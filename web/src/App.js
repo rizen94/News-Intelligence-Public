@@ -9,8 +9,8 @@ import Layout from './components/Layout/Layout';
 
 // Pages
 import UnifiedDashboard from './pages/Dashboard/UnifiedDashboard';
-import ArticlesAnalysis from './pages/Articles/ArticlesAnalysis';
-import StoryDossiers from './pages/StoryDossiers/StoryDossiers';
+import UnifiedArticlesAnalysis from './pages/Articles/UnifiedArticlesAnalysis';
+import UnifiedStoryDossiers from './pages/StoryDossiers/UnifiedStoryDossiers';
 import UnifiedLivingStoryNarrator from './pages/LivingStoryNarrator/UnifiedLivingStoryNarrator';
 import UnifiedEnhancedArticleViewer from './pages/EnhancedArticleViewer/UnifiedEnhancedArticleViewer';
 
@@ -72,9 +72,9 @@ function App() {
             <Layout>
               <Routes>
                 <Route path="/" element={<UnifiedDashboard />} />
-                <Route path="/dashboard" element={<ConsolidatedDashboard />} />
-                <Route path="/articles" element={<ArticlesAnalysis />} />
-                <Route path="/story-dossiers" element={<StoryDossiers />} />
+                <Route path="/dashboard" element={<UnifiedDashboard />} />
+                <Route path="/articles" element={<UnifiedArticlesAnalysis />} />
+                <Route path="/story-dossiers" element={<UnifiedStoryDossiers />} />
                 <Route path="/living-narrator" element={<UnifiedLivingStoryNarrator />} />
                 <Route path="/article-viewer" element={<UnifiedEnhancedArticleViewer />} />
               </Routes>

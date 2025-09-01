@@ -184,7 +184,7 @@ export default function Layout({ children }) {
           </IconButton>
           
           <Typography variant="h6" noWrap component="div" sx={{ flexGrow: 1 }}>
-            News Intelligence System v2.7.0
+            News Intelligence System v2.8.0
           </Typography>
           
           {/* System Status Indicator */}
