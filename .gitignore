@@ -1,0 +1,118 @@
+# News Intelligence System v2.0.0 - Git Ignore File
+
+# Database files and data directories
+db_data/
+*.db
+*.sqlite
+postgres_data/
+redis_data/
+
+# Docker volumes and data
+docker/data/
+volumes/
+data/
+
+# Virtual environments
+venv/
+env/
+.venv/
+
+# Python cache and compiled files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+
+# Environment files
+.env
+.env.local
+.env.production
+
+# Logs
+*.log
+logs/
+log/
+
+# Temporary files
+temp/
+tmp/
+*.tmp
+*.temp
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Backup files
+backups/
+*.backup
+*.bak
+
+# Test coverage
+.coverage
+htmlcov/
+.pytest_cache/
+
+# Node.js (if any)
+node_modules/
+npm-debug.log*
+
+# Large data files
+*.csv
+*.json
+*.xml
+models/
+data/
+
+# Large backup and export files
+news-system-backup-*/
+news-system-export*.zip
+*.zip
+*.tar
+*.tar.gz
+*.7z
+
+# User home directory files (should not be in project)
+../.ICEauthority
+../.Xauthority
+../.bash_history
+../.bash_logout
+../.bashrc
+../.cache/
+../.config/
+../.cursor/
+../.dmrc
+../.docker/
+../.face
+../.face.icon
+../.gitignore
+../.local/
+../.mozilla/
+../.pki/
+../.profile
+../.ssh/
+../.sudo_as_admin_successful
+../.wget-hsts
+../.xsession-errors*
+../Documents/
+../Downloads/
+../venv/
+
+# Container-specific
+.dockerignore
+Dockerfile*
+docker-compose*.yml

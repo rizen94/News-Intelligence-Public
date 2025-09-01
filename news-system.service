@@ -1,0 +1,31 @@
+[Unit]
+Description=News Intelligence System v2.0.0
+Documentation=https://github.com/your-repo/news-system
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/home/petes/news-system
+ExecStart=/home/petes/news-system/deploy.sh start
+ExecStop=/home/petes/news-system/deploy.sh stop
+ExecReload=/home/petes/news-system/deploy.sh restart
+TimeoutStartSec=300
+TimeoutStopSec=60
+
+# Restart policy
+Restart=on-failure
+RestartSec=30
+
+# Security settings
+User=petes
+Group=petes
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/home/petes/news-system
+
+[Install]
+WantedBy=multi-user.target
