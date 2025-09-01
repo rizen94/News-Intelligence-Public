@@ -8,11 +8,11 @@ import { Box } from '@mui/material';
 import Layout from './components/Layout/Layout';
 
 // Pages
-import ConsolidatedDashboard from './pages/Dashboard/ConsolidatedDashboard';
+import UnifiedDashboard from './pages/Dashboard/UnifiedDashboard';
 import ArticlesAnalysis from './pages/Articles/ArticlesAnalysis';
 import StoryDossiers from './pages/StoryDossiers/StoryDossiers';
-import LivingStoryNarrator from './pages/LivingStoryNarrator/LivingStoryNarrator';
-import EnhancedArticleViewer from './pages/EnhancedArticleViewer/EnhancedArticleViewer';
+import UnifiedLivingStoryNarrator from './pages/LivingStoryNarrator/UnifiedLivingStoryNarrator';
+import UnifiedEnhancedArticleViewer from './pages/EnhancedArticleViewer/UnifiedEnhancedArticleViewer';
 
 // Context
 import { NewsSystemProvider } from './contexts/NewsSystemContext';
@@ -71,12 +71,12 @@ function App() {
           <Box sx={{ display: 'flex', minHeight: '100vh' }}>
             <Layout>
               <Routes>
-                <Route path="/" element={<ConsolidatedDashboard />} />
+                <Route path="/" element={<UnifiedDashboard />} />
                 <Route path="/dashboard" element={<ConsolidatedDashboard />} />
                 <Route path="/articles" element={<ArticlesAnalysis />} />
                 <Route path="/story-dossiers" element={<StoryDossiers />} />
-                <Route path="/living-narrator" element={<LivingStoryNarrator />} />
-                <Route path="/article-viewer" element={<EnhancedArticleViewer />} />
+                <Route path="/living-narrator" element={<UnifiedLivingStoryNarrator />} />
+                <Route path="/article-viewer" element={<UnifiedEnhancedArticleViewer />} />
               </Routes>
             </Layout>
           </Box>

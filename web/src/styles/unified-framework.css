@@ -1,0 +1,486 @@
+/* ============================================================================
+   UNIFIED CSS FRAMEWORK - News Intelligence System
+   Consistent sizing, spacing, and layout framework
+   ============================================================================ */
+
+/* ============================================================================
+   CSS CUSTOM PROPERTIES (VARIABLES)
+   ============================================================================ */
+:root {
+  /* Spacing Scale - Based on 8px grid system */
+  --spacing-xs: 4px;
+  --spacing-sm: 8px;
+  --spacing-md: 16px;
+  --spacing-lg: 24px;
+  --spacing-xl: 32px;
+  --spacing-xxl: 48px;
+  --spacing-xxxl: 64px;
+
+  /* Component Heights - Unified sizing */
+  --height-xs: 24px;
+  --height-sm: 32px;
+  --height-md: 40px;
+  --height-lg: 48px;
+  --height-xl: 56px;
+  --height-xxl: 64px;
+
+  /* Card Dimensions */
+  --card-min-height: 200px;
+  --card-standard-height: 240px;
+  --card-large-height: 320px;
+  --card-xl-height: 400px;
+
+  /* Grid System */
+  --grid-gap: var(--spacing-md);
+  --grid-gap-lg: var(--spacing-lg);
+  --grid-gap-xl: var(--spacing-xl);
+
+  /* Border Radius */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+
+  /* Shadows */
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.12), 0 1px 2px rgba(0, 0, 0, 0.24);
+  --shadow-md: 0 3px 6px rgba(0, 0, 0, 0.16), 0 3px 6px rgba(0, 0, 0, 0.23);
+  --shadow-lg: 0 10px 20px rgba(0, 0, 0, 0.19), 0 6px 6px rgba(0, 0, 0, 0.23);
+  --shadow-xl: 0 14px 28px rgba(0, 0, 0, 0.25), 0 10px 10px rgba(0, 0, 0, 0.22);
+
+  /* Typography Scale */
+  --font-size-xs: 0.75rem;
+  --font-size-sm: 0.875rem;
+  --font-size-md: 1rem;
+  --font-size-lg: 1.125rem;
+  --font-size-xl: 1.25rem;
+  --font-size-xxl: 1.5rem;
+  --font-size-xxxl: 2rem;
+
+  /* Line Heights */
+  --line-height-tight: 1.2;
+  --line-height-normal: 1.5;
+  --line-height-relaxed: 1.75;
+}
+
+/* ============================================================================
+   UNIFIED CARD SYSTEM
+   ============================================================================ */
+.unified-card {
+  min-height: var(--card-min-height);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  overflow: hidden;
+}
+
+.unified-card:hover {
+  box-shadow: var(--shadow-md);
+  transform: translateY(-2px);
+}
+
+.unified-card-standard {
+  min-height: var(--card-standard-height);
+}
+
+.unified-card-large {
+  min-height: var(--card-large-height);
+}
+
+.unified-card-xl {
+  min-height: var(--card-xl-height);
+}
+
+/* ============================================================================
+   UNIFIED GRID SYSTEM
+   ============================================================================ */
+.unified-grid {
+  display: grid;
+  gap: var(--grid-gap);
+  width: 100%;
+}
+
+.unified-grid-sm {
+  gap: var(--spacing-sm);
+}
+
+.unified-grid-lg {
+  gap: var(--grid-gap-lg);
+}
+
+.unified-grid-xl {
+  gap: var(--grid-gap-xl);
+}
+
+/* Grid Templates */
+.unified-grid-2 {
+  grid-template-columns: repeat(2, 1fr);
+}
+
+.unified-grid-3 {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.unified-grid-4 {
+  grid-template-columns: repeat(4, 1fr);
+}
+
+.unified-grid-5 {
+  grid-template-columns: repeat(5, 1fr);
+}
+
+.unified-grid-6 {
+  grid-template-columns: repeat(6, 1fr);
+}
+
+/* Responsive Grid */
+@media (max-width: 1200px) {
+  .unified-grid-6 { grid-template-columns: repeat(4, 1fr); }
+  .unified-grid-5 { grid-template-columns: repeat(4, 1fr); }
+  .unified-grid-4 { grid-template-columns: repeat(3, 1fr); }
+}
+
+@media (max-width: 900px) {
+  .unified-grid-6 { grid-template-columns: repeat(3, 1fr); }
+  .unified-grid-5 { grid-template-columns: repeat(3, 1fr); }
+  .unified-grid-4 { grid-template-columns: repeat(2, 1fr); }
+  .unified-grid-3 { grid-template-columns: repeat(2, 1fr); }
+}
+
+@media (max-width: 600px) {
+  .unified-grid-6,
+  .unified-grid-5,
+  .unified-grid-4,
+  .unified-grid-3,
+  .unified-grid-2 { 
+    grid-template-columns: 1fr; 
+  }
+}
+
+/* ============================================================================
+   UNIFIED SPACING SYSTEM
+   ============================================================================ */
+.unified-spacing-xs { padding: var(--spacing-xs); }
+.unified-spacing-sm { padding: var(--spacing-sm); }
+.unified-spacing-md { padding: var(--spacing-md); }
+.unified-spacing-lg { padding: var(--spacing-lg); }
+.unified-spacing-xl { padding: var(--spacing-xl); }
+.unified-spacing-xxl { padding: var(--spacing-xxl); }
+
+.unified-margin-xs { margin: var(--spacing-xs); }
+.unified-margin-sm { margin: var(--spacing-sm); }
+.unified-margin-md { margin: var(--spacing-md); }
+.unified-margin-lg { margin: var(--spacing-lg); }
+.unified-margin-xl { margin: var(--spacing-xl); }
+.unified-margin-xxl { margin: var(--spacing-xxl); }
+
+/* ============================================================================
+   UNIFIED COMPONENT SIZES
+   ============================================================================ */
+.unified-button {
+  min-height: var(--height-md);
+  padding: var(--spacing-sm) var(--spacing-md);
+  border-radius: var(--radius-md);
+  font-weight: 500;
+  transition: all 0.2s ease;
+}
+
+.unified-button-sm {
+  min-height: var(--height-sm);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  font-size: var(--font-size-sm);
+}
+
+.unified-button-lg {
+  min-height: var(--height-lg);
+  padding: var(--spacing-md) var(--spacing-lg);
+  font-size: var(--font-size-lg);
+}
+
+.unified-input {
+  min-height: var(--height-md);
+  padding: var(--spacing-sm) var(--spacing-md);
+  border-radius: var(--radius-md);
+  border: 1px solid #e0e0e0;
+  transition: all 0.2s ease;
+}
+
+.unified-input:focus {
+  outline: none;
+  border-color: #1976d2;
+  box-shadow: 0 0 0 2px rgba(25, 118, 210, 0.2);
+}
+
+/* ============================================================================
+   UNIFIED STATISTICS CARDS
+   ============================================================================ */
+.unified-stat-card {
+  min-height: var(--card-standard-height);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+  padding: var(--spacing-lg);
+  background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  transition: all 0.3s ease;
+}
+
+.unified-stat-card:hover {
+  transform: translateY(-4px);
+  box-shadow: var(--shadow-lg);
+}
+
+.unified-stat-number {
+  font-size: var(--font-size-xxxl);
+  font-weight: 700;
+  line-height: var(--line-height-tight);
+  margin-bottom: var(--spacing-sm);
+}
+
+.unified-stat-label {
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  color: #666;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.unified-stat-description {
+  font-size: var(--font-size-xs);
+  color: #888;
+  margin-top: var(--spacing-xs);
+}
+
+/* ============================================================================
+   UNIFIED CONTENT CARDS
+   ============================================================================ */
+.unified-content-card {
+  min-height: var(--card-large-height);
+  display: flex;
+  flex-direction: column;
+  padding: var(--spacing-lg);
+  background: white;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  transition: all 0.3s ease;
+}
+
+.unified-content-card:hover {
+  box-shadow: var(--shadow-md);
+  transform: translateY(-2px);
+}
+
+.unified-content-header {
+  display: flex;
+  align-items: center;
+  margin-bottom: var(--spacing-md);
+  padding-bottom: var(--spacing-sm);
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.unified-content-title {
+  font-size: var(--font-size-lg);
+  font-weight: 600;
+  color: #333;
+  margin: 0;
+}
+
+.unified-content-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.unified-content-text {
+  font-size: var(--font-size-md);
+  line-height: var(--line-height-normal);
+  color: #555;
+  margin-bottom: var(--spacing-md);
+}
+
+.unified-content-actions {
+  display: flex;
+  gap: var(--spacing-sm);
+  margin-top: auto;
+  padding-top: var(--spacing-md);
+  border-top: 1px solid #f0f0f0;
+}
+
+/* ============================================================================
+   UNIFIED STATUS INDICATORS
+   ============================================================================ */
+.unified-status {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.unified-status-success {
+  background-color: #e8f5e8;
+  color: #2e7d32;
+}
+
+.unified-status-warning {
+  background-color: #fff3e0;
+  color: #f57c00;
+}
+
+.unified-status-error {
+  background-color: #ffebee;
+  color: #d32f2f;
+}
+
+.unified-status-info {
+  background-color: #e3f2fd;
+  color: #1976d2;
+}
+
+.unified-status-neutral {
+  background-color: #f5f5f5;
+  color: #666;
+}
+
+/* ============================================================================
+   UNIFIED PROGRESS INDICATORS
+   ============================================================================ */
+.unified-progress {
+  width: 100%;
+  height: 8px;
+  background-color: #f0f0f0;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.unified-progress-bar {
+  height: 100%;
+  background: linear-gradient(90deg, #1976d2, #42a5f5);
+  border-radius: var(--radius-sm);
+  transition: width 0.3s ease;
+}
+
+.unified-progress-lg {
+  height: 12px;
+}
+
+.unified-progress-xl {
+  height: 16px;
+}
+
+/* ============================================================================
+   UNIFIED LAYOUT CONTAINERS
+   ============================================================================ */
+.unified-container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: var(--spacing-lg);
+}
+
+.unified-container-fluid {
+  width: 100%;
+  padding: var(--spacing-lg);
+}
+
+.unified-section {
+  margin-bottom: var(--spacing-xxl);
+}
+
+.unified-section:last-child {
+  margin-bottom: 0;
+}
+
+/* ============================================================================
+   UNIFIED RESPONSIVE UTILITIES
+   ============================================================================ */
+.unified-hidden-mobile {
+  display: block;
+}
+
+.unified-hidden-desktop {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .unified-hidden-mobile {
+    display: none;
+  }
+  
+  .unified-hidden-desktop {
+    display: block;
+  }
+  
+  .unified-container,
+  .unified-container-fluid {
+    padding: var(--spacing-md);
+  }
+  
+  .unified-stat-number {
+    font-size: var(--font-size-xxl);
+  }
+  
+  .unified-content-card {
+    min-height: var(--card-standard-height);
+  }
+}
+
+/* ============================================================================
+   UNIFIED ANIMATION UTILITIES
+   ============================================================================ */
+.unified-fade-in {
+  animation: unifiedFadeIn 0.3s ease-in-out;
+}
+
+.unified-slide-up {
+  animation: unifiedSlideUp 0.3s ease-out;
+}
+
+.unified-scale-in {
+  animation: unifiedScaleIn 0.2s ease-out;
+}
+
+@keyframes unifiedFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes unifiedSlideUp {
+  from { 
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to { 
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes unifiedScaleIn {
+  from { 
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to { 
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* ============================================================================
+   UNIFIED THEME UTILITIES
+   ============================================================================ */
+.unified-elevation-1 { box-shadow: var(--shadow-sm); }
+.unified-elevation-2 { box-shadow: var(--shadow-md); }
+.unified-elevation-3 { box-shadow: var(--shadow-lg); }
+.unified-elevation-4 { box-shadow: var(--shadow-xl); }
+
+.unified-rounded-sm { border-radius: var(--radius-sm); }
+.unified-rounded-md { border-radius: var(--radius-md); }
+.unified-rounded-lg { border-radius: var(--radius-lg); }
+.unified-rounded-xl { border-radius: var(--radius-xl); }
