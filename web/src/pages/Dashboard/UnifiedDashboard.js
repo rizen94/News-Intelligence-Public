@@ -192,11 +192,13 @@ const UnifiedDashboard = () => {
         <div className="unified-grid unified-grid-4">
           {/* Articles */}
           <div className="unified-stat-card unified-fade-in">
-            <ArticleIcon color="primary" sx={{ fontSize: 40, mb: 1 }} />
-            <div className="unified-stat-number" style={{ color: '#1976d2' }}>
-              {dashboardData.articles.total}
+            <div className="unified-stat-card-content">
+              <ArticleIcon color="primary" sx={{ fontSize: 40 }} className="unified-stat-icon" />
+              <div className="unified-stat-number" style={{ color: '#1976d2' }}>
+                {dashboardData.articles.total}
+              </div>
+              <div className="unified-stat-label">Articles</div>
             </div>
-            <div className="unified-stat-label">Articles</div>
             <div className="unified-stat-description">
               Processed: {dashboardData.articles.processed} | Pending: {dashboardData.articles.pending}
             </div>
@@ -204,11 +206,13 @@ const UnifiedDashboard = () => {
 
           {/* Story Threads */}
           <div className="unified-stat-card unified-fade-in">
-            <TimelineIcon color="secondary" sx={{ fontSize: 40, mb: 1 }} />
-            <div className="unified-stat-number" style={{ color: '#9c27b0' }}>
-              {dashboardData.stories.total}
+            <div className="unified-stat-card-content">
+              <TimelineIcon color="secondary" sx={{ fontSize: 40 }} className="unified-stat-icon" />
+              <div className="unified-stat-number" style={{ color: '#9c27b0' }}>
+                {dashboardData.stories.total}
+              </div>
+              <div className="unified-stat-label">Story Threads</div>
             </div>
-            <div className="unified-stat-label">Story Threads</div>
             <div className="unified-stat-description">
               Active: {dashboardData.stories.active} | Alerts: {dashboardData.stories.alerts}
             </div>
@@ -216,11 +220,15 @@ const UnifiedDashboard = () => {
 
           {/* System Status */}
           <div className="unified-stat-card unified-fade-in">
-            {getStatusIcon(dashboardData.system.status)}
-            <div className="unified-stat-number" style={{ color: getStatusColor(dashboardData.system.status) === 'success' ? '#2e7d32' : '#f57c00' }}>
-              {dashboardData.system.status}
+            <div className="unified-stat-card-content">
+              <div className="unified-stat-icon">
+                {getStatusIcon(dashboardData.system.status)}
+              </div>
+              <div className="unified-stat-number" style={{ color: getStatusColor(dashboardData.system.status) === 'success' ? '#2e7d32' : '#f57c00' }}>
+                {dashboardData.system.status}
+              </div>
+              <div className="unified-stat-label">System Status</div>
             </div>
-            <div className="unified-stat-label">System Status</div>
             <div className="unified-stat-description">
               Uptime: {dashboardData.system.uptime} | v{dashboardData.system.version}
             </div>
@@ -228,11 +236,13 @@ const UnifiedDashboard = () => {
 
           {/* ML Processing */}
           <div className="unified-stat-card unified-fade-in">
-            <PsychologyIcon color="info" sx={{ fontSize: 40, mb: 1 }} />
-            <div className="unified-stat-number" style={{ color: '#0288d1' }}>
-              {dashboardData.ml.processing ? 'Active' : 'Idle'}
+            <div className="unified-stat-card-content">
+              <PsychologyIcon color="info" sx={{ fontSize: 40 }} className="unified-stat-icon" />
+              <div className="unified-stat-number" style={{ color: '#0288d1' }}>
+                {dashboardData.ml.processing ? 'Active' : 'Idle'}
+              </div>
+              <div className="unified-stat-label">ML Processing</div>
             </div>
-            <div className="unified-stat-label">ML Processing</div>
             <div className="unified-stat-description">
               Queue: {dashboardData.ml.queue} | Completed: {dashboardData.ml.completed}
             </div>
@@ -245,11 +255,13 @@ const UnifiedDashboard = () => {
         <div className="unified-grid unified-grid-3">
           {/* Master Articles */}
           <div className="unified-stat-card unified-fade-in">
-            <ArticleIcon color="success" sx={{ fontSize: 40, mb: 1 }} />
-            <div className="unified-stat-number" style={{ color: '#2e7d32' }}>
-              {dashboardData.masterArticles.total}
+            <div className="unified-stat-card-content">
+              <ArticleIcon color="success" sx={{ fontSize: 40 }} className="unified-stat-icon" />
+              <div className="unified-stat-number" style={{ color: '#2e7d32' }}>
+                {dashboardData.masterArticles.total}
+              </div>
+              <div className="unified-stat-label">Master Articles</div>
             </div>
-            <div className="unified-stat-label">Master Articles</div>
             <div className="unified-stat-description">
               Consolidated: {dashboardData.masterArticles.consolidated} | Single: {dashboardData.masterArticles.singleSource}
             </div>
@@ -257,11 +269,13 @@ const UnifiedDashboard = () => {
 
           {/* Pipeline Status */}
           <div className="unified-stat-card unified-fade-in">
-            <SpeedIcon color="primary" sx={{ fontSize: 40, mb: 1 }} />
-            <div className="unified-stat-number" style={{ color: '#1976d2' }}>
-              {dashboardData.pipeline?.running ? 'Running' : 'Stopped'}
+            <div className="unified-stat-card-content">
+              <SpeedIcon color="primary" sx={{ fontSize: 40 }} className="unified-stat-icon" />
+              <div className="unified-stat-number" style={{ color: '#1976d2' }}>
+                {dashboardData.pipeline?.running ? 'Running' : 'Stopped'}
+              </div>
+              <div className="unified-stat-label">Automated Pipeline</div>
             </div>
-            <div className="unified-stat-label">Automated Pipeline</div>
             <div className="unified-stat-description">
               Runs: {dashboardData.pipeline?.pipeline_runs || 0} | Collected: {dashboardData.pipeline?.articles_collected || 0}
             </div>
@@ -269,11 +283,13 @@ const UnifiedDashboard = () => {
 
           {/* Preprocessing */}
           <div className="unified-stat-card unified-fade-in">
-            <MemoryIcon color="info" sx={{ fontSize: 40, mb: 1 }} />
-            <div className="unified-stat-number" style={{ color: '#0288d1' }}>
-              {dashboardData.preprocessing.tagsExtracted}
+            <div className="unified-stat-card-content">
+              <MemoryIcon color="info" sx={{ fontSize: 40 }} className="unified-stat-icon" />
+              <div className="unified-stat-number" style={{ color: '#0288d1' }}>
+                {dashboardData.preprocessing.tagsExtracted}
+              </div>
+              <div className="unified-stat-label">Tags Extracted</div>
             </div>
-            <div className="unified-stat-label">Tags Extracted</div>
             <div className="unified-stat-description">
               Last Run: {dashboardData.preprocessing.lastRun ? new Date(dashboardData.preprocessing.lastRun).toLocaleDateString() : 'Never'}
             </div>

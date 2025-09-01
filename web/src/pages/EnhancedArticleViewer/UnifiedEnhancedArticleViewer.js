@@ -475,32 +475,40 @@ const UnifiedEnhancedArticleViewer = () => {
         <div className="unified-section">
           <div className="unified-grid unified-grid-4">
             <div className="unified-stat-card unified-fade-in">
-              <Article sx={{ fontSize: 40, mb: 1 }} />
-              <div className="unified-stat-number" style={{ color: '#0288d1' }}>
-                {preprocessingStatus.total_master_articles || 0}
+              <div className="unified-stat-card-content">
+                <Article sx={{ fontSize: 40 }} className="unified-stat-icon" />
+                <div className="unified-stat-number" style={{ color: '#0288d1' }}>
+                  {preprocessingStatus.total_master_articles || 0}
+                </div>
+                <div className="unified-stat-label">Master Articles</div>
               </div>
-              <div className="unified-stat-label">Master Articles</div>
             </div>
             <div className="unified-stat-card unified-fade-in">
-              <Timeline sx={{ fontSize: 40, mb: 1 }} />
-              <div className="unified-stat-number" style={{ color: '#1976d2' }}>
-                {preprocessingStatus.consolidated_articles || 0}
+              <div className="unified-stat-card-content">
+                <Timeline sx={{ fontSize: 40 }} className="unified-stat-icon" />
+                <div className="unified-stat-number" style={{ color: '#1976d2' }}>
+                  {preprocessingStatus.consolidated_articles || 0}
+                </div>
+                <div className="unified-stat-label">Consolidated</div>
               </div>
-              <div className="unified-stat-label">Consolidated</div>
             </div>
             <div className="unified-stat-card unified-fade-in">
-              <Article sx={{ fontSize: 40, mb: 1 }} />
-              <div className="unified-stat-number" style={{ color: '#9c27b0' }}>
-                {preprocessingStatus.single_source_articles || 0}
+              <div className="unified-stat-card-content">
+                <Article sx={{ fontSize: 40 }} className="unified-stat-icon" />
+                <div className="unified-stat-number" style={{ color: '#9c27b0' }}>
+                  {preprocessingStatus.single_source_articles || 0}
+                </div>
+                <div className="unified-stat-label">Single Source</div>
               </div>
-              <div className="unified-stat-label">Single Source</div>
             </div>
             <div className="unified-stat-card unified-fade-in">
-              <Timeline sx={{ fontSize: 40, mb: 1 }} />
-              <div className="unified-stat-number" style={{ color: '#2e7d32' }}>
-                {preprocessingStatus.processing_statistics?.tags_extracted || 0}
+              <div className="unified-stat-card-content">
+                <Timeline sx={{ fontSize: 40 }} className="unified-stat-icon" />
+                <div className="unified-stat-number" style={{ color: '#2e7d32' }}>
+                  {preprocessingStatus.processing_statistics?.tags_extracted || 0}
+                </div>
+                <div className="unified-stat-label">Tags Extracted</div>
               </div>
-              <div className="unified-stat-label">Tags Extracted</div>
             </div>
           </div>
         </div>

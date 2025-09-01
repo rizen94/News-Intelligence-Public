@@ -214,10 +214,10 @@
    UNIFIED STATISTICS CARDS
    ============================================================================ */
 .unified-stat-card {
-  min-height: var(--card-standard-height);
+  height: var(--card-standard-height);
   display: flex;
   flex-direction: column;
-  justify-content: center;
+  justify-content: space-between;
   align-items: center;
   text-align: center;
   padding: var(--spacing-lg);
@@ -230,6 +230,18 @@
 .unified-stat-card:hover {
   transform: translateY(-4px);
   box-shadow: var(--shadow-lg);
+}
+
+.unified-stat-card-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: 1;
+  justify-content: center;
+}
+
+.unified-stat-icon {
+  margin-bottom: var(--spacing-sm);
 }
 
 .unified-stat-number {
@@ -245,12 +257,16 @@
   color: #666;
   text-transform: uppercase;
   letter-spacing: 0.5px;
+  margin-bottom: var(--spacing-sm);
 }
 
 .unified-stat-description {
   font-size: var(--font-size-xs);
   color: #888;
-  margin-top: var(--spacing-xs);
+  line-height: var(--line-height-normal);
+  text-align: center;
+  max-width: 100%;
+  word-wrap: break-word;
 }
 
 /* ============================================================================
