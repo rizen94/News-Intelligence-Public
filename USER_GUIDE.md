@@ -339,6 +339,11 @@ RAG_TOP_K=5
 
 ### **Grafana Monitoring**
 
+#### **Accessing API Documentation**
+1. Navigate to http://localhost:8000/docs for Swagger UI
+2. Navigate to http://localhost:8000/redoc for ReDoc
+3. Explore interactive API documentation and testing
+
 #### **Accessing Grafana**
 1. Navigate to http://localhost:3001
 2. Login with admin/Database@NEWSINT2025
@@ -410,6 +415,10 @@ LLAMA_TEMPERATURE=0.5
 curl http://localhost:8000/api/articles
 curl http://localhost:8000/api/stories
 curl http://localhost:8000/api/intelligence
+
+# Interactive API documentation:
+# http://localhost:8000/docs (Swagger UI)
+# http://localhost:8000/redoc (ReDoc)
 ```
 
 #### **API Features**

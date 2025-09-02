@@ -87,18 +87,33 @@ web/
 
 ### **Core Technologies**
 - **Python 3.9+**: Primary programming language
-- **Flask**: Web framework for API endpoints
-- **FastAPI**: Modern API framework for ML services
+- **FastAPI**: Modern async web framework for all API endpoints
+- **Uvicorn**: ASGI server for FastAPI
+- **Pydantic**: Data validation and serialization
 - **SQLAlchemy**: Database ORM
 - **Celery**: Asynchronous task processing
 
 ### **Backend Structure**
 ```
 api/
-├── app.py                  # Main Flask application
+├── main.py                 # Main FastAPI application
 ├── config/                 # Configuration management
 │   ├── __init__.py
 │   └── database.py
+├── middleware/             # Custom middleware
+│   ├── __init__.py
+│   ├── logging.py          # Request/response logging
+│   ├── metrics.py          # Prometheus metrics
+│   └── security.py         # Security middleware
+├── routes/                 # FastAPI route definitions
+│   ├── __init__.py
+│   ├── health.py           # Health checks
+│   ├── dashboard.py        # Dashboard data
+│   ├── articles.py         # Article management
+│   ├── stories.py          # Story tracking
+│   ├── intelligence.py     # Intelligence data
+│   ├── ml.py               # ML pipeline
+│   └── monitoring.py       # System monitoring
 ├── modules/                # Core business logic
 │   ├── automation/         # Automated processing
 │   ├── data_collection/    # RSS collection
@@ -108,24 +123,28 @@ api/
 │   ├── ml/                 # ML/AI services
 │   ├── monitoring/         # System monitoring
 │   └── prioritization/     # Content prioritization
-├── routes/                 # API route definitions
 ├── collectors/             # Data collection services
 ├── scripts/                # Utility scripts
 └── requirements.txt        # Python dependencies
 ```
 
 ### **Key Backend Features**
-- **RESTful API**: Comprehensive API endpoints
-- **Asynchronous Processing**: Background task processing
-- **Data Validation**: Input validation and sanitization
-- **Error Handling**: Comprehensive error management
-- **Logging**: Structured logging system
+- **FastAPI Framework**: Modern async web framework with automatic OpenAPI docs
+- **RESTful API**: Comprehensive API endpoints with type safety
+- **Asynchronous Processing**: Full async/await support for better performance
+- **Data Validation**: Pydantic models with comprehensive validation
+- **Error Handling**: Comprehensive error management with detailed responses
+- **Logging**: Structured logging with request tracing
+- **Security**: Rate limiting, security headers, and request validation
+- **Monitoring**: Prometheus metrics integration
 - **Configuration Management**: Environment-based configuration
 
 ### **Backend Dependencies**
 ```txt
-Flask==2.3.3
 FastAPI==0.104.1
+Uvicorn[standard]==0.24.0
+Pydantic==2.5.0
+Starlette==0.27.0
 SQLAlchemy==2.0.23
 Celery==5.3.4
 Redis==5.0.1

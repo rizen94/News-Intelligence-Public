@@ -92,7 +92,7 @@ cd news-intelligence-system
 
 ### **Technology Stack**
 - **Frontend**: React.js with Material-UI
-- **Backend**: Python Flask with FastAPI
+- **Backend**: Python FastAPI with async operations
 - **Database**: PostgreSQL with Redis caching
 - **ML/AI**: Llama 3.1 70B, RAG systems, custom ML models
 - **Infrastructure**: Docker, Docker Compose, NAS storage
@@ -165,6 +165,8 @@ cd news-intelligence-system
 
 ### **Access Points**
 - **Main Application**: http://localhost:8000
+- **API Documentation**: http://localhost:8000/docs (Swagger UI)
+- **API Reference**: http://localhost:8000/redoc (ReDoc)
 - **Grafana Dashboards**: http://localhost:3001 (admin/Database@NEWSINT2025)
 - **Prometheus**: http://localhost:9090
 - **Node Exporter**: http://localhost:9100
@@ -375,7 +377,9 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## 🎯 **Roadmap**
 
 ### **Current Version (v3.0)**
-- ✅ Unified deployment system
+- ✅ FastAPI backend with async operations
+- ✅ Auto-generated API documentation
+- ✅ Enhanced UI/UX with real-time updates
 - ✅ AI-powered content analysis
 - ✅ Story evolution tracking
 - ✅ Professional web interface

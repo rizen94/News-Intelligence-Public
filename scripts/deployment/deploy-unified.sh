@@ -2,6 +2,7 @@
 
 # News Intelligence System v3.0 - Unified Deployment Script
 # All-in-one package with NAS storage and full feature set
+# FastAPI backend with enhanced UI/UX
 # No profiles needed - everything is included by default
 
 set -e
