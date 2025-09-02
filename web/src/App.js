@@ -8,8 +8,8 @@ import { Box } from '@mui/material';
 import Layout from './components/Layout/Layout';
 
 // Pages
-import UnifiedDashboard from './pages/Dashboard/UnifiedDashboard';
-import UnifiedArticlesAnalysis from './pages/Articles/UnifiedArticlesAnalysis';
+import EnhancedDashboard from './pages/Dashboard/EnhancedDashboard';
+import EnhancedArticles from './pages/Articles/EnhancedArticles';
 import UnifiedStoryDossiers from './pages/StoryDossiers/UnifiedStoryDossiers';
 import UnifiedLivingStoryNarrator from './pages/LivingStoryNarrator/UnifiedLivingStoryNarrator';
 import UnifiedEnhancedArticleViewer from './pages/EnhancedArticleViewer/UnifiedEnhancedArticleViewer';
@@ -71,9 +71,9 @@ function App() {
           <Box sx={{ display: 'flex', minHeight: '100vh' }}>
             <Layout>
               <Routes>
-                <Route path="/" element={<UnifiedDashboard />} />
-                <Route path="/dashboard" element={<UnifiedDashboard />} />
-                <Route path="/articles" element={<UnifiedArticlesAnalysis />} />
+                <Route path="/" element={<EnhancedDashboard />} />
+                <Route path="/dashboard" element={<EnhancedDashboard />} />
+                <Route path="/articles" element={<EnhancedArticles />} />
                 <Route path="/story-dossiers" element={<UnifiedStoryDossiers />} />
                 <Route path="/living-narrator" element={<UnifiedLivingStoryNarrator />} />
                 <Route path="/article-viewer" element={<UnifiedEnhancedArticleViewer />} />

@@ -15,6 +15,7 @@ import re
 from .summarization_service import MLSummarizationService
 from .background_processor import BackgroundMLProcessor
 from .rag_external_services import RAGExternalServicesManager
+from .gdelt_rag_service import GDELTRAGService
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +39,9 @@ class RAGEnhancedService:
         
         # Initialize external services
         self.external_services = RAGExternalServicesManager(external_config)
+        
+        # Initialize GDELT service for timeline and context enhancement
+        self.gdelt_service = GDELTRAGService()
         
         # RAG Configuration
         self.config = {
@@ -1114,3 +1118,182 @@ class RAGEnhancedService:
             'success_rate': self.stats['success_rate'],
             'config': self.config
         }
+    
+    def enhance_article_with_gdelt_timeline(self, article_id: int, keywords: List[str] = None) -> Dict[str, Any]:
+        """
+        Enhance an article with GDELT timeline and context data
+        
+        Args:
+            article_id: ID of the article to enhance
+            keywords: Optional keywords to use for GDELT search
+            
+        Returns:
+            Dict containing enhanced article data with GDELT context
+        """
+        try:
+            start_time = time.time()
+            
+            # Get article data
+            article_data = self._get_article_data(article_id)
+            if not article_data:
+                return {"error": f"Article {article_id} not found"}
+            
+            # Extract keywords if not provided
+            if not keywords:
+                keywords = self._extract_article_keywords(article_data)
+            
+            # Get GDELT timeline data
+            gdelt_timeline = self.gdelt_service.get_event_timeline(
+                query=" ".join(keywords[:5]), 
+                days_back=30
+            )
+            
+            # Get background context
+            background_context = self.gdelt_service.get_background_context(
+                keywords=keywords,
+                article_date=article_data.get('published_date', '')
+            )
+            
+            # Extract entities and get entity context
+            entities = self._extract_entities_from_article(article_data)
+            entity_contexts = {}
+            
+            for entity in entities[:3]:  # Limit to top 3 entities
+                entity_context = self.gdelt_service.get_entity_context(
+                    entity=entity,
+                    entity_type="person"  # Default to person, could be enhanced
+                )
+                entity_contexts[entity] = entity_context
+            
+            # Combine all GDELT data
+            gdelt_enhancement = {
+                "article_id": article_id,
+                "keywords": keywords,
+                "timeline": gdelt_timeline,
+                "background_context": background_context,
+                "entity_contexts": entity_contexts,
+                "enhancement_timestamp": datetime.now().isoformat(),
+                "processing_time": time.time() - start_time
+            }
+            
+            # Store enhancement in database
+            self._store_gdelt_enhancement(article_id, gdelt_enhancement)
+            
+            # Update article with RAG enhancement flag
+            self._update_article_rag_status(article_id, "gdelt_enhanced")
+            
+            logger.info(f"Enhanced article {article_id} with GDELT timeline data in {gdelt_enhancement['processing_time']:.2f}s")
+            
+            return gdelt_enhancement
+            
+        except Exception as e:
+            logger.error(f"Error enhancing article {article_id} with GDELT: {e}")
+            return {"error": f"Error enhancing article with GDELT: {str(e)}"}
+    
+    def _get_article_data(self, article_id: int) -> Optional[Dict[str, Any]]:
+        """Get article data from database"""
+        try:
+            conn = psycopg2.connect(**self.db_config)
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT id, title, content, summary, url, source, published_date, 
+                       category, language, quality_score, processing_status, ml_data
+                FROM articles 
+                WHERE id = %s
+            """, (article_id,))
+            
+            result = cursor.fetchone()
+            if result:
+                columns = [desc[0] for desc in cursor.description]
+                article_data = dict(zip(columns, result))
+                return article_data
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error getting article data: {e}")
+            return None
+        finally:
+            if 'conn' in locals():
+                conn.close()
+    
+    def _extract_article_keywords(self, article_data: Dict[str, Any]) -> List[str]:
+        """Extract keywords from article data"""
+        # Simple keyword extraction - could be enhanced with NLP
+        text = f"{article_data.get('title', '')} {article_data.get('content', '')}"
+        
+        # Remove common words and extract meaningful terms
+        common_words = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'is', 'are', 'was', 'were', 'be', 'been', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should', 'may', 'might', 'must', 'can', 'this', 'that', 'these', 'those', 'i', 'you', 'he', 'she', 'it', 'we', 'they', 'me', 'him', 'her', 'us', 'them'}
+        
+        # Extract words (simple approach)
+        words = re.findall(r'\b[a-zA-Z]{3,}\b', text.lower())
+        keywords = [word for word in words if word not in common_words]
+        
+        # Count frequency and return top keywords
+        word_counts = Counter(keywords)
+        return [word for word, count in word_counts.most_common(10)]
+    
+    def _extract_entities_from_article(self, article_data: Dict[str, Any]) -> List[str]:
+        """Extract entities from article data"""
+        # Simple entity extraction - could be enhanced with NER
+        text = f"{article_data.get('title', '')} {article_data.get('content', '')}"
+        
+        # Look for capitalized words (simple approach)
+        entities = re.findall(r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b', text)
+        
+        # Remove common words and return unique entities
+        common_words = {'The', 'This', 'That', 'These', 'Those', 'And', 'Or', 'But', 'In', 'On', 'At', 'To', 'For', 'Of', 'With', 'By'}
+        entities = [entity for entity in entities if entity not in common_words]
+        
+        return list(set(entities))[:5]  # Return top 5 unique entities
+    
+    def _store_gdelt_enhancement(self, article_id: int, enhancement_data: Dict[str, Any]) -> bool:
+        """Store GDELT enhancement data in database"""
+        try:
+            conn = psycopg2.connect(**self.db_config)
+            cursor = conn.cursor()
+            
+            # Update article with GDELT enhancement data
+            cursor.execute("""
+                UPDATE articles 
+                SET ml_data = COALESCE(ml_data, '{}'::jsonb) || %s::jsonb,
+                    rag_keep_longer = TRUE,
+                    rag_context_needed = FALSE,
+                    updated_at = NOW()
+                WHERE id = %s
+            """, (json.dumps({"gdelt_enhancement": enhancement_data}), article_id))
+            
+            conn.commit()
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error storing GDELT enhancement: {e}")
+            return False
+        finally:
+            if 'conn' in locals():
+                conn.close()
+    
+    def _update_article_rag_status(self, article_id: int, status: str) -> bool:
+        """Update article RAG processing status"""
+        try:
+            conn = psycopg2.connect(**self.db_config)
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                UPDATE articles 
+                SET processing_status = %s,
+                    rag_keep_longer = TRUE,
+                    updated_at = NOW()
+                WHERE id = %s
+            """, (status, article_id))
+            
+            conn.commit()
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error updating article RAG status: {e}")
+            return False
+        finally:
+            if 'conn' in locals():
+                conn.close()

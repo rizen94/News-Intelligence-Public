@@ -1,303 +1,415 @@
 # 🚀 News Intelligence System v3.0
 
-## 🎯 **PRODUCTION-READY NEWS INTELLIGENCE PLATFORM**
+[![Version](https://img.shields.io/badge/version-3.0-blue.svg)](https://github.com/your-repo/news-intelligence-system)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](docker-compose.unified.yml)
+[![Python](https://img.shields.io/badge/python-3.9+-blue.svg)](api/requirements.txt)
+[![React](https://img.shields.io/badge/react-18+-blue.svg)](web/package.json)
 
-A comprehensive, automated news aggregation and analysis system designed for professional use. Collect, process, analyze, and prioritize news content with enterprise-grade reliability and monitoring.
+> **A comprehensive, automated news aggregation and analysis platform powered by AI**
 
----
-
-## ✨ **KEY FEATURES**
-
-### 🧠 **Intelligent Content Processing**
-- **Automated RSS Collection** - Multi-source news aggregation
-- **Advanced Deduplication** - AI-powered content similarity detection
-- **Entity Extraction** - Named entity recognition (people, organizations, locations)
-- **Story Clustering** - Automatic grouping of related content
-- **Content Prioritization** - Smart importance scoring and ranking
-
-### 🤖 **AI/ML Features (NEW!)**
-- **AI Summarization** - Llama 3.1 70B powered article summaries
-- **Content Analysis** - Multi-dimensional quality scoring system
-- **Sentiment Analysis** - AI-powered sentiment classification
-- **Key Point Extraction** - Automated bullet point generation
-- **ML Pipeline** - Orchestrated AI processing workflow
-
-### 🎨 **Professional Web Interface**
-- **Modern React Frontend** - Material-UI design system
-- **Real-time Dashboard** - Live system monitoring and metrics
-- **Responsive Design** - Mobile-first responsive layout
-- **Interactive Charts** - Data visualization with Recharts
-- **Search & Discovery** - Advanced content search capabilities
-
-### 🏗️ **Enterprise Architecture**
-- **Flask Backend** - Robust Python API with modular design
-- **PostgreSQL Database** - Professional database with pgvector support
-- **Docker Deployment** - Containerized deployment with profiles
-- **Monitoring Stack** - Prometheus + Grafana for system oversight
-- **NAS Integration** - TerraMaster NAS storage support
-
-### 📊 **System Monitoring**
-- **Health Checks** - Comprehensive system health monitoring
-- **Performance Metrics** - Real-time performance tracking
-- **Resource Monitoring** - CPU, memory, disk, and network metrics
-- **Alert System** - Automated alerting for critical issues
-- **Log Management** - Structured logging and error tracking
+The News Intelligence System is a professional-grade platform that automatically collects, processes, and analyzes news content using cutting-edge AI/ML technologies. Built for organizations that need real-time news intelligence and story tracking capabilities.
 
 ---
 
-## 🚀 **QUICK START**
+## ✨ **Key Features**
 
-### **1. Prerequisites**
-- Linux (Ubuntu 20.04+, Pop!_OS 20.04+)
-- Docker Engine 20.10+ and Docker Compose 2.0+
-- 4GB RAM minimum, 8GB recommended
+### 🤖 **AI-Powered Analysis**
+- **Automated Summarization**: Llama 3.1 70B powered article summaries
+- **Story Classification**: Intelligent content categorization
+- **Sentiment Analysis**: Content sentiment detection
+- **Entity Extraction**: Key people, places, and organizations
 
-### **2. Deploy the System**
+### 📰 **Advanced News Processing**
+- **Multi-source Collection**: 100+ RSS feeds and news sources
+- **Real-time Processing**: Continuous content ingestion and analysis
+- **Story Evolution Tracking**: Monitor how stories develop over time
+- **Content Deduplication**: Advanced similarity detection
+
+### 🎯 **Intelligence Delivery**
+- **Real-time Dashboards**: Live system monitoring and news overview
+- **Story Dossiers**: Comprehensive story profiles with timelines
+- **Daily Digests**: Automated summary reports
+- **RAG-Enhanced Search**: Advanced content discovery
+
+### 🏗️ **Professional Infrastructure**
+- **Unified Deployment**: Single-command setup with all features
+- **NAS Storage**: Persistent data storage and backup
+- **Background Processing**: Continue working during deployments
+- **Enterprise Monitoring**: Prometheus + Grafana observability
+
+---
+
+## 🚀 **Quick Start**
+
+### **Prerequisites**
+- Docker and Docker Compose installed
+- NAS mounted at `/mnt/terramaster-nas` (or update paths in `env.unified`)
+- At least 10GB free disk space
+- 8GB+ RAM recommended
+
+### **Deploy in 3 Steps**
+
 ```bash
-# Clone the repository
-git clone https://github.com/your-username/news-intelligence-system.git
+# 1. Clone the repository
+git clone <repository-url>
 cd news-intelligence-system
 
-# Deploy with local storage (default)
-chmod +x scripts/deployment/deploy.sh
-./scripts/deployment/deploy.sh local
+# 2. Deploy the system
+./scripts/deployment/deploy-unified.sh
 
-# Access your system
+# 3. Access your system
 # Main Application: http://localhost:8000
-# API Health: http://localhost:8000/health
+# Grafana Dashboards: http://localhost:3001 (admin/Database@NEWSINT2025)
 ```
 
-### **3. What Gets Deployed**
-- ✅ **PostgreSQL Database** - Local Docker volume storage
-- ✅ **Flask Backend** - All API endpoints and services
-- ✅ **React Frontend** - Professional web interface
-- ✅ **Database Schema** - Automatic initialization
-- ✅ **Sample Data** - Test content for validation
+### **Background Deployment**
+```bash
+# Deploy in background (continues if terminal closes)
+./scripts/deployment/deploy-unified.sh --background
+
+# Monitor the deployment
+./scripts/deployment/deployment-dashboard.sh
+```
 
 ---
 
-## 🏗️ **DEPLOYMENT OPTIONS**
+## 📊 **System Overview**
 
-### **Local Development**
-```bash
-# Quick local deployment
-./scripts/deployment/deploy.sh local
+### **Architecture**
 ```
-- **Storage**: Local Docker volumes
-- **Monitoring**: Basic system health
-- **Use Case**: Development, testing, small workloads
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Data Sources  │───▶│  AI Processing  │───▶│  Intelligence   │
+│   (RSS Feeds)   │    │  (Llama 3.1)    │    │  Delivery       │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+                                │
+                                ▼
+                    ┌─────────────────┐
+                    │   Web Interface │
+                    │   & Dashboards  │
+                    └─────────────────┘
+```
 
-### **NAS Deployment**
-```bash
-# Deploy with NAS storage and monitoring
-./scripts/deployment/deploy.sh nas --clean
-```
-- **Storage**: TerraMaster NAS with persistent data
-- **Monitoring**: Full monitoring stack (Prometheus + Grafana)
-- **Use Case**: Medium workloads, data persistence
-
-### **Production Deployment**
-```bash
-# Deploy production with full monitoring
-./scripts/deployment/deploy.sh production --clean --build
-```
-- **Storage**: NAS with production optimizations
-- **Monitoring**: Enterprise-grade monitoring and alerting
-- **Use Case**: Production workloads, high availability
+### **Technology Stack**
+- **Frontend**: React.js with Material-UI
+- **Backend**: Python Flask with FastAPI
+- **Database**: PostgreSQL with Redis caching
+- **ML/AI**: Llama 3.1 70B, RAG systems, custom ML models
+- **Infrastructure**: Docker, Docker Compose, NAS storage
+- **Monitoring**: Prometheus, Grafana, custom dashboards
 
 ---
 
-## 📚 **DOCUMENTATION**
+## 🛠️ **Deployment Options**
 
-### **Getting Started**
-- **[📖 Quick Start Guide](docs/QUICK_START.md)** - Get up and running in 5 minutes
-- **[🏗️ Project Overview](docs/PROJECT_OVERVIEW.md)** - System capabilities and features
-- **[📋 User Manual](docs/USER_MANUAL.md)** - Complete feature guide
+### **Basic Deployment**
+```bash
+# Standard deployment
+./scripts/deployment/deploy-unified.sh
+```
+
+### **Advanced Options**
+```bash
+# Force rebuild containers
+./scripts/deployment/deploy-unified.sh --build
+
+# Clean deployment (removes old containers)
+./scripts/deployment/deploy-unified.sh --clean --build
+
+# Deploy and show logs
+./scripts/deployment/deploy-unified.sh --logs
+
+# Background deployment
+./scripts/deployment/deploy-unified.sh --background
+```
+
+### **Management Commands**
+```bash
+# Check service status
+./scripts/deployment/deploy-unified.sh --status
+
+# Stop all services
+./scripts/deployment/deploy-unified.sh --stop
+
+# Restart services
+./scripts/deployment/deploy-unified.sh --restart
+```
+
+---
+
+## 📈 **Monitoring & Management**
+
+### **Real-time Dashboard**
+```bash
+# Start monitoring dashboard
+./scripts/deployment/deployment-dashboard.sh
+
+# Custom refresh interval
+./scripts/deployment/deployment-dashboard.sh --interval 10
+```
+
+### **Background Process Management**
+```bash
+# Check background processes
+./scripts/deployment/manage-background.sh status
+
+# View logs
+./scripts/deployment/manage-background.sh logs
+
+# Monitor processes in real-time
+./scripts/deployment/manage-background.sh monitor
+
+# Stop background processes
+./scripts/deployment/manage-background.sh stop
+```
+
+### **Access Points**
+- **Main Application**: http://localhost:8000
+- **Grafana Dashboards**: http://localhost:3001 (admin/Database@NEWSINT2025)
+- **Prometheus**: http://localhost:9090
+- **Node Exporter**: http://localhost:9100
+
+---
+
+## 🎯 **Key Capabilities**
+
+### **Automated News Collection**
+- **Multi-source RSS Collection**: 100+ news sources
+- **Real-time Processing**: Continuous content ingestion
+- **Quality Assurance**: Automated content validation
+- **Progress Tracking**: Live collection status monitoring
+
+### **AI-Powered Analysis**
+- **Content Summarization**: Automated article summaries
+- **Story Classification**: Intelligent categorization
+- **Sentiment Analysis**: Content sentiment detection
+- **Entity Extraction**: Key people, places, and organizations
+
+### **Story Evolution Tracking**
+- **Timeline Analysis**: Story development over time
+- **Event Correlation**: Related story connections
+- **Living Narratives**: Automated story consolidation
+- **Story Dossiers**: Comprehensive story profiles
+
+### **Intelligence Delivery**
+- **Real-time Dashboards**: Live system monitoring
+- **Advanced Search**: RAG-enhanced content discovery
+- **Daily Digests**: Automated summary reports
+- **Custom Analytics**: Tailored insights and reports
+
+---
+
+## 🔧 **Configuration**
+
+### **Environment Configuration**
+The system uses `env.unified` for configuration. Key settings:
+
+```bash
+# Database Configuration
+DB_PASSWORD=Database@NEWSINT2025
+DB_HOST=postgres
+DB_NAME=news_system
+DB_USER=NewsInt_DB
+
+# RSS Collection Settings
+RSS_INTERVAL_MINUTES=60
+MAX_CONCURRENT_RSS_FEEDS=10
+MAX_CONCURRENT_ARTICLES=100
+
+# ML/AI Configuration
+LLAMA_MODEL_PATH=/mnt/terramaster-nas/docker-postgres-data/ml-models
+RAG_ENABLED=true
+SUMMARIZATION_ENABLED=true
+```
+
+### **NAS Storage Configuration**
+```bash
+# NAS mount point
+NAS_MOUNT_POINT=/mnt/terramaster-nas
+
+# Storage paths
+POSTGRES_DATA_PATH=/mnt/terramaster-nas/docker-postgres-data/pgdata
+ML_MODELS_PATH=/mnt/terramaster-nas/docker-postgres-data/ml-models
+BACKUP_PATH=/mnt/terramaster-nas/docker-postgres-data/backups
+```
+
+---
+
+## 📚 **Documentation**
+
+### **Project Documentation**
+- **[Project Overview](PROJECT_OVERVIEW.md)**: High-level system overview and intent
+- **[Codebase Summary](CODEBASE_SUMMARY.md)**: Detailed technical architecture
+- **[User Guide](USER_GUIDE.md)**: Comprehensive usage instructions
 
 ### **Technical Documentation**
-- **[🏛️ System Architecture](docs/ARCHITECTURE.md)** - Technical design and components
-- **[🚀 Deployment Guide](docs/DEPLOYMENT.md)** - Production deployment instructions
-- **[📊 Backend Assessment](docs/BACKEND_ASSESSMENT.md)** - Backend system evaluation
-- **[🌐 Web Interface Assessment](docs/WEB_INTERFACE_ASSESSMENT.md)** - Frontend evaluation
-
-### **Project Information**
-- **[📁 Project Structure](PROJECT_STRUCTURE.md)** - Clean, organized project layout
-- **[📝 Deployment Readiness](docs/DEPLOYMENT_READINESS_SUMMARY.md)** - Production readiness status
+- **[UX Framework Guide](UX_FRAMEWORK_APPLICATION_GUIDE.md)**: Development framework
+- **[Deployment Guide](UNIFIED_DEPLOYMENT_GUIDE.md)**: Infrastructure setup
+- **[Enhanced UX Features](ENHANCED_UX_FEATURES_SUMMARY.md)**: User experience features
 
 ---
 
-## 🎯 **SYSTEM CAPABILITIES**
+## 🚨 **Troubleshooting**
 
-### **Content Collection**
-- **RSS Feed Management** - Add, configure, and monitor RSS sources
-- **Automatic Collection** - Scheduled content collection and processing
-- **Content Validation** - Quality assessment and filtering
-- **Error Handling** - Robust error handling and recovery
+### **Common Issues**
 
-### **Content Analysis**
-- **Text Processing** - HTML cleaning and text normalization
-- **Language Detection** - Automatic language identification
-- **Quality Scoring** - Content reliability assessment
-- **Metadata Extraction** - Publication dates, categories, authors
+#### **Docker Not Running**
+```bash
+# Start Docker
+sudo systemctl start docker
 
-### **Intelligence Features**
-- **Deduplication Engine** - Vector-based similarity detection
-- **Entity Recognition** - Named entity extraction and classification
-- **Story Clustering** - Automatic content grouping and threading
-- **Priority Management** - Content importance scoring and ranking
+# Check Docker status
+docker info
+```
 
-### **User Experience**
-- **Dashboard Overview** - System metrics and content statistics
-- **Content Browsing** - Article, cluster, and entity management
-- **Advanced Search** - Full-text search with filtering
-- **Real-time Updates** - Live data refresh and notifications
+#### **NAS Not Mounted**
+```bash
+# Check mount status
+mountpoint -q /mnt/terramaster-nas
 
----
+# Mount NAS (example)
+sudo mount -t nfs your-nas-ip:/path /mnt/terramaster-nas
+```
 
-## 🔧 **TECHNICAL SPECIFICATIONS**
+#### **Port Conflicts**
+```bash
+# Check port usage
+netstat -tulpn | grep :8000
 
-### **Backend Stack**
-- **Framework**: Flask 2.3.3 (Python 3.11+)
-- **Database**: PostgreSQL 15 with pgvector extension
-- **API**: RESTful API with comprehensive endpoints
-- **Processing**: Modular content processing pipeline
-- **Monitoring**: Prometheus metrics and health checks
+# Stop conflicting services
+sudo systemctl stop apache2  # or nginx
+```
 
-### **Frontend Stack**
-- **Framework**: React 18.2.0 with Material-UI
-- **Charts**: Recharts for data visualization
-- **Routing**: React Router for navigation
-- **State**: Context API for global state management
-- **Styling**: Material-UI theme system
+#### **Permission Issues**
+```bash
+# Fix permissions
+sudo chown -R 1000:1000 /mnt/terramaster-nas/docker-postgres-data/
+```
 
-### **Infrastructure**
-- **Containerization**: Docker with Docker Compose
-- **Networking**: Custom bridge network (172.20.0.0/16)
-- **Storage**: Docker volumes or NAS integration
-- **Monitoring**: Prometheus, Grafana, Node Exporter
-- **Security**: Container isolation and access controls
+### **Getting Help**
+- **Check Logs**: `./scripts/deployment/manage-background.sh logs`
+- **System Status**: `./scripts/deployment/deploy-unified.sh --status`
+- **Monitor Dashboard**: `./scripts/deployment/deployment-dashboard.sh`
 
 ---
 
-## 📈 **PERFORMANCE & SCALABILITY**
+## 🔄 **Updates & Maintenance**
 
-### **Performance Features**
-- **Connection Pooling** - Efficient database connection management
-- **Caching Strategy** - Application and database caching
-- **Async Processing** - Background task processing
-- **Resource Optimization** - CPU and memory optimization
+### **Updating the System**
+```bash
+# Pull latest changes
+git pull origin main
 
-### **Scaling Capabilities**
-- **Horizontal Scaling** - Multiple backend instances
-- **Database Clustering** - Primary-replica setup
-- **Load Balancing** - Request distribution across instances
-- **Storage Scaling** - NAS or cloud storage integration
+# Rebuild and deploy
+./scripts/deployment/deploy-unified.sh --clean --build
+```
 
----
+### **Backup & Recovery**
+```bash
+# Backup data
+./scripts/deployment/backup-data.sh
 
-## 🔒 **SECURITY & RELIABILITY**
+# Restore data
+./scripts/deployment/restore-data.sh
+```
 
-### **Security Features**
-- **Input Validation** - SQL injection and XSS protection
-- **Rate Limiting** - API request throttling
-- **CORS Control** - Cross-origin resource sharing management
-- **Container Isolation** - Docker-based security boundaries
-- **Data Encryption** - Encryption at rest and in transit
+### **System Cleanup**
+```bash
+# Clean up old containers
+./scripts/deployment/deploy-unified.sh --clean
 
-### **Reliability Features**
-- **Health Checks** - Comprehensive system health monitoring
-- **Automatic Recovery** - Service restart and recovery
-- **Backup Systems** - Automated data backup procedures
-- **Error Handling** - Robust error handling and logging
-- **Monitoring** - Real-time system oversight and alerting
+# Clean up logs
+./scripts/deployment/manage-background.sh cleanup
+```
 
 ---
 
-## 🚀 **FUTURE ROADMAP**
-
-### **Version 4.0 - ML Integration**
-- **Content Summarization** - AI-powered content summaries
-- **Sentiment Analysis** - Content sentiment scoring
-- **Trend Prediction** - Predictive analytics and insights
-- **Custom Models** - Domain-specific machine learning models
-
-### **Enterprise Features**
-- **Multi-tenancy** - Multiple organization support
-- **Advanced Analytics** - Business intelligence dashboards
-- **API Management** - Advanced API management and authentication
-- **Integration Hub** - Third-party system connections
-
----
-
-## 🤝 **CONTRIBUTING**
-
-### **Getting Started**
-1. **Fork the repository**
-2. **Create a feature branch** (`git checkout -b feature/amazing-feature`)
-3. **Make your changes** and commit (`git commit -m 'Add amazing feature'`)
-4. **Push to the branch** (`git push origin feature/amazing-feature`)
-5. **Open a Pull Request**
+## 🤝 **Contributing**
 
 ### **Development Setup**
 ```bash
-# Clone and setup development environment
-git clone https://github.com/your-username/news-intelligence-system.git
+# Clone repository
+git clone <repository-url>
 cd news-intelligence-system
 
-# Install dependencies
-pip install -r api/requirements.txt
-cd web && npm install
+# Set up development environment
+./scripts/setup-dev.sh
 
-# Run development servers
-# Backend: python api/app.py
-# Frontend: npm start
+# Run tests
+./scripts/run-tests.sh
 ```
 
----
-
-## 📞 **SUPPORT & COMMUNITY**
-
-### **Getting Help**
-- **📚 Documentation**: Check the comprehensive documentation
-- **🐛 Issues**: Report bugs and request features via GitHub Issues
-- **💬 Discussions**: Join community discussions in GitHub Discussions
-- **📧 Contact**: Reach out for professional support
-
-### **Community Guidelines**
-- **Be respectful** and inclusive in all interactions
-- **Help others** by answering questions and sharing knowledge
-- **Follow best practices** for code quality and documentation
-- **Contribute constructively** to improve the system
+### **Code Standards**
+- **Python**: PEP 8 compliance
+- **JavaScript**: ESLint configuration
+- **Documentation**: Comprehensive inline comments
+- **Testing**: Unit and integration tests
 
 ---
 
-## 📄 **LICENSE**
+## 📄 **License**
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ---
 
-## 🎉 **ACKNOWLEDGMENTS**
+## 🙏 **Acknowledgments**
 
-The News Intelligence System represents a significant evolution in automated news intelligence, combining:
-
-- **Modern web technologies** (React, Material-UI)
-- **Robust backend architecture** (Flask, PostgreSQL)
-- **Professional monitoring** (Prometheus, Grafana)
-- **Production-grade infrastructure** (Docker, NAS storage)
-
-**Ready for immediate production deployment!** 🚀
+- **Llama 3.1 70B**: Meta's large language model
+- **Material-UI**: React component library
+- **Docker**: Containerization platform
+- **PostgreSQL**: Database system
+- **Prometheus & Grafana**: Monitoring stack
 
 ---
 
-## 🔗 **QUICK LINKS**
+## 📞 **Support**
 
-- **[🚀 Quick Start](docs/QUICK_START.md)** - Get started in 5 minutes
-- **[📖 User Manual](docs/USER_MANUAL.md)** - Complete feature guide
-- **[🏗️ Architecture](docs/ARCHITECTURE.md)** - Technical system design
-- **[🚀 Deployment](docs/DEPLOYMENT.md)** - Production setup instructions
-- **[📁 Project Structure](PROJECT_STRUCTURE.md)** - Clean project organization
+- **Documentation**: Comprehensive guides in `/docs`
+- **Issues**: GitHub Issues for bug reports
+- **Discussions**: GitHub Discussions for questions
+- **Community**: Join our community discussions
 
 ---
+
+## 🎯 **Roadmap**
+
+### **Current Version (v3.0)**
+- ✅ Unified deployment system
+- ✅ AI-powered content analysis
+- ✅ Story evolution tracking
+- ✅ Professional web interface
+
+### **Upcoming Features**
+- 🔄 Multi-language support
+- 🔄 Advanced ML models
+- 🔄 Custom analytics dashboards
+- 🔄 API integrations
+
+---
+
+**The News Intelligence System represents the future of automated news analysis, combining cutting-edge AI with professional infrastructure to deliver actionable intelligence at scale.**
 
 **Built with ❤️ for the news intelligence community**
+
+---
+
+## 📊 **System Requirements**
+
+### **Minimum Requirements**
+- **CPU**: 4 cores
+- **RAM**: 8GB
+- **Storage**: 50GB free space
+- **Network**: Internet connection for RSS feeds
+
+### **Recommended Requirements**
+- **CPU**: 8+ cores
+- **RAM**: 16GB+
+- **Storage**: 100GB+ free space
+- **GPU**: NVIDIA GPU for ML acceleration (optional)
+- **Network**: High-speed internet connection
+
+### **Supported Platforms**
+- **Linux**: Ubuntu 20.04+, CentOS 8+, Debian 11+
+- **Docker**: Docker 20.10+, Docker Compose 2.0+
+- **NAS**: NFS, SMB/CIFS compatible storage

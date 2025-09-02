@@ -34,7 +34,7 @@ import {
   Visibility,
   Delete
 } from '@mui/icons-material';
-import { newsSystemService } from '../../services/newsSystemService';
+import newsSystemService from '../../services/newsSystemService';
 import './StorylineTracking.css';
 
 const StorylineTracking = () => {

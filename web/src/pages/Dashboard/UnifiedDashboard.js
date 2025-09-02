@@ -42,6 +42,7 @@ const UnifiedDashboard = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [recentActivity, setRecentActivity] = useState([]);
+  const [pipelineLoading, setPipelineLoading] = useState(false);
 
   useEffect(() => {
     fetchDashboardData();
@@ -51,52 +52,74 @@ const UnifiedDashboard = () => {
 
   const fetchDashboardData = async () => {
     try {
-      // Fetch articles data
+      // Fetch articles data (this works)
       const articlesResponse = await fetch('/api/articles');
       const articlesData = await articlesResponse.json();
       
-      // Fetch story threads data
-      const storiesResponse = await fetch('/api/prioritization/story-threads?status=active');
-      const storiesData = await storiesResponse.json();
+      // Get today's articles for daily digest
+      const today = new Date().toISOString().split('T')[0];
+      const todayArticles = articlesData.articles?.filter(article => 
+        article.published_date && article.published_date.startsWith(today)
+      ) || [];
       
-      // Fetch system metrics
-      const metricsResponse = await fetch('/api/monitoring/metrics');
-      const metricsData = await metricsResponse.json();
+      // Fetch system status (this works)
+      const systemResponse = await fetch('/api/system/status');
+      const systemData = await systemResponse.json();
       
-      // Fetch ML processing status
-      const mlResponse = await fetch('/api/ml/status');
-      const mlData = await mlResponse.json();
+      // Try to fetch other data, but handle failures gracefully
+      let storiesData = { data: [] };
+      let mlData = { processing: false, queue: 0, completed: 0 };
+      let pipelineData = { data: { pipeline: { running: false } } };
+      let alertsData = { data: [] };
+      let masterArticlesData = { total: 0 };
+      let preprocessingData = { data: {} };
       
-      // Fetch automated pipeline status
-      const pipelineResponse = await fetch('/api/automation/pipeline/status');
-      const pipelineData = await pipelineResponse.json();
+      try {
+        const storiesResponse = await fetch('/api/prioritization/story-threads?status=active');
+        if (storiesResponse.ok) storiesData = await storiesResponse.json();
+      } catch (e) { console.log('Story threads API not available'); }
       
-      // Fetch storyline alerts
-      const alertsResponse = await fetch('/api/alerts/storyline/unread');
-      const alertsData = await alertsResponse.json();
+      try {
+        const mlResponse = await fetch('/api/ml/status');
+        if (mlResponse.ok) mlData = await mlResponse.json();
+      } catch (e) { console.log('ML status API not available'); }
       
-      // Fetch master articles data
-      const masterArticlesResponse = await fetch('/api/master-articles');
-      const masterArticlesData = await masterArticlesResponse.json();
+      try {
+        const pipelineResponse = await fetch('/api/automation/pipeline/status');
+        if (pipelineResponse.ok) pipelineData = await pipelineResponse.json();
+      } catch (e) { console.log('Pipeline status API not available'); }
       
-      // Fetch preprocessing status
-      const preprocessingResponse = await fetch('/api/automation/preprocessing/status');
-      const preprocessingData = await preprocessingResponse.json();
+      try {
+        const alertsResponse = await fetch('/api/alerts/storyline/unread');
+        if (alertsResponse.ok) alertsData = await alertsResponse.json();
+      } catch (e) { console.log('Alerts API not available'); }
+      
+      try {
+        const masterArticlesResponse = await fetch('/api/master-articles');
+        if (masterArticlesResponse.ok) masterArticlesData = await masterArticlesResponse.json();
+      } catch (e) { console.log('Master articles API not available'); }
+      
+      try {
+        const preprocessingResponse = await fetch('/api/automation/preprocessing/status');
+        if (preprocessingResponse.ok) preprocessingData = await preprocessingResponse.json();
+      } catch (e) { console.log('Preprocessing API not available'); }
 
       setDashboardData({
         articles: {
-          total: articlesData.data?.length || 0,
-          processed: articlesData.data?.filter(a => a.processed).length || 0,
-          pending: articlesData.data?.filter(a => !a.processed).length || 0
+          total: articlesData.total || articlesData.articles?.length || 0,
+          processed: articlesData.articles?.filter(a => a.processing_status === 'completed').length || 0,
+          pending: articlesData.articles?.filter(a => a.processing_status === 'pending').length || 0,
+          today: todayArticles.length,
+          todayProcessed: todayArticles.filter(a => a.processing_status === 'completed').length
         },
         stories: {
-          total: storiesData.data?.length || 0,
+          total: storiesData.total || storiesData.data?.length || 0,
           active: storiesData.data?.length || 0,
           alerts: alertsData.data?.length || 0
         },
         system: {
-          uptime: metricsData.uptime || '0h 0m',
-          status: metricsData.status || 'healthy',
+          uptime: systemData.uptime || '0h 0m',
+          status: systemData.status || 'healthy',
           version: '2.8.0'
         },
         ml: {
@@ -112,9 +135,9 @@ const UnifiedDashboard = () => {
           story_threads_created: pipelineData.data?.pipeline?.statistics?.story_threads_created || 0
         },
         performance: {
-          cpu: metricsData.cpu_percent || 0,
-          memory: metricsData.memory_percent || 0,
-          disk: metricsData.disk_percent || 0
+          cpu: systemData.cpuUsage ? parseInt(systemData.cpuUsage.replace('%', '')) : 0,
+          memory: systemData.memoryUsage ? parseInt(systemData.memoryUsage.replace('%', '')) : 0,
+          disk: systemData.diskUsage ? parseInt(systemData.diskUsage.replace('%', '')) : 0
         },
         masterArticles: {
           total: masterArticlesData.total || 0,
@@ -146,6 +169,44 @@ const UnifiedDashboard = () => {
     }
   };
 
+  const handleRSSCollection = async () => {
+    setPipelineLoading(true);
+    try {
+      const response = await fetch('/api/rss/collect-now', { method: 'POST' });
+      const result = await response.json();
+      if (result.success) {
+        setError(null);
+        // Refresh data after collection
+        setTimeout(() => fetchDashboardData(), 2000);
+      } else {
+        setError(`RSS Collection failed: ${result.error || 'Unknown error'}`);
+      }
+    } catch (err) {
+      setError(`RSS Collection error: ${err.message}`);
+    } finally {
+      setPipelineLoading(false);
+    }
+  };
+
+  const handlePipelineStart = async () => {
+    setPipelineLoading(true);
+    try {
+      const response = await fetch('/api/automation/pipeline/start', { method: 'POST' });
+      const result = await response.json();
+      if (result.success) {
+        setError(null);
+        // Refresh data after starting
+        setTimeout(() => fetchDashboardData(), 2000);
+      } else {
+        setError(`Pipeline start failed: ${result.error || 'Unknown error'}`);
+      }
+    } catch (err) {
+      setError(`Pipeline start error: ${err.message}`);
+    } finally {
+      setPipelineLoading(false);
+    }
+  };
+
   const getStatusIcon = (status) => {
     switch (status) {
       case 'healthy': return <CheckCircleIcon />;
@@ -157,7 +218,7 @@ const UnifiedDashboard = () => {
 
   if (loading) {
     return (
-      <div className="unified-container">
+      <div className="unified-container-fluid">
         <Box display="flex" justifyContent="center" alignItems="center" minHeight="400px">
           <CircularProgress />
         </Box>
@@ -166,7 +227,7 @@ const UnifiedDashboard = () => {
   }
 
   return (
-    <div className="unified-container">
+    <div className="unified-container-fluid">
       {/* Header */}
       <div className="unified-section">
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
@@ -189,7 +250,7 @@ const UnifiedDashboard = () => {
 
       {/* Key Metrics Cards */}
       <div className="unified-section">
-        <div className="unified-grid unified-grid-4">
+        <div className="unified-grid unified-grid-6">
           {/* Articles */}
           <div className="unified-stat-card unified-fade-in">
             <div className="unified-stat-card-content">
@@ -292,6 +353,68 @@ const UnifiedDashboard = () => {
             </div>
             <div className="unified-stat-description">
               Last Run: {dashboardData.preprocessing.lastRun ? new Date(dashboardData.preprocessing.lastRun).toLocaleDateString() : 'Never'}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Daily Digest & Pipeline Controls */}
+      <div className="unified-section">
+        <div className="unified-grid unified-grid-2">
+          {/* Daily Digest */}
+          <div className="unified-content-card unified-fade-in">
+            <div className="unified-content-header">
+              <ArticleIcon sx={{ mr: 1 }} />
+              <div className="unified-content-title">Today's Articles</div>
+            </div>
+            <div className="unified-content-body">
+              <div className="unified-content-text">
+                <strong>{dashboardData.articles.today}</strong> articles collected today
+                <br />
+                <strong>{dashboardData.articles.todayProcessed}</strong> articles processed
+                <br />
+                <strong>{dashboardData.articles.today - dashboardData.articles.todayProcessed}</strong> articles pending
+              </div>
+              <div className="unified-content-actions">
+                <button 
+                  className="unified-button unified-button-sm"
+                  onClick={() => window.location.href = '/articles'}
+                >
+                  View All Articles
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Pipeline Controls */}
+          <div className="unified-content-card unified-fade-in">
+            <div className="unified-content-header">
+              <SpeedIcon sx={{ mr: 1 }} />
+              <div className="unified-content-title">Pipeline Controls</div>
+            </div>
+            <div className="unified-content-body">
+              <div className="unified-content-text">
+                Status: {dashboardData.pipeline.running ? 'Running' : 'Stopped'}
+                <br />
+                Last Run: {dashboardData.pipeline.lastRun || 'Never'}
+              </div>
+              <div className="unified-content-actions">
+                <button 
+                  className="unified-button unified-button-sm"
+                  onClick={handleRSSCollection}
+                  disabled={pipelineLoading}
+                  style={{ marginRight: '8px' }}
+                >
+                  {pipelineLoading ? 'Collecting...' : 'Collect RSS Now'}
+                </button>
+                <button 
+                  className="unified-button unified-button-sm"
+                  onClick={handlePipelineStart}
+                  disabled={pipelineLoading}
+                >
+                  {pipelineLoading ? 'Starting...' : 'Start Pipeline'}
+                </button>
+              </div>
             </div>
           </div>
         </div>

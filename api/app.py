@@ -33,6 +33,10 @@ import threading
 # Add the modules directory to the path
 sys.path.append(os.path.join(os.path.dirname(__file__), 'modules'))
 
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 # Import monitoring module
 try:
     from modules.monitoring import resource_logger
@@ -49,6 +53,7 @@ try:
     from modules.ml.daily_briefing_service import DailyBriefingService
     from modules.ml.background_processor import BackgroundMLProcessor
     from modules.ml.rag_enhanced_service import RAGEnhancedService
+    from modules.ml.iterative_rag_service import IterativeRAGService
     ML_AVAILABLE = True
 except ImportError:
     ML_AVAILABLE = False
@@ -56,6 +61,7 @@ except ImportError:
 
 try:
     from modules.data_collection import RSSFeedService, FeedScheduler
+    from modules.data_collection.progress_tracker import progress_tracker
     DATA_COLLECTION_AVAILABLE = True
 except ImportError:
     DATA_COLLECTION_AVAILABLE = False
@@ -139,6 +145,7 @@ except ImportError:
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'your-secret-key-change-in-production')
+app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0  # Disable default caching
 
 # Web API endpoints are already implemented in this file
 # No additional blueprint registration needed
@@ -147,15 +154,18 @@ app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'your-secret-key-change-
 background_ml_processor = None
 rag_enhanced_service = None
 feed_scheduler = None
+
+# Define database configuration (needed for all services)
+db_config = {
+    'host': os.environ.get('POSTGRES_HOST', 'news-system-postgres-local'),
+    'port': os.environ.get('POSTGRES_PORT', '5432'),
+    'database': os.environ.get('POSTGRES_DB', 'news_system'),
+    'user': os.environ.get('POSTGRES_USER', 'NewsInt_DB'),
+    'password': os.environ.get('POSTGRES_PASSWORD', 'Database@NEWSINT2025')
+}
+
 if ML_AVAILABLE:
     try:
-        db_config = {
-            'host': os.environ.get('POSTGRES_HOST', 'news-system-postgres-local'),
-            'port': os.environ.get('POSTGRES_PORT', '5432'),
-            'database': os.environ.get('POSTGRES_DB', 'news_system'),
-            'user': os.environ.get('POSTGRES_USER', 'NewsInt_DB'),
-            'password': os.environ.get('POSTGRES_PASSWORD', 'Database@NEWSINT2025')
-        }
         
         # Initialize background ML processor
         background_ml_processor = BackgroundMLProcessor(db_config)
@@ -175,13 +185,6 @@ if ML_AVAILABLE:
 # Initialize RSS feed scheduler
 if DATA_COLLECTION_AVAILABLE:
     try:
-        db_config = {
-            'host': os.environ.get('POSTGRES_HOST', 'news-system-postgres-local'),
-            'port': os.environ.get('POSTGRES_PORT', '5432'),
-            'database': os.environ.get('POSTGRES_DB', 'news_system'),
-            'user': os.environ.get('POSTGRES_USER', 'NewsInt_DB'),
-            'password': os.environ.get('POSTGRES_PASSWORD', 'Database@NEWSINT2025')
-        }
         
         # Initialize RSS feed scheduler
         feed_scheduler = FeedScheduler(db_config)
@@ -272,20 +275,38 @@ def serve_static(filename):
                     logger.info(f"Serving from build dir: {build_dir}, relative path: {relative_path}, file_path: {file_path}")
                     if os.path.exists(file_path):
                         logger.info(f"File exists, serving from: {os.path.join(build_dir, 'static')}")
-                        return send_from_directory(os.path.join(build_dir, 'static'), relative_path)
+                        response = send_from_directory(os.path.join(build_dir, 'static'), relative_path)
+                        # Add cache control headers for static assets
+                        if relative_path.endswith('.js') or relative_path.endswith('.css'):
+                            response.headers['Cache-Control'] = 'public, max-age=3600'  # 1 hour
+                        else:
+                            response.headers['Cache-Control'] = 'public, max-age=86400'  # 1 day
+                        return response
                 elif '/' in filename:
                     # Handle other nested paths
                     subdir, subfilename = filename.split('/', 1)
                     static_dir = os.path.join(build_dir, 'static', subdir)
                     logger.info(f"Serving from subdir: {static_dir}, file: {subfilename}")
                     if os.path.exists(os.path.join(static_dir, subfilename)):
-                        return send_from_directory(static_dir, subfilename)
+                        response = send_from_directory(static_dir, subfilename)
+                        # Add cache control headers for static assets
+                        if subfilename.endswith('.js') or subfilename.endswith('.css'):
+                            response.headers['Cache-Control'] = 'public, max-age=3600'  # 1 hour
+                        else:
+                            response.headers['Cache-Control'] = 'public, max-age=86400'  # 1 day
+                        return response
                 else:
                     # Direct file in static directory
                     static_dir = os.path.join(build_dir, 'static')
                     logger.info(f"Serving from static dir: {static_dir}, file: {filename}")
                     if os.path.exists(os.path.join(static_dir, filename)):
-                        return send_from_directory(static_dir, filename)
+                        response = send_from_directory(static_dir, filename)
+                        # Add cache control headers for static assets
+                        if filename.endswith('.js') or filename.endswith('.css'):
+                            response.headers['Cache-Control'] = 'public, max-age=3600'  # 1 hour
+                        else:
+                            response.headers['Cache-Control'] = 'public, max-age=86400'  # 1 day
+                        return response
             except Exception as e:
                 logger.error(f"Error serving static file {filename} from {build_dir}: {e}")
                 continue
@@ -431,6 +452,19 @@ def security_headers(response):
     response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
     response.headers['Permissions-Policy'] = 'geolocation=(), microphone=(), camera=()'
     
+    # Set cache control headers based on request path
+    if request.path.startswith('/assets/static/'):
+        # Static assets - cache for 1 hour
+        if request.path.endswith(('.js', '.css')):
+            response.headers['Cache-Control'] = 'public, max-age=3600'
+        else:
+            response.headers['Cache-Control'] = 'public, max-age=86400'
+    elif request.path == '/' or not request.path.startswith('/api/'):
+        # Main HTML file and React routes - no cache
+        response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+        response.headers['Pragma'] = 'no-cache'
+        response.headers['Expires'] = '0'
+    
     # HSTS header for HTTPS
     if request.is_secure:
         response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
@@ -468,9 +502,9 @@ MOCK_DATA = {
     'system_status': {
         'isOnline': True,
         'lastUpdate': datetime.now().isoformat(),
-        'version': 'v2.7.0',
+        'version': 'v2.8.0',
         'status': 'healthy',
-        'uptime': '24h 32m',
+        'uptime': '0h 5m',  # Will be calculated dynamically
         'memoryUsage': '45%',
         'cpuUsage': '12%',
         'diskUsage': '23%',
@@ -1390,7 +1424,7 @@ def health():
     return jsonify({
         'status': 'healthy' if db_healthy else 'degraded',
         'timestamp': datetime.now().isoformat(),
-        'version': 'v2.7.0',
+        'version': 'v2.8.0',
         'database': 'connected' if db_healthy else 'disconnected'
     })
 
@@ -1398,7 +1432,18 @@ def health():
 @limiter.limit("500 per hour")
 def system_status():
     """Get system status"""
-    return jsonify(MOCK_DATA['system_status'])
+    # Calculate actual uptime
+    uptime_seconds = time.time() - app_metrics['start_time']
+    hours = int(uptime_seconds // 3600)
+    minutes = int((uptime_seconds % 3600) // 60)
+    uptime_str = f"{hours}h {minutes}m"
+    
+    # Update the mock data with real uptime
+    status_data = MOCK_DATA['system_status'].copy()
+    status_data['uptime'] = uptime_str
+    status_data['lastUpdate'] = datetime.now().isoformat()
+    
+    return jsonify(status_data)
 
 @app.route('/api/security/events')
 # @limiter.limit("50 per hour")
@@ -3486,6 +3531,389 @@ def get_external_services_status():
         logger.error(f"Error getting external services status: {e}")
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/rag/gdelt-enhancement/<int:article_id>', methods=['POST'])
+def enhance_article_with_gdelt(article_id):
+    """Enhance an article with GDELT timeline and context data"""
+    try:
+        if not ML_AVAILABLE or not rag_enhanced_service:
+            return jsonify({'error': 'RAG Enhanced Service not available'}), 503
+        
+        # Get optional keywords from request
+        data = request.get_json() or {}
+        keywords = data.get('keywords', [])
+        
+        # Enhance article with GDELT data
+        enhancement_result = rag_enhanced_service.enhance_article_with_gdelt_timeline(
+            article_id=article_id,
+            keywords=keywords
+        )
+        
+        if 'error' in enhancement_result:
+            return jsonify({
+                'success': False,
+                'error': enhancement_result['error']
+            }), 400
+        
+        return jsonify({
+            'success': True,
+            'enhancement': enhancement_result,
+            'message': f'Article {article_id} enhanced with GDELT timeline data',
+            'timestamp': datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        logger.error(f"Error enhancing article {article_id} with GDELT: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/rag/gdelt-timeline', methods=['POST'])
+def get_gdelt_timeline():
+    """Get GDELT timeline data for a query"""
+    try:
+        if not ML_AVAILABLE or not rag_enhanced_service:
+            return jsonify({'error': 'RAG Enhanced Service not available'}), 503
+        
+        data = request.get_json()
+        if not data or 'query' not in data:
+            return jsonify({'error': 'Query parameter is required'}), 400
+        
+        query = data['query']
+        days_back = data.get('days_back', 7)
+        
+        # Get GDELT timeline data
+        timeline_data = rag_enhanced_service.gdelt_service.get_event_timeline(
+            query=query,
+            days_back=days_back
+        )
+        
+        if 'error' in timeline_data:
+            return jsonify({
+                'success': False,
+                'error': timeline_data['error']
+            }), 400
+        
+        return jsonify({
+            'success': True,
+            'timeline': timeline_data,
+            'timestamp': datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        logger.error(f"Error getting GDELT timeline: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/rag/simple-enhancement/<int:article_id>', methods=['POST'])
+def enhance_article_with_simple_rag(article_id):
+    """Enhance an article with simple RAG context (no external APIs)"""
+    try:
+        # Import the simple RAG service
+        from modules.ml.simple_rag_service import SimpleRAGService
+        
+        # Get optional keywords from request
+        data = request.get_json() or {}
+        keywords = data.get('keywords', [])
+        
+        # Initialize simple RAG service
+        simple_rag = SimpleRAGService(db_config)
+        
+        # Enhance article with simple RAG
+        enhancement_result = simple_rag.enhance_article_with_context(
+            article_id=article_id,
+            keywords=keywords
+        )
+        
+        if 'error' in enhancement_result:
+            return jsonify({
+                'success': False,
+                'error': enhancement_result['error']
+            }), 400
+        
+        return jsonify({
+            'success': True,
+            'enhancement': enhancement_result,
+            'message': f'Article {article_id} enhanced with RAG context',
+            'timestamp': datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        logger.error(f"Error enhancing article {article_id} with simple RAG: {e}")
+        return jsonify({'error': str(e)}), 500
+
+# ============================================================================
+# ITERATIVE RAG SYSTEM API ENDPOINTS (V2.9)
+# ============================================================================
+
+@app.route('/api/rag/iterative/test', methods=['GET'])
+def test_iterative_rag_registration():
+    """Test route to verify iterative RAG route registration"""
+    return jsonify({'message': 'Iterative RAG routes are working!', 'timestamp': datetime.now().isoformat()})
+
+@app.route('/api/rag/iterative/create-dossier/<int:article_id>', methods=['POST'])
+def create_iterative_rag_dossier(article_id):
+    """Create a new iterative RAG dossier for an article"""
+    try:
+        if not ML_AVAILABLE:
+            return jsonify({'error': 'ML services not available'}), 503
+        
+        # Get optional initial keywords from request
+        data = request.get_json() or {}
+        initial_keywords = data.get('keywords', [])
+        
+        # Initialize iterative RAG service with database connection
+        import psycopg2
+        from psycopg2.extras import RealDictCursor
+        db_connection = psycopg2.connect(**db_config, cursor_factory=RealDictCursor)
+        iterative_rag = IterativeRAGService(db_connection)
+        
+        # Create dossier
+        dossier = iterative_rag.create_dossier(article_id, initial_keywords)
+        
+        return jsonify({
+            'success': True,
+            'dossier_id': dossier.dossier_id,
+            'article_id': dossier.article_id,
+            'created_at': dossier.created_at,
+            'current_phase': dossier.current_phase,
+            'message': f'Iterative RAG dossier created for article {article_id}',
+            'timestamp': datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        logger.error(f"Error creating iterative RAG dossier for article {article_id}: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/rag/iterative/process-iteration/<dossier_id>', methods=['POST'])
+def process_iterative_rag_iteration(dossier_id):
+    """Process the next iteration in an iterative RAG dossier"""
+    try:
+        if not ML_AVAILABLE:
+            return jsonify({'error': 'ML services not available'}), 503
+        
+        # Get optional force continue flag
+        data = request.get_json() or {}
+        force_continue = data.get('force_continue', False)
+        
+        # Initialize iterative RAG service with database connection
+        import psycopg2
+        from psycopg2.extras import RealDictCursor
+        db_connection = psycopg2.connect(**db_config, cursor_factory=RealDictCursor)
+        iterative_rag = IterativeRAGService(db_connection)
+        
+        # Process iteration
+        iteration = iterative_rag.process_iteration(dossier_id, force_continue)
+        
+        return jsonify({
+            'success': True,
+            'dossier_id': dossier_id,
+            'iteration': {
+                'iteration_number': iteration.iteration_number,
+                'phase': iteration.phase,
+                'timestamp': iteration.timestamp,
+                'processing_time': iteration.processing_time,
+                'plateau_score': iteration.plateau_score,
+                'new_articles_found': iteration.new_articles_found,
+                'new_entities_found': iteration.new_entities_found,
+                'success': iteration.success,
+                'error_message': iteration.error_message
+            },
+            'message': f'Iteration {iteration.iteration_number} completed for dossier {dossier_id}',
+            'timestamp': datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        logger.error(f"Error processing iteration for dossier {dossier_id}: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/rag/iterative/dossier-status/<dossier_id>')
+def get_iterative_rag_dossier_status(dossier_id):
+    """Get the current status of an iterative RAG dossier"""
+    try:
+        if not ML_AVAILABLE:
+            return jsonify({'error': 'ML services not available'}), 503
+        
+        # Initialize iterative RAG service with database connection
+        import psycopg2
+        from psycopg2.extras import RealDictCursor
+        db_connection = psycopg2.connect(**db_config, cursor_factory=RealDictCursor)
+        iterative_rag = IterativeRAGService(db_connection)
+        
+        # Get dossier status
+        status = iterative_rag.get_dossier_status(dossier_id)
+        
+        if 'error' in status:
+            return jsonify(status), 404
+        
+        return jsonify({
+            'success': True,
+            'status': status,
+            'timestamp': datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        logger.error(f"Error getting dossier status for {dossier_id}: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/rag/iterative/complete-dossier/<dossier_id>')
+def get_complete_iterative_rag_dossier(dossier_id):
+    """Get the complete iterative RAG dossier with all data"""
+    try:
+        if not ML_AVAILABLE:
+            return jsonify({'error': 'ML services not available'}), 503
+        
+        # Initialize iterative RAG service with database connection
+        import psycopg2
+        from psycopg2.extras import RealDictCursor
+        db_connection = psycopg2.connect(**db_config, cursor_factory=RealDictCursor)
+        iterative_rag = IterativeRAGService(db_connection)
+        
+        # Get complete dossier
+        dossier = iterative_rag.get_complete_dossier(dossier_id)
+        
+        if 'error' in dossier:
+            return jsonify(dossier), 404
+        
+        return jsonify({
+            'success': True,
+            'dossier': dossier,
+            'timestamp': datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        logger.error(f"Error getting complete dossier {dossier_id}: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/rag/iterative/list-dossiers')
+def list_iterative_rag_dossiers():
+    """List all iterative RAG dossiers"""
+    try:
+        if not ML_AVAILABLE:
+            return jsonify({'error': 'ML services not available'}), 503
+        
+        # Get query parameters
+        limit = request.args.get('limit', 20, type=int)
+        offset = request.args.get('offset', 0, type=int)
+        status = request.args.get('status', 'all')  # 'all', 'complete', 'processing'
+        
+        # Build query
+        query = """
+            SELECT d.*, a.title as article_title
+            FROM rag_dossiers d
+            LEFT JOIN articles a ON d.article_id = a.id
+        """
+        
+        conditions = []
+        params = []
+        
+        if status == 'complete':
+            conditions.append("d.is_complete = TRUE")
+        elif status == 'processing':
+            conditions.append("d.is_complete = FALSE")
+        
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
+        
+        query += " ORDER BY d.last_updated DESC LIMIT %s OFFSET %s"
+        params.extend([limit, offset])
+        
+        # Execute query
+        cursor = db_config.cursor()
+        cursor.execute(query, params)
+        dossiers = cursor.fetchall()
+        cursor.close()
+        
+        # Format results
+        dossier_list = []
+        for dossier in dossiers:
+            dossier_list.append({
+                'dossier_id': dossier['dossier_id'],
+                'article_id': dossier['article_id'],
+                'article_title': dossier['article_title'],
+                'created_at': dossier['created_at'].isoformat() if dossier['created_at'] else None,
+                'last_updated': dossier['last_updated'].isoformat() if dossier['last_updated'] else None,
+                'total_iterations': dossier['total_iterations'],
+                'current_phase': dossier['current_phase'],
+                'is_complete': dossier['is_complete'],
+                'plateau_reached': dossier['plateau_reached'],
+                'total_articles_analyzed': dossier['total_articles_analyzed'],
+                'total_entities_found': dossier['total_entities_found'],
+                'historical_depth_years': dossier['historical_depth_years']
+            })
+        
+        return jsonify({
+            'success': True,
+            'dossiers': dossier_list,
+            'count': len(dossier_list),
+            'limit': limit,
+            'offset': offset,
+            'status_filter': status,
+            'timestamp': datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        logger.error(f"Error listing iterative RAG dossiers: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/rag/iterative/auto-process/<dossier_id>', methods=['POST'])
+def auto_process_iterative_rag_dossier(dossier_id):
+    """Automatically process iterations until plateau is reached"""
+    try:
+        if not ML_AVAILABLE:
+            return jsonify({'error': 'ML services not available'}), 503
+        
+        # Get optional parameters
+        data = request.get_json() or {}
+        max_iterations = data.get('max_iterations', 10)
+        min_iteration_gap = data.get('min_iteration_gap_seconds', 30)
+        
+        # Initialize iterative RAG service with database connection
+        import psycopg2
+        from psycopg2.extras import RealDictCursor
+        db_connection = psycopg2.connect(**db_config, cursor_factory=RealDictCursor)
+        iterative_rag = IterativeRAGService(db_connection)
+        
+        # Process iterations until plateau or max iterations
+        iterations_processed = 0
+        results = []
+        
+        while iterations_processed < max_iterations:
+            try:
+                # Process next iteration
+                iteration = iterative_rag.process_iteration(dossier_id)
+                iterations_processed += 1
+                
+                results.append({
+                    'iteration_number': iteration.iteration_number,
+                    'phase': iteration.phase,
+                    'plateau_score': iteration.plateau_score,
+                    'new_articles_found': iteration.new_articles_found,
+                    'new_entities_found': iteration.new_entities_found,
+                    'success': iteration.success
+                })
+                
+                # Check if plateau reached
+                if iteration.plateau_score < iterative_rag.plateau_threshold:
+                    break
+                
+                # Wait between iterations
+                if min_iteration_gap > 0:
+                    time.sleep(min_iteration_gap)
+                    
+            except Exception as e:
+                logger.error(f"Error in auto-processing iteration {iterations_processed + 1}: {e}")
+                break
+        
+        return jsonify({
+            'success': True,
+            'dossier_id': dossier_id,
+            'iterations_processed': iterations_processed,
+            'results': results,
+            'message': f'Auto-processed {iterations_processed} iterations for dossier {dossier_id}',
+            'timestamp': datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        logger.error(f"Error auto-processing dossier {dossier_id}: {e}")
+        return jsonify({'error': str(e)}), 500
+
 # ============================================================================
 # RSS FEED COLLECTION API ENDPOINTS
 # ============================================================================
@@ -3697,6 +4125,77 @@ def update_rss_collection_interval():
         
     except Exception as e:
         logger.error(f"Error updating RSS collection interval: {e}")
+        return jsonify({'error': str(e)}), 500
+
+# RSS Collection Progress Tracking API Endpoints
+# ============================================================================
+
+@app.route('/api/rss/progress/<collection_id>')
+def get_rss_collection_progress(collection_id):
+    """Get progress for a specific RSS collection"""
+    try:
+        if not DATA_COLLECTION_AVAILABLE:
+            return jsonify({'error': 'RSS features not available'}), 503
+        
+        progress = progress_tracker.get_progress(collection_id)
+        
+        if not progress:
+            return jsonify({'error': 'Collection not found'}), 404
+        
+        return jsonify({
+            'success': True,
+            'progress': progress.to_dict()
+        })
+        
+    except Exception as e:
+        logger.error(f"Error getting RSS collection progress: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/rss/progress')
+def get_all_rss_collection_progress():
+    """Get all active RSS collection progress"""
+    try:
+        if not DATA_COLLECTION_AVAILABLE:
+            return jsonify({'error': 'RSS features not available'}), 503
+        
+        active_collections = progress_tracker.get_active_collections()
+        
+        return jsonify({
+            'success': True,
+            'active_collections': {
+                collection_id: progress.to_dict() 
+                for collection_id, progress in active_collections.items()
+            }
+        })
+        
+    except Exception as e:
+        logger.error(f"Error getting RSS collection progress: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/rss/progress/<collection_id>/cancel', methods=['POST'])
+def cancel_rss_collection(collection_id):
+    """Cancel a running RSS collection"""
+    try:
+        if not DATA_COLLECTION_AVAILABLE:
+            return jsonify({'error': 'RSS features not available'}), 503
+        
+        progress = progress_tracker.get_progress(collection_id)
+        
+        if not progress:
+            return jsonify({'error': 'Collection not found'}), 404
+        
+        if progress.status != 'running':
+            return jsonify({'error': 'Collection is not running'}), 400
+        
+        progress_tracker.cancel_collection(collection_id)
+        
+        return jsonify({
+            'success': True,
+            'message': f'Collection {collection_id} cancelled'
+        })
+        
+    except Exception as e:
+        logger.error(f"Error cancelling RSS collection: {e}")
         return jsonify({'error': str(e)}), 500
 
 # ============================================================================
@@ -4305,7 +4804,14 @@ def serve_react_app(path):
             logger.warning(f"File not found: {file_path}")
     
     # Otherwise serve the main index.html for React routing
-    return send_from_directory(REACT_BUILD_DIR, 'index.html')
+    response = send_from_directory(REACT_BUILD_DIR, 'index.html')
+    
+    # Add cache control headers to prevent caching of the main HTML file
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+    
+    return response
 
 @app.errorhandler(404)
 def not_found(error):
@@ -4334,11 +4840,23 @@ atexit.register(cleanup_background_processor)
 atexit.register(cleanup_feed_scheduler)
 
 if __name__ == '__main__':
-    logger.info("Starting News Intelligence System Web Application v2.7.0")
+    logger.info("Starting News Intelligence System Web Application v2.8.0")
     logger.info("Unified frontend and backend will be available at http://localhost:8000")
     logger.info("React frontend and API endpoints served from single port")
     
     try:
+        # Auto-start the ML pipeline
+        logger.info("🚀 Auto-starting ML pipeline...")
+        try:
+            orchestrator = get_pipeline_orchestrator()
+            success = orchestrator.start_automated_pipeline()
+            if success:
+                logger.info("✅ ML pipeline started successfully - running every 15 minutes")
+            else:
+                logger.warning("⚠️ Failed to start ML pipeline automatically")
+        except Exception as e:
+            logger.error(f"❌ Error auto-starting ML pipeline: {e}")
+        
         # Run the Flask app
         app.run(
             host='0.0.0.0',

@@ -40,12 +40,12 @@ class LivingStoryNarrator:
         
         # Configuration
         self.config = {
-            # Pipeline timing
-            'rss_collection_interval_hours': 1,  # Collect RSS every hour
-            'preprocessing_interval_hours': 2,   # Process new articles every 2 hours
-            'story_consolidation_time': '02:00', # Overnight consolidation at 2 AM
+            # Pipeline timing - Aggressive processing
+            'rss_collection_interval_minutes': 15,  # Collect RSS every 15 minutes
+            'preprocessing_interval_minutes': 15,   # Process new articles every 15 minutes
+            'story_consolidation_interval_minutes': 30, # Story consolidation every 30 minutes
             'daily_digest_time': '06:00',        # Daily digest at 6 AM
-            'cleanup_time': '03:00',             # Database cleanup at 3 AM
+            'cleanup_interval_hours': 6,         # Database cleanup every 6 hours
             
             # Processing parameters
             'max_articles_per_batch': 100,
@@ -122,18 +122,18 @@ class LivingStoryNarrator:
             # Clear existing schedules
             schedule.clear()
             
-            # RSS Collection - Every hour
-            schedule.every(self.config['rss_collection_interval_hours']).hours.do(
+            # RSS Collection - Every 15 minutes
+            schedule.every(self.config['rss_collection_interval_minutes']).minutes.do(
                 self._scheduled_rss_collection
             )
             
-            # Preprocessing - Every 2 hours
-            schedule.every(self.config['preprocessing_interval_hours']).hours.do(
+            # Preprocessing - Every 15 minutes
+            schedule.every(self.config['preprocessing_interval_minutes']).minutes.do(
                 self._scheduled_preprocessing
             )
             
-            # Overnight Story Consolidation - 2 AM daily
-            schedule.every().day.at(self.config['story_consolidation_time']).do(
+            # Story Consolidation - Every 30 minutes
+            schedule.every(self.config['story_consolidation_interval_minutes']).minutes.do(
                 self._scheduled_story_consolidation
             )
             
@@ -142,17 +142,17 @@ class LivingStoryNarrator:
                 self._scheduled_daily_digest
             )
             
-            # Database Cleanup - 3 AM daily
-            schedule.every().day.at(self.config['cleanup_time']).do(
+            # Database Cleanup - Every 6 hours
+            schedule.every(self.config['cleanup_interval_hours']).hours.do(
                 self._scheduled_database_cleanup
             )
             
             logger.info("📅 Scheduled automated tasks:")
-            logger.info(f"   - RSS Collection: Every {self.config['rss_collection_interval_hours']} hours")
-            logger.info(f"   - Preprocessing: Every {self.config['preprocessing_interval_hours']} hours")
-            logger.info(f"   - Story Consolidation: Daily at {self.config['story_consolidation_time']}")
+            logger.info(f"   - RSS Collection: Every {self.config['rss_collection_interval_minutes']} minutes")
+            logger.info(f"   - Preprocessing: Every {self.config['preprocessing_interval_minutes']} minutes")
+            logger.info(f"   - Story Consolidation: Every {self.config['story_consolidation_interval_minutes']} minutes")
             logger.info(f"   - Daily Digest: Daily at {self.config['daily_digest_time']}")
-            logger.info(f"   - Database Cleanup: Daily at {self.config['cleanup_time']}")
+            logger.info(f"   - Database Cleanup: Every {self.config['cleanup_interval_hours']} hours")
             
         except Exception as e:
             logger.error(f"Error scheduling automated tasks: {e}")

@@ -45,7 +45,7 @@ import {
   Source as SourceIcon,
   AutoAwesome as AutoAwesomeIcon
 } from '@mui/icons-material';
-import { newsSystemService } from '../../services/newsSystemService';
+import newsSystemService from '../../services/newsSystemService';
 
 function TabPanel({ children, value, index, ...other }) {
   return (

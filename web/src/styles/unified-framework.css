@@ -132,10 +132,21 @@
   grid-template-columns: repeat(6, 1fr);
 }
 
-/* Responsive Grid */
-@media (max-width: 1200px) {
+/* Responsive Grid - Enhanced breakpoints */
+@media (max-width: 1600px) {
+  .unified-grid-6 { grid-template-columns: repeat(5, 1fr); }
+  .unified-grid-5 { grid-template-columns: repeat(4, 1fr); }
+}
+
+@media (max-width: 1400px) {
   .unified-grid-6 { grid-template-columns: repeat(4, 1fr); }
   .unified-grid-5 { grid-template-columns: repeat(4, 1fr); }
+  .unified-grid-4 { grid-template-columns: repeat(3, 1fr); }
+}
+
+@media (max-width: 1200px) {
+  .unified-grid-6 { grid-template-columns: repeat(4, 1fr); }
+  .unified-grid-5 { grid-template-columns: repeat(3, 1fr); }
   .unified-grid-4 { grid-template-columns: repeat(3, 1fr); }
 }
 
@@ -394,13 +405,20 @@
    UNIFIED LAYOUT CONTAINERS
    ============================================================================ */
 .unified-container {
-  max-width: 1200px;
+  max-width: 1400px;
   margin: 0 auto;
   padding: var(--spacing-lg);
+  width: 100%;
 }
 
 .unified-container-fluid {
   width: 100%;
+  padding: var(--spacing-lg);
+}
+
+.unified-container-full {
+  width: 100vw;
+  margin-left: calc(-50vw + 50%);
   padding: var(--spacing-lg);
 }
 

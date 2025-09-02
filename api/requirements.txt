@@ -10,11 +10,11 @@
 # =============================================================================
 # CORE DEPENDENCIES (Required for all deployments)
 # =============================================================================
-# Web framework
-Flask==2.3.3
-Flask-CORS==4.0.0
-Flask-Limiter==3.5.0
-Werkzeug==2.3.7
+# Web framework - FastAPI
+FastAPI==0.104.1
+Uvicorn[standard]==0.24.0
+Pydantic==2.5.0
+Starlette==0.27.0
 
 # Database
 psycopg2-binary==2.9.9
@@ -33,10 +33,19 @@ lxml==4.9.3
 pandas==2.1.3
 numpy==1.25.2
 
+# Machine Learning
+scikit-learn==1.3.2
+sentence-transformers==2.2.2
+chardet==5.2.0
+
+# GDELT API for RAG enhancement
+requests==2.31.0
+
 # Utilities
 python-dateutil==2.8.2
 pytz==2023.3
 click==8.1.7
+schedule==1.2.0
 
 # =============================================================================
 # MONITORING DEPENDENCIES (Optional - for monitoring profile)
@@ -63,7 +72,6 @@ python-dotenv==1.0.0
 
 # Production
 gunicorn==21.2.0
-uvicorn==0.24.0
 
 # =============================================================================
 # VERSION CONSTRAINTS AND COMPATIBILITY

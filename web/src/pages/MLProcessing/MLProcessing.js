@@ -42,7 +42,7 @@ import {
   Error as ErrorIcon,
   Schedule as ScheduleIcon
 } from '@mui/icons-material';
-import { newsSystemService } from '../../services/newsSystemService';
+import newsSystemService from '../../services/newsSystemService';
 
 function TabPanel({ children, value, index, ...other }) {
   return (

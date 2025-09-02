@@ -34,7 +34,7 @@ import {
   Edit as EditIcon,
   Delete as DeleteIcon,
   Build as BuildIcon,
-  AutoAwesome as AutoAwesomeIcon,
+  AutoAwesome,
   Timeline as TimelineIcon,
   Notifications as NotificationsIcon,
   TrendingUp as TrendingUpIcon,
@@ -45,7 +45,7 @@ import {
   Search as SearchIcon
 } from '@mui/icons-material';
 import StoryThreadManager from '../../components/ContentPrioritization/StoryThreadManager';
-import { newsSystemService } from '../../services/newsSystemService';
+import newsSystemService from '../../services/newsSystemService';
 
 const UnifiedStoryDossiers = () => {
   const [storyThreads, setStoryThreads] = useState([]);
@@ -218,7 +218,7 @@ const UnifiedStoryDossiers = () => {
   const filteredThreads = getFilteredThreads();
 
   return (
-    <div className="unified-container">
+    <div className="unified-container-fluid">
       {/* Header */}
       <div className="unified-section">
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>

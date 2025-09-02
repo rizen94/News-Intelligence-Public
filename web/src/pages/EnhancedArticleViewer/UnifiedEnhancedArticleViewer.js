@@ -36,7 +36,7 @@ import {
   Close,
   Refresh
 } from '@mui/icons-material';
-import { newsSystemService } from '../../services/newsSystemService';
+import newsSystemService from '../../services/newsSystemService';
 
 const UnifiedEnhancedArticleViewer = () => {
   const [articles, setArticles] = useState([]);
@@ -447,7 +447,7 @@ const UnifiedEnhancedArticleViewer = () => {
   const filteredArticles = getFilteredArticles();
 
   return (
-    <div className="unified-container">
+    <div className="unified-container-fluid">
       {/* Header */}
       <div className="unified-section">
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>

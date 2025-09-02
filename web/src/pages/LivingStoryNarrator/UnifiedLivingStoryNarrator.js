@@ -36,7 +36,7 @@ import {
   Info,
   Settings
 } from '@mui/icons-material';
-import { newsSystemService } from '../../services/newsSystemService';
+import newsSystemService from '../../services/newsSystemService';
 
 const UnifiedLivingStoryNarrator = () => {
   const [activeTab, setActiveTab] = useState(0);
@@ -224,7 +224,7 @@ const UnifiedLivingStoryNarrator = () => {
   };
 
   return (
-    <div className="unified-container">
+    <div className="unified-container-fluid">
       {/* Header */}
       <div className="unified-section">
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>

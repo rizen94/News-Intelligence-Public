@@ -8,6 +8,7 @@ import feedparser
 import requests
 import time
 import hashlib
+import uuid
 from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime, timedelta
 import psycopg2
@@ -15,6 +16,7 @@ from urllib.parse import urlparse, urljoin
 import re
 from dataclasses import dataclass
 import json
+from .progress_tracker import progress_tracker
 
 logger = logging.getLogger(__name__)
 
@@ -125,18 +127,29 @@ class RSSFeedService:
             'last_collection': None
         }
     
-    def collect_all_feeds(self, max_articles_per_feed: int = 50) -> Dict[str, Any]:
+    def collect_all_feeds(self, max_articles_per_feed: int = 50, collection_id: Optional[str] = None) -> Dict[str, Any]:
         """
-        Collect articles from all enabled RSS feeds
+        Collect articles from all enabled RSS feeds with progress tracking
         
         Args:
             max_articles_per_feed: Maximum articles to collect per feed
+            collection_id: Optional collection ID for progress tracking
             
         Returns:
             Dictionary with collection results
         """
+        # Generate collection ID if not provided
+        if not collection_id:
+            collection_id = str(uuid.uuid4())
+        
         start_time = time.time()
+        enabled_feeds = [feed for feed in self.feeds if feed.enabled]
+        
+        # Start progress tracking
+        progress_tracker.start_collection(collection_id, len(enabled_feeds))
+        
         collection_results = {
+            'collection_id': collection_id,
             'start_time': datetime.now().isoformat(),
             'feeds_processed': 0,
             'feeds_successful': 0,
@@ -148,34 +161,69 @@ class RSSFeedService:
             'feed_results': []
         }
         
-        logger.info(f"Starting RSS feed collection from {self.stats['enabled_feeds']} feeds")
+        logger.info(f"Starting RSS feed collection {collection_id} from {len(enabled_feeds)} feeds")
         
-        for feed in self.feeds:
-            if not feed.enabled:
-                continue
-                
-            try:
-                collection_results['feeds_processed'] += 1
-                feed_result = self.collect_feed(feed, max_articles_per_feed)
-                collection_results['feed_results'].append(feed_result)
-                
-                if feed_result['success']:
-                    collection_results['feeds_successful'] += 1
-                    collection_results['total_articles'] += feed_result['articles_found']
-                    collection_results['new_articles'] += feed_result['new_articles']
-                    collection_results['duplicate_articles'] += feed_result['duplicate_articles']
-                else:
+        try:
+            for feed in enabled_feeds:
+                try:
+                    collection_results['feeds_processed'] += 1
+                    
+                    # Update progress for current feed
+                    progress_tracker.update_feed_progress(collection_id, feed.name, 0, 0)
+                    
+                    feed_result = self.collect_feed(feed, max_articles_per_feed)
+                    collection_results['feed_results'].append(feed_result)
+                    
+                    if feed_result['success']:
+                        collection_results['feeds_successful'] += 1
+                        collection_results['total_articles'] += feed_result['articles_found']
+                        collection_results['new_articles'] += feed_result['new_articles']
+                        collection_results['duplicate_articles'] += feed_result['duplicate_articles']
+                        
+                        # Mark feed as completed successfully
+                        progress_tracker.complete_feed(
+                            collection_id, feed.name,
+                            feed_result['articles_found'],
+                            feed_result['new_articles'],
+                            feed_result['duplicate_articles'],
+                            success=True
+                        )
+                    else:
+                        collection_results['feeds_failed'] += 1
+                        collection_results['errors'].append(f"{feed.name}: {feed_result['error']}")
+                        
+                        # Mark feed as failed
+                        progress_tracker.complete_feed(
+                            collection_id, feed.name,
+                            0, 0, 0,
+                            success=False
+                        )
+                        progress_tracker.add_error(collection_id, f"{feed.name}: {feed_result['error']}")
+                    
+                    # Rate limiting - be respectful to RSS feeds
+                    time.sleep(1)
+                    
+                except Exception as e:
+                    logger.error(f"Error processing feed {feed.name}: {e}")
                     collection_results['feeds_failed'] += 1
-                    collection_results['errors'].append(f"{feed.name}: {feed_result['error']}")
-                
-                # Rate limiting - be respectful to RSS feeds
-                time.sleep(1)
-                
-            except Exception as e:
-                logger.error(f"Error processing feed {feed.name}: {e}")
-                collection_results['feeds_failed'] += 1
-                collection_results['errors'].append(f"{feed.name}: {str(e)}")
-                feed.error_count += 1
+                    collection_results['errors'].append(f"{feed.name}: {str(e)}")
+                    
+                    # Mark feed as failed
+                    progress_tracker.complete_feed(
+                        collection_id, feed.name,
+                        0, 0, 0,
+                        success=False
+                    )
+                    progress_tracker.add_error(collection_id, f"{feed.name}: {str(e)}")
+            
+            # Mark collection as completed
+            progress_tracker.complete_collection(collection_id, success=True)
+            
+        except Exception as e:
+            logger.error(f"Fatal error in RSS collection {collection_id}: {e}")
+            progress_tracker.add_error(collection_id, f"Fatal error: {str(e)}")
+            progress_tracker.complete_collection(collection_id, success=False)
+            raise
         
         # Update statistics
         collection_results['end_time'] = datetime.now().isoformat()

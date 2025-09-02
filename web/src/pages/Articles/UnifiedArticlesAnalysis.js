@@ -36,7 +36,7 @@ import {
   Business as BusinessIcon,
   LocationOn as LocationIcon,
   TrendingUp as TrendingUpIcon,
-  AutoAwesome as AutoAwesomeIcon,
+  AutoAwesome,
   Build as BuildIcon,
   Edit as EditIcon,
   Delete as DeleteIcon,
@@ -44,7 +44,7 @@ import {
   Refresh as RefreshIcon
 } from '@mui/icons-material';
 import ArticleViewer from '../../components/ArticleViewer/ArticleViewer';
-import { newsSystemService } from '../../services/newsSystemService';
+import newsSystemService from '../../services/newsSystemService';
 
 const UnifiedArticlesAnalysis = () => {
   const [activeTab, setActiveTab] = useState(0);
@@ -123,7 +123,7 @@ const UnifiedArticlesAnalysis = () => {
     filtered.sort((a, b) => {
       switch (sortBy) {
         case 'date':
-          return new Date(b.published_date) - new Date(a.published_date);
+          return new Date(b.publishedDate) - new Date(a.publishedDate);
         case 'title':
           return a.title?.localeCompare(b.title);
         case 'source':
@@ -165,6 +165,46 @@ const UnifiedArticlesAnalysis = () => {
 
     return (
       <div className="unified-section">
+        {/* Article Stats */}
+        <div className="unified-content-card unified-fade-in">
+          <div className="unified-content-header">
+            <ArticleIcon sx={{ mr: 1 }} />
+            <div className="unified-content-title">Article Overview</div>
+          </div>
+          <div className="unified-content-body">
+            <div className="unified-grid unified-grid-4">
+              <div className="unified-stat-card">
+                <div className="unified-stat-card-content">
+                  <ArticleIcon sx={{ fontSize: 40, color: 'primary.main' }} />
+                  <Typography variant="h4" fontWeight="bold">{articles.length}</Typography>
+                  <Typography variant="body2" color="textSecondary">Total Articles</Typography>
+                </div>
+              </div>
+              <div className="unified-stat-card">
+                <div className="unified-stat-card-content">
+                  <ClusterIcon sx={{ fontSize: 40, color: 'secondary.main' }} />
+                  <Typography variant="h4" fontWeight="bold">{clusters.length}</Typography>
+                  <Typography variant="body2" color="textSecondary">Story Clusters</Typography>
+                </div>
+              </div>
+              <div className="unified-stat-card">
+                <div className="unified-stat-card-content">
+                  <BusinessIcon sx={{ fontSize: 40, color: 'warning.main' }} />
+                  <Typography variant="h4" fontWeight="bold">{entities.length}</Typography>
+                  <Typography variant="body2" color="textSecondary">Entities</Typography>
+                </div>
+              </div>
+              <div className="unified-stat-card">
+                <div className="unified-stat-card-content">
+                  <TrendingUpIcon sx={{ fontSize: 40, color: 'success.main' }} />
+                  <Typography variant="h4" fontWeight="bold">{new Date().toLocaleDateString()}</Typography>
+                  <Typography variant="body2" color="textSecondary">Last Updated</Typography>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
         {/* Filters */}
         <div className="unified-content-card unified-fade-in">
           <div className="unified-content-header">
@@ -247,49 +287,189 @@ const UnifiedArticlesAnalysis = () => {
             </Tooltip>
           </div>
           <div className="unified-content-body">
-            <List>
-              {filteredArticles.map((article, index) => (
-                <React.Fragment key={article.id || index}>
-                  <ListItem>
-                    <ListItemText
-                      primary={
-                        <Box display="flex" alignItems="center" gap={1}>
-                          <Typography variant="subtitle1" fontWeight="medium">
-                            {article.title || 'Untitled Article'}
-                          </Typography>
-                          {article.category && (
-                            <Chip label={article.category} size="small" color="primary" variant="outlined" />
-                          )}
-                        </Box>
-                      }
-                      secondary={
-                        <Box>
-                          <Typography variant="body2" color="text.secondary">
-                            {article.summary || article.content?.substring(0, 200) + '...'}
-                          </Typography>
-                          <Box display="flex" gap={1} mt={1}>
-                            {article.source && (
-                              <Chip label={article.source} size="small" variant="outlined" />
-                            )}
-                            <Typography variant="caption" color="text.secondary">
-                              {article.published_date ? new Date(article.published_date).toLocaleDateString() : 'No date'}
+            {filteredArticles.length === 0 ? (
+              <Box textAlign="center" py={4}>
+                <ArticleIcon sx={{ fontSize: 60, color: 'text.secondary', mb: 2 }} />
+                <Typography variant="h6" color="text.secondary">
+                  No articles found
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  Try adjusting your filters or refresh the data
+                </Typography>
+              </Box>
+            ) : (
+              <List>
+                {filteredArticles.map((article, index) => (
+                  <React.Fragment key={article.id || index}>
+                    <ListItem 
+                      sx={{ 
+                        '&:hover': { backgroundColor: 'action.hover' },
+                        cursor: 'pointer',
+                        borderRadius: 1,
+                        mb: 1
+                      }}
+                      onClick={() => handleArticleClick(article)}
+                    >
+                      <ListItemText
+                        primary={
+                          <Box display="flex" alignItems="center" gap={1} mb={1}>
+                            <Typography variant="subtitle1" fontWeight="medium" color="primary.main">
+                              {article.title || 'Untitled Article'}
                             </Typography>
+                            {article.category && (
+                              <Chip label={article.category} size="small" color="primary" variant="outlined" />
+                            )}
+                            {article.processingStatus === 'processed' && (
+                              <Chip label="Processed" size="small" color="success" variant="outlined" />
+                            )}
                           </Box>
-                        </Box>
-                      }
-                    />
-                    <ListItemSecondaryAction>
-                      <Tooltip title="View Article">
-                        <IconButton onClick={() => handleArticleClick(article)}>
-                          <ViewIcon />
-                        </IconButton>
-                      </Tooltip>
-                    </ListItemSecondaryAction>
-                  </ListItem>
-                  {index < filteredArticles.length - 1 && <Divider />}
-                </React.Fragment>
-              ))}
-            </List>
+                        }
+                        secondary={
+                          <Box>
+                            <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                              {article.summary || article.content?.substring(0, 200) + '...'}
+                            </Typography>
+                            <Box display="flex" justifyContent="space-between" alignItems="center">
+                              <Box display="flex" gap={1} alignItems="center">
+                                {article.source && (
+                                  <Chip label={article.source} size="small" variant="outlined" />
+                                )}
+                                <Typography variant="caption" color="text.secondary">
+                                  {article.publishedDate ? new Date(article.publishedDate).toLocaleDateString() : 'No date'}
+                                </Typography>
+                              </Box>
+                              <Box display="flex" gap={1}>
+                                {article.url && article.url !== '#' && (
+                                  <Tooltip title="Open Original Article">
+                                    <IconButton 
+                                      size="small" 
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        window.open(article.url, '_blank');
+                                      }}
+                                    >
+                                      <ViewIcon fontSize="small" />
+                                    </IconButton>
+                                  </Tooltip>
+                                )}
+                                <Tooltip title="View Full Analysis">
+                                  <IconButton 
+                                    size="small" 
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleArticleClick(article);
+                                    }}
+                                  >
+                                    <AutoAwesome fontSize="small" />
+                                  </IconButton>
+                                </Tooltip>
+                              </Box>
+                            </Box>
+                          </Box>
+                        }
+                      />
+                    </ListItem>
+                    {index < filteredArticles.length - 1 && <Divider />}
+                  </React.Fragment>
+                ))}
+              </List>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderDailyDigestTab = () => {
+    const today = new Date().toISOString().split('T')[0];
+    const todayArticles = articles.filter(article => 
+      article.publishedDate && article.publishedDate.startsWith(today)
+    );
+    const processedToday = todayArticles.filter(article => 
+      article.processingStatus === 'completed' || article.processingStatus === 'processed'
+    );
+    const pendingToday = todayArticles.filter(article => 
+      article.processingStatus === 'pending'
+    );
+
+    return (
+      <div className="unified-section">
+        <div className="unified-grid unified-grid-3">
+          {/* Today's Summary */}
+          <div className="unified-content-card unified-fade-in">
+            <div className="unified-content-header">
+              <TrendingUpIcon sx={{ mr: 1 }} />
+              <div className="unified-content-title">Today's Summary</div>
+            </div>
+            <div className="unified-content-body">
+              <div className="unified-content-text">
+                <strong>{todayArticles.length}</strong> articles collected today
+                <br />
+                <strong>{processedToday.length}</strong> articles processed
+                <br />
+                <strong>{pendingToday.length}</strong> articles pending
+                <br />
+                <strong>{Math.round((processedToday.length / todayArticles.length) * 100) || 0}%</strong> processing rate
+              </div>
+            </div>
+          </div>
+
+          {/* Processed Articles */}
+          <div className="unified-content-card unified-fade-in">
+            <div className="unified-content-header">
+              <ArticleIcon sx={{ mr: 1 }} />
+              <div className="unified-content-title">Processed Today</div>
+            </div>
+            <div className="unified-content-body">
+              {processedToday.length > 0 ? (
+                <List>
+                  {processedToday.slice(0, 5).map((article) => (
+                    <ListItem key={article.id} button onClick={() => handleArticleClick(article)}>
+                      <ListItemText
+                        primary={article.title}
+                        secondary={`${article.source} • ${new Date(article.publishedDate).toLocaleTimeString()}`}
+                      />
+                    </ListItem>
+                  ))}
+                  {processedToday.length > 5 && (
+                    <ListItem>
+                      <ListItemText primary={`... and ${processedToday.length - 5} more`} />
+                    </ListItem>
+                  )}
+                </List>
+              ) : (
+                <div className="unified-content-text">No articles processed today yet.</div>
+              )}
+            </div>
+          </div>
+
+          {/* Pending Articles */}
+          <div className="unified-content-card unified-fade-in">
+            <div className="unified-content-header">
+              <BuildIcon sx={{ mr: 1 }} />
+              <div className="unified-content-title">Pending Processing</div>
+            </div>
+            <div className="unified-content-body">
+              {pendingToday.length > 0 ? (
+                <List>
+                  {pendingToday.slice(0, 5).map((article) => (
+                    <ListItem key={article.id} button onClick={() => handleArticleClick(article)}>
+                      <ListItemText
+                        primary={article.title}
+                        secondary={`${article.source} • ${new Date(article.publishedDate).toLocaleTimeString()}`}
+                      />
+                    </ListItem>
+                  ))}
+                  {pendingToday.length > 5 && (
+                    <ListItem>
+                      <ListItemText primary={`... and ${pendingToday.length - 5} more`} />
+                    </ListItem>
+                  )}
+                </List>
+              ) : (
+                <div className="unified-content-text">All articles processed!</div>
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -450,7 +630,7 @@ const UnifiedArticlesAnalysis = () => {
   };
 
   return (
-    <div className="unified-container">
+    <div className="unified-container-fluid">
       {/* Header */}
       <div className="unified-section">
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
@@ -478,6 +658,7 @@ const UnifiedArticlesAnalysis = () => {
         <div className="unified-content-card unified-fade-in">
           <Tabs value={activeTab} onChange={(e, newValue) => setActiveTab(newValue)}>
             <Tab label="Articles" icon={<ArticleIcon />} />
+            <Tab label="Daily Digest" icon={<TrendingUpIcon />} />
             <Tab label="Clusters" icon={<ClusterIcon />} />
             <Tab label="Entities" icon={<AutoAwesome />} />
           </Tabs>
@@ -486,8 +667,9 @@ const UnifiedArticlesAnalysis = () => {
 
       {/* Tab Content */}
       {activeTab === 0 && renderArticlesTab()}
-      {activeTab === 1 && renderClustersTab()}
-      {activeTab === 2 && renderEntitiesTab()}
+      {activeTab === 1 && renderDailyDigestTab()}
+      {activeTab === 2 && renderClustersTab()}
+      {activeTab === 3 && renderEntitiesTab()}
 
       {/* Article Dialog */}
       <Dialog 

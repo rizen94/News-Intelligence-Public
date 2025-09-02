@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useReducer, useEffect } from 'react';
-import { newsSystemService } from '../services/newsSystemService';
+import newsSystemService from '../services/newsSystemService';
 
 const NewsSystemContext = createContext();
 
@@ -8,7 +8,7 @@ const initialState = {
   systemStatus: {
     isOnline: false,
     lastUpdate: null,
-    version: 'v2.7.0',
+    version: 'v2.8.0',
   },
   
   // Dashboard Data

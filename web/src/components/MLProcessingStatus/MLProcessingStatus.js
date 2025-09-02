@@ -27,7 +27,7 @@ import {
   PlayArrow as PlayArrowIcon,
   Stop as StopIcon
 } from '@mui/icons-material';
-import { newsSystemService } from '../../services/newsSystemService';
+import newsSystemService from '../../services/newsSystemService';
 
 function MLProcessingStatus() {
   const [processingStatus, setProcessingStatus] = useState(null);
