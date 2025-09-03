@@ -235,6 +235,11 @@ async def get_recent_activity(
             detail=f"Failed to get recent activity: {str(e)}"
         )
 
+@router.get("/real")
+async def get_real_dashboard_data():
+    """Get real dashboard data (alias for main endpoint)"""
+    return await get_dashboard_stats()
+
 # Helper functions
 async def get_total_articles() -> int:
     """Get total number of articles"""

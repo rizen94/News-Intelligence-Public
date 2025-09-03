@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-News Intelligence System v3.0 - FastAPI Application
+News Intelligence System v2.9.0 - FastAPI Application
 Modern, high-performance API with automatic OpenAPI documentation
 """
 
@@ -36,7 +36,16 @@ from api.routes import (
     ml,
     monitoring,
     health,
-    dashboard
+    dashboard,
+    rss,
+    deduplication,
+    entities,
+    clusters,
+    sources,
+    search,
+    rag,
+    ml_management,
+    automation
 )
 
 # Import middleware
@@ -53,11 +62,11 @@ app_state: Dict[str, Any] = {}
 async def lifespan(app: FastAPI):
     """Application lifespan manager for startup and shutdown events"""
     # Startup
-    logger.info("Starting News Intelligence System v3.0")
+    logger.info("Starting News Intelligence System v2.9.0")
     
     # Initialize application state
     app_state["startup_time"] = os.time.time()
-    app_state["version"] = "3.0.0"
+    app_state["version"] = "2.9.0"
     
     # Initialize database connections
     try:
@@ -111,7 +120,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="News Intelligence System API",
     description="Comprehensive news aggregation and analysis platform powered by AI",
-    version="3.0.0",
+    version="2.9.0",
     docs_url="/docs",
     redoc_url="/redoc",
     openapi_url="/openapi.json",
@@ -146,6 +155,15 @@ app.include_router(stories.router, prefix="/api/stories", tags=["Stories"])
 app.include_router(intelligence.router, prefix="/api/intelligence", tags=["Intelligence"])
 app.include_router(ml.router, prefix="/api/ml", tags=["Machine Learning"])
 app.include_router(monitoring.router, prefix="/api/monitoring", tags=["Monitoring"])
+app.include_router(rss.router, prefix="/api/rss", tags=["RSS Management"])
+app.include_router(deduplication.router, prefix="/api/deduplication", tags=["Deduplication"])
+app.include_router(entities.router, prefix="/api/entities", tags=["Entities"])
+app.include_router(clusters.router, prefix="/api/clusters", tags=["Clusters"])
+app.include_router(sources.router, prefix="/api/sources", tags=["Sources"])
+app.include_router(search.router, prefix="/api/search", tags=["Search"])
+app.include_router(rag.router, prefix="/api/rag", tags=["RAG System"])
+app.include_router(ml_management.router, prefix="/api/ml-management", tags=["ML Management"])
+app.include_router(automation.router, prefix="/api/automation", tags=["Automation"])
 
 # Mount static files
 if os.path.exists("web/build"):
@@ -159,9 +177,9 @@ def custom_openapi():
     
     openapi_schema = get_openapi(
         title="News Intelligence System API",
-        version="3.0.0",
+        version="2.9.0",
         description="""
-        ## News Intelligence System API v3.0
+        ## News Intelligence System API v2.9.0
         
         A comprehensive news aggregation and analysis platform powered by AI.
         
