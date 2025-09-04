@@ -48,6 +48,11 @@ tmp/
 *.swo
 *~
 
+# AI Assistant files
+.aider/
+.aider.*
+*.aider*
+
 # OS generated files
 .DS_Store
 .DS_Store?
