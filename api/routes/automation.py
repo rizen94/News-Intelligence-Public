@@ -11,7 +11,7 @@ from enum import Enum
 from fastapi import APIRouter, HTTPException, Query, Path, Body
 from pydantic import BaseModel, Field
 
-from api.config.database import get_db_connection
+from config.database import get_db_connection
 
 router = APIRouter()
 
@@ -213,7 +213,7 @@ async def generate_daily_digest():
         
         # Get top stories
         cursor.execute("""
-            SELECT title, source, published_at, summary
+            SELECT title, source, published_date, summary
             FROM articles 
             WHERE DATE(created_at) = %s
             ORDER BY priority_score DESC, created_at DESC
@@ -224,7 +224,7 @@ async def generate_daily_digest():
             {
                 "title": row[0],
                 "source": row[1],
-                "published_at": row[2],
+                "published_date": row[2],
                 "summary": row[3]
             }
             for row in cursor.fetchall()

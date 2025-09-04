@@ -63,9 +63,9 @@ deploy_system() {
     
     # Set environment variables
     print_progress "Loading environment configuration..."
-    if ! export $(cat env.unified | grep -v '^#' | xargs) 2>/dev/null; then
+    if ! export $(cat .env | grep -v '^#' | xargs) 2>/dev/null; then
         print_error "Failed to load environment configuration"
-        print_error "Check env.unified file for syntax errors"
+        print_error "Check .env file for syntax errors"
         return 1
     fi
     print_success "Environment configuration loaded"
@@ -81,7 +81,7 @@ deploy_system() {
         fi
         
         # Use the UX framework's error handling
-        execute_with_error_handling "docker compose -f docker-compose.unified.yml down -v" "Stopping and removing containers"
+        execute_with_error_handling "docker compose -f docker-compose.yml down -v" "Stopping and removing containers"
         execute_with_error_handling "docker system prune -f" "Cleaning up Docker system"
         
         print_success "Cleanup completed"
@@ -107,7 +107,7 @@ deploy_system() {
     
     # Start services
     print_activity "Starting services..."
-    execute_with_error_handling "docker compose -f docker-compose.unified.yml up -d $build_cmd" "Starting core services"
+    execute_with_error_handling "docker compose -f docker-compose.yml up -d $build_cmd" "Starting core services"
     
     # Wait for services to be ready
     print_progress "Waiting for services to initialize..."
@@ -123,7 +123,7 @@ deploy_system() {
     # Check each service
     for service in postgres news-system redis prometheus grafana; do
         total_services=$((total_services + 1))
-        if docker compose -f docker-compose.unified.yml ps $service | grep -q "Up"; then
+        if docker compose -f docker-compose.yml ps $service | grep -q "Up"; then
             healthy_services=$((healthy_services + 1))
             print_success "Service $service is running"
         else
@@ -143,7 +143,7 @@ deploy_system() {
     else
         print_warning "Deployment completed with issues"
         print_warning "$healthy_services out of $total_services services are running"
-        print_warning "Check logs: docker compose -f docker-compose.unified.yml logs"
+        print_warning "Check logs: docker compose -f docker-compose.yml logs"
     fi
 }
 
@@ -152,9 +152,9 @@ show_status() {
     print_header "Service Status"
     echo ""
     
-    if docker compose -f docker-compose.unified.yml ps | grep -q "Up"; then
+    if docker compose -f docker-compose.yml ps | grep -q "Up"; then
         print_success "Services are running"
-        docker compose -f docker-compose.unified.yml ps
+        docker compose -f docker-compose.yml ps
     else
         print_warning "Some services may not be running properly"
     fi
@@ -168,20 +168,20 @@ show_logs() {
     echo ""
     
     # Start log monitoring in background
-    local log_pid=$(start_background_process "docker compose -f docker-compose.unified.yml logs -f" "logs")
+    local log_pid=$(start_background_process "docker compose -f docker-compose.yml logs -f" "logs")
     
     print_activity "Log monitoring started (PID: $log_pid)"
     print_status "Logs are being written to: /tmp/news-system-logs.log"
     print_status "You can safely close this terminal - logs will continue in background"
     
     # Show initial logs
-    docker compose -f docker-compose.unified.yml logs --tail=50
+    docker compose -f docker-compose.yml logs --tail=50
     
     print_confirmation "Press Enter to continue monitoring, or Ctrl+C to exit (logs continue in background)"
     read -r
     
     # Continue showing logs
-    docker compose -f docker-compose.unified.yml logs -f
+    docker compose -f docker-compose.yml logs -f
 }
 
 # Function to stop services
@@ -194,7 +194,7 @@ stop_services() {
         return 0
     fi
     
-    execute_with_error_handling "docker compose -f docker-compose.unified.yml down" "Stopping containers"
+    execute_with_error_handling "docker compose -f docker-compose.yml down" "Stopping containers"
     print_success "All services stopped successfully"
 }
 
@@ -208,7 +208,7 @@ restart_services() {
         return 0
     fi
     
-    execute_with_error_handling "docker compose -f docker-compose.unified.yml restart" "Restarting containers"
+    execute_with_error_handling "docker compose -f docker-compose.yml restart" "Restarting containers"
     print_success "All services restarted successfully"
     
     # Wait for services to be ready
@@ -222,7 +222,7 @@ restart_services() {
     
     for service in postgres news-system redis prometheus grafana; do
         total_services=$((total_services + 1))
-        if docker compose -f docker-compose.unified.yml ps $service | grep -q "Up"; then
+        if docker compose -f docker-compose.yml ps $service | grep -q "Up"; then
             healthy_services=$((healthy_services + 1))
             print_success "Service $service is running"
         else

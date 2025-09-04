@@ -52,8 +52,10 @@ import {
   Schedule as ScheduleIcon,
 } from '@mui/icons-material';
 import { newsSystemService } from '../../services/newsSystemService';
+import { useNotifications } from '../../components/Notifications/NotificationSystem';
 
 const EnhancedArticles = () => {
+  const { showSuccess, showError, showLoading, showInfo } = useNotifications();
   const [articles, setArticles] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -75,16 +77,21 @@ const EnhancedArticles = () => {
   const [analyzing, setAnalyzing] = useState(false);
   const [activeTab, setActiveTab] = useState(0);
   const [stats, setStats] = useState(null);
+  const [buttonLoading, setButtonLoading] = useState({});
 
   useEffect(() => {
     fetchArticles();
     fetchStats();
   }, [page, perPage, sortBy, sortOrder, filters, searchQuery]);
 
-  const fetchArticles = async () => {
+  const fetchArticles = async (isManualRefresh = false) => {
     try {
       setLoading(true);
       setError(null);
+
+      if (isManualRefresh) {
+        showInfo('Loading articles...', 'Articles Refresh');
+      }
 
       const params = {
         page,
@@ -105,9 +112,17 @@ const EnhancedArticles = () => {
       const response = await newsSystemService.getArticles(params);
       setArticles(response.articles || []);
       setTotal(response.total || 0);
+
+      if (isManualRefresh) {
+        showSuccess(`Loaded ${response.articles?.length || 0} articles`, 'Articles Updated');
+      }
     } catch (err) {
       console.error('Error fetching articles:', err);
       setError(err.message);
+      
+      if (isManualRefresh) {
+        showError(`Failed to load articles: ${err.message}`, 'Load Error');
+      }
     } finally {
       setLoading(false);
     }
@@ -122,9 +137,14 @@ const EnhancedArticles = () => {
     }
   };
 
-  const handleSearch = () => {
-    setPage(1);
-    fetchArticles();
+  const handleSearch = async () => {
+    setButtonLoading(prev => ({ ...prev, search: true }));
+    try {
+      setPage(1);
+      await fetchArticles(true);
+    } finally {
+      setButtonLoading(prev => ({ ...prev, search: false }));
+    }
   };
 
   const handleFilterChange = (filterName, value) => {
@@ -150,20 +170,34 @@ const EnhancedArticles = () => {
   };
 
   const handleViewArticle = async (article) => {
-    setSelectedArticle(article);
-    setDetailDialogOpen(true);
+    setButtonLoading(prev => ({ ...prev, [`view-${article.id}`]: true }));
+    try {
+      setSelectedArticle(article);
+      setDetailDialogOpen(true);
+    } finally {
+      setButtonLoading(prev => ({ ...prev, [`view-${article.id}`]: false }));
+    }
   };
 
   const handleAnalyzeArticle = async (articleId) => {
     try {
       setAnalyzing(true);
+      setButtonLoading(prev => ({ ...prev, [`analyze-${articleId}`]: true }));
+      
+      showLoading('Analyzing article with AI...', 'AI Analysis');
+      
       await newsSystemService.analyzeArticle(articleId);
+      
+      showSuccess('Article analyzed successfully!', 'Analysis Complete');
+      
       // Refresh the article list to show updated analysis
-      fetchArticles();
+      await fetchArticles();
     } catch (err) {
       console.error('Error analyzing article:', err);
+      showError(`Failed to analyze article: ${err.message}`, 'Analysis Error');
     } finally {
       setAnalyzing(false);
+      setButtonLoading(prev => ({ ...prev, [`analyze-${articleId}`]: false }));
     }
   };
 
@@ -217,11 +251,11 @@ const EnhancedArticles = () => {
         </Typography>
         <Button
           variant="outlined"
-          startIcon={<RefreshIcon />}
-          onClick={fetchArticles}
+          startIcon={loading ? <CircularProgress size={16} /> : <RefreshIcon />}
+          onClick={() => fetchArticles(true)}
           disabled={loading}
         >
-          Refresh
+          {loading ? 'Refreshing...' : 'Refresh'}
         </Button>
       </Box>
 
@@ -364,11 +398,11 @@ const EnhancedArticles = () => {
             <Button
               fullWidth
               variant="contained"
-              startIcon={<SearchIcon />}
+              startIcon={buttonLoading.search ? <CircularProgress size={16} /> : <SearchIcon />}
               onClick={handleSearch}
-              disabled={loading}
+              disabled={loading || buttonLoading.search}
             >
-              Search
+              {buttonLoading.search ? 'Searching...' : 'Search'}
             </Button>
           </Grid>
         </Grid>
@@ -448,17 +482,26 @@ const EnhancedArticles = () => {
 
                   <Box display="flex" flexDirection="column" gap={1}>
                     <Tooltip title="View Details">
-                      <IconButton onClick={() => handleViewArticle(article)}>
-                        <VisibilityIcon />
+                      <IconButton 
+                        onClick={() => handleViewArticle(article)}
+                        disabled={buttonLoading[`view-${article.id}`]}
+                      >
+                        {buttonLoading[`view-${article.id}`] ? 
+                          <CircularProgress size={20} /> : 
+                          <VisibilityIcon />
+                        }
                       </IconButton>
                     </Tooltip>
                     {article.status !== 'processed' && (
-                      <Tooltip title="Analyze with AI">
+                      <Tooltip title={buttonLoading[`analyze-${article.id}`] ? "Analyzing..." : "Analyze with AI"}>
                         <IconButton 
                           onClick={() => handleAnalyzeArticle(article.id)}
-                          disabled={analyzing}
+                          disabled={analyzing || buttonLoading[`analyze-${article.id}`]}
                         >
-                          <PsychologyIcon />
+                          {buttonLoading[`analyze-${article.id}`] ? 
+                            <CircularProgress size={20} /> : 
+                            <PsychologyIcon />
+                          }
                         </IconButton>
                       </Tooltip>
                     )}

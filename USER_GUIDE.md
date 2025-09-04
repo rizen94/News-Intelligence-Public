@@ -151,7 +151,7 @@ chmod +x scripts/deployment/deploy-unified.sh
 ### **Environment Configuration**
 
 #### **Basic Configuration**
-Edit `env.unified` to customize your system:
+Edit `.env` to customize your system:
 
 ```bash
 # Database Configuration
@@ -391,7 +391,7 @@ RAG_TOP_K=5
 
 #### **Model Configuration**
 ```bash
-# Edit model settings in env.unified
+# Edit model settings in .env
 LLAMA_MODEL_PATH=/path/to/your/models
 LLAMA_MODEL_NAME=your-custom-model
 LLAMA_MAX_TOKENS=4096
@@ -512,7 +512,7 @@ sudo chown -R 1000:1000 /mnt/terramaster-nas/docker-postgres-data/
 # Access web interface -> ML Processing
 
 # Optimize configuration
-# Edit env.unified -> increase MAX_CONCURRENT_ARTICLES
+# Edit .env -> increase MAX_CONCURRENT_ARTICLES
 ```
 
 #### **High Memory Usage**

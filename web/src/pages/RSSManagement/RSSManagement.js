@@ -94,8 +94,10 @@ import {
   ShowChart as ShowChartIcon
 } from '@mui/icons-material';
 import { newsSystemService } from '../../services/newsSystemService';
+import { useNotifications } from '../../components/Notifications/NotificationSystem';
 
 const RSSManagement = () => {
+  const { showSuccess, showError, showLoading, showInfo } = useNotifications();
   const [feeds, setFeeds] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -111,6 +113,7 @@ const RSSManagement = () => {
   const [showStatsDialog, setShowStatsDialog] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [stats, setStats] = useState(null);
+  const [buttonLoading, setButtonLoading] = useState({});
 
   // Form state for add/edit
   const [formData, setFormData] = useState({
@@ -142,15 +145,28 @@ const RSSManagement = () => {
     return () => clearInterval(interval);
   }, []);
 
-  const fetchFeeds = async () => {
+  const fetchFeeds = async (isManualRefresh = false) => {
     try {
       setLoading(true);
       setError(null);
+      
+      if (isManualRefresh) {
+        showInfo('Loading RSS feeds...', 'RSS Refresh');
+      }
+      
       const response = await newsSystemService.getRSSFeeds();
       setFeeds(response.feeds || []);
+      
+      if (isManualRefresh) {
+        showSuccess(`Loaded ${response.feeds?.length || 0} RSS feeds`, 'RSS Updated');
+      }
     } catch (err) {
       console.error('Error fetching RSS feeds:', err);
       setError(err.message);
+      
+      if (isManualRefresh) {
+        showError(`Failed to load RSS feeds: ${err.message}`, 'Load Error');
+      }
     } finally {
       setLoading(false);
     }
@@ -168,33 +184,51 @@ const RSSManagement = () => {
   const handleAddFeed = async () => {
     try {
       setRefreshing(true);
+      setButtonLoading(prev => ({ ...prev, add: true }));
+      
+      showLoading('Adding RSS feed...', 'RSS Feed');
+      
       await newsSystemService.addRSSFeed(formData);
+      
+      showSuccess('RSS feed added successfully!', 'Feed Added');
+      
       setShowAddDialog(false);
       resetForm();
-      fetchFeeds();
-      fetchStats();
+      await fetchFeeds();
+      await fetchStats();
     } catch (err) {
       console.error('Error adding RSS feed:', err);
       setError(err.message);
+      showError(`Failed to add RSS feed: ${err.message}`, 'Add Error');
     } finally {
       setRefreshing(false);
+      setButtonLoading(prev => ({ ...prev, add: false }));
     }
   };
 
   const handleEditFeed = async () => {
     try {
       setRefreshing(true);
+      setButtonLoading(prev => ({ ...prev, edit: true }));
+      
+      showLoading('Updating RSS feed...', 'RSS Feed');
+      
       await newsSystemService.updateRSSFeed(selectedFeed.id, formData);
+      
+      showSuccess('RSS feed updated successfully!', 'Feed Updated');
+      
       setShowEditDialog(false);
       setSelectedFeed(null);
       resetForm();
-      fetchFeeds();
-      fetchStats();
+      await fetchFeeds();
+      await fetchStats();
     } catch (err) {
       console.error('Error updating RSS feed:', err);
       setError(err.message);
+      showError(`Failed to update RSS feed: ${err.message}`, 'Update Error');
     } finally {
       setRefreshing(false);
+      setButtonLoading(prev => ({ ...prev, edit: false }));
     }
   };
 
@@ -202,14 +236,23 @@ const RSSManagement = () => {
     if (window.confirm('Are you sure you want to delete this RSS feed?')) {
       try {
         setRefreshing(true);
+        setButtonLoading(prev => ({ ...prev, [`delete-${feedId}`]: true }));
+        
+        showLoading('Deleting RSS feed...', 'RSS Feed');
+        
         await newsSystemService.deleteRSSFeed(feedId);
-        fetchFeeds();
-        fetchStats();
+        
+        showSuccess('RSS feed deleted successfully!', 'Feed Deleted');
+        
+        await fetchFeeds();
+        await fetchStats();
       } catch (err) {
         console.error('Error deleting RSS feed:', err);
         setError(err.message);
+        showError(`Failed to delete RSS feed: ${err.message}`, 'Delete Error');
       } finally {
         setRefreshing(false);
+        setButtonLoading(prev => ({ ...prev, [`delete-${feedId}`]: false }));
       }
     }
   };
@@ -217,41 +260,68 @@ const RSSManagement = () => {
   const handleTestFeed = async (feedId) => {
     try {
       setRefreshing(true);
+      setButtonLoading(prev => ({ ...prev, [`test-${feedId}`]: true }));
+      
+      showLoading('Testing RSS feed...', 'RSS Feed');
+      
       await newsSystemService.testRSSFeed(feedId);
-      fetchFeeds();
+      
+      showSuccess('RSS feed test completed!', 'Feed Test');
+      
+      await fetchFeeds();
     } catch (err) {
       console.error('Error testing RSS feed:', err);
       setError(err.message);
+      showError(`Failed to test RSS feed: ${err.message}`, 'Test Error');
     } finally {
       setRefreshing(false);
+      setButtonLoading(prev => ({ ...prev, [`test-${feedId}`]: false }));
     }
   };
 
   const handleRefreshFeed = async (feedId) => {
     try {
       setRefreshing(true);
+      setButtonLoading(prev => ({ ...prev, [`refresh-${feedId}`]: true }));
+      
+      showLoading('Refreshing RSS feed...', 'RSS Feed');
+      
       await newsSystemService.refreshRSSFeed(feedId);
-      fetchFeeds();
-      fetchStats();
+      
+      showSuccess('RSS feed refreshed successfully!', 'Feed Refreshed');
+      
+      await fetchFeeds();
+      await fetchStats();
     } catch (err) {
       console.error('Error refreshing RSS feed:', err);
       setError(err.message);
+      showError(`Failed to refresh RSS feed: ${err.message}`, 'Refresh Error');
     } finally {
       setRefreshing(false);
+      setButtonLoading(prev => ({ ...prev, [`refresh-${feedId}`]: false }));
     }
   };
 
   const handleToggleFeed = async (feedId, isActive) => {
     try {
       setRefreshing(true);
+      setButtonLoading(prev => ({ ...prev, [`toggle-${feedId}`]: true }));
+      
+      showLoading(`${isActive ? 'Activating' : 'Deactivating'} RSS feed...`, 'RSS Feed');
+      
       await newsSystemService.toggleRSSFeed(feedId, isActive);
-      fetchFeeds();
-      fetchStats();
+      
+      showSuccess(`RSS feed ${isActive ? 'activated' : 'deactivated'} successfully!`, 'Feed Updated');
+      
+      await fetchFeeds();
+      await fetchStats();
     } catch (err) {
       console.error('Error toggling RSS feed:', err);
       setError(err.message);
+      showError(`Failed to ${isActive ? 'activate' : 'deactivate'} RSS feed: ${err.message}`, 'Toggle Error');
     } finally {
       setRefreshing(false);
+      setButtonLoading(prev => ({ ...prev, [`toggle-${feedId}`]: false }));
     }
   };
 

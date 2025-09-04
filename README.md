@@ -44,7 +44,7 @@ The News Intelligence System is a professional-grade platform that automatically
 
 ### **Prerequisites**
 - Docker and Docker Compose installed
-- NAS mounted at `/mnt/terramaster-nas` (or update paths in `env.unified`)
+- NAS mounted at `/mnt/terramaster-nas` (or update paths in `.env`)
 - At least 10GB free disk space
 - 8GB+ RAM recommended
 
@@ -204,7 +204,7 @@ cd news-intelligence-system
 ## 🔧 **Configuration**
 
 ### **Environment Configuration**
-The system uses `env.unified` for configuration. Key settings:
+The system uses `.env` for configuration. Key settings:
 
 ```bash
 # Database Configuration

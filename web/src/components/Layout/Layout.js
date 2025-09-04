@@ -78,6 +78,7 @@ const menuItems = [
   // Advanced Features (Phase 3)
   { text: 'Advanced Monitoring', icon: <AssessmentIcon />, path: '/monitoring', category: 'advanced', phase: 1 },
   { text: 'Data Management', icon: <DataManagementIcon />, path: '/data-management', category: 'advanced', phase: 1 },
+  { text: 'Story Management', icon: <TimelineIcon />, path: '/story-management', category: 'advanced', phase: 1 },
 ];
 
 const entityTypeItems = [

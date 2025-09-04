@@ -25,6 +25,7 @@ import DailyBriefings from './pages/DailyBriefings/DailyBriefings';
 import AutomationPipeline from './pages/AutomationPipeline/AutomationPipeline';
 import AdvancedMonitoring from './pages/AdvancedMonitoring/AdvancedMonitoring';
 import DataManagement from './pages/DataManagement/DataManagement';
+import StoryControlDashboard from './pages/StoryManagement/StoryControlDashboard';
 
 // Context
 import { NewsSystemProvider } from './contexts/NewsSystemContext';
@@ -111,6 +112,7 @@ function App() {
                 {/* Phase 3 Routes - Now Implemented */}
                 <Route path="/monitoring" element={<AdvancedMonitoring />} />
                 <Route path="/data-management" element={<DataManagement />} />
+                <Route path="/story-management" element={<StoryControlDashboard />} />
                   </Routes>
                 </Layout>
               </Box>

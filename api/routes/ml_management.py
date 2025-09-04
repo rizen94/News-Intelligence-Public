@@ -11,7 +11,7 @@ from enum import Enum
 from fastapi import APIRouter, HTTPException, Query, Path, Body
 from pydantic import BaseModel, Field
 
-from api.config.database import get_db_connection
+from config.database import get_db_connection
 
 router = APIRouter()
 

@@ -276,14 +276,14 @@ check_prerequisites() {
     
     # Check if unified files exist
     print_progress "Checking deployment files..."
-    if [[ ! -f "docker-compose.unified.yml" ]]; then
-        print_error "docker-compose.unified.yml not found!"
+    if [[ ! -f "docker-compose.yml" ]]; then
+        print_error "docker-compose.yml not found!"
         print_error "Make sure you're running this script from the project root directory"
         exit 1
     fi
     
-    if [[ ! -f "env.unified" ]]; then
-        print_error "env.unified not found!"
+    if [[ ! -f ".env" ]]; then
+        print_error ".env not found!"
         print_error "Make sure you're running this script from the project root directory"
         exit 1
     fi
@@ -294,7 +294,7 @@ check_prerequisites() {
     if ! mountpoint -q /mnt/terramaster-nas; then
         print_warning "NAS not mounted at /mnt/terramaster-nas"
         print_warning "This will cause deployment to fail"
-        print_warning "Please mount your NAS first or update the paths in env.unified"
+        print_warning "Please mount your NAS first or update the paths in .env"
         
         if ! confirm_action "Continue anyway? (This will likely fail)"; then
             print_status "Deployment cancelled by user"
@@ -351,9 +351,9 @@ deploy_unified() {
     
     # Set environment variables
     print_progress "Loading environment configuration..."
-    if ! export $(cat env.unified | grep -v '^#' | xargs) 2>/dev/null; then
+    if ! export $(cat .env | grep -v '^#' | xargs) 2>/dev/null; then
         print_error "Failed to load environment configuration"
-        print_error "Check env.unified file for syntax errors"
+        print_error "Check .env file for syntax errors"
         exit 1
     fi
     print_success "Environment configuration loaded"
@@ -369,7 +369,7 @@ deploy_unified() {
         fi
         
         print_activity "Stopping and removing containers..."
-        if ! docker compose -f docker-compose.unified.yml down -v 2>/dev/null; then
+        if ! docker compose -f docker-compose.yml down -v 2>/dev/null; then
             print_warning "Some containers may not have been stopped properly"
         fi
         
@@ -401,9 +401,9 @@ deploy_unified() {
     
     # Start core services
     print_activity "Starting core services..."
-    if ! docker compose -f docker-compose.unified.yml up -d $build_cmd; then
+    if ! docker compose -f docker-compose.yml up -d $build_cmd; then
         print_error "Failed to start core services"
-        print_error "Check Docker logs: docker compose -f docker-compose.unified.yml logs"
+        print_error "Check Docker logs: docker compose -f docker-compose.yml logs"
         exit 1
     fi
     print_success "Core services started"
@@ -412,7 +412,7 @@ deploy_unified() {
     print_progress "Checking for GPU availability..."
     if command -v nvidia-smi &> /dev/null; then
         print_activity "GPU detected, starting GPU monitoring..."
-        if docker compose -f docker-compose.unified.yml --profile gpu up -d nvidia-gpu-exporter 2>/dev/null; then
+        if docker compose -f docker-compose.yml --profile gpu up -d nvidia-gpu-exporter 2>/dev/null; then
             print_success "GPU monitoring started"
         else
             print_warning "Failed to start GPU monitoring (this is optional)"
@@ -435,7 +435,7 @@ deploy_unified() {
     # Check each service
     for service in postgres news-system redis prometheus grafana; do
         total_services=$((total_services + 1))
-        if docker compose -f docker-compose.unified.yml ps $service | grep -q "Up"; then
+        if docker compose -f docker-compose.yml ps $service | grep -q "Up"; then
             healthy_services=$((healthy_services + 1))
             print_success "Service $service is running"
         else
@@ -455,7 +455,7 @@ deploy_unified() {
     else
         print_warning "Deployment completed with issues"
         print_warning "$healthy_services out of $total_services services are running"
-        print_warning "Check logs: docker compose -f docker-compose.unified.yml logs"
+        print_warning "Check logs: docker compose -f docker-compose.yml logs"
     fi
 }
 
@@ -464,7 +464,7 @@ show_status() {
     print_header "Service Status"
     echo ""
     
-    docker compose -f docker-compose.unified.yml ps
+    docker compose -f docker-compose.yml ps
     
     echo ""
     print_header "Service URLs"
@@ -480,7 +480,7 @@ show_status() {
     
     # Check service health
     print_status "Checking service health..."
-    if docker compose -f docker-compose.unified.yml ps | grep -q "Up"; then
+    if docker compose -f docker-compose.yml ps | grep -q "Up"; then
         print_success "Services are running"
     else
         print_warning "Some services may not be running properly"
@@ -495,20 +495,20 @@ show_logs() {
     echo ""
     
     # Start log monitoring in background
-    local log_pid=$(start_background_process "docker compose -f docker-compose.unified.yml logs -f" "logs")
+    local log_pid=$(start_background_process "docker compose -f docker-compose.yml logs -f" "logs")
     
     print_activity "Log monitoring started (PID: $log_pid)"
     print_status "Logs are being written to: /tmp/news-system-logs.log"
     print_status "You can safely close this terminal - logs will continue in background"
     
     # Show initial logs
-    docker compose -f docker-compose.unified.yml logs --tail=50
+    docker compose -f docker-compose.yml logs --tail=50
     
     print_confirmation "Press Enter to continue monitoring, or Ctrl+C to exit (logs continue in background)"
     read -r
     
     # Continue showing logs
-    docker compose -f docker-compose.unified.yml logs -f
+    docker compose -f docker-compose.yml logs -f
 }
 
 # Function to stop services
@@ -522,11 +522,11 @@ stop_services() {
     fi
     
     print_activity "Stopping containers..."
-    if docker compose -f docker-compose.unified.yml down; then
+    if docker compose -f docker-compose.yml down; then
         print_success "All services stopped successfully"
     else
         print_error "Some services may not have stopped properly"
-        print_error "Check logs: docker compose -f docker-compose.unified.yml logs"
+        print_error "Check logs: docker compose -f docker-compose.yml logs"
     fi
 }
 
@@ -541,7 +541,7 @@ restart_services() {
     fi
     
     print_activity "Restarting containers..."
-    if docker compose -f docker-compose.unified.yml restart; then
+    if docker compose -f docker-compose.yml restart; then
         print_success "All services restarted successfully"
         
         # Wait for services to be ready
@@ -555,7 +555,7 @@ restart_services() {
         
         for service in postgres news-system redis prometheus grafana; do
             total_services=$((total_services + 1))
-            if docker compose -f docker-compose.unified.yml ps $service | grep -q "Up"; then
+            if docker compose -f docker-compose.yml ps $service | grep -q "Up"; then
                 healthy_services=$((healthy_services + 1))
                 print_success "Service $service is running"
             else
@@ -570,7 +570,7 @@ restart_services() {
         fi
     else
         print_error "Some services may not have restarted properly"
-        print_error "Check logs: docker compose -f docker-compose.unified.yml logs"
+        print_error "Check logs: docker compose -f docker-compose.yml logs"
     fi
 }
 
@@ -580,8 +580,8 @@ show_system_info() {
     echo ""
     echo "📋 Deployment Type: Unified (All-in-one)"
     echo "💾 Storage: NAS (/mnt/terramaster-nas/docker-postgres-data/)"
-    echo "🐳 Docker Compose: docker-compose.unified.yml"
-    echo "⚙️  Environment: env.unified"
+    echo "🐳 Docker Compose: docker-compose.yml"
+    echo "⚙️  Environment: .env"
     echo "🔧 Features: All enabled by default"
     echo ""
     echo "📦 Included Services:"

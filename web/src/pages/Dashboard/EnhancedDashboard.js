@@ -41,8 +41,10 @@ import {
   AutoAwesome as AutoAwesomeIcon,
 } from '@mui/icons-material';
 import { newsSystemService } from '../../services/newsSystemService';
+import { useNotifications } from '../../components/Notifications/NotificationSystem';
 
 const EnhancedDashboard = () => {
+  const { showSuccess, showError, showLoading, showInfo } = useNotifications();
   const [dashboardStats, setDashboardStats] = useState(null);
   const [ingestionStats, setIngestionStats] = useState(null);
   const [mlStats, setMlStats] = useState(null);
@@ -54,6 +56,7 @@ const EnhancedDashboard = () => {
   const [error, setError] = useState(null);
   const [activeTab, setActiveTab] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
+  const [buttonLoading, setButtonLoading] = useState({});
 
   useEffect(() => {
     fetchDashboardData();
@@ -61,10 +64,14 @@ const EnhancedDashboard = () => {
     return () => clearInterval(interval);
   }, []);
 
-  const fetchDashboardData = async () => {
+  const fetchDashboardData = async (isManualRefresh = false) => {
     try {
       setRefreshing(true);
       setError(null);
+
+      if (isManualRefresh) {
+        showInfo('Refreshing dashboard data...', 'Dashboard Refresh');
+      }
 
       // Fetch all dashboard data in parallel
       const [
@@ -94,18 +101,43 @@ const EnhancedDashboard = () => {
       if (activity.status === 'fulfilled') setRecentActivity(activity.value.activities || []);
       if (metrics.status === 'fulfilled') setSystemMetrics(metrics.value);
 
+      // Count successful vs failed requests
+      const successful = [stats, ingestion, ml, stories, alerts, activity, metrics].filter(r => r.status === 'fulfilled').length;
+      const total = 7;
+
+      if (isManualRefresh) {
+        if (successful === total) {
+          showSuccess('Dashboard refreshed successfully!', 'Dashboard Updated');
+        } else {
+          showWarning(`Dashboard refreshed with ${successful}/${total} data sources`, 'Partial Update');
+        }
+      }
+
       setLoading(false);
     } catch (err) {
       console.error('Error fetching dashboard data:', err);
       setError(err.message);
       setLoading(false);
+      
+      if (isManualRefresh) {
+        showError(`Failed to refresh dashboard: ${err.message}`, 'Refresh Error');
+      }
     } finally {
       setRefreshing(false);
     }
   };
 
   const handleRefresh = () => {
-    fetchDashboardData();
+    fetchDashboardData(true);
+  };
+
+  const handleRetry = async () => {
+    setButtonLoading(prev => ({ ...prev, retry: true }));
+    try {
+      await fetchDashboardData(true);
+    } finally {
+      setButtonLoading(prev => ({ ...prev, retry: false }));
+    }
   };
 
   const handleTabChange = (event, newValue) => {
@@ -207,8 +239,14 @@ const EnhancedDashboard = () => {
   if (error) {
     return (
       <Alert severity="error" action={
-        <Button color="inherit" size="small" onClick={handleRefresh}>
-          Retry
+        <Button 
+          color="inherit" 
+          size="small" 
+          onClick={handleRetry}
+          disabled={buttonLoading.retry}
+          startIcon={buttonLoading.retry ? <CircularProgress size={16} /> : null}
+        >
+          {buttonLoading.retry ? 'Retrying...' : 'Retry'}
         </Button>
       }>
         Error loading dashboard: {error}
@@ -224,9 +262,9 @@ const EnhancedDashboard = () => {
           News Intelligence Dashboard
         </Typography>
         <Box>
-          <Tooltip title="Refresh Dashboard">
+          <Tooltip title={refreshing ? "Refreshing..." : "Refresh Dashboard"}>
             <IconButton onClick={handleRefresh} disabled={refreshing}>
-              <RefreshIcon />
+              {refreshing ? <CircularProgress size={20} /> : <RefreshIcon />}
             </IconButton>
           </Tooltip>
           {dashboardStats && (

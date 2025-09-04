@@ -33,7 +33,7 @@
 ### **5. Configuration Files Ready**
 - [x] docker-compose.unified.yml updated for FastAPI
 - [x] Dockerfile updated to use Uvicorn
-- [x] env.unified configuration ready
+- [x] .env configuration ready
 - [x] Deployment scripts ready
 
 ---

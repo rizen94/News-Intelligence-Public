@@ -10,7 +10,7 @@ from typing import Dict, Any, List, Optional
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from api.config.database import get_db_connection
+from config.database import get_db_connection
 
 router = APIRouter()
 
@@ -305,7 +305,7 @@ async def get_active_stories() -> int:
 async def get_ml_queue_size() -> int:
     """Get ML processing queue size"""
     try:
-        from api.modules.ml.ml_pipeline import MLPipeline
+        from modules.ml.ml_pipeline import MLPipeline
         pipeline = MLPipeline()
         return pipeline.get_queue_size()
     except:
@@ -490,7 +490,7 @@ async def get_ml_avg_processing_time() -> float:
 async def get_models_status() -> Dict[str, str]:
     """Get status of ML models"""
     try:
-        from api.modules.ml.ml_pipeline import MLPipeline
+        from modules.ml.ml_pipeline import MLPipeline
         pipeline = MLPipeline()
         return pipeline.get_models_status()
     except:

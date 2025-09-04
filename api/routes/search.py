@@ -11,7 +11,7 @@ from enum import Enum
 from fastapi import APIRouter, HTTPException, Query, Path, Body
 from pydantic import BaseModel, Field
 
-from api.config.database import get_db_connection
+from config.database import get_db_connection
 
 router = APIRouter()
 
@@ -59,7 +59,7 @@ class SearchResult(BaseModel):
     content: str = Field(..., description="Article content")
     url: str = Field(..., description="Article URL")
     source: str = Field(..., description="Article source")
-    published_at: datetime = Field(..., description="Publication date")
+    published_date: datetime = Field(..., description="Publication date")
     summary: Optional[str] = Field(None, description="Article summary")
     sentiment: Optional[float] = Field(None, description="Sentiment score")
     relevance_score: float = Field(..., description="Relevance score")
@@ -279,11 +279,11 @@ async def _full_text_search(search_request: SearchRequest, offset: int, limit: i
             params.append(search_request.filters.sources)
         
         if search_request.filters.date_from:
-            where_conditions.append("published_at >= %s")
+            where_conditions.append("published_date >= %s")
             params.append(search_request.filters.date_from)
         
         if search_request.filters.date_to:
-            where_conditions.append("published_at <= %s")
+            where_conditions.append("published_date <= %s")
             params.append(search_request.filters.date_to)
         
         if search_request.filters.sentiment:
@@ -303,7 +303,7 @@ async def _full_text_search(search_request: SearchRequest, offset: int, limit: i
     
     results_query = f"""
         SELECT 
-            id, title, content, url, source, published_at, summary, sentiment,
+            id, title, content, url, source, published_date, summary, sentiment,
             ts_rank(to_tsvector('english', title || ' ' || content), plainto_tsquery('english', %s)) as relevance_score,
             entities, tags
         FROM articles 
@@ -322,7 +322,7 @@ async def _full_text_search(search_request: SearchRequest, offset: int, limit: i
             content=row[2],
             url=row[3],
             source=row[4],
-            published_at=row[5],
+            published_date=row[5],
             summary=row[6],
             sentiment=row[7],
             relevance_score=float(row[8]),
@@ -370,7 +370,7 @@ async def _get_search_suggestions(query: str, limit: int = 10) -> List[str]:
             SELECT DISTINCT title
             FROM articles 
             WHERE title ILIKE %s
-            ORDER BY published_at DESC
+            ORDER BY published_date DESC
             LIMIT %s
         """, (f"%{query}%", limit - len(suggestions)))
         

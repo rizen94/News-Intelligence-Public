@@ -10,7 +10,7 @@ VERSION="2.9.0"
 PROJECT_NAME="news-intelligence-system"
 BACKUP_DIR="/opt/backups/news-intelligence"
 LOG_FILE="/var/log/news-intelligence/deploy-v2.9.log"
-DOCKER_COMPOSE_FILE="docker-compose.unified.yml"
+DOCKER_COMPOSE_FILE="docker-compose.yml"
 
 # Colors for output
 RED='\033[0;31m'

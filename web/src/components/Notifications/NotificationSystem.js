@@ -4,16 +4,23 @@ import {
   Alert,
   AlertTitle,
   IconButton,
-  Collapse
+  Collapse,
+  Box,
+  Typography
 } from '@mui/material';
 import {
   Close as CloseIcon,
-  ExpandMore as ExpandMoreIcon,
-  ExpandLess as ExpandLessIcon
+  CheckCircle as CheckCircleIcon,
+  Error as ErrorIcon,
+  Warning as WarningIcon,
+  Info as InfoIcon,
+  Refresh as RefreshIcon
 } from '@mui/icons-material';
 
+// Notification context
 const NotificationContext = createContext();
 
+// Custom hook to use notifications
 export const useNotifications = () => {
   const context = useContext(NotificationContext);
   if (!context) {
@@ -22,86 +29,87 @@ export const useNotifications = () => {
   return context;
 };
 
+// Notification provider component
 export const NotificationProvider = ({ children }) => {
   const [notifications, setNotifications] = useState([]);
-  const [expanded, setExpanded] = useState({});
 
   const addNotification = useCallback((notification) => {
     const id = Date.now() + Math.random();
     const newNotification = {
       id,
-      severity: 'info',
-      title: null,
-      message: '',
-      duration: 6000,
-      action: null,
-      details: null,
+      timestamp: new Date(),
       ...notification
     };
-
+    
     setNotifications(prev => [...prev, newNotification]);
-
-    // Auto-remove notification after duration
-    if (newNotification.duration > 0) {
-      setTimeout(() => {
-        removeNotification(id);
-      }, newNotification.duration);
-    }
-
+    
+    // Auto-remove after duration (default 5 seconds)
+    const duration = notification.duration || 5000;
+    setTimeout(() => {
+      removeNotification(id);
+    }, duration);
+    
     return id;
   }, []);
 
   const removeNotification = useCallback((id) => {
     setNotifications(prev => prev.filter(notification => notification.id !== id));
-    setExpanded(prev => {
-      const newExpanded = { ...prev };
-      delete newExpanded[id];
-      return newExpanded;
-    });
   }, []);
 
   const clearAllNotifications = useCallback(() => {
     setNotifications([]);
-    setExpanded({});
   }, []);
 
-  const toggleExpanded = useCallback((id) => {
-    setExpanded(prev => ({
-      ...prev,
-      [id]: !prev[id]
-    }));
-  }, []);
-
-  // Convenience methods
-  const showSuccess = useCallback((message, options = {}) => {
+  // Convenience methods for different notification types
+  const showSuccess = useCallback((message, title = 'Success', options = {}) => {
     return addNotification({
-      severity: 'success',
+      type: 'success',
+      title,
       message,
+      icon: <CheckCircleIcon />,
       ...options
     });
   }, [addNotification]);
 
-  const showError = useCallback((message, options = {}) => {
+  const showError = useCallback((message, title = 'Error', options = {}) => {
     return addNotification({
-      severity: 'error',
+      type: 'error',
+      title,
       message,
-      duration: 0, // Don't auto-dismiss errors
+      icon: <ErrorIcon />,
+      duration: 8000, // Errors stay longer
       ...options
     });
   }, [addNotification]);
 
-  const showWarning = useCallback((message, options = {}) => {
+  const showWarning = useCallback((message, title = 'Warning', options = {}) => {
     return addNotification({
-      severity: 'warning',
+      type: 'warning',
+      title,
       message,
+      icon: <WarningIcon />,
+      duration: 6000,
       ...options
     });
   }, [addNotification]);
 
-  const showInfo = useCallback((message, options = {}) => {
+  const showInfo = useCallback((message, title = 'Info', options = {}) => {
     return addNotification({
-      severity: 'info',
+      type: 'info',
+      title,
       message,
+      icon: <InfoIcon />,
+      ...options
+    });
+  }, [addNotification]);
+
+  const showLoading = useCallback((message, title = 'Loading', options = {}) => {
+    return addNotification({
+      type: 'info',
+      title,
+      message,
+      icon: <RefreshIcon className="animate-spin" />,
+      duration: 0, // Loading notifications don't auto-remove
       ...options
     });
   }, [addNotification]);
@@ -114,28 +122,36 @@ export const NotificationProvider = ({ children }) => {
     showSuccess,
     showError,
     showWarning,
-    showInfo
+    showInfo,
+    showLoading
   };
 
   return (
     <NotificationContext.Provider value={value}>
       {children}
-      <NotificationContainer 
-        notifications={notifications}
-        expanded={expanded}
-        onRemove={removeNotification}
-        onToggleExpanded={toggleExpanded}
-      />
+      <NotificationContainer notifications={notifications} onRemove={removeNotification} />
     </NotificationContext.Provider>
   );
 };
 
-const NotificationContainer = ({ 
-  notifications, 
-  expanded, 
-  onRemove, 
-  onToggleExpanded 
-}) => {
+// Notification container component
+const NotificationContainer = ({ notifications, onRemove }) => {
+  const [expanded, setExpanded] = useState({});
+
+  const handleExpand = (id) => {
+    setExpanded(prev => ({ ...prev, [id]: !prev[id] }));
+  };
+
+  const getSeverity = (type) => {
+    switch (type) {
+      case 'success': return 'success';
+      case 'error': return 'error';
+      case 'warning': return 'warning';
+      case 'info': return 'info';
+      default: return 'info';
+    }
+  };
+
   return (
     <Box
       sx={{
@@ -143,102 +159,83 @@ const NotificationContainer = ({
         top: 20,
         right: 20,
         zIndex: 9999,
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 1,
-        maxWidth: 400
+        maxWidth: 400,
+        width: '100%'
       }}
     >
       {notifications.map((notification) => (
-        <NotificationItem
+        <Snackbar
           key={notification.id}
-          notification={notification}
-          expanded={expanded[notification.id] || false}
-          onRemove={onRemove}
-          onToggleExpanded={onToggleExpanded}
-        />
+          open={true}
+          anchorOrigin={{ vertical: 'top', horizontal: 'right' }}
+          sx={{ mb: 1 }}
+        >
+          <Alert
+            severity={getSeverity(notification.type)}
+            icon={notification.icon}
+            action={
+              <Box display="flex" alignItems="center" gap={1}>
+                {notification.details && (
+                  <IconButton
+                    size="small"
+                    onClick={() => handleExpand(notification.id)}
+                    sx={{ color: 'inherit' }}
+                  >
+                    <Typography variant="caption">
+                      {expanded[notification.id] ? 'Less' : 'More'}
+                    </Typography>
+                  </IconButton>
+                )}
+                <IconButton
+                  size="small"
+                  onClick={() => onRemove(notification.id)}
+                  sx={{ color: 'inherit' }}
+                >
+                  <CloseIcon fontSize="small" />
+                </IconButton>
+              </Box>
+            }
+            sx={{
+              width: '100%',
+              '& .MuiAlert-message': {
+                width: '100%'
+              }
+            }}
+          >
+            <AlertTitle>{notification.title}</AlertTitle>
+            {notification.message}
+            {notification.details && (
+              <Collapse in={expanded[notification.id]}>
+                <Box sx={{ mt: 1, pt: 1, borderTop: 1, borderColor: 'divider' }}>
+                  <Typography variant="body2" color="text.secondary">
+                    {notification.details}
+                  </Typography>
+                </Box>
+              </Collapse>
+            )}
+          </Alert>
+        </Snackbar>
       ))}
     </Box>
   );
 };
 
-const NotificationItem = ({ 
-  notification, 
-  expanded, 
-  onRemove, 
-  onToggleExpanded 
-}) => {
-  const {
-    id,
-    severity,
-    title,
-    message,
-    action,
-    details
-  } = notification;
+// CSS for spin animation
+const spinStyle = `
+  @keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+  .animate-spin {
+    animation: spin 1s linear infinite;
+  }
+`;
 
-  const handleClose = () => {
-    onRemove(id);
-  };
-
-  const handleToggleExpanded = () => {
-    onToggleExpanded(id);
-  };
-
-  return (
-    <Alert
-      severity={severity}
-      onClose={handleClose}
-      sx={{
-        minWidth: 300,
-        '& .MuiAlert-message': {
-          width: '100%'
-        }
-      }}
-      action={
-        <Box sx={{ display: 'flex', alignItems: 'center' }}>
-          {details && (
-            <IconButton
-              size="small"
-              onClick={handleToggleExpanded}
-              sx={{ mr: 1 }}
-            >
-              {expanded ? <ExpandLessIcon /> : <ExpandMoreIcon />}
-            </IconButton>
-          )}
-          {action && (
-            <Box sx={{ mr: 1 }}>
-              {action}
-            </Box>
-          )}
-          <IconButton
-            size="small"
-            onClick={handleClose}
-          >
-            <CloseIcon />
-          </IconButton>
-        </Box>
-      }
-    >
-      {title && <AlertTitle>{title}</AlertTitle>}
-      {message}
-      
-      {details && (
-        <Collapse in={expanded}>
-          <Box sx={{ mt: 1, p: 1, backgroundColor: 'rgba(0,0,0,0.1)', borderRadius: 1 }}>
-            <pre style={{ 
-              margin: 0, 
-              fontSize: '0.75rem', 
-              whiteSpace: 'pre-wrap',
-              wordBreak: 'break-word'
-            }}>
-              {typeof details === 'string' ? details : JSON.stringify(details, null, 2)}
-            </pre>
-          </Box>
-        </Collapse>
-      )}
-    </Alert>
-  );
-};
+// Inject CSS
+if (typeof document !== 'undefined') {
+  const style = document.createElement('style');
+  style.textContent = spinStyle;
+  document.head.appendChild(style);
+}
 
 export default NotificationProvider;

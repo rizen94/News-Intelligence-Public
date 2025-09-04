@@ -11,7 +11,7 @@ from enum import Enum
 from fastapi import APIRouter, HTTPException, Query, Path
 from pydantic import BaseModel, Field
 
-from api.config.database import get_db_connection
+from config.database import get_db_connection
 
 router = APIRouter()
 
@@ -43,7 +43,7 @@ class ArticleBase(BaseModel):
     content: str = Field(..., description="Article content")
     url: str = Field(..., description="Article URL")
     source: str = Field(..., description="Article source")
-    published_at: Optional[datetime] = Field(None, description="Publication timestamp")
+    published_date: Optional[datetime] = Field(None, description="Publication timestamp")
 
 class ArticleCreate(ArticleBase):
     """Article creation model"""
@@ -59,17 +59,14 @@ class ArticleUpdate(BaseModel):
 class Article(ArticleBase):
     """Full article model"""
     id: int = Field(..., description="Article ID")
-    status: ArticleStatus = Field(..., description="Processing status")
+    processing_status: str = Field(..., description="Processing status")
     created_at: datetime = Field(..., description="Creation timestamp")
-    processed_at: Optional[datetime] = Field(None, description="Processing timestamp")
-    ml_processed_at: Optional[datetime] = Field(None, description="ML processing timestamp")
+    processing_completed_at: Optional[datetime] = Field(None, description="Processing timestamp")
     
     # Analysis results
     summary: Optional[str] = Field(None, description="AI-generated summary")
-    sentiment: Optional[float] = Field(None, description="Sentiment score (-1 to 1)")
-    entities: Optional[List[Dict[str, Any]]] = Field(None, description="Extracted entities")
-    tags: Optional[List[str]] = Field(None, description="Article tags")
-    relevance_score: Optional[float] = Field(None, description="Relevance score")
+    quality_score: Optional[float] = Field(None, description="Quality score")
+    ml_data: Optional[Dict[str, Any]] = Field(None, description="ML analysis data")
     
     class Config:
         from_attributes = True
@@ -149,9 +146,9 @@ async def get_articles(
         order_clause = f"ORDER BY {sort_by.value} {sort_order.value.upper()}"
         articles_query = f"""
             SELECT 
-                id, title, content, url, source, published_at,
-                status, created_at, processed_at, ml_processed_at,
-                summary, sentiment, entities, tags, relevance_score
+                id, title, content, url, source, published_date,
+                processing_status, created_at, processing_completed_at, processing_completed_at,
+                summary, quality_score, ml_data, ml_data, quality_score
             FROM articles 
             {where_clause}
             {order_clause}
@@ -168,16 +165,13 @@ async def get_articles(
                 content=row[2],
                 url=row[3],
                 source=row[4],
-                published_at=row[5],
-                status=ArticleStatus(row[6]),
+                published_date=row[5],
+                processing_status=row[6],
                 created_at=row[7],
-                processed_at=row[8],
-                ml_processed_at=row[9],
+                processing_completed_at=row[8],
                 summary=row[10],
-                sentiment=row[11],
-                entities=row[12] if row[12] else [],
-                tags=row[13] if row[13] else [],
-                relevance_score=row[14]
+                quality_score=row[11],
+                ml_data=row[12] if row[12] else {}
             ))
         
         cursor.close()
@@ -212,7 +206,7 @@ async def get_article(
         cursor = conn.cursor()
         cursor.execute("""
             SELECT 
-                id, title, content, url, source, published_at,
+                id, title, content, url, source, published_date,
                 status, created_at, processed_at, ml_processed_at,
                 summary, sentiment, entities, tags, relevance_score
             FROM articles 
@@ -235,7 +229,7 @@ async def get_article(
             content=row[2],
             url=row[3],
             source=row[4],
-            published_at=row[5],
+            published_date=row[5],
             status=ArticleStatus(row[6]),
             created_at=row[7],
             processed_at=row[8],
@@ -268,7 +262,7 @@ async def create_article(article: ArticleCreate):
         
         cursor.execute("""
             INSERT INTO articles (
-                title, content, url, source, published_at, status, created_at
+                title, content, url, source, published_date, status, created_at
             ) VALUES (%s, %s, %s, %s, %s, %s, %s)
             RETURNING id
         """, (
@@ -276,7 +270,7 @@ async def create_article(article: ArticleCreate):
             article.content,
             article.url,
             article.source,
-            article.published_at,
+            article.published_date,
             ArticleStatus.PENDING.value,
             datetime.utcnow()
         ))
@@ -450,7 +444,7 @@ async def search_articles(search: ArticleSearch):
         order_clause = f"ORDER BY {search.sort_by.value} {search.sort_order.value.upper()}"
         articles_query = f"""
             SELECT 
-                id, title, content, url, source, published_at,
+                id, title, content, url, source, published_date,
                 status, created_at, processed_at, ml_processed_at,
                 summary, sentiment, entities, tags, relevance_score
             FROM articles 
@@ -469,16 +463,13 @@ async def search_articles(search: ArticleSearch):
                 content=row[2],
                 url=row[3],
                 source=row[4],
-                published_at=row[5],
-                status=ArticleStatus(row[6]),
+                published_date=row[5],
+                processing_status=row[6],
                 created_at=row[7],
-                processed_at=row[8],
-                ml_processed_at=row[9],
+                processing_completed_at=row[8],
                 summary=row[10],
-                sentiment=row[11],
-                entities=row[12] if row[12] else [],
-                tags=row[13] if row[13] else [],
-                relevance_score=row[14]
+                quality_score=row[11],
+                ml_data=row[12] if row[12] else {}
             ))
         
         cursor.close()
@@ -513,7 +504,7 @@ async def analyze_article(
         article = await get_article(article_id)
         
         # Trigger ML analysis
-        from api.modules.ml.ml_pipeline import MLPipeline
+        from modules.ml.ml_pipeline import MLPipeline
         pipeline = MLPipeline()
         
         start_time = time.time()
@@ -593,7 +584,7 @@ async def get_related_articles(
             
             cursor.execute(f"""
                 SELECT 
-                    id, title, content, url, source, published_at,
+                    id, title, content, url, source, published_date,
                     status, created_at, processed_at, ml_processed_at,
                     summary, sentiment, entities, tags, relevance_score
                 FROM articles 
@@ -605,7 +596,7 @@ async def get_related_articles(
             # Fallback: get recent articles from same source
             cursor.execute("""
                 SELECT 
-                    id, title, content, url, source, published_at,
+                    id, title, content, url, source, published_date,
                     status, created_at, processed_at, ml_processed_at,
                     summary, sentiment, entities, tags, relevance_score
                 FROM articles 
@@ -622,16 +613,13 @@ async def get_related_articles(
                 content=row[2],
                 url=row[3],
                 source=row[4],
-                published_at=row[5],
-                status=ArticleStatus(row[6]),
+                published_date=row[5],
+                processing_status=row[6],
                 created_at=row[7],
-                processed_at=row[8],
-                ml_processed_at=row[9],
+                processing_completed_at=row[8],
                 summary=row[10],
-                sentiment=row[11],
-                entities=row[12] if row[12] else [],
-                tags=row[13] if row[13] else [],
-                relevance_score=row[14]
+                quality_score=row[11],
+                ml_data=row[12] if row[12] else {}
             ))
         
         cursor.close()

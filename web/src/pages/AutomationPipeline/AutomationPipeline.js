@@ -41,7 +41,8 @@ import {
   CheckCircle,
   Error,
   Warning,
-  Info
+  Info,
+  Save
 } from '@mui/icons-material';
 import newsSystemService from '../../services/newsSystemService';
 

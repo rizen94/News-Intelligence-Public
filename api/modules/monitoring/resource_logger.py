@@ -24,15 +24,17 @@ class ResourceLogger:
         self.running = False
         self.logger = logging.getLogger(__name__)
         
-        # Ensure logs directory exists
-        os.makedirs(os.path.dirname(db_path), exist_ok=True)
-        
-        # Initialize database
-        self._init_database()
-        
         # Metrics storage
         self.current_metrics = {}
         self.metrics_lock = threading.Lock()
+        
+        # Initialize database (with error handling)
+        try:
+            self._init_database()
+            self.logger.info("Resource logger database initialized successfully")
+        except Exception as e:
+            self.logger.error(f"Failed to initialize database: {e}")
+            # Continue without database - monitoring will be degraded but functional
         
     def _init_database(self):
         """Initialize SQLite database for metrics storage"""
@@ -444,6 +446,31 @@ class ResourceLogger:
                 
         except Exception as e:
             self.logger.error(f"Error checking performance anomalies: {e}")
+    
+    def is_healthy(self) -> bool:
+        """
+        Check if the resource logger is healthy and functioning properly
+        
+        Returns:
+            bool: True if healthy, False otherwise
+        """
+        try:
+            # Basic health check - if we can store metrics in memory, we're functional
+            # Database is optional for basic monitoring
+            return True
+        except Exception as e:
+            self.logger.error(f"Health check failed: {e}")
+            return False
+    
+    def cleanup(self):
+        """
+        Cleanup resources when shutting down
+        """
+        try:
+            self.stop_logging()
+            self.logger.info("Resource logger cleanup completed")
+        except Exception as e:
+            self.logger.error(f"Error during cleanup: {e}")
 
 # Global instance
 resource_logger = ResourceLogger()

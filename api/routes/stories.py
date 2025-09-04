@@ -11,7 +11,7 @@ from enum import Enum
 from fastapi import APIRouter, HTTPException, Query, Path
 from pydantic import BaseModel, Field
 
-from api.config.database import get_db_connection
+from config.database import get_db_connection
 
 router = APIRouter()
 
@@ -276,12 +276,12 @@ async def get_story_dossier(
         
         cursor.execute("""
             SELECT 
-                a.id, a.title, a.url, a.source, a.published_at,
+                a.id, a.title, a.url, a.source, a.published_date,
                 a.summary, a.sentiment, a.tags, a.relevance_score
             FROM articles a
             JOIN story_articles sa ON a.id = sa.article_id
             WHERE sa.story_id = %s
-            ORDER BY a.published_at DESC
+            ORDER BY a.published_date DESC
         """, (story_id,))
         
         articles = []
@@ -291,7 +291,7 @@ async def get_story_dossier(
                 "title": row[1],
                 "url": row[2],
                 "source": row[3],
-                "published_at": row[4],
+                "published_date": row[4],
                 "summary": row[5],
                 "sentiment": row[6],
                 "tags": row[7] if row[7] else [],
@@ -301,13 +301,13 @@ async def get_story_dossier(
         # Get timeline
         cursor.execute("""
             SELECT 
-                DATE(a.published_at) as date,
+                DATE(a.published_date) as date,
                 COUNT(*) as article_count,
                 AVG(a.sentiment) as avg_sentiment
             FROM articles a
             JOIN story_articles sa ON a.id = sa.article_id
             WHERE sa.story_id = %s
-            GROUP BY DATE(a.published_at)
+            GROUP BY DATE(a.published_date)
             ORDER BY date
         """, (story_id,))
         
@@ -445,7 +445,7 @@ async def get_story_evolution(
             FROM articles a
             JOIN story_articles sa ON a.id = sa.article_id
             WHERE sa.story_id = %s 
-            AND a.published_at >= NOW() - INTERVAL %s
+            AND a.published_date >= NOW() - INTERVAL %s
         """, (story_id, interval))
         article_count = cursor.fetchone()[0]
         
@@ -455,7 +455,7 @@ async def get_story_evolution(
             FROM articles a
             JOIN story_articles sa ON a.id = sa.article_id
             WHERE sa.story_id = %s 
-            AND a.published_at >= NOW() - INTERVAL %s
+            AND a.published_date >= NOW() - INTERVAL %s
             AND a.sentiment IS NOT NULL
         """, (story_id, interval))
         sentiment_avg = cursor.fetchone()[0]
@@ -463,11 +463,11 @@ async def get_story_evolution(
         # Get key events (articles with high relevance)
         cursor.execute("""
             SELECT 
-                a.id, a.title, a.published_at, a.relevance_score
+                a.id, a.title, a.published_date, a.relevance_score
             FROM articles a
             JOIN story_articles sa ON a.id = sa.article_id
             WHERE sa.story_id = %s 
-            AND a.published_at >= NOW() - INTERVAL %s
+            AND a.published_date >= NOW() - INTERVAL %s
             ORDER BY a.relevance_score DESC
             LIMIT 10
         """, (story_id, interval))
@@ -477,7 +477,7 @@ async def get_story_evolution(
             key_events.append({
                 "article_id": row[0],
                 "title": row[1],
-                "published_at": row[2],
+                "published_date": row[2],
                 "relevance_score": row[3]
             })
         
@@ -491,7 +491,7 @@ async def get_story_evolution(
                 FROM articles a
                 JOIN story_articles sa ON a.id = sa.article_id
                 WHERE sa.story_id = %s 
-                AND a.published_at >= NOW() - INTERVAL %s
+                AND a.published_date >= NOW() - INTERVAL %s
                 AND a.entities IS NOT NULL
             ) as entity_data
             CROSS JOIN LATERAL (

@@ -11,7 +11,7 @@ from enum import Enum
 from fastapi import APIRouter, HTTPException, Query, Path, Body
 from pydantic import BaseModel, Field
 
-from api.config.database import get_db_connection
+from config.database import get_db_connection
 
 router = APIRouter()
 
@@ -40,15 +40,8 @@ class RSSFeedBase(BaseModel):
     """Base RSS feed model"""
     name: str = Field(..., description="Feed name")
     url: str = Field(..., description="Feed URL")
-    description: Optional[str] = Field(None, description="Feed description")
-    category: FeedCategory = Field(..., description="Feed category")
-    language: str = Field("en", description="Feed language")
-    update_frequency: int = Field(30, description="Update frequency in minutes")
-    max_articles_per_update: int = Field(50, description="Maximum articles per update")
+    category: Optional[str] = Field(None, description="Feed category")
     is_active: bool = Field(True, description="Whether feed is active")
-    tags: List[str] = Field(default_factory=list, description="Feed tags")
-    custom_headers: Dict[str, str] = Field(default_factory=dict, description="Custom HTTP headers")
-    filters: Dict[str, Any] = Field(default_factory=dict, description="Content filters")
 
 class RSSFeedCreate(RSSFeedBase):
     """RSS feed creation model"""
@@ -58,27 +51,16 @@ class RSSFeedUpdate(BaseModel):
     """RSS feed update model"""
     name: Optional[str] = None
     url: Optional[str] = None
-    description: Optional[str] = None
-    category: Optional[FeedCategory] = None
-    language: Optional[str] = None
-    update_frequency: Optional[int] = None
-    max_articles_per_update: Optional[int] = None
+    category: Optional[str] = None
     is_active: Optional[bool] = None
-    tags: Optional[List[str]] = None
-    custom_headers: Optional[Dict[str, str]] = None
-    filters: Optional[Dict[str, Any]] = None
 
 class RSSFeed(RSSFeedBase):
     """Complete RSS feed model"""
     id: int = Field(..., description="Feed ID")
-    status: FeedStatus = Field(..., description="Current status")
-    articles_count: int = Field(0, description="Total articles collected")
-    articles_today: int = Field(0, description="Articles collected today")
-    last_updated: Optional[datetime] = Field(None, description="Last successful update")
-    success_rate: float = Field(0.0, description="Success rate percentage")
-    avg_response_time: int = Field(0, description="Average response time in ms")
-    warning_message: Optional[str] = Field(None, description="Warning message")
-    last_error: Optional[str] = Field(None, description="Last error message")
+    last_check: Optional[datetime] = Field(None, description="Last check timestamp")
+    last_success: Optional[datetime] = Field(None, description="Last successful update")
+    failure_count: int = Field(0, description="Number of failures")
+    article_count: int = Field(0, description="Total articles collected")
     created_at: datetime = Field(..., description="Creation timestamp")
     updated_at: datetime = Field(..., description="Last update timestamp")
 
@@ -140,8 +122,8 @@ async def get_rss_feeds(
             params.append(category.value)
         
         if search:
-            where_conditions.append("(name ILIKE %s OR url ILIKE %s OR description ILIKE %s)")
-            params.extend([f"%{search}%", f"%{search}%", f"%{search}%"])
+            where_conditions.append("(name ILIKE %s OR url ILIKE %s)")
+            params.extend([f"%{search}%", f"%{search}%"])
         
         where_clause = "WHERE " + " AND ".join(where_conditions) if where_conditions else ""
         
@@ -155,10 +137,8 @@ async def get_rss_feeds(
         # Get feeds
         feeds_query = f"""
             SELECT 
-                id, name, url, description, category, language, update_frequency,
-                max_articles_per_update, is_active, status, articles_count, articles_today,
-                last_updated, success_rate, avg_response_time, warning_message, last_error,
-                tags, custom_headers, filters, created_at, updated_at
+                id, name, url, category, is_active, last_check, last_success,
+                failure_count, article_count, created_at, updated_at
             FROM rss_feeds 
             {where_clause}
             ORDER BY created_at DESC
@@ -173,25 +153,14 @@ async def get_rss_feeds(
                 id=row[0],
                 name=row[1],
                 url=row[2],
-                description=row[3],
-                category=row[4],
-                language=row[5],
-                update_frequency=row[6],
-                max_articles_per_update=row[7],
-                is_active=row[8],
-                status=row[9],
-                articles_count=row[10],
-                articles_today=row[11],
-                last_updated=row[12],
-                success_rate=row[13],
-                avg_response_time=row[14],
-                warning_message=row[15],
-                last_error=row[16],
-                tags=row[17] or [],
-                custom_headers=row[18] or {},
-                filters=row[19] or {},
-                created_at=row[20],
-                updated_at=row[21]
+                category=row[3],
+                is_active=row[4],
+                last_check=row[5],
+                last_success=row[6],
+                failure_count=row[7],
+                article_count=row[8],
+                created_at=row[9],
+                updated_at=row[10]
             )
             feeds.append(feed)
         
@@ -220,10 +189,8 @@ async def get_rss_feed(feed_id: int = Path(..., description="Feed ID")):
         
         cursor.execute("""
             SELECT 
-                id, name, url, description, category, language, update_frequency,
-                max_articles_per_update, is_active, status, articles_count, articles_today,
-                last_updated, success_rate, avg_response_time, warning_message, last_error,
-                tags, custom_headers, filters, created_at, updated_at
+                id, name, url, category, is_active, last_check, last_success,
+                failure_count, article_count, created_at, updated_at
             FROM rss_feeds 
             WHERE id = %s
         """, (feed_id,))
@@ -236,25 +203,14 @@ async def get_rss_feed(feed_id: int = Path(..., description="Feed ID")):
             id=row[0],
             name=row[1],
             url=row[2],
-            description=row[3],
-            category=row[4],
-            language=row[5],
-            update_frequency=row[6],
-            max_articles_per_update=row[7],
-            is_active=row[8],
-            status=row[9],
-            articles_count=row[10],
-            articles_today=row[11],
-            last_updated=row[12],
-            success_rate=row[13],
-            avg_response_time=row[14],
-            warning_message=row[15],
-            last_error=row[16],
-            tags=row[17] or [],
-            custom_headers=row[18] or {},
-            filters=row[19] or {},
-            created_at=row[20],
-            updated_at=row[21]
+            category=row[3],
+            is_active=row[4],
+            last_check=row[5],
+            last_success=row[6],
+            failure_count=row[7],
+            article_count=row[8],
+            created_at=row[9],
+            updated_at=row[10]
         )
         
         cursor.close()
@@ -285,25 +241,15 @@ async def create_rss_feed(feed_data: RSSFeedCreate):
         # Insert new feed
         cursor.execute("""
             INSERT INTO rss_feeds (
-                name, url, description, category, language, update_frequency,
-                max_articles_per_update, is_active, tags, custom_headers, filters,
-                status, created_at, updated_at
+                name, url, category, is_active, created_at, updated_at
             ) VALUES (
-                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                %s, %s, %s, %s, %s, %s
             ) RETURNING id
         """, (
             feed_data.name,
             feed_data.url,
-            feed_data.description,
-            feed_data.category.value,
-            feed_data.language,
-            feed_data.update_frequency,
-            feed_data.max_articles_per_update,
+            feed_data.category,
             feed_data.is_active,
-            feed_data.tags,
-            feed_data.custom_headers,
-            feed_data.filters,
-            FeedStatus.ACTIVE.value,
             datetime.utcnow(),
             datetime.utcnow()
         ))
@@ -356,41 +302,15 @@ async def update_rss_feed(
             update_fields.append("url = %s")
             params.append(feed_data.url)
         
-        if feed_data.description is not None:
-            update_fields.append("description = %s")
-            params.append(feed_data.description)
+
         
         if feed_data.category is not None:
             update_fields.append("category = %s")
-            params.append(feed_data.category.value)
-        
-        if feed_data.language is not None:
-            update_fields.append("language = %s")
-            params.append(feed_data.language)
-        
-        if feed_data.update_frequency is not None:
-            update_fields.append("update_frequency = %s")
-            params.append(feed_data.update_frequency)
-        
-        if feed_data.max_articles_per_update is not None:
-            update_fields.append("max_articles_per_update = %s")
-            params.append(feed_data.max_articles_per_update)
+            params.append(feed_data.category)
         
         if feed_data.is_active is not None:
             update_fields.append("is_active = %s")
             params.append(feed_data.is_active)
-        
-        if feed_data.tags is not None:
-            update_fields.append("tags = %s")
-            params.append(feed_data.tags)
-        
-        if feed_data.custom_headers is not None:
-            update_fields.append("custom_headers = %s")
-            params.append(feed_data.custom_headers)
-        
-        if feed_data.filters is not None:
-            update_fields.append("filters = %s")
-            params.append(feed_data.filters)
         
         if not update_fields:
             raise HTTPException(status_code=400, detail="No fields to update")

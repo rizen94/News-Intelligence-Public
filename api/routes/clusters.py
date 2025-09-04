@@ -11,7 +11,7 @@ from enum import Enum
 from fastapi import APIRouter, HTTPException, Query, Path, Body
 from pydantic import BaseModel, Field
 
-from api.config.database import get_db_connection
+from config.database import get_db_connection
 
 router = APIRouter()
 
@@ -45,7 +45,7 @@ class ArticleInfo(BaseModel):
     id: int = Field(..., description="Article ID")
     title: str = Field(..., description="Article title")
     source: str = Field(..., description="Article source")
-    published_at: datetime = Field(..., description="Publication date")
+    published_date: datetime = Field(..., description="Publication date")
     similarity_score: float = Field(..., description="Similarity score")
 
 class Cluster(ClusterBase):
@@ -134,7 +134,7 @@ async def get_clusters(
             # Get articles for this cluster
             cursor.execute("""
                 SELECT 
-                    a.id, a.title, a.source, a.published_at, ca.similarity_score
+                    a.id, a.title, a.source, a.published_date, ca.similarity_score
                 FROM cluster_articles ca
                 JOIN articles a ON ca.article_id = a.id
                 WHERE ca.cluster_id = %s
@@ -147,7 +147,7 @@ async def get_clusters(
                     id=article_row[0],
                     title=article_row[1],
                     source=article_row[2],
-                    published_at=article_row[3],
+                    published_date=article_row[3],
                     similarity_score=article_row[4]
                 )
                 articles.append(article)
@@ -205,7 +205,7 @@ async def get_cluster(cluster_id: int = Path(..., description="Cluster ID")):
         # Get articles for this cluster
         cursor.execute("""
             SELECT 
-                a.id, a.title, a.source, a.published_at, ca.similarity_score
+                a.id, a.title, a.source, a.published_date, ca.similarity_score
             FROM cluster_articles ca
             JOIN articles a ON ca.article_id = a.id
             WHERE ca.cluster_id = %s
@@ -218,7 +218,7 @@ async def get_cluster(cluster_id: int = Path(..., description="Cluster ID")):
                 id=article_row[0],
                 title=article_row[1],
                 source=article_row[2],
-                published_at=article_row[3],
+                published_date=article_row[3],
                 similarity_score=article_row[4]
             )
             articles.append(article)

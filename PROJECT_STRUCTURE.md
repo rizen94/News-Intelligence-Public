@@ -82,7 +82,7 @@ news-intelligence-system/
 │
 ├── 📁 scripts/                    # Project scripts
 │   └── 📁 deployment/             # Deployment scripts
-│       ├── 📄 deploy.sh           # Main deployment script
+│       ├── 📄 deploy-v2.9.sh      # Main deployment script
 │       ├── 📄 setup_nas_admin.sh  # NAS setup
 │       └── 📄 setup_nas_storage.sh
 │
@@ -145,13 +145,13 @@ news-intelligence-system/
 ### **Standard Commands**
 ```bash
 # Deploy with local storage
-./scripts/deployment/deploy.sh local
+./scripts/deployment/deploy-v2.9.sh
 
 # Deploy with NAS storage
-./scripts/deployment/deploy.sh nas
+./scripts/deployment/deploy-v2.9.sh --nas
 
 # Deploy production
-./scripts/deployment/deploy.sh production
+./scripts/deployment/deploy-v2.9.sh --production
 ```
 
 ### **Environment Configuration**

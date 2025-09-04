@@ -9,7 +9,7 @@ from typing import Dict, Any, List, Optional
 from fastapi import APIRouter, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 
-from api.middleware.metrics import MetricsMiddleware
+from middleware.metrics import MetricsMiddleware
 
 router = APIRouter()
 

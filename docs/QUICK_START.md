@@ -99,10 +99,10 @@ nano .env
 ### **Quick Deploy (Local Storage)**
 ```bash
 # Make deployment script executable
-chmod +x scripts/deployment/deploy.sh
+chmod +x scripts/deployment/deploy-v2.9.sh
 
 # Deploy with local storage
-./scripts/deployment/deploy.sh local
+./scripts/deployment/deploy-v2.9.sh
 ```
 
 ### **What This Does**

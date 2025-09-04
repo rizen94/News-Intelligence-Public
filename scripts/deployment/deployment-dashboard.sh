@@ -66,7 +66,7 @@ show_usage() {
 # Function to get service status
 get_service_status() {
     local service="$1"
-    local status=$(docker compose -f docker-compose.unified.yml ps $service 2>/dev/null | grep -E "Up|Down|Exited" | awk '{print $3}' || echo "Unknown")
+    local status=$(docker compose -f docker-compose.yml ps $service 2>/dev/null | grep -E "Up|Down|Exited" | awk '{print $3}' || echo "Unknown")
     echo "$status"
 }
 
@@ -149,7 +149,7 @@ show_recent_logs() {
     print_header "Recent Logs (Last 10 lines)"
     echo "┌─────────────────────────────────────────────────────────────┐"
     
-    local log_output=$(docker compose -f docker-compose.unified.yml logs --tail=10 2>/dev/null || echo "No logs available")
+    local log_output=$(docker compose -f docker-compose.yml logs --tail=10 2>/dev/null || echo "No logs available")
     
     while IFS= read -r line; do
         # Truncate long lines
@@ -186,7 +186,7 @@ show_deployment_info() {
     echo "│ Property        │ Value                                   │"
     echo "├─────────────────┼─────────────────────────────────────────┤"
     
-    local deployment_time=$(stat -c %y docker-compose.unified.yml 2>/dev/null | cut -d' ' -f1,2 | cut -d'.' -f1 || echo "Unknown")
+    local deployment_time=$(stat -c %y docker-compose.yml 2>/dev/null | cut -d' ' -f1,2 | cut -d'.' -f1 || echo "Unknown")
     local docker_version=$(docker --version 2>/dev/null | cut -d' ' -f3 | cut -d',' -f1 || echo "Unknown")
     local compose_version=$(docker compose version 2>/dev/null | cut -d' ' -f4 || echo "Unknown")
     
@@ -302,8 +302,8 @@ main() {
     fi
     
     # Check if unified files exist
-    if [[ ! -f "docker-compose.unified.yml" ]]; then
-        print_error "docker-compose.unified.yml not found!"
+    if [[ ! -f "docker-compose.yml" ]]; then
+        print_error "docker-compose.yml not found!"
         print_error "Make sure you're running this script from the project root directory"
         exit 1
     fi

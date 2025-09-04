@@ -59,8 +59,8 @@ cat .env | grep -E "ENVIRONMENT|STORAGE_TYPE|ENABLE_MONITORING"
 # ENABLE_MONITORING=false
 
 # 3. Deploy the system
-chmod +x scripts/deployment/deploy.sh
-./scripts/deployment/deploy.sh local
+chmod +x scripts/deployment/deploy-v2.9.sh
+./scripts/deployment/deploy-v2.9.sh
 ```
 
 ### **What Gets Deployed**
@@ -108,7 +108,7 @@ ENABLE_MONITORING=true
 ### **Deploy with NAS Storage**
 ```bash
 # Deploy with NAS storage and monitoring
-./scripts/deployment/deploy.sh nas --clean
+./scripts/deployment/deploy-v2.9.sh --clean
 ```
 
 ### **What Gets Deployed**
@@ -160,7 +160,7 @@ LOG_LEVEL=WARNING
 ### **Deploy Production System**
 ```bash
 # Deploy production with full monitoring
-./scripts/deployment/deploy.sh production --clean --build
+./scripts/deployment/deploy-v2.9.sh --clean --build
 ```
 
 ### **Production Features**

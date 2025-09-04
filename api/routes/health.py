@@ -12,8 +12,8 @@ from typing import Dict, Any, List
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
 
-from api.config.database import get_db_connection
-from api.middleware.metrics import MetricsMiddleware
+from config.database import get_db_connection
+from middleware.metrics import MetricsMiddleware
 
 router = APIRouter()
 
@@ -69,14 +69,28 @@ async def health_check():
         # Check monitoring
         monitoring_status = await check_monitoring_health()
         
-        # Determine overall status
-        all_healthy = all([
-            db_status["status"] == "healthy",
-            ml_status["status"] == "healthy",
-            monitoring_status["status"] == "healthy"
-        ])
+        # Check story management
+        story_management_status = await check_story_management_health()
         
-        overall_status = "healthy" if all_healthy else "degraded"
+        # Check feedback loop
+        feedback_loop_status = await check_feedback_loop_health()
+        
+        # Check RSS collection
+        rss_status = await check_rss_collection_health()
+        
+        # Determine overall status
+        critical_services = [db_status, ml_status]
+        optional_services = [monitoring_status, story_management_status, feedback_loop_status, rss_status]
+        
+        critical_healthy = all(service["status"] == "healthy" for service in critical_services)
+        optional_healthy = all(service["status"] in ["healthy", "degraded"] for service in optional_services)
+        
+        if critical_healthy and optional_healthy:
+            overall_status = "healthy"
+        elif critical_healthy:
+            overall_status = "degraded"
+        else:
+            overall_status = "unhealthy"
         
         return HealthResponse(
             status=overall_status,
@@ -86,7 +100,10 @@ async def health_check():
             services={
                 "database": db_status,
                 "ml_pipeline": ml_status,
-                "monitoring": monitoring_status
+                "monitoring": monitoring_status,
+                "story_management": story_management_status,
+                "feedback_loop": feedback_loop_status,
+                "rss_collection": rss_status
             }
         )
         
@@ -110,6 +127,21 @@ async def ml_pipeline_health():
 async def monitoring_health():
     """Check monitoring system status"""
     return await check_monitoring_health()
+
+@router.get("/story-management", response_model=ServiceStatus)
+async def story_management_health():
+    """Check story management system status"""
+    return await check_story_management_health()
+
+@router.get("/feedback-loop", response_model=ServiceStatus)
+async def feedback_loop_health():
+    """Check feedback loop system status"""
+    return await check_feedback_loop_health()
+
+@router.get("/rss", response_model=ServiceStatus)
+async def rss_health():
+    """Check RSS collection system status"""
+    return await check_rss_collection_health()
 
 @router.get("/metrics", response_model=SystemMetrics)
 async def system_metrics():
@@ -227,12 +259,24 @@ async def check_ml_pipeline_health() -> Dict[str, Any]:
     start_time = time.time()
     
     try:
-        # Import ML pipeline
-        from api.modules.ml.ml_pipeline import MLPipeline
+        # Check if ML pipeline is available in app state
+        from main import app_state
         
-        # Check if ML pipeline is available
-        pipeline = MLPipeline()
-        is_healthy = pipeline.is_healthy()
+        if "ml_pipeline" not in app_state or not app_state.get("ml_available", False):
+            return {
+                "status": "unhealthy",
+                "message": "ML pipeline not initialized",
+                "last_check": datetime.utcnow(),
+                "response_time_ms": (time.time() - start_time) * 1000
+            }
+        
+        # Check if pipeline has is_healthy method
+        pipeline = app_state["ml_pipeline"]
+        if hasattr(pipeline, 'is_healthy'):
+            is_healthy = pipeline.is_healthy()
+        else:
+            # Basic check - if pipeline exists and is initialized
+            is_healthy = pipeline is not None
         
         response_time = (time.time() - start_time) * 1000
         
@@ -264,12 +308,24 @@ async def check_monitoring_health() -> Dict[str, Any]:
     start_time = time.time()
     
     try:
-        # Import monitoring
-        from api.modules.monitoring.resource_logger import ResourceLogger
+        # Check if monitoring is available in app state
+        from main import app_state
         
-        # Check if monitoring is available
-        monitor = ResourceLogger()
-        is_healthy = monitor.is_healthy()
+        if "monitoring" not in app_state or not app_state.get("monitoring_available", False):
+            return {
+                "status": "unhealthy",
+                "message": "Monitoring system not initialized",
+                "last_check": datetime.utcnow(),
+                "response_time_ms": (time.time() - start_time) * 1000
+            }
+        
+        # Check if monitoring has is_healthy method
+        monitor = app_state["monitoring"]
+        if hasattr(monitor, 'is_healthy'):
+            is_healthy = monitor.is_healthy()
+        else:
+            # Basic check - if monitor exists and is initialized
+            is_healthy = monitor is not None
         
         response_time = (time.time() - start_time) * 1000
         
@@ -328,8 +384,169 @@ async def get_articles_processed_today() -> int:
 async def get_ml_queue_size() -> int:
     """Get ML processing queue size"""
     try:
-        from api.modules.ml.ml_pipeline import MLPipeline
-        pipeline = MLPipeline()
-        return pipeline.get_queue_size()
+        from main import app_state
+        if "ml_pipeline" in app_state and app_state.get("ml_available", False):
+            pipeline = app_state["ml_pipeline"]
+            if hasattr(pipeline, 'get_queue_size'):
+                return pipeline.get_queue_size()
+        return 0
     except:
         return 0
+
+async def check_story_management_health() -> Dict[str, Any]:
+    """Check story management system health"""
+    start_time = time.time()
+    
+    try:
+        # Check if story management tables exist and are accessible
+        conn = await get_db_connection()
+        cursor = conn.cursor()
+        
+        # Check story_expectations table
+        cursor.execute("""
+            SELECT COUNT(*) FROM story_expectations 
+            WHERE is_active = true
+        """)
+        active_stories = cursor.fetchone()[0]
+        
+        # Check story_targets table
+        cursor.execute("SELECT COUNT(*) FROM story_targets WHERE is_active = true")
+        active_targets = cursor.fetchone()[0]
+        
+        cursor.close()
+        conn.close()
+        
+        response_time = (time.time() - start_time) * 1000
+        
+        return {
+            "status": "healthy",
+            "message": f"Story management operational - {active_stories} active stories, {active_targets} targets",
+            "last_check": datetime.utcnow(),
+            "response_time_ms": response_time,
+            "active_stories": active_stories,
+            "active_targets": active_targets
+        }
+        
+    except Exception as e:
+        return {
+            "status": "unhealthy",
+            "message": f"Story management error: {str(e)}",
+            "last_check": datetime.utcnow(),
+            "response_time_ms": (time.time() - start_time) * 1000
+        }
+
+async def check_feedback_loop_health() -> Dict[str, Any]:
+    """Check feedback loop system health"""
+    start_time = time.time()
+    
+    try:
+        # Check feedback loop status table
+        conn = await get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            SELECT is_running, last_run, stories_being_tracked, 
+                   articles_processed_today, context_growth_percentage
+            FROM feedback_loop_status 
+            ORDER BY created_at DESC 
+            LIMIT 1
+        """)
+        
+        result = cursor.fetchone()
+        cursor.close()
+        conn.close()
+        
+        response_time = (time.time() - start_time) * 1000
+        
+        if result:
+            is_running, last_run, stories_tracked, articles_processed, growth = result
+            status = "healthy" if is_running else "degraded"
+            message = f"Feedback loop {'running' if is_running else 'stopped'} - {stories_tracked} stories tracked, {articles_processed} articles processed today"
+        else:
+            status = "unhealthy"
+            message = "No feedback loop status found"
+            is_running = False
+            stories_tracked = 0
+            articles_processed = 0
+            growth = 0.0
+        
+        return {
+            "status": status,
+            "message": message,
+            "last_check": datetime.utcnow(),
+            "response_time_ms": response_time,
+            "is_running": is_running,
+            "stories_tracked": stories_tracked,
+            "articles_processed_today": articles_processed,
+            "context_growth_percentage": float(growth) if growth else 0.0
+        }
+        
+    except Exception as e:
+        return {
+            "status": "unhealthy",
+            "message": f"Feedback loop error: {str(e)}",
+            "last_check": datetime.utcnow(),
+            "response_time_ms": (time.time() - start_time) * 1000
+        }
+
+async def check_rss_collection_health() -> Dict[str, Any]:
+    """Check RSS collection system health"""
+    start_time = time.time()
+    
+    try:
+        # Check RSS feeds table
+        conn = await get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            SELECT 
+                COUNT(*) as total_feeds,
+                COUNT(CASE WHEN is_active = true THEN 1 END) as active_feeds,
+                COUNT(CASE WHEN last_success > NOW() - INTERVAL '24 hours' THEN 1 END) as recent_success,
+                AVG(article_count) as avg_articles_per_feed
+            FROM rss_feeds
+        """)
+        
+        result = cursor.fetchone()
+        cursor.close()
+        conn.close()
+        
+        response_time = (time.time() - start_time) * 1000
+        
+        if result:
+            total_feeds, active_feeds, recent_success, avg_articles = result
+            avg_articles = float(avg_articles) if avg_articles else 0.0
+            
+            if active_feeds > 0 and recent_success > 0:
+                status = "healthy"
+                message = f"RSS collection operational - {active_feeds}/{total_feeds} active feeds, {recent_success} recent successes"
+            elif active_feeds > 0:
+                status = "degraded"
+                message = f"RSS collection partially operational - {active_feeds}/{total_feeds} active feeds, no recent successes"
+            else:
+                status = "unhealthy"
+                message = "No active RSS feeds configured"
+        else:
+            status = "unhealthy"
+            message = "No RSS feeds found"
+            total_feeds = active_feeds = recent_success = 0
+            avg_articles = 0.0
+        
+        return {
+            "status": status,
+            "message": message,
+            "last_check": datetime.utcnow(),
+            "response_time_ms": response_time,
+            "total_feeds": total_feeds,
+            "active_feeds": active_feeds,
+            "recent_successes": recent_success,
+            "avg_articles_per_feed": avg_articles
+        }
+        
+    except Exception as e:
+        return {
+            "status": "unhealthy",
+            "message": f"RSS collection error: {str(e)}",
+            "last_check": datetime.utcnow(),
+            "response_time_ms": (time.time() - start_time) * 1000
+        }

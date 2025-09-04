@@ -1043,6 +1043,128 @@ export const newsSystemService = {
     }
   },
 
+  // Story Management Functions
+  async getActiveStories() {
+    try {
+      const response = await api.get('/api/story-management/stories');
+      return response;
+    } catch (error) {
+      console.error('Failed to get active stories:', error);
+      throw error;
+    }
+  },
+
+  async createStoryExpectation(storyData) {
+    try {
+      const response = await api.post('/api/story-management/stories', storyData);
+      return response;
+    } catch (error) {
+      console.error('Failed to create story expectation:', error);
+      throw error;
+    }
+  },
+
+  async createUkraineRussiaConflictStory() {
+    try {
+      const response = await api.post('/api/story-management/stories/ukraine-russia-conflict');
+      return response;
+    } catch (error) {
+      console.error('Failed to create Ukraine-Russia conflict story:', error);
+      throw error;
+    }
+  },
+
+  async addStoryTargets(storyId, targets) {
+    try {
+      const response = await api.post(`/api/story-management/stories/${storyId}/targets`, targets);
+      return response;
+    } catch (error) {
+      console.error('Failed to add story targets:', error);
+      throw error;
+    }
+  },
+
+  async addStoryQualityFilters(storyId, filters) {
+    try {
+      const response = await api.post(`/api/story-management/stories/${storyId}/filters`, filters);
+      return response;
+    } catch (error) {
+      console.error('Failed to add story quality filters:', error);
+      throw error;
+    }
+  },
+
+  async evaluateArticleForStory(storyId, articleId) {
+    try {
+      const response = await api.post(`/api/story-management/stories/${storyId}/evaluate/${articleId}`);
+      return response;
+    } catch (error) {
+      console.error('Failed to evaluate article for story:', error);
+      throw error;
+    }
+  },
+
+  async generateWeeklyDigest(weekStart = null) {
+    try {
+      const params = weekStart ? { week_start: weekStart } : {};
+      const response = await api.post('/api/story-management/discovery/weekly-digest', null, { params });
+      return response;
+    } catch (error) {
+      console.error('Failed to generate weekly digest:', error);
+      throw error;
+    }
+  },
+
+  async getRecentDigests(limit = 5) {
+    try {
+      const response = await api.get(`/api/story-management/discovery/weekly-digests?limit=${limit}`);
+      return response;
+    } catch (error) {
+      console.error('Failed to get recent digests:', error);
+      throw error;
+    }
+  },
+
+  async getWeeklyDigest(digestId) {
+    try {
+      const response = await api.get(`/api/story-management/discovery/weekly-digests/${digestId}`);
+      return response;
+    } catch (error) {
+      console.error('Failed to get weekly digest:', error);
+      throw error;
+    }
+  },
+
+  async startFeedbackLoop() {
+    try {
+      const response = await api.post('/api/story-management/feedback-loop/start');
+      return response;
+    } catch (error) {
+      console.error('Failed to start feedback loop:', error);
+      throw error;
+    }
+  },
+
+  async stopFeedbackLoop() {
+    try {
+      const response = await api.post('/api/story-management/feedback-loop/stop');
+      return response;
+    } catch (error) {
+      console.error('Failed to stop feedback loop:', error);
+      throw error;
+    }
+  },
+
+  async getFeedbackLoopStatus() {
+    try {
+      const response = await api.get('/api/story-management/feedback-loop/status');
+      return response;
+    } catch (error) {
+      console.error('Failed to get feedback loop status:', error);
+      throw error;
+    }
+  },
+
   // Additional automation functions
   async getAutomationStatus() {
     try {

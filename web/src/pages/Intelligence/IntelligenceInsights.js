@@ -49,7 +49,7 @@ import {
   Security as SecurityIcon,
   Business as BusinessIcon,
   Public as PublicIcon,
-  Technology as TechnologyIcon,
+  Computer as TechnologyIcon,
   Assessment as AssessmentIcon,
   Visibility as VisibilityIcon,
   Share as ShareIcon,
@@ -68,8 +68,10 @@ import {
   Error as ErrorIcon
 } from '@mui/icons-material';
 import { newsSystemService } from '../../services/newsSystemService';
+import { useNotifications } from '../../components/Notifications/NotificationSystem';
 
 const IntelligenceInsights = () => {
+  const { showSuccess, showError, showLoading, showInfo } = useNotifications();
   const [insights, setInsights] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -81,29 +83,56 @@ const IntelligenceInsights = () => {
   const [sortBy, setSortBy] = useState('created_at');
   const [sortOrder, setSortOrder] = useState('desc');
   const [activeTab, setActiveTab] = useState(0);
+  const [buttonLoading, setButtonLoading] = useState({});
 
   useEffect(() => {
     fetchInsights();
   }, [filterCategory, filterConfidence, sortBy, sortOrder]);
 
-  const fetchInsights = async () => {
+  const fetchInsights = async (isManualRefresh = false) => {
     try {
       setLoading(true);
       setError(null);
 
+      if (isManualRefresh) {
+        showInfo('Loading intelligence insights...', 'Insights Refresh');
+      }
+
       const response = await newsSystemService.getIntelligenceInsights(filterCategory, 100);
       setInsights(response.insights || []);
+
+      if (isManualRefresh) {
+        showSuccess(`Loaded ${response.insights?.length || 0} insights`, 'Insights Updated');
+      }
     } catch (err) {
       console.error('Error fetching insights:', err);
       setError(err.message);
+      
+      if (isManualRefresh) {
+        showError(`Failed to load insights: ${err.message}`, 'Load Error');
+      }
     } finally {
       setLoading(false);
     }
   };
 
   const handleViewInsight = (insight) => {
-    setSelectedInsight(insight);
-    setDetailDialogOpen(true);
+    setButtonLoading(prev => ({ ...prev, [`view-${insight.id}`]: true }));
+    try {
+      setSelectedInsight(insight);
+      setDetailDialogOpen(true);
+    } finally {
+      setButtonLoading(prev => ({ ...prev, [`view-${insight.id}`]: false }));
+    }
+  };
+
+  const handleFilter = async () => {
+    setButtonLoading(prev => ({ ...prev, filter: true }));
+    try {
+      await fetchInsights(true);
+    } finally {
+      setButtonLoading(prev => ({ ...prev, filter: false }));
+    }
   };
 
   const handleCloseDialog = () => {
@@ -337,7 +366,7 @@ const IntelligenceInsights = () => {
                 <MenuItem value="">All</MenuItem>
                 <MenuItem value="high">High (80%+)</MenuItem>
                 <MenuItem value="medium">Medium (60-80%)</MenuItem>
-                <MenuItem value="low">Low (<60%)</MenuItem>
+                <MenuItem value="low">Low (&lt;60%)</MenuItem>
               </Select>
             </FormControl>
           </Grid>
@@ -373,10 +402,11 @@ const IntelligenceInsights = () => {
             <Button
               fullWidth
               variant="contained"
-              startIcon={<FilterIcon />}
-              onClick={fetchInsights}
+              startIcon={buttonLoading.filter ? <CircularProgress size={16} /> : <FilterIcon />}
+              onClick={handleFilter}
+              disabled={loading || buttonLoading.filter}
             >
-              Filter
+              {buttonLoading.filter ? 'Filtering...' : 'Filter'}
             </Button>
           </Grid>
         </Grid>
@@ -415,8 +445,14 @@ const IntelligenceInsights = () => {
                 }
                 action={
                   <Tooltip title="View Details">
-                    <IconButton size="small">
-                      <VisibilityIcon />
+                    <IconButton 
+                      size="small"
+                      disabled={buttonLoading[`view-${insight.id}`]}
+                    >
+                      {buttonLoading[`view-${insight.id}`] ? 
+                        <CircularProgress size={16} /> : 
+                        <VisibilityIcon />
+                      }
                     </IconButton>
                   </Tooltip>
                 }

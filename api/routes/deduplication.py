@@ -11,7 +11,7 @@ from enum import Enum
 from fastapi import APIRouter, HTTPException, Query, Path, Body
 from pydantic import BaseModel, Field
 
-from api.config.database import get_db_connection
+from config.database import get_db_connection
 
 router = APIRouter()
 
@@ -36,7 +36,7 @@ class ArticleInfo(BaseModel):
     title: str = Field(..., description="Article title")
     content: str = Field(..., description="Article content")
     source: str = Field(..., description="Article source")
-    published_at: datetime = Field(..., description="Publication date")
+    published_date: datetime = Field(..., description="Publication date")
     word_count: int = Field(..., description="Word count")
 
 class DuplicatePair(BaseModel):
@@ -148,8 +148,8 @@ async def get_duplicates(
             SELECT 
                 dp.id, dp.similarity_score, dp.title_similarity, dp.content_similarity,
                 dp.algorithm, dp.status, dp.detected_at,
-                a1.id, a1.title, a1.content, a1.source, a1.published_at, a1.word_count,
-                a2.id, a2.title, a2.content, a2.source, a2.published_at, a2.word_count
+                a1.id, a1.title, a1.content, a1.source, a1.published_date, a1.word_count,
+                a2.id, a2.title, a2.content, a2.source, a2.published_date, a2.word_count
             FROM duplicate_pairs dp
             JOIN articles a1 ON dp.article1_id = a1.id
             JOIN articles a2 ON dp.article2_id = a2.id
@@ -169,7 +169,7 @@ async def get_duplicates(
                     title=row[8],
                     content=row[9],
                     source=row[10],
-                    published_at=row[11],
+                    published_date=row[11],
                     word_count=row[12]
                 ),
                 article2=ArticleInfo(
@@ -177,7 +177,7 @@ async def get_duplicates(
                     title=row[14],
                     content=row[15],
                     source=row[16],
-                    published_at=row[17],
+                    published_date=row[17],
                     word_count=row[18]
                 ),
                 similarity_score=row[1],
@@ -216,8 +216,8 @@ async def get_duplicate(duplicate_id: int = Path(..., description="Duplicate ID"
             SELECT 
                 dp.id, dp.similarity_score, dp.title_similarity, dp.content_similarity,
                 dp.algorithm, dp.status, dp.detected_at,
-                a1.id, a1.title, a1.content, a1.source, a1.published_at, a1.word_count,
-                a2.id, a2.title, a2.content, a2.source, a2.published_at, a2.word_count
+                a1.id, a1.title, a1.content, a1.source, a1.published_date, a1.word_count,
+                a2.id, a2.title, a2.content, a2.source, a2.published_date, a2.word_count
             FROM duplicate_pairs dp
             JOIN articles a1 ON dp.article1_id = a1.id
             JOIN articles a2 ON dp.article2_id = a2.id
@@ -235,7 +235,7 @@ async def get_duplicate(duplicate_id: int = Path(..., description="Duplicate ID"
                 title=row[8],
                 content=row[9],
                 source=row[10],
-                published_at=row[11],
+                published_date=row[11],
                 word_count=row[12]
             ),
             article2=ArticleInfo(
@@ -243,7 +243,7 @@ async def get_duplicate(duplicate_id: int = Path(..., description="Duplicate ID"
                 title=row[14],
                 content=row[15],
                 source=row[16],
-                published_at=row[17],
+                published_date=row[17],
                 word_count=row[18]
             ),
             similarity_score=row[1],

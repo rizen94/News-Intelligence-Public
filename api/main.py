@@ -6,6 +6,7 @@ Modern, high-performance API with automatic OpenAPI documentation
 
 import os
 import sys
+import time
 import logging
 from contextlib import asynccontextmanager
 from typing import Dict, Any
@@ -13,7 +14,7 @@ from typing import Dict, Any
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.openapi.docs import get_swagger_ui_html, get_redoc_html
 from fastapi.openapi.utils import get_openapi
@@ -29,7 +30,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Import API modules
-from api.routes import (
+from routes import (
     articles,
     stories,
     intelligence,
@@ -45,11 +46,12 @@ from api.routes import (
     search,
     rag,
     ml_management,
-    automation
+    automation,
+    story_management
 )
 
 # Import middleware
-from api.middleware import (
+from middleware import (
     LoggingMiddleware,
     MetricsMiddleware,
     SecurityMiddleware
@@ -65,12 +67,12 @@ async def lifespan(app: FastAPI):
     logger.info("Starting News Intelligence System v2.9.0")
     
     # Initialize application state
-    app_state["startup_time"] = os.time.time()
+    app_state["startup_time"] = time.time()
     app_state["version"] = "2.9.0"
     
     # Initialize database connections
     try:
-        from api.config.database import init_database
+        from config.database import init_database
         await init_database()
         app_state["database_connected"] = True
         logger.info("Database connection established")
@@ -80,8 +82,10 @@ async def lifespan(app: FastAPI):
     
     # Initialize ML services
     try:
-        from api.modules.ml.ml_pipeline import MLPipeline
-        app_state["ml_pipeline"] = MLPipeline()
+        from modules.ml.ml_pipeline import MLPipeline
+        from config.database import get_db_config
+        db_config = get_db_config()
+        app_state["ml_pipeline"] = MLPipeline(db_config)
         app_state["ml_available"] = True
         logger.info("ML pipeline initialized")
     except Exception as e:
@@ -90,7 +94,7 @@ async def lifespan(app: FastAPI):
     
     # Initialize monitoring
     try:
-        from api.modules.monitoring.resource_logger import ResourceLogger
+        from modules.monitoring.resource_logger import ResourceLogger
         app_state["monitoring"] = ResourceLogger()
         app_state["monitoring_available"] = True
         logger.info("Monitoring system initialized")
@@ -164,11 +168,77 @@ app.include_router(search.router, prefix="/api/search", tags=["Search"])
 app.include_router(rag.router, prefix="/api/rag", tags=["RAG System"])
 app.include_router(ml_management.router, prefix="/api/ml-management", tags=["ML Management"])
 app.include_router(automation.router, prefix="/api/automation", tags=["Automation"])
+app.include_router(story_management.router, prefix="/api/story-management", tags=["Story Management"])
 
-# Mount static files
+# Mount static files (after API routes to prevent override)
 if os.path.exists("web/build"):
+    # Mount static assets at /static path
     app.mount("/static", StaticFiles(directory="web/build/static"), name="static")
-    app.mount("/", StaticFiles(directory="web/build", html=True), name="frontend")
+    
+    # Add specific routes for frontend (avoiding API path conflicts)
+    @app.get("/dashboard")
+    async def serve_dashboard():
+        """Serve frontend for dashboard route"""
+        if os.path.exists("web/build/index.html"):
+            return FileResponse("web/build/index.html")
+        else:
+            raise HTTPException(status_code=404, detail="Frontend not built")
+    
+    @app.get("/intelligence")
+    async def serve_intelligence():
+        """Serve frontend for intelligence route"""
+        if os.path.exists("web/build/index.html"):
+            return FileResponse("web/build/index.html")
+        else:
+            raise HTTPException(status_code=404, detail="Frontend not built")
+    
+    @app.get("/articles")
+    async def serve_articles():
+        """Serve frontend for articles route"""
+        if os.path.exists("web/build/index.html"):
+            return FileResponse("web/build/index.html")
+        else:
+            raise HTTPException(status_code=404, detail="Frontend not built")
+    
+    @app.get("/stories")
+    async def serve_stories():
+        """Serve frontend for stories route"""
+        if os.path.exists("web/build/index.html"):
+            return FileResponse("web/build/index.html")
+        else:
+            raise HTTPException(status_code=404, detail="Frontend not built")
+    
+    @app.get("/rss")
+    async def serve_rss():
+        """Serve frontend for RSS route"""
+        if os.path.exists("web/build/index.html"):
+            return FileResponse("web/build/index.html")
+        else:
+            raise HTTPException(status_code=404, detail="Frontend not built")
+    
+    @app.get("/deduplication")
+    async def serve_deduplication():
+        """Serve frontend for deduplication route"""
+        if os.path.exists("web/build/index.html"):
+            return FileResponse("web/build/index.html")
+        else:
+            raise HTTPException(status_code=404, detail="Frontend not built")
+    
+    @app.get("/ml")
+    async def serve_ml():
+        """Serve frontend for ML route"""
+        if os.path.exists("web/build/index.html"):
+            return FileResponse("web/build/index.html")
+        else:
+            raise HTTPException(status_code=404, detail="Frontend not built")
+    
+    @app.get("/monitoring")
+    async def serve_monitoring():
+        """Serve frontend for monitoring route"""
+        if os.path.exists("web/build/index.html"):
+            return FileResponse("web/build/index.html")
+        else:
+            raise HTTPException(status_code=404, detail="Frontend not built")
 
 # Custom OpenAPI schema
 def custom_openapi():

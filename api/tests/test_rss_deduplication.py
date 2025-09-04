@@ -7,7 +7,7 @@ import sys
 sys.path.append('/app/api')
 
 import logging
-from api.collectors.rss_collector import collect_rss_feeds
+from collectors.rss_collector import collect_rss_feeds
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')

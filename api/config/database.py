@@ -17,8 +17,8 @@ def get_db_config():
     return {
         'host': os.getenv('DB_HOST', 'postgres'),
         'database': os.getenv('DB_NAME', 'news_system'),
-        'user': os.getenv('DB_USER', 'NewsInt_DB'),
-        'password': os.getenv('DB_PASSWORD', 'Database@NEWSINT2025'),
+        'user': os.getenv('DB_USER', 'newsapp'),
+        'password': os.getenv('DB_PASSWORD', 'newsapp123'),
         'port': os.getenv('DB_PORT', '5432')
     }
 
