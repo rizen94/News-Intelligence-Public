@@ -31,6 +31,11 @@ class APIResponse(BaseModel, Generic[T]):
     error: Optional[str] = Field(None, description="Error message if unsuccessful")
     meta: Optional[Dict[str, Any]] = Field(None, description="Additional metadata")
     timestamp: datetime = Field(default_factory=datetime.utcnow, description="Response timestamp")
+    
+    class Config:
+        json_encoders = {
+            datetime: lambda v: v.isoformat() if v else None
+        }
 
 class PaginatedResponse(BaseModel, Generic[T]):
     """Paginated response format"""
@@ -41,6 +46,11 @@ class PaginatedResponse(BaseModel, Generic[T]):
     message: Optional[str] = Field(None, description="Success or informational message")
     error: Optional[str] = Field(None, description="Error message if unsuccessful")
     timestamp: datetime = Field(default_factory=datetime.utcnow, description="Response timestamp")
+    
+    class Config:
+        json_encoders = {
+            datetime: lambda v: v.isoformat() if v else None
+        }
 
 class ErrorResponse(BaseModel):
     """Standardized error response format"""
@@ -50,6 +60,11 @@ class ErrorResponse(BaseModel):
     error_code: Optional[str] = Field(None, description="Error code for programmatic handling")
     details: Optional[Dict[str, Any]] = Field(None, description="Additional error details")
     timestamp: datetime = Field(default_factory=datetime.utcnow, description="Error timestamp")
+    
+    class Config:
+        json_encoders = {
+            datetime: lambda v: v.isoformat() if v else None
+        }
 
 # Utility functions for creating responses
 def create_success_response(data: T, message: str = None, meta: Dict[str, Any] = None) -> APIResponse[T]:

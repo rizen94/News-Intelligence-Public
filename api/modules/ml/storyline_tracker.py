@@ -1,6 +1,7 @@
 """
 Storyline Tracker for News Intelligence System
 Manages story evolution, topic clustering, and dossier generation
+Uses local processing only - no external AI services
 """
 
 import logging

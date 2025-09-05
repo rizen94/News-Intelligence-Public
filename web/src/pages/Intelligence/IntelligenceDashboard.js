@@ -663,7 +663,7 @@ const IntelligenceDashboard = () => {
                     </Box>
                     <Box>
                       <Box display="flex" justifyContent="space-between" mb={1}>
-                        <Typography variant="body2">Low (<60%)</Typography>
+                        <Typography variant="body2">Low (&lt;60%)</Typography>
                         <Typography variant="body2">
                           {insights.filter(i => i.confidence < 0.6).length}
                         </Typography>

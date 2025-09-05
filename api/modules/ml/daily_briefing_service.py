@@ -1,6 +1,7 @@
 """
 Automated Daily Briefing Service for News Intelligence System
 Generates scheduled daily intelligence reports with topic clouds and breaking news
+Uses local processing only - no external AI services
 """
 
 import logging

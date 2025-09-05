@@ -33,7 +33,7 @@ const UnifiedDashboard = () => {
   const [dashboardData, setDashboardData] = useState({
     articles: { total: 0, processed: 0, pending: 0 },
     stories: { total: 0, active: 0, alerts: 0 },
-    system: { uptime: '0h 0m', status: 'healthy', version: '2.8.0' },
+    system: { uptime: '0h 0m', status: 'healthy', version: '3.1.0' },
     ml: { processing: false, queue: 0, completed: 0 },
     performance: { cpu: 0, memory: 0, disk: 0 },
     masterArticles: { total: 0, consolidated: 0, singleSource: 0 },
@@ -120,7 +120,7 @@ const UnifiedDashboard = () => {
         system: {
           uptime: systemData.uptime || '0h 0m',
           status: systemData.status || 'healthy',
-          version: '2.8.0'
+          version: '3.1.0'
         },
         ml: {
           processing: mlData.processing || false,

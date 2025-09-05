@@ -76,3 +76,5 @@ echo -e "  ${YELLOW}View logs:${NC} journalctl -u docker-cleanup.service -f"
 echo -e "  ${YELLOW}Disable cleanup:${NC} systemctl disable docker-cleanup.timer"
 
 
+
+

@@ -8,7 +8,7 @@ const initialState = {
   systemStatus: {
     isOnline: false,
     lastUpdate: null,
-    version: 'v2.8.0',
+    version: 'v3.1.0',
   },
   
   // Dashboard Data

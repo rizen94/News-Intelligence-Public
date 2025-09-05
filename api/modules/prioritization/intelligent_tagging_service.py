@@ -39,9 +39,9 @@ class IntelligentTaggingService:
         ]
         
         self.tech_terms = [
-            'AI', 'ML', 'NLP', 'GPT', 'ChatGPT', 'LLM', 'API', 'SaaS', 'PaaS',
-            'IaaS', 'IoT', '5G', '6G', 'WiFi', 'Bluetooth', 'NFC', 'RFID',
-            'QR', 'AR', 'VR', 'MR', 'XR', 'blockchain', 'bitcoin', 'ethereum'
+            'API', 'SaaS', 'PaaS', 'IaaS', 'IoT', '5G', '6G', 'WiFi', 
+            'Bluetooth', 'NFC', 'RFID', 'QR', 'AR', 'VR', 'MR', 'XR', 
+            'blockchain', 'bitcoin', 'ethereum', 'automation', 'digital'
         ]
     
     def extract_tags_from_content(self, content: str, title: str = '', max_tags: int = 20) -> List[Dict[str, Any]]:
