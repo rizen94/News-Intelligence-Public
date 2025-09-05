@@ -51,7 +51,7 @@ import {
   Link as LinkIcon,
   Schedule as ScheduleIcon,
 } from '@mui/icons-material';
-import { newsSystemService } from '../../services/newsSystemService';
+import newsSystemService from '../../services/newsSystemService';
 import { useNotifications } from '../../components/Notifications/NotificationSystem';
 
 const EnhancedArticles = () => {

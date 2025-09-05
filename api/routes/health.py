@@ -12,7 +12,7 @@ from typing import Dict, Any, List
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
 
-from config.database import get_db_connection
+from config.database import get_db_connection, get_database_health
 from middleware.metrics import MetricsMiddleware
 
 router = APIRouter()
@@ -223,35 +223,37 @@ async def liveness_check():
 
 # Helper functions
 async def check_database_health() -> Dict[str, Any]:
-    """Check database health and performance"""
+    """Check database health and performance using robust connection manager"""
     start_time = time.time()
     
     try:
-        # Test database connection
-        conn = await get_db_connection()
-        
-        # Test a simple query
-        cursor = conn.cursor()
-        cursor.execute("SELECT 1")
-        cursor.fetchone()
-        cursor.close()
-        conn.close()
-        
+        # Use robust database health check
+        health_status = get_database_health()
         response_time = (time.time() - start_time) * 1000
         
-        return {
-            "status": "healthy",
-            "message": "Database connection successful",
-            "last_check": datetime.utcnow(),
-            "response_time_ms": response_time
-        }
-        
+        if health_status["status"] == "healthy":
+            return {
+                "status": "healthy",
+                "message": "Database connection successful with robust pooling",
+                "last_check": datetime.utcnow(),
+                "response_time_ms": response_time,
+                "pool_status": health_status.get("pool_status", {})
+            }
+        else:
+            return {
+                "status": "unhealthy",
+                "message": f"Database error: {health_status.get('error', 'Unknown error')}",
+                "last_check": datetime.utcnow(),
+                "response_time_ms": response_time
+            }
+            
     except Exception as e:
+        response_time = (time.time() - start_time) * 1000
         return {
             "status": "unhealthy",
-            "message": f"Database error: {str(e)}",
+            "message": f"Database health check failed: {str(e)}",
             "last_check": datetime.utcnow(),
-            "response_time_ms": (time.time() - start_time) * 1000
+            "response_time_ms": response_time
         }
 
 async def check_ml_pipeline_health() -> Dict[str, Any]:

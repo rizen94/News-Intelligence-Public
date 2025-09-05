@@ -11,7 +11,7 @@ from enum import Enum
 from fastapi import APIRouter, HTTPException, Query, Path
 from pydantic import BaseModel, Field
 
-from config.database import get_db_connection
+from config.database import get_db_connection, get_db_cursor
 
 router = APIRouter()
 
@@ -42,7 +42,7 @@ class ArticleBase(BaseModel):
     title: str = Field(..., description="Article title")
     content: str = Field(..., description="Article content")
     url: str = Field(..., description="Article URL")
-    source: str = Field(..., description="Article source")
+    source: Optional[str] = Field(None, description="Article source")
     published_date: Optional[datetime] = Field(None, description="Publication timestamp")
 
 class ArticleCreate(ArticleBase):
@@ -67,6 +67,15 @@ class Article(ArticleBase):
     summary: Optional[str] = Field(None, description="AI-generated summary")
     quality_score: Optional[float] = Field(None, description="Quality score")
     ml_data: Optional[Dict[str, Any]] = Field(None, description="ML analysis data")
+    
+    # Additional fields for frontend
+    category: Optional[str] = Field(None, description="Article category")
+    sentiment_score: Optional[float] = Field(None, description="Sentiment score")
+    entities_extracted: Optional[List[str]] = Field(None, description="Extracted entities")
+    topics_extracted: Optional[List[str]] = Field(None, description="Extracted topics")
+    key_points: Optional[List[str]] = Field(None, description="Key points")
+    readability_score: Optional[float] = Field(None, description="Readability score")
+    engagement_score: Optional[float] = Field(None, description="Engagement score")
     
     class Config:
         from_attributes = True
@@ -99,7 +108,7 @@ class ArticleAnalysis(BaseModel):
     relevance_score: float = Field(..., description="Relevance score")
     processing_time: float = Field(..., description="Processing time in seconds")
 
-@router.get("/", response_model=ArticleList)
+@router.get("/")
 async def get_articles(
     page: int = Query(1, ge=1, description="Page number"),
     per_page: int = Query(20, ge=1, le=100, description="Articles per page"),
@@ -122,7 +131,7 @@ async def get_articles(
         params = []
         
         if status:
-            where_conditions.append("status = %s")
+            where_conditions.append("processing_status = %s")
             params.append(status.value)
         
         if source:
@@ -135,64 +144,156 @@ async def get_articles(
         
         where_clause = "WHERE " + " AND ".join(where_conditions) if where_conditions else ""
         
-        # Get total count
+        # Get total count and articles using robust connection
         count_query = f"SELECT COUNT(*) FROM articles {where_clause}"
-        conn = await get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute(count_query, params)
-        total = cursor.fetchone()[0]
-        
-        # Get articles
         order_clause = f"ORDER BY {sort_by.value} {sort_order.value.upper()}"
         articles_query = f"""
             SELECT 
                 id, title, content, url, source, published_date,
-                processing_status, created_at, processing_completed_at, processing_completed_at,
-                summary, quality_score, ml_data, ml_data, quality_score
+                processing_status, created_at, processing_completed_at,
+                summary, quality_score, ml_data,
+                category, sentiment_score, entities_extracted, topics_extracted,
+                key_points, readability_score, engagement_score,
+                timeline_relevance_score, timeline_processed, timeline_events_generated
             FROM articles 
             {where_clause}
             {order_clause}
             LIMIT %s OFFSET %s
         """
-        params.extend([per_page, offset])
-        cursor.execute(articles_query, params)
+        
+        # Use robust connection manager
+        from config.simple_robust_database import db_manager
+        
+        # Get total count
+        total = db_manager.execute_query(count_query, tuple(params))[0]['count']
+        
+        # Get articles
+        articles_params = params + [per_page, offset]
+        articles_rows = db_manager.execute_query(articles_query, tuple(articles_params))
         
         articles = []
-        for row in cursor.fetchall():
+        for row in articles_rows:
             articles.append(Article(
-                id=row[0],
-                title=row[1],
-                content=row[2],
-                url=row[3],
-                source=row[4],
-                published_date=row[5],
-                processing_status=row[6],
-                created_at=row[7],
-                processing_completed_at=row[8],
-                summary=row[10],
-                quality_score=row[11],
-                ml_data=row[12] if row[12] else {}
+                id=row['id'],
+                title=row['title'],
+                content=row['content'],
+                url=row['url'],
+                source=row['source'],
+                published_date=row['published_date'],
+                processing_status=row['processing_status'],
+                created_at=row['created_at'],
+                processing_completed_at=row['processing_completed_at'],
+                summary=row['summary'],
+                quality_score=row['quality_score'],
+                ml_data=row['ml_data'] if row['ml_data'] else {},
+                category=row['category'],
+                sentiment_score=row['sentiment_score'],
+                entities_extracted=row['entities_extracted'] if row['entities_extracted'] else [],
+                topics_extracted=row['topics_extracted'] if row['topics_extracted'] else [],
+                key_points=row['key_points'] if row['key_points'] else [],
+                readability_score=row['readability_score'],
+                engagement_score=row['engagement_score']
             ))
+        
+        # Return in standard API format
+        return {
+            "success": True,
+            "data": {
+                "articles": articles,
+                "total": total,
+                "page": page,
+                "per_page": per_page,
+                "has_next": offset + per_page < total,
+                "has_prev": page > 1
+            },
+            "message": "Articles retrieved successfully"
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "data": None,
+            "message": f"Failed to get articles: {str(e)}",
+            "error": str(e)
+        }
+
+@router.get("/sources")
+async def get_sources():
+    """
+    Get list of unique article sources
+    
+    Returns all unique sources from articles
+    """
+    try:
+        conn = await get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            SELECT DISTINCT source, COUNT(*) as article_count
+            FROM articles 
+            WHERE source IS NOT NULL
+            GROUP BY source
+            ORDER BY article_count DESC
+        """)
+        
+        sources = [{"name": row[0], "count": row[1]} for row in cursor.fetchall()]
         
         cursor.close()
         conn.close()
         
-        return ArticleList(
-            articles=articles,
-            total=total,
-            page=page,
-            per_page=per_page,
-            has_next=offset + per_page < total,
-            has_prev=page > 1
-        )
+        return {
+            "success": True,
+            "data": sources,
+            "message": "Sources retrieved successfully"
+        }
         
     except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to get articles: {str(e)}"
-        )
+        return {
+            "success": False,
+            "data": [],
+            "message": f"Failed to get sources: {str(e)}",
+            "error": str(e)
+        }
 
-@router.get("/{article_id}", response_model=Article)
+@router.get("/categories")
+async def get_categories():
+    """
+    Get list of unique article categories
+    
+    Returns all unique categories from articles
+    """
+    try:
+        conn = await get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            SELECT DISTINCT category, COUNT(*) as article_count
+            FROM articles 
+            WHERE category IS NOT NULL
+            GROUP BY category
+            ORDER BY article_count DESC
+        """)
+        
+        categories = [{"name": row[0], "count": row[1]} for row in cursor.fetchall()]
+        
+        cursor.close()
+        conn.close()
+        
+        return {
+            "success": True,
+            "data": categories,
+            "message": "Categories retrieved successfully"
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "data": [],
+            "message": f"Failed to get categories: {str(e)}",
+            "error": str(e)
+        }
+
+@router.get("/{article_id}")
 async def get_article(
     article_id: int = Path(..., description="Article ID")
 ):
@@ -207,8 +308,11 @@ async def get_article(
         cursor.execute("""
             SELECT 
                 id, title, content, url, source, published_date,
-                status, created_at, processed_at, ml_processed_at,
-                summary, sentiment, entities, tags, relevance_score
+                processing_status, created_at, processing_completed_at,
+                summary, quality_score, ml_data,
+                category, sentiment_score, entities_extracted, topics_extracted,
+                key_points, readability_score, engagement_score,
+                timeline_relevance_score, timeline_processed, timeline_events_generated
             FROM articles 
             WHERE id = %s
         """, (article_id,))
@@ -218,36 +322,48 @@ async def get_article(
         conn.close()
         
         if not row:
-            raise HTTPException(
-                status_code=404,
-                detail="Article not found"
-            )
+            return {
+                "success": False,
+                "data": None,
+                "message": "Article not found",
+                "error": "Article not found"
+            }
         
-        return Article(
+        article = Article(
             id=row[0],
             title=row[1],
             content=row[2],
             url=row[3],
             source=row[4],
             published_date=row[5],
-            status=ArticleStatus(row[6]),
+            processing_status=row[6],
             created_at=row[7],
-            processed_at=row[8],
-            ml_processed_at=row[9],
-            summary=row[10],
-            sentiment=row[11],
-            entities=row[12] if row[12] else [],
-            tags=row[13] if row[13] else [],
-            relevance_score=row[14]
+            processing_completed_at=row[8],
+            summary=row[9],
+            quality_score=row[10],
+            ml_data=row[11] if row[11] else {},
+            category=row[12],
+            sentiment_score=row[13],
+            entities_extracted=row[14] if row[14] else [],
+            topics_extracted=row[15] if row[15] else [],
+            key_points=row[16] if row[16] else [],
+            readability_score=row[17],
+            engagement_score=row[18]
         )
         
-    except HTTPException:
-        raise
+        return {
+            "success": True,
+            "data": article,
+            "message": "Article retrieved successfully"
+        }
+        
     except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to get article: {str(e)}"
-        )
+        return {
+            "success": False,
+            "data": None,
+            "message": f"Failed to get article: {str(e)}",
+            "error": str(e)
+        }
 
 @router.post("/", response_model=Article)
 async def create_article(article: ArticleCreate):
@@ -467,9 +583,16 @@ async def search_articles(search: ArticleSearch):
                 processing_status=row[6],
                 created_at=row[7],
                 processing_completed_at=row[8],
-                summary=row[10],
-                quality_score=row[11],
-                ml_data=row[12] if row[12] else {}
+                summary=row[9],
+                quality_score=row[10],
+                ml_data=row[11] if row[11] else {},
+                category=row[12],
+                sentiment_score=row[13],
+                entities_extracted=row[14] if row[14] else [],
+                topics_extracted=row[15] if row[15] else [],
+                key_points=row[16] if row[16] else [],
+                readability_score=row[17],
+                engagement_score=row[18]
             ))
         
         cursor.close()
@@ -617,9 +740,16 @@ async def get_related_articles(
                 processing_status=row[6],
                 created_at=row[7],
                 processing_completed_at=row[8],
-                summary=row[10],
-                quality_score=row[11],
-                ml_data=row[12] if row[12] else {}
+                summary=row[9],
+                quality_score=row[10],
+                ml_data=row[11] if row[11] else {},
+                category=row[12],
+                sentiment_score=row[13],
+                entities_extracted=row[14] if row[14] else [],
+                topics_extracted=row[15] if row[15] else [],
+                key_points=row[16] if row[16] else [],
+                readability_score=row[17],
+                engagement_score=row[18]
             ))
         
         cursor.close()
@@ -655,9 +785,9 @@ async def get_article_stats():
         
         # Articles by status
         cursor.execute("""
-            SELECT status, COUNT(*) 
+            SELECT processing_status, COUNT(*) 
             FROM articles 
-            GROUP BY status
+            GROUP BY processing_status
         """)
         stats["by_status"] = dict(cursor.fetchall())
         
@@ -683,9 +813,9 @@ async def get_article_stats():
         
         # Average sentiment
         cursor.execute("""
-            SELECT AVG(sentiment) 
+            SELECT AVG(sentiment_score) 
             FROM articles 
-            WHERE sentiment IS NOT NULL
+            WHERE sentiment_score IS NOT NULL
         """)
         result = cursor.fetchone()[0]
         stats["avg_sentiment"] = float(result) if result else 0.0
@@ -693,10 +823,92 @@ async def get_article_stats():
         cursor.close()
         conn.close()
         
-        return stats
+        return {
+            "success": True,
+            "data": stats,
+            "message": "Article statistics retrieved successfully"
+        }
         
     except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to get article stats: {str(e)}"
-        )
+        return {
+            "success": False,
+            "data": None,
+            "message": f"Failed to get article stats: {str(e)}",
+            "error": str(e)
+        }
+
+@router.get("/sources")
+async def get_sources():
+    """
+    Get list of unique article sources
+    
+    Returns all unique sources from articles
+    """
+    try:
+        conn = await get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            SELECT DISTINCT source, COUNT(*) as article_count
+            FROM articles 
+            WHERE source IS NOT NULL
+            GROUP BY source
+            ORDER BY article_count DESC
+        """)
+        
+        sources = [{"name": row[0], "count": row[1]} for row in cursor.fetchall()]
+        
+        cursor.close()
+        conn.close()
+        
+        return {
+            "success": True,
+            "data": sources,
+            "message": "Sources retrieved successfully"
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "data": [],
+            "message": f"Failed to get sources: {str(e)}",
+            "error": str(e)
+        }
+
+@router.get("/categories")
+async def get_categories():
+    """
+    Get list of unique article categories
+    
+    Returns all unique categories from articles
+    """
+    try:
+        conn = await get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            SELECT DISTINCT category, COUNT(*) as article_count
+            FROM articles 
+            WHERE category IS NOT NULL
+            GROUP BY category
+            ORDER BY article_count DESC
+        """)
+        
+        categories = [{"name": row[0], "count": row[1]} for row in cursor.fetchall()]
+        
+        cursor.close()
+        conn.close()
+        
+        return {
+            "success": True,
+            "data": categories,
+            "message": "Categories retrieved successfully"
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "data": [],
+            "message": f"Failed to get categories: {str(e)}",
+            "error": str(e)
+        }

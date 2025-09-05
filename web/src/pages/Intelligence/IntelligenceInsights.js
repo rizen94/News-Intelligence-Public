@@ -67,7 +67,7 @@ import {
   Warning as WarningIcon,
   Error as ErrorIcon
 } from '@mui/icons-material';
-import { newsSystemService } from '../../services/newsSystemService';
+import newsSystemService from '../../services/newsSystemService';
 import { useNotifications } from '../../components/Notifications/NotificationSystem';
 
 const IntelligenceInsights = () => {

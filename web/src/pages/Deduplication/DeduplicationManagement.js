@@ -106,7 +106,7 @@ import {
   ThumbUpOutlined as ThumbUpOutlinedIcon,
   ThumbDownOutlined as ThumbDownOutlinedIcon
 } from '@mui/icons-material';
-import { newsSystemService } from '../../services/newsSystemService';
+import newsSystemService from '../../services/newsSystemService';
 
 const DeduplicationManagement = () => {
   const [duplicates, setDuplicates] = useState([]);

@@ -87,61 +87,69 @@ const ContentPrioritization = () => {
 
   const loadData = async () => {
     setLoading(true);
+    setError(null);
+    
     try {
-      // Load priority rules, content priorities, and story threads
-      // These would be real API calls in production
-      setPriorityRules([
-        {
-          id: 1,
-          name: 'Breaking News',
-          condition: 'title contains "breaking" OR "urgent"',
-          priority: 'critical',
-          enabled: true,
-          created_at: new Date().toISOString()
-        },
-        {
-          id: 2,
-          name: 'High-Impact Technology',
-          condition: 'category = "technology" AND entities contains "AI"',
-          priority: 'high',
-          enabled: true,
-          created_at: new Date().toISOString()
-        }
+      // Load priority rules, content priorities, and story threads from API
+      const [rulesResponse, prioritiesResponse, statsResponse, threadsResponse] = await Promise.all([
+        newsSystemService.getPriorityRules(),
+        newsSystemService.getContentPriorities(),
+        newsSystemService.getPriorityStats(),
+        newsSystemService.getStoryThreads()
       ]);
       
-      setContentPriorities([
-        {
-          id: 1,
-          article_id: 1,
-          title: 'AI Regulation Breakthrough',
-          priority_level: 'critical',
-          priority_score: 0.95,
-          assigned_by: 'system',
-          assigned_at: new Date().toISOString()
-        }
-      ]);
+      // Check for critical failures
+      const failures = [];
       
-      setPriorityStats({
-        total_articles: 1250,
-        critical_priority: 45,
-        high_priority: 180,
-        medium_priority: 650,
-        low_priority: 375,
-        avg_priority_score: 0.68
-      });
+      if (!rulesResponse.success) {
+        failures.push('Priority rules');
+        console.error('Failed to load priority rules:', rulesResponse.error);
+      } else {
+        setPriorityRules(rulesResponse.data || []);
+      }
       
-      setStoryThreads([
-        {
-          id: 1,
-          title: 'AI Regulation Developments',
-          priority: 'high',
-          article_count: 25,
-          last_updated: new Date().toISOString()
-        }
-      ]);
+      if (!prioritiesResponse.success) {
+        failures.push('Content priorities');
+        console.error('Failed to load content priorities:', prioritiesResponse.error);
+      } else {
+        setContentPriorities(prioritiesResponse.data || []);
+      }
+      
+      if (!statsResponse.success) {
+        failures.push('Priority statistics');
+        console.error('Failed to load priority stats:', statsResponse.error);
+      } else {
+        setPriorityStats(statsResponse.data || {
+          total_articles: 0,
+          critical_priority: 0,
+          high_priority: 0,
+          medium_priority: 0,
+          low_priority: 0,
+          avg_priority_score: 0
+        });
+      }
+      
+      if (!threadsResponse.success) {
+        failures.push('Story threads');
+        console.error('Failed to load story threads:', threadsResponse.error);
+      } else {
+        setStoryThreads(threadsResponse.data || []);
+      }
+      
+      // If any critical data failed to load, show error
+      if (failures.length > 0) {
+        const errorMessage = `Failed to load: ${failures.join(', ')}. Please check your connection and try again.`;
+        setError(errorMessage);
+        showError(errorMessage);
+      } else {
+        showSuccess('Prioritization data loaded successfully');
+      }
       
     } catch (err) {
-      setError('Failed to load prioritization data: ' + err.message);
+      const errorMessage = 'Failed to load prioritization data: ' + err.message;
+      setError(errorMessage);
+      showError(errorMessage);
+      console.error('Error fetching prioritization data:', err);
     } finally {
       setLoading(false);
     }

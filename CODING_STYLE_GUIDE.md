@@ -301,12 +301,17 @@ const evaluateArticleForStory = async (storyId, articleId) => { /* ... */ };
 
 ## 🗄️ **DATABASE STANDARDS**
 
+> **📚 REFERENCE**: For complete database schema documentation, see [DATABASE_SCHEMA_DOCUMENTATION.md](./DATABASE_SCHEMA_DOCUMENTATION.md)
+
 ### **Table Naming**
 ```sql
 -- Use snake_case for table names
 articles
 rss_feeds
-story_threads
+story_expectations
+timeline_events
+timeline_periods
+timeline_milestones
 article_clusters
 content_priority_assignments
 automation_logs
@@ -324,16 +329,24 @@ created_at
 updated_at
 processing_status
 content_hash
+-- Timeline-specific columns
+timeline_relevance_score
+timeline_processed
+timeline_events_generated
 ```
 
 ### **Index Naming**
 ```sql
--- Use descriptive index names
+-- Use descriptive index names with table prefix
 idx_articles_category
 idx_articles_created_at
 idx_articles_processing_status
+idx_articles_timeline_relevance
+idx_timeline_events_storyline_id
+idx_timeline_events_event_date
+idx_timeline_events_importance_score
 idx_rss_feeds_is_active
-idx_story_threads_status
+idx_story_expectations_is_active
 ```
 
 ### **Constraint Naming**
@@ -341,8 +354,22 @@ idx_story_threads_status
 -- Use descriptive constraint names
 unique_content_hash
 unique_url
+unique_event_id
 fk_articles_rss_feed_id
+chk_importance_score
+chk_confidence_score
 check_quality_score_range
+```
+
+### **Timeline Features Schema**
+```sql
+-- New timeline-related tables (v3.0)
+timeline_events          -- ML-generated timeline events
+timeline_periods         -- Grouped events by time periods
+timeline_milestones      -- Key milestone events
+timeline_analysis        -- ML analysis results
+timeline_generation_log  -- ML generation tracking
+timeline_event_sources   -- Article-to-event mapping
 ```
 
 ---
@@ -513,16 +540,294 @@ Before committing code, ensure:
 
 ---
 
+## 🔌 **API SPECIFICATION & CONSISTENCY RULES**
+
+### **CRITICAL: ALWAYS REFERENCE THIS SECTION BEFORE ANY UPDATE**
+
+### **API Endpoint Standards**
+
+#### **Base URLs**
+```javascript
+// Frontend API calls
+const API_BASE_URL = 'http://localhost:8000';
+const API_ENDPOINTS = {
+  ARTICLES: '/api/articles',
+  STORYLINES: '/api/story-management/stories',
+  TIMELINE: '/api/storyline-timeline',
+  HEALTH: '/api/health',
+  RSS: '/api/rss',
+  INTELLIGENCE: '/api/intelligence'
+};
+```
+
+#### **Timeline API Endpoints**
+```javascript
+// Timeline-specific endpoints
+const TIMELINE_ENDPOINTS = {
+  GET_TIMELINE: '/api/storyline-timeline/{storyline_id}',
+  GET_EVENTS: '/api/storyline-timeline/{storyline_id}/events',
+  GET_MILESTONES: '/api/storyline-timeline/{storyline_id}/milestones'
+};
+```
+
+#### **Response Format Standards**
+```javascript
+// ALL API responses MUST follow this format:
+{
+  "success": boolean,
+  "data": any,           // Actual response data
+  "message": string,     // Optional success/error message
+  "error": string        // Optional error details
+}
+
+// Examples:
+// Success Response
+{
+  "success": true,
+  "data": { "articles": [...], "total": 50 },
+  "message": "Articles retrieved successfully"
+}
+
+// Error Response
+{
+  "success": false,
+  "data": null,
+  "message": "Failed to retrieve articles",
+  "error": "Database connection failed"
+}
+```
+
+### **Database Field Mapping Rules**
+
+#### **Storylines API Field Mapping**
+```javascript
+// FRONTEND → BACKEND Field Mapping
+const STORYLINE_FIELD_MAPPING = {
+  // Frontend Form Fields → Backend API Fields
+  'title' → 'name',                    // Storyline title
+  'description' → 'description',       // Storyline description
+  'priority' → 'priority_level',       // Priority (high=8, medium=5, low=3)
+  'status' → 'is_active',              // Active status
+  'targets' → 'keywords',              // Target keywords
+  'category' → 'geographic_regions',   // Geographic regions
+  'quality_filters' → 'quality_threshold' // Quality threshold
+};
+
+// BACKEND → FRONTEND Field Mapping
+const STORYLINE_DISPLAY_MAPPING = {
+  // Backend API Fields → Frontend Display Fields
+  'story_id' → 'id',                   // Unique identifier
+  'name' → 'title',                    // Display title
+  'priority_level' → 'priority',       // Display priority
+  'is_active' → 'status',              // Display status
+  'keywords' → 'targets',              // Display targets
+  'geographic_regions' → 'category',   // Display category
+  'quality_threshold' → 'quality_filters' // Display quality filters
+};
+```
+
+#### **Articles API Field Mapping**
+```javascript
+// Articles use consistent field names between frontend and backend
+const ARTICLE_FIELDS = [
+  'id', 'title', 'content', 'summary', 'source', 'url',
+  'published_date', 'created_at', 'updated_at',
+  'category', 'sentiment_score', 'entities_extracted',
+  'topics_extracted', 'key_points', 'readability_score',
+  'engagement_score', 'processing_status', 'content_hash'
+];
+```
+
+### **Button & Component Consistency Rules**
+
+#### **Button Click Handler Naming**
+```javascript
+// Use consistent naming patterns for all button handlers
+const BUTTON_HANDLERS = {
+  // CRUD Operations
+  'handleCreate' + ComponentName,      // handleCreateStoryline
+  'handleEdit' + ComponentName,        // handleEditStoryline
+  'handleDelete' + ComponentName,      // handleDeleteStoryline
+  'handleView' + ComponentName,        // handleViewArticle
+  
+  // Navigation
+  'handle' + Action + 'Click',         // handleArticleClick
+  'handle' + Action + 'Navigation',    // handleBackNavigation
+  
+  // Form Actions
+  'handle' + Action + 'Submit',        // handleFormSubmit
+  'handle' + Action + 'Cancel',        // handleFormCancel
+  'handle' + Action + 'Success',       // handleFormSuccess
+};
+```
+
+#### **ID Field Consistency**
+```javascript
+// ALWAYS use the correct ID field for each entity type
+const ID_FIELDS = {
+  'storylines': 'story_id',           // NOT 'id'
+  'articles': 'id',                   // Use 'id'
+  'rss_feeds': 'id',                  // Use 'id'
+  'users': 'id'                       // Use 'id'
+};
+
+// Examples of CORRECT usage:
+onClick={() => handleStorylineClick(storyline.story_id)}  // ✅ CORRECT
+onClick={() => handleArticleClick(article.id)}            // ✅ CORRECT
+
+// Examples of INCORRECT usage:
+onClick={() => handleStorylineClick(storyline.id)}        // ❌ WRONG
+onClick={() => handleArticleClick(article.story_id)}      // ❌ WRONG
+```
+
+### **API Service Function Standards**
+
+#### **Required API Service Functions**
+```javascript
+// ALL API service functions MUST follow this pattern:
+const newsSystemService = {
+  // Storylines
+  getActiveStories: async () => { /* ... */ },
+  createStoryExpectation: async (data) => { /* ... */ },
+  updateStoryline: async (id, data) => { /* ... */ },
+  deleteStoryline: async (id) => { /* ... */ },
+  
+  // Articles
+  getArticles: async (params) => { /* ... */ },
+  getArticle: async (id) => { /* ... */ },
+  addArticleToStoryline: async (storylineId, articleId, data) => { /* ... */ },
+  
+  // Health & System
+  getSystemHealth: async () => { /* ... */ },
+  getSystemMetrics: async () => { /* ... */ }
+};
+```
+
+#### **Error Handling Standards**
+```javascript
+// ALL API calls MUST include proper error handling:
+const handleApiCall = async (apiFunction, ...args) => {
+  try {
+    showLoading('Processing...');
+    const response = await apiFunction(...args);
+    
+    if (response.success) {
+      showSuccess('Operation completed successfully');
+      return response.data;
+    } else {
+      throw new Error(response.message || 'Operation failed');
+    }
+  } catch (error) {
+    console.error('API Error:', error);
+    showError(error.message || 'An unexpected error occurred');
+    throw error;
+  } finally {
+    // Always hide loading indicator
+  }
+};
+```
+
+### **Component State Management Rules**
+
+#### **Required State Variables**
+```javascript
+// ALL components MUST include these standard state variables:
+const [loading, setLoading] = useState(false);
+const [error, setError] = useState(null);
+const [data, setData] = useState([]);
+
+// For forms:
+const [formData, setFormData] = useState({});
+const [formErrors, setFormErrors] = useState({});
+const [isSubmitting, setIsSubmitting] = useState(false);
+
+// For dialogs:
+const [dialogOpen, setDialogOpen] = useState(false);
+const [selectedItem, setSelectedItem] = useState(null);
+```
+
+### **Navigation Consistency Rules**
+
+#### **Route Parameter Standards**
+```javascript
+// Use consistent route parameter names:
+const ROUTES = {
+  '/articles/:id': 'id',                    // Article ID
+  '/storylines/:storylineId': 'storylineId', // Storyline ID
+  '/storylines/:storylineId/timeline': 'storylineId', // Storyline ID
+  '/users/:userId': 'userId'                // User ID
+};
+
+// Access route parameters consistently:
+const { id } = useParams();              // For articles
+const { storylineId } = useParams();     // For storylines
+const { userId } = useParams();          // For users
+```
+
+### **Form Validation Standards**
+
+#### **Required Form Validation**
+```javascript
+// ALL forms MUST include validation:
+const validateForm = (formData) => {
+  const errors = {};
+  
+  // Required field validation
+  if (!formData.title?.trim()) {
+    errors.title = 'Title is required';
+  }
+  
+  // Length validation
+  if (formData.description?.length > 500) {
+    errors.description = 'Description must be less than 500 characters';
+  }
+  
+  // Range validation
+  if (formData.priority_level < 1 || formData.priority_level > 10) {
+    errors.priority_level = 'Priority must be between 1 and 10';
+  }
+  
+  return errors;
+};
+```
+
+### **Testing Requirements**
+
+#### **Pre-Update Testing Checklist**
+Before any update, test:
+- [ ] All buttons are clickable and functional
+- [ ] Form submissions work correctly
+- [ ] API calls return expected data format
+- [ ] Error handling displays appropriate messages
+- [ ] Navigation works between all pages
+- [ ] ID fields are correctly mapped
+- [ ] Loading states are properly managed
+
+---
+
 ## 🔄 **AI AGENT GUIDELINES**
 
+### **MANDATORY: Reference This Guide Before Every Update**
+
 When using AI agents (Claude Sonnet, GPT-5):
-1. **Always reference this style guide**
-2. **Maintain consistency** with existing code patterns
-3. **Use established naming conventions**
-4. **Follow the port reservation list**
-5. **Respect environment variable standards**
-6. **Update documentation** when adding new features
-7. **Test changes** before committing
+1. **ALWAYS reference this style guide** before making any changes
+2. **Check field mappings** in the API specification section
+3. **Verify ID field usage** for each entity type
+4. **Test all button functionality** after updates
+5. **Maintain consistent naming conventions**
+6. **Follow the port reservation list**
+7. **Respect environment variable standards**
+8. **Update documentation** when adding new features
+9. **Test changes** before committing
+10. **Use the pre-update testing checklist**
+
+### **Update Priority Order**
+1. **Read this coding style guide**
+2. **Check API field mappings**
+3. **Verify existing patterns**
+4. **Make changes following standards**
+5. **Test all functionality**
+6. **Update documentation if needed**
 
 ---
 

@@ -40,8 +40,6 @@ sentence-transformers==2.2.2
 # Additional ML dependencies for story management
 schedule==1.2.0
 chardet==5.2.0
-
-# GDELT API for RAG enhancement
 requests==2.31.0
 
 # Utilities

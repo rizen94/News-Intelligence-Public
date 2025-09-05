@@ -314,7 +314,7 @@ class MLPipeline:
             
             # Update processing status
             update_fields.append("processing_status = %s")
-            update_values.append("ml_processed")
+            update_values.append("completed")
             
             # Update content hash if available
             if content_analysis.get("content_hash"):

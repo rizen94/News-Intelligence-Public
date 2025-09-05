@@ -56,7 +56,7 @@ import {
   Error as ErrorIcon,
   Info as InfoIcon
 } from '@mui/icons-material';
-import { newsSystemService } from '../../services/newsSystemService';
+import newsSystemService from '../../services/newsSystemService';
 import { useNotifications } from '../../components/Notifications/NotificationSystem';
 
 const StoryControlDashboard = () => {

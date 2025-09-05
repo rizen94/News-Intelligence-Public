@@ -56,7 +56,7 @@ class SystemAlerts(BaseModel):
     warning_count: int = Field(..., description="Number of warning alerts")
     info_count: int = Field(..., description="Number of info alerts")
 
-@router.get("/", response_model=DashboardStats)
+@router.get("/")
 async def get_dashboard_stats():
     """
     Get comprehensive dashboard statistics
@@ -76,15 +76,19 @@ async def get_dashboard_stats():
         ml_queue_size = await get_ml_queue_size()
         uptime_hours = await get_system_uptime_hours()
         
-        return DashboardStats(
-            total_articles=total_articles,
-            articles_today=articles_today,
-            articles_this_hour=articles_this_hour,
-            active_stories=active_stories,
-            ml_processing_queue=ml_queue_size,
-            system_uptime_hours=uptime_hours,
-            last_update=datetime.utcnow()
-        )
+        return {
+            "success": True,
+            "data": {
+                "total_articles": total_articles,
+                "articles_today": articles_today,
+                "articles_this_hour": articles_this_hour,
+                "active_stories": active_stories,
+                "ml_processing_queue": ml_queue_size,
+                "system_uptime_hours": uptime_hours,
+                "last_update": datetime.utcnow().isoformat()
+            },
+            "message": "Dashboard stats retrieved successfully"
+        }
         
     except Exception as e:
         raise HTTPException(
@@ -92,7 +96,7 @@ async def get_dashboard_stats():
             detail=f"Failed to get dashboard stats: {str(e)}"
         )
 
-@router.get("/ingestion", response_model=IngestionStats)
+@router.get("/ingestion")
 async def get_ingestion_stats(
     period: str = Query("hour", description="Time period: hour, day, week")
 ):
@@ -114,13 +118,17 @@ async def get_ingestion_stats(
         avg_processing_time = await get_avg_processing_time(period)
         success_rate = await get_ingestion_success_rate(period)
         
-        return IngestionStats(
-            period=period,
-            articles_count=articles_count,
-            sources_count=sources_count,
-            avg_processing_time=avg_processing_time,
-            success_rate=success_rate
-        )
+        return {
+            "success": True,
+            "data": {
+                "period": period,
+                "articles_count": articles_count,
+                "sources_count": sources_count,
+                "avg_processing_time": avg_processing_time,
+                "success_rate": success_rate
+            },
+            "message": f"Ingestion stats retrieved for {period}"
+        }
         
     except HTTPException:
         raise
@@ -130,7 +138,7 @@ async def get_ingestion_stats(
             detail=f"Failed to get ingestion stats: {str(e)}"
         )
 
-@router.get("/ml-pipeline", response_model=MLPipelineStats)
+@router.get("/ml-pipeline")
 async def get_ml_pipeline_stats():
     """
     Get ML pipeline statistics
@@ -144,13 +152,17 @@ async def get_ml_pipeline_stats():
         models_status = await get_models_status()
         last_processed = await get_last_ml_processing_time()
         
-        return MLPipelineStats(
-            queue_size=queue_size,
-            processing_rate=processing_rate,
-            avg_processing_time=avg_processing_time,
-            models_status=models_status,
-            last_processed=last_processed
-        )
+        return {
+            "success": True,
+            "data": {
+                "queue_size": queue_size,
+                "processing_rate": processing_rate,
+                "avg_processing_time": avg_processing_time,
+                "models_status": models_status,
+                "last_processed": last_processed.isoformat() if last_processed else None
+            },
+            "message": "ML pipeline stats retrieved successfully"
+        }
         
     except Exception as e:
         raise HTTPException(
@@ -158,7 +170,7 @@ async def get_ml_pipeline_stats():
             detail=f"Failed to get ML pipeline stats: {str(e)}"
         )
 
-@router.get("/story-evolution", response_model=StoryEvolutionStats)
+@router.get("/story-evolution")
 async def get_story_evolution_stats():
     """
     Get story evolution statistics
@@ -172,13 +184,17 @@ async def get_story_evolution_stats():
         avg_articles_per_story = await get_avg_articles_per_story()
         top_categories = await get_top_story_categories()
         
-        return StoryEvolutionStats(
-            total_stories=total_stories,
-            active_stories=active_stories,
-            stories_today=stories_today,
-            avg_articles_per_story=avg_articles_per_story,
-            top_categories=top_categories
-        )
+        return {
+            "success": True,
+            "data": {
+                "total_stories": total_stories,
+                "active_stories": active_stories,
+                "stories_today": stories_today,
+                "avg_articles_per_story": avg_articles_per_story,
+                "top_categories": top_categories
+            },
+            "message": "Story evolution stats retrieved successfully"
+        }
         
     except Exception as e:
         raise HTTPException(
@@ -186,7 +202,7 @@ async def get_story_evolution_stats():
             detail=f"Failed to get story evolution stats: {str(e)}"
         )
 
-@router.get("/alerts", response_model=SystemAlerts)
+@router.get("/alerts")
 async def get_system_alerts():
     """
     Get system alerts and notifications
@@ -200,12 +216,16 @@ async def get_system_alerts():
         warning_count = sum(1 for alert in alerts if alert.get("severity") == "warning")
         info_count = sum(1 for alert in alerts if alert.get("severity") == "info")
         
-        return SystemAlerts(
-            alerts=alerts,
-            critical_count=critical_count,
-            warning_count=warning_count,
-            info_count=info_count
-        )
+        return {
+            "success": True,
+            "data": {
+                "alerts": alerts,
+                "critical_count": critical_count,
+                "warning_count": warning_count,
+                "info_count": info_count
+            },
+            "message": "System alerts retrieved successfully"
+        }
         
     except Exception as e:
         raise HTTPException(
@@ -227,7 +247,13 @@ async def get_recent_activity(
             limit = 100
         
         activities = await get_recent_activities(limit)
-        return {"activities": activities}
+        return {
+            "success": True,
+            "data": {
+                "activities": activities
+            },
+            "message": f"Recent activity retrieved successfully"
+        }
         
     except Exception as e:
         raise HTTPException(
@@ -292,8 +318,8 @@ async def get_active_stories() -> int:
         conn = await get_db_connection()
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT COUNT(*) FROM stories 
-            WHERE status = 'active'
+            SELECT COUNT(*) FROM story_expectations 
+            WHERE is_active = true
         """)
         count = cursor.fetchone()[0]
         cursor.close()
@@ -517,7 +543,7 @@ async def get_total_stories() -> int:
     try:
         conn = await get_db_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT COUNT(*) FROM stories")
+        cursor.execute("SELECT COUNT(*) FROM story_expectations")
         count = cursor.fetchone()[0]
         cursor.close()
         conn.close()
@@ -531,7 +557,7 @@ async def get_stories_today() -> int:
         conn = await get_db_connection()
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT COUNT(*) FROM stories 
+            SELECT COUNT(*) FROM story_expectations 
             WHERE DATE(created_at) = CURRENT_DATE
         """)
         count = cursor.fetchone()[0]
@@ -566,9 +592,10 @@ async def get_top_story_categories(limit: int = 5) -> List[Dict[str, Any]]:
         conn = await get_db_connection()
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT category, COUNT(*) as count 
-            FROM stories 
-            GROUP BY category 
+            SELECT 'general' as category, COUNT(*) as count 
+            FROM story_expectations 
+            WHERE is_active = true
+            GROUP BY 'general'
             ORDER BY count DESC 
             LIMIT %s
         """, (limit,))

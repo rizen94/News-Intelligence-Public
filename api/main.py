@@ -47,7 +47,10 @@ from routes import (
     rag,
     ml_management,
     automation,
-    story_management
+    story_management,
+    storyline_timeline,
+    ml_queue,
+    scaling
 )
 
 # Import middleware
@@ -169,6 +172,9 @@ app.include_router(rag.router, prefix="/api/rag", tags=["RAG System"])
 app.include_router(ml_management.router, prefix="/api/ml-management", tags=["ML Management"])
 app.include_router(automation.router, prefix="/api/automation", tags=["Automation"])
 app.include_router(story_management.router, prefix="/api/story-management", tags=["Story Management"])
+app.include_router(storyline_timeline.router, prefix="/api/storyline-timeline", tags=["Storyline Timeline"])
+app.include_router(ml_queue.router, prefix="/api/ml-queue", tags=["ML Queue Management"])
+app.include_router(scaling.router, prefix="/api/scaling", tags=["Scaling Management"])
 
 # Mount static files (after API routes to prevent override)
 if os.path.exists("web/build"):

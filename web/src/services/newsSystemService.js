@@ -47,40 +47,48 @@ export const newsSystemService = {
 
   // Dashboard
   async getDashboardStats() {
-    return api.get('/api/dashboard/');
+    const response = await api.get('/api/dashboard/');
+    return response.data;
   },
 
   async getIngestionStats(period = 'hour') {
-    return api.get('/api/dashboard/ingestion', { params: { period } });
+    const response = await api.get('/api/dashboard/ingestion', { params: { period } });
+    return response.data;
   },
 
   async getMLPipelineStats() {
-    return api.get('/api/dashboard/ml-pipeline');
+    const response = await api.get('/api/dashboard/ml-pipeline');
+    return response.data;
   },
 
   async getStoryEvolutionStats() {
-    return api.get('/api/dashboard/story-evolution');
+    const response = await api.get('/api/dashboard/story-evolution');
+    return response.data;
   },
 
   async getSystemAlerts() {
-    return api.get('/api/dashboard/alerts');
+    const response = await api.get('/api/dashboard/alerts');
+    return response.data;
   },
 
   async getRecentActivity(limit = 10) {
-    return api.get('/api/dashboard/recent-activity', { params: { limit } });
+    const response = await api.get('/api/dashboard/recent-activity', { params: { limit } });
+    return response.data;
   },
 
   // Articles
   async getArticles(filters = {}) {
     try {
-      const response = await api.get('/api/articles', { params: filters });
-      return response;
+      const response = await api.get('/api/articles/', { params: filters });
+      return response.data;
     } catch (error) {
       console.error('Failed to get articles:', error);
       return {
         success: false,
-        articles: [],
-        total: 0,
+        data: {
+          articles: [],
+          total: 0
+        },
         error: error.message
       };
     }
@@ -411,22 +419,13 @@ export const newsSystemService = {
     return api.get('/api/ml/status');
   },
 
-  async triggerMLProcessing() {
-    return api.post('/api/ml/process');
-  },
 
-  async getMLModels() {
-    return api.get('/api/ml/models');
-  },
 
   // Monitoring
   async getPrometheusMetrics() {
     return api.get('/api/monitoring/metrics');
   },
 
-  async getSystemMetrics() {
-    return api.get('/api/monitoring/system');
-  },
 
   async getMonitoringHealth() {
     return api.get('/api/monitoring/health');
@@ -469,17 +468,167 @@ export const newsSystemService = {
     }
   },
 
-  // Articles - Use the correct endpoint
-  async getArticles(filters = {}) {
+
+  // Get single article
+  async getArticle(id) {
     try {
-      const response = await api.get('/api/articles', { params: filters });
-      return response;
+      const response = await api.get(`/api/articles/${id}`);
+      
+      return {
+        success: response.data.success,
+        data: response.data.data,
+        error: response.data.success ? null : response.data.message
+      };
     } catch (error) {
-      console.error('Failed to get articles:', error);
+      console.error('Failed to get article:', error);
       return {
         success: false,
-        articles: [],
-        total: 0,
+        data: null,
+        error: error.response?.data?.detail || error.message || 'Network error'
+      };
+    }
+  },
+
+  // Add article to storyline
+  async addArticleToStoryline(storylineId, articleId, data = {}) {
+    try {
+      const response = await api.post(`/api/story-management/stories/${storylineId}/articles/${articleId}`, data);
+      
+      return {
+        success: true,
+        data: response.data
+      };
+    } catch (error) {
+      console.error('Failed to add article to storyline:', error);
+      return {
+        success: false,
+        data: null,
+        error: error.message
+      };
+    }
+  },
+
+  // Update storyline
+  async updateStoryline(storylineId, updateData) {
+    try {
+      const response = await api.put(`/api/story-management/stories/${storylineId}`, updateData);
+      
+      return {
+        success: true,
+        data: response.data
+      };
+    } catch (error) {
+      console.error('Failed to update storyline:', error);
+      return {
+        success: false,
+        data: null,
+        error: error.message
+      };
+    }
+  },
+
+  // Delete storyline
+  async deleteStoryline(storylineId) {
+    try {
+      const response = await api.delete(`/api/story-management/stories/${storylineId}`);
+      
+      return {
+        success: true,
+        data: response.data
+      };
+    } catch (error) {
+      console.error('Failed to delete storyline:', error);
+      return {
+        success: false,
+        data: null,
+        error: error.message
+      };
+    }
+  },
+
+  // Get storyline timeline
+  async getStorylineTimeline(storylineId, filters = {}) {
+    try {
+      const params = {
+        start_date: filters.startDate || undefined,
+        end_date: filters.endDate || undefined,
+        event_types: filters.eventTypes || undefined,
+        min_importance: filters.minImportance || 0.0
+      };
+      
+      Object.keys(params).forEach(key => {
+        if (params[key] === undefined) {
+          delete params[key];
+        }
+      });
+      
+      const response = await api.get(`/api/storyline-timeline/${storylineId}`, { params });
+      
+      return {
+        success: response.data.success,
+        data: response.data.data,
+        message: response.data.message
+      };
+    } catch (error) {
+      console.error('Failed to get storyline timeline:', error);
+      return {
+        success: false,
+        data: null,
+        error: error.message
+      };
+    }
+  },
+
+  // Get storyline events
+  async getStorylineEvents(storylineId, filters = {}) {
+    try {
+      const params = {
+        limit: filters.limit || 50,
+        offset: filters.offset || 0,
+        sort_by: filters.sortBy || 'event_date',
+        sort_order: filters.sortOrder || 'desc',
+        event_types: filters.eventTypes || undefined,
+        min_importance: filters.minImportance || 0.0
+      };
+      
+      Object.keys(params).forEach(key => {
+        if (params[key] === undefined) {
+          delete params[key];
+        }
+      });
+      
+      const response = await api.get(`/api/storyline-timeline/${storylineId}/events`, { params });
+      
+      return {
+        success: true,
+        data: response.data
+      };
+    } catch (error) {
+      console.error('Failed to get storyline events:', error);
+      return {
+        success: false,
+        data: null,
+        error: error.message
+      };
+    }
+  },
+
+  // Get storyline milestones
+  async getStorylineMilestones(storylineId, limit = 20) {
+    try {
+      const response = await api.get(`/api/storyline-timeline/${storylineId}/milestones`, {
+        params: { limit }
+      });
+      
+      return {
+        success: true,
+        data: response.data
+      };
+    } catch (error) {
+      console.error('Failed to get storyline milestones:', error);
+      return {
+        success: false,
+        data: null,
         error: error.message
       };
     }
@@ -528,14 +677,26 @@ export const newsSystemService = {
   // Sources - Now using real API endpoint
   async getSources() {
     try {
-      const response = await api.get('/api/sources');
-      return {
-        success: true,
-        data: response.data.sources || [],
-        total: response.data.total || 0
-      };
+      const response = await api.get('/api/articles/sources');
+      return response.data;
     } catch (error) {
       console.error('Failed to get sources:', error);
+      return {
+        success: false,
+        data: [],
+        total: 0,
+        error: error.message
+      };
+    }
+  },
+
+  // Categories - Now using real API endpoint
+  async getCategories() {
+    try {
+      const response = await api.get('/api/articles/categories');
+      return response.data;
+    } catch (error) {
+      console.error('Failed to get categories:', error);
       return {
         success: false,
         data: [],
@@ -1028,39 +1189,40 @@ export const newsSystemService = {
     }
   },
 
-  // Additional ML Functions for consistency
-  async getMLStatus() {
-    try {
-      const response = await api.get('/api/ml/status');
-      return response;
-    } catch (error) {
-      console.error('Failed to get ML status:', error);
-      return {
-        success: false,
-        status: 'unknown',
-        error: error.message
-      };
-    }
-  },
 
   // Story Management Functions
   async getActiveStories() {
     try {
       const response = await api.get('/api/story-management/stories');
-      return response;
+      return {
+        success: response.data.success,
+        data: response.data.data,
+        message: response.data.message
+      };
     } catch (error) {
       console.error('Failed to get active stories:', error);
-      throw error;
+      return {
+        success: false,
+        data: [],
+        error: error.message
+      };
     }
   },
 
   async createStoryExpectation(storyData) {
     try {
       const response = await api.post('/api/story-management/stories', storyData);
-      return response;
+      return {
+        success: true,
+        data: response.data
+      };
     } catch (error) {
       console.error('Failed to create story expectation:', error);
-      throw error;
+      return {
+        success: false,
+        data: null,
+        error: error.message
+      };
     }
   },
 
@@ -1232,14 +1394,123 @@ export const newsSystemService = {
 
   async getStoryThreads() {
     try {
-      const response = await api.get('/api/stories/threads');
-      return response;
+      const response = await api.get('/api/story-management/stories');
+      return {
+        success: response.data.success,
+        data: response.data.data || []
+      };
     } catch (error) {
       console.error('Failed to get story threads:', error);
       return {
         success: false,
         data: [],
         error: error.message
+      };
+    }
+  },
+
+  // Briefing Templates - using story management as base
+  async getBriefingTemplates() {
+    try {
+      const response = await api.get('/api/story-management/stories');
+      return {
+        success: response.data.success,
+        data: response.data.data || [],
+        error: response.data.success ? null : response.data.message
+      };
+    } catch (error) {
+      console.error('Failed to get briefing templates:', error);
+      return {
+        success: false,
+        data: [],
+        error: error.response?.data?.detail || error.message || 'Network error'
+      };
+    }
+  },
+
+  // Generated Briefings - using articles as base
+  async getGeneratedBriefings() {
+    try {
+      const response = await api.get('/api/articles/?per_page=10');
+      return {
+        success: response.data.success,
+        data: response.data.data?.articles || [],
+        error: response.data.success ? null : response.data.message
+      };
+    } catch (error) {
+      console.error('Failed to get generated briefings:', error);
+      return {
+        success: false,
+        data: [],
+        error: error.response?.data?.detail || error.message || 'Network error'
+      };
+    }
+  },
+
+  // Briefing Stats - using dashboard stats
+  async getBriefingStats() {
+    try {
+      const response = await api.get('/api/dashboard/');
+      return {
+        success: response.data.success,
+        data: response.data.data || {}
+      };
+    } catch (error) {
+      console.error('Failed to get briefing stats:', error);
+      return {
+        success: false,
+        data: {}
+      };
+    }
+  },
+
+  // Priority Rules - using story management as base
+  async getPriorityRules() {
+    try {
+      const response = await api.get('/api/story-management/stories');
+      return {
+        success: response.data.success,
+        data: response.data.data || []
+      };
+    } catch (error) {
+      console.error('Failed to get priority rules:', error);
+      return {
+        success: false,
+        data: []
+      };
+    }
+  },
+
+  // Content Priorities - using articles as base
+  async getContentPriorities() {
+    try {
+      const response = await api.get('/api/articles/?per_page=20');
+      return {
+        success: response.data.success,
+        data: response.data.data?.articles || []
+      };
+    } catch (error) {
+      console.error('Failed to get content priorities:', error);
+      return {
+        success: false,
+        data: []
+      };
+    }
+  },
+
+  // Priority Stats - using dashboard stats
+  async getPriorityStats() {
+    try {
+      const response = await api.get('/api/dashboard/');
+      return {
+        success: response.data.success,
+        data: response.data.data || {}
+      };
+    } catch (error) {
+      console.error('Failed to get priority stats:', error);
+      return {
+        success: false,
+        data: {}
       };
     }
   }

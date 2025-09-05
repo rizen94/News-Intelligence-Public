@@ -40,6 +40,7 @@ temp/
 tmp/
 *.tmp
 *.temp
+api/temp/
 
 # IDE and editor files
 .vscode/
@@ -48,10 +49,15 @@ tmp/
 *.swo
 *~
 
-# AI Assistant files
+# AI Assistant files (legacy)
 .aider/
 .aider.*
 *.aider*
+
+# Code assistant files (legacy)
+*code-assistant*
+*aider*
+*ollama*
 
 # OS generated files
 .DS_Store

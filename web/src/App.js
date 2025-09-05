@@ -5,72 +5,113 @@ import CssBaseline from '@mui/material/CssBaseline';
 import { Box } from '@mui/material';
 
 // Layout Components
-import Layout from './components/Layout/Layout';
+import NewspaperLayout from './components/Layout/NewspaperLayout';
 
-// Pages
-import EnhancedDashboard from './pages/Dashboard/EnhancedDashboard';
-import IntelligenceDashboard from './pages/Intelligence/IntelligenceDashboard';
-import IntelligenceInsights from './pages/Intelligence/IntelligenceInsights';
-import EnhancedArticles from './pages/Articles/EnhancedArticles';
-import UnifiedStoryDossiers from './pages/StoryDossiers/UnifiedStoryDossiers';
-import UnifiedLivingStoryNarrator from './pages/LivingStoryNarrator/UnifiedLivingStoryNarrator';
-import UnifiedEnhancedArticleViewer from './pages/EnhancedArticleViewer/UnifiedEnhancedArticleViewer';
-import MLProcessing from './pages/MLProcessing/MLProcessing';
-import RSSManagement from './pages/RSSManagement/RSSManagement';
-import DeduplicationManagement from './pages/Deduplication/DeduplicationManagement';
-import RAGEnhanced from './pages/RAGEnhanced/RAGEnhanced';
-import StorylineTracking from './pages/StorylineTracking/StorylineTracking';
-import ContentPrioritization from './pages/ContentPrioritization/ContentPrioritization';
-import DailyBriefings from './pages/DailyBriefings/DailyBriefings';
-import AutomationPipeline from './pages/AutomationPipeline/AutomationPipeline';
-import AdvancedMonitoring from './pages/AdvancedMonitoring/AdvancedMonitoring';
-import DataManagement from './pages/DataManagement/DataManagement';
-import StoryControlDashboard from './pages/StoryManagement/StoryControlDashboard';
+// New Newspaper-Style Pages
+import MorningBriefing from './pages/MorningBriefing/MorningBriefing';
+import Articles from './pages/Articles/Articles';
+import ArticleDetail from './pages/Articles/ArticleDetail';
+import Storylines from './pages/Storylines/Storylines';
+import StorylineDetail from './pages/Storylines/StorylineDetail';
+import StorylineTimeline from './pages/Timeline/StorylineTimeline';
+import Discover from './pages/Discover/Discover';
+// import DebugAPI from './pages/Debug/DebugAPI'; // Debug component - not for production
 
 // Context
 import { NewsSystemProvider } from './contexts/NewsSystemContext';
 import { NotificationProvider } from './components/Notifications/NotificationSystem';
 import ErrorBoundary from './components/ErrorBoundary/ErrorBoundary';
 
-// Create theme
+// Create newspaper-style theme
 const theme = createTheme({
   palette: {
     mode: 'light',
     primary: {
-      main: '#1976d2',
+      main: '#1a1a1a', // Classic newspaper black
     },
     secondary: {
-      main: '#dc004e',
+      main: '#d32f2f', // Newspaper red for accents
     },
     background: {
-      default: '#f5f5f5',
+      default: '#fafafa', // Clean white background
+      paper: '#ffffff',
+    },
+    text: {
+      primary: '#1a1a1a',
+      secondary: '#666666',
     },
   },
   typography: {
-    fontFamily: '"Roboto", "Helvetica", "Arial", sans-serif',
-    h4: {
+    fontFamily: '"Georgia", "Times New Roman", serif', // Classic newspaper font
+    h1: {
+      fontFamily: '"Helvetica Neue", "Arial", sans-serif',
+      fontWeight: 700,
+      fontSize: '2.5rem',
+      lineHeight: 1.2,
+    },
+    h2: {
+      fontFamily: '"Helvetica Neue", "Arial", sans-serif',
       fontWeight: 600,
+      fontSize: '2rem',
+      lineHeight: 1.3,
+    },
+    h3: {
+      fontFamily: '"Helvetica Neue", "Arial", sans-serif',
+      fontWeight: 600,
+      fontSize: '1.5rem',
+      lineHeight: 1.4,
+    },
+    h4: {
+      fontFamily: '"Helvetica Neue", "Arial", sans-serif',
+      fontWeight: 600,
+      fontSize: '1.25rem',
+      lineHeight: 1.4,
     },
     h5: {
+      fontFamily: '"Helvetica Neue", "Arial", sans-serif',
       fontWeight: 600,
+      fontSize: '1.1rem',
+      lineHeight: 1.4,
     },
     h6: {
+      fontFamily: '"Helvetica Neue", "Arial", sans-serif',
       fontWeight: 600,
+      fontSize: '1rem',
+      lineHeight: 1.4,
+    },
+    body1: {
+      fontFamily: '"Georgia", "Times New Roman", serif',
+      fontSize: '1rem',
+      lineHeight: 1.6,
+    },
+    body2: {
+      fontFamily: '"Georgia", "Times New Roman", serif',
+      fontSize: '0.875rem',
+      lineHeight: 1.5,
     },
   },
   components: {
     MuiCard: {
       styleOverrides: {
         root: {
-          boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
-          borderRadius: 8,
+          boxShadow: '0 1px 3px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.24)',
+          borderRadius: 4,
+          border: '1px solid #e0e0e0',
         },
       },
     },
     MuiPaper: {
       styleOverrides: {
         root: {
-          boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+          boxShadow: '0 1px 3px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.24)',
+        },
+      },
+    },
+    MuiButton: {
+      styleOverrides: {
+        root: {
+          textTransform: 'none',
+          fontWeight: 500,
         },
       },
     },
@@ -85,36 +126,29 @@ function App() {
         <NotificationProvider>
           <NewsSystemProvider>
             <Router>
-              <Box sx={{ display: 'flex', minHeight: '100vh' }}>
-                <Layout>
+              <Box sx={{ display: 'flex', minHeight: '100vh', backgroundColor: '#fafafa' }}>
+                <NewspaperLayout>
                   <Routes>
-                <Route path="/" element={<EnhancedDashboard />} />
-                <Route path="/dashboard" element={<EnhancedDashboard />} />
-                <Route path="/intelligence" element={<IntelligenceDashboard />} />
-                <Route path="/intelligence/insights" element={<IntelligenceInsights />} />
-                <Route path="/articles" element={<EnhancedArticles />} />
-                <Route path="/story-dossiers" element={<UnifiedStoryDossiers />} />
-                <Route path="/ml-processing" element={<MLProcessing />} />
-                <Route path="/living-narrator" element={<UnifiedLivingStoryNarrator />} />
-                <Route path="/article-viewer" element={<UnifiedEnhancedArticleViewer />} />
-                
-                {/* Phase 2 Routes - Now Implemented */}
-                <Route path="/deduplication" element={<DeduplicationManagement />} />
-                <Route path="/rss-management" element={<RSSManagement />} />
-                <Route path="/rag-enhanced" element={<RAGEnhanced />} />
-                <Route path="/storyline-tracking" element={<StorylineTracking />} />
-                
-                {/* Phase 2 Routes - Now Implemented */}
-                <Route path="/prioritization" element={<ContentPrioritization />} />
-                <Route path="/briefings" element={<DailyBriefings />} />
-                <Route path="/automation" element={<AutomationPipeline />} />
-                
-                {/* Phase 3 Routes - Now Implemented */}
-                <Route path="/monitoring" element={<AdvancedMonitoring />} />
-                <Route path="/data-management" element={<DataManagement />} />
-                <Route path="/story-management" element={<StoryControlDashboard />} />
+                    {/* Main Newspaper Routes */}
+                    <Route path="/" element={<MorningBriefing />} />
+                    <Route path="/briefing" element={<MorningBriefing />} />
+                    
+                    {/* Articles */}
+                    <Route path="/articles" element={<Articles />} />
+                    <Route path="/articles/:id" element={<ArticleDetail />} />
+                    
+                    {/* Storylines */}
+                    <Route path="/storylines" element={<Storylines />} />
+                    <Route path="/storylines/:storylineId" element={<StorylineDetail />} />
+                    <Route path="/storylines/:storylineId/timeline" element={<StorylineTimeline />} />
+                    
+                    {/* Debug - Commented out for production */}
+                    {/* <Route path="/debug" element={<DebugAPI />} /> */}
+                    
+                    {/* Discover */}
+                    <Route path="/discover" element={<Discover />} />
                   </Routes>
-                </Layout>
+                </NewspaperLayout>
               </Box>
             </Router>
           </NewsSystemProvider>

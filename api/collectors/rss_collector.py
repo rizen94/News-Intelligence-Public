@@ -127,8 +127,8 @@ def collect_rss_feeds() -> int:
                         # Insert article if it doesn't exist
                         cur.execute("""
                             INSERT INTO articles
-                            (title, url, content, summary, published_date, created_at)
-                            VALUES (%s, %s, %s, %s, %s, %s)
+                            (title, url, content, summary, published_date, created_at, source)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s)
                             ON CONFLICT (url) DO NOTHING
                         """, (
                             title,
@@ -136,7 +136,8 @@ def collect_rss_feeds() -> int:
                             content,
                             None,
                             published_date,
-                            datetime.now()
+                            datetime.now(),
+                            feed_name
                         ))
                         
                         if cur.rowcount > 0:
@@ -229,11 +230,11 @@ def collect_rss_feed(feed_url: str, feed_name: str = "Unknown") -> int:
                 
                 cur.execute("""
                     INSERT INTO articles
-                    (title, url, content, summary, published_date, created_at)
-                    VALUES (%s, %s, %s, %s, %s, %s)
+                    (title, url, content, summary, published_date, created_at, source)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (url) DO NOTHING
                 """, (
-                    title, url, content, None, published_date, datetime.now()
+                    title, url, content, None, published_date, datetime.now(), feed_name
                 ))
                 
                 if cur.rowcount > 0:

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   IconButton,
   Badge,
@@ -24,6 +25,7 @@ import {
 } from '@mui/icons-material';
 
 const NotificationBell = () => {
+  const navigate = useNavigate();
   const [anchorEl, setAnchorEl] = useState(null);
   const [alerts, setAlerts] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -214,7 +216,7 @@ const NotificationBell = () => {
                       variant="text"
                       onClick={() => {
                         // Navigate to storyline details
-                        window.location.href = `/storyline-tracking?thread=${alert.thread_id}`;
+                        navigate(`/storylines/${alert.thread_id}`);
                         handleClose();
                       }}
                       sx={{ flex: 1 }}

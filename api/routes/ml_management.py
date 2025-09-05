@@ -87,25 +87,25 @@ async def get_ml_status():
         cursor = conn.cursor()
         
         # Get processing queue size
-        cursor.execute("SELECT COUNT(*) FROM articles WHERE status = 'pending'")
+        cursor.execute("SELECT COUNT(*) FROM articles WHERE processing_status = 'raw'")
         queue_size = cursor.fetchone()[0]
         
         # Get processing rate (articles processed in last hour)
         cursor.execute("""
             SELECT COUNT(*) FROM articles 
-            WHERE ml_processed_at >= %s AND status = 'processed'
+            WHERE processing_completed_at >= %s AND processing_status = 'processed'
         """, (datetime.utcnow() - timedelta(hours=1),))
         recent_processed = cursor.fetchone()[0]
         
         # Get last processed timestamp
         cursor.execute("""
-            SELECT MAX(ml_processed_at) FROM articles 
-            WHERE ml_processed_at IS NOT NULL
+            SELECT MAX(processing_completed_at) FROM articles 
+            WHERE processing_completed_at IS NOT NULL
         """)
         last_processed = cursor.fetchone()[0]
         
         # Get total processed
-        cursor.execute("SELECT COUNT(*) FROM articles WHERE status = 'processed'")
+        cursor.execute("SELECT COUNT(*) FROM articles WHERE processing_status = 'processed'")
         total_processed = cursor.fetchone()[0]
         
         # Get success rate
@@ -200,39 +200,50 @@ async def trigger_ml_processing(processing_request: ProcessingRequest):
         cursor = conn.cursor()
         
         # Validate article IDs
-        placeholders = ','.join(['%s'] * len(processing_request.article_ids))
-        cursor.execute(f"""
-            SELECT id FROM articles 
-            WHERE id IN ({placeholders}) AND status IN ('pending', 'processing')
-        """, processing_request.article_ids)
+        if processing_request.article_ids:
+            placeholders = ','.join(['%s'] * len(processing_request.article_ids))
+            cursor.execute(f"""
+                SELECT id FROM articles 
+                WHERE id IN ({placeholders}) AND processing_status IN ('raw', 'processing')
+            """, processing_request.article_ids)
+        else:
+            # Process all raw articles if no specific IDs provided
+            cursor.execute("""
+                SELECT id FROM articles 
+                WHERE processing_status = 'raw'
+                LIMIT 100
+            """)
         
         valid_article_ids = [row[0] for row in cursor.fetchall()]
         
         if not valid_article_ids:
             raise HTTPException(status_code=400, detail="No valid articles found for processing")
         
-        # Create processing jobs
+        # Create processing jobs in ml_task_queue
         job_ids = []
         for article_id in valid_article_ids:
+            task_id = f"article_processing_{article_id}_{int(datetime.utcnow().timestamp())}"
             cursor.execute("""
-                INSERT INTO ml_processing_jobs (
-                    article_id, job_type, status, priority, created_at
+                INSERT INTO ml_task_queue (
+                    task_id, task_type, article_id, priority, status, created_at
                 ) VALUES (
-                    %s, %s, %s, %s, %s
+                    %s, %s, %s, %s, %s, %s
                 ) RETURNING id
             """, (
-                article_id,
+                task_id,
                 processing_request.job_type,
-                ProcessingStatus.PENDING.value,
+                article_id,
                 processing_request.priority,
+                'pending',
                 datetime.utcnow()
             ))
             job_ids.append(cursor.fetchone()[0])
         
         # Update article status
+        placeholders = ','.join(['%s'] * len(valid_article_ids))
         cursor.execute(f"""
             UPDATE articles 
-            SET status = 'processing', updated_at = %s
+            SET processing_status = 'processing', updated_at = %s
             WHERE id IN ({placeholders})
         """, [datetime.utcnow()] + valid_article_ids)
         
@@ -271,7 +282,7 @@ async def get_processing_jobs(
         params = []
         
         if status:
-            where_clause = "WHERE status = %s"
+            where_clause = "WHERE processing_status = %s"
             params.append(status.value)
         
         cursor.execute(f"""
@@ -464,13 +475,13 @@ async def get_ml_performance():
         cursor = conn.cursor()
         
         # Get total processed
-        cursor.execute("SELECT COUNT(*) FROM articles WHERE status = 'processed'")
+        cursor.execute("SELECT COUNT(*) FROM articles WHERE processing_status = 'processed'")
         total_processed = cursor.fetchone()[0]
         
         # Get processing rate (last 24 hours)
         cursor.execute("""
             SELECT COUNT(*) FROM articles 
-            WHERE ml_processed_at >= %s AND status = 'processed'
+            WHERE processing_completed_at >= %s AND processing_status = 'processed'
         """, (datetime.utcnow() - timedelta(hours=24),))
         recent_processed = cursor.fetchone()[0]
         
@@ -494,7 +505,7 @@ async def get_ml_performance():
         avg_processing_time = float(cursor.fetchone()[0] or 0)
         
         # Get queue size
-        cursor.execute("SELECT COUNT(*) FROM articles WHERE status = 'pending'")
+        cursor.execute("SELECT COUNT(*) FROM articles WHERE processing_status = 'raw'")
         queue_size = cursor.fetchone()[0]
         
         # Get recent jobs

@@ -46,6 +46,19 @@ class StoryExpectationCreate(BaseModel):
     max_articles_per_day: int = Field(100, ge=1, description="Maximum articles per day")
     auto_enhance: bool = Field(True, description="Whether to auto-trigger RAG enhancement")
 
+class StoryExpectationUpdate(BaseModel):
+    """Model for updating a story expectation"""
+    name: Optional[str] = Field(None, description="Name of the story")
+    description: Optional[str] = Field(None, description="Description of the story")
+    priority_level: Optional[int] = Field(None, ge=1, le=10, description="Priority level (1-10)")
+    keywords: Optional[List[str]] = Field(None, description="Keywords to track")
+    entities: Optional[List[str]] = Field(None, description="Entities to track")
+    geographic_regions: Optional[List[str]] = Field(None, description="Geographic regions to track")
+    quality_threshold: Optional[float] = Field(None, ge=0.0, le=1.0, description="Minimum quality threshold")
+    max_articles_per_day: Optional[int] = Field(None, ge=1, description="Maximum articles per day")
+    auto_enhance: Optional[bool] = Field(None, description="Whether to auto-trigger RAG enhancement")
+    is_active: Optional[bool] = Field(None, description="Whether the story is active")
+
 class StoryTargetCreate(BaseModel):
     """Model for creating a story target"""
     target_type: str = Field(..., description="Type of target (person, organization, event, concept)")
@@ -166,13 +179,13 @@ async def create_ukraine_russia_conflict_story():
         logger.error(f"Error creating Ukraine-Russia conflict story: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/stories", response_model=List[StoryExpectationResponse])
+@router.get("/stories")
 async def get_active_stories():
     """Get all active story expectations"""
     try:
         stories = story_control.get_active_stories()
         
-        return [
+        story_responses = [
             StoryExpectationResponse(
                 story_id=story.story_id,
                 name=story.name,
@@ -190,8 +203,58 @@ async def get_active_stories():
             )
             for story in stories
         ]
+        
+        return {
+            "success": True,
+            "data": story_responses,
+            "message": "Active stories retrieved successfully"
+        }
     except Exception as e:
         logger.error(f"Error getting active stories: {e}")
+        return {
+            "success": False,
+            "data": [],
+            "message": f"Failed to get active stories: {str(e)}",
+            "error": str(e)
+        }
+
+@router.put("/stories/{story_id}", response_model=StoryExpectationResponse)
+async def update_story_expectation(story_id: str, story_update: StoryExpectationUpdate):
+    """Update an existing story expectation"""
+    try:
+        updated_story = story_control.update_story_expectation(story_id, story_update)
+        
+        return StoryExpectationResponse(
+            story_id=updated_story.story_id,
+            name=updated_story.name,
+            description=updated_story.description,
+            priority_level=updated_story.priority_level,
+            keywords=updated_story.keywords,
+            entities=updated_story.entities,
+            geographic_regions=updated_story.geographic_regions,
+            quality_threshold=updated_story.quality_threshold,
+            max_articles_per_day=updated_story.max_articles_per_day,
+            auto_enhance=updated_story.auto_enhance,
+            created_at=updated_story.created_at,
+            updated_at=updated_story.updated_at,
+            is_active=updated_story.is_active
+        )
+    except Exception as e:
+        logger.error(f"Error updating story expectation: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.delete("/stories/{story_id}")
+async def delete_story_expectation(story_id: str):
+    """Delete a story expectation"""
+    try:
+        success = story_control.delete_story_expectation(story_id)
+        
+        if not success:
+            raise HTTPException(status_code=404, detail="Story not found")
+        
+        return {"message": "Story expectation deleted successfully"}
+    except Exception as e:
+        logger.error(f"Error deleting story expectation: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/stories/{story_id}/targets")

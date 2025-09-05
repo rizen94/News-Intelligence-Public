@@ -40,7 +40,7 @@ import {
   Assessment as AssessmentIcon,
   AutoAwesome as AutoAwesomeIcon,
 } from '@mui/icons-material';
-import { newsSystemService } from '../../services/newsSystemService';
+import newsSystemService from '../../services/newsSystemService';
 import { useNotifications } from '../../components/Notifications/NotificationSystem';
 
 const EnhancedDashboard = () => {
@@ -93,13 +93,13 @@ const EnhancedDashboard = () => {
       ]);
 
       // Set data if successful
-      if (stats.status === 'fulfilled') setDashboardStats(stats.value);
-      if (ingestion.status === 'fulfilled') setIngestionStats(ingestion.value);
-      if (ml.status === 'fulfilled') setMlStats(ml.value);
-      if (stories.status === 'fulfilled') setStoryStats(stories.value);
-      if (alerts.status === 'fulfilled') setSystemAlerts(alerts.value);
-      if (activity.status === 'fulfilled') setRecentActivity(activity.value.activities || []);
-      if (metrics.status === 'fulfilled') setSystemMetrics(metrics.value);
+      if (stats.status === 'fulfilled') setDashboardStats(stats.value.data);
+      if (ingestion.status === 'fulfilled') setIngestionStats(ingestion.value.data);
+      if (ml.status === 'fulfilled') setMlStats(ml.value.data);
+      if (stories.status === 'fulfilled') setStoryStats(stories.value.data);
+      if (alerts.status === 'fulfilled') setSystemAlerts(alerts.value.data);
+      if (activity.status === 'fulfilled') setRecentActivity(activity.value.data.activities || []);
+      if (metrics.status === 'fulfilled') setSystemMetrics(metrics.value.data);
 
       // Count successful vs failed requests
       const successful = [stats, ingestion, ml, stories, alerts, activity, metrics].filter(r => r.status === 'fulfilled').length;

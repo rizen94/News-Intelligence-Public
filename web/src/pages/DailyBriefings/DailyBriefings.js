@@ -94,63 +94,60 @@ const DailyBriefings = () => {
 
   const loadData = async () => {
     setLoading(true);
+    setError(null);
+    
     try {
-      // Load briefing templates and generated briefings
-      // These would be real API calls in production
-      setTemplates([
-        {
-          id: 1,
-          name: 'Executive Summary',
-          description: 'High-level overview of key developments',
-          sections: ['Top Stories', 'Market Impact', 'Key Metrics'],
-          schedule: 'daily',
-          enabled: true,
-          created_at: new Date().toISOString()
-        },
-        {
-          id: 2,
-          name: 'Technology Focus',
-          description: 'Technology and innovation highlights',
-          sections: ['Tech News', 'AI Developments', 'Startup Updates'],
-          schedule: 'daily',
-          enabled: true,
-          created_at: new Date().toISOString()
-        }
+      // Load briefing templates and generated briefings from API
+      const [templatesResponse, briefingsResponse, statsResponse] = await Promise.all([
+        newsSystemService.getBriefingTemplates(),
+        newsSystemService.getGeneratedBriefings(),
+        newsSystemService.getBriefingStats()
       ]);
       
-      setBriefings([
-        {
-          id: 1,
-          template_id: 1,
-          title: 'Executive Summary - January 15, 2024',
-          content: 'Today\'s key developments include...',
-          generated_at: new Date().toISOString(),
-          status: 'generated',
-          article_count: 45,
-          word_count: 1250
-        },
-        {
-          id: 2,
-          template_id: 2,
-          title: 'Technology Focus - January 15, 2024',
-          content: 'Technology highlights for today...',
-          generated_at: new Date().toISOString(),
-          status: 'generated',
-          article_count: 32,
-          word_count: 980
-        }
-      ]);
+      // Check for critical failures
+      const failures = [];
       
-      setBriefingStats({
-        total_briefings: 45,
-        briefings_this_week: 7,
-        avg_articles_per_briefing: 38,
-        avg_word_count: 1150,
-        most_popular_template: 'Executive Summary'
-      });
+      if (!templatesResponse.success) {
+        failures.push('Briefing templates');
+        console.error('Failed to load briefing templates:', templatesResponse.error);
+      } else {
+        setTemplates(templatesResponse.data || []);
+      }
+      
+      if (!briefingsResponse.success) {
+        failures.push('Generated briefings');
+        console.error('Failed to load generated briefings:', briefingsResponse.error);
+      } else {
+        setBriefings(briefingsResponse.data || []);
+      }
+      
+      if (!statsResponse.success) {
+        failures.push('Briefing statistics');
+        console.error('Failed to load briefing stats:', statsResponse.error);
+      } else {
+        setBriefingStats(statsResponse.data || {
+          total_briefings: 0,
+          briefings_this_week: 0,
+          avg_articles_per_briefing: 0,
+          avg_word_count: 0,
+          most_popular_template: 'None'
+        });
+      }
+      
+      // If any critical data failed to load, show error
+      if (failures.length > 0) {
+        const errorMessage = `Failed to load: ${failures.join(', ')}. Please check your connection and try again.`;
+        setError(errorMessage);
+        showError(errorMessage);
+      } else {
+        showSuccess('Briefing data loaded successfully');
+      }
       
     } catch (err) {
-      setError('Failed to load briefing data: ' + err.message);
+      const errorMessage = 'Failed to load briefing data: ' + err.message;
+      setError(errorMessage);
+      showError(errorMessage);
+      console.error('Error fetching briefing data:', err);
     } finally {
       setLoading(false);
     }

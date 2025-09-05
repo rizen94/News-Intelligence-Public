@@ -520,6 +520,103 @@ class StoryControlSystem:
         except Exception as e:
             self.logger.error(f"Failed to get active stories: {e}")
             return []
+
+    def update_story_expectation(self, story_id: str, update_data: Dict[str, Any]) -> StoryExpectation:
+        """Update an existing story expectation"""
+        try:
+            # Get existing story
+            existing_story = self._get_story_expectation(story_id)
+            if not existing_story:
+                raise ValueError(f"Story {story_id} not found")
+            
+            # Convert Pydantic model to dict if needed
+            if hasattr(update_data, 'dict'):
+                update_dict = update_data.dict(exclude_unset=True)
+            else:
+                update_dict = update_data
+            
+            # Update fields that are provided
+            updated_story = StoryExpectation(
+                story_id=story_id,
+                name=update_dict.get('name', existing_story.name),
+                description=update_dict.get('description', existing_story.description),
+                priority_level=update_dict.get('priority_level', existing_story.priority_level),
+                keywords=update_dict.get('keywords', existing_story.keywords),
+                entities=update_dict.get('entities', existing_story.entities),
+                geographic_regions=update_dict.get('geographic_regions', existing_story.geographic_regions),
+                time_period=update_dict.get('time_period', existing_story.time_period),
+                quality_threshold=update_dict.get('quality_threshold', existing_story.quality_threshold),
+                max_articles_per_day=update_dict.get('max_articles_per_day', existing_story.max_articles_per_day),
+                auto_enhance=update_dict.get('auto_enhance', existing_story.auto_enhance),
+                created_at=existing_story.created_at,
+                updated_at=datetime.now().isoformat(),
+                is_active=update_dict.get('is_active', existing_story.is_active)
+            )
+            
+            # Update in database
+            conn = psycopg2.connect(**self.db_config)
+            cur = conn.cursor()
+            
+            cur.execute("""
+                UPDATE story_expectations 
+                SET name = %s, description = %s, priority_level = %s, keywords = %s, 
+                    entities = %s, geographic_regions = %s, quality_threshold = %s, 
+                    max_articles_per_day = %s, auto_enhance = %s, updated_at = %s, is_active = %s
+                WHERE story_id = %s
+            """, (
+                updated_story.name,
+                updated_story.description,
+                updated_story.priority_level,
+                json.dumps(updated_story.keywords),
+                json.dumps(updated_story.entities),
+                json.dumps(updated_story.geographic_regions),
+                updated_story.quality_threshold,
+                updated_story.max_articles_per_day,
+                updated_story.auto_enhance,
+                updated_story.updated_at,
+                updated_story.is_active,
+                story_id
+            ))
+            
+            conn.commit()
+            cur.close()
+            conn.close()
+            
+            self.logger.info(f"Updated story expectation: {story_id}")
+            return updated_story
+            
+        except Exception as e:
+            self.logger.error(f"Error updating story expectation: {e}")
+            raise
+
+    def delete_story_expectation(self, story_id: str) -> bool:
+        """Delete a story expectation (soft delete by setting is_active = false)"""
+        try:
+            conn = psycopg2.connect(**self.db_config)
+            cur = conn.cursor()
+            
+            # Soft delete by setting is_active = false
+            cur.execute("""
+                UPDATE story_expectations 
+                SET is_active = false, updated_at = %s
+                WHERE story_id = %s
+            """, (datetime.now().isoformat(), story_id))
+            
+            if cur.rowcount == 0:
+                cur.close()
+                conn.close()
+                return False
+            
+            conn.commit()
+            cur.close()
+            conn.close()
+            
+            self.logger.info(f"Deleted story expectation: {story_id}")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Error deleting story expectation: {e}")
+            return False
     
     def _store_story_expectation(self, expectation: StoryExpectation):
         """Store story expectation in database"""

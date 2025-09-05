@@ -65,13 +65,13 @@ async def get_ml_pipeline_status():
         cursor = conn.cursor()
         
         # Get processing queue size
-        cursor.execute("SELECT COUNT(*) FROM articles WHERE status = 'pending'")
+        cursor.execute("SELECT COUNT(*) FROM articles WHERE processing_status = 'raw'")
         queue_size = cursor.fetchone()[0]
         
         # Get processing rate (articles processed in last hour)
         cursor.execute("""
             SELECT COUNT(*) FROM articles 
-            WHERE ml_processed_at >= %s AND status = 'processed'
+            WHERE processing_completed_at >= %s AND processing_status = 'processed'
         """, (datetime.utcnow() - timedelta(hours=1),))
         recent_processed = cursor.fetchone()[0]
         
@@ -101,25 +101,25 @@ async def get_ml_processing_status():
         cursor = conn.cursor()
         
         # Get processing queue size
-        cursor.execute("SELECT COUNT(*) FROM articles WHERE status = 'pending'")
+        cursor.execute("SELECT COUNT(*) FROM articles WHERE processing_status = 'raw'")
         queue_size = cursor.fetchone()[0]
         
         # Get processing rate (articles processed in last hour)
         cursor.execute("""
             SELECT COUNT(*) FROM articles 
-            WHERE ml_processed_at >= %s AND status = 'processed'
+            WHERE processing_completed_at >= %s AND processing_status = 'processed'
         """, (datetime.utcnow() - timedelta(hours=1),))
         recent_processed = cursor.fetchone()[0]
         
         # Get last processed timestamp
         cursor.execute("""
-            SELECT MAX(ml_processed_at) FROM articles 
-            WHERE ml_processed_at IS NOT NULL
+            SELECT MAX(processing_completed_at) FROM articles 
+            WHERE processing_completed_at IS NOT NULL
         """)
         last_processed = cursor.fetchone()[0]
         
         # Get total processed
-        cursor.execute("SELECT COUNT(*) FROM articles WHERE status = 'processed'")
+        cursor.execute("SELECT COUNT(*) FROM articles WHERE processing_status = 'processed'")
         total_processed = cursor.fetchone()[0]
         
         # Determine status
@@ -152,24 +152,24 @@ async def get_ml_queue_status():
         cursor = conn.cursor()
         
         # Get queue statistics
-        cursor.execute("SELECT COUNT(*) FROM articles WHERE status = 'pending'")
+        cursor.execute("SELECT COUNT(*) FROM articles WHERE processing_status = 'raw'")
         pending = cursor.fetchone()[0]
         
-        cursor.execute("SELECT COUNT(*) FROM articles WHERE status = 'processing'")
+        cursor.execute("SELECT COUNT(*) FROM articles WHERE processing_status = 'processing'")
         processing = cursor.fetchone()[0]
         
         # Get completed today
         cursor.execute("""
             SELECT COUNT(*) FROM articles 
-            WHERE DATE(ml_processed_at) = %s AND status = 'processed'
+            WHERE DATE(processing_completed_at) = %s AND processing_status = 'processed'
         """, (datetime.utcnow().date(),))
         completed_today = cursor.fetchone()[0]
         
         # Get average processing time
         cursor.execute("""
-            SELECT AVG(EXTRACT(EPOCH FROM (ml_processed_at - created_at))) 
+            SELECT AVG(EXTRACT(EPOCH FROM (processing_completed_at - created_at))) 
             FROM articles 
-            WHERE ml_processed_at IS NOT NULL AND status = 'processed'
+            WHERE processing_completed_at IS NOT NULL AND processing_status = 'processed'
         """)
         avg_processing_time = cursor.fetchone()[0] or 0
         
@@ -201,12 +201,12 @@ async def get_ml_timing_stats():
         cursor.execute("""
             SELECT 
                 COUNT(*) as articles_processed,
-                AVG(EXTRACT(EPOCH FROM (ml_processed_at - created_at))) as avg_time,
-                MIN(EXTRACT(EPOCH FROM (ml_processed_at - created_at))) as min_time,
-                MAX(EXTRACT(EPOCH FROM (ml_processed_at - created_at))) as max_time,
-                SUM(EXTRACT(EPOCH FROM (ml_processed_at - created_at))) as total_time
+                AVG(EXTRACT(EPOCH FROM (processing_completed_at - created_at))) as avg_time,
+                MIN(EXTRACT(EPOCH FROM (processing_completed_at - created_at))) as min_time,
+                MAX(EXTRACT(EPOCH FROM (processing_completed_at - created_at))) as max_time,
+                SUM(EXTRACT(EPOCH FROM (processing_completed_at - created_at))) as total_time
             FROM articles 
-            WHERE ml_processed_at IS NOT NULL AND status = 'processed'
+            WHERE processing_completed_at IS NOT NULL AND processing_status = 'processed'
         """)
         
         row = cursor.fetchone()
@@ -237,7 +237,7 @@ async def trigger_ml_processing():
         cursor = conn.cursor()
         
         # Get pending articles
-        cursor.execute("SELECT id FROM articles WHERE status = 'pending' LIMIT 10")
+        cursor.execute("SELECT id FROM articles WHERE processing_status = 'raw' LIMIT 10")
         pending_articles = [row[0] for row in cursor.fetchall()]
         
         if not pending_articles:
@@ -274,7 +274,7 @@ async def process_all_articles():
         cursor = conn.cursor()
         
         # Get all pending articles
-        cursor.execute("SELECT id FROM articles WHERE status = 'pending'")
+        cursor.execute("SELECT id FROM articles WHERE processing_status = 'raw'")
         pending_articles = [row[0] for row in cursor.fetchall()]
         
         if not pending_articles:

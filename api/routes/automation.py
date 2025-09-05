@@ -149,7 +149,7 @@ async def trigger_story_consolidation():
         # Simulate processing
         cursor.execute("""
             SELECT COUNT(*) FROM articles 
-            WHERE status = 'pending' AND created_at >= %s
+            WHERE processing_status = 'raw' AND created_at >= %s
         """, (datetime.utcnow() - timedelta(hours=24),))
         
         articles_affected = cursor.fetchone()[0] or 0
