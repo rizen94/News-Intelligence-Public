@@ -487,15 +487,43 @@ Published: {article.get('published_at', 'Unknown')}
                 end = response.rfind('}') + 1
                 response = response[start:end]
             
+            # Clean up common JSON issues
+            response = self._clean_json_string(response)
+            
             return json.loads(response)
             
         except json.JSONDecodeError as e:
             logger.error(f"Error parsing JSON response: {e}")
             logger.error(f"Response was: {response[:500]}...")
-            return {}
+            # Try to return a fallback structure
+            return self._create_fallback_response(response)
         except Exception as e:
             logger.error(f"Error parsing response: {e}")
             return {}
+    
+    def _clean_json_string(self, json_str: str) -> str:
+        """Clean JSON string by removing comments and fixing common issues"""
+        import re
+        
+        # Remove single-line comments (// comment)
+        json_str = re.sub(r'//.*$', '', json_str, flags=re.MULTILINE)
+        
+        # Remove trailing commas before closing braces/brackets
+        json_str = re.sub(r',(\s*[}\]])', r'\1', json_str)
+        
+        # Fix common quote issues
+        json_str = re.sub(r"'([^']*)':", r'"\1":', json_str)  # Single quotes to double quotes for keys
+        
+        return json_str
+    
+    def _create_fallback_response(self, response: str) -> Dict[str, Any]:
+        """Create a fallback response when JSON parsing fails"""
+        return {
+            "error": "JSON parsing failed",
+            "raw_response": response[:200] + "..." if len(response) > 200 else response,
+            "fallback": True,
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }
     
     def _parse_analysis_response(self, response: str, analysis_type: str) -> Dict[str, Any]:
         """Parse analysis response based on type"""

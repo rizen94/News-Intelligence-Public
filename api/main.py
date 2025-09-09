@@ -26,19 +26,68 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Import production route modules
-from routes.articles_production import router as articles_router
-from routes.rss_feeds_production import router as rss_feeds_router
-from routes.health_production import router as health_router
+# Import route modules
+from routes.articles import router as articles_router
+from routes.rss_feeds import router as rss_feeds_router
+from routes.health import router as health_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan manager"""
     # Startup
     logger.info("Starting News Intelligence System v3.1.0")
+    
+    # Start automation manager in background thread
+    try:
+        from services.automation_manager import AutomationManager
+        from database.connection import get_db_config
+        import threading
+        
+        db_config = get_db_config()
+        automation = AutomationManager(db_config)
+        
+        # Start automation in background thread
+        def start_automation():
+            import asyncio
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(automation.start())
+        
+        automation_thread = threading.Thread(target=start_automation, daemon=True)
+        automation_thread.start()
+        
+        logger.info("Automation manager started in background thread")
+        
+        # Store automation manager for shutdown
+        app.state.automation = automation
+        app.state.automation_thread = automation_thread
+    except Exception as e:
+        logger.error(f"Failed to start automation manager: {e}")
+        # Continue without automation if it fails
+        app.state.automation = None
+        app.state.automation_thread = None
+    
     yield
+    
     # Shutdown
     logger.info("Shutting down News Intelligence System v3.1.0")
+    
+    # Stop automation manager
+    try:
+        if hasattr(app.state, 'automation') and app.state.automation:
+            # Signal automation to stop
+            app.state.automation.is_running = False
+            logger.info("Automation manager stop signal sent")
+            
+            # Wait for automation thread to finish (with timeout)
+            if hasattr(app.state, 'automation_thread') and app.state.automation_thread:
+                app.state.automation_thread.join(timeout=5)
+                if app.state.automation_thread.is_alive():
+                    logger.warning("Automation thread did not stop gracefully")
+                else:
+                    logger.info("Automation manager stopped")
+    except Exception as e:
+        logger.error(f"Error stopping automation manager: {e}")
 
 # Create FastAPI application
 app = FastAPI(

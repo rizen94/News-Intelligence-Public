@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>News Intelligence System - WORKING VERSION</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background: #f5f5f5; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        .header { background: #1976d2; color: white; padding: 20px; border-radius: 8px; margin-bottom: 20px; }
+        .status { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 20px; }
+        .working { color: #4caf50; font-weight: bold; }
+        .not-working { color: #f44336; font-weight: bold; }
+        .info { color: #2196f3; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>News Intelligence System v3.1.0</h1>
+            <p>Clean System Refresh - What Actually Works</p>
+        </div>
+        
+        <div class="status">
+            <h2>System Status</h2>
+            <p id="api-health">Loading API health...</p>
+            <p id="database-status">Loading database status...</p>
+            <p id="articles-status">Loading articles status...</p>
+        </div>
+        
+        <div class="status">
+            <h2>What We Learned</h2>
+            <ul>
+                <li class="working">✅ API Health endpoint works</li>
+                <li class="working">✅ Dashboard API works</li>
+                <li class="not-working">❌ Articles API has database connection issues</li>
+                <li class="info">ℹ️ Database exists but connection string has @ symbol issue</li>
+                <li class="info">ℹ️ Complex React frontend shows blank page</li>
+                <li class="working">✅ Simple HTML + JavaScript works</li>
+            </ul>
+        </div>
+    </div>
+
+    <script>
+        async function loadStatus() {
+            try {
+                // Test API Health
+                const healthResponse = await fetch('http://localhost:8000/api/health/');
+                const healthData = await healthResponse.json();
+                document.getElementById('api-health').innerHTML = 
+                    `<span class="working">✅ API Health: ${healthData.data.status}</span>`;
+                
+                // Test Dashboard API
+                const dashboardResponse = await fetch('http://localhost:8000/api/dashboard/');
+                const dashboardData = await dashboardResponse.json();
+                document.getElementById('database-status').innerHTML = 
+                    `<span class="working">✅ Dashboard API: ${dashboardData.data.system_health.database}</span>`;
+                
+                // Test Articles API
+                const articlesResponse = await fetch('http://localhost:8000/api/articles/');
+                const articlesData = await articlesResponse.json();
+                if (articlesData.success && articlesData.data.total_count > 0) {
+                    document.getElementById('articles-status').innerHTML = 
+                        `<span class="working">✅ Articles API: ${articlesData.data.total_count} articles</span>`;
+                } else {
+                    document.getElementById('articles-status').innerHTML = 
+                        `<span class="not-working">❌ Articles API: ${articlesData.data.error || 'No articles'}</span>`;
+                }
+                
+            } catch (error) {
+                document.getElementById('api-health').innerHTML = 
+                    `<span class="not-working">❌ Error: ${error.message}</span>`;
+            }
+        }
+        
+        loadStatus();
+    </script>
+</body>
+</html>

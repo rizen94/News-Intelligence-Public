@@ -172,9 +172,9 @@ class DigestAutomationService:
             cursor = conn.cursor(cursor_factory=RealDictCursor)
             
             cursor.execute("""
-                SELECT id, story_id, title, summary, status, sentiment, impact_level, created_at
+                SELECT id, story_id, title, summary, processing_status, sentiment, impact_level, created_at
                 FROM story_timelines 
-                WHERE status IN ('developing', 'breaking', 'monitoring')
+                WHERE processing_status IN ('developing', 'breaking', 'monitoring')
                 ORDER BY created_at DESC
                 LIMIT 20
             """)
@@ -272,12 +272,7 @@ def get_digest_service() -> DigestAutomationService:
     """Get the global digest service instance"""
     global digest_service
     if digest_service is None:
-        db_config = {
-            'host': os.getenv('DB_HOST', 'news-system-postgres'),
-            'database': os.getenv('DB_NAME', 'newsintelligence'),
-            'user': os.getenv('DB_USER', 'newsapp'),
-            'password': os.getenv('DB_PASSWORD', 'Database@NEWSINT2025'),
-            'port': os.getenv('DB_PORT', '5432')
-        }
+        from database.connection import get_db_config
+        db_config = get_db_config()
         digest_service = DigestAutomationService(db_config)
     return digest_service

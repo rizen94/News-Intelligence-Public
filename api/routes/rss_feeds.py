@@ -180,7 +180,7 @@ async def get_rss_stats(db: Session = Depends(get_db)):
     """Get RSS feeds statistics"""
     try:
         service = RSSService(db)
-        stats = await service.get_stats()
+        stats = await service.get_stats_overview()
         return APIResponse(
             success=True,
             data=stats,

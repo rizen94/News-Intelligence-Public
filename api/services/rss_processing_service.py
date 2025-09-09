@@ -14,6 +14,7 @@ from psycopg2.extras import RealDictCursor
 import json
 import hashlib
 import re
+import time
 from urllib.parse import urlparse
 
 # Configure logging
@@ -113,8 +114,8 @@ class RSSProcessingService:
     async def _extract_article_data(self, entry, feed: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Extract article data from RSS entry"""
         try:
-            # Generate unique ID
-            article_id = hashlib.md5(entry.link.encode()).hexdigest()
+            # Generate unique ID as integer (use timestamp + hash)
+            article_id = int(time.time() * 1000) + hash(entry.link) % 10000
             
             # Extract title and content
             title = entry.get('title', '').strip()
@@ -242,12 +243,7 @@ def get_rss_processor() -> RSSProcessingService:
     """Get the global RSS processor instance"""
     global rss_processor
     if rss_processor is None:
-        db_config = {
-            'host': 'news-system-postgres',
-            'database': 'newsintelligence',
-            'user': 'newsapp',
-            'password': 'Database@NEWSINT2025',
-            'port': '5432'
-        }
+        from database.connection import get_db_config
+        db_config = get_db_config()
         rss_processor = RSSProcessingService(db_config)
     return rss_processor
