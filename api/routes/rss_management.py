@@ -301,12 +301,12 @@ async def get_articles(query: ArticleQueryRequest = None):
         where_clause = " AND ".join(where_conditions) if where_conditions else "1=1"
         
         # Execute query
-        from database.connection import get_db
+        from config.database import get_db
         db_gen = get_db()
         db = next(db_gen)
         try:
             query_sql = f"""
-                SELECT a.id, a.title, a.url, a.content, a.summary, a.published_date,
+                SELECT a.id, a.title, a.url, a.content, a.summary, a.published_at,
                        a.created_at, a.source, a.source_tier, a.source_priority,
                        a.language, a.detected_language, a.is_translated,
                        a.categories, a.geography, a.entities, a.sentiment_score,
@@ -328,7 +328,7 @@ async def get_articles(query: ArticleQueryRequest = None):
                     "url": row[2],
                     "content": row[3],
                     "summary": row[4],
-                    "published_date": row[5].isoformat() if row[5] else None,
+                    "published_at": row[5].isoformat() if row[5] else None,
                     "created_at": row[6].isoformat() if row[6] else None,
                     "source": row[7],
                     "source_tier": row[8],
@@ -474,7 +474,7 @@ async def health_check():
     """Health check endpoint"""
     try:
         # Check database connection
-        from database.connection import get_db
+        from config.database import get_db
         db_gen = get_db()
         db = next(db_gen)
         try:

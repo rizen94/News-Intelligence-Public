@@ -1182,7 +1182,7 @@ def get_automation_manager() -> AutomationManager:
     """Get the global automation manager instance"""
     global automation_manager
     if automation_manager is None:
-        from database.connection import get_db_config
+        from config.database import get_db_config
         db_config = get_db_config()
         automation_manager = AutomationManager(db_config)
     return automation_manager

@@ -44,14 +44,16 @@ import {
   ViewModule as ViewModuleIcon
 } from '@mui/icons-material';
 import { apiService } from '../../services/apiService';
+import ArticleReader from '../../components/ArticleReader';
 
 const EnhancedArticles = () => {
   const [articles, setArticles] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [selectedArticle, setSelectedArticle] = useState(null);
+  const [readerOpen, setReaderOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterSource, setFilterSource] = useState('');
-  const [filterSentiment, setFilterSentiment] = useState('');
   const [sortBy, setSortBy] = useState('date');
   const [viewMode, setViewMode] = useState('grid');
   const [page, setPage] = useState(1);
@@ -67,7 +69,6 @@ const EnhancedArticles = () => {
         limit: 12,
         search: searchQuery,
         source: filterSource,
-        sentiment: filterSentiment,
         sort: sortBy
       });
       
@@ -85,7 +86,7 @@ const EnhancedArticles = () => {
     } finally {
       setLoading(false);
     }
-  }, [page, searchQuery, filterSource, filterSentiment, sortBy]);
+  }, [page, searchQuery, filterSource, sortBy]);
 
   useEffect(() => {
     loadArticles();
@@ -100,9 +101,6 @@ const EnhancedArticles = () => {
     switch (filterType) {
       case 'source':
         setFilterSource(value);
-        break;
-      case 'sentiment':
-        setFilterSentiment(value);
         break;
       case 'sort':
         setSortBy(value);
@@ -153,8 +151,37 @@ const EnhancedArticles = () => {
     return text.length > maxLength ? text.substring(0, maxLength) + '...' : text;
   };
 
+  const handleOpenArticle = (article) => {
+    setSelectedArticle(article);
+    setReaderOpen(true);
+  };
+
+  const handleCloseReader = () => {
+    setReaderOpen(false);
+    setSelectedArticle(null);
+  };
+
+  const handleAddToStoryline = (storylineId, articleId) => {
+    // Refresh articles to update any storyline associations
+    loadArticles();
+    console.log(`Article ${articleId} added to storyline ${storylineId}`);
+  };
+
   const ArticleCard = ({ article }) => (
-    <Card sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+    <Card 
+      sx={{ 
+        height: '100%', 
+        display: 'flex', 
+        flexDirection: 'column',
+        cursor: 'pointer',
+        '&:hover': {
+          boxShadow: 4,
+          transform: 'translateY(-2px)',
+          transition: 'all 0.2s ease-in-out'
+        }
+      }}
+      onClick={() => handleOpenArticle(article)}
+    >
       {article.image_url && (
         <CardMedia
           component="img"
@@ -252,7 +279,10 @@ const EnhancedArticles = () => {
         <Button 
           size="small" 
           startIcon={<VisibilityIcon />}
-          onClick={() => window.open(article.url, '_blank')}
+          onClick={(e) => {
+            e.stopPropagation();
+            handleOpenArticle(article);
+          }}
         >
           Read Full Article
         </Button>
@@ -268,8 +298,14 @@ const EnhancedArticles = () => {
 
   const ArticleListItem = ({ article }) => (
     <ListItem
+      onClick={() => handleOpenArticle(article)}
       sx={{
         border: 1,
+        cursor: 'pointer',
+        '&:hover': {
+          backgroundColor: 'action.hover',
+          boxShadow: 1
+        },
         borderColor: 'divider',
         borderRadius: 1,
         mb: 1,
@@ -338,7 +374,10 @@ const EnhancedArticles = () => {
           <Button 
             size="small" 
             startIcon={<VisibilityIcon />}
-            onClick={() => window.open(article.url, '_blank')}
+            onClick={(e) => {
+              e.stopPropagation();
+              handleOpenArticle(article);
+            }}
           >
             View
           </Button>
@@ -414,21 +453,6 @@ const EnhancedArticles = () => {
           </Grid>
           <Grid item xs={12} md={2}>
             <FormControl fullWidth>
-              <InputLabel>Sentiment</InputLabel>
-              <Select
-                value={filterSentiment}
-                label="Sentiment"
-                onChange={(e) => handleFilterChange('sentiment', e.target.value)}
-              >
-                <MenuItem value="">All Sentiments</MenuItem>
-                <MenuItem value="positive">Positive</MenuItem>
-                <MenuItem value="negative">Negative</MenuItem>
-                <MenuItem value="neutral">Neutral</MenuItem>
-              </Select>
-            </FormControl>
-          </Grid>
-          <Grid item xs={12} md={2}>
-            <FormControl fullWidth>
               <InputLabel>Sort By</InputLabel>
               <Select
                 value={sortBy}
@@ -438,7 +462,8 @@ const EnhancedArticles = () => {
                 <MenuItem value="date">Date</MenuItem>
                 <MenuItem value="relevance">Relevance</MenuItem>
                 <MenuItem value="quality">Quality Score</MenuItem>
-                <MenuItem value="sentiment">Sentiment</MenuItem>
+                <MenuItem value="title">Title</MenuItem>
+                <MenuItem value="source">Source</MenuItem>
               </Select>
             </FormControl>
           </Grid>
@@ -450,7 +475,6 @@ const EnhancedArticles = () => {
               onClick={() => {
                 setSearchQuery('');
                 setFilterSource('');
-                setFilterSentiment('');
                 setSortBy('date');
                 setPage(1);
               }}
@@ -477,7 +501,7 @@ const EnhancedArticles = () => {
             No articles found
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            {searchQuery || filterSource || filterSentiment 
+            {searchQuery || filterSource 
               ? 'Try adjusting your search criteria or filters'
               : 'Articles will appear here once the system starts collecting data'
             }
@@ -552,6 +576,14 @@ const EnhancedArticles = () => {
           </Grid>
         </Grid>
       </Paper>
+
+      {/* Article Reader Dialog */}
+      <ArticleReader
+        article={selectedArticle}
+        open={readerOpen}
+        onClose={handleCloseReader}
+        onAddToStoryline={handleAddToStoryline}
+      />
     </Box>
   );
 };

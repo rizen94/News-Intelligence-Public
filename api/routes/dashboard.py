@@ -11,7 +11,7 @@ import logging
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-@router.get("/", response_model=APIResponse)
+@router.get("/dashboard/", response_model=APIResponse)
 async def get_dashboard_data():
     """Get comprehensive dashboard data"""
     try:
@@ -30,7 +30,7 @@ async def get_dashboard_data():
         logger.error(f"Error getting dashboard data: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to retrieve dashboard data: {str(e)}")
 
-@router.get("/stats", response_model=APIResponse)
+@router.get("/dashboard/stats", response_model=APIResponse)
 async def get_dashboard_stats():
     """Get dashboard statistics"""
     try:

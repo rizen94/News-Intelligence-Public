@@ -703,7 +703,7 @@ def get_advanced_monitoring_service() -> AdvancedMonitoringService:
     """Get global advanced monitoring service instance"""
     global _advanced_monitoring_service
     if _advanced_monitoring_service is None:
-        from database.connection import get_db_config
+        from config.database import get_db_config
         _advanced_monitoring_service = AdvancedMonitoringService(get_db_config())
     return _advanced_monitoring_service
 

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-Automated Cleanup System for News Intelligence System v2.1.3
+Automated Cleanup System for News Intelligence System v3.0
 Prevents data drift and garbage buildup through proactive monitoring and cleanup
+Follows architectural standards and naming conventions
 """
 import os
 import sys
@@ -106,29 +107,53 @@ class AutomatedCleanupSystem:
                     'retention_days': 7,
                     'description': 'Docker build cache and unused resources'
                 },
+                'postgres_data': {
+                    'path': os.path.join(PROJECT_ROOT, 'postgres_data'),
+                    'max_size_gb': 50.0,
+                    'cleanup_priority': 3,
+                    'cleanup_type': 'archive',
+                    'retention_days': 90,
+                    'description': 'PostgreSQL data directory'
+                },
+                'redis_data': {
+                    'path': os.path.join(PROJECT_ROOT, 'redis_data'),
+                    'max_size_gb': 5.0,
+                    'cleanup_priority': 2,
+                    'cleanup_type': 'delete',
+                    'retention_days': 30,
+                    'description': 'Redis data directory'
+                },
+                'api_logs': {
+                    'path': os.path.join(PROJECT_ROOT, 'api', 'logs'),
+                    'max_size_gb': 2.0,
+                    'cleanup_priority': 1,
+                    'cleanup_type': 'delete',
+                    'retention_days': 14,
+                    'description': 'API application logs'
+                },
                 'backups': {
-                    'path': '/home/petes/news-data/backups',
+                    'path': os.path.join(PROJECT_ROOT, 'backups'),
                     'max_size_gb': 10.0,
                     'cleanup_priority': 2,
                     'cleanup_type': 'archive',
                     'retention_days': 30,
                     'description': 'System backups'
                 },
-                'exports': {
-                    'path': '/home/petes/news-data/exports',
-                    'max_size_gb': 5.0,
-                    'cleanup_priority': 3,
-                    'cleanup_type': 'compress',
-                    'retention_days': 90,
-                    'description': 'Data exports'
-                },
                 'old_datasets': {
-                    'path': '/home/petes/news-data/datasets',
+                    'path': os.path.join(PROJECT_ROOT, 'data', 'models'),
                     'max_size_gb': 20.0,
                     'cleanup_priority': 2,
                     'cleanup_type': 'archive',
                     'retention_days': 180,
-                    'description': 'Old ML datasets'
+                    'description': 'Old ML models and datasets'
+                },
+                'duplicate_configs': {
+                    'path': os.path.join(PROJECT_ROOT, 'api', 'config'),
+                    'max_size_gb': 0.1,
+                    'cleanup_priority': 1,
+                    'cleanup_type': 'delete_duplicates',
+                    'retention_days': 0,
+                    'description': 'Remove duplicate configuration files'
                 }
             },
             'thresholds': {
@@ -301,6 +326,8 @@ class AutomatedCleanupSystem:
                 freed_space = self._cleanup_archive(target, space_to_free)
             elif target.cleanup_type == 'compress':
                 freed_space = self._cleanup_compress(target, space_to_free)
+            elif target.cleanup_type == 'delete_duplicates':
+                freed_space = self._cleanup_delete_duplicates(target, space_to_free)
             else:
                 freed_space = 0.0
             
@@ -434,6 +461,57 @@ class AutomatedCleanupSystem:
                         
         except Exception as e:
             logger.error(f"Error during compress cleanup: {e}")
+        
+        return freed_space
+    
+    def _cleanup_delete_duplicates(self, target: CleanupTarget, space_to_free: float) -> float:
+        """Remove duplicate configuration files based on architectural standards"""
+        freed_space = 0.0
+        
+        try:
+            # Define duplicate patterns based on architectural standards
+            duplicate_patterns = [
+                'robust_database.py',
+                'unified_database.py',
+                'connection.py'
+            ]
+            
+            # Keep only the main database.py file
+            main_file = os.path.join(target.path, 'database.py')
+            
+            for pattern in duplicate_patterns:
+                file_path = os.path.join(target.path, pattern)
+                if os.path.exists(file_path) and file_path != main_file:
+                    try:
+                        file_size = os.path.getsize(file_path) / (1024**3)  # GB
+                        os.remove(file_path)
+                        freed_space += file_size
+                        logger.info(f"Removed duplicate config file: {file_path}")
+                    except Exception as e:
+                        logger.debug(f"Could not remove {file_path}: {e}")
+            
+            # Check for duplicate docker-compose files
+            compose_files = [
+                'docker-compose.dev.yml',
+                'docker-compose.prod.yml',
+                'configs/docker-compose.backend.yml',
+                'configs/docker-compose.frontend.yml',
+                'configs/docker-compose.monitoring.yml'
+            ]
+            
+            for compose_file in compose_files:
+                file_path = os.path.join(PROJECT_ROOT, compose_file)
+                if os.path.exists(file_path):
+                    try:
+                        file_size = os.path.getsize(file_path) / (1024**3)  # GB
+                        os.remove(file_path)
+                        freed_space += file_size
+                        logger.info(f"Removed duplicate compose file: {file_path}")
+                    except Exception as e:
+                        logger.debug(f"Could not remove {file_path}: {e}")
+                        
+        except Exception as e:
+            logger.error(f"Error during duplicate cleanup: {e}")
         
         return freed_space
     

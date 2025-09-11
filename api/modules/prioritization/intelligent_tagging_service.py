@@ -141,7 +141,7 @@ class IntelligentTaggingService:
                 FROM articles a
                 JOIN content_priority_assignments cpa ON a.id = cpa.article_id
                 WHERE cpa.thread_id = %s
-                ORDER BY a.published_date DESC
+                ORDER BY a.published_at DESC
             """, (thread_id,))
             
             articles = cursor.fetchall()

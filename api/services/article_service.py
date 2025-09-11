@@ -59,10 +59,45 @@ class ArticleService:
             logger.error(f"Error getting articles: {e}")
             raise
 
-    async def get_article(self, article_id: str) -> Optional[Article]:
+    async def get_article(self, article_id: str) -> Optional[Dict[str, Any]]:
         """Get specific article by ID"""
         try:
-            return self.db.query(Article).filter(Article.id == article_id).first()
+            from sqlalchemy import text
+            
+            query = text("""
+                SELECT id, title, content, url, published_at, source, tags, created_at, updated_at,
+                       sentiment_score, entities, readability_score, quality_score,
+                       summary, ml_data, language, word_count, reading_time, feed_id
+                FROM articles 
+                WHERE id = :article_id
+            """)
+            
+            result = self.db.execute(query, {"article_id": article_id}).fetchone()
+            
+            if not result:
+                return None
+                
+            return {
+                "id": result[0],
+                "title": result[1],
+                "content": result[2],
+                "url": result[3],
+                "published_at": result[4].isoformat() if result[4] else None,
+                "source": result[5],
+                "tags": result[6],
+                "created_at": result[7].isoformat() if result[7] else None,
+                "updated_at": result[8].isoformat() if result[8] else None,
+                "sentiment_score": float(result[9]) if result[9] is not None else None,
+                "entities": result[10] if result[10] else {},
+                "readability_score": float(result[11]) if result[11] is not None else None,
+                "quality_score": float(result[12]) if result[12] is not None else None,
+                "summary": result[13],
+                "ml_data": result[14] if result[14] else {},
+                "language": result[15],
+                "word_count": result[16] if result[16] else 0,
+                "reading_time": result[17] if result[17] else 0,
+                "feed_id": result[18]
+            }
         except Exception as e:
             logger.error(f"Error getting article {article_id}: {e}")
             raise

@@ -5,14 +5,17 @@ Provides intelligence data, insights, analysis, and ML processing status
 
 from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional
+import logging
 
 from fastapi import APIRouter, HTTPException, Query, Depends
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 
-from database.connection import get_db
+from config.database import get_db
 from schemas.robust_schemas import APIResponse
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/intelligence", tags=["Intelligence"])
 
@@ -521,6 +524,392 @@ async def get_ml_processing_status_from_db(db: Session) -> Dict[str, Any]:
             "last_updated": datetime.now().isoformat(),
             "error": str(e)
         }
+
+@router.get("/morning-briefing", response_model=APIResponse)
+async def get_morning_briefing(
+    date: Optional[str] = Query(None, description="Date for briefing (YYYY-MM-DD)"),
+    db: Session = Depends(get_db)
+):
+    """Get morning briefing with highlights and AI-generated summary"""
+    try:
+        from modules.ml.daily_briefing_service import DailyBriefingService
+        from config.database import get_db_config
+        
+        # Get database config
+        db_config = get_db_config()
+        
+        # Initialize briefing service
+        briefing_service = DailyBriefingService(db_config)
+        
+        # Parse date if provided
+        briefing_date = None
+        if date:
+            briefing_date = datetime.strptime(date, '%Y-%m-%d')
+        
+        # Generate briefing
+        briefing = briefing_service.generate_daily_briefing(
+            briefing_date=briefing_date,
+            include_deduplication=True,
+            include_storylines=True
+        )
+        
+        return APIResponse(
+            success=True,
+            data=briefing,
+            message="Morning briefing generated successfully"
+        )
+        
+    except Exception as e:
+        logger.error(f"Error generating morning briefing: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/trending-topics", response_model=APIResponse)
+async def get_trending_topics(
+    time_period: str = Query("24h", description="Time period (1h, 24h, 7d, 30d)"),
+    limit: int = Query(10, ge=1, le=50, description="Number of topics to return"),
+    db: Session = Depends(get_db)
+):
+    """Get trending topics based on article analysis"""
+    try:
+        # Parse time period
+        period_hours = {"1h": 1, "24h": 24, "7d": 168, "30d": 720}.get(time_period, 24)
+        
+        # Get trending topics from articles
+        trending_query = text(f"""
+            SELECT 
+                category,
+                COUNT(*) as article_count,
+                AVG(quality_score) as avg_quality,
+                AVG(sentiment_score) as avg_sentiment,
+                COUNT(DISTINCT source) as source_diversity
+            FROM articles 
+            WHERE status = 'processed' 
+            AND created_at > NOW() - INTERVAL '{period_hours} hours'
+            AND category IS NOT NULL
+            GROUP BY category
+            ORDER BY article_count DESC, avg_quality DESC
+            LIMIT :limit
+        """)
+        
+        result = db.execute(trending_query, {"limit": limit}).fetchall()
+        
+        trending_topics = []
+        for i, row in enumerate(result):
+            topic = {
+                "id": f"trend_{i+1}",
+                "name": row[0],
+                "article_count": row[1],
+                "avg_quality": float(row[2]) if row[2] else 0.0,
+                "avg_sentiment": float(row[3]) if row[3] else 0.0,
+                "source_diversity": row[4],
+                "trend_score": float(row[1]) * float(row[2]) if row[2] else 0.0,
+                "time_period": time_period
+            }
+            trending_topics.append(topic)
+        
+        return APIResponse(
+            success=True,
+            data={
+                "trending_topics": trending_topics,
+                "time_period": time_period,
+                "total_topics": len(trending_topics),
+                "generated_at": datetime.now().isoformat()
+            },
+            message=f"Retrieved {len(trending_topics)} trending topics"
+        )
+        
+    except Exception as e:
+        logger.error(f"Error getting trending topics: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/topic-clusters", response_model=APIResponse)
+async def get_topic_clusters(
+    min_articles: int = Query(3, ge=1, description="Minimum articles per cluster"),
+    time_period: str = Query("7d", description="Time period (1d, 7d, 30d)"),
+    db: Session = Depends(get_db)
+):
+    """Get topic clusters based on article similarity"""
+    try:
+        # Parse time period
+        period_days = {"1d": 1, "7d": 7, "30d": 30}.get(time_period, 7)
+        
+        # Get articles for clustering
+        articles_query = text(f"""
+            SELECT 
+                id, title, content, category, tags, entities, quality_score,
+                created_at, source
+            FROM articles 
+            WHERE status = 'processed' 
+            AND created_at > NOW() - INTERVAL '{period_days} days'
+            AND quality_score > 0.5
+            ORDER BY quality_score DESC
+            LIMIT 1000
+        """)
+        
+        articles = db.execute(articles_query).fetchall()
+        
+        # Simple clustering based on category and tags
+        clusters = {}
+        for article in articles:
+            category = article[3] or "general"
+            tags = article[4] or []
+            
+            # Create cluster key
+            cluster_key = f"{category}_{len(tags)}"
+            
+            if cluster_key not in clusters:
+                clusters[cluster_key] = {
+                    "id": f"cluster_{len(clusters) + 1}",
+                    "name": f"{category.title()} Cluster",
+                    "category": category,
+                    "articles": [],
+                    "article_count": 0,
+                    "avg_quality": 0.0,
+                    "sources": set(),
+                    "tags": set()
+                }
+            
+            cluster = clusters[cluster_key]
+            cluster["articles"].append({
+                "id": article[0],
+                "title": article[1],
+                "quality_score": float(article[6]) if article[6] else 0.0
+            })
+            cluster["article_count"] += 1
+            cluster["sources"].add(article[8])
+            if tags:
+                cluster["tags"].update(tags)
+        
+        # Filter clusters by minimum articles and calculate metrics
+        filtered_clusters = []
+        for cluster in clusters.values():
+            if cluster["article_count"] >= min_articles:
+                # Calculate average quality
+                total_quality = sum(article["quality_score"] for article in cluster["articles"])
+                cluster["avg_quality"] = total_quality / cluster["article_count"]
+                
+                # Convert sets to lists
+                cluster["sources"] = list(cluster["sources"])
+                cluster["tags"] = list(cluster["tags"])
+                
+                # Remove articles list for response (keep only count)
+                del cluster["articles"]
+                
+                filtered_clusters.append(cluster)
+        
+        # Sort by article count and quality
+        filtered_clusters.sort(key=lambda x: (x["article_count"], x["avg_quality"]), reverse=True)
+        
+        return APIResponse(
+            success=True,
+            data={
+                "clusters": filtered_clusters,
+                "total_clusters": len(filtered_clusters),
+                "time_period": time_period,
+                "min_articles": min_articles,
+                "generated_at": datetime.now().isoformat()
+            },
+            message=f"Retrieved {len(filtered_clusters)} topic clusters"
+        )
+        
+    except Exception as e:
+        logger.error(f"Error getting topic clusters: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/discovery", response_model=APIResponse)
+async def discover_content(
+    search_query: Optional[str] = Query(None, description="Search query"),
+    category: Optional[str] = Query(None, description="Filter by category"),
+    source: Optional[str] = Query(None, description="Filter by source"),
+    min_quality: float = Query(0.5, ge=0.0, le=1.0, description="Minimum quality score"),
+    limit: int = Query(20, ge=1, le=100, description="Number of results"),
+    db: Session = Depends(get_db)
+):
+    """Discover articles with advanced search and filtering"""
+    try:
+        # Build search query
+        where_conditions = ["status = 'processed'", "quality_score >= :min_quality"]
+        params = {"min_quality": min_quality, "limit": limit}
+        
+        if search_query:
+            where_conditions.append("(title ILIKE :search OR content ILIKE :search OR summary ILIKE :search)")
+            params["search"] = f"%{search_query}%"
+        
+        if category:
+            where_conditions.append("category = :category")
+            params["category"] = category
+            
+        if source:
+            where_conditions.append("source = :source")
+            params["source"] = source
+        
+        where_clause = " AND ".join(where_conditions)
+        
+        # Execute search
+        search_query_sql = text(f"""
+            SELECT 
+                id, title, content, summary, url, source, category, 
+                quality_score, sentiment_score, tags, entities,
+                created_at, published_at, word_count, reading_time
+            FROM articles 
+            WHERE {where_clause}
+            ORDER BY quality_score DESC, created_at DESC
+            LIMIT :limit
+        """)
+        
+        results = db.execute(search_query_sql, params).fetchall()
+        
+        # Format results
+        articles = []
+        for row in results:
+            article = {
+                "id": row[0],
+                "title": row[1],
+                "content": row[2],
+                "summary": row[3],
+                "url": row[4],
+                "source": row[5],
+                "category": row[6],
+                "quality_score": float(row[7]) if row[7] else 0.0,
+                "sentiment_score": float(row[8]) if row[8] else 0.0,
+                "tags": row[9] if row[9] else [],
+                "entities": row[10] if row[10] else {},
+                "created_at": row[11].isoformat() if row[11] else None,
+                "published_at": row[12].isoformat() if row[12] else None,
+                "word_count": row[13] if row[13] else 0,
+                "reading_time": row[14] if row[14] else 0
+            }
+            articles.append(article)
+        
+        # Get discovery statistics
+        stats_query = text(f"""
+            SELECT 
+                COUNT(*) as total_articles,
+                COUNT(DISTINCT category) as category_count,
+                COUNT(DISTINCT source) as source_count,
+                AVG(quality_score) as avg_quality
+            FROM articles 
+            WHERE {where_clause}
+        """)
+        
+        stats = db.execute(stats_query, params).fetchone()
+        
+        return APIResponse(
+            success=True,
+            data={
+                "articles": articles,
+                "total_results": len(articles),
+                "search_query": search_query,
+                "filters": {
+                    "category": category,
+                    "source": source,
+                    "min_quality": min_quality
+                },
+                "statistics": {
+                    "total_articles": stats[0] or 0,
+                    "category_count": stats[1] or 0,
+                    "source_count": stats[2] or 0,
+                    "avg_quality": float(stats[3]) if stats[3] else 0.0
+                },
+                "generated_at": datetime.now().isoformat()
+            },
+            message=f"Found {len(articles)} articles matching criteria"
+        )
+        
+    except Exception as e:
+        logger.error(f"Error discovering content: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/highlights", response_model=APIResponse)
+async def get_highlights(
+    highlight_type: str = Query("daily", description="Type of highlights (daily, weekly, breaking)"),
+    limit: int = Query(5, ge=1, le=20, description="Number of highlights"),
+    db: Session = Depends(get_db)
+):
+    """Get news highlights based on type"""
+    try:
+        if highlight_type == "breaking":
+            # Get breaking news (high quality, recent)
+            highlights_query = text("""
+                SELECT 
+                    id, title, content, summary, source, category,
+                    quality_score, created_at, published_at
+                FROM articles 
+                WHERE status = 'processed' 
+                AND quality_score > 0.8
+                AND created_at > NOW() - INTERVAL '6 hours'
+                ORDER BY quality_score DESC, created_at DESC
+                LIMIT :limit
+            """)
+        elif highlight_type == "weekly":
+            # Get weekly highlights (high quality, last 7 days)
+            highlights_query = text("""
+                SELECT 
+                    id, title, content, summary, source, category,
+                    quality_score, created_at, published_at
+                FROM articles 
+                WHERE status = 'processed' 
+                AND quality_score > 0.7
+                AND created_at > NOW() - INTERVAL '7 days'
+                ORDER BY quality_score DESC, created_at DESC
+                LIMIT :limit
+            """)
+        else:  # daily
+            # Get daily highlights (high quality, last 24 hours)
+            highlights_query = text("""
+                SELECT 
+                    id, title, content, summary, source, category,
+                    quality_score, created_at, published_at
+                FROM articles 
+                WHERE status = 'processed' 
+                AND quality_score > 0.6
+                AND created_at > NOW() - INTERVAL '24 hours'
+                ORDER BY quality_score DESC, created_at DESC
+                LIMIT :limit
+            """)
+        
+        results = db.execute(highlights_query, {"limit": limit}).fetchall()
+        
+        highlights = []
+        for i, row in enumerate(results):
+            highlight = {
+                "id": f"highlight_{i+1}",
+                "article_id": row[0],
+                "title": row[1],
+                "content": row[2],
+                "summary": row[3],
+                "source": row[4],
+                "category": row[5],
+                "quality_score": float(row[6]) if row[6] else 0.0,
+                "created_at": row[7].isoformat() if row[7] else None,
+                "published_at": row[8].isoformat() if row[8] else None,
+                "highlight_type": highlight_type
+            }
+            highlights.append(highlight)
+        
+        return APIResponse(
+            success=True,
+            data={
+                "highlights": highlights,
+                "highlight_type": highlight_type,
+                "total_highlights": len(highlights),
+                "generated_at": datetime.now().isoformat()
+            },
+            message=f"Retrieved {len(highlights)} {highlight_type} highlights"
+        )
+        
+    except Exception as e:
+        logger.error(f"Error getting highlights: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/test-endpoint", response_model=APIResponse)
+async def test_endpoint():
+    """Test endpoint to verify route registration"""
+    return APIResponse(
+        success=True,
+        data={"message": "Test endpoint working"},
+        message="Test endpoint is working"
+    )
 
 # Health check endpoint
 @router.get("/health", response_model=APIResponse)

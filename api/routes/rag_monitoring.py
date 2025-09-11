@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException, Query
 from typing import Dict, List, Any, Optional
 from datetime import datetime, timezone, timedelta
 import logging
-from database.connection import get_db
+from config.database import get_db
 from sqlalchemy import text
 import json
 

@@ -7,7 +7,7 @@ import asyncio
 import logging
 from typing import Dict, List, Any, Optional
 from datetime import datetime
-from database.connection import get_db
+from config.database import get_db
 from sqlalchemy import text
 
 logger = logging.getLogger(__name__)

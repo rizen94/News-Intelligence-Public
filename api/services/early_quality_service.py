@@ -527,7 +527,7 @@ def get_early_quality_service() -> EarlyQualityService:
     """Get global early quality service instance"""
     global _early_quality_service
     if _early_quality_service is None:
-        from database.connection import get_db_config
+        from config.database import get_db_config
         _early_quality_service = EarlyQualityService(get_db_config())
     return _early_quality_service
 

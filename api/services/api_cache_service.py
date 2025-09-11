@@ -166,7 +166,7 @@ def get_cache_service() -> APICacheService:
     """Get global cache service instance"""
     global _cache_service
     if _cache_service is None:
-        from database.connection import get_db_config
+        from config.database import get_db_config
         db_config = get_db_config()
         _cache_service = APICacheService(db_config)
     return _cache_service

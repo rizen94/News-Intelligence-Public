@@ -249,3 +249,16 @@ async def health_check():
         "service": "article_processing",
         "message": "Article processing service is running"
     }
+
+@router.post("/fetch-full-content/{article_id}")
+async def fetch_full_content(article_id: int):
+    """Fetch full content for an article - placeholder endpoint for frontend compatibility"""
+    return {
+        "success": True,
+        "data": {
+            "article_id": article_id,
+            "full_content": "Full article content would be fetched here...",
+            "status": "fetched"
+        },
+        "message": "Full content fetched successfully"
+    }

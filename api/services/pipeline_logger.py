@@ -14,7 +14,7 @@ from dataclasses import dataclass, asdict
 from enum import Enum
 import traceback
 
-from database.connection import get_db
+from config.database import get_db
 from sqlalchemy import text
 
 logger = logging.getLogger(__name__)
@@ -108,19 +108,31 @@ class PipelineLogger:
         self.pipeline_logger = logging.getLogger('pipeline')
         self.pipeline_logger.setLevel(logging.DEBUG)
         
-        # Create file handler for pipeline logs
-        pipeline_handler = logging.FileHandler('logs/pipeline_trace.log')
-        pipeline_handler.setLevel(logging.DEBUG)
-        
-        # Create formatter
-        formatter = logging.Formatter(
-            '%(asctime)s - %(name)s - %(levelname)s - [%(funcName)s:%(lineno)d] - %(message)s'
-        )
-        pipeline_handler.setFormatter(formatter)
-        
-        # Add handler to pipeline logger
-        if not self.pipeline_logger.handlers:
-            self.pipeline_logger.addHandler(pipeline_handler)
+        # Try to create file handler for pipeline logs, fallback to console if permission denied
+        try:
+            pipeline_handler = logging.FileHandler('logs/pipeline_trace.log')
+            pipeline_handler.setLevel(logging.DEBUG)
+            
+            # Create formatter
+            formatter = logging.Formatter(
+                '%(asctime)s - %(name)s - %(levelname)s - [%(funcName)s:%(lineno)d] - %(message)s'
+            )
+            pipeline_handler.setFormatter(formatter)
+            
+            # Add handler to pipeline logger
+            if not self.pipeline_logger.handlers:
+                self.pipeline_logger.addHandler(pipeline_handler)
+        except (PermissionError, OSError) as e:
+            # Fallback to console logging if file logging fails
+            logger.warning(f"Could not create pipeline log file: {e}. Using console logging instead.")
+            console_handler = logging.StreamHandler()
+            console_handler.setLevel(logging.DEBUG)
+            formatter = logging.Formatter(
+                '%(asctime)s - %(name)s - %(levelname)s - [%(funcName)s:%(lineno)d] - %(message)s'
+            )
+            console_handler.setFormatter(formatter)
+            if not self.pipeline_logger.handlers:
+                self.pipeline_logger.addHandler(console_handler)
     
     def start_trace(self, rss_feed_id: Optional[str] = None, 
                    article_id: Optional[str] = None,
@@ -180,10 +192,16 @@ class PipelineLogger:
             checkpoint_id: Unique identifier for this checkpoint
         """
         if trace_id not in self.active_traces:
-            self.pipeline_logger.error(f"Trace {trace_id} not found")
+            self.pipeline_logger.warning(f"Trace {trace_id} not found in active traces - may have been completed")
             return None
         
         trace = self.active_traces[trace_id]
+        
+        # Check if trace is already completed
+        if trace.end_time is not None:
+            self.pipeline_logger.warning(f"Attempted to add checkpoint to completed trace {trace_id}")
+            return None
+            
         checkpoint_id = str(uuid.uuid4())
         timestamp = datetime.now(timezone.utc)
         
@@ -236,7 +254,7 @@ class PipelineLogger:
             Completed trace object
         """
         if trace_id not in self.active_traces:
-            self.pipeline_logger.error(f"Trace {trace_id} not found")
+            self.pipeline_logger.warning(f"Trace {trace_id} not found in active traces - may have been completed")
             return None
         
         trace = self.active_traces[trace_id]

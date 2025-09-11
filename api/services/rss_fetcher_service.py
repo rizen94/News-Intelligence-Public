@@ -16,7 +16,7 @@ from dataclasses import dataclass
 import signal
 import time
 
-from database.connection import get_db
+from config.database import get_db
 from sqlalchemy import text
 from .enhanced_rss_service import EnhancedRSSService
 

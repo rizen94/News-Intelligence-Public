@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 
-from database.connection import get_db
+from config.database import get_db
 from schemas.robust_schemas import APIResponse
 
 logger = logging.getLogger(__name__)

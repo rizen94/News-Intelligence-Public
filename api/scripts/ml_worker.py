@@ -48,7 +48,7 @@ class MLWorker:
             
             # Get article data
             cursor.execute("""
-                SELECT id, title, content, source, published_date
+                SELECT id, title, content, source, published_at
                 FROM articles 
                 WHERE id = %s
             """, (article_id,))
@@ -58,7 +58,7 @@ class MLWorker:
                 logger.error(f"Article {article_id} not found")
                 return False
                 
-            article_id, title, content, source, published_date = article
+            article_id, title, content, source, published_at = article
             
             # Basic processing - update quality score and processing status
             # This is a simplified version - in production you'd use actual ML models

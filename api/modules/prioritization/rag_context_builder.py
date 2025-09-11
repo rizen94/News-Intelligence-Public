@@ -379,13 +379,13 @@ class RAGContextBuilder:
             keyword_query = " OR ".join(keyword_conditions) if keyword_conditions else "1=1"
             
             query = f"""
-                SELECT id, title, content, source, published_date, category, url
+                SELECT id, title, content, source, published_at, category, url
                 FROM articles
                 WHERE ({keyword_query})
-                AND published_date < %s
+                AND published_at < %s
                 AND category = %s
                 AND deduplication_status = 'unique'
-                ORDER BY published_date DESC
+                ORDER BY published_at DESC
                 LIMIT %s
             """
             
@@ -402,7 +402,7 @@ class RAGContextBuilder:
                         'title': row[1] if row[1] else "",
                         'content': content_preview,
                         'source': row[3] if row[3] else "",
-                        'published_date': row[4].isoformat() if row[4] else None,
+                        'published_at': row[4].isoformat() if row[4] else None,
                         'category': row[5] if row[5] else "",
                         'url': row[6] if row[6] else ""
                     })
@@ -432,7 +432,7 @@ class RAGContextBuilder:
             keyword_query = " OR ".join(keyword_conditions) if keyword_conditions else "1=1"
             
             query = f"""
-                SELECT id, title, content, source, published_date, category, url
+                SELECT id, title, content, source, published_at, category, url
                 FROM articles
                 WHERE ({keyword_query})
                 AND category = %s
@@ -442,7 +442,7 @@ class RAGContextBuilder:
                     FROM content_priority_assignments 
                     WHERE thread_id = %s
                 )
-                ORDER BY published_date DESC
+                ORDER BY published_at DESC
                 LIMIT %s
             """
             
@@ -455,7 +455,7 @@ class RAGContextBuilder:
                     'title': row[1],
                     'content': row[2][:500] + '...' if len(row[2]) > 500 else row[2],
                     'source': row[3],
-                    'published_date': row[4].isoformat() if row[4] else None,
+                    'published_at': row[4].isoformat() if row[4] else None,
                     'category': row[5],
                     'url': row[6]
                 })
@@ -482,7 +482,7 @@ class RAGContextBuilder:
             keyword_query = " OR ".join(keyword_conditions) if keyword_conditions else "1=1"
             
             query = f"""
-                SELECT id, title, content, source, published_date, category, url
+                SELECT id, title, content, source, published_at, category, url
                 FROM articles
                 WHERE ({keyword_query})
                 AND category = %s
@@ -494,7 +494,7 @@ class RAGContextBuilder:
                     LOWER(title) LIKE '%basics%' OR
                     LOWER(title) LIKE '%fundamentals%'
                 )
-                ORDER BY published_date DESC
+                ORDER BY published_at DESC
                 LIMIT %s
             """
             
@@ -507,7 +507,7 @@ class RAGContextBuilder:
                     'title': row[1],
                     'content': row[2][:500] + '...' if len(row[2]) > 500 else row[2],
                     'source': row[3],
-                    'published_date': row[4].isoformat() if row[4] else None,
+                    'published_at': row[4].isoformat() if row[4] else None,
                     'category': row[5],
                     'url': row[6]
                 })
@@ -533,11 +533,11 @@ class RAGContextBuilder:
             keyword_query = " OR ".join(keyword_conditions) if keyword_conditions else "1=1"
             
             query = f"""
-                SELECT id, title, content, source, published_date, category, url
+                SELECT id, title, content, source, published_at, category, url
                 FROM articles
                 WHERE ({keyword_query})
                 AND deduplication_status = 'unique'
-                ORDER BY published_date DESC
+                ORDER BY published_at DESC
                 LIMIT %s
             """
             
@@ -550,7 +550,7 @@ class RAGContextBuilder:
                     'title': row[1],
                     'content': row[2][:500] + '...' if len(row[2]) > 500 else row[2],
                     'source': row[3],
-                    'published_date': row[4].isoformat() if row[4] else None,
+                    'published_at': row[4].isoformat() if row[4] else None,
                     'category': row[5],
                     'url': row[6]
                 })
@@ -569,12 +569,12 @@ class RAGContextBuilder:
             cursor = conn.cursor()
             
             query = """
-                SELECT a.id, a.title, a.content, a.source, a.published_date, a.category, a.url
+                SELECT a.id, a.title, a.content, a.source, a.published_at, a.category, a.url
                 FROM articles a
                 JOIN content_priority_assignments cpa ON a.id = cpa.article_id
                 WHERE cpa.thread_id = %s
                 AND a.deduplication_status = 'unique'
-                ORDER BY a.published_date ASC
+                ORDER BY a.published_at ASC
                 LIMIT %s
             """
             
@@ -587,7 +587,7 @@ class RAGContextBuilder:
                     'title': row[1],
                     'content': row[2][:500] + '...' if len(row[2]) > 500 else row[2],
                     'source': row[3],
-                    'published_date': row[4].isoformat() if row[4] else None,
+                    'published_at': row[4].isoformat() if row[4] else None,
                     'category': row[5],
                     'url': row[6]
                 })
@@ -919,12 +919,12 @@ class RAGContextBuilder:
         try:
             timeline = []
             for article in articles:
-                published_date = article.get('published_date')
-                if published_date:
+                published_at = article.get('published_at')
+                if published_at:
                     try:
-                        date_obj = datetime.fromisoformat(published_date.replace('Z', '+00:00'))
+                        date_obj = datetime.fromisoformat(published_at.replace('Z', '+00:00'))
                         timeline.append({
-                            'date': published_date,
+                            'date': published_at,
                             'title': article.get('title', ''),
                             'source': article.get('source', ''),
                             'summary': article.get('content', '')[:200] + '...' if len(article.get('content', '')) > 200 else article.get('content', ''),
@@ -1002,10 +1002,10 @@ class RAGContextBuilder:
             
             dates = []
             for article in articles:
-                published_date = article.get('published_date')
-                if published_date:
+                published_at = article.get('published_at')
+                if published_at:
                     try:
-                        date_obj = datetime.fromisoformat(published_date.replace('Z', '+00:00'))
+                        date_obj = datetime.fromisoformat(published_at.replace('Z', '+00:00'))
                         dates.append(date_obj)
                     except:
                         continue

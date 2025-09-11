@@ -35,8 +35,14 @@ from routes.timeline import router as timeline_router
 from routes.story_management import router as story_management_router
 from routes.monitoring import router as monitoring_router
 from routes.intelligence import router as intelligence_router
-# from routes.enhanced_analysis import router as enhanced_analysis_router
+from routes.dashboard import router as dashboard_router
+from routes.storylines import router as storylines_router
+from routes.article_processing import router as article_processing_router
+# # from routes.enhanced_analysis import router as enhanced_analysis_router
 from routes.pipeline_monitoring import router as pipeline_monitoring_router
+
+# Import unified database configuration
+from config.database import get_db, get_db_config, check_database_health
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -47,7 +53,7 @@ async def lifespan(app: FastAPI):
     # Start automation manager in background thread
     try:
         from services.automation_manager import AutomationManager
-        from database.connection import get_db_config
+        from config.database import get_db_config
         import threading
         
         db_config = get_db_config()
@@ -144,7 +150,10 @@ app.include_router(timeline_router, prefix="/api")
 app.include_router(story_management_router, prefix="/api")
 app.include_router(monitoring_router, prefix="/api")
 app.include_router(intelligence_router, prefix="/api")
-# app.include_router(enhanced_analysis_router, prefix="/api")
+app.include_router(dashboard_router, prefix="/api")
+app.include_router(storylines_router, prefix="/api")
+app.include_router(article_processing_router, prefix="/api")
+# # app.include_router(enhanced_analysis_router, prefix="/api")
 app.include_router(pipeline_monitoring_router, prefix="/api")
 
 # Root endpoint
@@ -162,6 +171,143 @@ async def root():
         "message": "News Intelligence System v3.0 is running",
         "timestamp": "2025-09-05T17:00:00Z"
     }
+
+# Additional endpoints for frontend compatibility (without /api prefix)
+@app.get("/api/storylines")
+async def get_storylines_frontend():
+    """Frontend-compatible storyline endpoint"""
+    try:
+        from services.storyline_service import StorylineService
+        storyline_service = StorylineService()
+        result = await storyline_service.get_storylines()
+        
+        if "error" in result:
+            return {"success": False, "message": "Failed to retrieve storylines", "error": result["error"]}
+        
+        return {"success": True, "data": result, "message": f"Retrieved {len(result['storylines'])} storylines"}
+    except Exception as e:
+        logger.error(f"Error retrieving storylines: {str(e)}")
+        return {"success": False, "message": "Internal server error", "error": str(e)}
+
+@app.post("/api/storylines")
+async def create_storyline_frontend(request: dict):
+    """Frontend-compatible storyline creation endpoint"""
+    try:
+        from services.storyline_service import StorylineService
+        storyline_service = StorylineService()
+        result = await storyline_service.create_storyline(
+            title=request.get('title', ''),
+            description=request.get('description', '')
+        )
+        
+        if "error" in result:
+            return {"success": False, "message": "Failed to create storyline", "error": result["error"]}
+        
+        return {"success": True, "data": {"storyline": result}, "message": "Storyline created successfully"}
+    except Exception as e:
+        logger.error(f"Error creating storyline: {str(e)}")
+        return {"success": False, "message": "Internal server error", "error": str(e)}
+
+@app.post("/api/storylines/{storyline_id}/add-article")
+async def add_article_to_storyline_frontend(storyline_id: int, request: dict):
+    """Frontend-compatible add article to storyline endpoint"""
+    try:
+        from services.storyline_service import StorylineService
+        storyline_service = StorylineService()
+        
+        article_id = request.get('article_id')
+        if not article_id:
+            return {"success": False, "message": "Article ID is required"}
+        
+        result = await storyline_service.add_article_to_storyline(
+            storyline_id=str(storyline_id),
+            article_id=str(article_id)
+        )
+        
+        if "error" in result:
+            return {"success": False, "message": "Failed to add article to storyline", "error": result["error"]}
+        
+        return {"success": True, "message": "Article added to storyline successfully"}
+    except Exception as e:
+        logger.error(f"Error adding article to storyline: {str(e)}")
+        return {"success": False, "message": "Internal server error", "error": str(e)}
+
+@app.post("/article-processing/fetch-full-content/{article_id}")
+async def fetch_full_content_frontend(article_id: int):
+    """Frontend-compatible article content fetching endpoint"""
+    try:
+        from config.database import get_db_connection
+        from psycopg2.extras import RealDictCursor
+        
+        conn = get_db_connection()
+        if not conn:
+            return {
+                "success": False,
+                "data": {"error": "Database connection failed"},
+                "message": "Failed to fetch article content"
+            }
+        
+        try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT id, title, content, url, published_at, source, 
+                           summary, word_count, reading_time, quality_score
+                    FROM articles 
+                    WHERE id = %s
+                """, (article_id,))
+                
+                article = cur.fetchone()
+                
+                if not article:
+                    return {
+                        "success": False,
+                        "data": {"error": "Article not found"},
+                        "message": "Article not found"
+                    }
+                
+                # Format the content for better readability
+                full_content = f"""
+# {article['title']}
+
+**Source:** {article['source']}  
+**Published:** {article['published_at']}  
+**URL:** {article['url']}
+
+---
+
+{article['content']}
+
+---
+
+**Summary:** {article['summary'] or 'No summary available'}
+
+**Word Count:** {article['word_count'] or 'Unknown'}  
+**Reading Time:** {article['reading_time'] or 'Unknown'} minutes  
+**Quality Score:** {article['quality_score'] or 'Not rated'}
+                """.strip()
+                
+                return {
+                    "success": True,
+                    "data": {
+                        "article_id": article_id,
+                        "full_content": full_content,
+                        "title": article['title'],
+                        "source": article['source'],
+                        "url": article['url'],
+                        "status": "fetched"
+                    },
+                    "message": "Full content fetched successfully"
+                }
+        finally:
+            conn.close()
+            
+    except Exception as e:
+        logger.error(f"Error fetching article content: {e}")
+        return {
+            "success": False,
+            "data": {"error": str(e)},
+            "message": "Failed to fetch article content"
+        }
 
 if __name__ == "__main__":
     import uvicorn

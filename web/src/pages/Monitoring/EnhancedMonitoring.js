@@ -1148,13 +1148,16 @@ Do you want to proceed with running AI sentiment analysis?`
                   </ListItemIcon>
                   <ListItemText
                     primary="GPU VRAM Usage"
-                    secondary={`${systemStatus?.monitoringData?.data?.system_metrics?.gpu_vram_percent || 1.6}% (${systemStatus?.monitoringData?.data?.system_metrics?.gpu_memory_used_mb || 532}MB / ${systemStatus?.monitoringData?.data?.system_metrics?.gpu_memory_total_mb || 32607}MB)`}
+                    secondary={systemStatus?.monitoringData?.data?.system_metrics?.gpu_vram_percent 
+                      ? `${systemStatus.monitoringData.data.system_metrics.gpu_vram_percent}% (${systemStatus.monitoringData.data.system_metrics.gpu_memory_used_mb || 0}MB / ${systemStatus.monitoringData.data.system_metrics.gpu_memory_total_mb || 0}MB)`
+                      : 'No GPU data available'
+                    }
                   />
                   <LinearProgress 
                     variant="determinate" 
-                    value={systemStatus?.monitoringData?.data?.system_metrics?.gpu_vram_percent || 1.6}
+                    value={systemStatus?.monitoringData?.data?.system_metrics?.gpu_vram_percent || 0}
                     sx={{ width: 100, ml: 2 }}
-                    color={(systemStatus?.monitoringData?.data?.system_metrics?.gpu_vram_percent || 1.6) > 80 ? 'error' : 'primary'}
+                    color={(systemStatus?.monitoringData?.data?.system_metrics?.gpu_vram_percent || 0) > 80 ? 'error' : 'primary'}
                   />
                 </ListItem>
                 <ListItem>
@@ -1163,11 +1166,14 @@ Do you want to proceed with running AI sentiment analysis?`
                   </ListItemIcon>
                   <ListItemText
                     primary="GPU Utilization"
-                    secondary={`${systemStatus?.monitoringData?.data?.system_metrics?.gpu_utilization_percent || 2}%`}
+                    secondary={systemStatus?.monitoringData?.data?.system_metrics?.gpu_utilization_percent 
+                      ? `${systemStatus.monitoringData.data.system_metrics.gpu_utilization_percent}%`
+                      : 'No GPU data available'
+                    }
                   />
                   <LinearProgress 
                     variant="determinate" 
-                    value={systemStatus?.monitoringData?.data?.system_metrics?.gpu_utilization_percent || 2}
+                    value={systemStatus?.monitoringData?.data?.system_metrics?.gpu_utilization_percent || 0}
                     sx={{ width: 100, ml: 2 }}
                     color="secondary"
                   />

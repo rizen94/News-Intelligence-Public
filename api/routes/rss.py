@@ -11,7 +11,7 @@ from enum import Enum
 from fastapi import APIRouter, HTTPException, Query, Path, Body
 from pydantic import BaseModel, Field
 
-from database.connection import get_db
+from config.database import get_db
 from sqlalchemy import text
 from schemas.response_schemas import APIResponse, PaginatedResponse
 

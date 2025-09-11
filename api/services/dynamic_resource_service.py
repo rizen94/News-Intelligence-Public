@@ -150,7 +150,7 @@ class DynamicResourceService:
             cursor.execute("""
                 SELECT COUNT(*) as pending_tasks
                 FROM articles 
-                WHERE processing_status IN ('pending_processing', 'processing')
+                WHERE processing_status IN ('raw', 'processing')
                 AND created_at > NOW() - INTERVAL '10 minutes'
             """)
             
@@ -505,7 +505,7 @@ def get_dynamic_resource_service() -> DynamicResourceService:
     """Get global dynamic resource service instance"""
     global _dynamic_resource_service
     if _dynamic_resource_service is None:
-        from database.connection import get_db_config
+        from config.database import get_db_config
         _dynamic_resource_service = DynamicResourceService(get_db_config())
     return _dynamic_resource_service
 

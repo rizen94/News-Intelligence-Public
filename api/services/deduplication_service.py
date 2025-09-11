@@ -22,7 +22,7 @@ except ImportError:
     SENTENCE_TRANSFORMERS_AVAILABLE = False
     logging.warning("Sentence transformers not available - using basic similarity")
 
-from database.connection import get_db
+from config.database import get_db
 from sqlalchemy import text
 
 logger = logging.getLogger(__name__)

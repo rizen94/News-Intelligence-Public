@@ -191,8 +191,8 @@ async def generate_multi_perspective_analysis(
 
 @router.get("/storyline/{storyline_id}", response_model=EnhancedAnalysisResponse)
 async def get_enhanced_storyline_analysis(
-    storyline_id: str,
-    enhanced_service = Depends(get_enhanced_service)
+    storyline_id: str = Path(..., description="Storyline ID"),
+    enhanced_service: EnhancedAnalysisService = Depends(get_enhanced_service)
 ):
     """
     Get existing enhanced storyline analysis
@@ -220,9 +220,9 @@ async def get_enhanced_storyline_analysis(
 
 @router.get("/storyline/{storyline_id}/perspectives")
 async def get_storyline_perspectives(
-    storyline_id: str,
+    storyline_id: str = Path(..., description="Storyline ID"),
     perspective_type: Optional[str] = Query(None, description="Filter by specific perspective type"),
-    enhanced_service = Depends(get_enhanced_service)
+    enhanced_service: EnhancedAnalysisService = Depends(get_enhanced_service)
 ):
     """
     Get individual perspective analyses for a storyline
@@ -254,8 +254,8 @@ async def get_storyline_perspectives(
 
 @router.get("/storyline/{storyline_id}/quality")
 async def get_analysis_quality_metrics(
-    storyline_id: str,
-    enhanced_service = Depends(get_enhanced_service)
+    storyline_id: str = Path(..., description="Storyline ID"),
+    enhanced_service: EnhancedAnalysisService = Depends(get_enhanced_service)
 ):
     """
     Get analysis quality metrics for a storyline
@@ -329,8 +329,8 @@ async def get_available_perspectives():
 
 @router.post("/impact-assessment/{storyline_id}")
 async def generate_impact_assessment(
-    storyline_id: str,
-    enhanced_service = Depends(get_enhanced_service)
+    storyline_id: str = Path(..., description="Storyline ID"),
+    enhanced_service: EnhancedAnalysisService = Depends(get_enhanced_service)
 ):
     """
     Generate comprehensive impact assessment for a storyline
@@ -433,8 +433,8 @@ async def get_impact_dimensions():
 
 @router.post("/historical-context/{storyline_id}")
 async def generate_historical_context(
-    storyline_id: str,
-    enhanced_service = Depends(get_enhanced_service)
+    storyline_id: str = Path(..., description="Storyline ID"),
+    enhanced_service: EnhancedAnalysisService = Depends(get_enhanced_service)
 ):
     """
     Generate historical context analysis for a storyline
@@ -495,8 +495,8 @@ async def generate_historical_context(
 
 @router.post("/predictive-analysis/{storyline_id}")
 async def generate_predictive_analysis(
-    storyline_id: str,
-    enhanced_service = Depends(get_enhanced_service)
+    storyline_id: str = Path(..., description="Storyline ID"),
+    enhanced_service: EnhancedAnalysisService = Depends(get_enhanced_service)
 ):
     """
     Generate predictive analysis for a storyline
@@ -593,8 +593,8 @@ async def get_prediction_horizons():
 
 @router.post("/expert-analysis/{storyline_id}")
 async def generate_expert_analysis(
-    storyline_id: str,
-    enhanced_service = Depends(get_enhanced_service)
+    storyline_id: str = Path(..., description="Storyline ID"),
+    enhanced_service: EnhancedAnalysisService = Depends(get_enhanced_service)
 ):
     """
     Generate expert analysis for a storyline

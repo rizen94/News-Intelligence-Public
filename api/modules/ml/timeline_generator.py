@@ -120,12 +120,12 @@ class TimelineGenerator:
             
             # Date filtering
             if start_date:
-                where_conditions.append(f"DATE(a.published_date) >= %s")
+                where_conditions.append(f"DATE(a.published_at) >= %s")
                 params.append(start_date)
                 param_count += 1
             
             if end_date:
-                where_conditions.append(f"DATE(a.published_date) <= %s")
+                where_conditions.append(f"DATE(a.published_at) <= %s")
                 params.append(end_date)
                 param_count += 1
             
@@ -168,7 +168,7 @@ class TimelineGenerator:
                     a.summary,
                     a.source,
                     a.url,
-                    a.published_date,
+                    a.published_at,
                     a.category,
                     a.engagement_score,
                     a.entities_extracted,
@@ -184,7 +184,7 @@ class TimelineGenerator:
                     ) as relevance_score
                 FROM articles a
                 WHERE {where_clause}
-                ORDER BY relevance_score DESC, a.published_date DESC
+                ORDER BY relevance_score DESC, a.published_at DESC
                 LIMIT %s
             """
             
@@ -209,7 +209,7 @@ class TimelineGenerator:
                     'summary': row[3],
                     'source': row[4],
                     'url': row[5],
-                    'published_date': row[6],
+                    'published_at': row[6],
                     'category': row[7],
                     'engagement_score': row[8],
                     'entities_extracted': row[9],
@@ -229,8 +229,8 @@ class TimelineGenerator:
         """Group articles by publication date"""
         grouped = {}
         for article in articles:
-            if article['published_date']:
-                date_str = article['published_date'].strftime('%Y-%m-%d')
+            if article['published_at']:
+                date_str = article['published_at'].strftime('%Y-%m-%d')
                 if date_str not in grouped:
                     grouped[date_str] = []
                 grouped[date_str].append(article)

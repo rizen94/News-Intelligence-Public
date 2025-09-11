@@ -36,10 +36,10 @@ const Health = ({ systemHealth }) => {
               </Typography>
               {systemHealth ? (
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                  {getStatusIcon(systemHealth.status)}
+                  {getStatusIcon(systemHealth.data?.status)}
                   <Chip
-                    label={systemHealth.status?.toUpperCase() || 'UNKNOWN'}
-                    color={getStatusColor(systemHealth.status)}
+                    label={systemHealth.data?.status?.toUpperCase() || 'UNKNOWN'}
+                    color={getStatusColor(systemHealth.data?.status)}
                     variant="outlined"
                   />
                   <Typography variant="body2" color="text.secondary">

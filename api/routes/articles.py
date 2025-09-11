@@ -10,7 +10,7 @@ from sqlalchemy import text
 from pydantic import BaseModel
 from schemas.robust_schemas import APIResponse
 from schemas.generated_models import Article, RSSFeed, ArticleCreate, ArticleUpdate
-from database.connection import get_db
+from config.database import get_db
 from services.article_service import ArticleService
 import logging
 
@@ -37,9 +37,12 @@ class ArticleStatsResponse(BaseModel):
 async def get_articles(
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(20, ge=1, le=100, description="Items per page"),
+    search: Optional[str] = Query(None, description="Search in title and content"),
     source: Optional[str] = Query(None, description="Filter by source"),
     category: Optional[str] = Query(None, description="Filter by category"),
-    status: Optional[str] = Query(None, description="Filter by status")
+    status: Optional[str] = Query(None, description="Filter by status"),
+    sort: Optional[str] = Query("created_at", description="Sort field"),
+    sort_order: Optional[str] = Query("desc", description="Sort order (asc/desc)")
 ):
     """Get paginated list of articles with filters"""
     try:
@@ -52,6 +55,9 @@ async def get_articles(
             where_conditions = []
             params = {"limit": limit, "offset": offset}
             
+            if search:
+                where_conditions.append("(title ILIKE :search OR content ILIKE :search)")
+                params["search"] = f"%{search}%"
             if source:
                 where_conditions.append("source = :source")
                 params["source"] = source
@@ -64,6 +70,20 @@ async def get_articles(
                 
             where_clause = " AND ".join(where_conditions) if where_conditions else "1=1"
             
+            # Build ORDER BY clause
+            valid_sort_fields = {
+                "created_at": "created_at",
+                "published_at": "published_at", 
+                "title": "title",
+                "quality_score": "quality_score",
+                "source": "source",
+                "category": "category"
+            }
+            
+            sort_field = valid_sort_fields.get(sort, "created_at")
+            sort_direction = "ASC" if sort_order.lower() == "asc" else "DESC"
+            order_clause = f"{sort_field} {sort_direction}"
+            
             # Get articles
             articles_query = text(f"""
                 SELECT id, title, content, url, published_at, source, tags, created_at, updated_at,
@@ -71,7 +91,7 @@ async def get_articles(
                        summary, ml_data, language, word_count, reading_time, feed_id
                 FROM articles 
                 WHERE {where_clause}
-                ORDER BY created_at DESC 
+                ORDER BY {order_clause}
                 LIMIT :limit OFFSET :offset
             """)
             
@@ -192,10 +212,10 @@ async def get_article_by_id(
     """Get article by ID"""
     try:
         service = ArticleService(db)
-        article = await service.get_article_by_id(article_id)
+        article = await service.get_article(article_id)
         
-        if "error" in article:
-            raise HTTPException(status_code=404, detail=article["error"])
+        if not article:
+            raise HTTPException(status_code=404, detail="Article not found")
         
         return APIResponse(
             success=True,

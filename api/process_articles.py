@@ -33,10 +33,10 @@ def process_raw_articles():
         cur = conn.cursor()
         
         cur.execute("""
-            SELECT id, title, content, source, published_date 
+            SELECT id, title, content, source, published_at 
             FROM articles 
             WHERE processing_status = 'raw' 
-            ORDER BY published_date DESC 
+            ORDER BY published_at DESC 
             LIMIT 10
         """)
         
@@ -52,7 +52,7 @@ def process_raw_articles():
         
         # Process each article
         processed_count = 0
-        for article_id, title, content, source, published_date in raw_articles:
+        for article_id, title, content, source, published_at in raw_articles:
             logger.info(f"Processing article {article_id}: {title[:50]}...")
             
             result = ml_pipeline.process_article(article_id)

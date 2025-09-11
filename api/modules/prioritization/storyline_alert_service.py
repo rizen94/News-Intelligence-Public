@@ -62,7 +62,7 @@ class StorylineAlertService:
             time_window = datetime.now() - timedelta(hours=self.significance_thresholds['time_window_hours'])
             
             cursor.execute("""
-                SELECT a.id, a.title, a.source, a.published_date, a.quality_score, a.category,
+                SELECT a.id, a.title, a.source, a.published_at, a.quality_score, a.category,
                        cpa.assigned_at, cpa.confidence_score
                 FROM articles a
                 JOIN content_priority_assignments cpa ON a.id = cpa.article_id
@@ -325,7 +325,7 @@ class StorylineAlertService:
                 'id': article[0],
                 'title': article[1],
                 'source': article[2],
-                'published_date': article[3].isoformat() if article[3] else None,
+                'published_at': article[3].isoformat() if article[3] else None,
                 'quality_score': float(article[4]) if article[4] else 0.0,
                 'category': article[5],
                 'assigned_at': article[6].isoformat() if article[6] else None

@@ -13,7 +13,7 @@ from sqlalchemy import text
 import json
 import logging
 
-from database.connection import get_db
+from config.database import get_db
 from schemas.robust_schemas import APIResponse
 
 logger = logging.getLogger(__name__)

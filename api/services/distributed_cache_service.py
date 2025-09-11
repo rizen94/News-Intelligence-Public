@@ -490,7 +490,7 @@ def get_distributed_cache_service() -> DistributedCacheService:
     """Get global distributed cache service instance"""
     global _distributed_cache_service
     if _distributed_cache_service is None:
-        from database.connection import get_db_config
+        from config.database import get_db_config
         _distributed_cache_service = DistributedCacheService(get_db_config())
     return _distributed_cache_service
 

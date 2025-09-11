@@ -24,10 +24,10 @@ import {
   Source as SourceIcon,
   Schedule as ScheduleIcon,
   Refresh as RefreshIcon,
+  ReadMore as ReadMoreIcon,
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
-// import { useNotifications } from '../../components/Notifications/NotificationSystem';
-// import newsSystemService from '../../services/newsSystemService';
+import { apiService } from '../../services/apiService';
 
 const Articles = () => {
   const [articles, setArticles] = useState([]);
@@ -35,7 +35,7 @@ const Articles = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('');
   const [sourceFilter, setSourceFilter] = useState('');
-  const [sortBy, setSortBy] = useState('published_date');
+  const [sortBy, setSortBy] = useState('published_at');
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [totalArticles, setTotalArticles] = useState(0);
@@ -47,19 +47,14 @@ const Articles = () => {
   const fetchArticles = useCallback(async (isManualRefresh = false) => {
     try {
       setLoading(true);
-      // if (isManualRefresh) {
-      //   showLoading('Refreshing articles...');
-      // } else {
-      //   showLoading('Loading articles...');
-      // }
 
       const params = {
         page,
-        per_page: 12,
+        limit: 12,
         search: searchTerm,
         category: categoryFilter,
         source: sourceFilter,
-        sort_by: sortBy,
+        sort: sortBy,
         sort_order: 'desc'
       };
 
@@ -68,27 +63,20 @@ const Articles = () => {
         params._t = Date.now();
       }
 
-      // const response = await newsSystemService.getArticles(params);
-      const response = { success: true, data: { articles: [], total: 0 } };
+      const response = await apiService.getArticles(params);
       
       if (response.success) {
-        setArticles(response.data.articles || []);
+        setArticles(response.data?.articles || []);
         // Calculate total pages correctly
-        const totalPages = Math.ceil((response.data.total || 0) / 12);
+        const totalPages = Math.ceil((response.data?.total || 0) / 12);
         setTotalPages(totalPages);
-        setTotalArticles(response.data.total || 0);
-        // if (isManualRefresh) {
-        //   showSuccess(`Refreshed ${response.data.articles?.length || 0} articles`);
-        // } else {
-        //   showSuccess(`Loaded ${response.data.articles?.length || 0} articles`);
-        // }
+        setTotalArticles(response.data?.total || 0);
       } else {
         console.error('Articles API Error:', response);
         throw new Error(response.message || 'Failed to fetch articles');
       }
     } catch (error) {
       console.error('Error fetching articles:', error);
-      // showError('Failed to load articles. Please try refreshing the page.');
       
       // Set empty state instead of mock data
       setArticles([]);
@@ -102,15 +90,17 @@ const Articles = () => {
   const fetchSourcesAndCategories = useCallback(async () => {
     try {
       // Fetch sources and categories for filters
-      // const sourcesResponse = await newsSystemService.getSources();
-      // const categoriesResponse = await newsSystemService.getCategories();
+      const [sourcesResponse, categoriesResponse] = await Promise.all([
+        apiService.getSources(),
+        apiService.getCategories()
+      ]);
       
-      // if (sourcesResponse.success) {
-      //   setSources(sourcesResponse.data || []);
-      // }
-      // if (categoriesResponse.success) {
-      //   setCategories(categoriesResponse.data || []);
-      // }
+      if (sourcesResponse.success) {
+        setSources(sourcesResponse.data || []);
+      }
+      if (categoriesResponse.success) {
+        setCategories(categoriesResponse.data || []);
+      }
     } catch (error) {
       console.error('Error fetching sources and categories:', error);
       // Set default values
@@ -127,6 +117,18 @@ const Articles = () => {
     fetchArticles();
   }, [fetchArticles]);
 
+  // Auto-search when filters change
+  useEffect(() => {
+    const timeoutId = setTimeout(() => {
+      if (searchTerm || categoryFilter || sourceFilter) {
+        setPage(1);
+        fetchArticles();
+      }
+    }, 500); // Debounce search
+
+    return () => clearTimeout(timeoutId);
+  }, [searchTerm, categoryFilter, sourceFilter, fetchArticles]);
+
   const handleSearch = () => {
     setPage(1);
     fetchArticles();
@@ -136,7 +138,7 @@ const Articles = () => {
     setSearchTerm('');
     setCategoryFilter('');
     setSourceFilter('');
-    setSortBy('published_date');
+    setSortBy('published_at');
     setPage(1);
   };
 
@@ -264,10 +266,11 @@ const Articles = () => {
                 onChange={(e) => setSortBy(e.target.value)}
                 label="Sort By"
               >
-                <MenuItem value="published_date">Date</MenuItem>
+                <MenuItem value="published_at">Date</MenuItem>
                 <MenuItem value="quality_score">Quality</MenuItem>
-                <MenuItem value="sentiment_score">Sentiment</MenuItem>
                 <MenuItem value="title">Title</MenuItem>
+                <MenuItem value="source">Source</MenuItem>
+                <MenuItem value="category">Category</MenuItem>
               </Select>
             </FormControl>
           </Grid>
@@ -403,7 +406,7 @@ const Articles = () => {
 
                 {/* Topics */}
                 {article.topics_extracted && article.topics_extracted.length > 0 && (
-                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mt: 1 }}>
+                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mt: 1, mb: 2 }}>
                     {(article.topics_extracted || []).slice(0, 3).map((topic, index) => (
                       <Chip 
                         key={index}
@@ -423,6 +426,24 @@ const Articles = () => {
                     )}
                   </Box>
                 )}
+
+                {/* Read Full Article Button */}
+                <Button
+                  variant="contained"
+                  fullWidth
+                  startIcon={<ReadMoreIcon />}
+                  onClick={(e) => {
+                    e.stopPropagation(); // Prevent card click
+                    handleArticleClick(article.id);
+                  }}
+                  sx={{ 
+                    mt: 'auto',
+                    textTransform: 'none',
+                    fontWeight: 500
+                  }}
+                >
+                  Read Full Article
+                </Button>
               </CardContent>
             </Card>
           </Grid>

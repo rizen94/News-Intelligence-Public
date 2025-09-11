@@ -9,7 +9,7 @@ import json
 from typing import Dict, List, Any, Optional
 from datetime import datetime, timezone
 
-from database.connection import get_db
+from config.database import get_db
 from sqlalchemy import text
 from .storyline_service import StorylineService
 from .multi_perspective_analyzer import MultiPerspectiveAnalyzer, get_multi_perspective_analyzer

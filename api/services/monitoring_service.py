@@ -18,8 +18,8 @@ except ImportError:
     PROMETHEUS_AVAILABLE = False
     logging.warning("Prometheus client not available - metrics disabled")
 
-from database.connection import get_db
-from sqlalchemy import text
+from config.database import get_db_connection
+from psycopg2.extras import RealDictCursor
 
 logger = logging.getLogger(__name__)
 
@@ -358,106 +358,103 @@ class MonitoringService:
     async def _get_database_metrics(self) -> Dict[str, Any]:
         """Get database-related metrics"""
         try:
-            db_gen = get_db()
-            db = next(db_gen)
+            conn = get_db_connection()
+            if not conn:
+                return {"error": "Database connection failed"}
+            
             try:
-                # Get table sizes
-                table_sizes = db.execute(text("""
-                    SELECT 
-                        schemaname,
-                        tablename,
-                        pg_size_pretty(pg_total_relation_size(schemaname||'.'||tablename)) as size,
-                        pg_total_relation_size(schemaname||'.'||tablename) as size_bytes
-                    FROM pg_tables 
-                    WHERE schemaname = 'public'
-                    ORDER BY pg_total_relation_size(schemaname||'.'||tablename) DESC
-                """)).fetchall()
-                
-                # Get connection count
-                connection_count = db.execute(text("""
-                    SELECT count(*) FROM pg_stat_activity 
-                    WHERE state = 'active'
-                """)).fetchone()[0]
-                
-                return {
-                    "table_sizes": [
-                        {
-                            "table": row[1],
-                            "size": row[2],
-                            "size_bytes": row[3]
-                        } for row in table_sizes
-                    ],
-                    "active_connections": connection_count
-                }
+                with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                    # Get article counts
+                    cur.execute("SELECT COUNT(*) FROM articles")
+                    article_count = cur.fetchone()['count']
+                    
+                    cur.execute("""
+                        SELECT COUNT(*) FROM articles 
+                        WHERE created_at >= NOW() - INTERVAL '24 hours'
+                    """)
+                    recent_articles = cur.fetchone()['count']
+                    
+                    return {
+                        "total_articles": article_count,
+                        "recent_articles": recent_articles,
+                        "database_size": "unknown",
+                        "connection_status": "healthy"
+                    }
             finally:
-                db.close()
+                conn.close()
         except Exception as e:
             self.logger.error(f"Error getting database metrics: {e}")
-            return {"error": str(e)}
+            return {"error": str(e), "connection_status": "error", "total_articles": 0, "recent_articles": 0}
     
     async def _get_rss_metrics(self) -> Dict[str, Any]:
         """Get RSS feed metrics"""
         try:
-            db_gen = get_db()
-            db = next(db_gen)
+            conn = get_db_connection()
+            if not conn:
+                return {"error": "Database connection failed"}
+            
             try:
-                # Get feed counts by status and tier
-                feed_counts = db.execute(text("""
-                    SELECT status, tier, COUNT(*) as count
-                    FROM rss_feeds 
-                    GROUP BY status, tier
-                    ORDER BY status, tier
-                """)).fetchall()
-                
-                # Get success rates
-                success_rates = db.execute(text("""
-                    SELECT 
-                        f.id, f.name, f.success_rate, f.avg_response_time,
-                        COUNT(a.id) as article_count
-                    FROM rss_feeds f
-                    LEFT JOIN articles a ON f.name = a.source
-                    WHERE f.is_active = true
-                    GROUP BY f.id, f.name, f.success_rate, f.avg_response_time
-                    ORDER BY f.success_rate DESC
-                """)).fetchall()
-                
-                # Get recent activity
-                recent_activity = db.execute(text("""
-                    SELECT 
-                        DATE(created_at) as date,
-                        COUNT(*) as articles_collected
-                    FROM articles 
-                    WHERE created_at >= CURRENT_DATE - INTERVAL '7 days'
-                    GROUP BY DATE(created_at)
-                    ORDER BY date DESC
-                """)).fetchall()
-                
-                return {
-                    "feed_counts": [
-                        {
-                            "status": row[0],
-                            "tier": row[1],
-                            "count": row[2]
-                        } for row in feed_counts
-                    ],
-                    "success_rates": [
-                        {
-                            "feed_id": row[0],
-                            "feed_name": row[1],
-                            "success_rate": float(row[2]) if row[2] else 0.0,
-                            "avg_response_time": row[3],
-                            "article_count": row[4]
-                        } for row in success_rates
-                    ],
-                    "recent_activity": [
-                        {
-                            "date": row[0].isoformat(),
-                            "articles_collected": row[1]
-                        } for row in recent_activity
-                    ]
-                }
+                with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                    # Get feed counts by status and tier
+                    cur.execute("""
+                        SELECT status, tier, COUNT(*) as count
+                        FROM rss_feeds 
+                        GROUP BY status, tier
+                        ORDER BY status, tier
+                    """)
+                    feed_counts = cur.fetchall()
+                    
+                    # Get success rates
+                    cur.execute("""
+                        SELECT 
+                            f.id, f.name, f.success_rate, f.avg_response_time,
+                            COUNT(a.id) as article_count
+                        FROM rss_feeds f
+                        LEFT JOIN articles a ON f.name = a.source
+                        WHERE f.is_active = true
+                        GROUP BY f.id, f.name, f.success_rate, f.avg_response_time
+                        ORDER BY f.success_rate DESC
+                    """)
+                    success_rates = cur.fetchall()
+                    
+                    # Get recent activity
+                    cur.execute("""
+                        SELECT 
+                            DATE(created_at) as date,
+                            COUNT(*) as articles_collected
+                        FROM articles 
+                        WHERE created_at >= CURRENT_DATE - INTERVAL '7 days'
+                        GROUP BY DATE(created_at)
+                        ORDER BY date DESC
+                    """)
+                    recent_activity = cur.fetchall()
+                    
+                    return {
+                        "feed_counts": [
+                            {
+                                "status": row['status'],
+                                "tier": row['tier'],
+                                "count": row['count']
+                            } for row in feed_counts
+                        ],
+                        "success_rates": [
+                            {
+                                "feed_id": row['id'],
+                                "feed_name": row['name'],
+                                "success_rate": float(row['success_rate']) if row['success_rate'] else 0.0,
+                                "avg_response_time": row['avg_response_time'],
+                                "article_count": row['article_count']
+                            } for row in success_rates
+                        ],
+                        "recent_activity": [
+                            {
+                                "date": row['date'].isoformat() if row['date'] else None,
+                                "articles_collected": row['articles_collected']
+                            } for row in recent_activity
+                        ]
+                    }
             finally:
-                db.close()
+                conn.close()
         except Exception as e:
             self.logger.error(f"Error getting RSS metrics: {e}")
             return {"error": str(e)}
@@ -465,29 +462,33 @@ class MonitoringService:
     async def _get_article_metrics(self) -> Dict[str, Any]:
         """Get article processing metrics"""
         try:
-            db_gen = get_db()
-            db = next(db_gen)
+            conn = get_db_connection()
+            if not conn:
+                return {"error": "Database connection failed"}
+            
             try:
-                # Get article counts by status and source tier
-                article_counts = db.execute(text("""
-                    SELECT 
-                        CASE 
-                            WHEN is_duplicate = true THEN 'duplicate'
-                            WHEN filtering_reason IS NOT NULL THEN 'filtered'
-                            ELSE 'accepted'
-                        END as status,
-                        COALESCE(source_tier, 0) as source_tier,
-                        COUNT(*) as count
-                    FROM articles 
-                    GROUP BY 
-                        CASE 
-                            WHEN is_duplicate = true THEN 'duplicate'
-                            WHEN filtering_reason IS NOT NULL THEN 'filtered'
-                            ELSE 'accepted'
-                        END,
-                        COALESCE(source_tier, 0)
-                    ORDER BY status, source_tier
-                """)).fetchall()
+                with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                    # Get article counts by status and source tier
+                    cur.execute("""
+                        SELECT 
+                            CASE 
+                                WHEN is_duplicate = true THEN 'duplicate'
+                                WHEN filtering_reason IS NOT NULL THEN 'filtered'
+                                ELSE 'accepted'
+                            END as status,
+                            COALESCE(source_tier, 0) as source_tier,
+                            COUNT(*) as count
+                        FROM articles 
+                        GROUP BY 
+                            CASE 
+                                WHEN is_duplicate = true THEN 'duplicate'
+                                WHEN filtering_reason IS NOT NULL THEN 'filtered'
+                                ELSE 'accepted'
+                            END,
+                            COALESCE(source_tier, 0)
+                        ORDER BY status, source_tier
+                    """)
+                    article_counts = cur.fetchall()
                 
                 # Get filtering statistics
                 filtering_stats = db.execute(text("""

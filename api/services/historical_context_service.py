@@ -11,7 +11,7 @@ from datetime import datetime, timezone, timedelta
 from dataclasses import dataclass
 from enum import Enum
 
-from database.connection import get_db
+from config.database import get_db
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 

@@ -9,7 +9,7 @@ import os
 import json
 from typing import Dict, List, Any, Optional
 from datetime import datetime
-from database.connection import get_db
+from config.database import get_db
 from sqlalchemy import text
 
 logger = logging.getLogger(__name__)
@@ -26,25 +26,30 @@ class StorylineService:
             db_gen = get_db()
             db = next(db_gen)
             try:
-                storyline_id = f"storyline_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{hash(title) % 10000}"
-                
-                db.execute(text("""
-                    INSERT INTO storylines (id, title, description, status, created_at, updated_at)
-                    VALUES (:id, :title, :description, 'active', NOW(), NOW())
+                # Use auto-incrementing ID instead of custom ID
+                result = db.execute(text("""
+                    INSERT INTO storylines (title, description, status, created_at, updated_at, created_by)
+                    VALUES (:title, :description, 'active', NOW(), NOW(), 'user')
+                    RETURNING id, created_at, updated_at
                 """), {
-                    "id": storyline_id,
                     "title": title,
-                    "description": description
-                })
+                    "description": description or ""
+                }).fetchone()
+                
                 db.commit()
+                
+                storyline_id = result[0]
+                created_at = result[1]
+                updated_at = result[2]
                 
                 return {
                     "id": storyline_id,
                     "title": title,
-                    "description": description,
+                    "description": description or "",
                     "status": "active",
                     "article_count": 0,
-                    "created_at": datetime.now().isoformat()
+                    "created_at": created_at.isoformat() if created_at else datetime.now().isoformat(),
+                    "updated_at": updated_at.isoformat() if updated_at else datetime.now().isoformat()
                 }
             finally:
                 db.close()

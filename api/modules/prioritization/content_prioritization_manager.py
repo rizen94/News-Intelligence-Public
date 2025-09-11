@@ -276,7 +276,7 @@ class ContentPrioritizationManager:
             cursor = conn.cursor()
             
             cursor.execute("""
-                SELECT id, title, content, source, category, published_date
+                SELECT id, title, content, source, category, published_at
                 FROM articles 
                 WHERE deduplication_status = 'unique'
                 AND id NOT IN (
@@ -369,7 +369,7 @@ class ContentPrioritizationManager:
                     'content': article_data[2],
                     'source': article_data[3],
                     'category': article_data[4],
-                    'published_date': article_data[5]
+                    'published_at': article_data[5]
                 }
                 
                 # Process article
@@ -425,7 +425,7 @@ class ContentPrioritizationManager:
                 # Insert new article
                 cursor.execute("""
                     INSERT INTO articles
-                    (title, url, content, summary, published_date, created_at, source, category,
+                    (title, url, content, summary, published_at, created_at, source, category,
                      content_hash, normalized_content, deduplication_status)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     RETURNING id
@@ -434,7 +434,7 @@ class ContentPrioritizationManager:
                     article_data['url'],
                     article_data['content'],
                     None,
-                    article_data['published_date'],
+                    article_data['published_at'],
                     datetime.now(),
                     article_data['source'],
                     article_data['category'],

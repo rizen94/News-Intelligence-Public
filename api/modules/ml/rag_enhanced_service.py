@@ -357,11 +357,11 @@ class RAGEnhancedService:
             if not keywords:
                 # If no keywords, get recent articles
                 query_sql = """
-                    SELECT id, title, content, summary, source, published_date, category, url,
+                    SELECT id, title, content, summary, source, published_at, category, url,
                            quality_score, processing_status
                     FROM articles 
                     WHERE quality_score >= 0.3
-                    ORDER BY published_date DESC
+                    ORDER BY published_at DESC
                     LIMIT %s
                 """
                 cursor.execute(query_sql, (max_articles,))
@@ -378,14 +378,14 @@ class RAGEnhancedService:
                 keyword_query = " OR ".join(keyword_conditions)
                 
                 query_sql = f"""
-                    SELECT id, title, content, summary, source, published_date, category, url,
+                    SELECT id, title, content, summary, source, published_at, category, url,
                            quality_score, processing_status
                     FROM articles 
                     WHERE ({keyword_query})
                     AND quality_score >= 0.3
                     ORDER BY 
                         quality_score DESC,
-                        published_date DESC
+                        published_at DESC
                     LIMIT %s
                 """
                 
@@ -414,7 +414,7 @@ class RAGEnhancedService:
                         'content': row[2] or "",
                         'summary': row[3] or "",
                         'source': row[4] or "",
-                        'published_date': row[5].isoformat() if row[5] else None,
+                        'published_at': row[5].isoformat() if row[5] else None,
                         'category': row[6] or "",
                         'url': row[7] or "",
                         'ml_data': {},  # Empty for now
@@ -620,7 +620,7 @@ class RAGEnhancedService:
             # Sort by recency and quality
             sorted_articles = sorted(
                 articles, 
-                key=lambda x: (x.get('published_date', ''), x.get('quality_score', 0)), 
+                key=lambda x: (x.get('published_at', ''), x.get('quality_score', 0)), 
                 reverse=True
             )
             
@@ -630,7 +630,7 @@ class RAGEnhancedService:
                 if article.get('title'):
                     developments.append({
                         'title': article['title'],
-                        'date': article.get('published_date'),
+                        'date': article.get('published_at'),
                         'source': article.get('source'),
                         'quality_score': article.get('quality_score', 0)
                     })
@@ -705,9 +705,9 @@ class RAGEnhancedService:
         try:
             timeline = []
             for article in articles:
-                if article.get('published_date'):
+                if article.get('published_at'):
                     timeline.append({
-                        'date': article['published_date'],
+                        'date': article['published_at'],
                         'title': article.get('title', ''),
                         'source': article.get('source', ''),
                         'url': article.get('url', '')
@@ -852,11 +852,11 @@ class RAGEnhancedService:
             
             # Search for articles related to story
             cursor.execute("""
-                SELECT id, title, content, summary, source, published_date, category, url,
+                SELECT id, title, content, summary, source, published_at, category, url,
                        quality_score, processing_status
                 FROM articles 
                 WHERE (LOWER(title) LIKE %s OR LOWER(content) LIKE %s)
-                ORDER BY published_date DESC
+                ORDER BY published_at DESC
                 LIMIT 20
             """, (f'%{story_id.lower()}%', f'%{story_id.lower()}%'))
             
@@ -868,7 +868,7 @@ class RAGEnhancedService:
                     'content': row[2] or "",
                     'summary': row[3] or "",
                     'source': row[4] or "",
-                    'published_date': row[5].isoformat() if row[5] else None,
+                    'published_at': row[5].isoformat() if row[5] else None,
                     'category': row[6] or "",
                     'url': row[7] or "",
                     'ml_data': {},  # Empty for now
@@ -888,9 +888,9 @@ class RAGEnhancedService:
         try:
             timeline = []
             for article in articles:
-                if article.get('published_date'):
+                if article.get('published_at'):
                     timeline.append({
-                        'date': article['published_date'],
+                        'date': article['published_at'],
                         'title': article.get('title', ''),
                         'source': article.get('source', ''),
                         'summary': article.get('summary', '')[:200] + '...' if len(article.get('summary', '')) > 200 else article.get('summary', ''),
@@ -975,7 +975,7 @@ class RAGEnhancedService:
                 return {}
             
             # Analyze by date
-            dates = [a.get('published_date') for a in articles if a.get('published_date')]
+            dates = [a.get('published_at') for a in articles if a.get('published_at')]
             if dates:
                 dates.sort()
                 trend_period = f"{dates[0]} to {dates[-1]}"
@@ -1151,7 +1151,7 @@ class RAGEnhancedService:
             # Get background context
             background_context = self.gdelt_service.get_background_context(
                 keywords=keywords,
-                article_date=article_data.get('published_date', '')
+                article_date=article_data.get('published_at', '')
             )
             
             # Extract entities and get entity context
@@ -1197,7 +1197,7 @@ class RAGEnhancedService:
             cursor = conn.cursor()
             
             cursor.execute("""
-                SELECT id, title, content, summary, url, source, published_date, 
+                SELECT id, title, content, summary, url, source, published_at, 
                        category, language, quality_score, processing_status, ml_data
                 FROM articles 
                 WHERE id = %s

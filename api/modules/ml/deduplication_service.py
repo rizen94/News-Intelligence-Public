@@ -64,7 +64,7 @@ class ContentDeduplicationService:
             # Get recent articles for analysis
             cutoff_date = datetime.now() - timedelta(days=30)
             cursor.execute("""
-                SELECT id, title, content, summary, source, published_date, 
+                SELECT id, title, content, summary, source, published_at, 
                        url, created_at, ml_data
                 FROM articles 
                 WHERE created_at >= %s 
@@ -190,7 +190,7 @@ class ContentDeduplicationService:
                     # Sort by quality (use ML data if available) and date
                     current_group.sort(key=lambda x: (
                         self._get_article_quality(x),
-                        x[5] or datetime.min  # published_date
+                        x[5] or datetime.min  # published_at
                     ), reverse=True)
                     
                     primary = current_group[0]
@@ -211,7 +211,7 @@ class ContentDeduplicationService:
                             'id': dup[0],
                             'title': dup[1],
                             'source': dup[4],
-                            'published_date': dup[5],
+                            'published_at': dup[5],
                             'url': dup[6],
                             'similarity_score': self._calculate_article_similarity(primary, dup)
                         } for dup in duplicates],

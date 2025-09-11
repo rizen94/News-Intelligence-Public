@@ -26,6 +26,8 @@ import {
   IconButton,
   Fab,
   Tooltip,
+  Alert,
+  Snackbar,
 } from '@mui/material';
 import {
   Search as SearchIcon,
@@ -38,9 +40,9 @@ import {
   Article as ArticleIcon,
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
-// import { useNotifications } from '../../components/Notifications/NotificationSystem';
-// import newsSystemService from '../../services/newsSystemService';
-// import EditStorylineDialog from '../../components/EditStorylineDialog/EditStorylineDialog';
+import apiService from '../../services/apiService';
+import StorylineCreationDialog from '../../components/StorylineCreationDialog';
+import StorylineConfirmationDialog from '../../components/StorylineConfirmationDialog';
 
 const Storylines = () => {
   const [storylines, setStorylines] = useState([]);
@@ -54,6 +56,11 @@ const Storylines = () => {
   const [totalStorylines, setTotalStorylines] = useState(0);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [confirmationDialog, setConfirmationDialog] = useState({
+    open: false,
+    action: null,
+    storyline: null
+  });
   const [selectedStoryline, setSelectedStoryline] = useState(null);
   const [newStoryline, setNewStoryline] = useState({
     title: '',
@@ -63,30 +70,35 @@ const Storylines = () => {
     targets: [],
     quality_filters: []
   });
+  const [snackbar, setSnackbar] = useState({
+    open: false,
+    message: '',
+    severity: 'success'
+  });
+  const [actionLoading, setActionLoading] = useState(false);
   const navigate = useNavigate();
-  // const { showSuccess, showError, showLoading } = useNotifications();
 
   const fetchStorylines = useCallback(async () => {
     try {
       setLoading(true);
-      // showLoading('Loading storylines...');
-
-      // const response = await newsSystemService.getActiveStories();
-      const response = { success: true, data: { storylines: [] } };
       
+      const response = await apiService.get('/api/storylines');
       
       if (response.success) {
-        setStorylines(response.data || []);
-        // showSuccess(`Loaded ${response.data?.length || 0} storylines`);
+        const storylinesData = response.data?.storylines || [];
+        setStorylines(storylinesData);
+        setTotalStorylines(response.data?.total_count || storylinesData.length);
+        setTotalPages(Math.ceil((response.data?.total_count || storylinesData.length) / 12));
+        showSnackbar(`Loaded ${storylinesData.length} storylines`, 'success');
       } else {
         console.error('Storylines API Error:', response);
         throw new Error(response.message || 'Failed to fetch storylines');
       }
     } catch (error) {
       console.error('Error fetching storylines:', error);
-      // showError('Failed to load storylines. Please try refreshing the page.');
+      showSnackbar('Failed to load storylines. Please try refreshing the page.', 'error');
       
-      // Set empty state instead of mock data
+      // Set empty state
       setStorylines([]);
       setTotalPages(1);
       setTotalStorylines(0);
@@ -98,6 +110,72 @@ const Storylines = () => {
   useEffect(() => {
     fetchStorylines();
   }, [fetchStorylines]);
+
+  const showSnackbar = (message, severity = 'success') => {
+    setSnackbar({
+      open: true,
+      message,
+      severity
+    });
+  };
+
+  const handleCloseSnackbar = () => {
+    setSnackbar(prev => ({ ...prev, open: false }));
+  };
+
+  const handleCreateStoryline = () => {
+    setCreateDialogOpen(true);
+  };
+
+  const handleCreateSuccess = (newStoryline) => {
+    setStorylines(prev => [newStoryline, ...prev]);
+    setTotalStorylines(prev => prev + 1);
+    showSnackbar('Storyline created successfully!', 'success');
+    setCreateDialogOpen(false);
+  };
+
+  const handleEditStoryline = (storyline) => {
+    setSelectedStoryline(storyline);
+    setEditDialogOpen(true);
+  };
+
+  const handleDeleteStoryline = (storyline) => {
+    setConfirmationDialog({
+      open: true,
+      action: 'delete',
+      storyline
+    });
+  };
+
+  const handleConfirmAction = async () => {
+    const { action, storyline } = confirmationDialog;
+    setActionLoading(true);
+
+    try {
+      if (action === 'delete') {
+        const response = await apiService.delete(`/storylines/${storyline.id}`);
+        if (response.success) {
+          setStorylines(prev => prev.filter(s => s.id !== storyline.id));
+          setTotalStorylines(prev => prev - 1);
+          showSnackbar('Storyline deleted successfully!', 'success');
+        } else {
+          throw new Error(response.message || 'Failed to delete storyline');
+        }
+      }
+    } catch (error) {
+      console.error(`Error ${action}ing storyline:`, error);
+      showSnackbar(`Failed to ${action} storyline: ${error.message}`, 'error');
+    } finally {
+      setActionLoading(false);
+      setConfirmationDialog({ open: false, action: null, storyline: null });
+    }
+  };
+
+  const handleCloseConfirmation = () => {
+    if (!actionLoading) {
+      setConfirmationDialog({ open: false, action: null, storyline: null });
+    }
+  };
 
   const handleSearch = () => {
     setPage(1);
@@ -486,85 +564,43 @@ const Storylines = () => {
         color="primary"
         aria-label="add"
         sx={{ position: 'fixed', bottom: 16, right: 16 }}
-        onClick={() => setCreateDialogOpen(true)}
+        onClick={handleCreateStoryline}
       >
         <AddIcon />
       </Fab>
 
-      {/* Create Storyline Dialog */}
-      <Dialog 
-        open={createDialogOpen} 
+      {/* Storyline Creation Dialog */}
+      <StorylineCreationDialog
+        open={createDialogOpen}
         onClose={() => setCreateDialogOpen(false)}
-        maxWidth="md"
-        fullWidth
-      >
-        <DialogTitle>Create New Storyline</DialogTitle>
-        <DialogContent>
-          <Grid container spacing={2} sx={{ mt: 1 }}>
-            <Grid item xs={12}>
-              <TextField
-                fullWidth
-                label="Title"
-                value={newStoryline.title}
-                onChange={(e) => setNewStoryline({...newStoryline, title: e.target.value})}
-                placeholder="e.g., Ukraine-Russia Conflict"
-              />
-            </Grid>
-            <Grid item xs={12}>
-              <TextField
-                fullWidth
-                label="Description"
-                multiline
-                rows={3}
-                value={newStoryline.description}
-                onChange={(e) => setNewStoryline({...newStoryline, description: e.target.value})}
-                placeholder="Describe what this storyline tracks..."
-              />
-            </Grid>
-            <Grid item xs={12} md={6}>
-              <FormControl fullWidth>
-                <InputLabel>Category</InputLabel>
-                <Select
-                  value={newStoryline.category}
-                  onChange={(e) => setNewStoryline({...newStoryline, category: e.target.value})}
-                  label="Category"
-                >
-                  <MenuItem value="Global Events">Global Events</MenuItem>
-                  <MenuItem value="Business">Business</MenuItem>
-                  <MenuItem value="Politics">Politics</MenuItem>
-                  <MenuItem value="Technology">Technology</MenuItem>
-                </Select>
-              </FormControl>
-            </Grid>
-            <Grid item xs={12} md={6}>
-              <FormControl fullWidth>
-                <InputLabel>Priority</InputLabel>
-                <Select
-                  value={newStoryline.priority}
-                  onChange={(e) => setNewStoryline({...newStoryline, priority: e.target.value})}
-                  label="Priority"
-                >
-                  <MenuItem value="low">Low</MenuItem>
-                  <MenuItem value="medium">Medium</MenuItem>
-                  <MenuItem value="high">High</MenuItem>
-                </Select>
-              </FormControl>
-            </Grid>
-          </Grid>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setCreateDialogOpen(false)}>Cancel</Button>
-          <Button onClick={handleCreateStoryline} variant="contained">Create</Button>
-        </DialogActions>
-      </Dialog>
+        onSuccess={handleCreateSuccess}
+      />
 
-      {/* Edit Storyline Dialog */}
-      {/* <EditStorylineDialog
-        open={editDialogOpen}
-        onClose={() => setEditDialogOpen(false)}
-        storyline={selectedStoryline}
-        onSuccess={handleEditSuccess}
-      /> */}
+      {/* Confirmation Dialog */}
+      <StorylineConfirmationDialog
+        open={confirmationDialog.open}
+        onClose={handleCloseConfirmation}
+        onConfirm={handleConfirmAction}
+        action={confirmationDialog.action}
+        storyline={confirmationDialog.storyline}
+        loading={actionLoading}
+      />
+
+      {/* Snackbar for notifications */}
+      <Snackbar
+        open={snackbar.open}
+        autoHideDuration={6000}
+        onClose={handleCloseSnackbar}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+      >
+        <Alert 
+          onClose={handleCloseSnackbar} 
+          severity={snackbar.severity}
+          sx={{ width: '100%' }}
+        >
+          {snackbar.message}
+        </Alert>
+      </Snackbar>
     </Box>
   );
 };

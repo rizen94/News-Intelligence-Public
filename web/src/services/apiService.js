@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8001';
+const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -39,6 +39,47 @@ api.interceptors.response.use(
 );
 
 export const apiService = {
+  // Generic HTTP methods
+  get: async (url, config = {}) => {
+    try {
+      const response = await api.get(url, config);
+      return response.data;
+    } catch (error) {
+      console.error(`GET ${url} failed:`, error);
+      throw error;
+    }
+  },
+
+  post: async (url, data = {}, config = {}) => {
+    try {
+      const response = await api.post(url, data, config);
+      return response.data;
+    } catch (error) {
+      console.error(`POST ${url} failed:`, error);
+      throw error;
+    }
+  },
+
+  put: async (url, data = {}, config = {}) => {
+    try {
+      const response = await api.put(url, data, config);
+      return response.data;
+    } catch (error) {
+      console.error(`PUT ${url} failed:`, error);
+      throw error;
+    }
+  },
+
+  delete: async (url, config = {}) => {
+    try {
+      const response = await api.delete(url, config);
+      return response.data;
+    } catch (error) {
+      console.error(`DELETE ${url} failed:`, error);
+      throw error;
+    }
+  },
+
   // Health endpoints
   getHealth: async () => {
     try {

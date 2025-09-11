@@ -50,13 +50,13 @@ class StorylineTracker:
             # Get recent articles with ML processing
             cutoff_date = datetime.now() - timedelta(days=days)
             cursor.execute("""
-                SELECT id, title, content, summary, category, source, published_date, 
+                SELECT id, title, content, summary, category, source, published_at, 
                        ml_data, quality_score, created_at
                 FROM articles 
                 WHERE created_at >= %s 
                 AND ml_data IS NOT NULL 
                 AND quality_score >= 0.3
-                ORDER BY published_date DESC, quality_score DESC
+                ORDER BY published_at DESC, quality_score DESC
             """, (cutoff_date,))
             
             articles = cursor.fetchall()
@@ -106,7 +106,7 @@ class StorylineTracker:
             
             # Get all articles related to this story
             cursor.execute("""
-                SELECT id, title, content, summary, category, source, published_date, 
+                SELECT id, title, content, summary, category, source, published_at, 
                        ml_data, quality_score, created_at
                 FROM articles 
                 WHERE (
@@ -117,7 +117,7 @@ class StorylineTracker:
                 )
                 AND ml_data IS NOT NULL 
                 AND quality_score >= 0.4
-                ORDER BY published_date DESC, quality_score DESC
+                ORDER BY published_at DESC, quality_score DESC
             """, (f"%{story_id}%", f"%{story_id}%", f"%{story_id}%", story_id))
             
             articles = cursor.fetchall()
@@ -164,17 +164,17 @@ class StorylineTracker:
             
             cutoff_date = datetime.now() - timedelta(days=days)
             cursor.execute("""
-                SELECT id, title, content, summary, source, published_date, 
+                SELECT id, title, content, summary, source, published_at, 
                        ml_data, quality_score
                 FROM articles 
                 WHERE (
                     LOWER(title) LIKE LOWER(%s) OR 
-                    LOWER(content) LIKE LOWER(%s) OR
+                    LOWER(content) LIKE LOWER(%s) OR 
                     LOWER(summary) LIKE LOWER(%s)
                 )
-                AND published_date >= %s
+                AND published_at >= %s
                 AND ml_data IS NOT NULL 
-                ORDER BY published_date ASC
+                ORDER BY published_at ASC
             """, (f"%{story_id}%", f"%{story_id}%", f"%{story_id}%", cutoff_date))
             
             articles = cursor.fetchall()
@@ -258,21 +258,21 @@ class StorylineTracker:
             recent_cutoff = datetime.now() - timedelta(hours=6)
             
             for article in articles:
-                published_date = article[6]
-                if published_date and published_date >= recent_cutoff:
+                published_at = article[6]
+                if published_at and published_at >= recent_cutoff:
                     quality_score = article[8] or 0.0
                     if quality_score >= 0.5:  # High quality threshold for breaking news
                         breaking_topics.append({
                             "title": article[1],
                             "summary": article[3],
                             "source": article[5],
-                            "published_date": published_date.isoformat() if published_date else None,
+                            "published_at": published_at.isoformat() if published_at else None,
                             "quality_score": quality_score,
                             "urgency": "high" if quality_score >= 0.7 else "medium"
                         })
             
             # Sort by quality score and recency
-            breaking_topics.sort(key=lambda x: (x["quality_score"], x["published_date"]), reverse=True)
+            breaking_topics.sort(key=lambda x: (x["quality_score"], x["published_at"]), reverse=True)
             
             return breaking_topics[:10]  # Top 10 breaking topics
             
@@ -333,8 +333,8 @@ class StorylineTracker:
             # Timeline of Events
             dossier += "## TIMELINE OF EVENTS\n\n"
             for i, article in enumerate(articles[:10], 1):  # Top 10 articles
-                published_date = article[6]
-                date_str = published_date.strftime('%Y-%m-%d') if published_date else 'Unknown date'
+                published_at = article[6]
+                date_str = published_at.strftime('%Y-%m-%d') if published_at else 'Unknown date'
                 dossier += f"**{i}. {date_str}** - {article[1]}\n"
                 dossier += f"   Source: {article[5]}\n"
                 dossier += f"   Quality Score: {article[8] or 0.0:.2f}\n\n"
@@ -382,8 +382,8 @@ class StorylineTracker:
             timeline = []
             
             for article in articles:
-                published_date = article[6]
-                date_str = published_date.strftime('%Y-%m-%d %H:%M') if published_date else 'Unknown'
+                published_at = article[6]
+                date_str = published_at.strftime('%Y-%m-%d %H:%M') if published_at else 'Unknown'
                 
                 timeline.append({
                     "date": date_str,

@@ -15,7 +15,7 @@ from enum import Enum
 import re
 import hashlib
 
-from database.connection import get_db
+from config.database import get_db
 from sqlalchemy import text
 
 logger = logging.getLogger(__name__)

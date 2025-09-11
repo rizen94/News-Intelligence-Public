@@ -36,7 +36,7 @@ except ImportError:
     SPACY_AVAILABLE = False
     logging.warning("spacy not available - using basic entity extraction")
 
-from database.connection import get_db
+from config.database import get_db
 from sqlalchemy import text
 
 logger = logging.getLogger(__name__)

@@ -268,7 +268,7 @@ class EnhancedMLPipeline:
             cur = conn.cursor()
             
             cur.execute("""
-                SELECT id, title, content, summary, source, url, published_date,
+                SELECT id, title, content, summary, source, url, published_at,
                        category, processing_status, created_at
                 FROM articles
                 WHERE id = %s
@@ -286,7 +286,7 @@ class EnhancedMLPipeline:
                     "summary": row[3],
                     "source": row[4],
                     "url": row[5],
-                    "published_date": row[6],
+                    "published_at": row[6],
                     "category": row[7],
                     "processing_status": row[8],
                     "created_at": row[9]
@@ -363,10 +363,10 @@ class EnhancedMLPipeline:
             where_clause = " OR ".join(keyword_conditions)
             
             cur.execute(f"""
-                SELECT id, title, content, summary, source, published_date, category
+                SELECT id, title, content, summary, source, published_at, category
                 FROM articles
                 WHERE {where_clause} AND processing_status = 'completed'
-                ORDER BY published_date DESC
+                ORDER BY published_at DESC
                 LIMIT 100
             """, params)
             
@@ -382,7 +382,7 @@ class EnhancedMLPipeline:
                     "content": row[2],
                     "summary": row[3],
                     "source": row[4],
-                    "published_date": row[5],
+                    "published_at": row[5],
                     "category": row[6]
                 })
             
@@ -409,9 +409,9 @@ class EnhancedMLPipeline:
                 return True
         
         # Check for recent articles (within last 24 hours)
-        published_date = article.get("published_date")
-        if published_date:
-            time_diff = datetime.now() - published_date
+        published_at = article.get("published_at")
+        if published_at:
+            time_diff = datetime.now() - published_at
             if time_diff.total_seconds() < 86400:  # 24 hours
                 return True
         

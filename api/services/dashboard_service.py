@@ -7,7 +7,7 @@ import asyncio
 import logging
 from typing import Dict, List, Any, Optional
 from datetime import datetime, timedelta
-from database.connection import get_db
+from config.database import get_db
 from sqlalchemy import text
 
 logger = logging.getLogger(__name__)
@@ -156,11 +156,14 @@ class DashboardService:
             
             # Get top topics
             topics_query = text("""
-                SELECT tags, COUNT(*) as count
+                SELECT 
+                    jsonb_array_elements_text(tags::jsonb) as tag,
+                    COUNT(*) as count
                 FROM articles 
                 WHERE created_at >= NOW() - INTERVAL '7 days'
                 AND tags IS NOT NULL
-                GROUP BY tags
+                AND jsonb_typeof(tags::jsonb) = 'array'
+                GROUP BY jsonb_array_elements_text(tags::jsonb)
                 ORDER BY count DESC
                 LIMIT 10
             """)

@@ -613,7 +613,7 @@ def get_article_processor() -> ArticleProcessingService:
     """Get global article processor instance"""
     global _article_processor
     if _article_processor is None:
-        from database.connection import get_db_config
+        from config.database import get_db_config
         db_config = get_db_config()
         _article_processor = ArticleProcessingService(db_config)
     return _article_processor

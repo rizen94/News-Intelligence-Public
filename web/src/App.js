@@ -3,7 +3,8 @@ import {
   BrowserRouter as Router,
   Routes,
   Route,
-  Navigate
+  Navigate,
+  Link
 } from 'react-router-dom';
 import {
   ThemeProvider,
@@ -149,7 +150,7 @@ function App() {
       <List>
         {menuItems.map((item) => (
           <ListItem key={item.text} disablePadding>
-            <ListItemButton href={item.path}>
+            <ListItemButton component={Link} to={item.path}>
               <ListItemIcon>{item.icon}</ListItemIcon>
               <ListItemText primary={item.text} />
             </ListItemButton>
@@ -187,8 +188,8 @@ function App() {
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
                 {systemHealth && (
                   <Chip
-                    label={`Status: ${systemHealth.status}`}
-                    color={systemHealth.status === 'healthy' ? 'success' : 'error'}
+                    label={`Status: ${systemHealth.data?.status || 'unknown'}`}
+                    color={systemHealth.data?.status === 'healthy' ? 'success' : 'error'}
                     size="small"
                   />
                 )}

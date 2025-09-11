@@ -175,7 +175,7 @@ class MLPipeline:
             cursor = conn.cursor()
             
             cursor.execute("""
-                SELECT id, title, content, url, source, published_date, category, language
+                SELECT id, title, content, url, source, published_at, category, language
                 FROM articles 
                 WHERE id = %s
             """, (article_id,))
@@ -188,7 +188,7 @@ class MLPipeline:
                     "content": row[2],
                     "url": row[3],
                     "source": row[4],
-                    "published_date": row[5],
+                    "published_at": row[5],
                     "category": row[6],
                     "language": row[7]
                 }

@@ -12,7 +12,7 @@ import feedparser
 import requests
 from bs4 import BeautifulSoup
 
-from database.connection import get_db
+from config.database import get_db
 from sqlalchemy import text
 from services.pipeline_logger import PipelineLogger, PipelineStage, get_pipeline_logger
 from services.enhanced_storyline_service import EnhancedStorylineService

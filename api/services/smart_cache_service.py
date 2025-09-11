@@ -453,7 +453,7 @@ def get_smart_cache_service() -> SmartCacheService:
     """Get global smart cache service instance"""
     global _smart_cache_service
     if _smart_cache_service is None:
-        from database.connection import get_db_config
+        from config.database import get_db_config
         _smart_cache_service = SmartCacheService(get_db_config())
     return _smart_cache_service
 

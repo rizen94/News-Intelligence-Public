@@ -8,7 +8,7 @@ from typing import Dict, Any
 from sqlalchemy.orm import Session
 from schemas.robust_schemas import APIResponse, HealthCheck, HealthStatus
 from services.health_service import HealthService
-from database.connection import get_db
+from config.database import get_db, check_database_health
 import logging
 
 logger = logging.getLogger(__name__)
@@ -30,19 +30,22 @@ async def get_system_health(db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail="Failed to retrieve system health")
 
 @router.get("/database", response_model=APIResponse)
-async def get_database_health(db: Session = Depends(get_db)):
-    """Get database health status"""
+async def get_database_health():
+    """Get database health status using unified database manager"""
     try:
-        service = HealthService(db)
-        health = await service.get_database_health()
+        health_status = check_database_health()
         return APIResponse(
             success=True,
-            data=health,
+            data=health_status,
             message="Database health retrieved successfully"
         )
     except Exception as e:
         logger.error(f"Error getting database health: {e}")
-        raise HTTPException(status_code=500, detail="Failed to retrieve database health")
+        return APIResponse(
+            success=False,
+            data={"status": "error", "error": str(e)},
+            message="Failed to retrieve database health"
+        )
 
 @router.get("/ready", response_model=APIResponse)
 async def get_readiness_status(db: Session = Depends(get_db)):

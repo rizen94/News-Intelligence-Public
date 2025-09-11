@@ -268,6 +268,8 @@ class RSSFeed(RSSFeedBase):
 
 # AI Analysis Schemas (aligned with ai_analysis table)
 class AIAnalysisBase(BaseModel):
+    model_config = {"protected_namespaces": ()}
+    
     story_timeline_id: Optional[int] = Field(None, description="Associated timeline ID")
     analysis_type: str = Field(..., min_length=1, max_length=50, description="Analysis type")
     analysis_data: Dict[str, Any] = Field(..., description="Analysis data")
