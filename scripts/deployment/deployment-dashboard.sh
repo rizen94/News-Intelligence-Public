@@ -171,7 +171,7 @@ show_access_info() {
     echo "│ Service         │ URL                                     │"
     echo "├─────────────────┼─────────────────────────────────────────┤"
     echo "│ Main App        │ http://localhost:8000                   │"
-    echo "│ Grafana         │ http://localhost:3001                   │"
+    echo "│ Grafana         │ http://localhost:3002                   │"
     echo "│ Prometheus      │ http://localhost:9090                   │"
     echo "│ Node Exporter   │ http://localhost:9100                   │"
     echo "└─────────────────┴─────────────────────────────────────────┘"

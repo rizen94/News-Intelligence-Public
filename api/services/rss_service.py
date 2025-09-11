@@ -1,5 +1,5 @@
 """
-RSS Service for News Intelligence System v3.1.0
+RSS Service for News Intelligence System v3.0
 Production-ready RSS feed management
 """
 

@@ -210,3 +210,5 @@ COMMENT ON COLUMN articles.filtering_reason IS 'Reason why article was filtered 
 COMMENT ON COLUMN articles.enrichment_status IS 'Status of metadata enrichment: pending, completed, failed';
 
 
+
+

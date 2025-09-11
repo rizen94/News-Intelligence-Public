@@ -1,5 +1,5 @@
 """
-Dashboard Service for News Intelligence System v3.1.0
+Dashboard Service for News Intelligence System v3.0
 Production-ready dashboard data and analytics
 """
 

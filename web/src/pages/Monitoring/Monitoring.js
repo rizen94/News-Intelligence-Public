@@ -18,11 +18,29 @@ import {
   Error as ErrorIcon,
   CheckCircle as SuccessIcon,
 } from '@mui/icons-material';
-import { useNewsSystem } from '../../contexts/NewsSystemContext';
+// import { useNewsSystem } from '../../contexts/NewsSystemContext';
 
 export default function Monitoring() {
-  const { state } = useNewsSystem();
-  const { monitoring, systemStatus } = state;
+  // const { state } = useNewsSystem();
+  // const { monitoring, systemStatus } = state;
+  
+  // Mock data for demonstration
+  const systemStatus = {
+    status: 'healthy',
+    version: '3.3.0',
+    uptime: '2d 14h 32m'
+  };
+  
+  const monitoring = {
+    logs: [
+      { level: 'info', message: 'System started successfully', timestamp: new Date().toISOString() },
+      { level: 'warning', message: 'High memory usage detected', timestamp: new Date(Date.now() - 300000).toISOString() },
+      { level: 'error', message: 'Database connection failed', timestamp: new Date(Date.now() - 600000).toISOString() }
+    ],
+    errors: [
+      { message: 'Database connection timeout', timestamp: new Date(Date.now() - 600000).toISOString() }
+    ]
+  };
 
   const getLogIcon = (level) => {
     switch (level) {

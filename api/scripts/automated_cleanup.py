@@ -20,6 +20,9 @@ from pathlib import Path
 # Add the project root to the path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
+# Import centralized path configuration
+from config.paths import PROJECT_ROOT, LOGS_DIR, SCRIPTS_DIR
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
@@ -80,7 +83,7 @@ class AutomatedCleanupSystem:
             },
             'targets': {
                 'logs': {
-                    'path': '/home/petes/news-system/logs',
+                    'path': LOGS_DIR,
                     'max_size_gb': 1.0,
                     'cleanup_priority': 1,
                     'cleanup_type': 'delete',
@@ -138,7 +141,7 @@ class AutomatedCleanupSystem:
                 'enabled': True,
                 'email': None,
                 'slack_webhook': None,
-                'log_file': '/home/petes/news-system/logs/cleanup.log'
+                'log_file': os.path.join(LOGS_DIR, 'cleanup.log')
             }
         }
         
@@ -526,13 +529,13 @@ class AutomatedCleanupSystem:
     def create_cleanup_script(self, script_path: str = None) -> str:
         """Create a shell script for automated cleanup"""
         if not script_path:
-            script_path = "/home/petes/news-system/scripts/run_cleanup.sh"
+            script_path = os.path.join(SCRIPTS_DIR, 'run_cleanup.sh')
         
         script_content = f"""#!/bin/bash
 # Automated Cleanup Script for News Intelligence System
 # Generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 
-cd /home/petes/news-system
+cd {PROJECT_ROOT}
 
 # Run cleanup based on day of week
 DAY_OF_WEEK=$(date +%u)

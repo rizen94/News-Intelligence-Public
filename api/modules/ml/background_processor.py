@@ -21,7 +21,7 @@ class BackgroundMLProcessor:
     Background processor for ML operations with timing tracking
     """
     
-    def __init__(self, db_config: Dict[str, str], ollama_url: str = "http://192.168.93.92:11434"):
+    def __init__(self, db_config: Dict[str, str], ollama_url: str = "http://localhost:11434"):
         """
         Initialize the background ML processor
         

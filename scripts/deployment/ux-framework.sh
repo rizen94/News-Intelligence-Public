@@ -336,7 +336,7 @@ show_access_info() {
                 echo "  🌐 Main Application:     http://localhost:8000"
                 ;;
             grafana)
-                echo "  📊 Grafana Dashboards:   http://localhost:3001 (admin/Database@NEWSINT2025)"
+                echo "  📊 Grafana Dashboards:   http://localhost:3002 (admin/Database@NEWSINT2025)"
                 ;;
             prometheus)
                 echo "  📈 Prometheus:           http://localhost:9090"

@@ -1,5 +1,5 @@
 """
-News Intelligence System v3.1.0 - Enterprise Automation Manager
+News Intelligence System v3.0 - Enterprise Automation Manager
 Industry-standard background processing with scalability and reliability
 """
 

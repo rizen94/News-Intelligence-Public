@@ -17,6 +17,9 @@ import docker
 # Add the project root to the path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
+# Import centralized path configuration
+from config.paths import PROJECT_ROOT, LOGS_DIR
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -268,9 +271,11 @@ class SystemMonitor:
             logger.info("Triggering automated cleanup due to threshold exceeded")
             
             # Run cleanup script
+            script_dir = os.path.dirname(__file__)
+            cleanup_script = os.path.join(script_dir, 'automated_cleanup.py')
             result = subprocess.run([
                 '/usr/bin/python3',
-                '/home/petes/news-system/api/scripts/automated_cleanup.py',
+                cleanup_script,
                 'auto'
             ], capture_output=True, text=True, timeout=300)
             
@@ -364,7 +369,7 @@ class SystemMonitor:
     def save_monitoring_data(self, filepath: str = None):
         """Save monitoring data to file"""
         if not filepath:
-            filepath = "/home/petes/news-system/logs/monitoring_data.json"
+            filepath = os.path.join(LOGS_DIR, 'monitoring_data.json')
         
         try:
             os.makedirs(os.path.dirname(filepath), exist_ok=True)

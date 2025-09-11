@@ -1,5 +1,5 @@
 """
-News Intelligence System v3.1.0 - Database Connection
+News Intelligence System v3.0 - Database Connection
 Production-ready database connection management
 """
 
@@ -12,7 +12,7 @@ import os
 # Database configuration
 DATABASE_URL = os.getenv(
     "DATABASE_URL", 
-    "postgresql://newsapp:Database%40NEWSINT2025@localhost:5432/newsintelligence"
+    "postgresql://newsapp:newsapp_password@postgres:5432/news_intelligence"
 )
 
 # Create engine

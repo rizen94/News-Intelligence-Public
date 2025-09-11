@@ -1,5 +1,5 @@
 """
-News Intelligence System v3.1.0 - Storylines API
+News Intelligence System v3.0 - Storylines API
 Handles storyline management, article addition, and database operations
 """
 

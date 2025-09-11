@@ -1,5 +1,5 @@
 """
-News Intelligence System v3.1.0 - Production Health API
+News Intelligence System v3.0 - Production Health API
 Robust health monitoring and system status endpoints
 """
 

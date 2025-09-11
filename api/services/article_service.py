@@ -1,5 +1,5 @@
 """
-News Intelligence System v3.1.0 - Production Article Service
+News Intelligence System v3.0 - Production Article Service
 Robust article management service with full database integration
 """
 

@@ -1,5 +1,5 @@
 """
-News Intelligence System v3.1.0 - RAG Service
+News Intelligence System v3.0 - RAG Service
 Retrieval-Augmented Generation for storyline context enhancement
 Integrates Wikipedia and GDELT for additional context
 """
@@ -26,7 +26,7 @@ class RAGService:
         self.db_config = db_config
         self.session = requests.Session()
         self.session.headers.update({
-            'User-Agent': 'News Intelligence System v3.1.0 RAG Service'
+            'User-Agent': 'News Intelligence System v3.0 RAG Service'
         })
         
         # Wikipedia API configuration

@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# News Intelligence System v3.1.0 - Production Stop Script
+# News Intelligence System v3.0 - Production Stop Script
 # This script safely stops the production system
 
 set -e
@@ -72,7 +72,7 @@ show_status() {
 
 # Main execution
 main() {
-    log "Stopping News Intelligence System v3.1.0 Production"
+    log "Stopping News Intelligence System v3.0 Production"
     log "=================================================="
     
     stop_services

@@ -5,17 +5,20 @@ import {
   Card,
   CardContent,
   Grid,
-  Switch,
-  FormControlLabel,
-  TextField,
   Button,
-  Divider,
 } from '@mui/material';
-import { useNewsSystem } from '../../contexts/NewsSystemContext';
+// import { useNewsSystem } from '../../contexts/NewsSystemContext';
 
 export default function Settings() {
-  const { state, actions } = useNewsSystem();
-  const { ui } = state;
+  // const { state, actions } = useNewsSystem();
+  // const { ui } = state;
+  
+  // Mock data for demonstration
+  const ui = {
+    language: 'en',
+    notifications: true
+  };
+  
 
   return (
     <Box>
@@ -30,18 +33,11 @@ export default function Settings() {
               <Typography variant="h6" gutterBottom>
                 User Interface
               </Typography>
-              <FormControlLabel
-                control={
-                  <Switch
-                    checked={ui.theme === 'dark'}
-                    onChange={() => actions.setTheme(ui.theme === 'light' ? 'dark' : 'light')}
-                  />
-                }
-                label="Dark Mode"
-              />
-              <Divider sx={{ my: 2 }} />
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                Interface customization options will be available here
+              </Typography>
               <Typography variant="body2" color="text.secondary">
-                Customize the appearance of the application
+                Language: {ui.language}
               </Typography>
             </CardContent>
           </Card>

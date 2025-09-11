@@ -1,5 +1,5 @@
 """
-News Intelligence System v3.1.0 - Production FastAPI Application
+News Intelligence System v3.0 - Production FastAPI Application
 Robust, production-ready API with comprehensive error handling
 """
 
@@ -30,12 +30,19 @@ logger = logging.getLogger(__name__)
 from routes.articles import router as articles_router
 from routes.rss_feeds import router as rss_feeds_router
 from routes.health import router as health_router
+from routes.fallback_logging import router as fallback_router
+from routes.timeline import router as timeline_router
+from routes.story_management import router as story_management_router
+from routes.monitoring import router as monitoring_router
+from routes.intelligence import router as intelligence_router
+# from routes.enhanced_analysis import router as enhanced_analysis_router
+from routes.pipeline_monitoring import router as pipeline_monitoring_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan manager"""
     # Startup
-    logger.info("Starting News Intelligence System v3.1.0")
+    logger.info("Starting News Intelligence System v3.0")
     
     # Start automation manager in background thread
     try:
@@ -70,7 +77,7 @@ async def lifespan(app: FastAPI):
     yield
     
     # Shutdown
-    logger.info("Shutting down News Intelligence System v3.1.0")
+    logger.info("Shutting down News Intelligence System v3.0")
     
     # Stop automation manager
     try:
@@ -91,7 +98,7 @@ async def lifespan(app: FastAPI):
 
 # Create FastAPI application
 app = FastAPI(
-    title="News Intelligence System v3.1.0",
+    title="News Intelligence System v3.0",
     description="Production-ready news intelligence and analysis platform",
     version="3.1.0",
     lifespan=lifespan,
@@ -132,6 +139,13 @@ async def global_exception_handler(request: Request, exc: Exception):
 app.include_router(articles_router, prefix="/api")
 app.include_router(rss_feeds_router, prefix="/api")
 app.include_router(health_router, prefix="/api")
+app.include_router(fallback_router, prefix="/api")
+app.include_router(timeline_router, prefix="/api")
+app.include_router(story_management_router, prefix="/api")
+app.include_router(monitoring_router, prefix="/api")
+app.include_router(intelligence_router, prefix="/api")
+# app.include_router(enhanced_analysis_router, prefix="/api")
+app.include_router(pipeline_monitoring_router, prefix="/api")
 
 # Root endpoint
 @app.get("/")
@@ -145,7 +159,7 @@ async def root():
             "docs": "/docs",
             "redoc": "/redoc"
         },
-        "message": "News Intelligence System v3.1.0 is running",
+        "message": "News Intelligence System v3.0 is running",
         "timestamp": "2025-09-05T17:00:00Z"
     }
 

@@ -1,5 +1,5 @@
 """
-Iterative RAG Service for News Intelligence System v3.1.0
+Iterative RAG Service for News Intelligence System v3.0
 Production-ready iterative retrieval-augmented generation
 """
 

@@ -1,5 +1,5 @@
 """
-News Intelligence System v3.1.0 - Production Articles API
+News Intelligence System v3.0 - Production Articles API
 Robust, fully functional articles management endpoints
 """
 

@@ -1,5 +1,5 @@
 """
-Storyline Service for News Intelligence System v3.1.0
+Storyline Service for News Intelligence System v3.0
 Handles storyline management, ML processing, and temporal analysis
 """
 

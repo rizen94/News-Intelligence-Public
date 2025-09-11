@@ -1,5 +1,5 @@
 """
-Dashboard Routes for News Intelligence System v3.1.0
+Dashboard Routes for News Intelligence System v3.0
 """
 
 from fastapi import APIRouter, Depends, HTTPException

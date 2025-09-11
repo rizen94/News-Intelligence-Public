@@ -36,7 +36,7 @@ class TimelineEvent:
 class TimelineGenerator:
     """Generates intelligent timeline events using ML/LLM"""
     
-    def __init__(self, db_config: Dict[str, str], ollama_url: str = "http://host.docker.internal:11434"):
+    def __init__(self, db_config: Dict[str, str], ollama_url: str = "http://localhost:11434"):
         self.db_config = db_config
         self.ollama_url = ollama_url
         self.model_name = "llama3.1:70b-instruct-q4_K_M"  # Use the best available model

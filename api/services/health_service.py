@@ -1,5 +1,5 @@
 """
-Health Service for News Intelligence System v3.1.0
+Health Service for News Intelligence System v3.0
 Provides system health monitoring and status checks
 """
 

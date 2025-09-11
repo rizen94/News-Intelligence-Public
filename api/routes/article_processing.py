@@ -1,5 +1,5 @@
 """
-News Intelligence System v3.1.0 - Article Processing API
+News Intelligence System v3.0 - Article Processing API
 Handles RSS feed processing, HTML cleaning, and article ingestion
 """
 

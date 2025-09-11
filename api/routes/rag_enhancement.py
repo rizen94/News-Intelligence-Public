@@ -1,5 +1,5 @@
 """
-News Intelligence System v3.1.0 - RAG Enhancement API
+News Intelligence System v3.0 - RAG Enhancement API
 RAG context enhancement for storylines
 """
 

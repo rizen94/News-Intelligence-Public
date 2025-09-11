@@ -1,0 +1,21 @@
+[Unit]
+Description=Run Docker Cleanup every 6 hours
+Requires=docker-cleanup.service
+
+[Timer]
+OnBootSec=1h
+OnUnitActiveSec=6h
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+
+
+
+
+
+
+
+
+
+

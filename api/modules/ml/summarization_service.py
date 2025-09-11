@@ -17,7 +17,7 @@ class MLSummarizationService:
     AI-powered summarization service using Ollama and Llama 3.1 70B
     """
     
-    def __init__(self, ollama_url: str = "http://192.168.93.92:11434", model_name: str = "llama3.1:70b-instruct-q4_K_M"):
+    def __init__(self, ollama_url: str = "http://localhost:11434", model_name: str = "llama3.1:70b-instruct-q4_K_M"):
         """
         Initialize the ML Summarization Service
         

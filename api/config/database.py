@@ -1,5 +1,5 @@
 """
-Database Configuration for News Intelligence System v3.1.0
+Database Configuration for News Intelligence System v3.0
 Production-ready database connection management
 """
 

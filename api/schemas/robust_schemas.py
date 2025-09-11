@@ -1,5 +1,5 @@
 """
-News Intelligence System v3.1.0 - Robust API Schemas
+News Intelligence System v3.0 - Robust API Schemas
 Production-ready schemas aligned with database requirements
 """
 

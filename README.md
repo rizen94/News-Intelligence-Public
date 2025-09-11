@@ -125,33 +125,36 @@ The News Intelligence System v3.0 is a comprehensive, locally-powered AI platfor
 
 ---
 
-## 📁 Project Structure
+## 📁 Production Structure
 
 ```
 News Intelligence System v3.0/
-├── 📁 api/                    # Backend API (FastAPI)
-│   ├── 📁 modules/            # API modules
-│   ├── 📁 routes/             # API routes
-│   ├── 📁 schemas/            # Response schemas
-│   ├── 📁 config/             # Configuration
-│   └── 📄 main.py             # FastAPI application
+├── 📁 api/                          # Core API backend
+│   ├── 📁 modules/                  # ML and processing modules
+│   ├── 📁 routes/                   # API endpoints
+│   ├── 📁 schemas/                  # Data validation schemas
+│   ├── 📁 services/                 # Business logic services
+│   ├── 📁 config/                   # Database configuration
+│   └── 📄 main.py                   # FastAPI application
 │
-├── 📁 web/                    # Frontend (React + TypeScript)
-│   ├── 📁 src/
-│   │   ├── 📁 components/     # React components
-│   │   ├── 📁 pages/          # Page components
-│   │   ├── 📁 services/       # Domain services
-│   │   ├── 📁 hooks/          # Custom hooks
-│   │   ├── 📁 stores/         # State management
-│   │   ├── 📁 types/          # TypeScript types
-│   │   └── 📄 App.tsx         # Main React app
-│   └── 📄 package.json        # Dependencies
+├── 📁 web/                          # React.js frontend
+│   ├── 📁 src/                      # React source code
+│   ├── 📁 public/                   # Static assets
+│   └── 📄 package.json              # Node.js dependencies
 │
-├── 📁 docs/                   # Documentation
-├── 📁 configs/                # Configuration files
-├── 📁 scripts/                # Build & deployment scripts
-├── 📁 archive/                # Archived v2.x legacy code
-├── 📄 docker-compose.yml      # Main Docker Compose
+├── 📁 docs/v3.0/                    # Production documentation
+├── 📁 configs/                      # Docker and service configs
+├── 📁 nginx/                        # Web server configuration
+├── 📁 monitoring/                   # System monitoring
+├── 📁 data/                         # Application data
+├── 📁 logs/                         # System logs
+├── 📁 schema/                       # Database schemas
+├── 📁 scripts/                      # Production scripts
+├── 📁 archive/v3.0/development/     # Archived development files
+├── 📁 backups/                      # System backups
+├── 📄 docker-compose.yml            # Production orchestration
+├── 📄 start.sh                      # System startup
+├── 📄 stop.sh                       # System shutdown
 └── 📄 README.md               # This file
 ```
 
@@ -291,7 +294,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## 🏷️ Version History
 
 - **v3.0.0** - Current version with modern architecture
-- **v3.1.0** - Current stable version with full AI features
+- **v3.0** - Current stable version with full AI features
 - **v2.8.x** - Previous versions (archived)
 
 ---

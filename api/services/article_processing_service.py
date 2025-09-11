@@ -1,5 +1,5 @@
 """
-News Intelligence System v3.1.0 - Article Processing Service
+News Intelligence System v3.0 - Article Processing Service
 Handles RSS feed processing, HTML cleaning, deduplication, and database storage
 """
 

@@ -1,381 +1,414 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Box,
   Typography,
-  Grid,
   Card,
   CardContent,
-  CardHeader,
-  TextField,
-  Button,
+  Grid,
+  Paper,
   Chip,
+  LinearProgress,
+  Button,
+  IconButton,
+  Tooltip,
+  Alert,
+  TextField,
+  InputAdornment,
+  Select,
+  MenuItem,
+  FormControl,
+  InputLabel,
+  Pagination,
   List,
   ListItem,
   ListItemText,
   ListItemSecondaryAction,
-  IconButton,
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogActions,
-  FormControl,
-  InputLabel,
-  Select,
-  MenuItem,
-  Pagination,
-  Tabs,
-  Tab,
-  Paper,
-  Avatar,
-  Tooltip,
-  LinearProgress,
-  Alert,
-  CircularProgress,
-  Divider,
-  Badge
+  CardActions,
+  CardMedia
 } from '@mui/material';
 import {
   Search as SearchIcon,
   FilterList as FilterIcon,
+  Refresh as RefreshIcon,
   Article as ArticleIcon,
+  TrendingUp as TrendingUpIcon,
+  Source as SourceIcon,
   Psychology as PsychologyIcon,
+  AutoAwesome as AutoAwesomeIcon,
   Timeline as TimelineIcon,
   Visibility as VisibilityIcon,
-  Refresh as RefreshIcon,
-  TrendingUp as TrendingUpIcon,
-  TrendingDown as TrendingDownIcon,
-  SentimentSatisfied as SentimentSatisfiedIcon,
-  SentimentDissatisfied as SentimentDissatisfiedIcon,
-  SentimentNeutral as SentimentNeutralIcon,
-  AutoAwesome as AutoAwesomeIcon,
-  Link as LinkIcon,
-  Schedule as ScheduleIcon,
+  Share as ShareIcon,
+  Bookmark as BookmarkIcon,
+  BookmarkBorder as BookmarkBorderIcon,
+  ViewList as ViewListIcon,
+  ViewModule as ViewModuleIcon
 } from '@mui/icons-material';
-import newsSystemService from '../../services/newsSystemService';
-import { useNotifications } from '../../components/Notifications/NotificationSystem';
+import { apiService } from '../../services/apiService';
 
 const EnhancedArticles = () => {
-  const { showSuccess, showError, showLoading, showInfo } = useNotifications();
   const [articles, setArticles] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [filters, setFilters] = useState({
-    status: '',
-    source: '',
-    sentiment: '',
-    dateFrom: '',
-    dateTo: ''
-  });
-  const [sortBy, setSortBy] = useState('created_at');
-  const [sortOrder, setSortOrder] = useState('desc');
+  const [filterSource, setFilterSource] = useState('');
+  const [filterSentiment, setFilterSentiment] = useState('');
+  const [sortBy, setSortBy] = useState('date');
+  const [viewMode, setViewMode] = useState('grid');
   const [page, setPage] = useState(1);
-  const [perPage, setPerPage] = useState(20);
-  const [total, setTotal] = useState(0);
-  const [selectedArticle, setSelectedArticle] = useState(null);
-  const [detailDialogOpen, setDetailDialogOpen] = useState(false);
-  const [analyzing, setAnalyzing] = useState(false);
-  const [activeTab, setActiveTab] = useState(0);
-  const [stats, setStats] = useState(null);
-  const [buttonLoading, setButtonLoading] = useState({});
+  const [totalPages, setTotalPages] = useState(1);
+  const [bookmarkedArticles, setBookmarkedArticles] = useState(new Set());
 
-  useEffect(() => {
-    fetchArticles();
-    fetchStats();
-  }, [page, perPage, sortBy, sortOrder, filters, searchQuery]);
-
-  const fetchArticles = async (isManualRefresh = false) => {
+  const loadArticles = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
-
-      if (isManualRefresh) {
-        showInfo('Loading articles...', 'Articles Refresh');
-      }
-
-      const params = {
+      const response = await apiService.getArticles({
         page,
-        per_page: perPage,
-        sort_by: sortBy,
-        sort_order: sortOrder,
-        search: searchQuery || undefined,
-        ...filters
-      };
-
-      // Remove empty filters
-      Object.keys(params).forEach(key => {
-        if (params[key] === '' || params[key] === undefined) {
-          delete params[key];
-        }
+        limit: 12,
+        search: searchQuery,
+        source: filterSource,
+        sentiment: filterSentiment,
+        sort: sortBy
       });
-
-      const response = await newsSystemService.getArticles(params);
-      setArticles(response.articles || []);
-      setTotal(response.total || 0);
-
-      if (isManualRefresh) {
-        showSuccess(`Loaded ${response.articles?.length || 0} articles`, 'Articles Updated');
+      
+      if (response.success) {
+        setArticles(response.data.articles || []);
+        setTotalPages(Math.ceil((response.data.total || 0) / 12));
+      } else {
+        setArticles([]);
+        setTotalPages(1);
       }
     } catch (err) {
-      console.error('Error fetching articles:', err);
-      setError(err.message);
-      
-      if (isManualRefresh) {
-        showError(`Failed to load articles: ${err.message}`, 'Load Error');
-      }
+      console.error('Error loading articles:', err);
+      setError('Failed to load articles');
+      setArticles([]);
     } finally {
       setLoading(false);
     }
-  };
+  }, [page, searchQuery, filterSource, filterSentiment, sortBy]);
 
-  const fetchStats = async () => {
-    try {
-      const response = await newsSystemService.getArticleStats();
-      setStats(response);
-    } catch (err) {
-      console.error('Error fetching stats:', err);
-    }
-  };
+  useEffect(() => {
+    loadArticles();
+  }, [loadArticles]);
 
-  const handleSearch = async () => {
-    setButtonLoading(prev => ({ ...prev, search: true }));
-    try {
-      setPage(1);
-      await fetchArticles(true);
-    } finally {
-      setButtonLoading(prev => ({ ...prev, search: false }));
-    }
-  };
-
-  const handleFilterChange = (filterName, value) => {
-    setFilters(prev => ({
-      ...prev,
-      [filterName]: value
-    }));
+  const handleSearch = (event) => {
+    setSearchQuery(event.target.value);
     setPage(1);
   };
 
-  const handleSortChange = (field) => {
-    if (sortBy === field) {
-      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+  const handleFilterChange = (filterType, value) => {
+    switch (filterType) {
+      case 'source':
+        setFilterSource(value);
+        break;
+      case 'sentiment':
+        setFilterSentiment(value);
+        break;
+      case 'sort':
+        setSortBy(value);
+        break;
+      default:
+        console.warn('Unknown filter type:', filterType);
+        break;
+    }
+    setPage(1);
+  };
+
+  const handleRefresh = () => {
+    loadArticles();
+  };
+
+  const toggleBookmark = (articleId) => {
+    const newBookmarked = new Set(bookmarkedArticles);
+    if (newBookmarked.has(articleId)) {
+      newBookmarked.delete(articleId);
     } else {
-      setSortBy(field);
-      setSortOrder('desc');
+      newBookmarked.add(articleId);
     }
-    setPage(1);
-  };
-
-  const handlePageChange = (event, newPage) => {
-    setPage(newPage);
-  };
-
-  const handleViewArticle = async (article) => {
-    setButtonLoading(prev => ({ ...prev, [`view-${article.id}`]: true }));
-    try {
-      setSelectedArticle(article);
-      setDetailDialogOpen(true);
-    } finally {
-      setButtonLoading(prev => ({ ...prev, [`view-${article.id}`]: false }));
-    }
-  };
-
-  const handleAnalyzeArticle = async (articleId) => {
-    try {
-      setAnalyzing(true);
-      setButtonLoading(prev => ({ ...prev, [`analyze-${articleId}`]: true }));
-      
-      showLoading('Analyzing article with AI...', 'AI Analysis');
-      
-      await newsSystemService.analyzeArticle(articleId);
-      
-      showSuccess('Article analyzed successfully!', 'Analysis Complete');
-      
-      // Refresh the article list to show updated analysis
-      await fetchArticles();
-    } catch (err) {
-      console.error('Error analyzing article:', err);
-      showError(`Failed to analyze article: ${err.message}`, 'Analysis Error');
-    } finally {
-      setAnalyzing(false);
-      setButtonLoading(prev => ({ ...prev, [`analyze-${articleId}`]: false }));
-    }
-  };
-
-  const getSentimentIcon = (sentiment) => {
-    if (sentiment > 0.1) return <SentimentSatisfiedIcon color="success" />;
-    if (sentiment < -0.1) return <SentimentDissatisfiedIcon color="error" />;
-    return <SentimentNeutralIcon color="default" />;
+    setBookmarkedArticles(newBookmarked);
   };
 
   const getSentimentColor = (sentiment) => {
-    if (sentiment > 0.1) return 'success';
-    if (sentiment < -0.1) return 'error';
-    return 'default';
-  };
-
-  const getStatusColor = (status) => {
-    switch (status) {
-      case 'processed': return 'success';
-      case 'processing': return 'warning';
-      case 'failed': return 'error';
+    switch (sentiment?.toLowerCase()) {
+      case 'positive': return 'success';
+      case 'negative': return 'error';
+      case 'neutral': return 'default';
       default: return 'default';
     }
   };
 
   const formatDate = (dateString) => {
-    return new Date(dateString).toLocaleString();
+    if (!dateString) return 'Unknown date';
+    return new Date(dateString).toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
   };
 
   const truncateText = (text, maxLength = 150) => {
-    if (text.length <= maxLength) return text;
-    return text.substring(0, maxLength) + '...';
+    if (!text) return '';
+    return text.length > maxLength ? text.substring(0, maxLength) + '...' : text;
   };
 
-  if (loading && articles.length === 0) {
-    return (
-      <Box display="flex" justifyContent="center" alignItems="center" minHeight="400px">
-        <CircularProgress />
-        <Typography variant="h6" ml={2}>
-          Loading articles...
+  const ArticleCard = ({ article }) => (
+    <Card sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+      {article.image_url && (
+        <CardMedia
+          component="img"
+          height="200"
+          image={article.image_url}
+          alt={article.title}
+          sx={{ objectFit: 'cover' }}
+        />
+      )}
+      <CardContent sx={{ flexGrow: 1 }}>
+        <Box display="flex" justifyContent="space-between" alignItems="flex-start" mb={2}>
+          <Typography variant="h6" component="h3" sx={{ 
+            fontWeight: 'bold',
+            lineHeight: 1.2,
+            display: '-webkit-box',
+            WebkitLineClamp: 2,
+            WebkitBoxOrient: 'vertical',
+            overflow: 'hidden'
+          }}>
+            {article.title || 'Untitled Article'}
+          </Typography>
+          <IconButton 
+            size="small" 
+            onClick={() => toggleBookmark(article.id)}
+            sx={{ ml: 1 }}
+          >
+            {bookmarkedArticles.has(article.id) ? 
+              <BookmarkIcon color="primary" /> : 
+              <BookmarkBorderIcon />
+            }
+          </IconButton>
+        </Box>
+
+        <Typography 
+          variant="body2" 
+          color="text.secondary" 
+          sx={{ 
+            mb: 2,
+            display: '-webkit-box',
+            WebkitLineClamp: 3,
+            WebkitBoxOrient: 'vertical',
+            overflow: 'hidden'
+          }}
+        >
+          {truncateText(article.summary || article.content)}
         </Typography>
-      </Box>
-    );
-  }
+
+        <Box display="flex" flexWrap="wrap" gap={1} mb={2}>
+          {article.sentiment && (
+            <Chip
+              label={article.sentiment}
+              color={getSentimentColor(article.sentiment)}
+              size="small"
+            />
+          )}
+          {article.quality_score && (
+            <Chip
+              label={`Quality: ${Math.round(article.quality_score * 100)}%`}
+              color="primary"
+              size="small"
+            />
+          )}
+          {article.category && (
+            <Chip
+              label={article.category}
+              color="secondary"
+              size="small"
+            />
+          )}
+        </Box>
+
+        <Box display="flex" alignItems="center" justifyContent="space-between" mb={1}>
+          <Box display="flex" alignItems="center" gap={1}>
+            <SourceIcon fontSize="small" color="action" />
+            <Typography variant="caption" color="text.secondary">
+              {article.source || 'Unknown Source'}
+            </Typography>
+          </Box>
+          <Typography variant="caption" color="text.secondary">
+            {formatDate(article.published_at || article.created_at)}
+          </Typography>
+        </Box>
+
+        {article.entities && article.entities.length > 0 && (
+          <Box mt={1}>
+            <Typography variant="caption" color="text.secondary" display="block">
+              Key Entities: {article.entities.slice(0, 3).join(', ')}
+              {article.entities.length > 3 && ` +${article.entities.length - 3} more`}
+            </Typography>
+          </Box>
+        )}
+      </CardContent>
+
+      <CardActions sx={{ p: 2, pt: 0 }}>
+        <Button 
+          size="small" 
+          startIcon={<VisibilityIcon />}
+          onClick={() => window.open(article.url, '_blank')}
+        >
+          Read Full Article
+        </Button>
+        <Button size="small" startIcon={<ShareIcon />}>
+          Share
+        </Button>
+        <Button size="small" startIcon={<TimelineIcon />}>
+          View in Storyline
+        </Button>
+      </CardActions>
+    </Card>
+  );
+
+  const ArticleListItem = ({ article }) => (
+    <ListItem
+      sx={{
+        border: 1,
+        borderColor: 'divider',
+        borderRadius: 1,
+        mb: 1,
+        bgcolor: 'background.paper'
+      }}
+    >
+      <ListItemText
+        primary={
+          <Box display="flex" alignItems="center" gap={1} mb={1}>
+            <Typography variant="h6" sx={{ flexGrow: 1 }}>
+              {article.title || 'Untitled Article'}
+            </Typography>
+            <Box display="flex" gap={1}>
+              {article.sentiment && (
+                <Chip
+                  label={article.sentiment}
+                  color={getSentimentColor(article.sentiment)}
+                  size="small"
+                />
+              )}
+              {article.quality_score && (
+                <Chip
+                  label={`${Math.round(article.quality_score * 100)}%`}
+                  color="primary"
+                  size="small"
+                />
+              )}
+            </Box>
+          </Box>
+        }
+        secondary={
+          <Box>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+              {truncateText(article.summary || article.content, 200)}
+            </Typography>
+            <Box display="flex" alignItems="center" gap={2}>
+              <Box display="flex" alignItems="center" gap={0.5}>
+                <SourceIcon fontSize="small" />
+                <Typography variant="caption">
+                  {article.source || 'Unknown Source'}
+                </Typography>
+              </Box>
+              <Typography variant="caption">
+                {formatDate(article.published_at || article.created_at)}
+              </Typography>
+              {article.entities && article.entities.length > 0 && (
+                <Typography variant="caption" color="text.secondary">
+                  Entities: {article.entities.slice(0, 3).join(', ')}
+                </Typography>
+              )}
+            </Box>
+          </Box>
+        }
+      />
+      <ListItemSecondaryAction>
+        <Box display="flex" gap={1}>
+          <IconButton 
+            size="small" 
+            onClick={() => toggleBookmark(article.id)}
+          >
+            {bookmarkedArticles.has(article.id) ? 
+              <BookmarkIcon color="primary" /> : 
+              <BookmarkBorderIcon />
+            }
+          </IconButton>
+          <Button 
+            size="small" 
+            startIcon={<VisibilityIcon />}
+            onClick={() => window.open(article.url, '_blank')}
+          >
+            View
+          </Button>
+        </Box>
+      </ListItemSecondaryAction>
+    </ListItem>
+  );
 
   return (
-    <Box sx={{ p: 3 }}>
-      {/* Header */}
+    <Box>
       <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
-        <Typography variant="h4" component="h1">
-          Articles Analysis
+        <Typography variant="h4" component="h1" sx={{ fontWeight: 'bold' }}>
+          Articles
         </Typography>
-        <Button
-          variant="outlined"
-          startIcon={loading ? <CircularProgress size={16} /> : <RefreshIcon />}
-          onClick={() => fetchArticles(true)}
-          disabled={loading}
-        >
-          {loading ? 'Refreshing...' : 'Refresh'}
-        </Button>
+        <Box display="flex" gap={2} alignItems="center">
+          <Tooltip title="Refresh Articles">
+            <IconButton onClick={handleRefresh} disabled={loading}>
+              <RefreshIcon />
+            </IconButton>
+          </Tooltip>
+          <Button
+            variant={viewMode === 'grid' ? 'contained' : 'outlined'}
+            startIcon={<ViewModuleIcon />}
+            onClick={() => setViewMode('grid')}
+            size="small"
+          >
+            Grid
+          </Button>
+          <Button
+            variant={viewMode === 'list' ? 'contained' : 'outlined'}
+            startIcon={<ViewListIcon />}
+            onClick={() => setViewMode('list')}
+            size="small"
+          >
+            List
+          </Button>
+        </Box>
       </Box>
 
-      {/* Stats Overview */}
-      {stats && (
-        <Grid container spacing={3} mb={3}>
-          <Grid item xs={12} sm={6} md={3}>
-            <Card>
-              <CardContent>
-                <Box display="flex" alignItems="center" justifyContent="space-between">
-                  <Box>
-                    <Typography color="textSecondary" gutterBottom>
-                      Total Articles
-                    </Typography>
-                    <Typography variant="h4">
-                      {stats.total_articles || 0}
-                    </Typography>
-                  </Box>
-                  <ArticleIcon sx={{ fontSize: 40, color: 'primary.main' }} />
-                </Box>
-              </CardContent>
-            </Card>
-          </Grid>
-          <Grid item xs={12} sm={6} md={3}>
-            <Card>
-              <CardContent>
-                <Box display="flex" alignItems="center" justifyContent="space-between">
-                  <Box>
-                    <Typography color="textSecondary" gutterBottom>
-                      Processed
-                    </Typography>
-                    <Typography variant="h4">
-                      {stats.by_status?.processed || 0}
-                    </Typography>
-                  </Box>
-                  <PsychologyIcon sx={{ fontSize: 40, color: 'success.main' }} />
-                </Box>
-              </CardContent>
-            </Card>
-          </Grid>
-          <Grid item xs={12} sm={6} md={3}>
-            <Card>
-              <CardContent>
-                <Box display="flex" alignItems="center" justifyContent="space-between">
-                  <Box>
-                    <Typography color="textSecondary" gutterBottom>
-                      Processing
-                    </Typography>
-                    <Typography variant="h4">
-                      {stats.by_status?.processing || 0}
-                    </Typography>
-                  </Box>
-                  <TimelineIcon sx={{ fontSize: 40, color: 'warning.main' }} />
-                </Box>
-              </CardContent>
-            </Card>
-          </Grid>
-          <Grid item xs={12} sm={6} md={3}>
-            <Card>
-              <CardContent>
-                <Box display="flex" alignItems="center" justifyContent="space-between">
-                  <Box>
-                    <Typography color="textSecondary" gutterBottom>
-                      Avg Sentiment
-                    </Typography>
-                    <Typography variant="h4">
-                      {stats.avg_sentiment?.toFixed(2) || '0.00'}
-                    </Typography>
-                  </Box>
-                  <AutoAwesomeIcon sx={{ fontSize: 40, color: 'info.main' }} />
-                </Box>
-              </CardContent>
-            </Card>
-          </Grid>
-        </Grid>
-      )}
-
       {/* Search and Filters */}
-      <Paper sx={{ p: 2, mb: 3 }}>
+      <Paper sx={{ p: 3, mb: 3 }}>
         <Grid container spacing={2} alignItems="center">
           <Grid item xs={12} md={4}>
             <TextField
               fullWidth
-              label="Search articles"
+              placeholder="Search articles..."
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
+              onChange={handleSearch}
               InputProps={{
-                startAdornment: <SearchIcon sx={{ mr: 1, color: 'text.secondary' }} />
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <SearchIcon />
+                  </InputAdornment>
+                ),
               }}
             />
           </Grid>
           <Grid item xs={12} md={2}>
             <FormControl fullWidth>
-              <InputLabel>Status</InputLabel>
-              <Select
-                value={filters.status}
-                label="Status"
-                onChange={(e) => handleFilterChange('status', e.target.value)}
-              >
-                <MenuItem value="">All</MenuItem>
-                <MenuItem value="pending">Pending</MenuItem>
-                <MenuItem value="processing">Processing</MenuItem>
-                <MenuItem value="processed">Processed</MenuItem>
-                <MenuItem value="failed">Failed</MenuItem>
-              </Select>
-            </FormControl>
-          </Grid>
-          <Grid item xs={12} md={2}>
-            <FormControl fullWidth>
               <InputLabel>Source</InputLabel>
               <Select
-                value={filters.source}
+                value={filterSource}
                 label="Source"
                 onChange={(e) => handleFilterChange('source', e.target.value)}
               >
-                <MenuItem value="">All</MenuItem>
-                {stats?.top_sources && Object.keys(stats.top_sources).map(source => (
-                  <MenuItem key={source} value={source}>{source}</MenuItem>
-                ))}
+                <MenuItem value="">All Sources</MenuItem>
+                <MenuItem value="bbc">BBC</MenuItem>
+                <MenuItem value="cnn">CNN</MenuItem>
+                <MenuItem value="reuters">Reuters</MenuItem>
+                <MenuItem value="ap">Associated Press</MenuItem>
               </Select>
             </FormControl>
           </Grid>
@@ -383,241 +416,142 @@ const EnhancedArticles = () => {
             <FormControl fullWidth>
               <InputLabel>Sentiment</InputLabel>
               <Select
-                value={filters.sentiment}
+                value={filterSentiment}
                 label="Sentiment"
                 onChange={(e) => handleFilterChange('sentiment', e.target.value)}
               >
-                <MenuItem value="">All</MenuItem>
+                <MenuItem value="">All Sentiments</MenuItem>
                 <MenuItem value="positive">Positive</MenuItem>
-                <MenuItem value="neutral">Neutral</MenuItem>
                 <MenuItem value="negative">Negative</MenuItem>
+                <MenuItem value="neutral">Neutral</MenuItem>
+              </Select>
+            </FormControl>
+          </Grid>
+          <Grid item xs={12} md={2}>
+            <FormControl fullWidth>
+              <InputLabel>Sort By</InputLabel>
+              <Select
+                value={sortBy}
+                label="Sort By"
+                onChange={(e) => handleFilterChange('sort', e.target.value)}
+              >
+                <MenuItem value="date">Date</MenuItem>
+                <MenuItem value="relevance">Relevance</MenuItem>
+                <MenuItem value="quality">Quality Score</MenuItem>
+                <MenuItem value="sentiment">Sentiment</MenuItem>
               </Select>
             </FormControl>
           </Grid>
           <Grid item xs={12} md={2}>
             <Button
               fullWidth
-              variant="contained"
-              startIcon={buttonLoading.search ? <CircularProgress size={16} /> : <SearchIcon />}
-              onClick={handleSearch}
-              disabled={loading || buttonLoading.search}
+              variant="outlined"
+              startIcon={<FilterIcon />}
+              onClick={() => {
+                setSearchQuery('');
+                setFilterSource('');
+                setFilterSentiment('');
+                setSortBy('date');
+                setPage(1);
+              }}
             >
-              {buttonLoading.search ? 'Searching...' : 'Search'}
+              Clear Filters
             </Button>
           </Grid>
         </Grid>
       </Paper>
 
-      {/* Articles List */}
       {error && (
-        <Alert severity="error" sx={{ mb: 2 }}>
+        <Alert severity="error" sx={{ mb: 3 }}>
           {error}
         </Alert>
       )}
 
-      {loading && (
-        <LinearProgress sx={{ mb: 2 }} />
-      )}
+      {loading && <LinearProgress sx={{ mb: 3 }} />}
 
-      <Grid container spacing={2}>
-        {articles.map((article) => (
-          <Grid item xs={12} key={article.id}>
-            <Card>
-              <CardContent>
-                <Box display="flex" justifyContent="space-between" alignItems="flex-start">
-                  <Box flex={1}>
-                    <Typography variant="h6" gutterBottom>
-                      {article.title}
-                    </Typography>
-                    <Typography variant="body2" color="textSecondary" paragraph>
-                      {truncateText(article.content)}
-                    </Typography>
-                    
-                    <Box display="flex" alignItems="center" gap={2} mb={2}>
-                      <Chip
-                        label={article.source}
-                        size="small"
-                        variant="outlined"
-                      />
-                      <Chip
-                        label={article.status}
-                        size="small"
-                        color={getStatusColor(article.status)}
-                      />
-                      {article.sentiment !== null && (
-                        <Box display="flex" alignItems="center" gap={0.5}>
-                          {getSentimentIcon(article.sentiment)}
-                          <Typography variant="body2" color={`${getSentimentColor(article.sentiment)}.main`}>
-                            {article.sentiment.toFixed(2)}
-                          </Typography>
-                        </Box>
-                      )}
-                      {article.relevance_score && (
-                        <Chip
-                          label={`Relevance: ${(article.relevance_score * 100).toFixed(0)}%`}
-                          size="small"
-                          color="info"
-                          variant="outlined"
-                        />
-                      )}
-                    </Box>
+      {/* Articles Display */}
+      {articles.length === 0 && !loading ? (
+        <Paper sx={{ p: 4, textAlign: 'center' }}>
+          <ArticleIcon sx={{ fontSize: 64, color: 'text.secondary', mb: 2 }} />
+          <Typography variant="h6" color="text.secondary" gutterBottom>
+            No articles found
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            {searchQuery || filterSource || filterSentiment 
+              ? 'Try adjusting your search criteria or filters'
+              : 'Articles will appear here once the system starts collecting data'
+            }
+          </Typography>
+        </Paper>
+      ) : (
+        <>
+          {viewMode === 'grid' ? (
+            <Grid container spacing={3}>
+              {articles.map((article) => (
+                <Grid item xs={12} sm={6} md={4} key={article.id}>
+                  <ArticleCard article={article} />
+                </Grid>
+              ))}
+            </Grid>
+          ) : (
+            <List>
+              {articles.map((article) => (
+                <ArticleListItem key={article.id} article={article} />
+              ))}
+            </List>
+          )}
 
-                    <Box display="flex" alignItems="center" gap={2}>
-                      <Typography variant="caption" color="textSecondary">
-                        <ScheduleIcon sx={{ fontSize: 14, mr: 0.5 }} />
-                        {formatDate(article.created_at)}
-                      </Typography>
-                      {article.tags && article.tags.length > 0 && (
-                        <Box display="flex" gap={0.5}>
-                          {article.tags.slice(0, 3).map((tag, index) => (
-                            <Chip key={index} label={tag} size="small" variant="outlined" />
-                          ))}
-                          {article.tags.length > 3 && (
-                            <Chip label={`+${article.tags.length - 3}`} size="small" variant="outlined" />
-                          )}
-                        </Box>
-                      )}
-                    </Box>
-                  </Box>
-
-                  <Box display="flex" flexDirection="column" gap={1}>
-                    <Tooltip title="View Details">
-                      <IconButton 
-                        onClick={() => handleViewArticle(article)}
-                        disabled={buttonLoading[`view-${article.id}`]}
-                      >
-                        {buttonLoading[`view-${article.id}`] ? 
-                          <CircularProgress size={20} /> : 
-                          <VisibilityIcon />
-                        }
-                      </IconButton>
-                    </Tooltip>
-                    {article.status !== 'processed' && (
-                      <Tooltip title={buttonLoading[`analyze-${article.id}`] ? "Analyzing..." : "Analyze with AI"}>
-                        <IconButton 
-                          onClick={() => handleAnalyzeArticle(article.id)}
-                          disabled={analyzing || buttonLoading[`analyze-${article.id}`]}
-                        >
-                          {buttonLoading[`analyze-${article.id}`] ? 
-                            <CircularProgress size={20} /> : 
-                            <PsychologyIcon />
-                          }
-                        </IconButton>
-                      </Tooltip>
-                    )}
-                    <Tooltip title="Open Original">
-                      <IconButton 
-                        component="a" 
-                        href={article.url} 
-                        target="_blank" 
-                        rel="noopener noreferrer"
-                      >
-                        <LinkIcon />
-                      </IconButton>
-                    </Tooltip>
-                  </Box>
-                </Box>
-              </CardContent>
-            </Card>
-          </Grid>
-        ))}
-      </Grid>
-
-      {/* Pagination */}
-      {total > perPage && (
-        <Box display="flex" justifyContent="center" mt={3}>
-          <Pagination
-            count={Math.ceil(total / perPage)}
-            page={page}
-            onChange={handlePageChange}
-            color="primary"
-            size="large"
-          />
-        </Box>
-      )}
-
-      {/* Article Detail Dialog */}
-      <Dialog
-        open={detailDialogOpen}
-        onClose={() => setDetailDialogOpen(false)}
-        maxWidth="md"
-        fullWidth
-      >
-        <DialogTitle>
-          {selectedArticle?.title}
-        </DialogTitle>
-        <DialogContent>
-          {selectedArticle && (
-            <Box>
-              <Typography variant="body1" paragraph>
-                {selectedArticle.content}
-              </Typography>
-              
-              {selectedArticle.summary && (
-                <Box mb={2}>
-                  <Typography variant="h6" gutterBottom>
-                    AI Summary
-                  </Typography>
-                  <Paper sx={{ p: 2, bgcolor: 'grey.50' }}>
-                    <Typography variant="body2">
-                      {selectedArticle.summary}
-                    </Typography>
-                  </Paper>
-                </Box>
-              )}
-
-              {selectedArticle.entities && selectedArticle.entities.length > 0 && (
-                <Box mb={2}>
-                  <Typography variant="h6" gutterBottom>
-                    Key Entities
-                  </Typography>
-                  <Box display="flex" flexWrap="wrap" gap={1}>
-                    {selectedArticle.entities.map((entity, index) => (
-                      <Chip
-                        key={index}
-                        label={`${entity.name} (${entity.type})`}
-                        size="small"
-                        variant="outlined"
-                      />
-                    ))}
-                  </Box>
-                </Box>
-              )}
-
-              <Box display="flex" gap={2} flexWrap="wrap">
-                <Chip label={`Source: ${selectedArticle.source}`} />
-                <Chip label={`Status: ${selectedArticle.status}`} color={getStatusColor(selectedArticle.status)} />
-                {selectedArticle.sentiment !== null && (
-                  <Chip
-                    label={`Sentiment: ${selectedArticle.sentiment.toFixed(2)}`}
-                    color={getSentimentColor(selectedArticle.sentiment)}
-                  />
-                )}
-                {selectedArticle.relevance_score && (
-                  <Chip
-                    label={`Relevance: ${(selectedArticle.relevance_score * 100).toFixed(0)}%`}
-                    color="info"
-                  />
-                )}
-              </Box>
+          {/* Pagination */}
+          {totalPages > 1 && (
+            <Box display="flex" justifyContent="center" mt={4}>
+              <Pagination
+                count={totalPages}
+                page={page}
+                onChange={(event, value) => setPage(value)}
+                color="primary"
+                size="large"
+              />
             </Box>
           )}
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setDetailDialogOpen(false)}>
-            Close
-          </Button>
-          <Button
-            component="a"
-            href={selectedArticle?.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            variant="contained"
-          >
-            View Original
-          </Button>
-        </DialogActions>
-      </Dialog>
+        </>
+      )}
+
+      {/* AI Analysis Features */}
+      <Paper sx={{ p: 3, mt: 4 }}>
+        <Typography variant="h6" gutterBottom>
+          <PsychologyIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
+          AI-Powered Analysis
+        </Typography>
+        <Grid container spacing={2}>
+          <Grid item xs={12} md={4}>
+            <Box textAlign="center">
+              <AutoAwesomeIcon color="primary" sx={{ fontSize: 40, mb: 1 }} />
+              <Typography variant="h6">Sentiment Analysis</Typography>
+              <Typography variant="body2" color="text.secondary">
+                Automatic sentiment classification for each article
+              </Typography>
+            </Box>
+          </Grid>
+          <Grid item xs={12} md={4}>
+            <Box textAlign="center">
+              <TimelineIcon color="primary" sx={{ fontSize: 40, mb: 1 }} />
+              <Typography variant="h6">Entity Extraction</Typography>
+              <Typography variant="body2" color="text.secondary">
+                Identify key people, places, and organizations
+              </Typography>
+            </Box>
+          </Grid>
+          <Grid item xs={12} md={4}>
+            <Box textAlign="center">
+              <TrendingUpIcon color="primary" sx={{ fontSize: 40, mb: 1 }} />
+              <Typography variant="h6">Quality Scoring</Typography>
+              <Typography variant="body2" color="text.secondary">
+                AI-powered quality assessment and ranking
+              </Typography>
+            </Box>
+          </Grid>
+        </Grid>
+      </Paper>
     </Box>
   );
 };

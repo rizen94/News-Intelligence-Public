@@ -1,5 +1,5 @@
 """
-News Intelligence System v3.1.0 - Production RSS Feeds API
+News Intelligence System v3.0 - Production RSS Feeds API
 Robust, fully functional RSS feeds management endpoints
 """
 

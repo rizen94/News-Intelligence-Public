@@ -12,9 +12,12 @@ import logging
 from datetime import datetime
 from typing import Dict, List
 
-# Add the modules directory to the path
-sys.path.append(os.path.join(os.path.dirname(__file__), 'modules', 'intelligence'))
-sys.path.append(os.path.join(os.path.dirname(__file__), 'modules', 'ingestion'))
+# Add the project root to the path
+project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+sys.path.append(project_root)
+
+# Import centralized path configuration
+from api.config.paths import PROJECT_ROOT, MIGRATIONS_DIR
 
 try:
     from smart_article_pruner import SmartArticlePruner
@@ -57,10 +60,17 @@ class IntelligenceDatabaseManager:
         """Update the database schema for the intelligence system."""
         try:
             if not schema_file:
-                schema_file = os.path.join(
-                    os.path.dirname(__file__), 
-                    'schema_intelligence_system_v2.sql'
-                )
+                # Try to find the latest schema file in migrations directory
+                schema_file = os.path.join(MIGRATIONS_DIR, '001_base_schema.sql')
+                
+                if not os.path.exists(schema_file):
+                    # Fallback to any .sql file in migrations
+                    sql_files = [f for f in os.listdir(MIGRATIONS_DIR) if f.endswith('.sql')]
+                    if sql_files:
+                        schema_file = os.path.join(MIGRATIONS_DIR, sorted(sql_files)[-1])
+                    else:
+                        logger.error(f"No schema files found in {MIGRATIONS_DIR}")
+                        return False
             
             if not os.path.exists(schema_file):
                 logger.error(f"Schema file not found: {schema_file}")

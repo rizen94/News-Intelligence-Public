@@ -507,7 +507,7 @@ cat > RSS_MANAGEMENT_README.md << 'EOF'
 ## Monitoring
 
 - **Prometheus**: http://localhost:9090
-- **Grafana**: http://localhost:3000 (admin/admin)
+- **Grafana**: http://localhost:3002 (admin/admin)
 - **API Health**: http://localhost:8000/api/rss/health
 
 ## API Endpoints
@@ -558,5 +558,7 @@ echo "Documentation: docs/RSS_FEED_MANAGEMENT_SYSTEM.md"
 echo "Quick reference: RSS_MANAGEMENT_README.md"
 echo ""
 echo "============================================================================="
+
+
 
 

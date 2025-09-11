@@ -99,7 +99,7 @@ fast_startup() {
     docker-compose -f docker-compose.yml up -d news-frontend news-nginx
     
     # Wait for frontend to be healthy
-    health_check "Frontend" "http://localhost:3001/"
+    health_check "Frontend" "http://localhost:3002/"
     
     # Start monitoring (optional)
     if [ "$1" = "with-monitoring" ]; then

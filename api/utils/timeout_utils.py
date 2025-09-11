@@ -1,5 +1,5 @@
 """
-News Intelligence System v3.1.0 - Timeout Utilities
+News Intelligence System v3.0 - Timeout Utilities
 Provides timeout protection for all external calls
 """
 

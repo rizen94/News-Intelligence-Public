@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>News Intelligence System v3.1.0 - Unified Production</title>
+    <title>News Intelligence System v3.0 - FALLBACK MODE</title>
     <style>
         * {
             margin: 0;
@@ -275,7 +275,19 @@
     <div class="container">
         <div class="header">
             <h1>News Intelligence System</h1>
-            <p>Unified Production Dashboard v3.1.0</p>
+            <p>Unified Production Dashboard v3.0</p>
+        <div style="background: #ff6b6b; color: white; padding: 15px; border-radius: 8px; margin: 20px 0; border-left: 5px solid #d63031;">
+            <h3 style="margin: 0 0 10px 0; display: flex; align-items: center;">
+                ⚠️ FALLBACK MODE ACTIVE
+            </h3>
+            <p style="margin: 0; font-size: 14px;">
+                You are viewing the HTML fallback interface. The React application may have failed to load. 
+                This is a temporary interface with limited functionality.
+            </p>
+            <p style="margin: 5px 0 0 0; font-size: 12px; opacity: 0.9;">
+                <strong>For full functionality:</strong> Try refreshing the page or contact support if the issue persists.
+            </p>
+        </div>
             <div class="schema-info">
                 <h4>🎯 Schema-Driven Architecture</h4>
                 <p>This system is built using a unified schema that generates database migrations, API models, and frontend types simultaneously. All layers stay in perfect harmony!</p>
@@ -293,7 +305,7 @@
             </div>
             <div class="status-item">
                 <div class="status-indicator" id="schema-status"></div>
-                <span id="schema-status-text">Schema Version: 3.1.0</span>
+                <span id="schema-status-text">Schema Version: 3.3.0</span>
             </div>
             <div class="status-item">
                 <div class="status-indicator" id="last-update"></div>
@@ -353,6 +365,50 @@
     <button class="refresh-btn" onclick="refreshData()" title="Refresh Data">↻</button>
     
     <script>
+        // Log fallback usage for investigation
+        console.warn('🚨 FALLBACK MODE ACTIVATED - React application failed to load');
+        console.warn('Fallback timestamp:', new Date().toISOString());
+        console.warn('User agent:', navigator.userAgent);
+        console.warn('Current URL:', window.location.href);
+        
+        // Send fallback notification to server (if API is available)
+        fetch('http://localhost:8000/api/health/', { method: 'GET' })
+            .then(response => response.json())
+            .then(data => {
+                console.warn('API is available, logging fallback usage');
+                // Send fallback event to server
+                fetch('http://localhost:8000/api/fallback/log', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        timestamp: new Date().toISOString(),
+                        user_agent: navigator.userAgent,
+                        url: window.location.href,
+                        reason: 'React application failed to load',
+                        api_available: true
+                    })
+                }).catch(err => console.warn('Failed to log fallback usage:', err));
+            })
+            .catch(error => {
+                console.warn('API not available, fallback mode confirmed');
+                // Still try to log even if API check failed
+                fetch('http://localhost:8000/api/fallback/log', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        timestamp: new Date().toISOString(),
+                        user_agent: navigator.userAgent,
+                        url: window.location.href,
+                        reason: 'React application failed to load',
+                        api_available: false
+                    })
+                }).catch(err => console.warn('Failed to log fallback usage:', err));
+            });
+
         const API_BASE = 'http://localhost:8000';
         let lastUpdate = null;
         
@@ -530,10 +586,10 @@
             // Simple data export functionality
             const data = {
                 timestamp: new Date().toISOString(),
-                system: 'News Intelligence System v3.1.0',
+                system: 'News Intelligence System v3.3.0',
                 architecture: 'Schema-Driven Unified System',
                 status: 'Production Ready',
-                schema_version: '3.1.0'
+                schema_version: '3.3.0'
             };
             
             const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });

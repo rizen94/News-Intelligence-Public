@@ -474,3 +474,5 @@ def get_predictive_scaling_service() -> PredictiveScalingService:
     return _predictive_scaling_service
 
 
+
+

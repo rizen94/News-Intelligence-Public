@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# News Intelligence System v3.1.0 - Production Startup Script
-# This script starts the production system with proper health checks and monitoring
+# News Intelligence System v3.0 - Production Startup Script with Pipeline Logging
+# This script starts the production system with comprehensive pipeline tracking and monitoring
 
 set -e
 
@@ -17,9 +17,26 @@ COMPOSE_FILE="docker-compose.yml"
 PROJECT_NAME="news-intelligence"
 HEALTH_CHECK_TIMEOUT=300
 LOG_FILE="logs/production-startup.log"
+PIPELINE_LOG_FILE="logs/pipeline_trace.log"
 
 # Create logs directory
 mkdir -p logs
+
+# Initialize pipeline logging system
+init_pipeline_logging() {
+    log "Initializing pipeline logging system..."
+    
+    # Create pipeline log file
+    touch "$PIPELINE_LOG_FILE"
+    
+    # Set up log rotation for pipeline logs
+    if ! crontab -l 2>/dev/null | grep -q "pipeline_trace.log"; then
+        log "Setting up log rotation for pipeline logs..."
+        (crontab -l 2>/dev/null; echo "0 2 * * * find $(pwd)/logs -name 'pipeline_trace.log*' -mtime +7 -delete") | crontab -
+    fi
+    
+    success "Pipeline logging system initialized"
+}
 
 # Logging function
 log() {
@@ -36,6 +53,25 @@ success() {
 
 warning() {
     echo -e "${YELLOW}[WARNING]${NC} $1" | tee -a "$LOG_FILE"
+}
+
+# Initialize database with pipeline tracking tables
+init_database() {
+    log "Initializing database with pipeline tracking tables..."
+    
+    # Check if database is accessible
+    if docker-compose -f "$COMPOSE_FILE" -p "$PROJECT_NAME" exec -T postgres pg_isready -U newsapp -d news_intelligence > /dev/null 2>&1; then
+        log "Database is accessible, checking for pipeline tracking tables..."
+        
+        # Run database migrations for pipeline tracking
+        log "Applying pipeline tracking database migrations..."
+        docker-compose -f "$COMPOSE_FILE" -p "$PROJECT_NAME" exec -T postgres psql -U newsapp -d news_intelligence -f /docker-entrypoint-initdb.d/011_pipeline_tracking_tables.sql 2>/dev/null || {
+            warning "Pipeline tracking tables may already exist or migration failed"
+        }
+        success "Pipeline tracking database schema initialized"
+    else
+        warning "Database not accessible yet, will initialize after startup"
+    fi
 }
 
 # Check if Docker is running
@@ -81,7 +117,7 @@ wait_for_health() {
     
     while [ $(($(date +%s) - start_time)) -lt $timeout ]; do
         local healthy_count=0
-        local total_count=4
+        local total_count=5  # Added pipeline monitoring
         
         # Check PostgreSQL
         if docker-compose -f "$COMPOSE_FILE" -p "$PROJECT_NAME" exec -T postgres pg_isready -U newsapp -d news_intelligence > /dev/null 2>&1; then
@@ -100,6 +136,11 @@ wait_for_health() {
         
         # Check Frontend
         if curl -s http://localhost/ > /dev/null 2>&1; then
+            ((healthy_count++))
+        fi
+        
+        # Check Pipeline Monitoring API
+        if curl -s http://localhost:8000/api/pipeline-monitoring/health > /dev/null 2>&1; then
             ((healthy_count++))
         fi
         
@@ -149,28 +190,44 @@ show_status() {
         error "Frontend: Not responding"
     fi
     
+    # Pipeline Monitoring
+    if curl -s http://localhost:8000/api/pipeline-monitoring/health > /dev/null 2>&1; then
+        success "Pipeline Monitoring: Running (http://localhost:8000/api/pipeline-monitoring)"
+    else
+        error "Pipeline Monitoring: Not responding"
+    fi
+    
     echo ""
     log "Access URLs:"
     echo "  Frontend: http://localhost"
     echo "  API: http://localhost:8000"
     echo "  API Docs: http://localhost:8000/docs"
+    echo "  Pipeline Monitoring: http://localhost:8000/api/pipeline-monitoring"
     echo "  Monitoring: http://localhost:9090"
+    
+    echo ""
+    log "Pipeline Logging:"
+    echo "  Pipeline Log: logs/pipeline_trace.log"
+    echo "  Startup Log: logs/production-startup.log"
 }
 
 # Main execution
 main() {
-    log "Starting News Intelligence System v3.1.0 Production"
-    log "=================================================="
+    log "Starting News Intelligence System v3.0 with Pipeline Logging"
+    log "============================================================"
     
+    init_pipeline_logging
     check_docker
     check_docker_compose
     stop_existing
     start_services
     
     if wait_for_health; then
+        init_database
         show_status
-        success "Production system is ready!"
+        success "Production system with pipeline logging is ready!"
         log "System started successfully. Check logs with: docker-compose -f $COMPOSE_FILE -p $PROJECT_NAME logs -f"
+        log "Pipeline logs: tail -f logs/pipeline_trace.log"
     else
         error "Production system failed to start properly."
         log "Check logs with: docker-compose -f $COMPOSE_FILE -p $PROJECT_NAME logs"
