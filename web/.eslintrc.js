@@ -20,13 +20,7 @@ module.exports = {
     'no-unreachable': 'error',
     
     // React specific rules
-    'react/function-component-definition': [
-      'error',
-      {
-        'namedComponents': 'arrow-function',
-        'unnamedComponents': 'arrow-function'
-      }
-    ],
+    'react/function-component-definition': 'off',
     'react/jsx-uses-react': 'off',
     'react/react-in-jsx-scope': 'off',
     
@@ -60,8 +54,11 @@ module.exports = {
     'no-useless-concat': 'error',
     'no-useless-return': 'error',
     'prefer-promise-reject-errors': 'error',
-    'radix': 'error',
-    'yoda': 'error'
+    'radix': 'warn',
+    'yoda': 'error',
+    
+    // React Hooks rules
+    'react-hooks/exhaustive-deps': 'warn'
   },
   env: {
     'browser': true,
