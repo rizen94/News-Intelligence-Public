@@ -50,7 +50,6 @@ import Monitoring from './pages/Monitoring/EnhancedMonitoring';
 import RSSFeeds from './pages/RSSFeeds/EnhancedRSSFeeds';
 import Settings from './pages/Settings/Settings';
 import Storylines from './pages/Storylines/EnhancedStorylines';
-import StorylineDashboard from './pages/Storylines/StorylineDashboard';
 import StorylineDetail from './pages/Storylines/StorylineDetail';
 import StorylineTimeline from './pages/Timeline/StorylineTimeline';
 // import AIAnalysis from './pages/AIAnalysis/AIAnalysis';
