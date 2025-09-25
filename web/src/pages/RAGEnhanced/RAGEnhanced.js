@@ -1,4 +1,19 @@
-import React, { useState, useEffect } from 'react';
+import {
+  Search as SearchIcon,
+  Psychology as PsychologyIcon,
+  Timeline as TimelineIcon,
+  History as HistoryIcon,
+  Link as LinkIcon,
+  ExpandMore as ExpandMoreIcon,
+  Refresh as RefreshIcon,
+  Download as DownloadIcon,
+  Share as ShareIcon,
+  Bookmark as BookmarkIcon,
+  TrendingUp as TrendingUpIcon,
+  Article as ArticleIcon,
+  Source as SourceIcon,
+  AutoAwesome as AutoAwesomeIcon,
+} from '@mui/icons-material';
 import {
   Box,
   Card,
@@ -27,27 +42,13 @@ import {
   Paper,
   IconButton,
   Tooltip,
-  Badge
+  Badge,
 } from '@mui/material';
-import {
-  Search as SearchIcon,
-  Psychology as PsychologyIcon,
-  Timeline as TimelineIcon,
-  History as HistoryIcon,
-  Link as LinkIcon,
-  ExpandMore as ExpandMoreIcon,
-  Refresh as RefreshIcon,
-  Download as DownloadIcon,
-  Share as ShareIcon,
-  Bookmark as BookmarkIcon,
-  TrendingUp as TrendingUpIcon,
-  Article as ArticleIcon,
-  Source as SourceIcon,
-  AutoAwesome as AutoAwesomeIcon
-} from '@mui/icons-material';
+import React, { useState, useEffect } from 'react';
+
 import newsSystemService from '../../services/newsSystemService';
 
-function TabPanel({ children, value, index, ...other }) {
+const TabPanel = ({ children, value, index, ...other }) => {
   return (
     <div
       role="tabpanel"
@@ -63,9 +64,9 @@ function TabPanel({ children, value, index, ...other }) {
       )}
     </div>
   );
-}
+};
 
-function RAGEnhanced() {
+const RAGEnhanced = () => {
   const [activeTab, setActiveTab] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchType, setSearchType] = useState('comprehensive');
@@ -89,7 +90,7 @@ function RAGEnhanced() {
     loadExternalServicesStatus();
   }, []);
 
-  const loadRAGStatistics = async () => {
+  const loadRAGStatistics = async() => {
     try {
       const response = await newsSystemService.getRAGStatistics();
       setRagStats(response.statistics);
@@ -98,7 +99,7 @@ function RAGEnhanced() {
     }
   };
 
-  const loadExternalServicesStatus = async () => {
+  const loadExternalServicesStatus = async() => {
     try {
       const response = await newsSystemService.getExternalServicesStatus();
       setExternalServicesStatus(response.services);
@@ -107,7 +108,7 @@ function RAGEnhanced() {
     }
   };
 
-  const handleRAGSearch = async () => {
+  const handleRAGSearch = async() => {
     if (!searchQuery.trim()) {
       setError('Please enter a search query');
       return;
@@ -121,7 +122,7 @@ function RAGEnhanced() {
       const response = await newsSystemService.performRAGSearch(
         searchQuery,
         searchType,
-        maxResults
+        maxResults,
       );
 
       setSearchResults(response.results);
@@ -132,7 +133,7 @@ function RAGEnhanced() {
     }
   };
 
-  const handleBuildDossier = async () => {
+  const handleBuildDossier = async() => {
     if (!storyId.trim()) {
       setError('Please enter a story ID');
       return;
@@ -148,7 +149,7 @@ function RAGEnhanced() {
         storyTitle || null,
         true, // include historical
         true, // include related
-        true  // include analysis
+        true,  // include analysis
       );
 
       setDossier(response.dossier);
@@ -159,7 +160,7 @@ function RAGEnhanced() {
     }
   };
 
-  const handleComprehensiveResearch = async () => {
+  const handleComprehensiveResearch = async() => {
     if (!researchQuery.trim()) {
       setError('Please enter a research query');
       return;
@@ -171,12 +172,12 @@ function RAGEnhanced() {
       setComprehensiveResearch(null);
 
       const keywords = storyKeywords.split(',').map(k => k.trim()).filter(k => k);
-      
+
       const response = await newsSystemService.performComprehensiveResearch(
         researchQuery,
         keywords,
         true, // include external
-        true  // include internal
+        true,  // include internal
       );
 
       setComprehensiveResearch(response.context);
@@ -208,7 +209,7 @@ function RAGEnhanced() {
         <Typography variant="h6" gutterBottom>
           Search Results for: "{searchResults.query}"
         </Typography>
-        
+
         <Grid container spacing={2} sx={{ mb: 3 }}>
           <Grid item xs={12} md={3}>
             <Card>
@@ -225,7 +226,7 @@ function RAGEnhanced() {
                   </Box>
                   <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
                     <Typography variant="body2">ML Enhanced:</Typography>
-                    <Chip 
+                    <Chip
                       label={searchResults.ml_enhanced ? 'Yes' : 'No'}
                       color={searchResults.ml_enhanced ? 'success' : 'default'}
                       size="small"
@@ -241,7 +242,7 @@ function RAGEnhanced() {
               </CardContent>
             </Card>
           </Grid>
-          
+
           <Grid item xs={12} md={9}>
             <Card>
               <CardContent>
@@ -268,12 +269,12 @@ function RAGEnhanced() {
                 {searchResults.ml_analysis.summary}
               </Typography>
               <Box sx={{ mt: 2, display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-                <Chip 
+                <Chip
                   label={`Model: ${searchResults.ml_analysis.model_used}`}
                   size="small"
                   variant="outlined"
                 />
-                <Chip 
+                <Chip
                   label={`Generated: ${formatDateTime(searchResults.ml_analysis.generated_at)}`}
                   size="small"
                   variant="outlined"
@@ -338,7 +339,7 @@ function RAGEnhanced() {
                               {article.title}
                             </Typography>
                             {article.ml_processed && (
-                              <Chip 
+                              <Chip
                                 label="ML Processed"
                                 color="success"
                                 size="small"
@@ -353,18 +354,18 @@ function RAGEnhanced() {
                               {article.summary || article.content?.substring(0, 200) + '...'}
                             </Typography>
                             <Box sx={{ mt: 1, display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-                              <Chip 
+                              <Chip
                                 label={article.source}
                                 size="small"
                                 variant="outlined"
                                 icon={<SourceIcon />}
                               />
-                              <Chip 
+                              <Chip
                                 label={formatDateTime(article.published_date)}
                                 size="small"
                                 variant="outlined"
                               />
-                              <Chip 
+                              <Chip
                                 label={`Quality: ${(article.quality_score * 100).toFixed(0)}%`}
                                 size="small"
                                 color={article.quality_score > 0.7 ? 'success' : article.quality_score > 0.4 ? 'warning' : 'error'}
@@ -393,7 +394,7 @@ function RAGEnhanced() {
         <Typography variant="h6" gutterBottom>
           Story Dossier: {dossier.story_title || dossier.story_id}
         </Typography>
-        
+
         <Grid container spacing={2} sx={{ mb: 3 }}>
           <Grid item xs={12} md={6}>
             <Card>
@@ -424,7 +425,7 @@ function RAGEnhanced() {
               </CardContent>
             </Card>
           </Grid>
-          
+
           <Grid item xs={12} md={6}>
             <Card>
               <CardContent>
@@ -477,12 +478,12 @@ function RAGEnhanced() {
                         {sectionData.analysis}
                       </Typography>
                       <Box sx={{ mt: 2, display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-                        <Chip 
+                        <Chip
                           label={`Model: ${sectionData.model_used}`}
                           size="small"
                           variant="outlined"
                         />
-                        <Chip 
+                        <Chip
                           label={`Articles: ${sectionData.articles_analyzed}`}
                           size="small"
                           variant="outlined"
@@ -744,7 +745,7 @@ function RAGEnhanced() {
                 {Object.entries(externalServicesStatus).map(([service, status]) => (
                   <Grid item xs={12} sm={6} md={4} key={service}>
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                      <Chip 
+                      <Chip
                         label={service.replace('_', ' ').toUpperCase()}
                         color={status.available ? 'success' : 'default'}
                         size="small"
@@ -769,7 +770,7 @@ function RAGEnhanced() {
             <Typography variant="h6" gutterBottom>
               Research Results for: "{comprehensiveResearch.query}"
             </Typography>
-            
+
             {/* Summary */}
             <Card sx={{ mb: 3 }}>
               <CardContent>
@@ -780,17 +781,17 @@ function RAGEnhanced() {
                   {comprehensiveResearch.comprehensive_summary}
                 </Typography>
                 <Box sx={{ mt: 2, display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-                  <Chip 
+                  <Chip
                     label={`Processing Time: ${formatDuration(comprehensiveResearch.processing_time)}`}
                     size="small"
                     variant="outlined"
                   />
-                  <Chip 
+                  <Chip
                     label={`Sources: ${comprehensiveResearch.total_sources}`}
                     size="small"
                     variant="outlined"
                   />
-                  <Chip 
+                  <Chip
                     label={`Generated: ${formatDateTime(comprehensiveResearch.generated_at)}`}
                     size="small"
                     variant="outlined"
@@ -908,6 +909,6 @@ function RAGEnhanced() {
       </TabPanel>
     </Box>
   );
-}
+};
 
 export default RAGEnhanced;

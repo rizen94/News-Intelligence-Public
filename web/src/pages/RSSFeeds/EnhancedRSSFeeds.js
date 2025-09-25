@@ -1,4 +1,28 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import {
+  Search as SearchIcon,
+  FilterList as FilterIcon,
+  Refresh as RefreshIcon,
+  RssFeed as RssFeedIcon,
+  Add as AddIcon,
+  Edit as EditIcon,
+  Delete as DeleteIcon,
+  PlayArrow as PlayIcon,
+  Pause as PauseIcon,
+  Warning as WarningIcon,
+  CheckCircle as CheckCircleIcon,
+  Error as ErrorIcon,
+  Schedule as ScheduleIcon,
+  Visibility as VisibilityIcon,
+  Settings as SettingsIcon,
+  ExpandMore as ExpandMoreIcon,
+  Link as LinkIcon,
+  Update as UpdateIcon,
+  Speed as SpeedIcon,
+  Memory as MemoryIcon,
+  NetworkCheck as NetworkIcon,
+  ViewModule as ViewModuleIcon,
+  ViewList as ViewListIcon,
+} from '@mui/icons-material';
 import {
   Box,
   Typography,
@@ -36,33 +60,10 @@ import {
   FormControlLabel,
   Accordion,
   AccordionSummary,
-  AccordionDetails
+  AccordionDetails,
 } from '@mui/material';
-import {
-  Search as SearchIcon,
-  FilterList as FilterIcon,
-  Refresh as RefreshIcon,
-  RssFeed as RssFeedIcon,
-  Add as AddIcon,
-  Edit as EditIcon,
-  Delete as DeleteIcon,
-  PlayArrow as PlayIcon,
-  Pause as PauseIcon,
-  Warning as WarningIcon,
-  CheckCircle as CheckCircleIcon,
-  Error as ErrorIcon,
-  Schedule as ScheduleIcon,
-  Visibility as VisibilityIcon,
-  Settings as SettingsIcon,
-  ExpandMore as ExpandMoreIcon,
-  Link as LinkIcon,
-  Update as UpdateIcon,
-  Speed as SpeedIcon,
-  Memory as MemoryIcon,
-  NetworkCheck as NetworkIcon,
-  ViewModule as ViewModuleIcon,
-  ViewList as ViewListIcon
-} from '@mui/icons-material';
+import React, { useState, useEffect, useCallback } from 'react';
+
 import { apiService } from '../../services/apiService';
 
 const EnhancedRSSFeeds = () => {
@@ -85,10 +86,10 @@ const EnhancedRSSFeeds = () => {
     category: '',
     description: '',
     enabled: true,
-    update_frequency: 30
+    update_frequency: 30,
   });
 
-  const loadFeeds = useCallback(async () => {
+  const loadFeeds = useCallback(async() => {
     try {
       setLoading(true);
       setError(null);
@@ -98,9 +99,9 @@ const EnhancedRSSFeeds = () => {
         search: searchQuery,
         status: filterStatus,
         category: filterCategory,
-        sort: sortBy
+        sort: sortBy,
       });
-      
+
       if (response.success) {
         setFeeds(response.data.feeds || []);
         setTotalPages(Math.ceil((response.data.total || 0) / 12));
@@ -128,18 +129,18 @@ const EnhancedRSSFeeds = () => {
 
   const handleFilterChange = (filterType, value) => {
     switch (filterType) {
-      case 'status':
-        setFilterStatus(value);
-        break;
-      case 'category':
-        setFilterCategory(value);
-        break;
-      case 'sort':
-        setSortBy(value);
-        break;
-      default:
-        console.warn('Unknown filter type:', filterType);
-        break;
+    case 'status':
+      setFilterStatus(value);
+      break;
+    case 'category':
+      setFilterCategory(value);
+      break;
+    case 'sort':
+      setSortBy(value);
+      break;
+    default:
+      console.warn('Unknown filter type:', filterType);
+      break;
     }
     setPage(1);
   };
@@ -155,7 +156,7 @@ const EnhancedRSSFeeds = () => {
       category: '',
       description: '',
       enabled: true,
-      update_frequency: 30
+      update_frequency: 30,
     });
     setAddDialogOpen(true);
   };
@@ -168,12 +169,12 @@ const EnhancedRSSFeeds = () => {
       category: feed.category || '',
       description: feed.description || '',
       enabled: feed.enabled !== false,
-      update_frequency: feed.update_frequency || 30
+      update_frequency: feed.update_frequency || 30,
     });
     setEditDialogOpen(true);
   };
 
-  const handleSaveFeed = async () => {
+  const handleSaveFeed = async() => {
     try {
       // Here you would call the API to save the feed
       console.log('Saving feed:', newFeed);
@@ -185,7 +186,7 @@ const EnhancedRSSFeeds = () => {
     }
   };
 
-  const handleDeleteFeed = async (feedId) => {
+  const handleDeleteFeed = async(feedId) => {
     if (window.confirm('Are you sure you want to delete this RSS feed?')) {
       try {
         // Here you would call the API to delete the feed
@@ -197,7 +198,7 @@ const EnhancedRSSFeeds = () => {
     }
   };
 
-  const handleToggleFeed = async (feedId, enabled) => {
+  const handleToggleFeed = async(feedId, enabled) => {
     try {
       // Here you would call the API to toggle the feed status
       console.log('Toggling feed:', feedId, enabled);
@@ -209,33 +210,33 @@ const EnhancedRSSFeeds = () => {
 
   const getStatusColor = (status) => {
     switch (status?.toLowerCase()) {
-      case 'active': return 'success';
-      case 'error': return 'error';
-      case 'paused': return 'warning';
-      case 'disabled': return 'default';
-      default: return 'default';
+    case 'active': return 'success';
+    case 'error': return 'error';
+    case 'paused': return 'warning';
+    case 'disabled': return 'default';
+    default: return 'default';
     }
   };
 
   const getStatusIcon = (status) => {
     switch (status?.toLowerCase()) {
-      case 'active': return <CheckCircleIcon />;
-      case 'error': return <ErrorIcon />;
-      case 'paused': return <PauseIcon />;
-      case 'disabled': return <PauseIcon />;
-      default: return <WarningIcon />;
+    case 'active': return <CheckCircleIcon />;
+    case 'error': return <ErrorIcon />;
+    case 'paused': return <PauseIcon />;
+    case 'disabled': return <PauseIcon />;
+    default: return <WarningIcon />;
     }
   };
 
   const getCategoryIcon = (category) => {
     switch (category?.toLowerCase()) {
-      case 'news': return <RssFeedIcon />;
-      case 'politics': return <LinkIcon />;
-      case 'business': return <LinkIcon />;
-      case 'technology': return <LinkIcon />;
-      case 'health': return <LinkIcon />;
-      case 'sports': return <LinkIcon />;
-      default: return <RssFeedIcon />;
+    case 'news': return <RssFeedIcon />;
+    case 'politics': return <LinkIcon />;
+    case 'business': return <LinkIcon />;
+    case 'technology': return <LinkIcon />;
+    case 'health': return <LinkIcon />;
+    case 'sports': return <LinkIcon />;
+    default: return <RssFeedIcon />;
     }
   };
 
@@ -246,7 +247,7 @@ const EnhancedRSSFeeds = () => {
       month: 'short',
       day: 'numeric',
       hour: '2-digit',
-      minute: '2-digit'
+      minute: '2-digit',
     });
   };
 
@@ -259,31 +260,31 @@ const EnhancedRSSFeeds = () => {
     <Card sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       <CardContent sx={{ flexGrow: 1 }}>
         <Box display="flex" justifyContent="space-between" alignItems="flex-start" mb={2}>
-          <Typography variant="h6" component="h3" sx={{ 
+          <Typography variant="h6" component="h3" sx={{
             fontWeight: 'bold',
             lineHeight: 1.2,
             display: '-webkit-box',
             WebkitLineClamp: 2,
             WebkitBoxOrient: 'vertical',
-            overflow: 'hidden'
+            overflow: 'hidden',
           }}>
             {feed.name || 'Unnamed Feed'}
           </Typography>
           <Box display="flex" gap={1}>
-            <IconButton 
-              size="small" 
+            <IconButton
+              size="small"
               onClick={() => handleToggleFeed(feed.id, !feed.enabled)}
             >
               {feed.enabled ? <PauseIcon /> : <PlayIcon />}
             </IconButton>
-            <IconButton 
-              size="small" 
+            <IconButton
+              size="small"
               onClick={() => handleEditFeed(feed)}
             >
               <EditIcon />
             </IconButton>
-            <IconButton 
-              size="small" 
+            <IconButton
+              size="small"
               onClick={() => handleDeleteFeed(feed.id)}
               color="error"
             >
@@ -292,15 +293,15 @@ const EnhancedRSSFeeds = () => {
           </Box>
         </Box>
 
-        <Typography 
-          variant="body2" 
-          color="text.secondary" 
-          sx={{ 
+        <Typography
+          variant="body2"
+          color="text.secondary"
+          sx={{
             mb: 2,
             display: '-webkit-box',
             WebkitLineClamp: 3,
             WebkitBoxOrient: 'vertical',
-            overflow: 'hidden'
+            overflow: 'hidden',
           }}
         >
           {truncateText(feed.description || feed.url)}
@@ -352,15 +353,15 @@ const EnhancedRSSFeeds = () => {
       </CardContent>
 
       <CardActions sx={{ p: 2, pt: 0 }}>
-        <Button 
-          size="small" 
+        <Button
+          size="small"
           startIcon={<VisibilityIcon />}
           onClick={() => window.open(feed.url, '_blank')}
         >
           View Feed
         </Button>
-        <Button 
-          size="small" 
+        <Button
+          size="small"
           startIcon={<UpdateIcon />}
           onClick={() => handleRefresh()}
         >
@@ -380,7 +381,7 @@ const EnhancedRSSFeeds = () => {
         borderColor: 'divider',
         borderRadius: 1,
         mb: 1,
-        bgcolor: 'background.paper'
+        bgcolor: 'background.paper',
       }}
     >
       <ListItemText
@@ -440,20 +441,20 @@ const EnhancedRSSFeeds = () => {
       />
       <ListItemSecondaryAction>
         <Box display="flex" gap={1}>
-          <IconButton 
-            size="small" 
+          <IconButton
+            size="small"
             onClick={() => handleToggleFeed(feed.id, !feed.enabled)}
           >
             {feed.enabled ? <PauseIcon /> : <PlayIcon />}
           </IconButton>
-          <IconButton 
-            size="small" 
+          <IconButton
+            size="small"
             onClick={() => handleEditFeed(feed)}
           >
             <EditIcon />
           </IconButton>
-          <IconButton 
-            size="small" 
+          <IconButton
+            size="small"
             onClick={() => handleDeleteFeed(feed.id)}
             color="error"
           >
@@ -605,7 +606,7 @@ const EnhancedRSSFeeds = () => {
             No RSS feeds found
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-            {searchQuery || filterStatus || filterCategory 
+            {searchQuery || filterStatus || filterCategory
               ? 'Try adjusting your search criteria or filters'
               : 'Add your first RSS feed to start collecting news articles'
             }
@@ -666,7 +667,7 @@ const EnhancedRSSFeeds = () => {
                 fullWidth
                 label="Feed Name"
                 value={newFeed.name}
-                onChange={(e) => setNewFeed({...newFeed, name: e.target.value})}
+                onChange={(e) => setNewFeed({ ...newFeed, name: e.target.value })}
               />
             </Grid>
             <Grid item xs={12}>
@@ -674,7 +675,7 @@ const EnhancedRSSFeeds = () => {
                 fullWidth
                 label="Feed URL"
                 value={newFeed.url}
-                onChange={(e) => setNewFeed({...newFeed, url: e.target.value})}
+                onChange={(e) => setNewFeed({ ...newFeed, url: e.target.value })}
                 placeholder="https://example.com/rss.xml"
               />
             </Grid>
@@ -684,7 +685,7 @@ const EnhancedRSSFeeds = () => {
                 <Select
                   value={newFeed.category}
                   label="Category"
-                  onChange={(e) => setNewFeed({...newFeed, category: e.target.value})}
+                  onChange={(e) => setNewFeed({ ...newFeed, category: e.target.value })}
                 >
                   <MenuItem value="news">News</MenuItem>
                   <MenuItem value="politics">Politics</MenuItem>
@@ -701,7 +702,7 @@ const EnhancedRSSFeeds = () => {
                 label="Update Frequency (minutes)"
                 type="number"
                 value={newFeed.update_frequency}
-                onChange={(e) => setNewFeed({...newFeed, update_frequency: parseInt(e.target.value)})}
+                onChange={(e) => setNewFeed({ ...newFeed, update_frequency: parseInt(e.target.value) })}
               />
             </Grid>
             <Grid item xs={12}>
@@ -711,7 +712,7 @@ const EnhancedRSSFeeds = () => {
                 multiline
                 rows={3}
                 value={newFeed.description}
-                onChange={(e) => setNewFeed({...newFeed, description: e.target.value})}
+                onChange={(e) => setNewFeed({ ...newFeed, description: e.target.value })}
               />
             </Grid>
             <Grid item xs={12}>
@@ -719,7 +720,7 @@ const EnhancedRSSFeeds = () => {
                 control={
                   <Switch
                     checked={newFeed.enabled}
-                    onChange={(e) => setNewFeed({...newFeed, enabled: e.target.checked})}
+                    onChange={(e) => setNewFeed({ ...newFeed, enabled: e.target.checked })}
                   />
                 }
                 label="Enable this feed"

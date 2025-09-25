@@ -1,4 +1,19 @@
-import React, { useState, useEffect } from 'react';
+import {
+  Settings,
+  PlayArrow,
+  Stop,
+  Pause,
+  Refresh,
+  Timeline,
+  AutoAwesome,
+  Assessment,
+  Schedule,
+  CheckCircle,
+  Error,
+  Warning,
+  Info,
+  Save,
+} from '@mui/icons-material';
 import {
   Box,
   Typography,
@@ -26,27 +41,13 @@ import {
   Divider,
   LinearProgress,
   Switch,
-  FormControlLabel
+  FormControlLabel,
 } from '@mui/material';
-import {
-  Settings,
-  PlayArrow,
-  Stop,
-  Pause,
-  Refresh,
-  Timeline,
-  AutoAwesome,
-  Assessment,
-  Schedule,
-  CheckCircle,
-  Error,
-  Warning,
-  Info,
-  Save
-} from '@mui/icons-material';
+import React, { useState, useEffect } from 'react';
+
 import newsSystemService from '../../services/newsSystemService';
 
-function TabPanel({ children, value, index, ...other }) {
+const TabPanel = ({ children, value, index, ...other }) => {
   return (
     <div
       role="tabpanel"
@@ -62,13 +63,13 @@ function TabPanel({ children, value, index, ...other }) {
       )}
     </div>
   );
-}
+};
 
 const AutomationPipeline = () => {
   const [activeTab, setActiveTab] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  
+
   // Pipeline Status State
   const [pipelineStatus, setPipelineStatus] = useState({
     status: 'stopped',
@@ -77,13 +78,13 @@ const AutomationPipeline = () => {
     total_runs: 0,
     successful_runs: 0,
     failed_runs: 0,
-    avg_processing_time: 0
+    avg_processing_time: 0,
   });
-  
+
   // Automation Tasks State
   const [automationTasks, setAutomationTasks] = useState([]);
   const [taskSettings, setTaskSettings] = useState({});
-  
+
   // Pipeline Logs State
   const [pipelineLogs, setPipelineLogs] = useState([]);
   const [logLevel, setLogLevel] = useState('all');
@@ -95,7 +96,7 @@ const AutomationPipeline = () => {
     return () => clearInterval(interval);
   }, []);
 
-  const loadData = async () => {
+  const loadData = async() => {
     setLoading(true);
     try {
       // Load pipeline status
@@ -103,7 +104,7 @@ const AutomationPipeline = () => {
       if (statusResponse.success) {
         setPipelineStatus(statusResponse.data);
       }
-      
+
       // Load automation tasks
       setAutomationTasks([
         {
@@ -114,7 +115,7 @@ const AutomationPipeline = () => {
           schedule: 'every 15 minutes',
           last_run: new Date().toISOString(),
           status: 'success',
-          next_run: new Date(Date.now() + 15 * 60000).toISOString()
+          next_run: new Date(Date.now() + 15 * 60000).toISOString(),
         },
         {
           id: 2,
@@ -124,7 +125,7 @@ const AutomationPipeline = () => {
           schedule: 'every 30 minutes',
           last_run: new Date().toISOString(),
           status: 'running',
-          next_run: new Date(Date.now() + 30 * 60000).toISOString()
+          next_run: new Date(Date.now() + 30 * 60000).toISOString(),
         },
         {
           id: 3,
@@ -134,7 +135,7 @@ const AutomationPipeline = () => {
           schedule: 'every hour',
           last_run: new Date().toISOString(),
           status: 'success',
-          next_run: new Date(Date.now() + 60 * 60000).toISOString()
+          next_run: new Date(Date.now() + 60 * 60000).toISOString(),
         },
         {
           id: 4,
@@ -144,10 +145,10 @@ const AutomationPipeline = () => {
           schedule: 'every 2 hours',
           last_run: new Date(Date.now() - 2 * 60 * 60000).toISOString(),
           status: 'failed',
-          next_run: new Date(Date.now() + 2 * 60 * 60000).toISOString()
-        }
+          next_run: new Date(Date.now() + 2 * 60 * 60000).toISOString(),
+        },
       ]);
-      
+
       // Load pipeline logs
       setPipelineLogs([
         {
@@ -155,31 +156,31 @@ const AutomationPipeline = () => {
           timestamp: new Date().toISOString(),
           level: 'info',
           message: 'Pipeline started successfully',
-          task: 'RSS Collection'
+          task: 'RSS Collection',
         },
         {
           id: 2,
           timestamp: new Date(Date.now() - 5 * 60000).toISOString(),
           level: 'success',
           message: 'ML processing completed for 25 articles',
-          task: 'ML Processing'
+          task: 'ML Processing',
         },
         {
           id: 3,
           timestamp: new Date(Date.now() - 10 * 60000).toISOString(),
           level: 'warning',
           message: 'High memory usage detected',
-          task: 'System Monitor'
+          task: 'System Monitor',
         },
         {
           id: 4,
           timestamp: new Date(Date.now() - 15 * 60000).toISOString(),
           level: 'error',
           message: 'Failed to connect to external API',
-          task: 'Story Consolidation'
-        }
+          task: 'Story Consolidation',
+        },
       ]);
-      
+
     } catch (err) {
       setError('Failed to load automation data: ' + err.message);
     } finally {
@@ -191,7 +192,7 @@ const AutomationPipeline = () => {
     setActiveTab(newValue);
   };
 
-  const handleStartPipeline = async () => {
+  const handleStartPipeline = async() => {
     try {
       setLoading(true);
       const response = await newsSystemService.startPipeline();
@@ -205,7 +206,7 @@ const AutomationPipeline = () => {
     }
   };
 
-  const handleStopPipeline = async () => {
+  const handleStopPipeline = async() => {
     try {
       setLoading(true);
       const response = await newsSystemService.stopPipeline();
@@ -219,12 +220,12 @@ const AutomationPipeline = () => {
     }
   };
 
-  const handleToggleTask = async (taskId) => {
+  const handleToggleTask = async(taskId) => {
     try {
-      setAutomationTasks(tasks => 
-        tasks.map(task => 
-          task.id === taskId ? { ...task, enabled: !task.enabled } : task
-        )
+      setAutomationTasks(tasks =>
+        tasks.map(task =>
+          task.id === taskId ? { ...task, enabled: !task.enabled } : task,
+        ),
       );
       // Here you would call the API to update the task status
     } catch (err) {
@@ -234,36 +235,36 @@ const AutomationPipeline = () => {
 
   const getStatusColor = (status) => {
     switch (status) {
-      case 'running': return 'primary';
-      case 'success': return 'success';
-      case 'failed': return 'error';
-      case 'stopped': return 'default';
-      default: return 'default';
+    case 'running': return 'primary';
+    case 'success': return 'success';
+    case 'failed': return 'error';
+    case 'stopped': return 'default';
+    default: return 'default';
     }
   };
 
   const getLogLevelColor = (level) => {
     switch (level) {
-      case 'error': return 'error';
-      case 'warning': return 'warning';
-      case 'success': return 'success';
-      case 'info': return 'info';
-      default: return 'default';
+    case 'error': return 'error';
+    case 'warning': return 'warning';
+    case 'success': return 'success';
+    case 'info': return 'info';
+    default: return 'default';
     }
   };
 
   const getLogLevelIcon = (level) => {
     switch (level) {
-      case 'error': return <Error />;
-      case 'warning': return <Warning />;
-      case 'success': return <CheckCircle />;
-      case 'info': return <Info />;
-      default: return <Info />;
+    case 'error': return <Error />;
+    case 'warning': return <Warning />;
+    case 'success': return <CheckCircle />;
+    case 'info': return <Info />;
+    default: return <Info />;
     }
   };
 
-  const filteredLogs = logLevel === 'all' 
-    ? pipelineLogs 
+  const filteredLogs = logLevel === 'all'
+    ? pipelineLogs
     : pipelineLogs.filter(log => log.level === logLevel);
 
   if (loading) {
@@ -335,11 +336,11 @@ const AutomationPipeline = () => {
                     </Button>
                   </Box>
                 </Box>
-                
+
                 <Box sx={{ mb: 3 }}>
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
-                    <Chip 
-                      label={pipelineStatus.status.toUpperCase()} 
+                    <Chip
+                      label={pipelineStatus.status.toUpperCase()}
                       color={getStatusColor(pipelineStatus.status)}
                       icon={pipelineStatus.status === 'running' ? <PlayArrow /> : <Stop />}
                     />
@@ -394,7 +395,7 @@ const AutomationPipeline = () => {
               </CardContent>
             </Card>
           </Grid>
-          
+
           <Grid item xs={12} md={4}>
             <Card>
               <CardContent>
@@ -456,14 +457,14 @@ const AutomationPipeline = () => {
                           Next run: {new Date(task.next_run).toLocaleString()}
                         </Typography>
                         <Box sx={{ mt: 1 }}>
-                          <Chip 
-                            label={task.status} 
+                          <Chip
+                            label={task.status}
                             color={getStatusColor(task.status)}
                             size="small"
                             sx={{ mr: 1 }}
                           />
-                          <Chip 
-                            label={task.enabled ? 'Enabled' : 'Disabled'} 
+                          <Chip
+                            label={task.enabled ? 'Enabled' : 'Disabled'}
                             color={task.enabled ? 'success' : 'default'}
                             size="small"
                           />
@@ -520,16 +521,16 @@ const AutomationPipeline = () => {
                         <Typography variant="body2" color="text.secondary">
                           {new Date(log.timestamp).toLocaleString()}
                         </Typography>
-                        <Chip 
-                          label={log.task} 
-                          size="small" 
+                        <Chip
+                          label={log.task}
+                          size="small"
                           variant="outlined"
                         />
                       </Box>
                     }
                     secondary={
-                      <Typography 
-                        variant="body2" 
+                      <Typography
+                        variant="body2"
                         color={getLogLevelColor(log.level)}
                         sx={{ mt: 1 }}
                       >
@@ -573,7 +574,7 @@ const AutomationPipeline = () => {
               </CardContent>
             </Card>
           </Grid>
-          
+
           <Grid item xs={12} md={6}>
             <Card>
               <CardContent>

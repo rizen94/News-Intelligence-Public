@@ -1,4 +1,14 @@
-import React, { useState, useEffect } from 'react';
+import {
+  PlayArrow as PlayIcon,
+  Stop as StopIcon,
+  Refresh as RefreshIcon,
+  Timeline as TimelineIcon,
+  Speed as SpeedIcon,
+  Queue as QueueIcon,
+  CheckCircle as CheckCircleIcon,
+  Error as ErrorIcon,
+  Schedule as ScheduleIcon,
+} from '@mui/icons-material';
 import {
   Box,
   Card,
@@ -29,22 +39,13 @@ import {
   Tab,
   CircularProgress,
   IconButton,
-  Tooltip
+  Tooltip,
 } from '@mui/material';
-import {
-  PlayArrow as PlayIcon,
-  Stop as StopIcon,
-  Refresh as RefreshIcon,
-  Timeline as TimelineIcon,
-  Speed as SpeedIcon,
-  Queue as QueueIcon,
-  CheckCircle as CheckCircleIcon,
-  Error as ErrorIcon,
-  Schedule as ScheduleIcon
-} from '@mui/icons-material';
+import React, { useState, useEffect } from 'react';
+
 import newsSystemService from '../../services/newsSystemService';
 
-function TabPanel({ children, value, index, ...other }) {
+const TabPanel = ({ children, value, index, ...other }) => {
   return (
     <div
       role="tabpanel"
@@ -60,9 +61,9 @@ function TabPanel({ children, value, index, ...other }) {
       )}
     </div>
   );
-}
+};
 
-function MLProcessing() {
+const MLProcessing = () => {
   const [activeTab, setActiveTab] = useState(0);
   const [queueStatus, setQueueStatus] = useState(null);
   const [processingStatus, setProcessingStatus] = useState(null);
@@ -85,7 +86,7 @@ function MLProcessing() {
     return () => clearInterval(interval);
   }, []);
 
-  const loadData = async () => {
+  const loadData = async() => {
     try {
       setLoading(true);
       setError(null);
@@ -93,7 +94,7 @@ function MLProcessing() {
       const [queueData, processingData, timingData] = await Promise.all([
         newsSystemService.getMLQueueStatus(),
         newsSystemService.getAllMLProcessingStatus(),
-        newsSystemService.getMLTimingStats()
+        newsSystemService.getMLTimingStats(),
       ]);
 
       setQueueStatus(queueData.queue_status);
@@ -106,7 +107,7 @@ function MLProcessing() {
     }
   };
 
-  const handleQueueArticle = async () => {
+  const handleQueueArticle = async() => {
     if (!selectedArticleId) {
       setError('Please enter an article ID');
       return;
@@ -118,15 +119,15 @@ function MLProcessing() {
         parseInt(selectedArticleId),
         operationType,
         priority,
-        modelName || null
+        modelName || null,
       );
-      
+
       setQueueDialogOpen(false);
       setSelectedArticleId('');
       setOperationType('full_analysis');
       setPriority(0);
       setModelName('');
-      
+
       // Refresh data
       await loadData();
     } catch (err) {
@@ -138,21 +139,21 @@ function MLProcessing() {
 
   const getStatusColor = (status) => {
     switch (status) {
-      case 'completed': return 'success';
-      case 'processing': return 'warning';
-      case 'failed': return 'error';
-      case 'queued': return 'info';
-      default: return 'default';
+    case 'completed': return 'success';
+    case 'processing': return 'warning';
+    case 'failed': return 'error';
+    case 'queued': return 'info';
+    default: return 'default';
     }
   };
 
   const getStatusIcon = (status) => {
     switch (status) {
-      case 'completed': return <CheckCircleIcon />;
-      case 'processing': return <CircularProgress size={16} />;
-      case 'failed': return <ErrorIcon />;
-      case 'queued': return <ScheduleIcon />;
-      default: return null;
+    case 'completed': return <CheckCircleIcon />;
+    case 'processing': return <CircularProgress size={16} />;
+    case 'failed': return <ErrorIcon />;
+    case 'queued': return <ScheduleIcon />;
+    default: return null;
     }
   };
 
@@ -219,7 +220,7 @@ function MLProcessing() {
                   <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
                     <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
                       <Typography>Status:</Typography>
-                      <Chip 
+                      <Chip
                         label={queueStatus.worker_stats.is_running ? 'Running' : 'Stopped'}
                         color={queueStatus.worker_stats.is_running ? 'success' : 'error'}
                         size="small"
@@ -240,7 +241,7 @@ function MLProcessing() {
                     <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
                       <Typography>Success Rate:</Typography>
                       <Typography>
-                        {queueStatus.worker_stats.total_processed > 0 
+                        {queueStatus.worker_stats.total_processed > 0
                           ? ((queueStatus.worker_stats.successful / queueStatus.worker_stats.total_processed) * 100).toFixed(1)
                           : 0}%
                       </Typography>
@@ -277,7 +278,7 @@ function MLProcessing() {
                         {queueStatus.queue_stats.map((stat, index) => (
                           <TableRow key={index}>
                             <TableCell>
-                              <Chip 
+                              <Chip
                                 label={stat.status}
                                 color={getStatusColor(stat.status)}
                                 size="small"
@@ -327,7 +328,7 @@ function MLProcessing() {
                           {article.title}
                         </TableCell>
                         <TableCell>
-                          <Chip 
+                          <Chip
                             label={article.status}
                             color={getStatusColor(article.status)}
                             size="small"
@@ -381,7 +382,7 @@ function MLProcessing() {
                             <TableCell>{formatDuration(stat.min_duration_seconds)}</TableCell>
                             <TableCell>{formatDuration(stat.max_duration_seconds)}</TableCell>
                             <TableCell>
-                              {stat.total_processed > 0 
+                              {stat.total_processed > 0
                                 ? ((stat.successful_count / stat.total_processed) * 100).toFixed(1)
                                 : 0}%
                             </TableCell>
@@ -422,7 +423,7 @@ function MLProcessing() {
                             <TableCell>{log.model_name}</TableCell>
                             <TableCell>{formatDuration(log.duration_seconds)}</TableCell>
                             <TableCell>
-                              <Chip 
+                              <Chip
                                 label={log.status}
                                 color={getStatusColor(log.status)}
                                 size="small"
@@ -490,8 +491,8 @@ function MLProcessing() {
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setQueueDialogOpen(false)}>Cancel</Button>
-          <Button 
-            onClick={handleQueueArticle} 
+          <Button
+            onClick={handleQueueArticle}
             variant="contained"
             disabled={loading || !selectedArticleId}
           >
@@ -501,6 +502,6 @@ function MLProcessing() {
       </Dialog>
     </Box>
   );
-}
+};
 
 export default MLProcessing;

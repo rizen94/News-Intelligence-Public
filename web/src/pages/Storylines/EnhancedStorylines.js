@@ -1,4 +1,33 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import {
+  Search as SearchIcon,
+  FilterList as FilterIcon,
+  Refresh as RefreshIcon,
+  Timeline as TimelineIcon,
+  TrendingUp as TrendingUpIcon,
+  Schedule as ScheduleIcon,
+  Psychology as PsychologyIcon,
+  AutoAwesome as AutoAwesomeIcon,
+  Visibility as VisibilityIcon,
+  Share as ShareIcon,
+  Bookmark as BookmarkIcon,
+  BookmarkBorder as BookmarkBorderIcon,
+  Sort as SortIcon,
+  ViewList as ViewListIcon,
+  ViewModule as ViewModuleIcon,
+  ExpandMore as ExpandMoreIcon,
+  Article as ArticleIcon,
+  Group as GroupIcon,
+  Analytics as AnalyticsIcon,
+  Assessment as AssessmentIcon,
+  History as HistoryIcon,
+  AutoAwesome as PredictionIcon,
+  Person as PersonIcon,
+  Public as PublicIcon,
+  Business as BusinessIcon,
+  Science as ScienceIcon,
+  School as SchoolIcon,
+  Work as WorkIcon,
+} from '@mui/icons-material';
 import {
   Box,
   Typography,
@@ -41,38 +70,10 @@ import {
   TimelineConnector,
   TimelineContent,
   TimelineDot,
-  TimelineOppositeContent
+  TimelineOppositeContent,
 } from '@mui/material';
-import {
-  Search as SearchIcon,
-  FilterList as FilterIcon,
-  Refresh as RefreshIcon,
-  Timeline as TimelineIcon,
-  TrendingUp as TrendingUpIcon,
-  Schedule as ScheduleIcon,
-  Psychology as PsychologyIcon,
-  AutoAwesome as AutoAwesomeIcon,
-  Visibility as VisibilityIcon,
-  Share as ShareIcon,
-  Bookmark as BookmarkIcon,
-  BookmarkBorder as BookmarkBorderIcon,
-  Sort as SortIcon,
-  ViewList as ViewListIcon,
-  ViewModule as ViewModuleIcon,
-  ExpandMore as ExpandMoreIcon,
-  Article as ArticleIcon,
-  Group as GroupIcon,
-  Analytics as AnalyticsIcon,
-  Assessment as AssessmentIcon,
-  History as HistoryIcon,
-  AutoAwesome as PredictionIcon,
-  Person as PersonIcon,
-  Public as PublicIcon,
-  Business as BusinessIcon,
-  Science as ScienceIcon,
-  School as SchoolIcon,
-  Work as WorkIcon
-} from '@mui/icons-material';
+import React, { useState, useEffect, useCallback } from 'react';
+
 import { apiService } from '../../services/apiService';
 
 const EnhancedStorylines = () => {
@@ -89,7 +90,7 @@ const EnhancedStorylines = () => {
   const [bookmarkedStorylines, setBookmarkedStorylines] = useState(new Set());
   const [expandedStoryline, setExpandedStoryline] = useState(null);
 
-  const loadStorylines = useCallback(async () => {
+  const loadStorylines = useCallback(async() => {
     try {
       setLoading(true);
       setError(null);
@@ -99,9 +100,9 @@ const EnhancedStorylines = () => {
         search: searchQuery,
         status: filterStatus,
         category: filterCategory,
-        sort: sortBy
+        sort: sortBy,
       });
-      
+
       if (response.success) {
         setStorylines(response.data.storylines || []);
         setTotalPages(Math.ceil((response.data.total || 0) / 12));
@@ -129,18 +130,18 @@ const EnhancedStorylines = () => {
 
   const handleFilterChange = (filterType, value) => {
     switch (filterType) {
-      case 'status':
-        setFilterStatus(value);
-        break;
-      case 'category':
-        setFilterCategory(value);
-        break;
-      case 'sort':
-        setSortBy(value);
-        break;
-      default:
-        console.warn('Unknown filter type:', filterType);
-        break;
+    case 'status':
+      setFilterStatus(value);
+      break;
+    case 'category':
+      setFilterCategory(value);
+      break;
+    case 'sort':
+      setSortBy(value);
+      break;
+    default:
+      console.warn('Unknown filter type:', filterType);
+      break;
     }
     setPage(1);
   };
@@ -165,23 +166,23 @@ const EnhancedStorylines = () => {
 
   const getStatusColor = (status) => {
     switch (status?.toLowerCase()) {
-      case 'active': return 'success';
-      case 'developing': return 'warning';
-      case 'resolved': return 'info';
-      case 'archived': return 'default';
-      default: return 'default';
+    case 'active': return 'success';
+    case 'developing': return 'warning';
+    case 'resolved': return 'info';
+    case 'archived': return 'default';
+    default: return 'default';
     }
   };
 
   const getCategoryIcon = (category) => {
     switch (category?.toLowerCase()) {
-      case 'politics': return <PublicIcon />;
-      case 'business': return <BusinessIcon />;
-      case 'technology': return <ScienceIcon />;
-      case 'health': return <PersonIcon />;
-      case 'education': return <SchoolIcon />;
-      case 'employment': return <WorkIcon />;
-      default: return <ArticleIcon />;
+    case 'politics': return <PublicIcon />;
+    case 'business': return <BusinessIcon />;
+    case 'technology': return <ScienceIcon />;
+    case 'health': return <PersonIcon />;
+    case 'education': return <SchoolIcon />;
+    case 'employment': return <WorkIcon />;
+    default: return <ArticleIcon />;
     }
   };
 
@@ -192,7 +193,7 @@ const EnhancedStorylines = () => {
       month: 'short',
       day: 'numeric',
       hour: '2-digit',
-      minute: '2-digit'
+      minute: '2-digit',
     });
   };
 
@@ -205,37 +206,37 @@ const EnhancedStorylines = () => {
     <Card sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       <CardContent sx={{ flexGrow: 1 }}>
         <Box display="flex" justifyContent="space-between" alignItems="flex-start" mb={2}>
-          <Typography variant="h6" component="h3" sx={{ 
+          <Typography variant="h6" component="h3" sx={{
             fontWeight: 'bold',
             lineHeight: 1.2,
             display: '-webkit-box',
             WebkitLineClamp: 2,
             WebkitBoxOrient: 'vertical',
-            overflow: 'hidden'
+            overflow: 'hidden',
           }}>
             {storyline.title || 'Untitled Storyline'}
           </Typography>
-          <IconButton 
-            size="small" 
+          <IconButton
+            size="small"
             onClick={() => toggleBookmark(storyline.id)}
             sx={{ ml: 1 }}
           >
-            {bookmarkedStorylines.has(storyline.id) ? 
-              <BookmarkIcon color="primary" /> : 
+            {bookmarkedStorylines.has(storyline.id) ?
+              <BookmarkIcon color="primary" /> :
               <BookmarkBorderIcon />
             }
           </IconButton>
         </Box>
 
-        <Typography 
-          variant="body2" 
-          color="text.secondary" 
-          sx={{ 
+        <Typography
+          variant="body2"
+          color="text.secondary"
+          sx={{
             mb: 2,
             display: '-webkit-box',
             WebkitLineClamp: 3,
             WebkitBoxOrient: 'vertical',
-            overflow: 'hidden'
+            overflow: 'hidden',
           }}
         >
           {truncateText(storyline.description || storyline.summary)}
@@ -289,8 +290,8 @@ const EnhancedStorylines = () => {
       </CardContent>
 
       <CardActions sx={{ p: 2, pt: 0 }}>
-        <Button 
-          size="small" 
+        <Button
+          size="small"
           startIcon={<VisibilityIcon />}
           onClick={() => toggleExpanded(storyline.id)}
         >
@@ -315,7 +316,7 @@ const EnhancedStorylines = () => {
         mb: 1,
         bgcolor: 'background.paper',
         flexDirection: 'column',
-        alignItems: 'stretch'
+        alignItems: 'stretch',
       }}
     >
       <Box display="flex" alignItems="center" justifyContent="space-between" width="100%">
@@ -377,17 +378,17 @@ const EnhancedStorylines = () => {
         />
         <ListItemSecondaryAction>
           <Box display="flex" gap={1}>
-            <IconButton 
-              size="small" 
+            <IconButton
+              size="small"
               onClick={() => toggleBookmark(storyline.id)}
             >
-              {bookmarkedStorylines.has(storyline.id) ? 
-                <BookmarkIcon color="primary" /> : 
+              {bookmarkedStorylines.has(storyline.id) ?
+                <BookmarkIcon color="primary" /> :
                 <BookmarkBorderIcon />
               }
             </IconButton>
-            <Button 
-              size="small" 
+            <Button
+              size="small"
               startIcon={<VisibilityIcon />}
               onClick={() => toggleExpanded(storyline.id)}
             >
@@ -571,7 +572,7 @@ const EnhancedStorylines = () => {
             No storylines found
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            {searchQuery || filterStatus || filterCategory 
+            {searchQuery || filterStatus || filterCategory
               ? 'Try adjusting your search criteria or filters'
               : 'Storylines will appear here once the system starts analyzing articles'
             }

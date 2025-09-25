@@ -1,4 +1,9 @@
-import React from 'react';
+import {
+  Info as InfoIcon,
+  Warning as WarningIcon,
+  Error as ErrorIcon,
+  CheckCircle as SuccessIcon,
+} from '@mui/icons-material';
 import {
   Box,
   Typography,
@@ -12,53 +17,48 @@ import {
   Chip,
   LinearProgress,
 } from '@mui/material';
-import {
-  Info as InfoIcon,
-  Warning as WarningIcon,
-  Error as ErrorIcon,
-  CheckCircle as SuccessIcon,
-} from '@mui/icons-material';
+import React from 'react';
 // import { useNewsSystem } from '../../contexts/NewsSystemContext';
 
 export default function Monitoring() {
   // const { state } = useNewsSystem();
   // const { monitoring, systemStatus } = state;
-  
+
   // Mock data for demonstration
   const systemStatus = {
     status: 'healthy',
     version: '3.3.0',
-    uptime: '2d 14h 32m'
+    uptime: '2d 14h 32m',
   };
-  
+
   const monitoring = {
     logs: [
       { level: 'info', message: 'System started successfully', timestamp: new Date().toISOString() },
       { level: 'warning', message: 'High memory usage detected', timestamp: new Date(Date.now() - 300000).toISOString() },
-      { level: 'error', message: 'Database connection failed', timestamp: new Date(Date.now() - 600000).toISOString() }
+      { level: 'error', message: 'Database connection failed', timestamp: new Date(Date.now() - 600000).toISOString() },
     ],
     errors: [
-      { message: 'Database connection timeout', timestamp: new Date(Date.now() - 600000).toISOString() }
-    ]
+      { message: 'Database connection timeout', timestamp: new Date(Date.now() - 600000).toISOString() },
+    ],
   };
 
   const getLogIcon = (level) => {
     switch (level) {
-      case 'info': return <InfoIcon color="info" />;
-      case 'warning': return <WarningIcon color="warning" />;
-      case 'error': return <ErrorIcon color="error" />;
-      case 'success': return <SuccessIcon color="success" />;
-      default: return <InfoIcon color="info" />;
+    case 'info': return <InfoIcon color="info" />;
+    case 'warning': return <WarningIcon color="warning" />;
+    case 'error': return <ErrorIcon color="error" />;
+    case 'success': return <SuccessIcon color="success" />;
+    default: return <InfoIcon color="info" />;
     }
   };
 
   const getLogColor = (level) => {
     switch (level) {
-      case 'info': return 'info';
-      case 'warning': return 'warning';
-      case 'error': return 'error';
-      case 'success': return 'success';
-      default: return 'default';
+    case 'info': return 'info';
+    case 'warning': return 'warning';
+    case 'error': return 'error';
+    case 'success': return 'success';
+    default: return 'default';
     }
   };
 

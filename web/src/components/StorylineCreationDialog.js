@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { Add as AddIcon, Close as CloseIcon } from '@mui/icons-material';
 import {
   Dialog,
   DialogTitle,
@@ -15,23 +15,25 @@ import {
   Select,
   MenuItem,
   Chip,
-  Stack
+  Stack,
 } from '@mui/material';
-import { Add as AddIcon, Close as CloseIcon } from '@mui/icons-material';
-import apiService from '../services/apiService';
+import React, { useState } from 'react';
 
-const StorylineCreationDialog = ({ 
-  open, 
-  onClose, 
-  onSuccess, 
+import apiService from '../services/apiService';
+import Logger from '../utils/logger';
+
+const StorylineCreationDialog = ({
+  open,
+  onClose,
+  onSuccess,
   articleId = null,
-  articleTitle = null 
+  articleTitle = null,
 }) => {
   const [formData, setFormData] = useState({
     title: '',
     description: '',
     priority: 'medium',
-    tags: []
+    tags: [],
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -41,13 +43,13 @@ const StorylineCreationDialog = ({
   const priorityOptions = [
     { value: 'low', label: 'Low', color: 'success' },
     { value: 'medium', label: 'Medium', color: 'warning' },
-    { value: 'high', label: 'High', color: 'error' }
+    { value: 'high', label: 'High', color: 'error' },
   ];
 
   const handleInputChange = (field) => (event) => {
     setFormData(prev => ({
       ...prev,
-      [field]: event.target.value
+      [field]: event.target.value,
     }));
     setError(null);
   };
@@ -56,7 +58,7 @@ const StorylineCreationDialog = ({
     if (newTag.trim() && !formData.tags.includes(newTag.trim())) {
       setFormData(prev => ({
         ...prev,
-        tags: [...prev.tags, newTag.trim()]
+        tags: [...prev.tags, newTag.trim()],
       }));
       setNewTag('');
     }
@@ -65,7 +67,7 @@ const StorylineCreationDialog = ({
   const handleRemoveTag = (tagToRemove) => {
     setFormData(prev => ({
       ...prev,
-      tags: prev.tags.filter(tag => tag !== tagToRemove)
+      tags: prev.tags.filter(tag => tag !== tagToRemove),
     }));
   };
 
@@ -76,7 +78,7 @@ const StorylineCreationDialog = ({
     }
   };
 
-  const handleSubmit = async () => {
+  const handleSubmit = async() => {
     if (!formData.title.trim()) {
       setError('Please enter a storyline title');
       return;
@@ -91,7 +93,7 @@ const StorylineCreationDialog = ({
         description: formData.description.trim() || `Storyline created${articleTitle ? ` from article: ${articleTitle}` : ''}`,
         priority: formData.priority,
         tags: formData.tags,
-        created_by: 'user'
+        created_by: 'user',
       };
 
       const response = await apiService.post('/api/storylines', storylineData);
@@ -106,7 +108,7 @@ const StorylineCreationDialog = ({
         throw new Error(response.message || 'Failed to create storyline');
       }
     } catch (err) {
-      console.error('Error creating storyline:', err);
+      Logger.error('Error creating storyline:', err);
       setError(err.message || 'Failed to create storyline. Please try again.');
     } finally {
       setLoading(false);
@@ -119,7 +121,7 @@ const StorylineCreationDialog = ({
         title: '',
         description: '',
         priority: 'medium',
-        tags: []
+        tags: [],
       });
       setError(null);
       setSuccess(false);
@@ -131,10 +133,10 @@ const StorylineCreationDialog = ({
   const isFormValid = formData.title.trim().length > 0;
 
   return (
-    <Dialog 
-      open={open} 
+    <Dialog
+      open={open}
       onClose={handleClose}
-      maxWidth="sm" 
+      maxWidth="sm"
       fullWidth
       disableEscapeKeyDown={loading}
     >
@@ -208,9 +210,9 @@ const StorylineCreationDialog = ({
               {priorityOptions.map((option) => (
                 <MenuItem key={option.value} value={option.value}>
                   <Box display="flex" alignItems="center" gap={1}>
-                    <Chip 
-                      label={option.label} 
-                      size="small" 
+                    <Chip
+                      label={option.label}
+                      size="small"
                       color={option.color}
                       variant="outlined"
                     />
@@ -261,8 +263,8 @@ const StorylineCreationDialog = ({
       </DialogContent>
 
       <DialogActions sx={{ p: 2 }}>
-        <Button 
-          onClick={handleClose} 
+        <Button
+          onClick={handleClose}
           disabled={loading}
           color="inherit"
         >

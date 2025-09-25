@@ -1,4 +1,16 @@
-import React, { useState, useEffect } from 'react';
+import {
+  Article as ArticleIcon,
+  Timeline as TimelineIcon,
+  Psychology as PsychologyIcon,
+  Memory as MemoryIcon,
+  Speed as SpeedIcon,
+  TrendingUp as TrendingUpIcon,
+  Notifications as NotificationsIcon,
+  CheckCircle as CheckCircleIcon,
+  Error as ErrorIcon,
+  Warning as WarningIcon,
+  Refresh as RefreshIcon,
+} from '@mui/icons-material';
 import {
   Box,
   Typography,
@@ -13,21 +25,9 @@ import {
   ListItemText,
   ListItemIcon,
   Divider,
-  Paper
+  Paper,
 } from '@mui/material';
-import {
-  Article as ArticleIcon,
-  Timeline as TimelineIcon,
-  Psychology as PsychologyIcon,
-  Memory as MemoryIcon,
-  Speed as SpeedIcon,
-  TrendingUp as TrendingUpIcon,
-  Notifications as NotificationsIcon,
-  CheckCircle as CheckCircleIcon,
-  Error as ErrorIcon,
-  Warning as WarningIcon,
-  Refresh as RefreshIcon,
-} from '@mui/icons-material';
+import React, { useState, useEffect } from 'react';
 
 const UnifiedDashboard = () => {
   const [dashboardData, setDashboardData] = useState({
@@ -37,7 +37,7 @@ const UnifiedDashboard = () => {
     ml: { processing: false, queue: 0, completed: 0 },
     performance: { cpu: 0, memory: 0, disk: 0 },
     masterArticles: { total: 0, consolidated: 0, singleSource: 0 },
-    preprocessing: { tagsExtracted: 0, lastRun: null }
+    preprocessing: { tagsExtracted: 0, lastRun: null },
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -50,22 +50,22 @@ const UnifiedDashboard = () => {
     return () => clearInterval(interval);
   }, []);
 
-  const fetchDashboardData = async () => {
+  const fetchDashboardData = async() => {
     try {
       // Fetch articles data (this works)
       const articlesResponse = await fetch('/api/articles');
       const articlesData = await articlesResponse.json();
-      
+
       // Get today's articles for daily digest
       const today = new Date().toISOString().split('T')[0];
-      const todayArticles = articlesData.articles?.filter(article => 
-        article.published_date && article.published_date.startsWith(today)
+      const todayArticles = articlesData.articles?.filter(article =>
+        article.published_date && article.published_date.startsWith(today),
       ) || [];
-      
+
       // Fetch system status (this works)
       const systemResponse = await fetch('/api/system/status');
       const systemData = await systemResponse.json();
-      
+
       // Try to fetch other data, but handle failures gracefully
       let storiesData = { data: [] };
       let mlData = { processing: false, queue: 0, completed: 0 };
@@ -73,32 +73,32 @@ const UnifiedDashboard = () => {
       let alertsData = { data: [] };
       let masterArticlesData = { total: 0 };
       let preprocessingData = { data: {} };
-      
+
       try {
         const storiesResponse = await fetch('/api/prioritization/story-threads?status=active');
         if (storiesResponse.ok) storiesData = await storiesResponse.json();
       } catch (e) { console.log('Story threads API not available'); }
-      
+
       try {
         const mlResponse = await fetch('/api/ml/status');
         if (mlResponse.ok) mlData = await mlResponse.json();
       } catch (e) { console.log('ML status API not available'); }
-      
+
       try {
         const pipelineResponse = await fetch('/api/automation/pipeline/status');
         if (pipelineResponse.ok) pipelineData = await pipelineResponse.json();
       } catch (e) { console.log('Pipeline status API not available'); }
-      
+
       try {
         const alertsResponse = await fetch('/api/alerts/storyline/unread');
         if (alertsResponse.ok) alertsData = await alertsResponse.json();
       } catch (e) { console.log('Alerts API not available'); }
-      
+
       try {
         const masterArticlesResponse = await fetch('/api/master-articles');
         if (masterArticlesResponse.ok) masterArticlesData = await masterArticlesResponse.json();
       } catch (e) { console.log('Master articles API not available'); }
-      
+
       try {
         const preprocessingResponse = await fetch('/api/automation/preprocessing/status');
         if (preprocessingResponse.ok) preprocessingData = await preprocessingResponse.json();
@@ -110,49 +110,49 @@ const UnifiedDashboard = () => {
           processed: articlesData.articles?.filter(a => a.processing_status === 'completed').length || 0,
           pending: articlesData.articles?.filter(a => a.processing_status === 'pending').length || 0,
           today: todayArticles.length,
-          todayProcessed: todayArticles.filter(a => a.processing_status === 'completed').length
+          todayProcessed: todayArticles.filter(a => a.processing_status === 'completed').length,
         },
         stories: {
           total: storiesData.total || storiesData.data?.length || 0,
           active: storiesData.data?.length || 0,
-          alerts: alertsData.data?.length || 0
+          alerts: alertsData.data?.length || 0,
         },
         system: {
           uptime: systemData.uptime || '0h 0m',
           status: systemData.status || 'healthy',
-          version: '3.1.0'
+          version: '3.1.0',
         },
         ml: {
           processing: mlData.processing || false,
           queue: mlData.queue || 0,
-          completed: mlData.completed || 0
+          completed: mlData.completed || 0,
         },
         pipeline: {
           running: pipelineData.data?.pipeline?.running || false,
           pipeline_runs: pipelineData.data?.pipeline?.pipeline_runs || 0,
           articles_collected: pipelineData.data?.pipeline?.statistics?.articles_collected || 0,
           articles_processed: pipelineData.data?.pipeline?.statistics?.articles_processed || 0,
-          story_threads_created: pipelineData.data?.pipeline?.statistics?.story_threads_created || 0
+          story_threads_created: pipelineData.data?.pipeline?.statistics?.story_threads_created || 0,
         },
         performance: {
           cpu: systemData.cpuUsage ? parseInt(systemData.cpuUsage.replace('%', '')) : 0,
           memory: systemData.memoryUsage ? parseInt(systemData.memoryUsage.replace('%', '')) : 0,
-          disk: systemData.diskUsage ? parseInt(systemData.diskUsage.replace('%', '')) : 0
+          disk: systemData.diskUsage ? parseInt(systemData.diskUsage.replace('%', '')) : 0,
         },
         masterArticles: {
           total: masterArticlesData.total || 0,
           consolidated: preprocessingData.data?.consolidated_articles || 0,
-          singleSource: preprocessingData.data?.single_source_articles || 0
+          singleSource: preprocessingData.data?.single_source_articles || 0,
         },
         preprocessing: {
           tagsExtracted: preprocessingData.data?.processing_statistics?.tags_extracted || 0,
-          lastRun: preprocessingData.data?.last_run || null
-        }
+          lastRun: preprocessingData.data?.last_run || null,
+        },
       });
 
       // Set recent activity (last 5 articles)
       setRecentActivity(articlesData.data?.slice(0, 5) || []);
-      
+
     } catch (err) {
       setError('Failed to fetch dashboard data: ' + err.message);
     } finally {
@@ -162,14 +162,14 @@ const UnifiedDashboard = () => {
 
   const getStatusColor = (status) => {
     switch (status) {
-      case 'healthy': return 'success';
-      case 'warning': return 'warning';
-      case 'error': return 'error';
-      default: return 'default';
+    case 'healthy': return 'success';
+    case 'warning': return 'warning';
+    case 'error': return 'error';
+    default: return 'default';
     }
   };
 
-  const handleRSSCollection = async () => {
+  const handleRSSCollection = async() => {
     setPipelineLoading(true);
     try {
       const response = await fetch('/api/rss/collect-now', { method: 'POST' });
@@ -188,7 +188,7 @@ const UnifiedDashboard = () => {
     }
   };
 
-  const handlePipelineStart = async () => {
+  const handlePipelineStart = async() => {
     setPipelineLoading(true);
     try {
       const response = await fetch('/api/automation/pipeline/start', { method: 'POST' });
@@ -209,10 +209,10 @@ const UnifiedDashboard = () => {
 
   const getStatusIcon = (status) => {
     switch (status) {
-      case 'healthy': return <CheckCircleIcon />;
-      case 'warning': return <WarningIcon />;
-      case 'error': return <ErrorIcon />;
-      default: return <CheckCircleIcon />;
+    case 'healthy': return <CheckCircleIcon />;
+    case 'warning': return <WarningIcon />;
+    case 'error': return <ErrorIcon />;
+    default: return <CheckCircleIcon />;
     }
   };
 
@@ -376,7 +376,7 @@ const UnifiedDashboard = () => {
                 <strong>{dashboardData.articles.today - dashboardData.articles.todayProcessed}</strong> articles pending
               </div>
               <div className="unified-content-actions">
-                <button 
+                <button
                   className="unified-button unified-button-sm"
                   onClick={() => window.location.href = '/articles'}
                 >
@@ -399,7 +399,7 @@ const UnifiedDashboard = () => {
                 Last Run: {dashboardData.pipeline.lastRun || 'Never'}
               </div>
               <div className="unified-content-actions">
-                <button 
+                <button
                   className="unified-button unified-button-sm"
                   onClick={handleRSSCollection}
                   disabled={pipelineLoading}
@@ -407,7 +407,7 @@ const UnifiedDashboard = () => {
                 >
                   {pipelineLoading ? 'Collecting...' : 'Collect RSS Now'}
                 </button>
-                <button 
+                <button
                   className="unified-button unified-button-sm"
                   onClick={handlePipelineStart}
                   disabled={pipelineLoading}
@@ -431,8 +431,8 @@ const UnifiedDashboard = () => {
             </div>
             <div className="unified-content-body">
               <div className="unified-progress unified-progress-lg">
-                <div 
-                  className="unified-progress-bar" 
+                <div
+                  className="unified-progress-bar"
                   style={{ width: `${dashboardData.performance.cpu}%` }}
                 />
               </div>
@@ -448,8 +448,8 @@ const UnifiedDashboard = () => {
             </div>
             <div className="unified-content-body">
               <div className="unified-progress unified-progress-lg">
-                <div 
-                  className="unified-progress-bar" 
+                <div
+                  className="unified-progress-bar"
                   style={{ width: `${dashboardData.performance.memory}%` }}
                 />
               </div>
@@ -465,8 +465,8 @@ const UnifiedDashboard = () => {
             </div>
             <div className="unified-content-body">
               <div className="unified-progress unified-progress-lg">
-                <div 
-                  className="unified-progress-bar" 
+                <div
+                  className="unified-progress-bar"
                   style={{ width: `${dashboardData.performance.disk}%` }}
                 />
               </div>
@@ -534,7 +534,7 @@ const UnifiedDashboard = () => {
                     />
                   </ListItem>
                 )}
-                
+
                 {dashboardData.ml.processing && (
                   <ListItem>
                     <ListItemIcon>
@@ -546,7 +546,7 @@ const UnifiedDashboard = () => {
                     />
                   </ListItem>
                 )}
-                
+
                 {dashboardData.pipeline?.running && (
                   <ListItem>
                     <ListItemIcon>

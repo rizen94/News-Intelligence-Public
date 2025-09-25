@@ -1,4 +1,23 @@
-import React, { useState, useEffect } from 'react';
+import {
+  Refresh as RefreshIcon,
+  Speed as SpeedIcon,
+  Memory as MemoryIcon,
+  Storage as StorageIcon,
+  NetworkCheck as NetworkIcon,
+  Psychology as PsychologyIcon,
+  AutoAwesome as AutoAwesomeIcon,
+  Schedule as ScheduleIcon,
+  Warning as WarningIcon,
+  CheckCircle as CheckCircleIcon,
+  Error as ErrorIcon,
+  TrendingUp as TrendingUpIcon,
+  Timeline as TimelineIcon,
+  Assessment as AssessmentIcon,
+  History as HistoryIcon,
+  AutoAwesome as PredictionIcon,
+  RssFeed as RssFeedIcon,
+  Analytics as AnalyticsIcon,
+} from '@mui/icons-material';
 import {
   Box,
   Typography,
@@ -28,26 +47,8 @@ import {
   DialogContent,
   DialogActions,
 } from '@mui/material';
-import {
-  Refresh as RefreshIcon,
-  Speed as SpeedIcon,
-  Memory as MemoryIcon,
-  Storage as StorageIcon,
-  NetworkCheck as NetworkIcon,
-  Psychology as PsychologyIcon,
-  AutoAwesome as AutoAwesomeIcon,
-  Schedule as ScheduleIcon,
-  Warning as WarningIcon,
-  CheckCircle as CheckCircleIcon,
-  Error as ErrorIcon,
-  TrendingUp as TrendingUpIcon,
-  Timeline as TimelineIcon,
-  Assessment as AssessmentIcon,
-  History as HistoryIcon,
-  AutoAwesome as PredictionIcon,
-  RssFeed as RssFeedIcon,
-  Analytics as AnalyticsIcon
-} from '@mui/icons-material';
+import React, { useState, useEffect } from 'react';
+
 import { apiService } from '../../services/apiService';
 
 const EnhancedMonitoring = () => {
@@ -61,14 +62,14 @@ const EnhancedMonitoring = () => {
   const [actionLoading, setActionLoading] = useState({
     pipeline: false,
     rss: false,
-    analysis: false
+    analysis: false,
   });
   const [actionMessage, setActionMessage] = useState(null);
   const [confirmDialog, setConfirmDialog] = useState({
     open: false,
     type: null,
     title: '',
-    content: ''
+    content: '',
   });
   // Pipeline status
   const [pipelineRunning, setPipelineRunning] = useState(() => {
@@ -201,13 +202,13 @@ const EnhancedMonitoring = () => {
         setPipelineETA(null);
         setPipelineProgress(0);
         saveProcessStatus('pipeline', false, null, 0);
-        
+
         // Show completion message
         setActionMessage({
           type: 'success',
-          text: 'Pipeline completed successfully!'
+          text: 'Pipeline completed successfully!',
         });
-        
+
         // Refresh data to get latest results
         loadMonitoringData();
       } else if (pipelineETA) {
@@ -216,7 +217,7 @@ const EnhancedMonitoring = () => {
         const elapsed = now - startedAt;
         const total = 30 * 60 * 1000; // 30 minutes total
         const progress = Math.min((elapsed / total) * 100, 95); // Cap at 95% until actually done
-        
+
         setPipelineProgress(progress);
         saveProcessStatus('pipeline', true, pipelineETA, progress);
       }
@@ -224,10 +225,10 @@ const EnhancedMonitoring = () => {
 
     // Check immediately
     checkPipelineCompletion();
-    
+
     // Then check every 10 seconds for ETA updates
     const interval = setInterval(checkPipelineCompletion, 10000);
-    
+
     return () => clearInterval(interval);
   }, [pipelineRunning, pipelineETA]);
 
@@ -254,16 +255,16 @@ const EnhancedMonitoring = () => {
     return () => clearInterval(interval);
   }, [pipelineRunning, pipelineETA]);
 
-  const loadMonitoringData = async () => {
+  const loadMonitoringData = async() => {
     try {
       setLoading(true);
       setError(null);
-      
+
       const [systemResponse, pipelineResponse, performanceResponse, tracesResponse] = await Promise.all([
         apiService.getSystemStatus(),
         apiService.getPipelineStatus(),
         apiService.getPipelinePerformance(),
-        apiService.getPipelineTraces({ limit: 10 })
+        apiService.getPipelineTraces({ limit: 10 }),
       ]);
 
       setSystemStatus(systemResponse);
@@ -271,10 +272,10 @@ const EnhancedMonitoring = () => {
       setPipelinePerformance(performanceResponse);
       setPipelineTraces(Array.isArray(tracesResponse?.data?.traces) ? tracesResponse.data.traces : []);
       setLastUpdate(new Date());
-      
+
       // Check if pipeline is running
       checkPipelineStatus(pipelineResponse);
-      
+
     } catch (err) {
       console.error('Error loading monitoring data:', err);
       setError('Failed to load monitoring data');
@@ -290,7 +291,7 @@ const EnhancedMonitoring = () => {
         running: true,
         eta: eta.toISOString(),
         progress: progress || 0,
-        startedAt: new Date().toISOString()
+        startedAt: new Date().toISOString(),
       };
       localStorage.setItem(key, JSON.stringify(status));
     } else {
@@ -316,14 +317,14 @@ const EnhancedMonitoring = () => {
     // Only check API response if we don't have a running pipeline
     if (pipelineResponse?.system_status === 'running' || pipelineResponse?.active_traces_count > 0) {
       setPipelineRunning(true);
-      
+
       // Calculate ETA based on pipeline performance data
       const avgDuration = pipelineResponse?.average_duration_ms || 0;
       const totalItems = 1000; // Default total items
       const processedItems = pipelineResponse?.processed_items || 0;
-      
+
       let eta, progress;
-      
+
       if (avgDuration > 0 && processedItems > 0) {
         const remainingItems = totalItems - processedItems;
         const estimatedRemainingTime = (remainingItems * avgDuration) / 1000; // Convert to seconds
@@ -334,7 +335,7 @@ const EnhancedMonitoring = () => {
         eta = new Date(Date.now() + 30 * 60 * 1000); // 30 minutes from now
         progress = 0;
       }
-      
+
       setPipelineETA(eta);
       setPipelineProgress(progress);
       saveProcessStatus('pipeline', true, eta, progress);
@@ -349,19 +350,19 @@ const EnhancedMonitoring = () => {
     // Determine which processes are already running and what needs to be done
     const runningProcesses = [];
     const remainingProcesses = [];
-    
+
     if (rssRunning) {
       runningProcesses.push('RSS Feed Update');
     } else {
       remainingProcesses.push('RSS Feed Update (5 min)');
     }
-    
+
     if (pipelineRunning) {
       runningProcesses.push('Pipeline Processing');
     } else {
       remainingProcesses.push('Pipeline Processing (30 min)');
     }
-    
+
     if (analysisRunning) {
       runningProcesses.push('AI Analysis');
     } else {
@@ -370,22 +371,22 @@ const EnhancedMonitoring = () => {
 
     // Calculate remaining time
     const remainingTime = remainingProcesses.length * 30; // Rough estimate
-    
-    let content = `This will complete the remaining processes in sequence:\n\n`;
-    
+
+    let content = 'This will complete the remaining processes in sequence:\n\n';
+
     if (runningProcesses.length > 0) {
-      content += `**Currently Running:**\n`;
+      content += '**Currently Running:**\n';
       runningProcesses.forEach(process => {
         content += `• ${process} - Will continue and complete\n`;
       });
-      content += `\n`;
+      content += '\n';
     }
-    
-    content += `**Will Execute Next:**\n`;
+
+    content += '**Will Execute Next:**\n';
     remainingProcesses.forEach(process => {
       content += `• ${process}\n`;
     });
-    
+
     content += `\n• **Total estimated time:** ${remainingTime} minutes (remaining processes)
 • **Why sequential?** Each process depends on the previous one's output
 • **Resource usage:** 
@@ -406,7 +407,7 @@ Do you want to proceed with completing the remaining processes?`;
       open: true,
       type: 'master',
       title: `Complete Remaining Processes (${remainingProcesses.length} remaining)`,
-      content
+      content,
     });
   };
 
@@ -415,7 +416,7 @@ Do you want to proceed with completing the remaining processes?`;
     if (pipelineRunning || rssRunning || analysisRunning || masterRunning) {
       setActionMessage({
         type: 'warning',
-        text: `Pipeline is already running or another process is active. ETA: ${formatETA(displayPipelineETA || pipelineETA)}`
+        text: `Pipeline is already running or another process is active. ETA: ${formatETA(displayPipelineETA || pipelineETA)}`,
       });
       return;
     }
@@ -447,14 +448,14 @@ Do you want to proceed with completing the remaining processes?`;
 • **Estimated time:** 30 minutes
 • **Articles to process:** Up to 1,000
 
-Do you want to proceed with triggering the pipeline?`
+Do you want to proceed with triggering the pipeline?`,
     });
   };
 
-  const handleConfirmAction = async () => {
+  const handleConfirmAction = async() => {
     const { type } = confirmDialog;
     setConfirmDialog({ open: false, type: null, title: '', content: '' });
-    
+
     if (type === 'pipeline') {
       await executeTriggerPipeline();
     } else if (type === 'rss') {
@@ -466,39 +467,39 @@ Do you want to proceed with triggering the pipeline?`
     }
   };
 
-  const executeTriggerPipeline = async () => {
+  const executeTriggerPipeline = async() => {
     try {
       setActionLoading(prev => ({ ...prev, pipeline: true }));
       setActionMessage(null);
-      
+
       const result = await apiService.triggerPipeline();
-      
+
       // Set pipeline as running with initial ETA
       setPipelineRunning(true);
       const eta = new Date(Date.now() + 30 * 60 * 1000); // 30 minutes from now
       setPipelineETA(eta);
       setPipelineProgress(0);
       saveProcessStatus('pipeline', true, eta, 0);
-      
+
       setActionMessage({
         type: 'success',
-        text: result.message || 'Pipeline triggered successfully'
+        text: result.message || 'Pipeline triggered successfully',
       });
-      
+
       // Refresh data more frequently when pipeline is running
       const interval = setInterval(() => {
         loadMonitoringData();
       }, 5000); // Check every 5 seconds
-      
+
       // Clear interval after 35 minutes (pipeline should be done)
       setTimeout(() => {
         clearInterval(interval);
       }, 35 * 60 * 1000);
-      
+
     } catch (error) {
       setActionMessage({
         type: 'error',
-        text: error.response?.data?.detail || 'Failed to trigger pipeline'
+        text: error.response?.data?.detail || 'Failed to trigger pipeline',
       });
     } finally {
       setActionLoading(prev => ({ ...prev, pipeline: false }));
@@ -510,7 +511,7 @@ Do you want to proceed with triggering the pipeline?`
     if (pipelineRunning || rssRunning || analysisRunning || masterRunning) {
       setActionMessage({
         type: 'warning',
-        text: `RSS feeds are already updating or another process is active. ETA: ${formatETA(displayRssETA || rssETA)}`
+        text: `RSS feeds are already updating or another process is active. ETA: ${formatETA(displayRssETA || rssETA)}`,
       });
       return;
     }
@@ -542,38 +543,38 @@ Do you want to proceed with triggering the pipeline?`
 • **Estimated time:** 2-5 minutes
 • **Feeds to update:** 1 active feed
 
-Do you want to proceed with updating RSS feeds?`
+Do you want to proceed with updating RSS feeds?`,
     });
   };
 
-  const executeUpdateRSSFeeds = async () => {
+  const executeUpdateRSSFeeds = async() => {
     try {
       setActionLoading(prev => ({ ...prev, rss: true }));
       setActionMessage(null);
-      
+
       const result = await apiService.updateRSSFeeds();
-      
+
       // Set RSS as running with ETA (5 minutes)
       setRssRunning(true);
       const eta = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes from now
       setRssETA(eta);
       setRssProgress(0);
       saveProcessStatus('rss', true, eta, 0);
-      
+
       setActionMessage({
         type: 'success',
-        text: result.message || 'RSS feeds update started'
+        text: result.message || 'RSS feeds update started',
       });
-      
+
       // Refresh data after a short delay
       setTimeout(() => {
         loadMonitoringData();
       }, 2000);
-      
+
     } catch (error) {
       setActionMessage({
         type: 'error',
-        text: error.response?.data?.detail || 'Failed to update RSS feeds'
+        text: error.response?.data?.detail || 'Failed to update RSS feeds',
       });
     } finally {
       setActionLoading(prev => ({ ...prev, rss: false }));
@@ -585,7 +586,7 @@ Do you want to proceed with updating RSS feeds?`
     if (pipelineRunning || rssRunning || analysisRunning || masterRunning) {
       setActionMessage({
         type: 'warning',
-        text: `AI analysis is already running or another process is active. ETA: ${formatETA(displayAnalysisETA || analysisETA)}`
+        text: `AI analysis is already running or another process is active. ETA: ${formatETA(displayAnalysisETA || analysisETA)}`,
       });
       return;
     }
@@ -617,68 +618,68 @@ Do you want to proceed with updating RSS feeds?`
 • **Estimated time:** 30 minutes
 • **Articles to process:** Up to 1,000
 
-Do you want to proceed with running AI sentiment analysis?`
+Do you want to proceed with running AI sentiment analysis?`,
     });
   };
 
-  const executeRunAIAnalysis = async () => {
+  const executeRunAIAnalysis = async() => {
     try {
       setActionLoading(prev => ({ ...prev, analysis: true }));
       setActionMessage(null);
-      
+
       const result = await apiService.runAIAnalysis();
-      
+
       // Set analysis as running with ETA (30 minutes)
       setAnalysisRunning(true);
       const eta = new Date(Date.now() + 30 * 60 * 1000); // 30 minutes from now
       setAnalysisETA(eta);
       setAnalysisProgress(0);
       saveProcessStatus('analysis', true, eta, 0);
-      
+
       setActionMessage({
         type: 'success',
-        text: result.message || 'AI analysis started'
+        text: result.message || 'AI analysis started',
       });
-      
+
       // Refresh data after a short delay
       setTimeout(() => {
         loadMonitoringData();
       }, 2000);
-      
+
     } catch (error) {
       setActionMessage({
         type: 'error',
-        text: error.response?.data?.detail || 'Failed to run AI analysis'
+        text: error.response?.data?.detail || 'Failed to run AI analysis',
       });
     } finally {
       setActionLoading(prev => ({ ...prev, analysis: false }));
     }
   };
 
-  const executeMasterSwitch = async () => {
+  const executeMasterSwitch = async() => {
     try {
       setActionLoading(prev => ({ ...prev, pipeline: true, rss: true, analysis: true }));
       setActionMessage(null);
-      
+
       // Calculate remaining time based on what's already running
       let remainingTime = 0;
       if (!rssRunning) remainingTime += 5;
       if (!pipelineRunning) remainingTime += 30;
       if (!analysisRunning) remainingTime += 30;
-      
+
       // Set master as running with calculated ETA
       setMasterRunning(true);
       const totalETA = new Date(Date.now() + remainingTime * 60 * 1000);
       setMasterETA(totalETA);
       saveProcessStatus('master', true, totalETA, 0);
-      
-      let executedProcesses = [];
-      
+
+      const executedProcesses = [];
+
       setActionMessage({
         type: 'success',
-        text: `Master process started! Completing remaining processes (${remainingTime} minutes estimated)...`
+        text: `Master process started! Completing remaining processes (${remainingTime} minutes estimated)...`,
       });
-      
+
       // Execute only the processes that aren't already running
       if (!rssRunning) {
         executedProcesses.push('RSS Feed Update');
@@ -687,7 +688,7 @@ Do you want to proceed with running AI sentiment analysis?`
       } else {
         executedProcesses.push('RSS Feed Update (already running)');
       }
-      
+
       if (!pipelineRunning) {
         executedProcesses.push('Pipeline Processing');
         await executeTriggerPipeline();
@@ -695,28 +696,28 @@ Do you want to proceed with running AI sentiment analysis?`
       } else {
         executedProcesses.push('Pipeline Processing (already running)');
       }
-      
+
       if (!analysisRunning) {
         executedProcesses.push('AI Analysis');
         await executeRunAIAnalysis();
       } else {
         executedProcesses.push('AI Analysis (already running)');
       }
-      
+
       // Master process completed
       setMasterRunning(false);
       setMasterETA(null);
       saveProcessStatus('master', false, null, 0);
-      
+
       setActionMessage({
         type: 'success',
-        text: `All processes completed successfully! Executed: ${executedProcesses.join(', ')}`
+        text: `All processes completed successfully! Executed: ${executedProcesses.join(', ')}`,
       });
-      
+
     } catch (error) {
       setActionMessage({
         type: 'error',
-        text: error.response?.data?.detail || 'Failed to run master process'
+        text: error.response?.data?.detail || 'Failed to run master process',
       });
     } finally {
       setActionLoading(prev => ({ ...prev, pipeline: false, rss: false, analysis: false }));
@@ -725,23 +726,23 @@ Do you want to proceed with running AI sentiment analysis?`
 
   const getStatusColor = (status) => {
     switch (status?.toLowerCase()) {
-      case 'healthy': return 'success';
-      case 'degraded': return 'warning';
-      case 'error': return 'error';
-      case 'idle': return 'info';
-      case 'running': return 'success';
-      default: return 'default';
+    case 'healthy': return 'success';
+    case 'degraded': return 'warning';
+    case 'error': return 'error';
+    case 'idle': return 'info';
+    case 'running': return 'success';
+    default: return 'default';
     }
   };
 
   const getStatusIcon = (status) => {
     switch (status?.toLowerCase()) {
-      case 'healthy': return <CheckCircleIcon />;
-      case 'degraded': return <WarningIcon />;
-      case 'error': return <ErrorIcon />;
-      case 'idle': return <ScheduleIcon />;
-      case 'running': return <SpeedIcon />;
-      default: return <WarningIcon />;
+    case 'healthy': return <CheckCircleIcon />;
+    case 'degraded': return <WarningIcon />;
+    case 'error': return <ErrorIcon />;
+    case 'idle': return <ScheduleIcon />;
+    case 'running': return <SpeedIcon />;
+    default: return <WarningIcon />;
     }
   };
 
@@ -753,7 +754,7 @@ Do you want to proceed with running AI sentiment analysis?`
       day: 'numeric',
       hour: '2-digit',
       minute: '2-digit',
-      second: '2-digit'
+      second: '2-digit',
     });
   };
 
@@ -768,12 +769,12 @@ Do you want to proceed with running AI sentiment analysis?`
     if (!eta) return 'Calculating...';
     const now = new Date();
     const diff = eta - now;
-    
+
     if (diff <= 0) return 'Completing soon...';
-    
+
     const minutes = Math.floor(diff / (1000 * 60));
     const hours = Math.floor(minutes / 60);
-    
+
     if (hours > 0) return `${hours}h ${minutes % 60}m remaining`;
     if (minutes > 0) return `${minutes}m remaining`;
     return 'Less than 1m remaining';
@@ -1108,8 +1109,8 @@ Do you want to proceed with running AI sentiment analysis?`
                     primary="Memory Usage"
                     secondary={`${systemStatus?.monitoringData?.data?.system_metrics?.memory_percent || 0}%`}
                   />
-                  <LinearProgress 
-                    variant="determinate" 
+                  <LinearProgress
+                    variant="determinate"
                     value={systemStatus?.monitoringData?.data?.system_metrics?.memory_percent || 0}
                     sx={{ width: 100, ml: 2 }}
                   />
@@ -1122,8 +1123,8 @@ Do you want to proceed with running AI sentiment analysis?`
                     primary="Disk Usage"
                     secondary={`${systemStatus?.monitoringData?.data?.system_metrics?.disk_percent || 0}%`}
                   />
-                  <LinearProgress 
-                    variant="determinate" 
+                  <LinearProgress
+                    variant="determinate"
                     value={systemStatus?.monitoringData?.data?.system_metrics?.disk_percent || 0}
                     sx={{ width: 100, ml: 2 }}
                   />
@@ -1136,8 +1137,8 @@ Do you want to proceed with running AI sentiment analysis?`
                     primary="CPU Usage"
                     secondary={`${systemStatus?.monitoringData?.data?.system_metrics?.cpu_percent || 0}%`}
                   />
-                  <LinearProgress 
-                    variant="determinate" 
+                  <LinearProgress
+                    variant="determinate"
                     value={systemStatus?.monitoringData?.data?.system_metrics?.cpu_percent || 0}
                     sx={{ width: 100, ml: 2 }}
                   />
@@ -1148,13 +1149,13 @@ Do you want to proceed with running AI sentiment analysis?`
                   </ListItemIcon>
                   <ListItemText
                     primary="GPU VRAM Usage"
-                    secondary={systemStatus?.monitoringData?.data?.system_metrics?.gpu_vram_percent 
+                    secondary={systemStatus?.monitoringData?.data?.system_metrics?.gpu_vram_percent
                       ? `${systemStatus.monitoringData.data.system_metrics.gpu_vram_percent}% (${systemStatus.monitoringData.data.system_metrics.gpu_memory_used_mb || 0}MB / ${systemStatus.monitoringData.data.system_metrics.gpu_memory_total_mb || 0}MB)`
                       : 'No GPU data available'
                     }
                   />
-                  <LinearProgress 
-                    variant="determinate" 
+                  <LinearProgress
+                    variant="determinate"
                     value={systemStatus?.monitoringData?.data?.system_metrics?.gpu_vram_percent || 0}
                     sx={{ width: 100, ml: 2 }}
                     color={(systemStatus?.monitoringData?.data?.system_metrics?.gpu_vram_percent || 0) > 80 ? 'error' : 'primary'}
@@ -1166,13 +1167,13 @@ Do you want to proceed with running AI sentiment analysis?`
                   </ListItemIcon>
                   <ListItemText
                     primary="GPU Utilization"
-                    secondary={systemStatus?.monitoringData?.data?.system_metrics?.gpu_utilization_percent 
+                    secondary={systemStatus?.monitoringData?.data?.system_metrics?.gpu_utilization_percent
                       ? `${systemStatus.monitoringData.data.system_metrics.gpu_utilization_percent}%`
                       : 'No GPU data available'
                     }
                   />
-                  <LinearProgress 
-                    variant="determinate" 
+                  <LinearProgress
+                    variant="determinate"
                     value={systemStatus?.monitoringData?.data?.system_metrics?.gpu_utilization_percent || 0}
                     sx={{ width: 100, ml: 2 }}
                     color="secondary"
@@ -1207,7 +1208,7 @@ Do you want to proceed with running AI sentiment analysis?`
                   disabled={actionLoading.pipeline || actionLoading.rss || actionLoading.analysis || masterRunning || pipelineRunning || rssRunning || analysisRunning}
                   sx={{ mt: 1 }}
                 >
-                  {masterRunning ? `Master Process Running` : 'Complete All Processes'}
+                  {masterRunning ? 'Master Process Running' : 'Complete All Processes'}
                 </Button>
                 <Button
                   variant="outlined"
@@ -1216,10 +1217,10 @@ Do you want to proceed with running AI sentiment analysis?`
                   disabled={actionLoading.pipeline || pipelineRunning || masterRunning || rssRunning || analysisRunning}
                   color={pipelineRunning ? 'warning' : masterRunning && !pipelineRunning ? 'info' : 'primary'}
                 >
-                  {actionLoading.pipeline ? 'Triggering...' : 
-                   pipelineRunning ? `Pipeline Running (${pipelineProgress.toFixed(0)}%)` : 
-                   masterRunning && !pipelineRunning ? 'Pipeline Queued' :
-                   'Trigger Pipeline'}
+                  {actionLoading.pipeline ? 'Triggering...' :
+                    pipelineRunning ? `Pipeline Running (${pipelineProgress.toFixed(0)}%)` :
+                      masterRunning && !pipelineRunning ? 'Pipeline Queued' :
+                        'Trigger Pipeline'}
                 </Button>
                 {pipelineRunning && (
                   <Box sx={{ mt: 1, p: 2, bgcolor: 'warning.light', borderRadius: 1 }}>
@@ -1232,9 +1233,9 @@ Do you want to proceed with running AI sentiment analysis?`
                     <Typography variant="body2" color="warning.contrastText" gutterBottom>
                       <strong>ETA:</strong> {formatETA(displayPipelineETA)}
                     </Typography>
-                    <LinearProgress 
-                      variant="determinate" 
-                      value={pipelineProgress} 
+                    <LinearProgress
+                      variant="determinate"
+                      value={pipelineProgress}
                       sx={{ mt: 1, bgcolor: 'warning.dark' }}
                     />
                     <Typography variant="caption" color="warning.contrastText" sx={{ mt: 1, display: 'block' }}>
@@ -1259,10 +1260,10 @@ Do you want to proceed with running AI sentiment analysis?`
                   disabled={actionLoading.analysis || analysisRunning || masterRunning || pipelineRunning || rssRunning}
                   color={analysisRunning ? 'warning' : masterRunning && !analysisRunning ? 'info' : 'primary'}
                 >
-                  {actionLoading.analysis ? 'Running...' : 
-                   analysisRunning ? `AI Analysis Running (${analysisProgress.toFixed(0)}%)` : 
-                   masterRunning && !analysisRunning ? 'AI Analysis Queued' :
-                   'Run AI Analysis'}
+                  {actionLoading.analysis ? 'Running...' :
+                    analysisRunning ? `AI Analysis Running (${analysisProgress.toFixed(0)}%)` :
+                      masterRunning && !analysisRunning ? 'AI Analysis Queued' :
+                        'Run AI Analysis'}
                 </Button>
                 {analysisRunning && (
                   <Box sx={{ mt: 1, p: 2, bgcolor: 'warning.light', borderRadius: 1 }}>
@@ -1275,9 +1276,9 @@ Do you want to proceed with running AI sentiment analysis?`
                     <Typography variant="body2" color="warning.contrastText" gutterBottom>
                       <strong>ETA:</strong> {formatETA(displayAnalysisETA)}
                     </Typography>
-                    <LinearProgress 
-                      variant="determinate" 
-                      value={analysisProgress} 
+                    <LinearProgress
+                      variant="determinate"
+                      value={analysisProgress}
                       sx={{ mt: 1, bgcolor: 'warning.dark' }}
                     />
                     <Typography variant="caption" color="warning.contrastText" sx={{ mt: 1, display: 'block' }}>
@@ -1302,10 +1303,10 @@ Do you want to proceed with running AI sentiment analysis?`
                   disabled={actionLoading.rss || rssRunning || masterRunning || pipelineRunning || analysisRunning}
                   color={rssRunning ? 'warning' : masterRunning && !rssRunning ? 'info' : 'primary'}
                 >
-                  {actionLoading.rss ? 'Updating...' : 
-                   rssRunning ? `RSS Updating (${rssProgress.toFixed(0)}%)` : 
-                   masterRunning && !rssRunning ? 'RSS Feeds Queued' :
-                   'Update RSS Feeds'}
+                  {actionLoading.rss ? 'Updating...' :
+                    rssRunning ? `RSS Updating (${rssProgress.toFixed(0)}%)` :
+                      masterRunning && !rssRunning ? 'RSS Feeds Queued' :
+                        'Update RSS Feeds'}
                 </Button>
                 {rssRunning && (
                   <Box sx={{ mt: 1, p: 2, bgcolor: 'warning.light', borderRadius: 1 }}>
@@ -1318,9 +1319,9 @@ Do you want to proceed with running AI sentiment analysis?`
                     <Typography variant="body2" color="warning.contrastText" gutterBottom>
                       <strong>ETA:</strong> {formatETA(displayRssETA)}
                     </Typography>
-                    <LinearProgress 
-                      variant="determinate" 
-                      value={rssProgress} 
+                    <LinearProgress
+                      variant="determinate"
+                      value={rssProgress}
                       sx={{ mt: 1, bgcolor: 'warning.dark' }}
                     />
                     <Typography variant="caption" color="warning.contrastText" sx={{ mt: 1, display: 'block' }}>
@@ -1346,8 +1347,8 @@ Do you want to proceed with running AI sentiment analysis?`
         {/* Action Messages */}
         {actionMessage && (
           <Grid item xs={12}>
-            <Alert 
-              severity={actionMessage.type} 
+            <Alert
+              severity={actionMessage.type}
               onClose={() => setActionMessage(null)}
               sx={{ mt: 2 }}
             >
@@ -1358,8 +1359,8 @@ Do you want to proceed with running AI sentiment analysis?`
       </Grid>
 
       {/* Confirmation Dialog */}
-      <Dialog 
-        open={confirmDialog.open} 
+      <Dialog
+        open={confirmDialog.open}
         onClose={() => setConfirmDialog({ open: false, type: null, title: '', content: '' })}
         maxWidth="md"
         fullWidth
@@ -1373,13 +1374,13 @@ Do you want to proceed with running AI sentiment analysis?`
           </Typography>
         </DialogContent>
         <DialogActions>
-          <Button 
+          <Button
             onClick={() => setConfirmDialog({ open: false, type: null, title: '', content: '' })}
             color="inherit"
           >
             Cancel
           </Button>
-          <Button 
+          <Button
             onClick={handleConfirmAction}
             variant="contained"
             color="primary"

@@ -1,4 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import {
+  ArrowBack as ArrowBackIcon,
+  Share as ShareIcon,
+  Bookmark as BookmarkIcon,
+} from '@mui/icons-material';
 import {
   Box,
   Typography,
@@ -9,14 +13,11 @@ import {
   Divider,
   Alert,
   CircularProgress,
-  Paper
+  Paper,
 } from '@mui/material';
-import {
-  ArrowBack as ArrowBackIcon,
-  Share as ShareIcon,
-  Bookmark as BookmarkIcon
-} from '@mui/icons-material';
+import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+
 import { apiService } from '../../services/apiService';
 
 const ArticleDetail = () => {
@@ -32,12 +33,12 @@ const ArticleDetail = () => {
     }
   }, [id]);
 
-  const loadArticle = async () => {
+  const loadArticle = async() => {
     try {
       setLoading(true);
       setError(null);
       const response = await apiService.getArticle(id);
-      
+
       if (response.success) {
         setArticle(response.data);
       } else {
@@ -59,7 +60,7 @@ const ArticleDetail = () => {
         month: 'long',
         day: 'numeric',
         hour: '2-digit',
-        minute: '2-digit'
+        minute: '2-digit',
       });
     } catch (error) {
       return 'Invalid date';
@@ -114,7 +115,7 @@ const ArticleDetail = () => {
           <Typography variant="h4" component="h1" sx={{ mb: 2 }}>
             {article.title || 'Untitled Article'}
           </Typography>
-          
+
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
             <Typography variant="body2" color="text.secondary">
               {article.source || 'Unknown Source'}

@@ -1,4 +1,17 @@
-import React, { useState, useEffect } from 'react';
+import {
+  Article as ArticleIcon,
+  Search as SearchIcon,
+  OpenInNew as ViewIcon,
+  AutoAwesome,
+  Refresh as RefreshIcon,
+  TrendingUp as TrendingUpIcon,
+  GroupWork as ClusterIcon,
+  Business as BusinessIcon,
+  FilterList as FilterIcon,
+  Person as PersonIcon,
+  LocationOn as LocationIcon,
+  Schedule as ScheduleIcon,
+} from '@mui/icons-material';
 import {
   Box,
   Typography,
@@ -26,24 +39,12 @@ import {
   Divider,
   Paper,
   Tabs,
-  Tab
+  Tab,
 } from '@mui/material';
-import {
-  Article as ArticleIcon,
-  Search as SearchIcon,
-  OpenInNew as ViewIcon,
-  AutoAwesome,
-  Refresh as RefreshIcon,
-  TrendingUp as TrendingUpIcon,
-  GroupWork as ClusterIcon,
-  Business as BusinessIcon,
-  FilterList as FilterIcon,
-  Person as PersonIcon,
-  LocationOn as LocationIcon,
-  Schedule as ScheduleIcon
-} from '@mui/icons-material';
-import newsSystemService from '../../services/newsSystemService';
+import React, { useState, useEffect } from 'react';
+
 import ArticleViewer from '../../components/ArticleViewer/ArticleViewer';
+import newsSystemService from '../../services/newsSystemService';
 
 const NewsStyleArticles = () => {
   const [articles, setArticles] = useState([]);
@@ -52,13 +53,13 @@ const NewsStyleArticles = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [activeTab, setActiveTab] = useState(0);
-  
+
   // Filters
   const [searchQuery, setSearchQuery] = useState('');
   const [filterCategory, setFilterCategory] = useState('');
   const [filterSource, setFilterSource] = useState('');
   const [sortBy, setSortBy] = useState('newest');
-  
+
   // Article dialog
   const [selectedArticle, setSelectedArticle] = useState(null);
   const [showArticleDialog, setShowArticleDialog] = useState(false);
@@ -67,17 +68,17 @@ const NewsStyleArticles = () => {
     loadData();
   }, []);
 
-  const loadData = async () => {
+  const loadData = async() => {
     try {
       setLoading(true);
       setError(null);
-      
+
       const [articlesData, clustersData, entitiesData] = await Promise.all([
         newsSystemService.getArticles(),
         newsSystemService.getClusters(),
-        newsSystemService.getEntities()
+        newsSystemService.getEntities(),
       ]);
-      
+
       if (articlesData.success) {
         setArticles(articlesData.articles || []);
       }
@@ -96,46 +97,46 @@ const NewsStyleArticles = () => {
 
   const getFilteredArticles = () => {
     let filtered = articles;
-    
+
     if (searchQuery) {
-      filtered = filtered.filter(article => 
+      filtered = filtered.filter(article =>
         article.title?.toLowerCase().includes(searchQuery.toLowerCase()) ||
         article.content?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        article.summary?.toLowerCase().includes(searchQuery.toLowerCase())
+        article.summary?.toLowerCase().includes(searchQuery.toLowerCase()),
       );
     }
-    
+
     if (filterCategory) {
       filtered = filtered.filter(article => article.category === filterCategory);
     }
-    
+
     if (filterSource) {
       filtered = filtered.filter(article => article.source === filterSource);
     }
-    
+
     // Sort articles
     switch (sortBy) {
-      case 'newest':
-        filtered.sort((a, b) => new Date(b.publishedDate) - new Date(a.publishedDate));
-        break;
-      case 'oldest':
-        filtered.sort((a, b) => new Date(a.publishedDate) - new Date(b.publishedDate));
-        break;
-      case 'title':
-        filtered.sort((a, b) => (a.title || '').localeCompare(b.title || ''));
-        break;
-      case 'source':
-        filtered.sort((a, b) => (a.source || '').localeCompare(b.source || ''));
-        break;
+    case 'newest':
+      filtered.sort((a, b) => new Date(b.publishedDate) - new Date(a.publishedDate));
+      break;
+    case 'oldest':
+      filtered.sort((a, b) => new Date(a.publishedDate) - new Date(b.publishedDate));
+      break;
+    case 'title':
+      filtered.sort((a, b) => (a.title || '').localeCompare(b.title || ''));
+      break;
+    case 'source':
+      filtered.sort((a, b) => (a.source || '').localeCompare(b.source || ''));
+      break;
     }
-    
+
     return filtered;
   };
 
   const getGroupedArticles = () => {
     const filtered = getFilteredArticles();
     const grouped = {};
-    
+
     filtered.forEach(article => {
       const topic = article.category || 'General';
       if (!grouped[topic]) {
@@ -143,7 +144,7 @@ const NewsStyleArticles = () => {
       }
       grouped[topic].push(article);
     });
-    
+
     return grouped;
   };
 
@@ -168,7 +169,7 @@ const NewsStyleArticles = () => {
   const renderNewsGrid = () => {
     const groupedArticles = getGroupedArticles();
     const topics = Object.keys(groupedArticles);
-    
+
     if (topics.length === 0) {
       return (
         <Box display="flex" flexDirection="column" alignItems="center" py={8}>
@@ -189,19 +190,19 @@ const NewsStyleArticles = () => {
           <Box key={topic} sx={{ mb: 4 }}>
             {/* Topic Header */}
             <Box sx={{ mb: 3 }}>
-              <Typography variant="h4" component="h2" sx={{ 
+              <Typography variant="h4" component="h2" sx={{
                 fontWeight: 'bold',
                 color: 'primary.main',
                 display: 'flex',
                 alignItems: 'center',
-                gap: 1
+                gap: 1,
               }}>
                 <ClusterIcon />
                 {topic}
-                <Chip 
-                  label={`${groupedArticles[topic].length} articles`} 
-                  size="small" 
-                  color="primary" 
+                <Chip
+                  label={`${groupedArticles[topic].length} articles`}
+                  size="small"
+                  color="primary"
                   variant="outlined"
                 />
               </Typography>
@@ -212,8 +213,8 @@ const NewsStyleArticles = () => {
             <Grid container spacing={3}>
               {groupedArticles[topic].map((article, index) => (
                 <Grid item xs={12} sm={6} md={4} lg={3} key={article.id || index}>
-                  <Card 
-                    sx={{ 
+                  <Card
+                    sx={{
                       height: '100%',
                       display: 'flex',
                       flexDirection: 'column',
@@ -221,17 +222,17 @@ const NewsStyleArticles = () => {
                       transition: 'all 0.2s ease',
                       '&:hover': {
                         transform: 'translateY(-4px)',
-                        boxShadow: 4
-                      }
+                        boxShadow: 4,
+                      },
                     }}
                     onClick={() => handleArticleClick(article)}
                   >
                     <CardContent sx={{ flexGrow: 1, pb: 1 }}>
                       {/* Article Title */}
-                      <Typography 
-                        variant="h6" 
-                        component="h3" 
-                        sx={{ 
+                      <Typography
+                        variant="h6"
+                        component="h3"
+                        sx={{
                           fontWeight: 'bold',
                           lineHeight: 1.3,
                           mb: 2,
@@ -239,42 +240,42 @@ const NewsStyleArticles = () => {
                           display: '-webkit-box',
                           WebkitLineClamp: 2,
                           WebkitBoxOrient: 'vertical',
-                          overflow: 'hidden'
+                          overflow: 'hidden',
                         }}
                       >
                         {article.title || 'Untitled Article'}
                       </Typography>
-                      
+
                       {/* Article Meta */}
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2, flexWrap: 'wrap' }}>
                         {article.source && (
-                          <Chip 
-                            label={article.source} 
-                            size="small" 
-                            variant="outlined" 
+                          <Chip
+                            label={article.source}
+                            size="small"
+                            variant="outlined"
                             color="primary"
                           />
                         )}
                         {article.processingStatus === 'processed' && (
-                          <Chip 
-                            label="Processed" 
-                            size="small" 
-                            color="success" 
+                          <Chip
+                            label="Processed"
+                            size="small"
+                            color="success"
                             variant="filled"
                           />
                         )}
                       </Box>
 
                       {/* Article Summary */}
-                      <Typography 
-                        variant="body2" 
-                        color="text.secondary" 
-                        sx={{ 
+                      <Typography
+                        variant="body2"
+                        color="text.secondary"
+                        sx={{
                           display: '-webkit-box',
                           WebkitLineClamp: 3,
                           WebkitBoxOrient: 'vertical',
                           overflow: 'hidden',
-                          lineHeight: 1.4
+                          lineHeight: 1.4,
                         }}
                       >
                         {article.summary || article.content?.substring(0, 150) + '...'}
@@ -408,7 +409,7 @@ const NewsStyleArticles = () => {
             Refresh
           </Button>
         </Box>
-        
+
         {error && (
           <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
             {error}
@@ -502,8 +503,8 @@ const NewsStyleArticles = () => {
       {activeTab === 1 && renderStatsTab()}
 
       {/* Article Dialog */}
-      <Dialog 
-        open={showArticleDialog} 
+      <Dialog
+        open={showArticleDialog}
         onClose={handleCloseDialog}
         maxWidth="lg"
         fullWidth
@@ -513,7 +514,7 @@ const NewsStyleArticles = () => {
         </DialogTitle>
         <DialogContent>
           {selectedArticle && (
-            <ArticleViewer 
+            <ArticleViewer
               article={selectedArticle}
               onClose={handleCloseDialog}
             />

@@ -1,4 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import {
+  RssFeed as SourceIcon,
+  CheckCircle as HealthyIcon,
+  Warning as WarningIcon,
+  Error as ErrorIcon,
+} from '@mui/icons-material';
 import {
   Box,
   Typography,
@@ -10,12 +15,8 @@ import {
   LinearProgress,
   Alert,
 } from '@mui/material';
-import {
-  RssFeed as SourceIcon,
-  CheckCircle as HealthyIcon,
-  Warning as WarningIcon,
-  Error as ErrorIcon,
-} from '@mui/icons-material';
+import React, { useState, useEffect } from 'react';
+
 import { useNewsSystem } from '../../contexts/NewsSystemContext';
 
 export default function Sources() {
@@ -28,21 +29,21 @@ export default function Sources() {
 
   const getHealthIcon = (health) => {
     switch (health) {
-      case 'excellent': return <HealthyIcon color="success" />;
-      case 'good': return <HealthyIcon color="success" />;
-      case 'warning': return <WarningIcon color="warning" />;
-      case 'error': return <ErrorIcon color="error" />;
-      default: return <WarningIcon color="warning" />;
+    case 'excellent': return <HealthyIcon color="success" />;
+    case 'good': return <HealthyIcon color="success" />;
+    case 'warning': return <WarningIcon color="warning" />;
+    case 'error': return <ErrorIcon color="error" />;
+    default: return <WarningIcon color="warning" />;
     }
   };
 
   const getHealthColor = (health) => {
     switch (health) {
-      case 'excellent': return 'success';
-      case 'good': return 'success';
-      case 'warning': return 'warning';
-      case 'error': return 'error';
-      default: return 'default';
+    case 'excellent': return 'success';
+    case 'good': return 'success';
+    case 'warning': return 'warning';
+    case 'error': return 'error';
+    default: return 'default';
     }
   };
 
@@ -63,11 +64,11 @@ export default function Sources() {
                   </Typography>
                   {getHealthIcon(source.health)}
                 </Box>
-                
+
                 <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
                   {source.url}
                 </Typography>
-                
+
                 <Box sx={{ display: 'flex', gap: 1, mb: 2, flexWrap: 'wrap' }}>
                   <Chip
                     label={source.category}
@@ -80,7 +81,7 @@ export default function Sources() {
                     size="small"
                   />
                 </Box>
-                
+
                 <Box sx={{ mb: 2 }}>
                   <Typography variant="body2" color="text.secondary">
                     Articles: {source.articleCount} | Success Rate: {source.successRate}%

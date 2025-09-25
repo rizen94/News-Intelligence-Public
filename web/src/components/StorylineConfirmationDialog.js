@@ -1,4 +1,9 @@
-import React from 'react';
+import {
+  Delete as DeleteIcon,
+  Add as AddIcon,
+  Edit as EditIcon,
+  Warning as WarningIcon,
+} from '@mui/icons-material';
 import {
   Dialog,
   DialogTitle,
@@ -8,14 +13,9 @@ import {
   Typography,
   Box,
   Alert,
-  CircularProgress
+  CircularProgress,
 } from '@mui/material';
-import {
-  Delete as DeleteIcon,
-  Add as AddIcon,
-  Edit as EditIcon,
-  Warning as WarningIcon
-} from '@mui/icons-material';
+import React from 'react';
 
 const StorylineConfirmationDialog = ({
   open,
@@ -24,50 +24,50 @@ const StorylineConfirmationDialog = ({
   action,
   storyline,
   loading = false,
-  error = null
+  error = null,
 }) => {
   const getActionDetails = () => {
     switch (action) {
-      case 'create':
-        return {
-          title: 'Create New Storyline',
-          message: 'Are you sure you want to create this new storyline?',
-          icon: <AddIcon color="primary" />,
-          confirmText: 'Create',
-          confirmColor: 'primary'
-        };
-      case 'delete':
-        return {
-          title: 'Delete Storyline',
-          message: `Are you sure you want to delete "${storyline?.title}"? This action cannot be undone.`,
-          icon: <DeleteIcon color="error" />,
-          confirmText: 'Delete',
-          confirmColor: 'error'
-        };
-      case 'edit':
-        return {
-          title: 'Edit Storyline',
-          message: 'Are you sure you want to save these changes?',
-          icon: <EditIcon color="primary" />,
-          confirmText: 'Save',
-          confirmColor: 'primary'
-        };
-      case 'add_article':
-        return {
-          title: 'Add Article to Storyline',
-          message: `Add this article to "${storyline?.title}"?`,
-          icon: <AddIcon color="primary" />,
-          confirmText: 'Add',
-          confirmColor: 'primary'
-        };
-      default:
-        return {
-          title: 'Confirm Action',
-          message: 'Are you sure you want to proceed?',
-          icon: <WarningIcon color="warning" />,
-          confirmText: 'Confirm',
-          confirmColor: 'primary'
-        };
+    case 'create':
+      return {
+        title: 'Create New Storyline',
+        message: 'Are you sure you want to create this new storyline?',
+        icon: <AddIcon color="primary" />,
+        confirmText: 'Create',
+        confirmColor: 'primary',
+      };
+    case 'delete':
+      return {
+        title: 'Delete Storyline',
+        message: `Are you sure you want to delete "${storyline?.title}"? This action cannot be undone.`,
+        icon: <DeleteIcon color="error" />,
+        confirmText: 'Delete',
+        confirmColor: 'error',
+      };
+    case 'edit':
+      return {
+        title: 'Edit Storyline',
+        message: 'Are you sure you want to save these changes?',
+        icon: <EditIcon color="primary" />,
+        confirmText: 'Save',
+        confirmColor: 'primary',
+      };
+    case 'add_article':
+      return {
+        title: 'Add Article to Storyline',
+        message: `Add this article to "${storyline?.title}"?`,
+        icon: <AddIcon color="primary" />,
+        confirmText: 'Add',
+        confirmColor: 'primary',
+      };
+    default:
+      return {
+        title: 'Confirm Action',
+        message: 'Are you sure you want to proceed?',
+        icon: <WarningIcon color="warning" />,
+        confirmText: 'Confirm',
+        confirmColor: 'primary',
+      };
     }
   };
 
@@ -84,8 +84,8 @@ const StorylineConfirmationDialog = ({
   };
 
   return (
-    <Dialog 
-      open={open} 
+    <Dialog
+      open={open}
       onClose={handleClose}
       maxWidth="sm"
       fullWidth
@@ -142,8 +142,8 @@ const StorylineConfirmationDialog = ({
       </DialogContent>
 
       <DialogActions sx={{ p: 2 }}>
-        <Button 
-          onClick={handleClose} 
+        <Button
+          onClick={handleClose}
           disabled={loading}
           color="inherit"
         >

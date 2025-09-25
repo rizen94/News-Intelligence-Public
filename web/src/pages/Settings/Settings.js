@@ -1,4 +1,3 @@
-import React from 'react';
 import {
   Box,
   Typography,
@@ -7,18 +6,18 @@ import {
   Grid,
   Button,
 } from '@mui/material';
+import React from 'react';
 // import { useNewsSystem } from '../../contexts/NewsSystemContext';
 
 export default function Settings() {
   // const { state, actions } = useNewsSystem();
   // const { ui } = state;
-  
+
   // Mock data for demonstration
   const ui = {
     language: 'en',
-    notifications: true
+    notifications: true,
   };
-  
 
   return (
     <Box>

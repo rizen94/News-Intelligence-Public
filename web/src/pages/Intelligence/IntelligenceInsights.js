@@ -1,4 +1,28 @@
-import React, { useState, useEffect } from 'react';
+import {
+  Insights as InsightsIcon,
+  TrendingUp as TrendingUpIcon,
+  Psychology as PsychologyIcon,
+  Security as SecurityIcon,
+  Business as BusinessIcon,
+  Public as PublicIcon,
+  Computer as TechnologyIcon,
+  Assessment as AssessmentIcon,
+  Visibility as VisibilityIcon,
+  Share as ShareIcon,
+  Download as DownloadIcon,
+  FilterList as FilterIcon,
+  Search as SearchIcon,
+  ExpandMore as ExpandMoreIcon,
+  Star as StarIcon,
+  Flag as FlagIcon,
+  Schedule as ScheduleIcon,
+  Person as PersonIcon,
+  LocationOn as LocationIcon,
+  AutoAwesome as AutoAwesomeIcon,
+  CheckCircle as CheckCircleIcon,
+  Warning as WarningIcon,
+  Error as ErrorIcon,
+} from '@mui/icons-material';
 import {
   Box,
   Typography,
@@ -40,35 +64,12 @@ import {
   TableRow,
   Accordion,
   AccordionSummary,
-  AccordionDetails
+  AccordionDetails,
 } from '@mui/material';
-import {
-  Insights as InsightsIcon,
-  TrendingUp as TrendingUpIcon,
-  Psychology as PsychologyIcon,
-  Security as SecurityIcon,
-  Business as BusinessIcon,
-  Public as PublicIcon,
-  Computer as TechnologyIcon,
-  Assessment as AssessmentIcon,
-  Visibility as VisibilityIcon,
-  Share as ShareIcon,
-  Download as DownloadIcon,
-  FilterList as FilterIcon,
-  Search as SearchIcon,
-  ExpandMore as ExpandMoreIcon,
-  Star as StarIcon,
-  Flag as FlagIcon,
-  Schedule as ScheduleIcon,
-  Person as PersonIcon,
-  LocationOn as LocationIcon,
-  AutoAwesome as AutoAwesomeIcon,
-  CheckCircle as CheckCircleIcon,
-  Warning as WarningIcon,
-  Error as ErrorIcon
-} from '@mui/icons-material';
-import newsSystemService from '../../services/newsSystemService';
+import React, { useState, useEffect } from 'react';
+
 import { useNotifications } from '../../components/Notifications/NotificationSystem';
+import newsSystemService from '../../services/newsSystemService';
 
 const IntelligenceInsights = () => {
   const { showSuccess, showError, showLoading, showInfo } = useNotifications();
@@ -89,7 +90,7 @@ const IntelligenceInsights = () => {
     fetchInsights();
   }, [filterCategory, filterConfidence, sortBy, sortOrder]);
 
-  const fetchInsights = async (isManualRefresh = false) => {
+  const fetchInsights = async(isManualRefresh = false) => {
     try {
       setLoading(true);
       setError(null);
@@ -107,7 +108,7 @@ const IntelligenceInsights = () => {
     } catch (err) {
       console.error('Error fetching insights:', err);
       setError(err.message);
-      
+
       if (isManualRefresh) {
         showError(`Failed to load insights: ${err.message}`, 'Load Error');
       }
@@ -126,7 +127,7 @@ const IntelligenceInsights = () => {
     }
   };
 
-  const handleFilter = async () => {
+  const handleFilter = async() => {
     setButtonLoading(prev => ({ ...prev, filter: true }));
     try {
       await fetchInsights(true);
@@ -142,12 +143,12 @@ const IntelligenceInsights = () => {
 
   const getInsightIcon = (category) => {
     switch (category?.toLowerCase()) {
-      case 'security': return <SecurityIcon />;
-      case 'business': return <BusinessIcon />;
-      case 'politics': return <PublicIcon />;
-      case 'technology': return <TechnologyIcon />;
-      case 'trending': return <TrendingUpIcon />;
-      default: return <InsightsIcon />;
+    case 'security': return <SecurityIcon />;
+    case 'business': return <BusinessIcon />;
+    case 'politics': return <PublicIcon />;
+    case 'technology': return <TechnologyIcon />;
+    case 'trending': return <TrendingUpIcon />;
+    default: return <InsightsIcon />;
     }
   };
 
@@ -172,20 +173,20 @@ const IntelligenceInsights = () => {
   };
 
   const filteredInsights = insights.filter(insight => {
-    const matchesSearch = !searchQuery || 
+    const matchesSearch = !searchQuery ||
       insight.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
       insight.description.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesCategory = !filterCategory || insight.category === filterCategory;
-    const matchesConfidence = !filterConfidence || 
+    const matchesConfidence = !filterConfidence ||
       (filterConfidence === 'high' && insight.confidence >= 0.8) ||
       (filterConfidence === 'medium' && insight.confidence >= 0.6 && insight.confidence < 0.8) ||
       (filterConfidence === 'low' && insight.confidence < 0.6);
-    
+
     return matchesSearch && matchesCategory && matchesConfidence;
   }).sort((a, b) => {
     const aValue = a[sortBy];
     const bValue = b[sortBy];
-    
+
     if (sortOrder === 'asc') {
       return aValue > bValue ? 1 : -1;
     } else {
@@ -334,7 +335,7 @@ const IntelligenceInsights = () => {
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               InputProps={{
-                startAdornment: <SearchIcon sx={{ mr: 1, color: 'text.secondary' }} />
+                startAdornment: <SearchIcon sx={{ mr: 1, color: 'text.secondary' }} />,
               }}
             />
           </Grid>
@@ -445,12 +446,12 @@ const IntelligenceInsights = () => {
                 }
                 action={
                   <Tooltip title="View Details">
-                    <IconButton 
+                    <IconButton
                       size="small"
                       disabled={buttonLoading[`view-${insight.id}`]}
                     >
-                      {buttonLoading[`view-${insight.id}`] ? 
-                        <CircularProgress size={16} /> : 
+                      {buttonLoading[`view-${insight.id}`] ?
+                        <CircularProgress size={16} /> :
                         <VisibilityIcon />
                       }
                     </IconButton>
@@ -461,7 +462,7 @@ const IntelligenceInsights = () => {
                 <Typography variant="body2" color="textSecondary" paragraph>
                   {insight.description}
                 </Typography>
-                
+
                 <Box display="flex" alignItems="center" gap={1} mb={2}>
                   <Typography variant="caption" color="textSecondary">
                     Confidence:
@@ -609,7 +610,7 @@ const IntelligenceInsights = () => {
                 />
                 <Chip
                   icon={<AutoAwesomeIcon />}
-                  label={`AI Generated`}
+                  label={'AI Generated'}
                   variant="outlined"
                 />
               </Box>

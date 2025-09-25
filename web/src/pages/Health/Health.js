@@ -1,23 +1,23 @@
-import React from 'react';
-import { Box, Typography, Paper, Chip, Grid, Card, CardContent } from '@mui/material';
 import { HealthAndSafety as HealthIcon, CheckCircle as CheckCircleIcon, Error as ErrorIcon } from '@mui/icons-material';
+import { Box, Typography, Paper, Chip, Grid, Card, CardContent } from '@mui/material';
+import React from 'react';
 
 const Health = ({ systemHealth }) => {
   const getStatusIcon = (status) => {
     switch (status) {
-      case 'healthy':
-        return <CheckCircleIcon color="success" />;
-      default:
-        return <ErrorIcon color="error" />;
+    case 'healthy':
+      return <CheckCircleIcon color="success" />;
+    default:
+      return <ErrorIcon color="error" />;
     }
   };
 
   const getStatusColor = (status) => {
     switch (status) {
-      case 'healthy':
-        return 'success';
-      default:
-        return 'error';
+    case 'healthy':
+      return 'success';
+    default:
+      return 'error';
     }
   };
 
@@ -26,7 +26,7 @@ const Health = ({ systemHealth }) => {
       <Typography variant="h4" component="h1" sx={{ mb: 3 }}>
         System Health
       </Typography>
-      
+
       <Grid container spacing={3}>
         <Grid item xs={12} md={6}>
           <Card>
@@ -54,7 +54,7 @@ const Health = ({ systemHealth }) => {
             </CardContent>
           </Card>
         </Grid>
-        
+
         <Grid item xs={12} md={6}>
           <Card>
             <CardContent>

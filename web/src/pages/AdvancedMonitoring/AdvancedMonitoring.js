@@ -1,4 +1,22 @@
-import React, { useState, useEffect } from 'react';
+import {
+  Assessment,
+  Memory,
+  Storage,
+  Speed,
+  NetworkCheck,
+  Security,
+  Warning,
+  CheckCircle,
+  Error,
+  Info,
+  Refresh,
+  Settings,
+  Download,
+  Timeline,
+  TrendingUp,
+  TrendingDown,
+  Monitor,
+} from '@mui/icons-material';
 import {
   Box,
   Typography,
@@ -36,30 +54,13 @@ import {
   TableCell,
   TableContainer,
   TableHead,
-  TableRow
+  TableRow,
 } from '@mui/material';
-import {
-  Assessment,
-  Memory,
-  Storage,
-  Speed,
-  NetworkCheck,
-  Security,
-  Warning,
-  CheckCircle,
-  Error,
-  Info,
-  Refresh,
-  Settings,
-  Download,
-  Timeline,
-  TrendingUp,
-  TrendingDown,
-  Monitor
-} from '@mui/icons-material';
+import React, { useState, useEffect } from 'react';
+
 import newsSystemService from '../../services/newsSystemService';
 
-function TabPanel({ children, value, index, ...other }) {
+const TabPanel = ({ children, value, index, ...other }) => {
   return (
     <div
       role="tabpanel"
@@ -75,13 +76,13 @@ function TabPanel({ children, value, index, ...other }) {
       )}
     </div>
   );
-}
+};
 
 const AdvancedMonitoring = () => {
   const [activeTab, setActiveTab] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  
+
   // System Metrics State
   const [systemMetrics, setSystemMetrics] = useState({
     cpu_usage: 0,
@@ -89,9 +90,9 @@ const AdvancedMonitoring = () => {
     disk_usage: 0,
     network_io: 0,
     database_connections: 0,
-    active_processes: 0
+    active_processes: 0,
   });
-  
+
   // Performance Metrics State
   const [performanceMetrics, setPerformanceMetrics] = useState({
     api_response_time: 0,
@@ -99,27 +100,27 @@ const AdvancedMonitoring = () => {
     ml_processing_time: 0,
     search_response_time: 0,
     throughput: 0,
-    error_rate: 0
+    error_rate: 0,
   });
-  
+
   // Security Metrics State
   const [securityMetrics, setSecurityMetrics] = useState({
     failed_logins: 0,
     suspicious_requests: 0,
     blocked_ips: 0,
     ssl_cert_expiry: null,
-    last_security_scan: null
+    last_security_scan: null,
   });
-  
+
   // Alert Configuration State
   const [alertConfig, setAlertConfig] = useState({
     cpu_threshold: 80,
     memory_threshold: 85,
     disk_threshold: 90,
     response_time_threshold: 5000,
-    error_rate_threshold: 5
+    error_rate_threshold: 5,
   });
-  
+
   // Logs State
   const [systemLogs, setSystemLogs] = useState([]);
   const [logLevel, setLogLevel] = useState('all');
@@ -133,7 +134,7 @@ const AdvancedMonitoring = () => {
     return () => clearInterval(interval);
   }, []);
 
-  const loadMetrics = async () => {
+  const loadMetrics = async() => {
     setLoading(true);
     try {
       // Load system metrics
@@ -141,22 +142,22 @@ const AdvancedMonitoring = () => {
       if (systemResponse.success) {
         setSystemMetrics(systemResponse.data);
       }
-      
+
       // Load performance metrics
       const performanceResponse = await newsSystemService.getPrometheusMetrics();
       if (performanceResponse.success) {
         setPerformanceMetrics(performanceResponse.data);
       }
-      
+
       // Load security metrics
       setSecurityMetrics({
         failed_logins: 0,
         suspicious_requests: 2,
         blocked_ips: 1,
         ssl_cert_expiry: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days from now
-        last_security_scan: new Date(Date.now() - 2 * 60 * 60 * 1000) // 2 hours ago
+        last_security_scan: new Date(Date.now() - 2 * 60 * 60 * 1000), // 2 hours ago
       });
-      
+
       // Load system logs
       setSystemLogs([
         {
@@ -165,7 +166,7 @@ const AdvancedMonitoring = () => {
           level: 'info',
           component: 'API',
           message: 'Request processed successfully',
-          details: { endpoint: '/api/articles', response_time: 245 }
+          details: { endpoint: '/api/articles', response_time: 245 },
         },
         {
           id: 2,
@@ -173,7 +174,7 @@ const AdvancedMonitoring = () => {
           level: 'warning',
           component: 'Database',
           message: 'High query execution time detected',
-          details: { query_time: 3500, query: 'SELECT * FROM articles' }
+          details: { query_time: 3500, query: 'SELECT * FROM articles' },
         },
         {
           id: 3,
@@ -181,10 +182,10 @@ const AdvancedMonitoring = () => {
           level: 'error',
           component: 'ML Processing',
           message: 'Model inference failed',
-          details: { model: 'summarization', error: 'CUDA out of memory' }
-        }
+          details: { model: 'summarization', error: 'CUDA out of memory' },
+        },
       ]);
-      
+
     } catch (err) {
       setError('Failed to load monitoring data: ' + err.message);
     } finally {
@@ -214,24 +215,24 @@ const AdvancedMonitoring = () => {
 
   const getLogLevelColor = (level) => {
     switch (level) {
-      case 'error': return 'error';
-      case 'warning': return 'warning';
-      case 'info': return 'info';
-      default: return 'default';
+    case 'error': return 'error';
+    case 'warning': return 'warning';
+    case 'info': return 'info';
+    default: return 'default';
     }
   };
 
   const getLogLevelIcon = (level) => {
     switch (level) {
-      case 'error': return <Error />;
-      case 'warning': return <Warning />;
-      case 'info': return <Info />;
-      default: return <Info />;
+    case 'error': return <Error />;
+    case 'warning': return <Warning />;
+    case 'info': return <Info />;
+    default: return <Info />;
     }
   };
 
-  const filteredLogs = logLevel === 'all' 
-    ? systemLogs 
+  const filteredLogs = logLevel === 'all'
+    ? systemLogs
     : systemLogs.filter(log => log.level === logLevel);
 
   if (loading) {
@@ -280,9 +281,9 @@ const AdvancedMonitoring = () => {
                     <Typography>CPU Usage</Typography>
                     <Typography>{systemMetrics.cpu_usage}%</Typography>
                   </Box>
-                  <LinearProgress 
-                    variant="determinate" 
-                    value={systemMetrics.cpu_usage} 
+                  <LinearProgress
+                    variant="determinate"
+                    value={systemMetrics.cpu_usage}
                     color={getMetricColor(systemMetrics.cpu_usage, alertConfig.cpu_threshold)}
                   />
                 </Box>
@@ -291,9 +292,9 @@ const AdvancedMonitoring = () => {
                     <Typography>Memory Usage</Typography>
                     <Typography>{systemMetrics.memory_usage}%</Typography>
                   </Box>
-                  <LinearProgress 
-                    variant="determinate" 
-                    value={systemMetrics.memory_usage} 
+                  <LinearProgress
+                    variant="determinate"
+                    value={systemMetrics.memory_usage}
                     color={getMetricColor(systemMetrics.memory_usage, alertConfig.memory_threshold)}
                   />
                 </Box>
@@ -302,16 +303,16 @@ const AdvancedMonitoring = () => {
                     <Typography>Disk Usage</Typography>
                     <Typography>{systemMetrics.disk_usage}%</Typography>
                   </Box>
-                  <LinearProgress 
-                    variant="determinate" 
-                    value={systemMetrics.disk_usage} 
+                  <LinearProgress
+                    variant="determinate"
+                    value={systemMetrics.disk_usage}
                     color={getMetricColor(systemMetrics.disk_usage, alertConfig.disk_threshold)}
                   />
                 </Box>
               </CardContent>
             </Card>
           </Grid>
-          
+
           <Grid item xs={12} md={6}>
             <Card>
               <CardContent>
@@ -367,9 +368,9 @@ const AdvancedMonitoring = () => {
                     <Typography>Response Time</Typography>
                     <Typography>{performanceMetrics.api_response_time}ms</Typography>
                   </Box>
-                  <LinearProgress 
-                    variant="determinate" 
-                    value={(performanceMetrics.api_response_time / alertConfig.response_time_threshold) * 100} 
+                  <LinearProgress
+                    variant="determinate"
+                    value={(performanceMetrics.api_response_time / alertConfig.response_time_threshold) * 100}
                     color={getMetricColor(performanceMetrics.api_response_time, alertConfig.response_time_threshold)}
                   />
                 </Box>
@@ -390,7 +391,7 @@ const AdvancedMonitoring = () => {
               </CardContent>
             </Card>
           </Grid>
-          
+
           <Grid item xs={12} md={6}>
             <Card>
               <CardContent>
@@ -448,8 +449,8 @@ const AdvancedMonitoring = () => {
                       secondary="Last 24 hours"
                     />
                     <ListItemSecondaryAction>
-                      <Chip 
-                        label={securityMetrics.failed_logins} 
+                      <Chip
+                        label={securityMetrics.failed_logins}
                         color={securityMetrics.failed_logins > 0 ? 'error' : 'success'}
                       />
                     </ListItemSecondaryAction>
@@ -460,8 +461,8 @@ const AdvancedMonitoring = () => {
                       secondary="Blocked automatically"
                     />
                     <ListItemSecondaryAction>
-                      <Chip 
-                        label={securityMetrics.suspicious_requests} 
+                      <Chip
+                        label={securityMetrics.suspicious_requests}
                         color={securityMetrics.suspicious_requests > 0 ? 'warning' : 'success'}
                       />
                     </ListItemSecondaryAction>
@@ -472,8 +473,8 @@ const AdvancedMonitoring = () => {
                       secondary="Currently blocked"
                     />
                     <ListItemSecondaryAction>
-                      <Chip 
-                        label={securityMetrics.blocked_ips} 
+                      <Chip
+                        label={securityMetrics.blocked_ips}
                         color={securityMetrics.blocked_ips > 0 ? 'error' : 'success'}
                       />
                     </ListItemSecondaryAction>
@@ -482,7 +483,7 @@ const AdvancedMonitoring = () => {
               </CardContent>
             </Card>
           </Grid>
-          
+
           <Grid item xs={12} md={6}>
             <Card>
               <CardContent>
@@ -494,14 +495,14 @@ const AdvancedMonitoring = () => {
                     SSL Certificate Expiry
                   </Typography>
                   <Typography variant="h6">
-                    {securityMetrics.ssl_cert_expiry ? 
-                      new Date(securityMetrics.ssl_cert_expiry).toLocaleDateString() : 
+                    {securityMetrics.ssl_cert_expiry ?
+                      new Date(securityMetrics.ssl_cert_expiry).toLocaleDateString() :
                       'Unknown'
                     }
                   </Typography>
-                  <Chip 
-                    label="Valid" 
-                    color="success" 
+                  <Chip
+                    label="Valid"
+                    color="success"
                     size="small"
                     sx={{ mt: 1 }}
                   />
@@ -511,8 +512,8 @@ const AdvancedMonitoring = () => {
                     Last Security Scan
                   </Typography>
                   <Typography variant="h6">
-                    {securityMetrics.last_security_scan ? 
-                      new Date(securityMetrics.last_security_scan).toLocaleString() : 
+                    {securityMetrics.last_security_scan ?
+                      new Date(securityMetrics.last_security_scan).toLocaleString() :
                       'Never'
                     }
                   </Typography>
@@ -573,8 +574,8 @@ const AdvancedMonitoring = () => {
                         {new Date(log.timestamp).toLocaleString()}
                       </TableCell>
                       <TableCell>
-                        <Chip 
-                          label={log.level} 
+                        <Chip
+                          label={log.level}
                           color={getLogLevelColor(log.level)}
                           size="small"
                           icon={getLogLevelIcon(log.level)}
@@ -611,28 +612,28 @@ const AdvancedMonitoring = () => {
                     label="CPU Threshold (%)"
                     type="number"
                     value={alertConfig.cpu_threshold}
-                    onChange={(e) => setAlertConfig({...alertConfig, cpu_threshold: parseInt(e.target.value)})}
+                    onChange={(e) => setAlertConfig({ ...alertConfig, cpu_threshold: parseInt(e.target.value) })}
                     size="small"
                   />
                   <TextField
                     label="Memory Threshold (%)"
                     type="number"
                     value={alertConfig.memory_threshold}
-                    onChange={(e) => setAlertConfig({...alertConfig, memory_threshold: parseInt(e.target.value)})}
+                    onChange={(e) => setAlertConfig({ ...alertConfig, memory_threshold: parseInt(e.target.value) })}
                     size="small"
                   />
                   <TextField
                     label="Disk Threshold (%)"
                     type="number"
                     value={alertConfig.disk_threshold}
-                    onChange={(e) => setAlertConfig({...alertConfig, disk_threshold: parseInt(e.target.value)})}
+                    onChange={(e) => setAlertConfig({ ...alertConfig, disk_threshold: parseInt(e.target.value) })}
                     size="small"
                   />
                   <TextField
                     label="Response Time Threshold (ms)"
                     type="number"
                     value={alertConfig.response_time_threshold}
-                    onChange={(e) => setAlertConfig({...alertConfig, response_time_threshold: parseInt(e.target.value)})}
+                    onChange={(e) => setAlertConfig({ ...alertConfig, response_time_threshold: parseInt(e.target.value) })}
                     size="small"
                   />
                   <Button variant="contained" startIcon={<Settings />}>
@@ -642,7 +643,7 @@ const AdvancedMonitoring = () => {
               </CardContent>
             </Card>
           </Grid>
-          
+
           <Grid item xs={12} md={6}>
             <Card>
               <CardContent>

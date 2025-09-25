@@ -1,4 +1,9 @@
-import React, { useState } from 'react';
+import {
+  Search as SearchIcon,
+  Article as ArticleIcon,
+  GroupWork as ClusterIcon,
+  Person as PersonIcon,
+} from '@mui/icons-material';
 import {
   Box,
   Typography,
@@ -10,12 +15,8 @@ import {
   Chip,
   LinearProgress,
 } from '@mui/material';
-import {
-  Search as SearchIcon,
-  Article as ArticleIcon,
-  GroupWork as ClusterIcon,
-  Person as PersonIcon,
-} from '@mui/icons-material';
+import React, { useState } from 'react';
+
 import { useNewsSystem } from '../../contexts/NewsSystemContext';
 
 export default function Search() {
@@ -76,7 +77,7 @@ export default function Search() {
           <Typography variant="h6" gutterBottom>
             Search Results for: "{query}"
           </Typography>
-          
+
           <Grid container spacing={3}>
             {search.results.map((result, index) => (
               <Grid item xs={12} key={index}>

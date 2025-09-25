@@ -1,4 +1,12 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import {
+  Search as SearchIcon,
+  FilterList as FilterIcon,
+  Article as ArticleIcon,
+  Source as SourceIcon,
+  Schedule as ScheduleIcon,
+  Refresh as RefreshIcon,
+  ReadMore as ReadMoreIcon,
+} from '@mui/icons-material';
 import {
   Box,
   Typography,
@@ -17,16 +25,9 @@ import {
   CircularProgress,
   Paper,
 } from '@mui/material';
-import {
-  Search as SearchIcon,
-  FilterList as FilterIcon,
-  Article as ArticleIcon,
-  Source as SourceIcon,
-  Schedule as ScheduleIcon,
-  Refresh as RefreshIcon,
-  ReadMore as ReadMoreIcon,
-} from '@mui/icons-material';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
+
 import { apiService } from '../../services/apiService';
 
 const Articles = () => {
@@ -44,7 +45,7 @@ const Articles = () => {
   const navigate = useNavigate();
   // const { showSuccess, showError, showLoading } = useNotifications();
 
-  const fetchArticles = useCallback(async (isManualRefresh = false) => {
+  const fetchArticles = useCallback(async(isManualRefresh = false) => {
     try {
       setLoading(true);
 
@@ -55,7 +56,7 @@ const Articles = () => {
         category: categoryFilter,
         source: sourceFilter,
         sort: sortBy,
-        sort_order: 'desc'
+        sort_order: 'desc',
       };
 
       // Add cache-busting parameter for manual refresh
@@ -64,7 +65,7 @@ const Articles = () => {
       }
 
       const response = await apiService.getArticles(params);
-      
+
       if (response.success) {
         setArticles(response.data?.articles || []);
         // Calculate total pages correctly
@@ -77,7 +78,7 @@ const Articles = () => {
       }
     } catch (error) {
       console.error('Error fetching articles:', error);
-      
+
       // Set empty state instead of mock data
       setArticles([]);
       setTotalPages(1);
@@ -87,14 +88,14 @@ const Articles = () => {
     }
   }, [page, searchTerm, categoryFilter, sourceFilter, sortBy]);
 
-  const fetchSourcesAndCategories = useCallback(async () => {
+  const fetchSourcesAndCategories = useCallback(async() => {
     try {
       // Fetch sources and categories for filters
       const [sourcesResponse, categoriesResponse] = await Promise.all([
         apiService.getSources(),
-        apiService.getCategories()
+        apiService.getCategories(),
       ]);
-      
+
       if (sourcesResponse.success) {
         setSources(sourcesResponse.data || []);
       }
@@ -152,7 +153,7 @@ const Articles = () => {
       month: 'short',
       day: 'numeric',
       hour: '2-digit',
-      minute: '2-digit'
+      minute: '2-digit',
     });
   };
 
@@ -221,7 +222,7 @@ const Articles = () => {
               onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
             />
           </Grid>
-          
+
           <Grid item xs={12} md={2}>
             <FormControl fullWidth>
               <InputLabel>Category</InputLabel>
@@ -239,7 +240,7 @@ const Articles = () => {
               </Select>
             </FormControl>
           </Grid>
-          
+
           <Grid item xs={12} md={2}>
             <FormControl fullWidth>
               <InputLabel>Source</InputLabel>
@@ -257,7 +258,7 @@ const Articles = () => {
               </Select>
             </FormControl>
           </Grid>
-          
+
           <Grid item xs={12} md={2}>
             <FormControl fullWidth>
               <InputLabel>Sort By</InputLabel>
@@ -274,7 +275,7 @@ const Articles = () => {
               </Select>
             </FormControl>
           </Grid>
-          
+
           <Grid item xs={12} md={2}>
             <Box sx={{ display: 'flex', gap: 1 }}>
               <Button
@@ -301,30 +302,30 @@ const Articles = () => {
       <Grid container spacing={3}>
         {articles.map((article) => (
           <Grid item xs={12} md={6} lg={4} key={article.id}>
-            <Card 
-              sx={{ 
+            <Card
+              sx={{
                 height: '100%',
                 cursor: 'pointer',
-                '&:hover': { 
+                '&:hover': {
                   boxShadow: 4,
                   transform: 'translateY(-2px)',
-                  transition: 'all 0.2s ease-in-out'
+                  transition: 'all 0.2s ease-in-out',
                 },
                 display: 'flex',
-                flexDirection: 'column'
+                flexDirection: 'column',
               }}
               onClick={() => handleArticleClick(article.id)}
             >
               <CardContent sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column' }}>
                 {/* Header */}
                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 2 }}>
-                  <Chip 
-                    label={article.category} 
-                    size="small" 
+                  <Chip
+                    label={article.category}
+                    size="small"
                     color="primary"
                     variant="outlined"
                   />
-                  <Chip 
+                  <Chip
                     label={getSentimentLabel(article.sentiment_score)}
                     size="small"
                     color={getSentimentColor(article.sentiment_score)}
@@ -332,33 +333,33 @@ const Articles = () => {
                 </Box>
 
                 {/* Title */}
-                <Typography 
-                  variant="h6" 
-                  component="h3" 
+                <Typography
+                  variant="h6"
+                  component="h3"
                   gutterBottom
-                  sx={{ 
+                  sx={{
                     fontWeight: 600,
                     lineHeight: 1.3,
                     display: '-webkit-box',
                     WebkitLineClamp: 2,
                     WebkitBoxOrient: 'vertical',
-                    overflow: 'hidden'
+                    overflow: 'hidden',
                   }}
                 >
                   {article.title}
                 </Typography>
 
                 {/* Summary */}
-                <Typography 
-                  variant="body2" 
-                  color="text.secondary" 
-                  sx={{ 
+                <Typography
+                  variant="body2"
+                  color="text.secondary"
+                  sx={{
                     mb: 2,
                     flexGrow: 1,
                     display: '-webkit-box',
                     WebkitLineClamp: 3,
                     WebkitBoxOrient: 'vertical',
-                    overflow: 'hidden'
+                    overflow: 'hidden',
                   }}
                 >
                   {article.summary || article.content?.substring(0, 200) + '...'}
@@ -385,18 +386,18 @@ const Articles = () => {
                   <Typography variant="caption" color="text.secondary" sx={{ mr: 1 }}>
                     Quality:
                   </Typography>
-                  <Box sx={{ 
-                    width: '100%', 
-                    height: 4, 
-                    backgroundColor: 'grey.300', 
+                  <Box sx={{
+                    width: '100%',
+                    height: 4,
+                    backgroundColor: 'grey.300',
                     borderRadius: 2,
-                    overflow: 'hidden'
+                    overflow: 'hidden',
                   }}>
-                    <Box sx={{ 
-                      width: `${(article.quality_score || 0) * 100}%`, 
-                      height: '100%', 
-                      backgroundColor: article.quality_score > 0.8 ? 'success.main' : 
-                                     article.quality_score > 0.6 ? 'warning.main' : 'error.main'
+                    <Box sx={{
+                      width: `${(article.quality_score || 0) * 100}%`,
+                      height: '100%',
+                      backgroundColor: article.quality_score > 0.8 ? 'success.main' :
+                        article.quality_score > 0.6 ? 'warning.main' : 'error.main',
                     }} />
                   </Box>
                   <Typography variant="caption" color="text.secondary" sx={{ ml: 1 }}>
@@ -408,18 +409,18 @@ const Articles = () => {
                 {article.topics_extracted && article.topics_extracted.length > 0 && (
                   <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mt: 1, mb: 2 }}>
                     {(article.topics_extracted || []).slice(0, 3).map((topic, index) => (
-                      <Chip 
+                      <Chip
                         key={index}
-                        label={topic} 
-                        size="small" 
+                        label={topic}
+                        size="small"
                         variant="outlined"
                         sx={{ fontSize: '0.7rem' }}
                       />
                     ))}
                     {article.topics_extracted.length > 3 && (
-                      <Chip 
-                        label={`+${article.topics_extracted.length - 3}`} 
-                        size="small" 
+                      <Chip
+                        label={`+${article.topics_extracted.length - 3}`}
+                        size="small"
                         variant="outlined"
                         sx={{ fontSize: '0.7rem' }}
                       />
@@ -436,10 +437,10 @@ const Articles = () => {
                     e.stopPropagation(); // Prevent card click
                     handleArticleClick(article.id);
                   }}
-                  sx={{ 
+                  sx={{
                     mt: 'auto',
                     textTransform: 'none',
-                    fontWeight: 500
+                    fontWeight: 500,
                   }}
                 >
                   Read Full Article

@@ -1,4 +1,19 @@
-import React, { useState, useEffect } from 'react';
+import {
+  Search as SearchIcon,
+  FilterList as FilterIcon,
+  Article as ArticleIcon,
+  GroupWork as ClusterIcon,
+  Person as PersonIcon,
+  Business as BusinessIcon,
+  LocationOn as LocationIcon,
+  TrendingUp as TrendingUpIcon,
+  AutoAwesome,
+  Build as BuildIcon,
+  Edit as EditIcon,
+  Delete as DeleteIcon,
+  Visibility as ViewIcon,
+  Refresh as RefreshIcon,
+} from '@mui/icons-material';
 import {
   Box,
   Typography,
@@ -25,24 +40,10 @@ import {
   Divider,
   Badge,
   Tooltip,
-  InputAdornment
+  InputAdornment,
 } from '@mui/material';
-import {
-  Search as SearchIcon,
-  FilterList as FilterIcon,
-  Article as ArticleIcon,
-  GroupWork as ClusterIcon,
-  Person as PersonIcon,
-  Business as BusinessIcon,
-  LocationOn as LocationIcon,
-  TrendingUp as TrendingUpIcon,
-  AutoAwesome,
-  Build as BuildIcon,
-  Edit as EditIcon,
-  Delete as DeleteIcon,
-  Visibility as ViewIcon,
-  Refresh as RefreshIcon
-} from '@mui/icons-material';
+import React, { useState, useEffect } from 'react';
+
 import ArticleViewer from '../../components/ArticleViewer/ArticleViewer';
 import newsSystemService from '../../services/newsSystemService';
 
@@ -64,13 +65,13 @@ const UnifiedArticlesAnalysis = () => {
     loadData();
   }, []);
 
-  const loadData = async () => {
+  const loadData = async() => {
     setLoading(true);
     try {
       const [articlesRes, clustersRes, entitiesRes] = await Promise.all([
         newsSystemService.getArticles({ limit: 100 }),
         newsSystemService.getClusters(),
-        newsSystemService.getEntities()
+        newsSystemService.getEntities(),
       ]);
 
       if (articlesRes.success) {
@@ -107,7 +108,7 @@ const UnifiedArticlesAnalysis = () => {
       filtered = filtered.filter(article =>
         article.title?.toLowerCase().includes(query) ||
         article.content?.toLowerCase().includes(query) ||
-        article.summary?.toLowerCase().includes(query)
+        article.summary?.toLowerCase().includes(query),
       );
     }
 
@@ -122,14 +123,14 @@ const UnifiedArticlesAnalysis = () => {
     // Sort articles
     filtered.sort((a, b) => {
       switch (sortBy) {
-        case 'date':
-          return new Date(b.publishedDate) - new Date(a.publishedDate);
-        case 'title':
-          return a.title?.localeCompare(b.title);
-        case 'source':
-          return a.source?.localeCompare(b.source);
-        default:
-          return 0;
+      case 'date':
+        return new Date(b.publishedDate) - new Date(a.publishedDate);
+      case 'title':
+        return a.title?.localeCompare(b.title);
+      case 'source':
+        return a.source?.localeCompare(b.source);
+      default:
+        return 0;
       }
     });
 
@@ -301,12 +302,12 @@ const UnifiedArticlesAnalysis = () => {
               <List>
                 {filteredArticles.map((article, index) => (
                   <React.Fragment key={article.id || index}>
-                    <ListItem 
-                      sx={{ 
+                    <ListItem
+                      sx={{
                         '&:hover': { backgroundColor: 'action.hover' },
                         cursor: 'pointer',
                         borderRadius: 1,
-                        mb: 1
+                        mb: 1,
                       }}
                       onClick={() => handleArticleClick(article)}
                     >
@@ -341,8 +342,8 @@ const UnifiedArticlesAnalysis = () => {
                               <Box display="flex" gap={1}>
                                 {article.url && article.url !== '#' && (
                                   <Tooltip title="Open Original Article">
-                                    <IconButton 
-                                      size="small" 
+                                    <IconButton
+                                      size="small"
                                       onClick={(e) => {
                                         e.stopPropagation();
                                         window.open(article.url, '_blank');
@@ -353,8 +354,8 @@ const UnifiedArticlesAnalysis = () => {
                                   </Tooltip>
                                 )}
                                 <Tooltip title="View Full Analysis">
-                                  <IconButton 
-                                    size="small" 
+                                  <IconButton
+                                    size="small"
                                     onClick={(e) => {
                                       e.stopPropagation();
                                       handleArticleClick(article);
@@ -382,14 +383,14 @@ const UnifiedArticlesAnalysis = () => {
 
   const renderDailyDigestTab = () => {
     const today = new Date().toISOString().split('T')[0];
-    const todayArticles = articles.filter(article => 
-      article.publishedDate && article.publishedDate.startsWith(today)
+    const todayArticles = articles.filter(article =>
+      article.publishedDate && article.publishedDate.startsWith(today),
     );
-    const processedToday = todayArticles.filter(article => 
-      article.processingStatus === 'completed' || article.processingStatus === 'processed'
+    const processedToday = todayArticles.filter(article =>
+      article.processingStatus === 'completed' || article.processingStatus === 'processed',
     );
-    const pendingToday = todayArticles.filter(article => 
-      article.processingStatus === 'pending'
+    const pendingToday = todayArticles.filter(article =>
+      article.processingStatus === 'pending',
     );
 
     return (
@@ -497,18 +498,18 @@ const UnifiedArticlesAnalysis = () => {
                         {cluster.description || 'No description available'}
                       </div>
                       <div style={{ marginTop: 'var(--spacing-md)' }}>
-                        <Chip 
-                          label={`${cluster.article_count || 0} articles`} 
-                          size="small" 
-                          color="primary" 
-                          variant="outlined" 
+                        <Chip
+                          label={`${cluster.article_count || 0} articles`}
+                          size="small"
+                          color="primary"
+                          variant="outlined"
                         />
                         {cluster.keywords && cluster.keywords.slice(0, 3).map((keyword, idx) => (
-                          <Chip 
+                          <Chip
                             key={idx}
-                            label={keyword} 
-                            size="small" 
-                            variant="outlined" 
+                            label={keyword}
+                            size="small"
+                            variant="outlined"
                             sx={{ ml: 1 }}
                           />
                         ))}
@@ -594,13 +595,13 @@ const UnifiedArticlesAnalysis = () => {
                             <Typography variant="subtitle1" fontWeight="medium">
                               {entity.name}
                             </Typography>
-                            <Chip 
-                              label={entity.type} 
-                              size="small" 
+                            <Chip
+                              label={entity.type}
+                              size="small"
                               color={
                                 entity.type === 'PERSON' ? 'primary' :
-                                entity.type === 'ORG' ? 'secondary' :
-                                entity.type === 'GPE' ? 'success' : 'default'
+                                  entity.type === 'ORG' ? 'secondary' :
+                                    entity.type === 'GPE' ? 'success' : 'default'
                               }
                               variant="outlined"
                             />
@@ -672,8 +673,8 @@ const UnifiedArticlesAnalysis = () => {
       {activeTab === 3 && renderEntitiesTab()}
 
       {/* Article Dialog */}
-      <Dialog 
-        open={showArticleDialog} 
+      <Dialog
+        open={showArticleDialog}
         onClose={handleCloseDialog}
         maxWidth="md"
         fullWidth
@@ -683,7 +684,7 @@ const UnifiedArticlesAnalysis = () => {
         </DialogTitle>
         <DialogContent>
           {selectedArticle && (
-            <ArticleViewer 
+            <ArticleViewer
               article={selectedArticle}
               onClose={handleCloseDialog}
             />

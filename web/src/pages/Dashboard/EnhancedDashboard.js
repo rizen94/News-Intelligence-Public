@@ -1,4 +1,23 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import {
+  Dashboard as DashboardIcon,
+  Article as ArticleIcon,
+  RssFeed as RssFeedIcon,
+  Timeline as TimelineIcon,
+  Refresh as RefreshIcon,
+  Warning as WarningIcon,
+  CheckCircle as CheckCircleIcon,
+  Schedule as ScheduleIcon,
+  Speed as SpeedIcon,
+  Memory as MemoryIcon,
+  Storage as StorageIcon,
+  NetworkCheck as NetworkIcon,
+  Psychology as PsychologyIcon,
+  Analytics as AnalyticsIcon,
+  AutoAwesome as AutoAwesomeIcon,
+  PlayArrow as PlayArrowIcon,
+  Stop as StopIcon,
+  Queue as QueueIcon,
+} from '@mui/icons-material';
 import {
   Box,
   Typography,
@@ -23,26 +42,8 @@ import {
   DialogContent,
   DialogActions,
 } from '@mui/material';
-import {
-  Dashboard as DashboardIcon,
-  Article as ArticleIcon,
-  RssFeed as RssFeedIcon,
-  Timeline as TimelineIcon,
-  Refresh as RefreshIcon,
-  Warning as WarningIcon,
-  CheckCircle as CheckCircleIcon,
-  Schedule as ScheduleIcon,
-  Speed as SpeedIcon,
-  Memory as MemoryIcon,
-  Storage as StorageIcon,
-  NetworkCheck as NetworkIcon,
-  Psychology as PsychologyIcon,
-  Analytics as AnalyticsIcon,
-  AutoAwesome as AutoAwesomeIcon,
-  PlayArrow as PlayArrowIcon,
-  Stop as StopIcon,
-  Queue as QueueIcon
-} from '@mui/icons-material';
+import React, { useState, useEffect, useCallback } from 'react';
+
 import { apiService } from '../../services/apiService';
 
 const EnhancedDashboard = () => {
@@ -50,35 +51,35 @@ const EnhancedDashboard = () => {
   const [systemStatus, setSystemStatus] = useState(null);
   const [error, setError] = useState(null);
   const [lastUpdate, setLastUpdate] = useState(null);
-  
+
   // Process status states
   const [pipelineRunning, setPipelineRunning] = useState(false);
   const [rssRunning, setRssRunning] = useState(false);
   const [analysisRunning, setAnalysisRunning] = useState(false);
   const [masterRunning, setMasterRunning] = useState(false);
-  
+
   // ETA states
   const [displayPipelineETA, setDisplayPipelineETA] = useState(null);
   const [displayRssETA, setDisplayRssETA] = useState(null);
   const [displayAnalysisETA, setDisplayAnalysisETA] = useState(null);
-  
+
   // Dialog states
   const [confirmDialogOpen, setConfirmDialogOpen] = useState(false);
   const [confirmAction, setConfirmAction] = useState(null);
 
-  const loadSystemData = useCallback(async () => {
+  const loadSystemData = useCallback(async() => {
     try {
       setLoading(true);
       setError(null);
-      
+
       // Load dashboard data from the proper endpoint
       const [monitoringData, healthData, pipelineStatus, pipelinePerformance] = await Promise.all([
         apiService.getMonitoringDashboard(),
         apiService.getHealth(),
         apiService.getPipelineStatus(),
-        apiService.getPipelinePerformance()
+        apiService.getPipelinePerformance(),
       ]);
-      
+
       // Combine the data into system status
       const status = {
         overall: healthData.data?.status || 'unknown',
@@ -88,35 +89,35 @@ const EnhancedDashboard = () => {
             total_articles: monitoringData?.data?.database_metrics?.total_articles || 0,
             articles_today: monitoringData?.data?.database_metrics?.recent_articles || 0,
             articles_this_week: 0, // TODO: Add weekly calculation
-            top_sources: []
-          }
+            top_sources: [],
+          },
         },
         rssStats: {
           data: {
             total_feeds: 0, // TODO: Add RSS feed count
             active_feeds: 0,
-            feeds_with_errors: 0
-          }
+            feeds_with_errors: 0,
+          },
         },
         storylineStats: {
           data: {
             total_storylines: 0, // TODO: Add when storylines endpoint is fixed
-            active_storylines: 0
-          }
+            active_storylines: 0,
+          },
         },
         pipelineStatus: {
           data: {
             status: pipelineStatus.active_traces_count > 0 ? 'running' : 'idle',
             success_rate: pipelinePerformance.success_rate || 0,
             total_traces: pipelinePerformance.total_traces || 0,
-            active_traces: pipelineStatus.active_traces_count || 0
-          }
+            active_traces: pipelineStatus.active_traces_count || 0,
+          },
         },
         recentArticles: [],
         analytics: {},
-        systemMetrics: monitoringData?.data?.system_metrics || {}
+        systemMetrics: monitoringData?.data?.system_metrics || {},
       };
-      
+
       setSystemStatus(status);
       setLastUpdate(new Date());
     } catch (err) {
@@ -171,14 +172,14 @@ const EnhancedDashboard = () => {
     localStorage.setItem(`${process}Status`, JSON.stringify(status));
   };
 
-  const executeTriggerPipeline = async () => {
+  const executeTriggerPipeline = async() => {
     try {
       setPipelineRunning(true);
       setDisplayPipelineETA('Processing...');
       saveProcessStatus('pipeline', true, 'Processing...');
-      
+
       await apiService.triggerPipeline();
-      
+
       // Simulate processing time
       setTimeout(() => {
         setPipelineRunning(false);
@@ -194,14 +195,14 @@ const EnhancedDashboard = () => {
     }
   };
 
-  const executeUpdateRSSFeeds = async () => {
+  const executeUpdateRSSFeeds = async() => {
     try {
       setRssRunning(true);
       setDisplayRssETA('Updating...');
       saveProcessStatus('rss', true, 'Updating...');
-      
+
       await apiService.updateRSSFeeds();
-      
+
       // Simulate processing time
       setTimeout(() => {
         setRssRunning(false);
@@ -217,14 +218,14 @@ const EnhancedDashboard = () => {
     }
   };
 
-  const executeRunAIAnalysis = async () => {
+  const executeRunAIAnalysis = async() => {
     try {
       setAnalysisRunning(true);
       setDisplayAnalysisETA('Analyzing...');
       saveProcessStatus('analysis', true, 'Analyzing...');
-      
+
       await apiService.runAIAnalysis();
-      
+
       // Simulate processing time
       setTimeout(() => {
         setAnalysisRunning(false);
@@ -240,20 +241,20 @@ const EnhancedDashboard = () => {
     }
   };
 
-  const executeMasterSwitch = async () => {
+  const executeMasterSwitch = async() => {
     try {
       setMasterRunning(true);
       saveProcessStatus('master', true);
-      
+
       // Execute processes in sequence
       await executeUpdateRSSFeeds();
       await new Promise(resolve => setTimeout(resolve, 2000)); // 2 second delay
-      
+
       await executeTriggerPipeline();
       await new Promise(resolve => setTimeout(resolve, 2000)); // 2 second delay
-      
+
       await executeRunAIAnalysis();
-      
+
       setMasterRunning(false);
       saveProcessStatus('master', false);
     } catch (error) {
@@ -270,40 +271,40 @@ const EnhancedDashboard = () => {
 
   const confirmProcessAction = () => {
     setConfirmDialogOpen(false);
-    
+
     switch (confirmAction) {
-      case 'pipeline':
-        executeTriggerPipeline();
-        break;
-      case 'rss':
-        executeUpdateRSSFeeds();
-        break;
-      case 'analysis':
-        executeRunAIAnalysis();
-        break;
-      case 'master':
-        executeMasterSwitch();
-        break;
-      default:
-        break;
+    case 'pipeline':
+      executeTriggerPipeline();
+      break;
+    case 'rss':
+      executeUpdateRSSFeeds();
+      break;
+    case 'analysis':
+      executeRunAIAnalysis();
+      break;
+    case 'master':
+      executeMasterSwitch();
+      break;
+    default:
+      break;
     }
   };
 
   const getStatusColor = (status) => {
     switch (status) {
-      case 'healthy': return 'success';
-      case 'degraded': return 'warning';
-      case 'error': return 'error';
-      default: return 'default';
+    case 'healthy': return 'success';
+    case 'degraded': return 'warning';
+    case 'error': return 'error';
+    default: return 'default';
     }
   };
 
   const getStatusIcon = (status) => {
     switch (status) {
-      case 'healthy': return <CheckCircleIcon />;
-      case 'degraded': return <WarningIcon />;
-      case 'error': return <WarningIcon />;
-      default: return <WarningIcon />;
+    case 'healthy': return <CheckCircleIcon />;
+    case 'degraded': return <WarningIcon />;
+    case 'error': return <WarningIcon />;
+    default: return <WarningIcon />;
     }
   };
 
@@ -495,17 +496,17 @@ const EnhancedDashboard = () => {
               <Typography variant="body2" color="text.secondary">
                 Total Traces: {systemStatus?.pipelineStatus?.data?.total_traces || 0}
               </Typography>
-              
+
               {/* Process Control Buttons with ETA */}
               <Divider sx={{ my: 2 }} />
               <Typography variant="subtitle2" gutterBottom>
                 Process Controls
               </Typography>
-              
+
               <Box display="flex" flexDirection="column" gap={1}>
-                <Button 
-                  variant={pipelineRunning ? "contained" : "outlined"}
-                  color={pipelineRunning ? "warning" : "primary"}
+                <Button
+                  variant={pipelineRunning ? 'contained' : 'outlined'}
+                  color={pipelineRunning ? 'warning' : 'primary'}
                   size="small"
                   startIcon={pipelineRunning ? <StopIcon /> : <PlayArrowIcon />}
                   onClick={() => handleProcessAction('pipeline')}
@@ -514,10 +515,10 @@ const EnhancedDashboard = () => {
                 >
                   {pipelineRunning ? `Pipeline Running ${displayPipelineETA ? `(${displayPipelineETA})` : ''}` : 'Trigger Pipeline'}
                 </Button>
-                
-                <Button 
-                  variant={rssRunning ? "contained" : "outlined"}
-                  color={rssRunning ? "warning" : "primary"}
+
+                <Button
+                  variant={rssRunning ? 'contained' : 'outlined'}
+                  color={rssRunning ? 'warning' : 'primary'}
                   size="small"
                   startIcon={rssRunning ? <StopIcon /> : <RssFeedIcon />}
                   onClick={() => handleProcessAction('rss')}
@@ -526,10 +527,10 @@ const EnhancedDashboard = () => {
                 >
                   {rssRunning ? `RSS Updating ${displayRssETA ? `(${displayRssETA})` : ''}` : 'Update RSS Feeds'}
                 </Button>
-                
-                <Button 
-                  variant={analysisRunning ? "contained" : "outlined"}
-                  color={analysisRunning ? "warning" : "primary"}
+
+                <Button
+                  variant={analysisRunning ? 'contained' : 'outlined'}
+                  color={analysisRunning ? 'warning' : 'primary'}
                   size="small"
                   startIcon={analysisRunning ? <StopIcon /> : <AnalyticsIcon />}
                   onClick={() => handleProcessAction('analysis')}
@@ -538,10 +539,10 @@ const EnhancedDashboard = () => {
                 >
                   {analysisRunning ? `Analysis Running ${displayAnalysisETA ? `(${displayAnalysisETA})` : ''}` : 'Run AI Analysis'}
                 </Button>
-                
-                <Button 
-                  variant={masterRunning ? "contained" : "outlined"}
-                  color={masterRunning ? "warning" : "secondary"}
+
+                <Button
+                  variant={masterRunning ? 'contained' : 'outlined'}
+                  color={masterRunning ? 'warning' : 'secondary'}
                   size="small"
                   startIcon={masterRunning ? <StopIcon /> : <QueueIcon />}
                   onClick={() => handleProcessAction('master')}
@@ -551,7 +552,7 @@ const EnhancedDashboard = () => {
                   {masterRunning ? 'Master Process Running' : 'Complete All Processes'}
                 </Button>
               </Box>
-              
+
               {/* Queue Status Indicators */}
               {masterRunning && (
                 <Box mt={2}>
@@ -559,20 +560,20 @@ const EnhancedDashboard = () => {
                     Process Queue Status:
                   </Typography>
                   <Box display="flex" gap={0.5} flexWrap="wrap">
-                    <Chip 
-                      label={rssRunning ? "RSS: Running" : "RSS: Queued"} 
-                      color={rssRunning ? "warning" : "info"} 
-                      size="small" 
+                    <Chip
+                      label={rssRunning ? 'RSS: Running' : 'RSS: Queued'}
+                      color={rssRunning ? 'warning' : 'info'}
+                      size="small"
                     />
-                    <Chip 
-                      label={pipelineRunning ? "Pipeline: Running" : "Pipeline: Queued"} 
-                      color={pipelineRunning ? "warning" : "info"} 
-                      size="small" 
+                    <Chip
+                      label={pipelineRunning ? 'Pipeline: Running' : 'Pipeline: Queued'}
+                      color={pipelineRunning ? 'warning' : 'info'}
+                      size="small"
                     />
-                    <Chip 
-                      label={analysisRunning ? "Analysis: Running" : "Analysis: Queued"} 
-                      color={analysisRunning ? "warning" : "info"} 
-                      size="small" 
+                    <Chip
+                      label={analysisRunning ? 'Analysis: Running' : 'Analysis: Queued'}
+                      color={analysisRunning ? 'warning' : 'info'}
+                      size="small"
                     />
                   </Box>
                 </Box>
@@ -645,8 +646,8 @@ const EnhancedDashboard = () => {
                 <Button variant="outlined" startIcon={<AnalyticsIcon />}>
                   View Analytics
                 </Button>
-                <Button 
-                  variant="outlined" 
+                <Button
+                  variant="outlined"
                   startIcon={<RefreshIcon />}
                   onClick={handleRefresh}
                   disabled={loading}
@@ -739,16 +740,16 @@ const EnhancedDashboard = () => {
         <DialogTitle>Confirm Process Action</DialogTitle>
         <DialogContent>
           <Typography>
-            {confirmAction === 'pipeline' && 
+            {confirmAction === 'pipeline' &&
               'This will trigger the article processing pipeline. This may take several minutes and will process all pending articles. Continue?'
             }
-            {confirmAction === 'rss' && 
+            {confirmAction === 'rss' &&
               'This will update all RSS feeds and collect new articles. This may take a few minutes depending on the number of feeds. Continue?'
             }
-            {confirmAction === 'analysis' && 
+            {confirmAction === 'analysis' &&
               'This will run AI analysis on recent articles including sentiment analysis, entity extraction, and content classification. Continue?'
             }
-            {confirmAction === 'master' && 
+            {confirmAction === 'master' &&
               'This will execute all processes in sequence: RSS update, pipeline processing, and AI analysis. This may take several minutes. Continue?'
             }
           </Typography>

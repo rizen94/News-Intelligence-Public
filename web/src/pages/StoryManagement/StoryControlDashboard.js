@@ -1,4 +1,20 @@
-import React, { useState, useEffect } from 'react';
+import {
+  Add as AddIcon,
+  Edit as EditIcon,
+  Delete as DeleteIcon,
+  PlayArrow as PlayIcon,
+  Stop as StopIcon,
+  Refresh as RefreshIcon,
+  TrendingUp as TrendingUpIcon,
+  Psychology as PsychologyIcon,
+  Timeline as TimelineIcon,
+  Assessment as AssessmentIcon,
+  AutoAwesome as AutoAwesomeIcon,
+  CheckCircle as CheckCircleIcon,
+  Warning as WarningIcon,
+  Error as ErrorIcon,
+  Info as InfoIcon,
+} from '@mui/icons-material';
 import {
   Box,
   Typography,
@@ -37,31 +53,16 @@ import {
   TableHead,
   TableRow,
   Badge,
-  LinearProgress
+  LinearProgress,
 } from '@mui/material';
-import {
-  Add as AddIcon,
-  Edit as EditIcon,
-  Delete as DeleteIcon,
-  PlayArrow as PlayIcon,
-  Stop as StopIcon,
-  Refresh as RefreshIcon,
-  TrendingUp as TrendingUpIcon,
-  Psychology as PsychologyIcon,
-  Timeline as TimelineIcon,
-  Assessment as AssessmentIcon,
-  AutoAwesome as AutoAwesomeIcon,
-  CheckCircle as CheckCircleIcon,
-  Warning as WarningIcon,
-  Error as ErrorIcon,
-  Info as InfoIcon
-} from '@mui/icons-material';
-import newsSystemService from '../../services/newsSystemService';
+import React, { useState, useEffect } from 'react';
+
 import { useNotifications } from '../../components/Notifications/NotificationSystem';
+import newsSystemService from '../../services/newsSystemService';
 
 const StoryControlDashboard = () => {
   const { showSuccess, showError, showLoading, showInfo } = useNotifications();
-  
+
   // State
   const [stories, setStories] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -83,7 +84,7 @@ const StoryControlDashboard = () => {
     geographic_regions: [],
     quality_threshold: 0.7,
     max_articles_per_day: 100,
-    auto_enhance: true
+    auto_enhance: true,
   });
 
   // Form state for keywords/entities
@@ -97,7 +98,7 @@ const StoryControlDashboard = () => {
     fetchWeeklyDigest();
   }, []);
 
-  const fetchStories = async () => {
+  const fetchStories = async() => {
     try {
       setLoading(true);
       const response = await newsSystemService.getActiveStories();
@@ -111,7 +112,7 @@ const StoryControlDashboard = () => {
     }
   };
 
-  const fetchFeedbackLoopStatus = async () => {
+  const fetchFeedbackLoopStatus = async() => {
     try {
       const response = await newsSystemService.getFeedbackLoopStatus();
       setFeedbackLoopStatus(response);
@@ -120,7 +121,7 @@ const StoryControlDashboard = () => {
     }
   };
 
-  const fetchWeeklyDigest = async () => {
+  const fetchWeeklyDigest = async() => {
     try {
       const response = await newsSystemService.getRecentDigests(1);
       if (response.length > 0) {
@@ -131,16 +132,16 @@ const StoryControlDashboard = () => {
     }
   };
 
-  const handleCreateStory = async () => {
+  const handleCreateStory = async() => {
     try {
       setButtonLoading(prev => ({ ...prev, create: true }));
-      
+
       showLoading('Creating story...', 'Story Creation');
-      
+
       const response = await newsSystemService.createStoryExpectation(storyForm);
-      
+
       showSuccess('Story created successfully!', 'Story Created');
-      
+
       setShowCreateDialog(false);
       resetStoryForm();
       await fetchStories();
@@ -152,16 +153,16 @@ const StoryControlDashboard = () => {
     }
   };
 
-  const handleCreateUkraineStory = async () => {
+  const handleCreateUkraineStory = async() => {
     try {
       setButtonLoading(prev => ({ ...prev, ukraine: true }));
-      
+
       showLoading('Creating Ukraine-Russia conflict story...', 'Story Creation');
-      
+
       const response = await newsSystemService.createUkraineRussiaConflictStory();
-      
+
       showSuccess('Ukraine-Russia conflict story created successfully!', 'Story Created');
-      
+
       setShowUkraineDialog(false);
       await fetchStories();
     } catch (err) {
@@ -172,16 +173,16 @@ const StoryControlDashboard = () => {
     }
   };
 
-  const handleStartFeedbackLoop = async () => {
+  const handleStartFeedbackLoop = async() => {
     try {
       setButtonLoading(prev => ({ ...prev, start: true }));
-      
+
       showLoading('Starting feedback loop...', 'Feedback Loop');
-      
+
       await newsSystemService.startFeedbackLoop();
-      
+
       showSuccess('Feedback loop started successfully!', 'Feedback Loop Started');
-      
+
       await fetchFeedbackLoopStatus();
     } catch (err) {
       console.error('Error starting feedback loop:', err);
@@ -191,16 +192,16 @@ const StoryControlDashboard = () => {
     }
   };
 
-  const handleStopFeedbackLoop = async () => {
+  const handleStopFeedbackLoop = async() => {
     try {
       setButtonLoading(prev => ({ ...prev, stop: true }));
-      
+
       showLoading('Stopping feedback loop...', 'Feedback Loop');
-      
+
       await newsSystemService.stopFeedbackLoop();
-      
+
       showSuccess('Feedback loop stopped successfully!', 'Feedback Loop Stopped');
-      
+
       await fetchFeedbackLoopStatus();
     } catch (err) {
       console.error('Error stopping feedback loop:', err);
@@ -210,16 +211,16 @@ const StoryControlDashboard = () => {
     }
   };
 
-  const handleGenerateDigest = async () => {
+  const handleGenerateDigest = async() => {
     try {
       setButtonLoading(prev => ({ ...prev, digest: true }));
-      
+
       showLoading('Generating weekly digest...', 'Weekly Digest');
-      
+
       await newsSystemService.generateWeeklyDigest();
-      
+
       showSuccess('Weekly digest generated successfully!', 'Digest Generated');
-      
+
       await fetchWeeklyDigest();
     } catch (err) {
       console.error('Error generating digest:', err);
@@ -239,7 +240,7 @@ const StoryControlDashboard = () => {
       geographic_regions: [],
       quality_threshold: 0.7,
       max_articles_per_day: 100,
-      auto_enhance: true
+      auto_enhance: true,
     });
   };
 
@@ -247,7 +248,7 @@ const StoryControlDashboard = () => {
     if (newKeyword.trim()) {
       setStoryForm(prev => ({
         ...prev,
-        keywords: [...prev.keywords, newKeyword.trim()]
+        keywords: [...prev.keywords, newKeyword.trim()],
       }));
       setNewKeyword('');
     }
@@ -257,7 +258,7 @@ const StoryControlDashboard = () => {
     if (newEntity.trim()) {
       setStoryForm(prev => ({
         ...prev,
-        entities: [...prev.entities, newEntity.trim()]
+        entities: [...prev.entities, newEntity.trim()],
       }));
       setNewEntity('');
     }
@@ -267,7 +268,7 @@ const StoryControlDashboard = () => {
     if (newRegion.trim()) {
       setStoryForm(prev => ({
         ...prev,
-        geographic_regions: [...prev.geographic_regions, newRegion.trim()]
+        geographic_regions: [...prev.geographic_regions, newRegion.trim()],
       }));
       setNewRegion('');
     }
@@ -276,21 +277,21 @@ const StoryControlDashboard = () => {
   const removeKeyword = (index) => {
     setStoryForm(prev => ({
       ...prev,
-      keywords: prev.keywords.filter((_, i) => i !== index)
+      keywords: prev.keywords.filter((_, i) => i !== index),
     }));
   };
 
   const removeEntity = (index) => {
     setStoryForm(prev => ({
       ...prev,
-      entities: prev.entities.filter((_, i) => i !== index)
+      entities: prev.entities.filter((_, i) => i !== index),
     }));
   };
 
   const removeRegion = (index) => {
     setStoryForm(prev => ({
       ...prev,
-      geographic_regions: prev.geographic_regions.filter((_, i) => i !== index)
+      geographic_regions: prev.geographic_regions.filter((_, i) => i !== index),
     }));
   };
 
@@ -676,7 +677,7 @@ const StoryControlDashboard = () => {
                   label="Auto Enhance with RAG"
                 />
               </Grid>
-              
+
               {/* Keywords */}
               <Grid item xs={12}>
                 <Typography variant="h6" gutterBottom>

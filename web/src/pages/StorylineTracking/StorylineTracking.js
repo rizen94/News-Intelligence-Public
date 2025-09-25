@@ -1,4 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import {
+  TrendingUp,
+  Assessment,
+  Timeline,
+  AutoAwesome,
+  Refresh,
+  Download,
+  Visibility,
+  Delete,
+} from '@mui/icons-material';
 import {
   Box,
   Typography,
@@ -22,18 +31,10 @@ import {
   ListItemText,
   ListItemSecondaryAction,
   IconButton,
-  Tooltip
+  Tooltip,
 } from '@mui/material';
-import {
-  TrendingUp,
-  Assessment,
-  Timeline,
-  AutoAwesome,
-  Refresh,
-  Download,
-  Visibility,
-  Delete
-} from '@mui/icons-material';
+import React, { useState, useEffect } from 'react';
+
 import newsSystemService from '../../services/newsSystemService';
 import './StorylineTracking.css';
 
@@ -41,22 +42,22 @@ const StorylineTracking = () => {
   const [activeTab, setActiveTab] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  
+
   // Topic Cloud State
   const [topicCloud, setTopicCloud] = useState(null);
   const [breakingTopics, setBreakingTopics] = useState([]);
   const [daysToAnalyze, setDaysToAnalyze] = useState(1);
-  
+
   // Story Dossier State
   const [storyId, setStoryId] = useState('');
   const [dossier, setDossier] = useState(null);
   const [includeRag, setIncludeRag] = useState(true);
-  
+
   // Deduplication State
   const [duplicateGroups, setDuplicateGroups] = useState([]);
   const [dedupStats, setDedupStats] = useState(null);
   const [similarityThreshold, setSimilarityThreshold] = useState(0.85);
-  
+
   // Daily Briefing State
   const [dailyBriefing, setDailyBriefing] = useState(null);
   const [weeklyBriefing, setWeeklyBriefing] = useState(null);
@@ -67,7 +68,7 @@ const StorylineTracking = () => {
     loadDeduplicationStats();
   }, []);
 
-  const loadDeduplicationStats = async () => {
+  const loadDeduplicationStats = async() => {
     try {
       setLoading(true);
       const response = await newsSystemService.getDeduplicationStats();
@@ -81,11 +82,11 @@ const StorylineTracking = () => {
     }
   };
 
-  const generateTopicCloud = async () => {
+  const generateTopicCloud = async() => {
     try {
       setLoading(true);
       setError(null);
-      
+
       const response = await newsSystemService.getTopicCloud(daysToAnalyze);
       if (response.success) {
         setTopicCloud(response.result.topic_cloud);
@@ -100,7 +101,7 @@ const StorylineTracking = () => {
     }
   };
 
-  const generateStoryDossier = async () => {
+  const generateStoryDossier = async() => {
     if (!storyId.trim()) {
       setError('Please enter a story ID or topic');
       return;
@@ -109,7 +110,7 @@ const StorylineTracking = () => {
     try {
       setLoading(true);
       setError(null);
-      
+
       const response = await newsSystemService.getStoryDossier(storyId, includeRag);
       if (response.success) {
         setDossier(response.result);
@@ -123,11 +124,11 @@ const StorylineTracking = () => {
     }
   };
 
-  const detectDuplicates = async () => {
+  const detectDuplicates = async() => {
     try {
       setLoading(true);
       setError(null);
-      
+
       const response = await newsSystemService.detectDuplicates(similarityThreshold);
       if (response.success) {
         setDuplicateGroups(response.result.duplicate_groups);
@@ -141,11 +142,11 @@ const StorylineTracking = () => {
     }
   };
 
-  const removeDuplicates = async () => {
+  const removeDuplicates = async() => {
     try {
       setLoading(true);
       setError(null);
-      
+
       const response = await newsSystemService.removeDuplicates(true, similarityThreshold);
       if (response.success) {
         setError(null);
@@ -162,11 +163,11 @@ const StorylineTracking = () => {
     }
   };
 
-  const generateDailyBriefing = async () => {
+  const generateDailyBriefing = async() => {
     try {
       setLoading(true);
       setError(null);
-      
+
       const response = await newsSystemService.generateDailyBriefing(briefingDate);
       if (response.success) {
         setDailyBriefing(response.result);
@@ -180,11 +181,11 @@ const StorylineTracking = () => {
     }
   };
 
-  const generateWeeklyBriefing = async () => {
+  const generateWeeklyBriefing = async() => {
     try {
       setLoading(true);
       setError(null);
-      
+
       const response = await newsSystemService.generateWeeklyBriefing();
       if (response.success) {
         setWeeklyBriefing(response.result);
@@ -207,7 +208,7 @@ const StorylineTracking = () => {
       <Typography variant="h6" gutterBottom>
         Topic Cloud & Breaking News
       </Typography>
-      
+
       <Grid container spacing={2} sx={{ mb: 3 }}>
         <Grid item xs={12} md={6}>
           <TextField
@@ -253,7 +254,7 @@ const StorylineTracking = () => {
               </CardContent>
             </Card>
           </Grid>
-          
+
           <Grid item xs={12} md={6}>
             <Card>
               <CardContent>
@@ -310,7 +311,7 @@ const StorylineTracking = () => {
       <Typography variant="h6" gutterBottom>
         Story Dossier Generation
       </Typography>
-      
+
       <Grid container spacing={2} sx={{ mb: 3 }}>
         <Grid item xs={12} md={6}>
           <TextField
@@ -356,9 +357,9 @@ const StorylineTracking = () => {
             <Typography variant="body2" color="text.secondary" gutterBottom>
               {dossier.article_count} articles • {dossier.time_span} • Generated: {dossier.generated_at}
             </Typography>
-            
+
             <Divider sx={{ my: 2 }} />
-            
+
             <Box sx={{ whiteSpace: 'pre-wrap', fontFamily: 'monospace' }}>
               {dossier.dossier}
             </Box>
@@ -373,7 +374,7 @@ const StorylineTracking = () => {
       <Typography variant="h6" gutterBottom>
         Content Deduplication
       </Typography>
-      
+
       {dedupStats && (
         <Grid container spacing={2} sx={{ mb: 3 }}>
           <Grid item xs={12} md={3}>
@@ -498,7 +499,7 @@ const StorylineTracking = () => {
       <Typography variant="h6" gutterBottom>
         Daily Intelligence Briefing
       </Typography>
-      
+
       <Grid container spacing={2} sx={{ mb: 3 }}>
         <Grid item xs={12} md={6}>
           <TextField
@@ -529,7 +530,7 @@ const StorylineTracking = () => {
             <Typography variant="h6" gutterBottom>
               Daily Briefing: {dailyBriefing.briefing_date}
             </Typography>
-            
+
             <Grid container spacing={2} sx={{ mb: 2 }}>
               <Grid item xs={12} md={3}>
                 <Typography variant="h4" color="primary">
@@ -566,7 +567,7 @@ const StorylineTracking = () => {
             </Grid>
 
             <Divider sx={{ my: 2 }} />
-            
+
             <Typography variant="h6" gutterBottom>
               Recommendations
             </Typography>

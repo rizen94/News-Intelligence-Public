@@ -1,4 +1,18 @@
-import React, { useState, useEffect } from 'react';
+import {
+  Add as AddIcon,
+  Edit as EditIcon,
+  Delete as DeleteIcon,
+  Build as BuildIcon,
+  AutoAwesome,
+  Timeline as TimelineIcon,
+  Notifications as NotificationsIcon,
+  TrendingUp as TrendingUpIcon,
+  Psychology as PsychologyIcon,
+  ExpandMore as ExpandMoreIcon,
+  Visibility as ViewIcon,
+  Refresh as RefreshIcon,
+  Search as SearchIcon,
+} from '@mui/icons-material';
 import {
   Box,
   Typography,
@@ -27,23 +41,10 @@ import {
   Accordion,
   AccordionSummary,
   AccordionDetails,
-  InputAdornment
+  InputAdornment,
 } from '@mui/material';
-import {
-  Add as AddIcon,
-  Edit as EditIcon,
-  Delete as DeleteIcon,
-  Build as BuildIcon,
-  AutoAwesome,
-  Timeline as TimelineIcon,
-  Notifications as NotificationsIcon,
-  TrendingUp as TrendingUpIcon,
-  Psychology as PsychologyIcon,
-  ExpandMore as ExpandMoreIcon,
-  Visibility as ViewIcon,
-  Refresh as RefreshIcon,
-  Search as SearchIcon
-} from '@mui/icons-material';
+import React, { useState, useEffect } from 'react';
+
 import StoryThreadManager from '../../components/ContentPrioritization/StoryThreadManager';
 import newsSystemService from '../../services/newsSystemService';
 
@@ -61,7 +62,7 @@ const UnifiedStoryDossiers = () => {
     loadStoryThreads();
   }, []);
 
-  const loadStoryThreads = async () => {
+  const loadStoryThreads = async() => {
     setLoading(true);
     try {
       const response = await newsSystemService.getStoryThreads();
@@ -93,7 +94,7 @@ const UnifiedStoryDossiers = () => {
     setShowCreateDialog(false);
   };
 
-  const handleDeleteThread = async (threadId) => {
+  const handleDeleteThread = async(threadId) => {
     if (window.confirm('Are you sure you want to delete this story thread?')) {
       try {
         const response = await newsSystemService.deleteStoryThread(threadId);
@@ -116,7 +117,7 @@ const UnifiedStoryDossiers = () => {
       filtered = filtered.filter(thread =>
         thread.title?.toLowerCase().includes(query) ||
         thread.description?.toLowerCase().includes(query) ||
-        thread.keywords?.some(keyword => keyword.toLowerCase().includes(query))
+        thread.keywords?.some(keyword => keyword.toLowerCase().includes(query)),
       );
     }
 
@@ -159,7 +160,7 @@ const UnifiedStoryDossiers = () => {
         <div className="unified-content-text">
           {thread.description || 'No description available'}
         </div>
-        
+
         {thread.keywords && thread.keywords.length > 0 && (
           <Box display="flex" gap={1} flexWrap="wrap" mt={2}>
             {thread.keywords.slice(0, 5).map((keyword, index) => (
@@ -359,7 +360,7 @@ const UnifiedStoryDossiers = () => {
               </div>
             ) : (
               <div className="unified-content-text">
-                {storyThreads.length === 0 
+                {storyThreads.length === 0
                   ? 'No story threads created yet. Create your first story thread to start tracking news stories.'
                   : 'No story threads match your current filters. Try adjusting your search criteria.'
                 }
@@ -370,8 +371,8 @@ const UnifiedStoryDossiers = () => {
       </div>
 
       {/* Thread Details Dialog */}
-      <Dialog 
-        open={showThreadDialog} 
+      <Dialog
+        open={showThreadDialog}
         onClose={handleCloseDialog}
         maxWidth="md"
         fullWidth
@@ -381,7 +382,7 @@ const UnifiedStoryDossiers = () => {
         </DialogTitle>
         <DialogContent>
           {selectedThread && (
-            <StoryThreadManager 
+            <StoryThreadManager
               threadId={selectedThread.id}
               onClose={handleCloseDialog}
             />
@@ -393,15 +394,15 @@ const UnifiedStoryDossiers = () => {
       </Dialog>
 
       {/* Create Thread Dialog */}
-      <Dialog 
-        open={showCreateDialog} 
+      <Dialog
+        open={showCreateDialog}
         onClose={handleCloseCreateDialog}
         maxWidth="sm"
         fullWidth
       >
         <DialogTitle>Create New Story Thread</DialogTitle>
         <DialogContent>
-          <StoryThreadManager 
+          <StoryThreadManager
             onClose={handleCloseCreateDialog}
             onSuccess={() => {
               handleCloseCreateDialog();

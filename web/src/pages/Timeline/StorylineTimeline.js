@@ -1,6 +1,6 @@
-import React from 'react';
-import { Box, Typography, Paper } from '@mui/material';
 import { Timeline as TimelineIcon } from '@mui/icons-material';
+import { Box, Typography, Paper } from '@mui/material';
+import React from 'react';
 
 const StorylineTimeline = () => {
   return (
@@ -8,7 +8,7 @@ const StorylineTimeline = () => {
       <Typography variant="h4" component="h1" sx={{ mb: 3 }}>
         Storyline Timeline
       </Typography>
-      
+
       <Paper sx={{ p: 4, textAlign: 'center' }}>
         <TimelineIcon sx={{ fontSize: 64, color: 'text.secondary', mb: 2 }} />
         <Typography variant="h6" color="text.secondary">

@@ -1,4 +1,10 @@
-import React from 'react';
+import {
+  Dashboard as DashboardIcon,
+  Article as ArticleIcon,
+  RssFeed as RssFeedIcon,
+  Timeline as TimelineIcon,
+  TrendingUp as TrendingUpIcon,
+} from '@mui/icons-material';
 import {
   Box,
   Typography,
@@ -7,15 +13,9 @@ import {
   Grid,
   Paper,
   Chip,
-  LinearProgress
+  LinearProgress,
 } from '@mui/material';
-import {
-  Dashboard as DashboardIcon,
-  Article as ArticleIcon,
-  RssFeed as RssFeedIcon,
-  Timeline as TimelineIcon,
-  TrendingUp as TrendingUpIcon
-} from '@mui/icons-material';
+import React from 'react';
 
 const Dashboard = () => {
   return (
@@ -109,5 +109,4 @@ const Dashboard = () => {
 };
 
 export default Dashboard;
-
 

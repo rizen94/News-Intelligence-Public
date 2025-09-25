@@ -1,4 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import {
+  Memory,
+  Storage,
+  Speed,
+  Timeline,
+  Refresh,
+  Warning,
+  Error,
+  Info,
+} from '@mui/icons-material';
 import {
   Box,
   Card,
@@ -19,18 +28,9 @@ import {
   Select,
   MenuItem,
   FormControl,
-  InputLabel
+  InputLabel,
 } from '@mui/material';
-import {
-  Memory,
-  Storage,
-  Speed,
-  Timeline,
-  Refresh,
-  Warning,
-  Error,
-  Info
-} from '@mui/icons-material';
+import React, { useState, useEffect } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer } from 'recharts';
 
 const ResourceDashboard = () => {
@@ -39,7 +39,7 @@ const ResourceDashboard = () => {
   const [timeRange, setTimeRange] = useState(24);
   const [refreshInterval, setRefreshInterval] = useState(30);
 
-  const fetchMetrics = async () => {
+  const fetchMetrics = async() => {
     try {
       const response = await fetch(`/api/metrics/history?hours=${timeRange}`);
       if (response.ok) {
@@ -288,15 +288,15 @@ const ResourceDashboard = () => {
               <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <Typography variant="body2">Data Points Collected</Typography>
-                  <Chip 
-                    label={metrics.system?.data_points || 0} 
-                    color="primary" 
-                    size="small" 
+                  <Chip
+                    label={metrics.system?.data_points || 0}
+                    color="primary"
+                    size="small"
                   />
                 </Box>
                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <Typography variant="body2">Error Rate</Typography>
-                  <Chip 
+                  <Chip
                     label={`${metrics.application?.total_errors || 0} errors`}
                     color={metrics.application?.total_errors > 0 ? 'error' : 'success'}
                     size="small"
@@ -304,9 +304,9 @@ const ResourceDashboard = () => {
                 </Box>
                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <Typography variant="body2">Monitoring Status</Typography>
-                  <Chip 
-                    label="Active" 
-                    color="success" 
+                  <Chip
+                    label="Active"
+                    color="success"
                     size="small"
                     icon={<Info />}
                   />
@@ -324,27 +324,27 @@ const ResourceDashboard = () => {
             Performance Summary
           </Typography>
           <Typography variant="body2" color="text.secondary" paragraph>
-            System performance metrics collected over the last {timeRange} hours. 
+            System performance metrics collected over the last {timeRange} hours.
             Data is automatically collected every minute and stored for historical analysis.
           </Typography>
-          
+
           <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
-            <Chip 
+            <Chip
               icon={<Speed />}
               label={`CPU: ${metrics.system?.avg_cpu_percent?.toFixed(1) || 0}% avg`}
               color={getSeverityColor(metrics.system?.avg_cpu_percent || 0, 80)}
             />
-            <Chip 
+            <Chip
               icon={<Memory />}
               label={`Memory: ${metrics.system?.avg_memory_percent?.toFixed(1) || 0}% avg`}
               color={getSeverityColor(metrics.system?.avg_memory_percent || 0, 85)}
             />
-            <Chip 
+            <Chip
               icon={<Storage />}
               label={`GPU: ${metrics.system?.avg_gpu_utilization?.toFixed(1) || 0}% avg`}
               color={getSeverityColor(metrics.system?.avg_gpu_utilization || 0, 80)}
             />
-            <Chip 
+            <Chip
               icon={<Timeline />}
               label={`Data Points: ${metrics.system?.data_points || 0}`}
               color="primary"

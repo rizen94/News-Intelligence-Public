@@ -1,4 +1,21 @@
-import React, { useState, useEffect } from 'react';
+import {
+  PlayArrow,
+  Stop,
+  Refresh,
+  Schedule,
+  Article,
+  Timeline,
+  AutoAwesome,
+  Storage,
+  TrendingUp,
+  History,
+  Notifications,
+  CheckCircle,
+  Error,
+  Warning,
+  Info,
+  Settings,
+} from '@mui/icons-material';
 import {
   Box,
   Typography,
@@ -16,26 +33,10 @@ import {
   Paper,
   IconButton,
   Tooltip,
-  Badge
+  Badge,
 } from '@mui/material';
-import {
-  PlayArrow,
-  Stop,
-  Refresh,
-  Schedule,
-  Article,
-  Timeline,
-  AutoAwesome,
-  Storage,
-  TrendingUp,
-  History,
-  Notifications,
-  CheckCircle,
-  Error,
-  Warning,
-  Info,
-  Settings
-} from '@mui/icons-material';
+import React, { useState, useEffect } from 'react';
+
 import newsSystemService from '../../services/newsSystemService';
 
 const UnifiedLivingStoryNarrator = () => {
@@ -55,7 +56,7 @@ const UnifiedLivingStoryNarrator = () => {
     loadPreprocessingStatus();
   }, []);
 
-  const loadNarratorStatus = async () => {
+  const loadNarratorStatus = async() => {
     try {
       const response = await newsSystemService.getLivingNarratorStatus();
       if (response.success) {
@@ -66,7 +67,7 @@ const UnifiedLivingStoryNarrator = () => {
     }
   };
 
-  const loadDailyDigests = async () => {
+  const loadDailyDigests = async() => {
     try {
       const response = await newsSystemService.getDailyDigests();
       if (response.success) {
@@ -77,7 +78,7 @@ const UnifiedLivingStoryNarrator = () => {
     }
   };
 
-  const loadMasterArticles = async () => {
+  const loadMasterArticles = async() => {
     try {
       const response = await newsSystemService.getMasterArticles();
       if (response.success) {
@@ -88,7 +89,7 @@ const UnifiedLivingStoryNarrator = () => {
     }
   };
 
-  const loadPreprocessingStatus = async () => {
+  const loadPreprocessingStatus = async() => {
     try {
       const response = await newsSystemService.getPreprocessingStatus();
       if (response.success) {
@@ -99,7 +100,7 @@ const UnifiedLivingStoryNarrator = () => {
     }
   };
 
-  const handleStartPipeline = async () => {
+  const handleStartPipeline = async() => {
     setLoading(true);
     setError(null);
     try {
@@ -117,7 +118,7 @@ const UnifiedLivingStoryNarrator = () => {
     }
   };
 
-  const handleStopPipeline = async () => {
+  const handleStopPipeline = async() => {
     setLoading(true);
     setError(null);
     try {
@@ -135,7 +136,7 @@ const UnifiedLivingStoryNarrator = () => {
     }
   };
 
-  const handleTriggerConsolidation = async () => {
+  const handleTriggerConsolidation = async() => {
     setLoading(true);
     setError(null);
     try {
@@ -154,7 +155,7 @@ const UnifiedLivingStoryNarrator = () => {
     }
   };
 
-  const handleGenerateDigest = async () => {
+  const handleGenerateDigest = async() => {
     setLoading(true);
     setError(null);
     try {
@@ -172,7 +173,7 @@ const UnifiedLivingStoryNarrator = () => {
     }
   };
 
-  const handleTriggerCleanup = async () => {
+  const handleTriggerCleanup = async() => {
     setLoading(true);
     setError(null);
     try {
@@ -190,7 +191,7 @@ const UnifiedLivingStoryNarrator = () => {
     }
   };
 
-  const handleRunPreprocessing = async () => {
+  const handleRunPreprocessing = async() => {
     setLoading(true);
     setError(null);
     try {
@@ -211,10 +212,10 @@ const UnifiedLivingStoryNarrator = () => {
 
   const getStatusIcon = (status) => {
     switch (status) {
-      case 'running': return <CheckCircle color="success" />;
-      case 'error': return <Error color="error" />;
-      case 'warning': return <Warning color="warning" />;
-      default: return <Info color="info" />;
+    case 'running': return <CheckCircle color="success" />;
+    case 'error': return <Error color="error" />;
+    case 'warning': return <Warning color="warning" />;
+    default: return <Info color="info" />;
     }
   };
 
@@ -248,7 +249,7 @@ const UnifiedLivingStoryNarrator = () => {
             {error}
           </Alert>
         )}
-        
+
         {success && (
           <Alert severity="success" sx={{ mb: 2 }} onClose={() => setSuccess(null)}>
             {success}
@@ -507,8 +508,8 @@ const UnifiedLivingStoryNarrator = () => {
                         {digest.content.substring(0, 200)}...
                       </div>
                       <div className="unified-content-actions">
-                        <Button 
-                          variant="text" 
+                        <Button
+                          variant="text"
                           size="small"
                           onClick={() => {
                             window.open(`/digest/${digest.id}`, '_blank');
@@ -551,8 +552,8 @@ const UnifiedLivingStoryNarrator = () => {
                         {article.summary || article.content?.substring(0, 200) + '...'}
                       </div>
                       <div className="unified-content-actions">
-                        <Button 
-                          variant="outlined" 
+                        <Button
+                          variant="outlined"
                           size="small"
                           onClick={() => {
                             window.open(`/article/${article.id}`, '_blank');
@@ -561,8 +562,8 @@ const UnifiedLivingStoryNarrator = () => {
                         >
                           Read Full Article
                         </Button>
-                        <Button 
-                          variant="outlined" 
+                        <Button
+                          variant="outlined"
                           size="small"
                           onClick={() => {
                             alert(`Sources: ${article.sources.join(', ')}`);

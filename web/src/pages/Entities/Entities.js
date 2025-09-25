@@ -1,4 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import {
+  Search as SearchIcon,
+  Refresh as RefreshIcon,
+  Person as PersonIcon,
+  Business as BusinessIcon,
+  LocationOn as LocationIcon,
+} from '@mui/icons-material';
 import {
   Box,
   Typography,
@@ -15,13 +21,8 @@ import {
   Pagination,
   LinearProgress,
 } from '@mui/material';
-import {
-  Search as SearchIcon,
-  Refresh as RefreshIcon,
-  Person as PersonIcon,
-  Business as BusinessIcon,
-  LocationOn as LocationIcon,
-} from '@mui/icons-material';
+import React, { useState, useEffect } from 'react';
+
 import { useNewsSystem } from '../../contexts/NewsSystemContext';
 
 export default function Entities() {
@@ -44,19 +45,19 @@ export default function Entities() {
 
   const getEntityIcon = (type) => {
     switch (type) {
-      case 'PERSON': return <PersonIcon fontSize="small" />;
-      case 'ORG': return <BusinessIcon fontSize="small" />;
-      case 'GPE': return <LocationIcon fontSize="small" />;
-      default: return <PersonIcon fontSize="small" />;
+    case 'PERSON': return <PersonIcon fontSize="small" />;
+    case 'ORG': return <BusinessIcon fontSize="small" />;
+    case 'GPE': return <LocationIcon fontSize="small" />;
+    default: return <PersonIcon fontSize="small" />;
     }
   };
 
   const getEntityColor = (type) => {
     switch (type) {
-      case 'PERSON': return 'primary';
-      case 'ORG': return 'secondary';
-      case 'GPE': return 'success';
-      default: return 'default';
+    case 'PERSON': return 'primary';
+    case 'ORG': return 'secondary';
+    case 'GPE': return 'success';
+    default: return 'default';
     }
   };
 

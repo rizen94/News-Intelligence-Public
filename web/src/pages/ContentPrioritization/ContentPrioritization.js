@@ -1,4 +1,17 @@
-import React, { useState, useEffect } from 'react';
+import {
+  TrendingUp,
+  Assessment,
+  Timeline,
+  AutoAwesome,
+  Refresh,
+  Download,
+  Visibility,
+  Delete,
+  Add,
+  Edit,
+  Save,
+  Cancel,
+} from '@mui/icons-material';
 import {
   Box,
   Typography,
@@ -23,25 +36,13 @@ import {
   IconButton,
   Tooltip,
   Paper,
-  Divider
+  Divider,
 } from '@mui/material';
-import {
-  TrendingUp,
-  Assessment,
-  Timeline,
-  AutoAwesome,
-  Refresh,
-  Download,
-  Visibility,
-  Delete,
-  Add,
-  Edit,
-  Save,
-  Cancel
-} from '@mui/icons-material';
+import React, { useState, useEffect } from 'react';
+
 import newsSystemService from '../../services/newsSystemService';
 
-function TabPanel({ children, value, index, ...other }) {
+const TabPanel = ({ children, value, index, ...other }) => {
   return (
     <div
       role="tabpanel"
@@ -57,26 +58,26 @@ function TabPanel({ children, value, index, ...other }) {
       )}
     </div>
   );
-}
+};
 
 const ContentPrioritization = () => {
   const [activeTab, setActiveTab] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  
+
   // Priority Rules State
   const [priorityRules, setPriorityRules] = useState([]);
   const [newRule, setNewRule] = useState({
     name: '',
     condition: '',
     priority: 'high',
-    enabled: true
+    enabled: true,
   });
-  
+
   // Content Priority State
   const [contentPriorities, setContentPriorities] = useState([]);
   const [priorityStats, setPriorityStats] = useState(null);
-  
+
   // Story Threads State
   const [storyThreads, setStoryThreads] = useState([]);
   const [selectedThread, setSelectedThread] = useState(null);
@@ -85,36 +86,36 @@ const ContentPrioritization = () => {
     loadData();
   }, []);
 
-  const loadData = async () => {
+  const loadData = async() => {
     setLoading(true);
     setError(null);
-    
+
     try {
       // Load priority rules, content priorities, and story threads from API
       const [rulesResponse, prioritiesResponse, statsResponse, threadsResponse] = await Promise.all([
         newsSystemService.getPriorityRules(),
         newsSystemService.getContentPriorities(),
         newsSystemService.getPriorityStats(),
-        newsSystemService.getStoryThreads()
+        newsSystemService.getStoryThreads(),
       ]);
-      
+
       // Check for critical failures
       const failures = [];
-      
+
       if (!rulesResponse.success) {
         failures.push('Priority rules');
         console.error('Failed to load priority rules:', rulesResponse.error);
       } else {
         setPriorityRules(rulesResponse.data || []);
       }
-      
+
       if (!prioritiesResponse.success) {
         failures.push('Content priorities');
         console.error('Failed to load content priorities:', prioritiesResponse.error);
       } else {
         setContentPriorities(prioritiesResponse.data || []);
       }
-      
+
       if (!statsResponse.success) {
         failures.push('Priority statistics');
         console.error('Failed to load priority stats:', statsResponse.error);
@@ -125,17 +126,17 @@ const ContentPrioritization = () => {
           high_priority: 0,
           medium_priority: 0,
           low_priority: 0,
-          avg_priority_score: 0
+          avg_priority_score: 0,
         });
       }
-      
+
       if (!threadsResponse.success) {
         failures.push('Story threads');
         console.error('Failed to load story threads:', threadsResponse.error);
       } else {
         setStoryThreads(threadsResponse.data || []);
       }
-      
+
       // If any critical data failed to load, show error
       if (failures.length > 0) {
         const errorMessage = `Failed to load: ${failures.join(', ')}. Please check your connection and try again.`;
@@ -144,7 +145,7 @@ const ContentPrioritization = () => {
       } else {
         showSuccess('Prioritization data loaded successfully');
       }
-      
+
     } catch (err) {
       const errorMessage = 'Failed to load prioritization data: ' + err.message;
       setError(errorMessage);
@@ -164,7 +165,7 @@ const ContentPrioritization = () => {
       const rule = {
         id: Date.now(),
         ...newRule,
-        created_at: new Date().toISOString()
+        created_at: new Date().toISOString(),
       };
       setPriorityRules([...priorityRules, rule]);
       setNewRule({ name: '', condition: '', priority: 'high', enabled: true });
@@ -176,18 +177,18 @@ const ContentPrioritization = () => {
   };
 
   const handleToggleRule = (ruleId) => {
-    setPriorityRules(priorityRules.map(rule => 
-      rule.id === ruleId ? { ...rule, enabled: !rule.enabled } : rule
+    setPriorityRules(priorityRules.map(rule =>
+      rule.id === ruleId ? { ...rule, enabled: !rule.enabled } : rule,
     ));
   };
 
   const getPriorityColor = (priority) => {
     switch (priority) {
-      case 'critical': return 'error';
-      case 'high': return 'warning';
-      case 'medium': return 'info';
-      case 'low': return 'default';
-      default: return 'default';
+    case 'critical': return 'error';
+    case 'high': return 'warning';
+    case 'medium': return 'info';
+    case 'low': return 'default';
+    default: return 'default';
     }
   };
 
@@ -242,14 +243,14 @@ const ContentPrioritization = () => {
                               Condition: {rule.condition}
                             </Typography>
                             <Box sx={{ mt: 1 }}>
-                              <Chip 
-                                label={rule.priority} 
+                              <Chip
+                                label={rule.priority}
                                 color={getPriorityColor(rule.priority)}
                                 size="small"
                                 sx={{ mr: 1 }}
                               />
-                              <Chip 
-                                label={rule.enabled ? 'Enabled' : 'Disabled'} 
+                              <Chip
+                                label={rule.enabled ? 'Enabled' : 'Disabled'}
                                 color={rule.enabled ? 'success' : 'default'}
                                 size="small"
                               />
@@ -275,7 +276,7 @@ const ContentPrioritization = () => {
               </CardContent>
             </Card>
           </Grid>
-          
+
           <Grid item xs={12} md={4}>
             <Card>
               <CardContent>
@@ -347,8 +348,8 @@ const ContentPrioritization = () => {
                     }
                   />
                   <ListItemSecondaryAction>
-                    <Chip 
-                      label={priority.priority_level} 
+                    <Chip
+                      label={priority.priority_level}
                       color={getPriorityColor(priority.priority_level)}
                     />
                   </ListItemSecondaryAction>
@@ -379,8 +380,8 @@ const ContentPrioritization = () => {
                     }
                   />
                   <ListItemSecondaryAction>
-                    <Chip 
-                      label={thread.priority} 
+                    <Chip
+                      label={thread.priority}
                       color={getPriorityColor(thread.priority)}
                     />
                   </ListItemSecondaryAction>
@@ -431,7 +432,7 @@ const ContentPrioritization = () => {
               </CardContent>
             </Card>
           </Grid>
-          
+
           <Grid item xs={12} md={6}>
             <Card>
               <CardContent>

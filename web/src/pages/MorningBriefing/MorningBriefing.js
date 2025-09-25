@@ -1,4 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import {
+  Schedule as ScheduleIcon,
+  TrendingUp as TrendingUpIcon,
+  Article as ArticleIcon,
+  Timeline as TimelineIcon,
+  Refresh as RefreshIcon,
+} from '@mui/icons-material';
 import {
   Box,
   Typography,
@@ -14,15 +20,10 @@ import {
   Divider,
   Paper,
   Alert,
-  CircularProgress
+  CircularProgress,
 } from '@mui/material';
-import {
-  Schedule as ScheduleIcon,
-  TrendingUp as TrendingUpIcon,
-  Article as ArticleIcon,
-  Timeline as TimelineIcon,
-  Refresh as RefreshIcon
-} from '@mui/icons-material';
+import React, { useState, useEffect } from 'react';
+
 import { apiService } from '../../services/apiService';
 
 const MorningBriefing = () => {
@@ -34,22 +35,22 @@ const MorningBriefing = () => {
     loadBriefing();
   }, []);
 
-  const loadBriefing = async () => {
+  const loadBriefing = async() => {
     try {
       setLoading(true);
       setError(null);
-      
+
       // Load recent articles and create a briefing
       const [articlesResponse, storylinesResponse] = await Promise.all([
         apiService.getArticles({ limit: 10 }),
-        apiService.getStorylines()
+        apiService.getStorylines(),
       ]);
 
       const briefing = {
         date: new Date().toLocaleDateString(),
         topStories: articlesResponse.data?.articles?.slice(0, 5) || [],
         storylines: storylinesResponse.data?.storylines?.slice(0, 3) || [],
-        summary: `Today's briefing covers ${articlesResponse.data?.articles?.length || 0} articles across ${storylinesResponse.data?.storylines?.length || 0} active storylines.`
+        summary: `Today's briefing covers ${articlesResponse.data?.articles?.length || 0} articles across ${storylinesResponse.data?.storylines?.length || 0} active storylines.`,
       };
 
       setBriefing(briefing);
@@ -69,7 +70,7 @@ const MorningBriefing = () => {
         month: 'long',
         day: 'numeric',
         hour: '2-digit',
-        minute: '2-digit'
+        minute: '2-digit',
       });
     } catch (error) {
       return 'Invalid date';
@@ -187,8 +188,8 @@ const MorningBriefing = () => {
                               </Typography>
                               {storyline.description && (
                                 <Typography variant="body2" sx={{ mt: 0.5 }}>
-                                  {storyline.description.length > 100 
-                                    ? `${storyline.description.substring(0, 100)}...` 
+                                  {storyline.description.length > 100
+                                    ? `${storyline.description.substring(0, 100)}...`
                                     : storyline.description}
                                 </Typography>
                               )}

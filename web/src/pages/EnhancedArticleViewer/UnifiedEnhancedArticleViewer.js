@@ -1,4 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import {
+  Search,
+  FilterList,
+  ViewList,
+  Article,
+  Source,
+  Timeline,
+  Close,
+  Refresh,
+} from '@mui/icons-material';
 import {
   Box,
   Typography,
@@ -24,18 +33,10 @@ import {
   ListItem,
   ListItemText,
   Divider,
-  Paper
+  Paper,
 } from '@mui/material';
-import {
-  Search,
-  FilterList,
-  ViewList,
-  Article,
-  Source,
-  Timeline,
-  Close,
-  Refresh
-} from '@mui/icons-material';
+import React, { useState, useEffect } from 'react';
+
 import newsSystemService from '../../services/newsSystemService';
 
 const UnifiedEnhancedArticleViewer = () => {
@@ -56,14 +57,14 @@ const UnifiedEnhancedArticleViewer = () => {
     loadData();
   }, [viewMode]);
 
-  const loadData = async () => {
+  const loadData = async() => {
     setLoading(true);
     try {
       const [articlesRes, masterArticlesRes, storyThreadsRes, preprocessingRes] = await Promise.all([
         newsSystemService.getArticles({ limit: 100 }),
         newsSystemService.getMasterArticles(),
         newsSystemService.getStoryThreads(),
-        newsSystemService.getPreprocessingStatus()
+        newsSystemService.getPreprocessingStatus(),
       ]);
 
       if (articlesRes.success) {
@@ -87,32 +88,32 @@ const UnifiedEnhancedArticleViewer = () => {
 
   const getFilteredArticles = () => {
     let filtered = [];
-    
+
     switch (viewMode) {
-      case 'raw':
-        filtered = articles.filter(article => !article.master_article_id);
-        break;
-      case 'master':
-        filtered = masterArticles;
-        break;
-      case 'processed':
-        filtered = articles.filter(article => article.master_article_id);
-        break;
-      default:
-        filtered = [...articles, ...masterArticles];
+    case 'raw':
+      filtered = articles.filter(article => !article.master_article_id);
+      break;
+    case 'master':
+      filtered = masterArticles;
+      break;
+    case 'processed':
+      filtered = articles.filter(article => article.master_article_id);
+      break;
+    default:
+      filtered = [...articles, ...masterArticles];
     }
 
     if (filterCategory) {
-      filtered = filtered.filter(article => 
-        article.category === filterCategory || 
-        article.tags?.includes(filterCategory)
+      filtered = filtered.filter(article =>
+        article.category === filterCategory ||
+        article.tags?.includes(filterCategory),
       );
     }
 
     if (filterSource) {
-      filtered = filtered.filter(article => 
+      filtered = filtered.filter(article =>
         article.source === filterSource ||
-        article.sources?.includes(filterSource)
+        article.sources?.includes(filterSource),
       );
     }
 
@@ -121,7 +122,7 @@ const UnifiedEnhancedArticleViewer = () => {
       filtered = filtered.filter(article =>
         article.title?.toLowerCase().includes(term) ||
         article.content?.toLowerCase().includes(term) ||
-        article.summary?.toLowerCase().includes(term)
+        article.summary?.toLowerCase().includes(term),
       );
     }
 
@@ -172,32 +173,32 @@ const UnifiedEnhancedArticleViewer = () => {
         <div className="unified-content-text">
           {article.summary || article.content?.substring(0, 300) + '...'}
         </div>
-        
+
         {/* Article Metadata */}
         <div style={{ marginBottom: 'var(--spacing-md)' }}>
           {article.source && (
-            <Chip 
-              label={article.source} 
-              size="small" 
+            <Chip
+              label={article.source}
+              size="small"
               sx={{ mr: 1, mb: 1 }}
               color="primary"
               variant="outlined"
             />
           )}
           {article.category && (
-            <Chip 
-              label={article.category} 
-              size="small" 
+            <Chip
+              label={article.category}
+              size="small"
               sx={{ mr: 1, mb: 1 }}
               color="secondary"
               variant="outlined"
             />
           )}
           {article.tags && article.tags.slice(0, 3).map((tag, idx) => (
-            <Chip 
+            <Chip
               key={idx}
-              label={tag} 
-              size="small" 
+              label={tag}
+              size="small"
               sx={{ mr: 1, mb: 1 }}
               variant="outlined"
             />
@@ -205,18 +206,18 @@ const UnifiedEnhancedArticleViewer = () => {
         </div>
 
         <div className="unified-content-actions">
-          <Button 
-            variant="contained" 
+          <Button
+            variant="contained"
             size="small"
             onClick={() => handleArticleClick(article)}
             className="unified-button-sm"
           >
             View Details
           </Button>
-          
+
           {article.url && (
-            <Button 
-              variant="outlined" 
+            <Button
+              variant="outlined"
               size="small"
               onClick={() => window.open(article.url, '_blank')}
               className="unified-button-sm"
@@ -226,8 +227,8 @@ const UnifiedEnhancedArticleViewer = () => {
           )}
 
           {article.sources && article.sources.length > 0 && (
-            <Button 
-              variant="outlined" 
+            <Button
+              variant="outlined"
               size="small"
               startIcon={<Source />}
               onClick={() => {
@@ -240,8 +241,8 @@ const UnifiedEnhancedArticleViewer = () => {
           )}
 
           {article.consolidation_metadata && (
-            <Button 
-              variant="outlined" 
+            <Button
+              variant="outlined"
               size="small"
               startIcon={<Timeline />}
               onClick={() => {
@@ -258,27 +259,27 @@ const UnifiedEnhancedArticleViewer = () => {
         {(article.processing_status || article.preprocessing_status || article.ml_processing_status) && (
           <div style={{ marginTop: 'var(--spacing-sm)' }}>
             {article.processing_status && (
-              <Chip 
-                label={`Processing: ${article.processing_status}`} 
-                size="small" 
+              <Chip
+                label={`Processing: ${article.processing_status}`}
+                size="small"
                 color="info"
                 variant="outlined"
                 sx={{ mr: 1 }}
               />
             )}
             {article.preprocessing_status && (
-              <Chip 
-                label={`Preprocessing: ${article.preprocessing_status}`} 
-                size="small" 
+              <Chip
+                label={`Preprocessing: ${article.preprocessing_status}`}
+                size="small"
                 color="warning"
                 variant="outlined"
                 sx={{ mr: 1 }}
               />
             )}
             {article.ml_processing_status && (
-              <Chip 
-                label={`ML: ${article.ml_processing_status}`} 
-                size="small" 
+              <Chip
+                label={`ML: ${article.ml_processing_status}`}
+                size="small"
                 color="success"
                 variant="outlined"
               />
@@ -346,7 +347,7 @@ const UnifiedEnhancedArticleViewer = () => {
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             InputProps={{
-              startAdornment: <Search sx={{ mr: 1, color: 'text.secondary' }} />
+              startAdornment: <Search sx={{ mr: 1, color: 'text.secondary' }} />,
             }}
           />
         </div>
@@ -355,8 +356,8 @@ const UnifiedEnhancedArticleViewer = () => {
   );
 
   const renderArticleDialog = () => (
-    <Dialog 
-      open={showArticleDialog} 
+    <Dialog
+      open={showArticleDialog}
       onClose={handleCloseDialog}
       maxWidth="md"
       fullWidth
@@ -377,9 +378,9 @@ const UnifiedEnhancedArticleViewer = () => {
             <Typography variant="body1" paragraph>
               {selectedArticle.content || selectedArticle.summary}
             </Typography>
-            
+
             <Divider sx={{ my: 2 }} />
-            
+
             <Typography variant="h6" gutterBottom>Metadata</Typography>
             <Grid container spacing={2}>
               <Grid item xs={6}>
@@ -433,8 +434,8 @@ const UnifiedEnhancedArticleViewer = () => {
       <DialogActions>
         <Button onClick={handleCloseDialog}>Close</Button>
         {selectedArticle?.url && (
-          <Button 
-            variant="contained" 
+          <Button
+            variant="contained"
             onClick={() => window.open(selectedArticle.url, '_blank')}
           >
             View Original

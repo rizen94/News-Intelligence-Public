@@ -1,4 +1,28 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import {
+  Schedule as ScheduleIcon,
+  Search as SearchIcon,
+  TrendingUp as TrendingUpIcon,
+  Group as GroupIcon,
+  Psychology as PsychologyIcon,
+  Refresh as RefreshIcon,
+  FilterList as FilterIcon,
+  AutoAwesome as AutoAwesomeIcon,
+  Timeline as TimelineIcon,
+  Assessment as AssessmentIcon,
+  History as HistoryIcon,
+  AutoAwesome as PredictionIcon,
+  Article as ArticleIcon,
+  RssFeed as RssFeedIcon,
+  Analytics as AnalyticsIcon,
+  Visibility as VisibilityIcon,
+  Share as ShareIcon,
+  Bookmark as BookmarkIcon,
+  BookmarkBorder as BookmarkBorderIcon,
+  ExpandMore as ExpandMoreIcon,
+  PlayArrow as PlayArrowIcon,
+  CheckCircle as CheckCircleIcon,
+  Error as ErrorIcon,
+} from '@mui/icons-material';
 import {
   Box,
   Typography,
@@ -37,33 +61,10 @@ import {
   CircularProgress,
   Accordion,
   AccordionSummary,
-  AccordionDetails
+  AccordionDetails,
 } from '@mui/material';
-import {
-  Schedule as ScheduleIcon,
-  Search as SearchIcon,
-  TrendingUp as TrendingUpIcon,
-  Group as GroupIcon,
-  Psychology as PsychologyIcon,
-  Refresh as RefreshIcon,
-  FilterList as FilterIcon,
-  AutoAwesome as AutoAwesomeIcon,
-  Timeline as TimelineIcon,
-  Assessment as AssessmentIcon,
-  History as HistoryIcon,
-  AutoAwesome as PredictionIcon,
-  Article as ArticleIcon,
-  RssFeed as RssFeedIcon,
-  Analytics as AnalyticsIcon,
-  Visibility as VisibilityIcon,
-  Share as ShareIcon,
-  Bookmark as BookmarkIcon,
-  BookmarkBorder as BookmarkBorderIcon,
-  ExpandMore as ExpandMoreIcon,
-  PlayArrow as PlayArrowIcon,
-  CheckCircle as CheckCircleIcon,
-  Error as ErrorIcon
-} from '@mui/icons-material';
+import React, { useState, useEffect, useCallback } from 'react';
+
 import { apiService } from '../../services/apiService';
 
 const IntelligenceHub = () => {
@@ -73,13 +74,13 @@ const IntelligenceHub = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [filterCategory, setFilterCategory] = useState('');
   const [bookmarkedItems, setBookmarkedItems] = useState(new Set());
-  
+
   // Content data
   const [articles, setArticles] = useState([]);
   const [storylines, setStorylines] = useState([]);
   const [selectedContent, setSelectedContent] = useState(null);
   const [contentType, setContentType] = useState('storyline'); // 'article' or 'storyline'
-  
+
   // Analysis states
   const [analysisDialogOpen, setAnalysisDialogOpen] = useState(false);
   const [selectedAnalysis, setSelectedAnalysis] = useState(null);
@@ -106,20 +107,20 @@ const IntelligenceHub = () => {
   };
 
   // Load content data
-  const loadContent = useCallback(async () => {
+  const loadContent = useCallback(async() => {
     try {
       setLoading(true);
       setError(null);
-      
+
       const [articlesResponse, storylinesResponse] = await Promise.all([
         apiService.getArticles({ limit: 50 }),
-        apiService.getStorylines({ limit: 50 })
+        apiService.getStorylines({ limit: 50 }),
       ]);
 
       if (articlesResponse.success) {
         setArticles(articlesResponse.data?.articles || []);
       }
-      
+
       if (storylinesResponse.success) {
         setStorylines(storylinesResponse.data?.storylines || []);
       }
@@ -136,24 +137,24 @@ const IntelligenceHub = () => {
   const [trendingTopics, setTrendingTopics] = useState([]);
   const [topicClusters, setTopicClusters] = useState([]);
   const [discoveryResults, setDiscoveryResults] = useState([]);
-  
+
   // Error states for individual data loading
   const [morningBriefingError, setMorningBriefingError] = useState(null);
   const [trendingTopicsError, setTrendingTopicsError] = useState(null);
   const [topicClustersError, setTopicClustersError] = useState(null);
   const [discoveryError, setDiscoveryError] = useState(null);
-  
+
   // Loading states for individual data loading
   const [morningBriefingLoading, setMorningBriefingLoading] = useState(false);
   const [trendingTopicsLoading, setTrendingTopicsLoading] = useState(false);
   const [topicClustersLoading, setTopicClustersLoading] = useState(false);
   const [discoveryLoading, setDiscoveryLoading] = useState(false);
 
-  const loadMorningBriefing = useCallback(async () => {
+  const loadMorningBriefing = useCallback(async() => {
     try {
       setMorningBriefingLoading(true);
       setMorningBriefingError(null);
-      
+
       const response = await apiService.get('/api/intelligence/morning-briefing');
       if (response.success) {
         setMorningBriefing(response.data);
@@ -168,12 +169,12 @@ const IntelligenceHub = () => {
     }
   }, []);
 
-  const loadTrendingTopics = useCallback(async () => {
+  const loadTrendingTopics = useCallback(async() => {
     try {
       setTrendingTopicsLoading(true);
       setTrendingTopicsError(null);
-      
-      const response = await apiService.get('/intelligence/trending-topics?time_period=24h&limit=10');
+
+      const response = await apiService.get('/api/intelligence/trending-topics?time_period=24h&limit=10');
       if (response.success) {
         setTrendingTopics(response.data.trending_topics || []);
       } else {
@@ -187,12 +188,12 @@ const IntelligenceHub = () => {
     }
   }, []);
 
-  const loadTopicClusters = useCallback(async () => {
+  const loadTopicClusters = useCallback(async() => {
     try {
       setTopicClustersLoading(true);
       setTopicClustersError(null);
-      
-      const response = await apiService.get('/intelligence/topic-clusters?time_period=7d&min_articles=3');
+
+      const response = await apiService.get('/api/intelligence/topic-clusters?time_period=7d&min_articles=3');
       if (response.success) {
         setTopicClusters(response.data.clusters || []);
       } else {
@@ -206,17 +207,17 @@ const IntelligenceHub = () => {
     }
   }, []);
 
-  const loadDiscoveryResults = useCallback(async (searchQuery = '', category = '') => {
+  const loadDiscoveryResults = useCallback(async(searchQuery = '', category = '') => {
     try {
       setDiscoveryLoading(true);
       setDiscoveryError(null);
-      
+
       const params = new URLSearchParams();
       if (searchQuery) params.append('search_query', searchQuery);
       if (category) params.append('category', category);
       params.append('limit', '20');
-      
-      const response = await apiService.get(`/intelligence/discovery?${params.toString()}`);
+
+      const response = await apiService.get(`/api/intelligence/discovery?${params.toString()}`);
       if (response.success) {
         setDiscoveryResults(response.data.articles || []);
       } else {
@@ -238,29 +239,29 @@ const IntelligenceHub = () => {
   }, [loadContent, loadMorningBriefing, loadTrendingTopics, loadTopicClusters]);
 
   // Analysis functions
-  const runAnalysis = async (analysisType, contentId) => {
+  const runAnalysis = async(analysisType, contentId) => {
     try {
       setAnalysisLoading(true);
       setAnalysisError(null);
-      
+
       let response;
       const endpoint = `/api/enhanced-analysis/${analysisType}/${contentId}`;
-      
+
       switch (analysisType) {
-        case 'multi-perspective':
-          response = await apiService.post(endpoint, {});
-          break;
-        case 'impact-assessment':
-          response = await apiService.post(endpoint, {});
-          break;
-        case 'predictive-analysis':
-          response = await apiService.post(endpoint, {});
-          break;
-        case 'expert-analysis':
-          response = await apiService.post(endpoint, {});
-          break;
-        default:
-          throw new Error('Unknown analysis type');
+      case 'multi-perspective':
+        response = await apiService.post(endpoint, {});
+        break;
+      case 'impact-assessment':
+        response = await apiService.post(endpoint, {});
+        break;
+      case 'predictive-analysis':
+        response = await apiService.post(endpoint, {});
+        break;
+      case 'expert-analysis':
+        response = await apiService.post(endpoint, {});
+        break;
+      default:
+        throw new Error('Unknown analysis type');
       }
 
       if (response.success) {
@@ -268,8 +269,8 @@ const IntelligenceHub = () => {
           ...prev,
           [contentId]: {
             ...prev[contentId],
-            [analysisType]: response.data
-          }
+            [analysisType]: response.data,
+          },
         }));
       } else {
         throw new Error(response.message || 'Analysis failed');
@@ -287,7 +288,7 @@ const IntelligenceHub = () => {
       setError('Please select an article or storyline first');
       return;
     }
-    
+
     setSelectedAnalysis(analysisType);
     setAnalysisDialogOpen(true);
   };
@@ -306,7 +307,7 @@ const IntelligenceHub = () => {
       month: 'short',
       day: 'numeric',
       hour: '2-digit',
-      minute: '2-digit'
+      minute: '2-digit',
     });
   };
 
@@ -350,8 +351,8 @@ const IntelligenceHub = () => {
                   </Typography>
                 </Box>
               ) : morningBriefingError ? (
-                <Alert 
-                  severity="error" 
+                <Alert
+                  severity="error"
                   action={
                     <Button size="small" onClick={loadMorningBriefing}>
                       Retry
@@ -385,10 +386,10 @@ const IntelligenceHub = () => {
                       </Typography>
                       <Box display="flex" flexWrap="wrap" gap={1}>
                         {trendingTopics.slice(0, 5).map((topic) => (
-                          <Chip 
-                            key={topic.id} 
-                            label={topic.name} 
-                            size="small" 
+                          <Chip
+                            key={topic.id}
+                            label={topic.name}
+                            size="small"
                             color="primary"
                             variant="outlined"
                           />
@@ -422,8 +423,8 @@ const IntelligenceHub = () => {
                 <Chip label="Impact Assessment" color="secondary" size="small" />
                 <Chip label="Predictive Analysis" color="info" size="small" />
               </Box>
-              <Button 
-                variant="outlined" 
+              <Button
+                variant="outlined"
                 startIcon={<AutoAwesomeIcon />}
                 onClick={loadMorningBriefing}
                 disabled={loading}
@@ -481,8 +482,8 @@ const IntelligenceHub = () => {
                 <MenuItem value="sports">Sports</MenuItem>
               </Select>
             </FormControl>
-            <Button 
-              variant="contained" 
+            <Button
+              variant="contained"
               onClick={handleSearchSubmit}
               disabled={loading}
             >
@@ -505,8 +506,8 @@ const IntelligenceHub = () => {
                   </Typography>
                 </Box>
               ) : discoveryError ? (
-                <Alert 
-                  severity="error" 
+                <Alert
+                  severity="error"
                   action={
                     <Button size="small" onClick={() => loadDiscoveryResults(searchQuery, filterCategory)}>
                       Retry
@@ -537,7 +538,7 @@ const IntelligenceHub = () => {
                         }
                       />
                       <Box display="flex" gap={1}>
-                        <IconButton 
+                        <IconButton
                           size="small"
                           onClick={() => toggleBookmark(article.id)}
                         >
@@ -562,7 +563,7 @@ const IntelligenceHub = () => {
                         secondary={truncateText(article.summary || article.content, 150)}
                       />
                       <Box display="flex" gap={1}>
-                        <IconButton 
+                        <IconButton
                           size="small"
                           onClick={() => toggleBookmark(article.id)}
                         >
@@ -589,29 +590,29 @@ const IntelligenceHub = () => {
                   Discovery Features
                 </Typography>
                 <Box display="flex" flexDirection="column" gap={2}>
-                  <Button 
-                    variant="outlined" 
+                  <Button
+                    variant="outlined"
                     startIcon={<AutoAwesomeIcon />}
                     onClick={() => loadDiscoveryResults('', '')}
                   >
                     AI-Powered Search
                   </Button>
-                  <Button 
-                    variant="outlined" 
+                  <Button
+                    variant="outlined"
                     startIcon={<TrendingUpIcon />}
                     onClick={loadTrendingTopics}
                   >
                     Trending Topics
                   </Button>
-                  <Button 
-                    variant="outlined" 
+                  <Button
+                    variant="outlined"
                     startIcon={<GroupIcon />}
                     onClick={loadTopicClusters}
                   >
                     Topic Clusters
                   </Button>
-                  <Button 
-                    variant="outlined" 
+                  <Button
+                    variant="outlined"
                     startIcon={<TimelineIcon />}
                     onClick={() => loadDiscoveryResults('', '')}
                   >
@@ -671,8 +672,8 @@ const IntelligenceHub = () => {
                     </Typography>
                   </Box>
                 ) : trendingTopicsError ? (
-                  <Alert 
-                    severity="error" 
+                  <Alert
+                    severity="error"
                     action={
                       <Button size="small" onClick={loadTrendingTopics}>
                         Retry
@@ -685,7 +686,7 @@ const IntelligenceHub = () => {
                   <Box>
                     <Box display="flex" flexWrap="wrap" gap={1} mb={2}>
                       {trendingTopics.slice(0, 8).map((topic) => (
-                        <Chip 
+                        <Chip
                           key={topic.id}
                           label={`${topic.name} (${topic.article_count})`}
                           color="primary"
@@ -798,8 +799,8 @@ const IntelligenceHub = () => {
   const ClustersTab = () => {
     // Calculate cluster metrics
     const totalClusters = topicClusters.length;
-    const avgQuality = topicClusters.length > 0 
-      ? topicClusters.reduce((sum, cluster) => sum + cluster.avg_quality, 0) / topicClusters.length 
+    const avgQuality = topicClusters.length > 0
+      ? topicClusters.reduce((sum, cluster) => sum + cluster.avg_quality, 0) / topicClusters.length
       : 0;
     const totalArticles = topicClusters.reduce((sum, cluster) => sum + cluster.article_count, 0);
     const sourceDiversity = topicClusters.reduce((sum, cluster) => sum + cluster.sources.length, 0);
@@ -833,8 +834,8 @@ const IntelligenceHub = () => {
                     </Typography>
                   </Box>
                 ) : topicClustersError ? (
-                  <Alert 
-                    severity="error" 
+                  <Alert
+                    severity="error"
                     action={
                       <Button size="small" onClick={loadTopicClusters}>
                         Retry
@@ -855,7 +856,7 @@ const IntelligenceHub = () => {
                           secondary={`${cluster.article_count} articles • ${cluster.sources.length} sources`}
                         />
                         <Box display="flex" alignItems="center" gap={1}>
-                          <Chip 
+                          <Chip
                             label={`${(cluster.avg_quality * 100).toFixed(0)}%`}
                             size="small"
                             color="primary"
@@ -962,14 +963,14 @@ const IntelligenceHub = () => {
               <FormControlLabel value="article" control={<Radio />} label="Articles" />
             </RadioGroup>
           </FormControl>
-          
+
           <FormControl fullWidth sx={{ mb: 2 }}>
             <InputLabel>Select {contentType === 'storyline' ? 'Storyline' : 'Article'}</InputLabel>
             <Select
               value={selectedContent?.id || ''}
               label={`Select ${contentType === 'storyline' ? 'Storyline' : 'Article'}`}
               onChange={(e) => {
-                const content = contentType === 'storyline' 
+                const content = contentType === 'storyline'
                   ? storylines.find(s => s.id === e.target.value)
                   : articles.find(a => a.id === e.target.value);
                 setSelectedContent(content);
@@ -1008,8 +1009,8 @@ const IntelligenceHub = () => {
               <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
                 Analyze from multiple viewpoints and sources to provide balanced insights.
               </Typography>
-              <Button 
-                variant="outlined" 
+              <Button
+                variant="outlined"
                 fullWidth
                 onClick={() => handleAnalysisClick('multi-perspective')}
                 disabled={!selectedContent || analysisLoading}
@@ -1031,8 +1032,8 @@ const IntelligenceHub = () => {
               <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
                 Evaluate potential impacts across different dimensions and stakeholders.
               </Typography>
-              <Button 
-                variant="outlined" 
+              <Button
+                variant="outlined"
                 fullWidth
                 onClick={() => handleAnalysisClick('impact-assessment')}
                 disabled={!selectedContent || analysisLoading}
@@ -1054,8 +1055,8 @@ const IntelligenceHub = () => {
               <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
                 Forecast future developments and trends based on current data patterns.
               </Typography>
-              <Button 
-                variant="outlined" 
+              <Button
+                variant="outlined"
                 fullWidth
                 onClick={() => handleAnalysisClick('predictive-analysis')}
                 disabled={!selectedContent || analysisLoading}
@@ -1077,8 +1078,8 @@ const IntelligenceHub = () => {
               <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
                 Integrate expert opinions and authoritative sources for comprehensive analysis.
               </Typography>
-              <Button 
-                variant="outlined" 
+              <Button
+                variant="outlined"
                 fullWidth
                 onClick={() => handleAnalysisClick('expert-analysis')}
                 disabled={!selectedContent || analysisLoading}
@@ -1100,8 +1101,8 @@ const IntelligenceHub = () => {
               <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
                 Execute all available analysis types for comprehensive insights.
               </Typography>
-              <Button 
-                variant="contained" 
+              <Button
+                variant="contained"
                 fullWidth
                 onClick={() => {
                   if (selectedContent) {
@@ -1159,7 +1160,7 @@ const IntelligenceHub = () => {
     { label: 'Discover', content: <DiscoverTab /> },
     { label: 'Trends', content: <TrendsTab /> },
     { label: 'Clusters', content: <ClustersTab /> },
-    { label: 'AI Analysis', content: <AIAnalysisTab /> }
+    { label: 'AI Analysis', content: <AIAnalysisTab /> },
   ];
 
   return (

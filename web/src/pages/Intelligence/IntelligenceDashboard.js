@@ -1,4 +1,34 @@
-import React, { useState, useEffect } from 'react';
+import {
+  Psychology as PsychologyIcon,
+  TrendingUp as TrendingUpIcon,
+  Notifications as NotificationsIcon,
+  CheckCircle as CheckCircleIcon,
+  Error as ErrorIcon,
+  Warning as WarningIcon,
+  Refresh as RefreshIcon,
+  AutoAwesome as AutoAwesomeIcon,
+  Timeline as TimelineIcon,
+  Assessment as AssessmentIcon,
+  Insights as InsightsIcon,
+  Analytics as AnalyticsIcon,
+  Speed as SpeedIcon,
+  Memory as MemoryIcon,
+  Search as SearchIcon,
+  FilterList as FilterIcon,
+  Download as DownloadIcon,
+  Share as ShareIcon,
+  Visibility as VisibilityIcon,
+  TrendingDown as TrendingDownIcon,
+  TrendingFlat as TrendingFlatIcon,
+  Security as SecurityIcon,
+  Public as PublicIcon,
+  Business as BusinessIcon,
+  Person as PersonIcon,
+  LocationOn as LocationIcon,
+  Schedule as ScheduleIcon,
+  Star as StarIcon,
+  Flag as FlagIcon,
+} from '@mui/icons-material';
 import {
   Box,
   Typography,
@@ -35,39 +65,10 @@ import {
   Select,
   MenuItem,
   TextField,
-  InputAdornment
+  InputAdornment,
 } from '@mui/material';
-import {
-  Psychology as PsychologyIcon,
-  TrendingUp as TrendingUpIcon,
-  Notifications as NotificationsIcon,
-  CheckCircle as CheckCircleIcon,
-  Error as ErrorIcon,
-  Warning as WarningIcon,
-  Refresh as RefreshIcon,
-  AutoAwesome as AutoAwesomeIcon,
-  Timeline as TimelineIcon,
-  Assessment as AssessmentIcon,
-  Insights as InsightsIcon,
-  Analytics as AnalyticsIcon,
-  Speed as SpeedIcon,
-  Memory as MemoryIcon,
-  Search as SearchIcon,
-  FilterList as FilterIcon,
-  Download as DownloadIcon,
-  Share as ShareIcon,
-  Visibility as VisibilityIcon,
-  TrendingDown as TrendingDownIcon,
-  TrendingFlat as TrendingFlatIcon,
-  Security as SecurityIcon,
-  Public as PublicIcon,
-  Business as BusinessIcon,
-  Person as PersonIcon,
-  LocationOn as LocationIcon,
-  Schedule as ScheduleIcon,
-  Star as StarIcon,
-  Flag as FlagIcon
-} from '@mui/icons-material';
+import React, { useState, useEffect } from 'react';
+
 import { newsSystemService } from '../../services/newsSystemService';
 
 const IntelligenceDashboard = () => {
@@ -88,7 +89,7 @@ const IntelligenceDashboard = () => {
     return () => clearInterval(interval);
   }, [timeRange]);
 
-  const fetchIntelligenceData = async () => {
+  const fetchIntelligenceData = async() => {
     try {
       setRefreshing(true);
       setError(null);
@@ -96,7 +97,7 @@ const IntelligenceDashboard = () => {
       const [insightsData, trendsData, alertsData] = await Promise.allSettled([
         newsSystemService.getIntelligenceInsights(filterCategory, 50),
         newsSystemService.getIntelligenceTrends(),
-        newsSystemService.getIntelligenceAlerts()
+        newsSystemService.getIntelligenceAlerts(),
       ]);
 
       if (insightsData.status === 'fulfilled') {
@@ -129,12 +130,12 @@ const IntelligenceDashboard = () => {
 
   const getInsightIcon = (category) => {
     switch (category?.toLowerCase()) {
-      case 'security': return <SecurityIcon />;
-      case 'business': return <BusinessIcon />;
-      case 'politics': return <PublicIcon />;
-      case 'technology': return <PsychologyIcon />;
-      case 'trending': return <TrendingUpIcon />;
-      default: return <InsightsIcon />;
+    case 'security': return <SecurityIcon />;
+    case 'business': return <BusinessIcon />;
+    case 'politics': return <PublicIcon />;
+    case 'technology': return <PsychologyIcon />;
+    case 'trending': return <TrendingUpIcon />;
+    default: return <InsightsIcon />;
     }
   };
 
@@ -146,19 +147,19 @@ const IntelligenceDashboard = () => {
 
   const getTrendIcon = (direction) => {
     switch (direction) {
-      case 'up': return <TrendingUpIcon color="success" />;
-      case 'down': return <TrendingDownIcon color="error" />;
-      default: return <TrendingFlatIcon color="default" />;
+    case 'up': return <TrendingUpIcon color="success" />;
+    case 'down': return <TrendingDownIcon color="error" />;
+    default: return <TrendingFlatIcon color="default" />;
     }
   };
 
   const getAlertSeverity = (severity) => {
     switch (severity?.toLowerCase()) {
-      case 'critical': return { color: 'error', icon: <ErrorIcon /> };
-      case 'high': return { color: 'warning', icon: <WarningIcon /> };
-      case 'medium': return { color: 'info', icon: <NotificationsIcon /> };
-      case 'low': return { color: 'success', icon: <CheckCircleIcon /> };
-      default: return { color: 'default', icon: <NotificationsIcon /> };
+    case 'critical': return { color: 'error', icon: <ErrorIcon /> };
+    case 'high': return { color: 'warning', icon: <WarningIcon /> };
+    case 'medium': return { color: 'info', icon: <NotificationsIcon /> };
+    case 'low': return { color: 'success', icon: <CheckCircleIcon /> };
+    default: return { color: 'default', icon: <NotificationsIcon /> };
     }
   };
 
@@ -172,7 +173,7 @@ const IntelligenceDashboard = () => {
 
   const filteredInsights = insights.filter(insight => {
     const matchesCategory = !filterCategory || insight.category === filterCategory;
-    const matchesSearch = !searchQuery || 
+    const matchesSearch = !searchQuery ||
       insight.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
       insight.description.toLowerCase().includes(searchQuery.toLowerCase());
     return matchesCategory && matchesSearch;
@@ -348,7 +349,7 @@ const IntelligenceDashboard = () => {
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               InputProps={{
-                startAdornment: <SearchIcon sx={{ mr: 1, color: 'text.secondary' }} />
+                startAdornment: <SearchIcon sx={{ mr: 1, color: 'text.secondary' }} />,
               }}
             />
           </Grid>

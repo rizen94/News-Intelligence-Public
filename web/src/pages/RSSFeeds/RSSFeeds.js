@@ -1,4 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import {
+  Refresh as RefreshIcon,
+  RssFeed as RssFeedIcon,
+  CheckCircle as CheckCircleIcon,
+  Error as ErrorIcon,
+  Warning as WarningIcon,
+  Edit as EditIcon,
+  Delete as DeleteIcon,
+} from '@mui/icons-material';
 import {
   Box,
   Typography,
@@ -17,17 +25,10 @@ import {
   IconButton,
   Tooltip,
   Alert,
-  CircularProgress
+  CircularProgress,
 } from '@mui/material';
-import {
-  Refresh as RefreshIcon,
-  RssFeed as RssFeedIcon,
-  CheckCircle as CheckCircleIcon,
-  Error as ErrorIcon,
-  Warning as WarningIcon,
-  Edit as EditIcon,
-  Delete as DeleteIcon
-} from '@mui/icons-material';
+import React, { useState, useEffect } from 'react';
+
 import { apiService } from '../../services/apiService';
 
 const RSSFeeds = () => {
@@ -39,12 +40,12 @@ const RSSFeeds = () => {
     loadFeeds();
   }, []);
 
-  const loadFeeds = async () => {
+  const loadFeeds = async() => {
     try {
       setLoading(true);
       setError(null);
       const response = await apiService.getRSSFeeds();
-      
+
       if (response.success) {
         setFeeds(response.data?.feeds || []);
       } else {
@@ -60,27 +61,27 @@ const RSSFeeds = () => {
 
   const getStatusIcon = (status) => {
     switch (status) {
-      case 'active':
-        return <CheckCircleIcon color="success" />;
-      case 'inactive':
-        return <ErrorIcon color="error" />;
-      case 'error':
-        return <ErrorIcon color="error" />;
-      default:
-        return <WarningIcon color="warning" />;
+    case 'active':
+      return <CheckCircleIcon color="success" />;
+    case 'inactive':
+      return <ErrorIcon color="error" />;
+    case 'error':
+      return <ErrorIcon color="error" />;
+    default:
+      return <WarningIcon color="warning" />;
     }
   };
 
   const getStatusColor = (status) => {
     switch (status) {
-      case 'active':
-        return 'success';
-      case 'inactive':
-        return 'error';
-      case 'error':
-        return 'error';
-      default:
-        return 'warning';
+    case 'active':
+      return 'success';
+    case 'inactive':
+      return 'error';
+    case 'error':
+      return 'error';
+    default:
+      return 'warning';
     }
   };
 
@@ -92,7 +93,7 @@ const RSSFeeds = () => {
         month: 'short',
         day: 'numeric',
         hour: '2-digit',
-        minute: '2-digit'
+        minute: '2-digit',
       });
     } catch (error) {
       return 'Invalid date';

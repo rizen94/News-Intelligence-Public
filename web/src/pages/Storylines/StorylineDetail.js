@@ -1,4 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import {
+  ArrowBack as ArrowBackIcon,
+  Timeline as TimelineIcon,
+  Article as ArticleIcon,
+  Edit as EditIcon,
+} from '@mui/icons-material';
 import {
   Box,
   Typography,
@@ -13,15 +18,11 @@ import {
   Divider,
   Alert,
   CircularProgress,
-  Paper
+  Paper,
 } from '@mui/material';
-import {
-  ArrowBack as ArrowBackIcon,
-  Timeline as TimelineIcon,
-  Article as ArticleIcon,
-  Edit as EditIcon
-} from '@mui/icons-material';
+import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+
 import { apiService } from '../../services/apiService';
 
 const StorylineDetail = () => {
@@ -38,20 +39,20 @@ const StorylineDetail = () => {
     }
   }, [id]);
 
-  const loadStoryline = async () => {
+  const loadStoryline = async() => {
     try {
       setLoading(true);
       setError(null);
-      
+
       const [storylineResponse, articlesResponse] = await Promise.all([
         apiService.getStoryline(id),
-        apiService.getArticles({ storyline_id: id })
+        apiService.getArticles({ storyline_id: id }),
       ]);
 
       if (storylineResponse.success) {
         setStoryline(storylineResponse.data);
       }
-      
+
       if (articlesResponse.success) {
         setArticles(articlesResponse.data?.articles || []);
       }
@@ -65,14 +66,14 @@ const StorylineDetail = () => {
 
   const getStatusColor = (status) => {
     switch (status) {
-      case 'active':
-        return 'success';
-      case 'developing':
-        return 'warning';
-      case 'concluded':
-        return 'default';
-      default:
-        return 'default';
+    case 'active':
+      return 'success';
+    case 'developing':
+      return 'warning';
+    case 'concluded':
+      return 'default';
+    default:
+      return 'default';
     }
   };
 
@@ -82,7 +83,7 @@ const StorylineDetail = () => {
       return new Date(dateString).toLocaleDateString('en-US', {
         year: 'numeric',
         month: 'short',
-        day: 'numeric'
+        day: 'numeric',
       });
     } catch (error) {
       return 'Invalid date';
@@ -148,7 +149,7 @@ const StorylineDetail = () => {
                   variant="outlined"
                 />
               </Box>
-              
+
               {storyline.description && (
                 <Typography variant="body1" color="text.secondary" sx={{ mb: 2 }}>
                   {storyline.description}
@@ -178,7 +179,7 @@ const StorylineDetail = () => {
                 <ArticleIcon color="primary" />
                 <Typography variant="h6">Articles in this Storyline</Typography>
               </Box>
-              
+
               {articles.length > 0 ? (
                 <List>
                   {articles.map((article, index) => (
@@ -186,8 +187,8 @@ const StorylineDetail = () => {
                       <ListItem>
                         <ListItemText
                           primary={
-                            <Typography 
-                              variant="h6" 
+                            <Typography
+                              variant="h6"
                               sx={{ cursor: 'pointer' }}
                               onClick={() => navigate(`/articles/${article.id}`)}
                             >
@@ -204,8 +205,8 @@ const StorylineDetail = () => {
                               )}
                               {article.summary && (
                                 <Typography variant="body2" sx={{ mt: 1 }}>
-                                  {article.summary.length > 200 
-                                    ? `${article.summary.substring(0, 200)}...` 
+                                  {article.summary.length > 200
+                                    ? `${article.summary.substring(0, 200)}...`
                                     : article.summary}
                                 </Typography>
                               )}

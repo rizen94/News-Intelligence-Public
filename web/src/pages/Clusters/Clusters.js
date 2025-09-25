@@ -1,4 +1,18 @@
-import React, { useState, useEffect } from 'react';
+import {
+  Search as SearchIcon,
+  Refresh as RefreshIcon,
+  GroupWork as ClusterIcon,
+  Visibility as ViewIcon,
+  Article as ArticleIcon,
+  Person as PersonIcon,
+  Business as BusinessIcon,
+  LocationOn as LocationIcon,
+  ExpandMore as ExpandMoreIcon,
+  TrendingUp as TrendingUpIcon,
+  Schedule as ScheduleIcon,
+  Topic as TopicIcon,
+  Close as CloseIcon,
+} from '@mui/icons-material';
 import {
   Box,
   Typography,
@@ -26,23 +40,10 @@ import {
   Divider,
   Badge,
 } from '@mui/material';
-import {
-  Search as SearchIcon,
-  Refresh as RefreshIcon,
-  GroupWork as ClusterIcon,
-  Visibility as ViewIcon,
-  Article as ArticleIcon,
-  Person as PersonIcon,
-  Business as BusinessIcon,
-  LocationOn as LocationIcon,
-  ExpandMore as ExpandMoreIcon,
-  TrendingUp as TrendingUpIcon,
-  Schedule as ScheduleIcon,
-  Topic as TopicIcon,
-  Close as CloseIcon,
-} from '@mui/icons-material';
-import { useNewsSystem } from '../../contexts/NewsSystemContext';
+import React, { useState, useEffect } from 'react';
+
 import Breadcrumb from '../../components/Breadcrumb/Breadcrumb';
+import { useNewsSystem } from '../../contexts/NewsSystemContext';
 
 export default function Clusters() {
   const { state, actions } = useNewsSystem();
@@ -79,19 +80,19 @@ export default function Clusters() {
 
   const getEntityIcon = (type) => {
     switch (type) {
-      case 'PERSON': return <PersonIcon fontSize="small" />;
-      case 'ORG': return <BusinessIcon fontSize="small" />;
-      case 'GPE': return <LocationIcon fontSize="small" />;
-      default: return <ArticleIcon fontSize="small" />;
+    case 'PERSON': return <PersonIcon fontSize="small" />;
+    case 'ORG': return <BusinessIcon fontSize="small" />;
+    case 'GPE': return <LocationIcon fontSize="small" />;
+    default: return <ArticleIcon fontSize="small" />;
     }
   };
 
   const getEntityColor = (type) => {
     switch (type) {
-      case 'PERSON': return 'primary';
-      case 'ORG': return 'secondary';
-      case 'GPE': return 'success';
-      default: return 'default';
+    case 'PERSON': return 'primary';
+    case 'ORG': return 'secondary';
+    case 'GPE': return 'success';
+    default: return 'default';
     }
   };
 
@@ -117,7 +118,7 @@ export default function Clusters() {
 
   const paginatedClusters = filteredClusters.slice(
     (currentPage - 1) * itemsPerPage,
-    currentPage * itemsPerPage
+    currentPage * itemsPerPage,
   );
 
   const totalPages = Math.ceil(filteredClusters.length / itemsPerPage);
@@ -235,7 +236,7 @@ export default function Clusters() {
             <Typography variant="h5" gutterBottom sx={{ fontWeight: 'bold' }}>
               {selectedCluster.topic}
             </Typography>
-            
+
             <Box sx={{ mb: 3 }}>
               <Typography variant="body1" paragraph>
                 {selectedCluster.summary}
@@ -351,7 +352,7 @@ export default function Clusters() {
     <Box sx={{ p: 3 }}>
       {/* Breadcrumb Navigation */}
       <Breadcrumb />
-      
+
       {/* Header */}
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
         <Typography variant="h4" component="h1" sx={{ fontWeight: 'bold' }}>
