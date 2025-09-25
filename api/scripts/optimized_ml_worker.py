@@ -34,7 +34,7 @@ class OptimizedMLWorker:
         self.batch_size = batch_size
         self.db_config = {
             'host': 'postgres',
-            'database': 'news_system',
+            'database': 'news_intelligence',
             'user': 'newsapp',
             'password': 'Database@NEWSINT2025'
         }

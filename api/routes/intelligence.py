@@ -12,7 +12,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 
-from config.database import get_db
+from config.database import get_db, get_db_connection
+from psycopg2.extras import RealDictCursor
 from schemas.robust_schemas import APIResponse
 
 logger = logging.getLogger(__name__)
@@ -250,48 +251,51 @@ async def get_intelligence_analytics_summary(db: Session = Depends(get_db)):
     """Get intelligence analytics summary"""
     try:
         # Get article statistics
-        article_stats = db.execute(text("""
+        article_stats_query = """
             SELECT 
                 COUNT(*) as total_articles,
                 COUNT(CASE WHEN status = 'processed' THEN 1 END) as processed_articles,
                 AVG(quality_score) as avg_quality,
                 COUNT(CASE WHEN created_at > NOW() - INTERVAL '24 hours' THEN 1 END) as recent_articles
             FROM articles
-        """)).fetchone()
+        """
+        article_stats = _execute_db_query(article_stats_query, fetch_all=False)
         
         # Get category distribution
-        category_stats = db.execute(text("""
+        category_stats_query = """
             SELECT category, COUNT(*) as count
             FROM articles 
             WHERE status = 'processed' AND category IS NOT NULL
             GROUP BY category
             ORDER BY count DESC
             LIMIT 10
-        """)).fetchall()
+        """
+        category_stats = _execute_db_query(category_stats_query)
         
         # Get entity statistics
-        entity_stats = db.execute(text("""
+        entity_stats_query = """
             SELECT 
                 COUNT(DISTINCT id) as articles_with_entities,
                 AVG(jsonb_array_length(entities)) as avg_entities_per_article
             FROM articles 
             WHERE status = 'processed' AND entities IS NOT NULL
-        """)).fetchone()
+        """
+        entity_stats = _execute_db_query(entity_stats_query, fetch_all=False)
         
         summary = {
             "timestamp": datetime.now().isoformat(),
             "articles": {
-                "total": article_stats[0] or 0,
-                "processed": article_stats[1] or 0,
-                "recent_24h": article_stats[3] or 0,
-                "avg_quality": float(article_stats[2]) if article_stats[2] else 0.0
+                "total": article_stats.get('total_articles', 0) or 0,
+                "processed": article_stats.get('processed_articles', 0) or 0,
+                "recent_24h": article_stats.get('recent_articles', 0) or 0,
+                "avg_quality": float(article_stats.get('avg_quality', 0)) if article_stats.get('avg_quality') else 0.0
             },
             "categories": [
-                {"category": row[0], "count": row[1]} for row in category_stats
+                {"category": row['category'], "count": row['count']} for row in category_stats
             ],
             "entities": {
-                "articles_with_entities": entity_stats[0] or 0,
-                "avg_entities_per_article": float(entity_stats[1]) if entity_stats[1] else 0.0
+                "articles_with_entities": entity_stats.get('articles_with_entities', 0) or 0,
+                "avg_entities_per_article": float(entity_stats.get('avg_entities_per_article', 0)) if entity_stats.get('avg_entities_per_article') else 0.0
             },
             "insights_generated": 0,  # Placeholder
             "trends_identified": 0,  # Placeholder
@@ -309,6 +313,32 @@ async def get_intelligence_analytics_summary(db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=str(e))
 
 # Helper functions
+def _execute_db_query(query: str, params: tuple = None, fetch_all: bool = True) -> List[Dict[str, Any]]:
+    """Execute database query with proper error handling and connection management"""
+    conn = None
+    cursor = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        
+        cursor.execute(query, params)
+        
+        if fetch_all:
+            result = cursor.fetchall()
+            return [dict(row) for row in result]
+        else:
+            result = cursor.fetchone()
+            return dict(result) if result else {}
+            
+    except Exception as e:
+        logger.error(f"Database query error: {e}")
+        return [] if fetch_all else {}
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
 async def generate_insights_from_articles(category: Optional[str], limit: int, db: Session) -> List[Dict[str, Any]]:
     """Generate insights from article analysis"""
     try:
@@ -320,32 +350,32 @@ async def generate_insights_from_articles(category: Optional[str], limit: int, d
             FROM articles 
             WHERE status = 'processed' AND quality_score > 0.7
         """
-        params = {}
+        params = []
         
         if category:
-            query += " AND category = :category"
-            params["category"] = category
+            query += " AND category = %s"
+            params.append(category)
         
-        query += " ORDER BY quality_score DESC LIMIT :limit"
-        params["limit"] = limit
+        query += " ORDER BY quality_score DESC LIMIT %s"
+        params.append(limit)
         
-        result = db.execute(text(query), params).fetchall()
+        result = _execute_db_query(query, tuple(params))
         
         for i, row in enumerate(result):
             insight = {
                 "id": f"insight_{i+1}_{int(datetime.now().timestamp())}",
-                "title": f"High-quality article: {row[1][:50]}...",
-                "description": f"Article with quality score {row[2]:.2f} in category {row[3] or 'unknown'}",
-                "category": row[3] or "general",
-                "confidence": float(row[2]),
+                "title": f"High-quality article: {row['title'][:50]}...",
+                "description": f"Article with quality score {row['quality_score']:.2f} in category {row['category'] or 'unknown'}",
+                "category": row['category'] or "general",
+                "confidence": float(row['quality_score']),
                 "created_at": datetime.now().isoformat(),
                 "data": {
-                    "article_id": row[0],
-                    "quality_score": float(row[2]),
-                    "entities": row[4] if row[4] else [],
-                    "tags": row[5] if row[5] else []
+                    "article_id": row['id'],
+                    "quality_score": float(row['quality_score']),
+                    "entities": row['entities'] if row['entities'] else [],
+                    "tags": row['tags'] if row['tags'] else []
                 },
-                "source_articles": [row[0]]
+                "source_articles": [row['id']]
             }
             insights.append(insight)
         
@@ -364,25 +394,26 @@ async def generate_trends_from_articles(trend_type: Optional[str], time_period: 
         period_days = {"1d": 1, "7d": 7, "30d": 30, "90d": 90}.get(time_period, 7)
         
         # Get category trends
-        category_trends = db.execute(text("""
+        category_trends_query = """
             SELECT category, DATE(created_at) as date, COUNT(*) as count
             FROM articles 
             WHERE status = 'processed' 
-            AND created_at > NOW() - INTERVAL :days DAY
+            AND created_at > NOW() - INTERVAL '%s days'
             AND category IS NOT NULL
             GROUP BY category, DATE(created_at)
             ORDER BY category, date
-        """), {"days": period_days}).fetchall()
+        """
+        category_trends = _execute_db_query(category_trends_query, (period_days,))
         
         # Group by category
         category_data = {}
         for row in category_trends:
-            category = row[0]
+            category = row['category']
             if category not in category_data:
                 category_data[category] = []
             category_data[category].append({
-                "date": row[1].isoformat(),
-                "count": row[2]
+                "date": row['date'].isoformat(),
+                "count": row['count']
             })
         
         # Generate trend objects
@@ -431,12 +462,14 @@ async def generate_alerts_from_analysis(severity: Optional[str], category: Optio
         alerts = []
         
         # Check for high-quality articles spike
-        recent_high_quality = db.execute(text("""
-            SELECT COUNT(*) FROM articles 
+        recent_high_quality_query = """
+            SELECT COUNT(*) as count FROM articles 
             WHERE status = 'processed' 
             AND quality_score > 0.8 
             AND created_at > NOW() - INTERVAL '1 hour'
-        """)).fetchone()[0] or 0
+        """
+        recent_high_quality_result = _execute_db_query(recent_high_quality_query, fetch_all=False)
+        recent_high_quality = recent_high_quality_result.get('count', 0) or 0
         
         if recent_high_quality > 10:
             alert = {
@@ -452,11 +485,13 @@ async def generate_alerts_from_analysis(severity: Optional[str], category: Optio
             alerts.append(alert)
         
         # Check for processing errors
-        recent_errors = db.execute(text("""
-            SELECT COUNT(*) FROM articles 
+        recent_errors_query = """
+            SELECT COUNT(*) as count FROM articles 
             WHERE status = 'failed' 
             AND created_at > NOW() - INTERVAL '1 hour'
-        """)).fetchone()[0] or 0
+        """
+        recent_errors_result = _execute_db_query(recent_errors_query, fetch_all=False)
+        recent_errors = recent_errors_result.get('count', 0) or 0
         
         if recent_errors > 5:
             alert = {
@@ -574,8 +609,8 @@ async def get_trending_topics(
         # Parse time period
         period_hours = {"1h": 1, "24h": 24, "7d": 168, "30d": 720}.get(time_period, 24)
         
-        # Get trending topics from articles
-        trending_query = text(f"""
+        # Get trending topics from articles using robust database helper
+        trending_query = """
             SELECT 
                 category,
                 COUNT(*) as article_count,
@@ -584,25 +619,25 @@ async def get_trending_topics(
                 COUNT(DISTINCT source) as source_diversity
             FROM articles 
             WHERE status = 'processed' 
-            AND created_at > NOW() - INTERVAL '{period_hours} hours'
+            AND created_at > NOW() - INTERVAL '%s hours'
             AND category IS NOT NULL
             GROUP BY category
             ORDER BY article_count DESC, avg_quality DESC
-            LIMIT :limit
-        """)
+            LIMIT %s
+        """
         
-        result = db.execute(trending_query, {"limit": limit}).fetchall()
+        result = _execute_db_query(trending_query, (period_hours, limit))
         
         trending_topics = []
         for i, row in enumerate(result):
             topic = {
                 "id": f"trend_{i+1}",
-                "name": row[0],
-                "article_count": row[1],
-                "avg_quality": float(row[2]) if row[2] else 0.0,
-                "avg_sentiment": float(row[3]) if row[3] else 0.0,
-                "source_diversity": row[4],
-                "trend_score": float(row[1]) * float(row[2]) if row[2] else 0.0,
+                "name": row['category'],
+                "article_count": row['article_count'],
+                "avg_quality": float(row['avg_quality']) if row['avg_quality'] else 0.0,
+                "avg_sentiment": float(row['avg_sentiment']) if row['avg_sentiment'] else 0.0,
+                "source_diversity": row['source_diversity'],
+                "trend_score": float(row['article_count']) * float(row['avg_quality']) if row['avg_quality'] else 0.0,
                 "time_period": time_period
             }
             trending_topics.append(topic)
@@ -633,26 +668,26 @@ async def get_topic_clusters(
         # Parse time period
         period_days = {"1d": 1, "7d": 7, "30d": 30}.get(time_period, 7)
         
-        # Get articles for clustering
-        articles_query = text(f"""
+        # Get articles for clustering using robust database helper
+        articles_query = """
             SELECT 
                 id, title, content, category, tags, entities, quality_score,
                 created_at, source
             FROM articles 
             WHERE status = 'processed' 
-            AND created_at > NOW() - INTERVAL '{period_days} days'
+            AND created_at > NOW() - INTERVAL '%s days'
             AND quality_score > 0.5
             ORDER BY quality_score DESC
             LIMIT 1000
-        """)
+        """
         
-        articles = db.execute(articles_query).fetchall()
+        articles = _execute_db_query(articles_query, (period_days,))
         
         # Simple clustering based on category and tags
         clusters = {}
         for article in articles:
-            category = article[3] or "general"
-            tags = article[4] or []
+            category = article['category'] or "general"
+            tags = article['tags'] or []
             
             # Create cluster key
             cluster_key = f"{category}_{len(tags)}"
@@ -671,12 +706,12 @@ async def get_topic_clusters(
             
             cluster = clusters[cluster_key]
             cluster["articles"].append({
-                "id": article[0],
-                "title": article[1],
-                "quality_score": float(article[6]) if article[6] else 0.0
+                "id": article['id'],
+                "title": article['title'],
+                "quality_score": float(article['quality_score']) if article['quality_score'] else 0.0
             })
             cluster["article_count"] += 1
-            cluster["sources"].add(article[8])
+            cluster["sources"].add(article['source'])
             if tags:
                 cluster["tags"].update(tags)
         
@@ -728,25 +763,26 @@ async def discover_content(
     """Discover articles with advanced search and filtering"""
     try:
         # Build search query
-        where_conditions = ["status = 'processed'", "quality_score >= :min_quality"]
-        params = {"min_quality": min_quality, "limit": limit}
+        where_conditions = ["status = 'processed'", "quality_score >= %s"]
+        params = [min_quality]
         
         if search_query:
-            where_conditions.append("(title ILIKE :search OR content ILIKE :search OR summary ILIKE :search)")
-            params["search"] = f"%{search_query}%"
+            where_conditions.append("(title ILIKE %s OR content ILIKE %s OR summary ILIKE %s)")
+            search_param = f"%{search_query}%"
+            params.extend([search_param, search_param, search_param])
         
         if category:
-            where_conditions.append("category = :category")
-            params["category"] = category
+            where_conditions.append("category = %s")
+            params.append(category)
             
         if source:
-            where_conditions.append("source = :source")
-            params["source"] = source
+            where_conditions.append("source = %s")
+            params.append(source)
         
         where_clause = " AND ".join(where_conditions)
         
-        # Execute search
-        search_query_sql = text(f"""
+        # Execute search using robust database helper
+        search_query_sql = f"""
             SELECT 
                 id, title, content, summary, url, source, category, 
                 quality_score, sentiment_score, tags, entities,
@@ -754,35 +790,36 @@ async def discover_content(
             FROM articles 
             WHERE {where_clause}
             ORDER BY quality_score DESC, created_at DESC
-            LIMIT :limit
-        """)
+            LIMIT %s
+        """
         
-        results = db.execute(search_query_sql, params).fetchall()
+        params.append(limit)
+        results = _execute_db_query(search_query_sql, tuple(params))
         
         # Format results
         articles = []
         for row in results:
             article = {
-                "id": row[0],
-                "title": row[1],
-                "content": row[2],
-                "summary": row[3],
-                "url": row[4],
-                "source": row[5],
-                "category": row[6],
-                "quality_score": float(row[7]) if row[7] else 0.0,
-                "sentiment_score": float(row[8]) if row[8] else 0.0,
-                "tags": row[9] if row[9] else [],
-                "entities": row[10] if row[10] else {},
-                "created_at": row[11].isoformat() if row[11] else None,
-                "published_at": row[12].isoformat() if row[12] else None,
-                "word_count": row[13] if row[13] else 0,
-                "reading_time": row[14] if row[14] else 0
+                "id": row['id'],
+                "title": row['title'],
+                "content": row['content'],
+                "summary": row['summary'],
+                "url": row['url'],
+                "source": row['source'],
+                "category": row['category'],
+                "quality_score": float(row['quality_score']) if row['quality_score'] else 0.0,
+                "sentiment_score": float(row['sentiment_score']) if row['sentiment_score'] else 0.0,
+                "tags": row['tags'] if row['tags'] else [],
+                "entities": row['entities'] if row['entities'] else {},
+                "created_at": row['created_at'].isoformat() if row['created_at'] else None,
+                "published_at": row['published_at'].isoformat() if row['published_at'] else None,
+                "word_count": row['word_count'] if row['word_count'] else 0,
+                "reading_time": row['reading_time'] if row['reading_time'] else 0
             }
             articles.append(article)
         
-        # Get discovery statistics
-        stats_query = text(f"""
+        # Get discovery statistics using robust database helper
+        stats_query = f"""
             SELECT 
                 COUNT(*) as total_articles,
                 COUNT(DISTINCT category) as category_count,
@@ -790,9 +827,18 @@ async def discover_content(
                 AVG(quality_score) as avg_quality
             FROM articles 
             WHERE {where_clause}
-        """)
+        """
         
-        stats = db.execute(stats_query, params).fetchone()
+        # Remove the limit parameter for stats query
+        stats_params = params[:-1]  # Remove the limit parameter
+        stats_result = _execute_db_query(stats_query, tuple(stats_params), fetch_all=False)
+        
+        stats = [
+            stats_result.get('total_articles', 0),
+            stats_result.get('category_count', 0),
+            stats_result.get('source_count', 0),
+            float(stats_result.get('avg_quality', 0)) if stats_result.get('avg_quality') else 0.0
+        ]
         
         return APIResponse(
             success=True,
@@ -830,7 +876,7 @@ async def get_highlights(
     try:
         if highlight_type == "breaking":
             # Get breaking news (high quality, recent)
-            highlights_query = text("""
+            highlights_query = """
                 SELECT 
                     id, title, content, summary, source, category,
                     quality_score, created_at, published_at
@@ -839,11 +885,11 @@ async def get_highlights(
                 AND quality_score > 0.8
                 AND created_at > NOW() - INTERVAL '6 hours'
                 ORDER BY quality_score DESC, created_at DESC
-                LIMIT :limit
-            """)
+                LIMIT %s
+            """
         elif highlight_type == "weekly":
             # Get weekly highlights (high quality, last 7 days)
-            highlights_query = text("""
+            highlights_query = """
                 SELECT 
                     id, title, content, summary, source, category,
                     quality_score, created_at, published_at
@@ -852,11 +898,11 @@ async def get_highlights(
                 AND quality_score > 0.7
                 AND created_at > NOW() - INTERVAL '7 days'
                 ORDER BY quality_score DESC, created_at DESC
-                LIMIT :limit
-            """)
+                LIMIT %s
+            """
         else:  # daily
             # Get daily highlights (high quality, last 24 hours)
-            highlights_query = text("""
+            highlights_query = """
                 SELECT 
                     id, title, content, summary, source, category,
                     quality_score, created_at, published_at
@@ -865,24 +911,24 @@ async def get_highlights(
                 AND quality_score > 0.6
                 AND created_at > NOW() - INTERVAL '24 hours'
                 ORDER BY quality_score DESC, created_at DESC
-                LIMIT :limit
-            """)
+                LIMIT %s
+            """
         
-        results = db.execute(highlights_query, {"limit": limit}).fetchall()
+        results = _execute_db_query(highlights_query, (limit,))
         
         highlights = []
         for i, row in enumerate(results):
             highlight = {
                 "id": f"highlight_{i+1}",
-                "article_id": row[0],
-                "title": row[1],
-                "content": row[2],
-                "summary": row[3],
-                "source": row[4],
-                "category": row[5],
-                "quality_score": float(row[6]) if row[6] else 0.0,
-                "created_at": row[7].isoformat() if row[7] else None,
-                "published_at": row[8].isoformat() if row[8] else None,
+                "article_id": row['id'],
+                "title": row['title'],
+                "content": row['content'],
+                "summary": row['summary'],
+                "source": row['source'],
+                "category": row['category'],
+                "quality_score": float(row['quality_score']) if row['quality_score'] else 0.0,
+                "created_at": row['created_at'].isoformat() if row['created_at'] else None,
+                "published_at": row['published_at'].isoformat() if row['published_at'] else None,
                 "highlight_type": highlight_type
             }
             highlights.append(highlight)

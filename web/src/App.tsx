@@ -130,17 +130,18 @@ const App = () => {
   };
 
   const menuItems = [
-    { text: 'My Storylines', icon: <TimelineIcon />, path: '/' },
-    { text: 'Article Queue', icon: <ArticleIcon />, path: '/articles' },
-    { text: 'Topic Clusters', icon: <PsychologyIcon />, path: '/intelligence' },
-    { text: 'RSS Sources', icon: <RssFeedIcon />, path: '/rss-feeds' },
-    { text: 'Reports', icon: <AssessmentIcon />, path: '/reports' },
+    { text: 'Dashboard', icon: <TimelineIcon />, path: '/' },
+    { text: 'Articles', icon: <ArticleIcon />, path: '/articles' },
+    { text: 'Storylines', icon: <TimelineIcon />, path: '/storylines' },
+    { text: 'Intelligence', icon: <PsychologyIcon />, path: '/intelligence' },
+    { text: 'RSS Feeds', icon: <RssFeedIcon />, path: '/rss-feeds' },
     { text: 'Settings', icon: <SettingsIcon />, path: '/settings' },
   ];
 
   // Admin-only menu items (shown conditionally)
   const adminMenuItems = [
-    { text: 'System Monitoring', icon: <HealthIcon />, path: '/monitoring' },
+    { text: 'Monitoring', icon: <HealthIcon />, path: '/monitoring' },
+    { text: 'Health', icon: <HealthIcon />, path: '/health' },
   ];
 
   const drawer = (

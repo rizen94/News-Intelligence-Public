@@ -28,9 +28,9 @@ class MLWorker:
     def __init__(self):
         self.db_config = {
             'host': 'postgres',
-            'database': 'news_system',
+            'database': 'news_intelligence',
             'user': 'newsapp',
-            'password': 'Database@NEWSINT2025'
+            'password': 'newsapp_password'
         }
         self.is_running = False
         

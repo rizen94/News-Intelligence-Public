@@ -113,8 +113,8 @@ class DashboardService:
                 SELECT id, title, source, created_at
                 FROM articles 
                 ORDER BY created_at DESC 
-                LIMIT %s
-            """), (limit,)).fetchall()
+                LIMIT :limit
+            """), {"limit": limit}).fetchall()
             
             articles = []
             for row in result:
