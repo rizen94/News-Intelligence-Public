@@ -279,7 +279,7 @@ const App = () => {
               <Route path="/storylines/:id/timeline" element={<StorylineTimeline />} />
               <Route path="/intelligence" element={<IntelligenceHub />} />
               <Route path="/monitoring" element={<Monitoring />} />
-              <Route path="/health" element={<Health />} />
+              <Route path="/health" element={<Health systemHealth={systemHealth} />} />
               <Route path="/settings" element={<Settings />} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>

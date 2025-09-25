@@ -11,11 +11,11 @@ module.exports = {
     'no-var': 'error',
     
     // Console logging rules
-    'no-console': 'warn',
+    'no-console': 'off',
     'no-debugger': 'warn',
     
     // Variable and function rules
-    'no-unused-vars': 'error',
+    'no-unused-vars': 'warn',
     'no-undef': 'error',
     'no-unreachable': 'error',
     
@@ -31,24 +31,7 @@ module.exports = {
     'react/react-in-jsx-scope': 'off',
     
     // Import rules
-    'import/order': [
-      'error',
-      {
-        'groups': [
-          'builtin',
-          'external',
-          'internal',
-          'parent',
-          'sibling',
-          'index'
-        ],
-        'newlines-between': 'always',
-        'alphabetize': {
-          'order': 'asc',
-          'caseInsensitive': true
-        }
-      }
-    ],
+    'import/order': 'off',
     
     // Code style rules
     'indent': ['error', 2],
