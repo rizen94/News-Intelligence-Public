@@ -51,6 +51,8 @@ import RSSFeeds from './pages/RSSFeeds/EnhancedRSSFeeds';
 import Settings from './pages/Settings/Settings';
 import Storylines from './pages/Storylines/EnhancedStorylines';
 import StorylineDashboard from './pages/Storylines/StorylineDashboard';
+import StorylineDetail from './pages/Storylines/StorylineDetail';
+import StorylineTimeline from './pages/Timeline/StorylineTimeline';
 // import AIAnalysis from './pages/AIAnalysis/AIAnalysis';
 // import SystemMonitoring from './pages/Monitoring/SystemMonitoring';
 
@@ -269,18 +271,17 @@ const App = () => {
             )}
 
             <Routes>
-              <Route path="/" element={<StorylineDashboard />} />
+              <Route path="/" element={<Dashboard />} />
               <Route path="/articles" element={<Articles />} />
               <Route path="/articles/:id" element={<ArticleDetail />} />
-              <Route path="/intelligence" element={<IntelligenceHub />} />
               <Route path="/rss-feeds" element={<RSSFeeds />} />
               <Route path="/storylines" element={<Storylines />} />
               <Route path="/storylines/:id" element={<StorylineDetail />} />
               <Route path="/storylines/:id/timeline" element={<StorylineTimeline />} />
-              <Route path="/reports" element={<Dashboard />} />
+              <Route path="/intelligence" element={<IntelligenceHub />} />
               <Route path="/monitoring" element={<Monitoring />} />
+              <Route path="/health" element={<Health />} />
               <Route path="/settings" element={<Settings />} />
-              <Route path="/health" element={<Health systemHealth={systemHealth} />} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
           </Box>
