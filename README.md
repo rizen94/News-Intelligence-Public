@@ -1,348 +1,222 @@
 # News Intelligence System v3.0
-## AI-Powered News Aggregation and Analysis Platform
 
-[![Version](https://img.shields.io/badge/version-3.0.0-blue.svg)](https://github.com/your-org/news-intelligence-system)
-[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](docker-compose.yml)
-[![TypeScript](https://img.shields.io/badge/typescript-5.3+-blue.svg)](web/tsconfig.json)
+## 🎯 **System Overview**
 
----
+The News Intelligence System is an AI-powered news aggregation and analysis platform that processes RSS feeds, analyzes articles, and creates intelligent storylines for investigative journalism.
 
-## 🚀 Overview
-
-The News Intelligence System v3.0 is a comprehensive, locally-powered AI platform for news aggregation, analysis, and intelligent content management. Built with modern architecture principles, it provides real-time news processing, storyline tracking, and intelligent insights using 100% local AI processing.
-
-### ✨ Key Features
-
-- **🤖 Local AI Analysis**: 100% local machine learning pipeline using Ollama
-- **📰 Real-time News Aggregation**: RSS feed collection and processing
-- **📊 Storyline Tracking**: Intelligent story development monitoring
-- **🎯 Content Prioritization**: Smart content ranking and filtering
-- **📈 Analytics Dashboard**: Comprehensive insights and reporting
-- **⚡ High Performance**: Optimized for speed and scalability
-- **🔒 Enterprise Security**: Production-ready security features
+### **Current Status: PRODUCTION READY** ✅
+- **Frontend**: `http://localhost:80` - React web interface
+- **API**: `http://localhost:8000` - FastAPI backend
+- **Database**: `localhost:5432` - PostgreSQL with real data
+- **Cache**: `localhost:6379` - Redis caching
+- **Monitoring**: `localhost:9090` - Prometheus metrics
 
 ---
 
-## 🏗️ Architecture
+## 📚 **Documentation Index**
 
-### v3.0 Design Principles
-- **Modular Architecture**: Domain-specific services and components
-- **Type Safety**: Full TypeScript implementation
-- **Centralized State Management**: Zustand-based state management
-- **Error Resilience**: Comprehensive error handling and recovery
-- **Performance Optimized**: Caching, parallel processing, and optimization
-- **Scalable**: Microservices-ready architecture
-- **Code Quality**: Automated linting, formatting, and logging systems
+### **Core Documentation**
+- **[DEVELOPMENT_METHODOLOGY.md](./DEVELOPMENT_METHODOLOGY.md)** - Development workflow and best practices
+- **[PRODUCTION_GIT_WORKFLOW.md](./PRODUCTION_GIT_WORKFLOW.md)** - Git branch strategy and workflow
+- **[ENVIRONMENT_MANAGEMENT.md](./ENVIRONMENT_MANAGEMENT.md)** - Environment separation strategy
 
-### Technology Stack
-- **Backend**: FastAPI (Python 3.11+)
-- **Frontend**: React 18 + TypeScript (Phase 2 Complete)
-- **Database**: PostgreSQL 15
-- **Cache**: Redis 7
-- **Containerization**: Docker + Docker Compose
-- **Monitoring**: Prometheus + Grafana
-- **Code Quality**: ESLint + Prettier + Logger System
+### **System Documentation**
+- **[DEPLOYMENT_STATUS.md](./DEPLOYMENT_STATUS.md)** - Current deployment status
+- **[docs/PROJECT_OVERVIEW.md](./docs/PROJECT_OVERVIEW.md)** - High-level system overview
+- **[docker-compose.yml](./docker-compose.yml)** - Docker container configuration
+
+### **Enforcement Tools**
+- **[scripts/enforce_methodology.sh](./scripts/enforce_methodology.sh)** - Methodology enforcement script
+- **[scripts/pre_deployment_check.sh](./scripts/pre_deployment_check.sh)** - Pre-deployment validation
+- **[scripts/test_pipeline.sh](./scripts/test_pipeline.sh)** - Pipeline testing script
 
 ---
 
-## 🚀 Quick Start
+## 🚀 **Quick Start**
 
-### Prerequisites
-- Docker & Docker Compose
-- Node.js 18+ (for development)
-- Python 3.11+ (for development)
-- Ollama (for local AI processing)
-
-### Installation
-
-1. **Clone the repository**
-   ```bash
-   git clone https://github.com/your-org/news-intelligence-system.git
-   cd news-intelligence-system
-   ```
-
-2. **Set up local AI processing**
-   ```bash
-   # Install and configure Ollama for local AI
-   ./scripts/setup-ollama.sh
-   ```
-
-3. **Start the system**
-   ```bash
-   # Using optimized Docker Compose
-   docker compose up -d
-   
-   # Or using the build script
-   ./scripts/build-optimized.sh parallel
-   ```
-
-4. **Access the application**
-   - **Frontend**: http://localhost:3001
-   - **API**: http://localhost:8000
-   - **API Docs**: http://localhost:8000/docs
-   - **Monitoring**: http://localhost:3002 (Grafana)
-
-### Development Setup
-
-1. **Backend Development**
-   ```bash
-   cd api
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   pip install -r requirements.txt
-   uvicorn main:app --reload
-   ```
-
-2. **Frontend Development**
-   ```bash
-   cd web
-   npm install
-   npm start
-   ```
-
----
-
-## 🎨 Frontend Development
-
-### Code Quality Standards
-The frontend follows strict coding standards with automated enforcement:
-
-- **ESLint**: Comprehensive linting rules for code quality
-- **Prettier**: Automated code formatting
-- **Logger System**: Centralized logging with development/production modes
-- **TypeScript**: Full type safety (Phase 2 Complete)
-- **Component Templates**: Standardized component structure
-
-### Development Commands
+### **Access Production System**
 ```bash
-# Code quality
-npm run lint          # Check for linting errors
-npm run lint:fix      # Auto-fix linting errors
-npm run format        # Format code with Prettier
-npm run style:check   # Check both linting and formatting
-npm run style:fix     # Fix both linting and formatting
+# Web Interface
+open http://localhost:80
 
-# Development
-npm start             # Start development server
-npm run build         # Build for production
-npm test              # Run tests
+# API Documentation
+open http://localhost:8000/docs
+
+# Monitoring Dashboard
+open http://localhost:9090
 ```
 
-### Frontend Architecture
-- **Components**: Arrow function components with TypeScript
-- **State Management**: React hooks with Zustand for global state
-- **API Integration**: Centralized API service with error handling
-- **Logging**: Production-ready logging system
-- **Styling**: Material-UI with consistent theming
-
----
-
-## 🤖 Local AI Processing
-
-### Why Local AI?
-- **🔒 Privacy**: All data stays on your machine - no external AI services
-- **💰 Cost-Free**: No API costs, subscriptions, or usage limits
-- **⚡ Performance**: No network latency - instant responses
-- **🛡️ Security**: Complete control over your data and processing
-- **🌐 Offline**: Works without internet connection
-- **🔧 Customizable**: Use any Ollama-compatible model
-
-### Supported Models
-- **llama3.1:8b**: Fast general-purpose model (4.9GB) ✅ **INSTALLED**
-- **llama3.1:70b**: High-quality analysis model (42GB) ✅ **INSTALLED**
-- **nomic-embed-text**: Text embedding for similarity (274MB) ✅ **INSTALLED**
-- **codellama:7b**: Code analysis and generation (7GB RAM)
-
-### Current Deployment Status
-- **System**: Fresh deployment completed ✅
-- **Database**: 66 tables with full production schema ✅
-- **API**: All endpoints functional ✅
-- **Frontend**: Web interface operational ✅
-- **Ollama**: Running with CUDA acceleration (RTX 5090) ✅
-- **Models**: All required models downloaded and tested ✅
-
-### Setup Requirements
-- **Minimum RAM**: 16GB (for llama3.1:8b)
-- **Recommended RAM**: 32GB+ (for llama3.1:70b)
-- **Storage**: 50GB+ for all models
-- **CPU**: 4+ cores recommended
-- **GPU**: NVIDIA GPU recommended for acceleration (RTX 5090 detected)
-
----
-
-## 📁 Production Structure
-
-```
-News Intelligence System v3.0/
-├── 📁 api/                          # Core API backend
-│   ├── 📁 modules/                  # ML and processing modules
-│   ├── 📁 routes/                   # API endpoints
-│   ├── 📁 schemas/                  # Data validation schemas
-│   ├── 📁 services/                 # Business logic services
-│   ├── 📁 config/                   # Database configuration
-│   └── 📄 main.py                   # FastAPI application
-│
-├── 📁 web/                          # React.js frontend
-│   ├── 📁 src/                      # React source code
-│   ├── 📁 public/                   # Static assets
-│   └── 📄 package.json              # Node.js dependencies
-│
-├── 📁 docs/v3.0/                    # Production documentation
-├── 📁 configs/                      # Docker and service configs
-├── 📁 nginx/                        # Web server configuration
-├── 📁 monitoring/                   # System monitoring
-├── 📁 data/                         # Application data
-├── 📁 logs/                         # System logs
-├── 📁 schema/                       # Database schemas
-├── 📁 scripts/                      # Production scripts
-├── 📁 archive/v3.0/development/     # Archived development files
-├── 📁 backups/                      # System backups
-├── 📄 docker-compose.yml            # Production orchestration
-├── 📄 start.sh                      # System startup
-├── 📄 stop.sh                       # System shutdown
-└── 📄 README.md               # This file
-```
-
----
-
-## 🔧 Configuration
-
-### Environment Variables
-Copy `configs/env.example` to `configs/.env` and configure:
-
+### **Development Workflow**
 ```bash
-# Database
-DATABASE_URL=postgresql://newsapp:password@localhost:5432/newsintelligence
+# Start development
+git checkout master
 
-# Redis
-REDIS_URL=redis://localhost:6379
+# Make changes and test
+# ... development work ...
 
-# API
-API_URL=http://localhost:8000
-FRONTEND_URL=http://localhost:3001
-
-# Security
-SECRET_KEY=your-secret-key-here
+# Promote to production (only when working!)
+./scripts/enforce_methodology.sh promote
 ```
 
-### Docker Configuration
-- **Production**: `docker-compose.yml` (optimized)
-- **Development**: `configs/docker-compose.backend.yml`
-- **Monitoring**: `configs/docker-compose.monitoring.yml`
-
----
-
-## 🚀 Deployment
-
-### Production Deployment
+### **System Management**
 ```bash
-# Build and deploy
-./scripts/build-optimized.sh parallel
+# Check system status
+./scripts/enforce_methodology.sh status
 
-# Start system
-./scripts/system-recovery-optimized.sh start
+# Run methodology checks
+./scripts/enforce_methodology.sh check
 
-# Monitor system
-./scripts/system-recovery-optimized.sh status
+# Emergency rollback
+./scripts/enforce_methodology.sh rollback
 ```
 
-### Development Deployment
+---
+
+## 🏗️ **Architecture**
+
+### **Frontend (React + TypeScript)**
+- **Location**: `web/`
+- **Port**: 80 (production), 3001 (development)
+- **Features**: Dashboard, Articles, Storylines, RSS Feeds, Intelligence Hub
+
+### **Backend (FastAPI + Python)**
+- **Location**: `api/`
+- **Port**: 8000
+- **Features**: REST API, ML pipelines, RSS processing, Database management
+
+### **Database (PostgreSQL)**
+- **Location**: Docker container
+- **Port**: 5432
+- **Features**: Articles, Storylines, RSS Feeds, User data
+
+### **Cache (Redis)**
+- **Location**: Docker container
+- **Port**: 6379
+- **Features**: Session storage, Data caching, Pipeline state
+
+### **Monitoring (Prometheus)**
+- **Location**: Docker container
+- **Port**: 9090
+- **Features**: System metrics, Performance monitoring, Health checks
+
+---
+
+## 🔧 **Development Environment**
+
+### **Prerequisites**
+- Docker and Docker Compose
+- Node.js 16+ (for frontend development)
+- Python 3.9+ (for backend development)
+- Git
+
+### **Environment Setup**
 ```bash
-# Start development environment
-docker compose -f configs/docker-compose.backend.yml up -d
+# Clone repository
+git clone <repository-url>
+cd news-intelligence-system
 
-# Start frontend in development mode
-cd web && npm start
+# Start production system
+docker-compose up -d
+
+# Verify system health
+./scripts/enforce_methodology.sh status
 ```
 
 ---
 
-## 📊 Performance
+## 📋 **Key Features**
 
-### v3.0 Optimizations
-- **Build Time**: 60% faster (3-5 minutes vs 8-12 minutes)
-- **System Recovery**: 75% faster (30-45 seconds vs 2-3 minutes)
-- **Memory Usage**: 40% reduction
-- **Docker Images**: 50% smaller with multi-stage builds
-- **API Response**: <200ms average response time
+### **News Processing**
+- RSS feed aggregation and monitoring
+- Article content extraction and analysis
+- Duplicate detection and deduplication
+- Quality scoring and filtering
 
-### Monitoring
-- **Health Checks**: Automated service monitoring
-- **Metrics**: Prometheus + Grafana dashboards
-- **Logging**: Centralized logging system
-- **Alerting**: Real-time system alerts
+### **Intelligence Analysis**
+- AI-powered storyline creation
+- Sentiment analysis and trend detection
+- Entity extraction and relationship mapping
+- Multi-perspective analysis
 
----
+### **User Interface**
+- Responsive web dashboard
+- Real-time data visualization
+- Interactive storyline exploration
+- Advanced search and filtering
 
-## 🧪 Testing
-
-### Run Tests
-```bash
-# Backend tests
-cd api && python -m pytest
-
-# Frontend tests
-cd web && npm test
-
-# Integration tests
-./scripts/test-integration.sh
-```
-
-### Test Coverage
-- **Backend**: 85%+ coverage
-- **Frontend**: 80%+ coverage
-- **Integration**: Full API coverage
-- **E2E**: Critical user flows
+### **Monitoring & Analytics**
+- Pipeline performance tracking
+- System health monitoring
+- Error logging and alerting
+- Usage analytics and reporting
 
 ---
 
-## 📚 Documentation
+## 🚨 **Critical Rules**
 
-- **API Documentation**: http://localhost:8000/docs
-- **Architecture Guide**: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
-- **Development Guide**: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)
-- **Deployment Guide**: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
-- **v3.0 Design Principles**: [docs/V3.0_DESIGN_PRINCIPLES.md](docs/V3.0_DESIGN_PRINCIPLES.md)
+### **Development Methodology**
+1. **Always develop on master branch**
+2. **Test thoroughly before promoting to production**
+3. **Never run development and production simultaneously**
+4. **Use root cause analysis for persistent problems**
+5. **Check configuration and security before code changes**
 
----
+### **Environment Separation**
+- **Production**: Live system with real data (ports 80, 8000, 5432)
+- **Development**: Local development with mock data (ports 3001, 8001, 5433)
+- **Never mix**: Development and production environments
 
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-### Development Guidelines
-- Follow TypeScript best practices
-- Write comprehensive tests
-- Update documentation
-- Follow the v3.0 design principles
+### **Git Workflow**
+- **Master**: Active development and testing
+- **Production**: Stable, working version only
+- **Promotion**: Only when code is tested and working
+- **Rollback**: Always available for emergency recovery
 
 ---
 
-## 📄 License
+## 📊 **System Status**
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+### **Production Environment** ✅ **OPERATIONAL**
+- **Frontend**: React web interface deployed and accessible
+- **API**: FastAPI backend running with all endpoints working
+- **Database**: PostgreSQL with complete schema and real data
+- **Cache**: Redis operational for session and data caching
+- **Monitoring**: Prometheus collecting system metrics
 
----
-
-## 🆘 Support
-
-- **Documentation**: [docs/](docs/)
-- **Issues**: [GitHub Issues](https://github.com/your-org/news-intelligence-system/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/your-org/news-intelligence-system/discussions)
-
----
-
-## 🏷️ Version History
-
-- **v3.0.0** - Current version with modern architecture
-- **v3.0** - Current stable version with full AI features
-- **v2.8.x** - Previous versions (archived)
+### **Development Environment** 🔧 **READY**
+- **Git**: Master branch ready for new development
+- **Ports**: All development ports available (3001, 8001, 5433)
+- **Tools**: Development tools and scripts ready
+- **Documentation**: Complete methodology documentation
 
 ---
 
-**News Intelligence System v3.0** - *Intelligent News, Simplified* 🚀
+## 🎯 **Next Steps**
+
+1. **✅ Production system operational** with frontend deployed
+2. **✅ Development methodology established** and documented
+3. **✅ Enforcement tools created** for methodology compliance
+4. **✅ Git workflow implemented** with production branch
+5. **🔄 Ready for new development** on master branch
+
+---
+
+## 📞 **Support**
+
+### **Documentation**
+- All documentation is in the root directory
+- Methodology enforcement script: `./scripts/enforce_methodology.sh`
+- System status check: `./scripts/enforce_methodology.sh status`
+
+### **Troubleshooting**
+- Check system status: `./scripts/enforce_methodology.sh status`
+- Run methodology checks: `./scripts/enforce_methodology.sh check`
+- View container logs: `docker logs <container-name>`
+- Emergency rollback: `./scripts/enforce_methodology.sh rollback`
+
+---
+
+*Last Updated: $(date)*
+*Status: Production Ready*
+*Version: 3.0.1*
+*Methodology: Established and Enforced*
