@@ -39,6 +39,7 @@ import {
   Navigate,
   Link,
 } from 'react-router-dom';
+
 // Import pages
 import ArticleDetail from './pages/Articles/ArticleDetail';
 import Articles from './pages/Articles/EnhancedArticles';
@@ -51,10 +52,6 @@ import Settings from './pages/Settings/Settings';
 import Storylines from './pages/Storylines/EnhancedStorylines';
 import StorylineDashboard from './pages/Storylines/StorylineDashboard';
 // import AIAnalysis from './pages/AIAnalysis/AIAnalysis';
-
-// Import advanced pages from v2.9/v3.2
-import StorylineDetail from './pages/Storylines/StorylineDetail';
-import StorylineTimeline from './pages/Timeline/StorylineTimeline';
 // import SystemMonitoring from './pages/Monitoring/SystemMonitoring';
 
 // Import API service
