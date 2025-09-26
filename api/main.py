@@ -8,6 +8,7 @@ import sys
 import logging
 from contextlib import asynccontextmanager
 from typing import Dict, Any
+from datetime import datetime
 
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,12 +20,22 @@ from fastapi.openapi.docs import get_swagger_ui_html, get_redoc_html
 # Add the modules directory to the path
 sys.path.append(os.path.join(os.path.dirname(__file__), 'modules'))
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+# Configure comprehensive logging system
+from config.logging_config import setup_logging, get_component_logger
+from middleware.error_handling import get_error_handler
+
+# Setup logging system
+logging_system = setup_logging(
+    log_level=os.getenv("LOG_LEVEL", "INFO"),
+    log_dir="/app/logs",
+    enable_console=True,
+    enable_file=True,
+    enable_json=True,
+    enable_ml_logging=True
 )
-logger = logging.getLogger(__name__)
+
+logger = get_component_logger('app')
+error_handler = get_error_handler()
 
 # Import route modules
 from routes.articles import router as articles_router
@@ -39,6 +50,7 @@ from routes.dashboard import router as dashboard_router
 from routes.storylines import router as storylines_router
 from routes.article_processing import router as article_processing_router
 from routes.deduplication_simple import router as deduplication_router
+from routes.log_management import router as log_management_router
 # # from routes.enhanced_analysis import router as enhanced_analysis_router
 from routes.pipeline_monitoring import router as pipeline_monitoring_router
 
@@ -130,15 +142,28 @@ app.add_middleware(
 # Global exception handler
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    logger.error(f"Global exception: {exc}", exc_info=True)
+    # Use comprehensive error handling
+    error_response = error_handler.handle_exception(
+        exception=exc,
+        context={
+            'endpoint': str(request.url),
+            'method': request.method,
+            'user_agent': request.headers.get('user-agent'),
+            'client_ip': request.client.host if request.client else None
+        },
+        request=request
+    )
+    
     return JSONResponse(
-        status_code=500,
+        status_code=error_response['status_code'],
         content={
             "success": False,
             "data": None,
-            "message": "Internal server error",
-            "error": str(exc),
-            "timestamp": "2025-09-05T17:00:00Z"
+            "message": error_response['message'],
+            "error": error_response['details'],
+            "error_type": error_response['error_type'],
+            "recoverable": error_response.get('recoverable', False),
+            "timestamp": datetime.now().isoformat()
         }
     )
 
@@ -155,6 +180,7 @@ app.include_router(dashboard_router, prefix="/api")
 app.include_router(storylines_router, prefix="/api")
 app.include_router(article_processing_router, prefix="/api")
 app.include_router(deduplication_router, prefix="/api")
+app.include_router(log_management_router, prefix="/api")
 # # app.include_router(enhanced_analysis_router, prefix="/api")
 app.include_router(pipeline_monitoring_router, prefix="/api")
 
