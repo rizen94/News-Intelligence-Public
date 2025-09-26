@@ -38,6 +38,7 @@ from routes.intelligence import router as intelligence_router
 from routes.dashboard import router as dashboard_router
 from routes.storylines import router as storylines_router
 from routes.article_processing import router as article_processing_router
+from routes.deduplication_simple import router as deduplication_router
 # # from routes.enhanced_analysis import router as enhanced_analysis_router
 from routes.pipeline_monitoring import router as pipeline_monitoring_router
 
@@ -153,6 +154,7 @@ app.include_router(intelligence_router, prefix="/api")
 app.include_router(dashboard_router, prefix="/api")
 app.include_router(storylines_router, prefix="/api")
 app.include_router(article_processing_router, prefix="/api")
+app.include_router(deduplication_router, prefix="/api")
 # # app.include_router(enhanced_analysis_router, prefix="/api")
 app.include_router(pipeline_monitoring_router, prefix="/api")
 

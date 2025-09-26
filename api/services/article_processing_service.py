@@ -18,6 +18,9 @@ from urllib.parse import urlparse
 from bs4 import BeautifulSoup
 import time
 
+# Import deduplication service
+from .deduplication_integration_service import DeduplicationIntegrationService
+
 # Configure logging
 logger = logging.getLogger(__name__)
 
@@ -32,6 +35,7 @@ class ArticleProcessingService:
         })
         self.processed_urls = set()
         self.early_quality_service = None
+        self.deduplication_service = DeduplicationIntegrationService(db_config)
         
     def _get_early_quality_service(self):
         """Get early quality service instance"""
@@ -415,65 +419,117 @@ class ArticleProcessingService:
             return articles
     
     async def _save_articles_to_db(self, articles: List[Dict[str, Any]]) -> int:
-        """Save cleaned articles to database"""
-        try:
-            conn = psycopg2.connect(**self.db_config)
-            cursor = conn.cursor()
-            
-            saved_count = 0
-            for article in articles:
+        """Save cleaned articles to database with advanced deduplication"""
+        saved_count = 0
+        duplicate_count = 0
+        storyline_suggestions = []
+        
+        for article in articles:
+            try:
+                # Process article through deduplication system
+                dedup_result = await self.deduplication_service.process_new_article(article)
+                
+                if dedup_result['status'] == 'duplicate':
+                    duplicate_count += 1
+                    logger.info(f"Duplicate article skipped: {article.get('title', 'Unknown')} - {dedup_result['recommendation']}")
+                    continue
+                
+                elif dedup_result['status'] == 'error':
+                    logger.error(f"Deduplication error for article {article.get('title', 'Unknown')}: {dedup_result.get('error', 'Unknown error')}")
+                    continue
+                
+                # Use processed article data from deduplication service
+                processed_article = dedup_result.get('article_data', article)
+                
+                # Collect storyline suggestions
+                if dedup_result.get('storyline_candidates'):
+                    storyline_suggestions.extend(dedup_result['storyline_candidates'])
+                
+                # Save to database
+                conn = None
+                cursor = None
                 try:
-                    # Generate unique ID as integer
-                    article_id = int(time.time() * 1000) + hash(article['url']) % 10000
+                    conn = psycopg2.connect(**self.db_config)
+                    cursor = conn.cursor()
                     
-                    # Insert article
+                    # Debug: Log article data
+                    logger.debug(f"Processing article: {processed_article.get('title', 'Unknown')}")
+                    logger.debug(f"Article source: {processed_article.get('source', 'None')}")
+                    logger.debug(f"Article URL: {processed_article.get('url', 'None')}")
+                    logger.debug(f"Content hash: {processed_article.get('content_hash', 'None')[:16]}...")
+                    
+                    # Get feed_id for this article
+                    feed_id = None
+                    if processed_article.get('source'):
+                        cursor.execute("SELECT id FROM rss_feeds WHERE name = %s", (processed_article.get('source'),))
+                        feed_result = cursor.fetchone()
+                        if feed_result:
+                            feed_id = feed_result[0]
+                            logger.debug(f"Found feed_id: {feed_id}")
+                        else:
+                            logger.warning(f"No feed found for source: {processed_article.get('source')}")
+                    
+                    # Insert article with deduplication data
                     cursor.execute("""
                         INSERT INTO articles (
-                            id, title, content, url, published_at, source, tags, 
+                            title, content, url, published_at, source, tags, 
                             entities, sentiment_score, readability_score, quality_score,
-                            summary, ml_data, language, word_count, reading_time, created_at
+                            summary, ml_data, language, word_count, reading_time, feed_id,
+                            content_hash, deduplication_status, similarity_score
                         ) VALUES (
-                            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
-                        ) ON CONFLICT (id) DO UPDATE SET
-                            title = EXCLUDED.title,
-                            content = EXCLUDED.content,
-                            updated_at = CURRENT_TIMESTAMP
+                            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                        )
                     """, (
-                        article_id,
-                        article.get('title', ''),
-                        article.get('cleaned_content', ''),
-                        article.get('url', ''),
-                        article.get('published_at'),
-                        article.get('source', ''),
-                        json.dumps(article.get('tags', [])),
-                        json.dumps(article.get('entities', {})),
-                        article.get('sentiment_score'),
-                        article.get('readability_score'),
-                        article.get('quality_score'),
-                        article.get('summary', ''),
-                        json.dumps(article.get('ml_data', {})),
-                        article.get('language', 'en'),
-                        article.get('word_count', 0),
-                        article.get('reading_time', 0),
-                        article.get('created_at')
+                        processed_article.get('title', ''),
+                        processed_article.get('cleaned_content', ''),
+                        processed_article.get('url', ''),
+                        processed_article.get('published_at'),
+                        processed_article.get('source', ''),
+                        json.dumps(processed_article.get('tags', [])),
+                        json.dumps(processed_article.get('entities', {})),
+                        processed_article.get('sentiment_score'),
+                        processed_article.get('readability_score'),
+                        processed_article.get('quality_score'),
+                        processed_article.get('summary', ''),
+                        json.dumps(processed_article.get('ml_data', {})),
+                        processed_article.get('language', 'en'),
+                        processed_article.get('word_count', 0),
+                        processed_article.get('reading_time', 1),
+                        feed_id,
+                        processed_article.get('content_hash'),
+                        processed_article.get('deduplication_status', 'processed'),
+                        processed_article.get('similarity_score')
                     ))
                     
+                    conn.commit()
                     saved_count += 1
+                    logger.debug(f"Successfully saved article: {processed_article.get('title', 'Unknown')}")
                     
                 except Exception as e:
-                    logger.error(f"Error saving article {article.get('title', 'Unknown')}: {e}")
+                    logger.error(f"Error saving article {processed_article.get('title', 'Unknown')}: {e}")
+                    if conn:
+                        conn.rollback()
                     continue
-            
-            conn.commit()
-            cursor.close()
-            conn.close()
-            
-            logger.info(f"Saved {saved_count} articles to database")
-            return saved_count
-            
-        except Exception as e:
-            logger.error(f"Error saving articles to database: {e}")
-            return 0
+                finally:
+                    if cursor:
+                        cursor.close()
+                    if conn:
+                        conn.close()
+                        
+            except Exception as e:
+                logger.error(f"Error processing article {article.get('title', 'Unknown')} through deduplication: {e}")
+                continue
+        
+        # Log summary
+        logger.info(f"Article processing complete: {saved_count} saved, {duplicate_count} duplicates skipped")
+        
+        # Log storyline suggestions if any
+        if storyline_suggestions:
+            logger.info(f"Found {len(storyline_suggestions)} storyline suggestions")
+            for suggestion in storyline_suggestions[:5]:  # Log first 5
+                logger.info(f"Storyline suggestion: {suggestion.get('storyline_suggestion', 'N/A')}")
+        
+        return saved_count
     
     def _parse_date(self, date_str: str) -> Optional[datetime]:
         """Parse date string to datetime object"""

@@ -21,6 +21,61 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/monitoring", tags=["Monitoring"])
 
+async def get_database_metrics():
+    """Get real-time database metrics by querying the database"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        
+        # Get total articles count
+        cursor.execute("SELECT COUNT(*) as total_articles FROM articles")
+        total_articles = cursor.fetchone()['total_articles']
+        
+        # Get recent articles (last 24 hours)
+        cursor.execute("""
+            SELECT COUNT(*) as recent_articles 
+            FROM articles 
+            WHERE created_at > NOW() - INTERVAL '24 hours'
+        """)
+        recent_articles = cursor.fetchone()['recent_articles']
+        
+        # Get total RSS feeds count
+        cursor.execute("SELECT COUNT(*) as total_rss_feeds FROM rss_feeds")
+        total_rss_feeds = cursor.fetchone()['total_rss_feeds']
+        
+        # Get total storylines count
+        cursor.execute("SELECT COUNT(*) as total_storylines FROM storylines")
+        total_storylines = cursor.fetchone()['total_storylines']
+        
+        # Get database size (approximate)
+        cursor.execute("""
+            SELECT pg_size_pretty(pg_database_size(current_database())) as database_size
+        """)
+        database_size = cursor.fetchone()['database_size']
+        
+        cursor.close()
+        conn.close()
+        
+        return {
+            'total_articles': total_articles,
+            'recent_articles': recent_articles,
+            'total_rss_feeds': total_rss_feeds,
+            'total_storylines': total_storylines,
+            'database_size': database_size,
+            'connection_status': 'healthy'
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting database metrics: {e}")
+        return {
+            'total_articles': 0,
+            'recent_articles': 0,
+            'total_rss_feeds': 0,
+            'total_storylines': 0,
+            'database_size': 'unknown',
+            'connection_status': 'error'
+        }
+
 def get_gpu_metrics():
     """Get GPU metrics using nvidia-smi"""
     try:
@@ -70,15 +125,8 @@ async def get_monitoring_dashboard():
         gpu_metrics = get_gpu_metrics()
         system_metrics.update(gpu_metrics)
         
-        # Database metrics - using real data
-        db_metrics = {
-            'total_articles': 18,  # Real data from our database
-            'recent_articles': 5,   # Articles from last 24 hours
-            'total_rss_feeds': 12,  # Real RSS feeds count
-            'total_storylines': 5,  # Real storylines count
-            'database_size': 'unknown',
-            'connection_status': 'healthy'
-        }
+        # Database metrics - query real data
+        db_metrics = await get_database_metrics()
         
         # Application metrics
         app_metrics = {
