@@ -1,3 +1,4 @@
+from utils.text_formatter import format_article_content, format_article_title, format_source_name
 """
 News Intelligence System v3.0 - Production Articles API
 Robust, fully functional articles management endpoints

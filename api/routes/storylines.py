@@ -1,3 +1,4 @@
+from utils.text_formatter import format_storyline_summary, format_storyline_timeline
 """
 News Intelligence System v3.0 - Storylines API
 Handles storyline management, article addition, and database operations
@@ -278,3 +279,28 @@ async def get_storylines_alt():
 async def create_storyline_alt(request: CreateStorylineRequest):
     """Alternative endpoint for frontend compatibility - POST /storylines"""
     return await create_storyline(request)
+
+@router.get("/{storyline_id}", response_model=StorylineResponse)
+async def get_storyline_by_id(storyline_id: str):
+    """Get a specific storyline by ID - standard endpoint"""
+    try:
+        result = await storyline_service.get_storyline_articles(storyline_id)
+        
+        if "error" in result:
+            return StorylineResponse(
+                success=False,
+                message="Failed to retrieve storyline",
+                error=result["error"]
+            )
+        
+        return StorylineResponse(
+            success=True,
+            data=result,
+            message="Storyline retrieved successfully"
+        )
+    except Exception as e:
+        return StorylineResponse(
+            success=False,
+            message="Failed to retrieve storyline",
+            error=str(e)
+        )

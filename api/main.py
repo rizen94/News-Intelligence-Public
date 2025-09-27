@@ -20,41 +20,48 @@ from fastapi.openapi.docs import get_swagger_ui_html, get_redoc_html
 # Add the modules directory to the path
 sys.path.append(os.path.join(os.path.dirname(__file__), 'modules'))
 
-# Configure comprehensive logging system
-from config.logging_config import setup_logging, get_component_logger
-from middleware.error_handling import get_error_handler
-
-# Setup logging system
-logging_system = setup_logging(
-    log_level=os.getenv("LOG_LEVEL", "INFO"),
-    log_dir="/app/logs",
-    enable_console=True,
-    enable_file=True,
-    enable_json=True,
-    enable_ml_logging=True
+# Configure basic logging (avoiding complex dependencies)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
+logger = logging.getLogger(__name__)
 
-logger = get_component_logger('app')
-error_handler = get_error_handler()
-
-# Import route modules
+# Import available route modules
 from routes.articles import router as articles_router
 from routes.rss_feeds import router as rss_feeds_router
 from routes.health import router as health_router
-from routes.fallback_logging import router as fallback_router
-from routes.timeline import router as timeline_router
-from routes.story_management import router as story_management_router
-from routes.monitoring import router as monitoring_router
-from routes.intelligence import router as intelligence_router
-from routes.dashboard import router as dashboard_router
 from routes.storylines import router as storylines_router
-from routes.enhanced_storylines import router as enhanced_storylines_router
-from routes.article_processing import router as article_processing_router
-from routes.deduplication_simple import router as deduplication_router
-from routes.log_management import router as log_management_router
-from routes.api_documentation import router as api_documentation_router
-# # from routes.enhanced_analysis import router as enhanced_analysis_router
-from routes.pipeline_monitoring import router as pipeline_monitoring_router
+from routes.search import router as search_router
+
+# Try to import additional routes if available
+try:
+    from routes.monitoring import router as monitoring_router
+    MONITORING_AVAILABLE = True
+except ImportError:
+    MONITORING_AVAILABLE = False
+    logger.warning("Monitoring routes not available")
+
+try:
+    from routes.intelligence import router as intelligence_router
+    INTELLIGENCE_AVAILABLE = True
+except ImportError:
+    INTELLIGENCE_AVAILABLE = False
+    logger.warning("Intelligence routes not available")
+
+try:
+    from routes.dashboard import router as dashboard_router
+    DASHBOARD_AVAILABLE = True
+except ImportError:
+    DASHBOARD_AVAILABLE = False
+    logger.warning("Dashboard routes not available")
+
+try:
+    from routes.pipeline_monitoring import router as pipeline_monitoring_router
+    PIPELINE_AVAILABLE = True
+except ImportError:
+    PIPELINE_AVAILABLE = False
+    logger.warning("Pipeline monitoring routes not available")
 
 # Import unified database configuration
 from config.database import get_db, get_db_config, check_database_health
@@ -167,16 +174,8 @@ app = FastAPI(
             "description": "Storyline creation and management"
         },
         {
-            "name": "Deduplication",
-            "description": "Duplicate detection and clustering"
-        },
-        {
-            "name": "Log Management",
-            "description": "Log viewing, analysis, and management"
-        },
-        {
-            "name": "API Documentation",
-            "description": "Comprehensive API documentation and examples"
+            "name": "Search",
+            "description": "Search functionality for articles and content"
         },
         {
             "name": "Monitoring",
@@ -215,49 +214,45 @@ app.add_middleware(
 # Global exception handler
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    # Use comprehensive error handling
-    error_response = error_handler.handle_exception(
-        exception=exc,
-        context={
-            'endpoint': str(request.url),
-            'method': request.method,
-            'user_agent': request.headers.get('user-agent'),
-            'client_ip': request.client.host if request.client else None
-        },
-        request=request
-    )
+    """Global exception handler for comprehensive error handling"""
+    logger.error(f"Unhandled exception: {exc}", exc_info=True)
     
     return JSONResponse(
-        status_code=error_response['status_code'],
+        status_code=500,
         content={
             "success": False,
             "data": None,
-            "message": error_response['message'],
-            "error": error_response['details'],
-            "error_type": error_response['error_type'],
-            "recoverable": error_response.get('recoverable', False),
+            "message": "Internal server error",
+            "error": str(exc),
+            "error_type": "InternalServerError",
+            "recoverable": False,
             "timestamp": datetime.now().isoformat()
         }
     )
 
-# Include routers
+# Include core routers
 app.include_router(articles_router, prefix="/api")
 app.include_router(rss_feeds_router, prefix="/api")
 app.include_router(health_router, prefix="/api")
-app.include_router(fallback_router, prefix="/api")
-app.include_router(timeline_router, prefix="/api")
-app.include_router(story_management_router, prefix="/api")
-app.include_router(monitoring_router, prefix="/api")
-app.include_router(intelligence_router, prefix="/api")
-app.include_router(dashboard_router, prefix="/api")
 app.include_router(storylines_router, prefix="/api")
-app.include_router(enhanced_storylines_router, prefix="/api")
-app.include_router(article_processing_router, prefix="/api")
-app.include_router(deduplication_router, prefix="/api")
-app.include_router(log_management_router, prefix="/api")
-app.include_router(api_documentation_router, prefix="/api")
-# # app.include_router(enhanced_analysis_router, prefix="/api")
-app.include_router(pipeline_monitoring_router, prefix="/api")
+app.include_router(search_router, prefix="/api")
+
+# Include optional routers if available
+if MONITORING_AVAILABLE:
+    app.include_router(monitoring_router, prefix="/api")
+    logger.info("Monitoring routes included")
+
+if INTELLIGENCE_AVAILABLE:
+    app.include_router(intelligence_router, prefix="/api")
+    logger.info("Intelligence routes included")
+
+if DASHBOARD_AVAILABLE:
+    app.include_router(dashboard_router, prefix="/api")
+    logger.info("Dashboard routes included")
+
+if PIPELINE_AVAILABLE:
+    app.include_router(pipeline_monitoring_router, prefix="/api")
+    logger.info("Pipeline monitoring routes included")
 
 # Root endpoint
 @app.get("/")
@@ -265,9 +260,8 @@ async def root():
     return {
         "success": True,
         "data": {
-            "name": "News Intelligence System",
-            "version": "3.1.0",
-            "status": "operational",
+            "name": "News Intelligence System v3.0",
+            "version": "3.3.0",
             "docs": "/docs",
             "redoc": "/redoc"
         },

@@ -12,7 +12,7 @@ from config.database import get_db
 import logging
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/rss/feeds", tags=["RSS Feeds"])
+router = APIRouter(prefix="/rss-feeds", tags=["RSS Feeds"])
 
 @router.get("/", response_model=APIResponse)
 async def get_rss_feeds(
