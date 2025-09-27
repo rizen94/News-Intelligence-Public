@@ -48,9 +48,11 @@ from routes.monitoring import router as monitoring_router
 from routes.intelligence import router as intelligence_router
 from routes.dashboard import router as dashboard_router
 from routes.storylines import router as storylines_router
+from routes.enhanced_storylines import router as enhanced_storylines_router
 from routes.article_processing import router as article_processing_router
 from routes.deduplication_simple import router as deduplication_router
 from routes.log_management import router as log_management_router
+from routes.api_documentation import router as api_documentation_router
 # # from routes.enhanced_analysis import router as enhanced_analysis_router
 from routes.pipeline_monitoring import router as pipeline_monitoring_router
 
@@ -117,12 +119,83 @@ async def lifespan(app: FastAPI):
 
 # Create FastAPI application
 app = FastAPI(
-    title="News Intelligence System v3.0",
-    description="Production-ready news intelligence and analysis platform",
-    version="3.1.0",
+    title="News Intelligence System v3.3.0",
+    description="""
+    ## News Intelligence System - AI-Powered News Analysis Platform
+    
+    A comprehensive news aggregation and analysis platform featuring:
+    
+    * **Article Management** - Process and analyze news articles with AI
+    * **RSS Feed Processing** - Automated collection from multiple news sources
+    * **Storyline Creation** - Organize articles into coherent storylines
+    * **Duplicate Detection** - Advanced clustering and deduplication
+    * **ML Processing** - AI-powered content analysis and summarization
+    * **Real-time Monitoring** - Comprehensive logging and system health
+    * **API Documentation** - Complete endpoint documentation and examples
+    
+    ### Key Features
+    - **Multi-source RSS aggregation** with intelligent filtering
+    - **AI-powered content analysis** using Llama 3.1 70B
+    - **Advanced duplicate detection** with semantic similarity
+    - **Storyline management** with automatic suggestions
+    - **Comprehensive logging** with structured data storage
+    - **Real-time monitoring** and health assessment
+    
+    ### Authentication
+    Currently in development mode - no authentication required.
+    Production deployment will include JWT-based authentication.
+    
+    ### Rate Limiting
+    Currently no rate limiting in development mode.
+    Production deployment will include rate limiting.
+    """,
+    version="3.3.0",
     lifespan=lifespan,
     docs_url="/docs",
-    redoc_url="/redoc"
+    redoc_url="/redoc",
+    openapi_tags=[
+        {
+            "name": "Articles",
+            "description": "Article management and processing operations"
+        },
+        {
+            "name": "RSS Feeds", 
+            "description": "RSS feed management and configuration"
+        },
+        {
+            "name": "Storylines",
+            "description": "Storyline creation and management"
+        },
+        {
+            "name": "Deduplication",
+            "description": "Duplicate detection and clustering"
+        },
+        {
+            "name": "Log Management",
+            "description": "Log viewing, analysis, and management"
+        },
+        {
+            "name": "API Documentation",
+            "description": "Comprehensive API documentation and examples"
+        },
+        {
+            "name": "Monitoring",
+            "description": "System monitoring and health checks"
+        },
+        {
+            "name": "Health",
+            "description": "System health and status endpoints"
+        }
+    ],
+    contact={
+        "name": "News Intelligence System",
+        "url": "https://github.com/news-intelligence",
+        "email": "support@news-intelligence.com"
+    },
+    license_info={
+        "name": "MIT License",
+        "url": "https://opensource.org/licenses/MIT"
+    }
 )
 
 # Add middleware
@@ -178,9 +251,11 @@ app.include_router(monitoring_router, prefix="/api")
 app.include_router(intelligence_router, prefix="/api")
 app.include_router(dashboard_router, prefix="/api")
 app.include_router(storylines_router, prefix="/api")
+app.include_router(enhanced_storylines_router, prefix="/api")
 app.include_router(article_processing_router, prefix="/api")
 app.include_router(deduplication_router, prefix="/api")
 app.include_router(log_management_router, prefix="/api")
+app.include_router(api_documentation_router, prefix="/api")
 # # app.include_router(enhanced_analysis_router, prefix="/api")
 app.include_router(pipeline_monitoring_router, prefix="/api")
 

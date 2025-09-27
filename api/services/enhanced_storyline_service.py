@@ -11,13 +11,13 @@ from datetime import datetime, timezone
 
 from config.database import get_db
 from sqlalchemy import text
-from .storyline_service import StorylineService
-from .multi_perspective_analyzer import MultiPerspectiveAnalyzer, get_multi_perspective_analyzer
-from .impact_assessment_service import ImpactAssessmentService, get_impact_assessment_service
-from .historical_context_service import HistoricalContextService, get_historical_context_service
-from .predictive_analysis_service import PredictiveAnalysisService, get_predictive_analysis_service
-from .expert_analysis_service import ExpertAnalysisService, get_expert_analysis_service
-from .rag_service import RAGService
+from services.storyline_service import StorylineService
+from services.multi_perspective_analyzer import MultiPerspectiveAnalyzer, get_multi_perspective_analyzer
+from services.impact_assessment_service import ImpactAssessmentService, get_impact_assessment_service
+from services.historical_context_service import HistoricalContextService, get_historical_context_service
+from services.predictive_analysis_service import PredictiveAnalysisService, get_predictive_analysis_service
+from services.expert_analysis_service import ExpertAnalysisService, get_expert_analysis_service
+from services.rag_service import RAGService
 from modules.ml.summarization_service import MLSummarizationService
 
 logger = logging.getLogger(__name__)
@@ -37,7 +37,7 @@ class EnhancedStorylineService(StorylineService):
             rag_service: RAG service for context enhancement
         """
         super().__init__(db_connection)
-        self.ml_service = ml_service
+        self.ml_service = ml_service or MLSummarizationService()
         self.rag_service = rag_service
         self.multi_perspective_analyzer = get_multi_perspective_analyzer(self.ml_service, self.rag_service)
         self.impact_assessment_service = get_impact_assessment_service(self.ml_service)
@@ -702,6 +702,143 @@ class EnhancedStorylineService(StorylineService):
                 "quality_improvements": []
             }
     
+    async def process_storyline_ml(self, storyline_id: str) -> Dict[str, Any]:
+        """Process storyline with ML to generate summary and analysis"""
+        try:
+            # Get storyline and articles
+            storyline_data = await self.get_storyline_articles(storyline_id)
+            
+            if "error" in storyline_data:
+                return {"error": storyline_data["error"]}
+            
+            storyline = storyline_data.get("storyline", {})
+            articles = storyline_data.get("articles", [])
+            
+            if not articles:
+                return {
+                    "error": "No articles found for storyline",
+                    "data": {
+                        "master_summary": "No articles available for analysis",
+                        "timeline_summary": "No timeline data available",
+                        "key_entities": {},
+                        "sentiment_trend": {"overall": 0.0, "trend": "neutral"},
+                        "source_diversity": {"score": 0.0, "sources": [], "total_sources": 0, "total_articles": 0}
+                    }
+                }
+            
+            # Check if ML service is available
+            if not self.ml_service or not self.ml_service.ml_available:
+                logger.error("❌ ML service not available - cannot process storyline")
+                return {
+                    "error": "ML service not available - Ollama connection failed",
+                    "data": {
+                        "master_summary": "ML service unavailable - cannot generate summary",
+                        "timeline_summary": "ML service unavailable - cannot generate timeline",
+                        "key_entities": {},
+                        "sentiment_trend": {"overall": 0.0, "trend": "error"},
+                        "source_diversity": {"score": 0.0, "sources": [], "total_sources": 0, "total_articles": len(articles)},
+                        "ml_status": "failed",
+                        "ml_error": "Ollama connection failed"
+                    }
+                }
+            
+            # Process with ML service
+            logger.info(f"🔍 Calling ML service with {len(articles)} articles")
+            logger.info(f"🔍 ML service available: {self.ml_service.ml_available}")
+            logger.info(f"🔍 First article content length: {len(articles[0].get('content', '')) if articles else 0}")
+            
+            ml_result = self.ml_service.summarize_articles(articles)
+            logger.info(f"🔍 ML result status: {ml_result.get('status')}")
+            logger.info(f"🔍 ML result summary length: {len(ml_result.get('summary', ''))}")
+            
+            if ml_result.get("status") == "failed":
+                logger.error(f"❌ ML processing failed: {ml_result.get('error')}")
+                return {
+                    "error": f"ML processing failed: {ml_result.get('error')}",
+                    "data": {
+                        "master_summary": "ML processing failed",
+                        "timeline_summary": "ML processing failed",
+                        "key_entities": {},
+                        "sentiment_trend": {"overall": 0.0, "trend": "error"},
+                        "source_diversity": {"score": 0.0, "sources": [], "total_sources": 0, "total_articles": len(articles)},
+                        "ml_status": "failed",
+                        "ml_error": ml_result.get("error")
+                    }
+                }
+            
+            # Extract sources
+            sources = list(set([article.get("source", "Unknown") for article in articles]))
+            
+            # Generate timeline summary
+            timeline_summary = f"{datetime.now().isoformat()}: {storyline.get('title', 'Untitled')} ({sources[0] if sources else 'Unknown'})"
+            
+            # Extract key entities (simple word frequency)
+            all_text = " ".join([article.get("title", "") + " " + article.get("content", "") for article in articles])
+            words = all_text.lower().split()
+            word_freq = {}
+            for word in words:
+                if len(word) > 4 and word.isalpha():
+                    word_freq[word] = word_freq.get(word, 0) + 1
+            
+            key_entities = dict(sorted(word_freq.items(), key=lambda x: x[1], reverse=True)[:10])
+            
+            result = {
+                "master_summary": ml_result.get("summary", "No summary available"),
+                "timeline_summary": timeline_summary,
+                "key_entities": key_entities,
+                "sentiment_trend": {
+                    "overall": 0.0,  # Would need sentiment analysis
+                    "trend": ml_result.get("sentiment", "neutral")
+                },
+                "source_diversity": {
+                    "score": 1.0 if len(sources) > 1 else 0.5,
+                    "sources": sources,
+                    "total_sources": len(sources),
+                    "total_articles": len(articles)
+                },
+                "ml_status": "success",
+                "ml_model": ml_result.get("model_used", "unknown")
+            }
+            
+            # Update storyline with results
+            try:
+                db_gen = get_db()
+                db = next(db_gen)
+                try:
+                    db.execute(text("""
+                        UPDATE storylines 
+                        SET master_summary = :summary,
+                            ml_processed = true,
+                            ml_processing_status = 'completed',
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE id = :storyline_id
+                    """), {
+                        "summary": result["master_summary"],
+                        "storyline_id": storyline_id
+                    })
+                    db.commit()
+                finally:
+                    db.close()
+            except Exception as e:
+                logger.error(f"Error updating storyline with ML results: {e}")
+            
+            return {"data": result}
+            
+        except Exception as e:
+            logger.error(f"Error processing storyline ML: {e}")
+            return {
+                "error": str(e),
+                "data": {
+                    "master_summary": "Error processing storyline",
+                    "timeline_summary": "Error processing storyline",
+                    "key_entities": {},
+                    "sentiment_trend": {"overall": 0.0, "trend": "error"},
+                    "source_diversity": {"score": 0.0, "sources": [], "total_sources": 0, "total_articles": 0},
+                    "ml_status": "error",
+                    "ml_error": str(e)
+                }
+            }
+
     async def get_enhanced_storyline_analysis(self, storyline_id: str) -> Dict[str, Any]:
         """Get existing enhanced storyline analysis from database"""
         try:

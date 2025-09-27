@@ -1,98 +1,180 @@
 #!/usr/bin/env python3
 """
-Import Fix Script for News Intelligence System v3.0
-Updates all database imports to use the unified configuration
+News Intelligence System v3.3.0 - Import Path Fixer
+Automatically fixes import paths across the project to match standards
 """
 
 import os
 import sys
 import re
 from pathlib import Path
+from typing import Dict, List, Any
 
-# Add the project root to the path
-sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+# Add the project root to Python path
+PROJECT_ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
 
-def fix_imports_in_file(file_path: Path) -> int:
-    """Fix imports in a single file"""
-    try:
-        with open(file_path, 'r', encoding='utf-8') as f:
-            content = f.read()
+from config.import_standards import validate_imports, fix_imports, validate_all_imports
+
+def fix_all_imports(project_root: str = None) -> Dict[str, Any]:
+    """
+    Fix imports across the entire project
+    
+    Args:
+        project_root: Root directory of the project
         
-        original_content = content
-        changes_made = 0
+    Returns:
+        Dict containing fix results
+    """
+    if project_root is None:
+        project_root = str(PROJECT_ROOT)
+    
+    results = {
+        'total_files': 0,
+        'fixed_files': 0,
+        'error_files': 0,
+        'file_results': [],
+        'summary': {}
+    }
+    
+    # Find all Python files
+    python_files = []
+    for root, dirs, files in os.walk(project_root):
+        # Skip certain directories
+        dirs[:] = [d for d in dirs if not d.startswith('.') and d != '__pycache__']
         
-        # Fix database imports
-        old_imports = [
-            'from config.database import',
-            'from config.database import',
-            'from config.database import'
-        ]
+        for file in files:
+            if file.endswith('.py') and not file.startswith('.'):
+                python_files.append(os.path.join(root, file))
+    
+    results['total_files'] = len(python_files)
+    
+    # Fix each file
+    for file_path in python_files:
+        print(f"Processing: {file_path}")
+        file_result = fix_imports(file_path)
+        results['file_results'].append(file_result)
         
-        for old_import in old_imports:
-            if old_import in content:
-                # Replace with new import
-                content = content.replace(old_import, 'from config.database import')
-                changes_made += 1
-        
-        # Fix specific import patterns
-        import_patterns = [
-            (r'from database\.connection import get_db', 'from config.database import get_db'),
-            (r'from database\.connection import get_db_config', 'from config.database import get_db_config'),
-            (r'from database\.connection import get_database_url', 'from config.database import get_database_url'),
-            (r'from database\.connection import test_database_connection', 'from config.database import test_database_connection'),
-            (r'from config\.robust_database import get_db', 'from config.database import get_db'),
-            (r'from config\.robust_database import get_db_config', 'from config.database import get_db_config'),
-            (r'from config\.unified_database import get_db', 'from config.database import get_db'),
-            (r'from config\.unified_database import get_db_config', 'from config.database import get_db_config'),
-        ]
-        
-        for pattern, replacement in import_patterns:
-            if re.search(pattern, content):
-                content = re.sub(pattern, replacement, content)
-                changes_made += 1
-        
-        # Only write if changes were made
-        if changes_made > 0:
-            with open(file_path, 'w', encoding='utf-8') as f:
-                f.write(content)
-            print(f"Fixed {changes_made} imports in {file_path.relative_to(Path.cwd())}")
-        
-        return changes_made
-        
-    except Exception as e:
-        print(f"Error fixing imports in {file_path}: {e}")
-        return 0
+        if file_result['fixed']:
+            results['fixed_files'] += 1
+            print(f"  ✓ Fixed {len(file_result['changes'])} imports")
+        elif file_result['errors']:
+            results['error_files'] += 1
+            print(f"  ✗ Errors: {file_result['errors']}")
+        else:
+            print(f"  - No changes needed")
+    
+    # Create summary
+    results['summary'] = {
+        'fix_rate': results['fixed_files'] / results['total_files'] if results['total_files'] > 0 else 0,
+        'total_changes': sum(len(r['changes']) for r in results['file_results']),
+        'total_errors': sum(len(r['errors']) for r in results['file_results'])
+    }
+    
+    return results
+
+def fix_specific_imports():
+    """
+    Fix specific known import issues
+    """
+    fixes = [
+        {
+            'file': 'api/services/article_processing_service.py',
+            'old': 'from .deduplication_integration_service import DeduplicationIntegrationService',
+            'new': 'from services.deduplication_integration_service import DeduplicationIntegrationService'
+        },
+        {
+            'file': 'api/services/storyline_service.py',
+            'old': 'from .rss_service import RSSService',
+            'new': 'from services.rss_service import RSSService'
+        },
+        {
+            'file': 'api/services/enhanced_storyline_service.py',
+            'old': 'from .storyline_service import StorylineService',
+            'new': 'from services.storyline_service import StorylineService'
+        },
+        {
+            'file': 'api/services/rss_fetcher_service.py',
+            'old': 'from .rss_service import RSSService',
+            'new': 'from services.rss_service import RSSService'
+        },
+        {
+            'file': 'api/services/progressive_enhancement_service.py',
+            'old': 'from .storyline_service import StorylineService',
+            'new': 'from services.storyline_service import StorylineService'
+        }
+    ]
+    
+    for fix in fixes:
+        file_path = os.path.join(PROJECT_ROOT, fix['file'])
+        if os.path.exists(file_path):
+            print(f"Fixing: {fix['file']}")
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                
+                if fix['old'] in content:
+                    content = content.replace(fix['old'], fix['new'])
+                    
+                    with open(file_path, 'w', encoding='utf-8') as f:
+                        f.write(content)
+                    
+                    print(f"  ✓ Fixed: {fix['old']} -> {fix['new']}")
+                else:
+                    print(f"  - Pattern not found: {fix['old']}")
+                    
+            except Exception as e:
+                print(f"  ✗ Error: {e}")
+        else:
+            print(f"  - File not found: {fix['file']}")
 
 def main():
-    """Main function to fix all imports"""
-    project_root = Path(__file__).parent.parent.parent
-    api_dir = project_root / 'api'
+    """Main function to run import fixes"""
+    print("News Intelligence System v3.3.0 - Import Path Fixer")
+    print("=" * 60)
     
-    print("Fixing database imports across the codebase...")
+    # First, validate current state
+    print("\n1. Validating current imports...")
+    validation_results = validate_all_imports()
     
-    total_files = 0
-    total_changes = 0
+    print(f"Total files: {validation_results['total_files']}")
+    print(f"Valid files: {validation_results['valid_files']}")
+    print(f"Invalid files: {validation_results['invalid_files']}")
+    print(f"Validation rate: {validation_results['summary']['validation_rate']:.2%}")
     
-    # Find all Python files in the API directory
-    python_files = list(api_dir.rglob('*.py'))
+    # Fix specific known issues
+    print("\n2. Fixing specific import issues...")
+    fix_specific_imports()
     
-    for py_file in python_files:
-        # Skip __pycache__ directories
-        if '__pycache__' in str(py_file):
-            continue
-        
-        total_files += 1
-        changes = fix_imports_in_file(py_file)
-        total_changes += changes
+    # Run general import fixes
+    print("\n3. Running general import fixes...")
+    fix_results = fix_all_imports()
     
-    print(f"\nImport fix completed:")
-    print(f"  Files processed: {total_files}")
-    print(f"  Total changes made: {total_changes}")
+    print(f"\nFix Results:")
+    print(f"Total files processed: {fix_results['total_files']}")
+    print(f"Files fixed: {fix_results['fixed_files']}")
+    print(f"Files with errors: {fix_results['error_files']}")
+    print(f"Total changes made: {fix_results['summary']['total_changes']}")
     
-    if total_changes > 0:
-        print("\n✅ All database imports have been updated to use config.database")
-    else:
-        print("\n✅ No import changes needed")
+    # Validate again
+    print("\n4. Validating after fixes...")
+    final_validation = validate_all_imports()
+    
+    print(f"Final validation:")
+    print(f"Valid files: {final_validation['valid_files']}")
+    print(f"Invalid files: {final_validation['invalid_files']}")
+    print(f"Validation rate: {final_validation['summary']['validation_rate']:.2%}")
+    
+    if final_validation['summary']['total_errors'] > 0:
+        print(f"\nRemaining errors: {final_validation['summary']['total_errors']}")
+        print("Files with errors:")
+        for file_result in final_validation['file_results']:
+            if file_result['errors']:
+                print(f"  {file_result['file_path']}:")
+                for error in file_result['errors']:
+                    print(f"    - {error}")
+    
+    print("\nImport path standardization complete!")
 
 if __name__ == "__main__":
     main()

@@ -293,7 +293,7 @@ class MLQueueManager:
     # Task handlers for different ML operations
     def _handle_timeline_generation(self, task: MLTask) -> Dict[str, Any]:
         """Handle timeline generation task"""
-        from .timeline_generator import TimelineGenerator
+        from modules.timeline_generator import TimelineGenerator
         
         timeline_generator = TimelineGenerator(self.db_config)
         storyline_data = task.payload.get('storyline_data', {})

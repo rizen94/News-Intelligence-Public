@@ -12,10 +12,10 @@ import psycopg2
 from collections import defaultdict, Counter
 import re
 
-from .summarization_service import MLSummarizationService
-from .background_processor import BackgroundMLProcessor
-from .rag_external_services import RAGExternalServicesManager
-from .gdelt_rag_service import GDELTRAGService
+from modules.summarization_service import MLSummarizationService
+from modules.background_processor import BackgroundMLProcessor
+from modules.rag_external_services import RAGExternalServicesManager
+from modules.gdelt_rag_service import GDELTRAGService
 
 logger = logging.getLogger(__name__)
 

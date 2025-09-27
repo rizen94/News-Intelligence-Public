@@ -28,9 +28,15 @@ class MLSummarizationService:
         self.ollama_url = ollama_url
         self.model_name = model_name
         self.timeout = 300  # 5 minutes timeout for large models
+        self.ml_available = False
         
         # Test connection on initialization
-        self._test_connection()
+        self.ml_available = self._test_connection()
+        if not self.ml_available:
+            logger.error("❌ CRITICAL: Ollama ML service not available. ML processing will fail.")
+            logger.error("❌ ACTION REQUIRED: Fix Ollama connectivity or install models.")
+        else:
+            logger.info("✅ ML service initialized successfully")
     
     def _test_connection(self) -> bool:
         """Test connection to Ollama service"""
@@ -311,6 +317,19 @@ Prioritize depth and completeness over brevity. Use the full capacity of your an
         Returns:
             Dictionary containing sentiment analysis results
         """
+        # Check if ML service is available
+        if not self.ml_available:
+            logger.error("❌ ML service not available - cannot analyze sentiment")
+            return {
+                "sentiment": "error",
+                "sentiment_analysis": "ML service unavailable",
+                "model_used": "none",
+                "generated_at": datetime.now().isoformat(),
+                "content_length": len(article_content) if article_content else 0,
+                "status": "failed",
+                "error": "ML service not available - Ollama connection failed"
+            }
+        
         try:
             max_content_length = 3000
             if len(article_content) > max_content_length:
@@ -375,11 +394,12 @@ Prioritize depth and completeness over brevity. Use the full capacity of your an
                 model_names = [model['name'] for model in models]
                 
                 return {
-                    "status": "online",
+                    "status": "online" if self.model_name in model_names else "offline",
                     "ollama_url": self.ollama_url,
                     "model_name": self.model_name,
                     "model_available": self.model_name in model_names,
                     "available_models": model_names,
+                    "ml_available": self.ml_available,
                     "checked_at": datetime.now().isoformat()
                 }
             else:
@@ -403,3 +423,87 @@ Prioritize depth and completeness over brevity. Use the full capacity of your an
                 "checked_at": datetime.now().isoformat(),
                 "error": str(e)
             }
+    
+    def summarize_articles(self, articles: List[Dict]) -> Dict[str, any]:
+        """
+        Summarize multiple articles for storyline analysis
+        
+        Args:
+            articles: List of article dictionaries with title, content, source
+            
+        Returns:
+            Dictionary containing summary and analysis results
+        """
+        # Check if ML service is available
+        if not self.ml_available:
+            logger.error("❌ ML service not available - cannot summarize articles")
+            return {
+                "summary": "ML service unavailable - cannot generate summary",
+                "key_points": ["ML service error"],
+                "sentiment": "error",
+                "sentiment_analysis": "ML service unavailable",
+                "model_used": "none",
+                "generated_at": datetime.now().isoformat(),
+                "article_count": len(articles),
+                "word_count": 0,
+                "status": "failed",
+                "error": "ML service not available - Ollama connection failed"
+            }
+        
+        try:
+            # Combine articles for analysis
+            combined_content = []
+            for article in articles:
+                title = article.get('title', '')
+                content = article.get('content', '')
+                source = article.get('source', 'Unknown')
+                
+                if title and content:
+                    combined_content.append(f"**{title}** (Source: {source})\n{content}")
+            
+            if not combined_content:
+                return {
+                    "summary": "No articles available for summarization.",
+                    "key_points": ["No content to analyze"],
+                    "model_used": self.model_name,
+                    "generated_at": datetime.now().isoformat(),
+                    "article_count": len(articles),
+                    "status": "failed",
+                    "error": "No articles with content"
+                }
+            
+            full_content = "\n\n".join(combined_content)
+            
+            # Generate comprehensive summary
+            summary_result = self.generate_summary(full_content, "Storyline Analysis")
+            
+            # Extract key points
+            key_points_result = self.extract_key_points(full_content, "Storyline Analysis")
+            
+            # Analyze sentiment
+            sentiment_result = self.analyze_sentiment(full_content)
+            
+            return {
+                "summary": summary_result.get("summary", ""),
+                "key_points": key_points_result.get("key_points", []),
+                "sentiment": sentiment_result.get("sentiment", "neutral"),
+                "sentiment_analysis": sentiment_result.get("sentiment_analysis", ""),
+                "model_used": self.model_name,
+                "generated_at": datetime.now().isoformat(),
+                "article_count": len(articles),
+                "word_count": len(full_content.split()),
+                "status": "success"
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ Error summarizing articles: {e}")
+            return {
+                "summary": "Error generating summary.",
+                "key_points": ["Error occurred during processing"],
+                "model_used": self.model_name,
+                "generated_at": datetime.now().isoformat(),
+                "article_count": len(articles),
+                "status": "error",
+                "error": str(e)
+            }
+    

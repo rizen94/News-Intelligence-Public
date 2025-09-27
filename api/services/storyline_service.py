@@ -176,19 +176,72 @@ class StorylineService:
                     "relevance_score": relevance_score,
                     "importance_score": importance_score
                 })
+                
+                # Log the addition
+                db.execute(text("""
+                    INSERT INTO storyline_edit_log (storyline_id, edit_type, edit_description, edit_data, edited_by)
+                    VALUES (:storyline_id, 'article_added', 'Article added to storyline', :edit_data, 'user')
+                """), {
+                    "storyline_id": storyline_id,
+                    "edit_data": json.dumps({
+                        "article_id": article_id,
+                        "relevance_score": relevance_score,
+                        "importance_score": importance_score
+                    })
+                })
+                
                 db.commit()
+                
+                # Trigger automated ML processing in background
+                try:
+                    await self._trigger_automated_ml_processing(storyline_id)
+                except Exception as ml_error:
+                    self.logger.warning(f"Automated ML processing failed: {ml_error}")
                 
                 return {
                     "storyline_id": storyline_id,
                     "article_id": article_id,
                     "status": "added",
-                    "message": "Article added to storyline successfully"
+                    "message": "Article added to storyline successfully",
+                    "ml_processing_triggered": True
                 }
             finally:
                 db.close()
         except Exception as e:
             self.logger.error(f"Error adding article to storyline: {e}")
             return {"error": str(e)}
+    
+    async def _trigger_automated_ml_processing(self, storyline_id: str):
+        """Trigger automated ML processing for storyline"""
+        try:
+            # Import enhanced storyline service
+            from services.enhanced_storyline_service import EnhancedStorylineService
+            enhanced_service = EnhancedStorylineService()
+            
+            # Update processing status
+            db_gen = get_db()
+            db = next(db_gen)
+            try:
+                db.execute(text("""
+                    UPDATE storylines 
+                    SET ml_processing_status = 'queued',
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = :storyline_id
+                """), {"storyline_id": storyline_id})
+                db.commit()
+            finally:
+                db.close()
+            
+            # Process ML in background
+            result = await enhanced_service.process_storyline_ml(storyline_id)
+            
+            if "error" in result:
+                self.logger.error(f"Automated ML processing failed for storyline {storyline_id}: {result['error']}")
+            else:
+                self.logger.info(f"Automated ML processing completed for storyline {storyline_id}")
+                
+        except Exception as e:
+            self.logger.error(f"Error triggering automated ML processing: {e}")
     
     async def get_storyline_articles(self, storyline_id: str) -> Dict[str, Any]:
         """Get all articles in a storyline"""
@@ -327,7 +380,7 @@ class StorylineService:
             
             # Use AI service for intelligent summarization
             try:
-                from .ai_processing_service import get_ai_service
+                from services.ai_processing_service import get_ai_service
                 ai_service = get_ai_service()
                 
                 if ai_service:
@@ -786,6 +839,102 @@ class StorylineService:
         except Exception as e:
             self.logger.error(f"Error getting storyline suggestions: {e}")
             return {"error": str(e)}
+    
+    async def get_storyline_events(self, storyline_id: int) -> List[Dict[str, Any]]:
+        """Get timeline events for a storyline"""
+        try:
+            db_gen = get_db()
+            db = next(db_gen)
+            try:
+                result = db.execute(text("""
+                    SELECT id, event_title, event_description, event_date, 
+                           event_source, event_type, confidence_score, sentiment_score
+                    FROM storyline_events 
+                    WHERE storyline_id = :storyline_id
+                    ORDER BY event_date ASC
+                """), {"storyline_id": storyline_id}).fetchall()
+                
+                events = []
+                for row in result:
+                    events.append({
+                        "id": row[0],
+                        "event_title": row[1],
+                        "event_description": row[2],
+                        "event_date": row[3].isoformat() if row[3] else None,
+                        "event_source": row[4],
+                        "event_type": row[5],
+                        "confidence_score": float(row[6]) if row[6] else None,
+                        "sentiment_score": float(row[7]) if row[7] else None
+                    })
+                
+                return events
+                
+            finally:
+                db.close()
+        except Exception as e:
+            self.logger.error(f"Error getting storyline events: {e}")
+            return []
+    
+    async def get_storyline_sources(self, storyline_id: int) -> List[Dict[str, Any]]:
+        """Get source analysis for a storyline"""
+        try:
+            db_gen = get_db()
+            db = next(db_gen)
+            try:
+                result = db.execute(text("""
+                    SELECT source, article_count, avg_sentiment, avg_quality
+                    FROM storyline_sources 
+                    WHERE storyline_id = :storyline_id
+                    ORDER BY article_count DESC
+                """), {"storyline_id": storyline_id}).fetchall()
+                
+                sources = []
+                for row in result:
+                    sources.append({
+                        "source": row[0],
+                        "article_count": row[1],
+                        "avg_sentiment": float(row[2]) if row[2] else None,
+                        "avg_quality": float(row[3]) if row[3] else None
+                    })
+                
+                return sources
+                
+            finally:
+                db.close()
+        except Exception as e:
+            self.logger.error(f"Error getting storyline sources: {e}")
+            return []
+    
+    async def get_storyline_edit_log(self, storyline_id: int) -> List[Dict[str, Any]]:
+        """Get edit log for a storyline"""
+        try:
+            db_gen = get_db()
+            db = next(db_gen)
+            try:
+                result = db.execute(text("""
+                    SELECT id, edit_type, edit_description, edited_at, edited_by
+                    FROM storyline_edit_log 
+                    WHERE storyline_id = :storyline_id
+                    ORDER BY edited_at DESC
+                """), {"storyline_id": storyline_id}).fetchall()
+                
+                edit_log = []
+                for row in result:
+                    edit_log.append({
+                        "id": row[0],
+                        "edit_type": row[1],
+                        "edit_description": row[2],
+                        "edited_at": row[3].isoformat() if row[3] else None,
+                        "edited_by": row[4]
+                    })
+                
+                return edit_log
+                
+            finally:
+                db.close()
+        except Exception as e:
+            self.logger.error(f"Error getting storyline edit log: {e}")
+            return []
 
 # Global instance
 storyline_service = None

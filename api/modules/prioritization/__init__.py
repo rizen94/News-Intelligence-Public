@@ -2,11 +2,11 @@
 Content Prioritization and Story Tracking System for News Intelligence
 """
 
-from .content_prioritization_engine import ContentPrioritizationEngine
-from .rag_context_builder import RAGContextBuilder
-from .content_prioritization_manager import ContentPrioritizationManager
-from .storyline_alert_service import StorylineAlertService
-from .intelligent_tagging_service import IntelligentTaggingService
+from modules.content_prioritization_engine import ContentPrioritizationEngine
+from modules.rag_context_builder import RAGContextBuilder
+from modules.content_prioritization_manager import ContentPrioritizationManager
+from modules.storyline_alert_service import StorylineAlertService
+from modules.intelligent_tagging_service import IntelligentTaggingService
 
 __all__ = [
     'ContentPrioritizationEngine',

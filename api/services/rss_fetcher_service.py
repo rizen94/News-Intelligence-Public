@@ -18,7 +18,7 @@ import time
 
 from config.database import get_db
 from sqlalchemy import text
-from .enhanced_rss_service import EnhancedRSSService
+from services.enhanced_rss_service import EnhancedRSSService
 
 logger = logging.getLogger(__name__)
 

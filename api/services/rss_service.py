@@ -189,9 +189,22 @@ class RSSService:
             db_gen = get_db()
             db = next(db_gen)
             try:
-                db.execute(text("DELETE FROM rss_feeds WHERE id = %s"), (feed_id,))
+                # First check if feed exists
+                check_result = db.execute(text("SELECT id FROM rss_feeds WHERE id = %s"), (int(feed_id),)).fetchone()
+                if not check_result:
+                    return {"error": "RSS feed not found"}
+                
+                # Delete the feed
+                result = db.execute(text("DELETE FROM rss_feeds WHERE id = %s"), (int(feed_id),))
                 db.commit()
                 
+                # Verify deletion
+                verify_result = db.execute(text("SELECT id FROM rss_feeds WHERE id = %s"), (int(feed_id),)).fetchone()
+                if verify_result:
+                    db.rollback()
+                    return {"error": "Failed to delete RSS feed"}
+                
+                self.logger.info(f"Successfully deleted RSS feed {feed_id}")
                 return {
                     "id": feed_id,
                     "status": "deleted",

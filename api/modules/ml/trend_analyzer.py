@@ -59,8 +59,8 @@ class LocalTrendAnalyzer:
     
     def __init__(self, ollama_url: str = "http://localhost:11434"):
         self.ollama_url = ollama_url
-        self.available_models = ["llama3.1:8b", "llama3.1:70b"]
-        self.default_model = "llama3.1:8b"
+        self.available_models = ["llama3.1:70b", "llama3.1:70b"]
+        self.default_model = "llama3.1:70b"
         self.cache = {}  # Simple in-memory cache
         self.cache_ttl = 1800  # 30 minutes cache TTL
         

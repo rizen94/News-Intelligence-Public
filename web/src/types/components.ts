@@ -2,7 +2,7 @@
  * Component-specific type definitions
  */
 
-import { ReactNode } from 'react';
+import React, { ReactNode } from 'react';
 
 // ============================================================================
 // Base Component Types

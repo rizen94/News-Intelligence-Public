@@ -4,6 +4,7 @@ Robust, fully functional articles management endpoints
 """
 
 from fastapi import APIRouter, HTTPException, Query, Path, Depends
+from fastapi.responses import RedirectResponse
 from typing import List, Optional, Dict, Any
 from sqlalchemy.orm import Session
 from sqlalchemy import text
@@ -190,11 +191,36 @@ async def get_article_categories(db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail="Failed to retrieve article categories")
 
 @router.get("/stats/overview", response_model=APIResponse)
-async def get_article_stats_overview(db: Session = Depends(get_db)):
+async def get_article_stats_overview():
     """Get article statistics overview"""
     try:
-        service = ArticleService(db)
-        stats = await service.get_stats()
+        # Use context manager approach
+        from config.database import get_db_cursor
+        with get_db_cursor() as cursor:
+            # Get basic stats using raw SQL
+            cursor.execute("SELECT COUNT(*) as total_articles FROM articles")
+            total_articles = cursor.fetchone()['total_articles']
+            
+            cursor.execute("SELECT source, COUNT(*) as count FROM articles WHERE source IS NOT NULL GROUP BY source")
+            sources_data = cursor.fetchall()
+            articles_by_source = {row['source']: row['count'] for row in sources_data}
+            
+            cursor.execute("SELECT category, COUNT(*) as count FROM articles WHERE category IS NOT NULL GROUP BY category")
+            categories_data = cursor.fetchall()
+            articles_by_category = {row['category']: row['count'] for row in categories_data}
+            
+            cursor.execute("SELECT AVG(quality_score) as avg_quality FROM articles WHERE quality_score IS NOT NULL")
+            avg_quality_result = cursor.fetchone()
+            avg_quality = float(avg_quality_result['avg_quality']) if avg_quality_result['avg_quality'] else None
+            
+            stats = {
+                "total_articles": total_articles,
+                "articles_by_source": articles_by_source,
+                "articles_by_category": articles_by_category,
+                "avg_quality_score": avg_quality,
+                "processing_success_rate": 1.0  # Placeholder
+            }
+            
         return APIResponse(
             success=True,
             data=stats,
@@ -204,22 +230,29 @@ async def get_article_stats_overview(db: Session = Depends(get_db)):
         logger.error(f"Error getting article stats: {e}")
         raise HTTPException(status_code=500, detail="Failed to retrieve article statistics")
 
+
+@router.get("/stats", response_model=APIResponse)
+async def get_article_stats():
+    """Get article statistics (redirect to overview)"""
+    return RedirectResponse(url="/api/articles/stats/overview", status_code=301)
+
 @router.get("/{article_id}", response_model=APIResponse)
 async def get_article_by_id(
-    article_id: str = Path(..., description="Article ID"),
-    db: Session = Depends(get_db)
+    article_id: str = Path(..., description="Article ID")
 ):
     """Get article by ID"""
     try:
-        service = ArticleService(db)
-        article = await service.get_article(article_id)
-        
+        from config.database import get_db_cursor
+        with get_db_cursor() as cursor:
+            cursor.execute("SELECT * FROM articles WHERE id = %s", (article_id,))
+            article = cursor.fetchone()
+            
         if not article:
             raise HTTPException(status_code=404, detail="Article not found")
         
         return APIResponse(
             success=True,
-            data=article,
+            data=dict(article),
             message="Article retrieved successfully"
         )
     except HTTPException:

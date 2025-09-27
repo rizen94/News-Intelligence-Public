@@ -11,8 +11,8 @@ from datetime import datetime, timedelta
 import time
 import re
 
-from .content_prioritization_engine import ContentPrioritizationEngine
-from .rag_context_builder import RAGContextBuilder
+from modules.content_prioritization_engine import ContentPrioritizationEngine
+from modules.rag_context_builder import RAGContextBuilder
 
 logger = logging.getLogger(__name__)
 

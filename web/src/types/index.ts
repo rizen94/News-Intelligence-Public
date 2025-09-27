@@ -3,6 +3,8 @@
  * Centralized type definitions for the frontend application
  */
 
+import React from 'react';
+
 // ============================================================================
 // API Response Types
 // ============================================================================

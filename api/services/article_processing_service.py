@@ -19,7 +19,7 @@ from bs4 import BeautifulSoup
 import time
 
 # Import deduplication service
-from .deduplication_integration_service import DeduplicationIntegrationService
+from services.deduplication_integration_service import DeduplicationIntegrationService
 
 # Configure logging
 logger = logging.getLogger(__name__)

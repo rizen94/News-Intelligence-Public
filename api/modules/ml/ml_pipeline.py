@@ -9,9 +9,9 @@ from typing import Dict, List, Optional, Tuple
 from datetime import datetime
 import psycopg2
 
-from .summarization_service import MLSummarizationService
-from .content_analyzer import ContentAnalyzer
-from .quality_scorer import QualityScorer
+from modules.summarization_service import MLSummarizationService
+from modules.content_analyzer import ContentAnalyzer
+from modules.quality_scorer import QualityScorer
 
 logger = logging.getLogger(__name__)
 

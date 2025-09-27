@@ -82,6 +82,16 @@ const ContentPrioritization = () => {
   const [storyThreads, setStoryThreads] = useState([]);
   const [selectedThread, setSelectedThread] = useState(null);
 
+  const showError = (message) => {
+    console.error(message);
+    // You can add a toast notification here
+  };
+
+  const showSuccess = (message) => {
+    console.log(message);
+    // You can add a toast notification here
+  };
+
   useEffect(() => {
     loadData();
   }, []);

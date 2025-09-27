@@ -223,7 +223,7 @@ export const apiService = {
 
   getStoryline: async(id: string | number) => {
     try {
-      const response = await api.get(`/api/storylines/${id}`);
+      const response = await api.get(`/api/storylines/${id}/report`);
       return response.data;
     } catch (error) {
       console.error('Failed to fetch storyline:', error);

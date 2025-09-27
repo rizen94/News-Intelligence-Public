@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# News Intelligence System v3.0 - Production Startup Script with Pipeline Logging
-# This script starts the production system with comprehensive pipeline tracking and monitoring
+# News Intelligence System v3.0 - Production Startup Script
+# This script starts the production system with RTX 5090 + 62GB RAM optimizations
 
 set -e
 
@@ -17,25 +17,33 @@ COMPOSE_FILE="docker-compose.yml"
 PROJECT_NAME="news-intelligence"
 HEALTH_CHECK_TIMEOUT=300
 LOG_FILE="logs/production-startup.log"
-PIPELINE_LOG_FILE="logs/pipeline_trace.log"
 
 # Create logs directory
 mkdir -p logs
 
-# Initialize pipeline logging system
-init_pipeline_logging() {
-    log "Initializing pipeline logging system..."
+# Initialize optimized system
+init_optimized_system() {
+    log "Initializing RTX 5090 + 62GB RAM optimized system..."
     
-    # Create pipeline log file
-    touch "$PIPELINE_LOG_FILE"
-    
-    # Set up log rotation for pipeline logs
-    if ! crontab -l 2>/dev/null | grep -q "pipeline_trace.log"; then
-        log "Setting up log rotation for pipeline logs..."
-        (crontab -l 2>/dev/null; echo "0 2 * * * find $(pwd)/logs -name 'pipeline_trace.log*' -mtime +7 -delete") | crontab -
+    # Load optimized Ollama configuration
+    if [ -f ~/.config/ollama/ollama.env ]; then
+        source ~/.config/ollama/ollama.env
+        log "Loaded optimized Ollama configuration"
+    else
+        warning "Optimized Ollama config not found, using defaults"
     fi
     
-    success "Pipeline logging system initialized"
+    # Set additional system optimizations
+    export CUDA_VISIBLE_DEVICES=0
+    export OMP_NUM_THREADS=16
+    export MKL_NUM_THREADS=16
+    
+    # Make scripts executable
+    chmod +x scripts/simple_integration.py
+    chmod +x scripts/quick_check.py
+    chmod +x scripts/production/start_optimized_system.sh
+    
+    success "Optimized system initialized"
 }
 
 # Logging function
@@ -55,20 +63,14 @@ warning() {
     echo -e "${YELLOW}[WARNING]${NC} $1" | tee -a "$LOG_FILE"
 }
 
-# Initialize database with pipeline tracking tables
+# Initialize database
 init_database() {
-    log "Initializing database with pipeline tracking tables..."
+    log "Initializing database..."
     
     # Check if database is accessible
     if docker-compose -f "$COMPOSE_FILE" -p "$PROJECT_NAME" exec -T postgres pg_isready -U newsapp -d news_intelligence > /dev/null 2>&1; then
-        log "Database is accessible, checking for pipeline tracking tables..."
-        
-        # Run database migrations for pipeline tracking
-        log "Applying pipeline tracking database migrations..."
-        docker-compose -f "$COMPOSE_FILE" -p "$PROJECT_NAME" exec -T postgres psql -U newsapp -d news_intelligence -f /docker-entrypoint-initdb.d/011_pipeline_tracking_tables.sql 2>/dev/null || {
-            warning "Pipeline tracking tables may already exist or migration failed"
-        }
-        success "Pipeline tracking database schema initialized"
+        log "Database is accessible"
+        success "Database initialized"
     else
         warning "Database not accessible yet, will initialize after startup"
     fi
@@ -117,7 +119,7 @@ wait_for_health() {
     
     while [ $(($(date +%s) - start_time)) -lt $timeout ]; do
         local healthy_count=0
-        local total_count=5  # Added pipeline monitoring
+        local total_count=4  # Core services only
         
         # Check PostgreSQL
         if docker-compose -f "$COMPOSE_FILE" -p "$PROJECT_NAME" exec -T postgres pg_isready -U newsapp -d news_intelligence > /dev/null 2>&1; then
@@ -136,11 +138,6 @@ wait_for_health() {
         
         # Check Frontend
         if curl -s http://localhost/ > /dev/null 2>&1; then
-            ((healthy_count++))
-        fi
-        
-        # Check Pipeline Monitoring API
-        if curl -s http://localhost:8000/api/pipeline-monitoring/health > /dev/null 2>&1; then
             ((healthy_count++))
         fi
         
@@ -190,33 +187,52 @@ show_status() {
         error "Frontend: Not responding"
     fi
     
-    # Pipeline Monitoring
-    if curl -s http://localhost:8000/api/pipeline-monitoring/health > /dev/null 2>&1; then
-        success "Pipeline Monitoring: Running (http://localhost:8000/api/pipeline-monitoring)"
-    else
-        error "Pipeline Monitoring: Not responding"
-    fi
-    
     echo ""
     log "Access URLs:"
     echo "  Frontend: http://localhost"
     echo "  API: http://localhost:8000"
     echo "  API Docs: http://localhost:8000/docs"
-    echo "  Pipeline Monitoring: http://localhost:8000/api/pipeline-monitoring"
     echo "  Monitoring: http://localhost:9090"
     
     echo ""
-    log "Pipeline Logging:"
-    echo "  Pipeline Log: logs/pipeline_trace.log"
+    log "Integration Tools:"
+    echo "  Quick Check: python3 scripts/quick_check.py"
+    echo "  Full Integration: python3 scripts/simple_integration.py"
     echo "  Startup Log: logs/production-startup.log"
+}
+
+# Start Ollama ML service
+start_ollama() {
+    log "Starting Ollama ML service with RTX 5090 optimizations..."
+    
+    # Kill any existing Ollama processes
+    pkill -f ollama 2>/dev/null || true
+    sleep 2
+    
+    # Start Ollama with optimized settings
+    nohup ollama serve > /tmp/ollama.log 2>&1 &
+    OLLAMA_PID=$!
+    
+    log "Ollama started with PID: $OLLAMA_PID"
+    
+    # Wait for Ollama to be ready
+    log "Waiting for Ollama to initialize..."
+    for i in {1..30}; do
+        if curl -s http://localhost:11434/api/tags > /dev/null 2>&1; then
+            success "Ollama is ready"
+            break
+        fi
+        log "Waiting... ($i/30)"
+        sleep 2
+    done
 }
 
 # Main execution
 main() {
-    log "Starting News Intelligence System v3.0 with Pipeline Logging"
+    log "Starting News Intelligence System v3.0 - RTX 5090 Optimized"
     log "============================================================"
     
-    init_pipeline_logging
+    init_optimized_system
     check_docker
     check_docker_compose
     stop_existing
@@ -224,10 +240,12 @@ main() {
     
     if wait_for_health; then
         init_database
+        start_ollama
         show_status
-        success "Production system with pipeline logging is ready!"
+        success "Production system is ready with RTX 5090 optimizations!"
         log "System started successfully. Check logs with: docker-compose -f $COMPOSE_FILE -p $PROJECT_NAME logs -f"
-        log "Pipeline logs: tail -f logs/pipeline_trace.log"
+        log "Test integration: python3 scripts/simple_integration.py"
+        log "Ollama logs: tail -f /tmp/ollama.log"
     else
         error "Production system failed to start properly."
         log "Check logs with: docker-compose -f $COMPOSE_FILE -p $PROJECT_NAME logs"

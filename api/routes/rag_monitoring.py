@@ -20,10 +20,7 @@ async def get_rag_activity(
     storyline_id: Optional[str] = Query(None, description="Filter by specific storyline")
 ):
     """Get RAG activity summary for the specified time period"""
-    try:
-        db_gen = get_db()
-        db = next(db_gen)
-        try:
+    try:        try:
             # Calculate time threshold
             time_threshold = datetime.now(timezone.utc) - timedelta(hours=hours)
             
@@ -113,10 +110,7 @@ async def get_rag_performance(
     days: int = Query(7, description="Days to look back for performance metrics")
 ):
     """Get RAG system performance metrics"""
-    try:
-        db_gen = get_db()
-        db = next(db_gen)
-        try:
+    try:        try:
             time_threshold = datetime.now(timezone.utc) - timedelta(days=days)
             
             # Get RAG enhancement statistics
@@ -199,12 +193,9 @@ async def get_rag_performance(
         raise HTTPException(status_code=500, detail=f"Failed to get RAG performance: {str(e)}")
 
 @router.get("/rag-validation/{storyline_id}")
-async def validate_rag_enhancement(storyline_id: str):
+async def validate_rag_enhancement(storyline_id: str, db: Session = Depends(get_db)):
     """Validate RAG enhancement quality for a specific storyline"""
     try:
-        db_gen = get_db()
-        db = next(db_gen)
-        try:
             # Get RAG context for storyline
             rag_query = text("""
                 SELECT 

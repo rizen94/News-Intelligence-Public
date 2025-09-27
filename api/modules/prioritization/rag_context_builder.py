@@ -10,7 +10,7 @@ from typing import Dict, List, Any, Optional, Tuple
 from datetime import datetime, timedelta
 import json
 import re
-from .intelligent_tagging_service import IntelligentTaggingService
+from modules.intelligent_tagging_service import IntelligentTaggingService
 
 logger = logging.getLogger(__name__)
 

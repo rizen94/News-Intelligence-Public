@@ -311,6 +311,13 @@ def get_db():
     """Get SQLAlchemy database session (for FastAPI dependency injection)"""
     return db_manager.get_sqlalchemy_session()
 
+
+def get_db_session():
+    """Get SQLAlchemy database session directly (for direct use)"""
+    if not db_manager.sqlalchemy_session:
+        raise Exception("SQLAlchemy session not initialized")
+    return db_manager.sqlalchemy_session()
+
 def get_db_config():
     """Get database configuration"""
     return db_manager.config

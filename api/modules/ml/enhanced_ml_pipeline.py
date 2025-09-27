@@ -11,8 +11,8 @@ from datetime import datetime, timedelta
 import psycopg2
 import json
 
-from .ml_queue_manager import MLQueueManager, MLTask, TaskType, TaskPriority
-from .timeline_generator import TimelineGenerator
+from modules.ml_queue_manager import MLQueueManager, MLTask, TaskType, TaskPriority
+from modules.timeline_generator import TimelineGenerator
 
 logger = logging.getLogger(__name__)
 

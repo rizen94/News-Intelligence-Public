@@ -256,12 +256,9 @@ async def get_rss_feed(feed_id: int = Path(..., description="Feed ID")):
         )
 
 @router.post("/feeds", response_model=APIResponse)
-async def create_rss_feed(feed_data: RSSFeedCreate):
+async def create_rss_feed(feed_data: RSSFeedCreate, db: Session = Depends(get_db)):
     """Create new RSS feed"""
     try:
-        db_gen = get_db()
-        db = next(db_gen)
-        try:
             # Check if URL already exists
             existing = db.execute(text("SELECT id FROM rss_feeds WHERE url = :url"), {"url": feed_data.url}).fetchone()
             if existing:

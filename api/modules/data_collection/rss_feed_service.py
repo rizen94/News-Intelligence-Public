@@ -16,7 +16,7 @@ from urllib.parse import urlparse, urljoin
 import re
 from dataclasses import dataclass
 import json
-from .progress_tracker import progress_tracker
+from modules.progress_tracker import progress_tracker
 
 logger = logging.getLogger(__name__)
 

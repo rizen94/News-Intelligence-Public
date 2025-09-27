@@ -77,10 +77,7 @@ async def get_pipeline_traces(
     """
     Get pipeline traces with filtering options
     """
-    try:
-        db_gen = get_db()
-        db = next(db_gen)
-        try:
+    try:        try:
             # Build query with filters
             where_conditions = ["start_time >= :start_time"]
             params = {
@@ -145,14 +142,9 @@ async def get_pipeline_traces(
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/traces/{trace_id}", response_model=PipelineTraceResponse)
-async def get_pipeline_trace(trace_id: str):
-    """
-    Get a specific pipeline trace by ID
-    """
+async def get_pipeline_trace(trace_id: str, db: Session = Depends(get_db)):
+    """Get a specific pipeline trace by ID"""
     try:
-        db_gen = get_db()
-        db = next(db_gen)
-        try:
             query = text("""
                 SELECT 
                     trace_id, rss_feed_id, article_id, storyline_id,
@@ -190,14 +182,9 @@ async def get_pipeline_trace(trace_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/traces/{trace_id}/checkpoints", response_model=List[PipelineCheckpointResponse])
-async def get_trace_checkpoints(trace_id: str):
-    """
-    Get all checkpoints for a specific trace
-    """
+async def get_trace_checkpoints(trace_id: str, db: Session = Depends(get_db)):
+    """Get all checkpoints for a specific trace"""
     try:
-        db_gen = get_db()
-        db = next(db_gen)
-        try:
             query = text("""
                 SELECT 
                     checkpoint_id, trace_id, stage, status, timestamp,
@@ -237,10 +224,7 @@ async def get_pipeline_performance(
     """
     Get comprehensive pipeline performance metrics
     """
-    try:
-        db_gen = get_db()
-        db = next(db_gen)
-        try:
+    try:        try:
             start_time = datetime.now(timezone.utc) - timedelta(hours=hours_back)
             
             # Get basic metrics
@@ -328,14 +312,9 @@ async def get_pipeline_performance(
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/automation-status", response_model=List[AutomationStatusResponse])
-async def get_automation_status():
-    """
-    Get status of all automated pipeline processes
-    """
+async def get_automation_status(db: Session = Depends(get_db)):
+    """Get status of all automated pipeline processes"""
     try:
-        db_gen = get_db()
-        db = next(db_gen)
-        try:
             query = text("""
                 SELECT 
                     automation_type, status, last_run, next_run,
@@ -379,10 +358,7 @@ async def get_pipeline_errors(
     """
     Get pipeline errors with filtering options
     """
-    try:
-        db_gen = get_db()
-        db = next(db_gen)
-        try:
+    try:        try:
             where_conditions = ["created_at >= :start_time"]
             params = {
                 "start_time": datetime.now(timezone.utc) - timedelta(hours=hours_back),

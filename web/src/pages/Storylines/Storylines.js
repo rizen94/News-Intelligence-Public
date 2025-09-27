@@ -47,6 +47,7 @@ import StorylineConfirmationDialog from '../../components/StorylineConfirmationD
 const Storylines = () => {
   const [storylines, setStorylines] = useState([]);
   const [loading, setLoading] = useState(true);
+  
   const [searchTerm, setSearchTerm] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
@@ -81,11 +82,10 @@ const Storylines = () => {
   const fetchStorylines = useCallback(async () => {
     try {
       setLoading(true);
-      
-      const response = await apiService.get('/api/storylines');
-      
-      if (response.success) {
-        const storylinesData = response.data?.storylines || [];
+        const response = await apiService.get('/api/storylines');
+        
+        if (response.success) {
+          const storylinesData = response.data?.storylines || [];
         setStorylines(storylinesData);
         setTotalStorylines(response.data?.total_count || storylinesData.length);
         setTotalPages(Math.ceil((response.data?.total_count || storylinesData.length) / 12));
@@ -190,78 +190,13 @@ const Storylines = () => {
     setPage(1);
   };
 
-  const handleCreateStoryline = async () => {
-    try {
-      // showLoading('Creating storyline...');
-      
-      // Convert form data to API format
-      const storylineData = {
-        name: newStoryline.title,
-        description: newStoryline.description,
-        priority_level: newStoryline.priority === 'high' ? 8 : newStoryline.priority === 'medium' ? 5 : 3,
-        keywords: newStoryline.targets || [],
-        entities: [],
-        geographic_regions: [],
-        quality_threshold: 0.7,
-        max_articles_per_day: 50,
-        auto_enhance: true,
-        is_active: true
-      };
-      
-      // const response = await newsSystemService.createStoryExpectation(storylineData);
-      const response = { success: true, data: { id: Date.now() } };
-      
-      if (response.success) {
-        // showSuccess('Storyline created successfully');
-        setCreateDialogOpen(false);
-        setNewStoryline({
-          title: '',
-          description: '',
-          category: '',
-          priority: 'medium',
-          targets: [],
-          quality_filters: []
-        });
-        fetchStorylines();
-      } else {
-        throw new Error(response.message || 'Failed to create storyline');
-      }
-    } catch (error) {
-      console.error('Error creating storyline:', error);
-        // showError('Failed to create storyline');
-    }
-  };
-
-  const handleDeleteStoryline = async (storylineId) => {
-    try {
-      // showLoading('Deleting storyline...');
-      
-      // const response = await newsSystemService.deleteStoryline(storylineId);
-      const response = { success: true };
-      
-      if (response.success) {
-        // showSuccess('Storyline deleted successfully');
-        fetchStorylines();
-      } else {
-        throw new Error(response.message || 'Failed to delete storyline');
-      }
-    } catch (error) {
-      console.error('Error deleting storyline:', error);
-        // showError('Failed to delete storyline');
-    }
-  };
-
-  const handleEditStoryline = (storyline) => {
-    setSelectedStoryline(storyline);
-    setEditDialogOpen(true);
-  };
 
   const handleEditSuccess = () => {
     fetchStorylines();
   };
 
   const handleStorylineClick = (storylineId) => {
-    navigate(`/storylines/${storylineId}`);
+    navigate(`/storylines/${storylineId}/report`);
   };
 
   const formatDate = (dateString) => {
@@ -433,38 +368,41 @@ const Storylines = () => {
                 display: 'flex',
                 flexDirection: 'column',
                 borderLeft: `4px solid ${
-                  storyline.priority_level >= 8 ? '#d32f2f' : 
-                  storyline.priority_level >= 5 ? '#ed6c02' : '#2e7d32'
+                  storyline.status === 'active' ? '#2e7d32' : '#757575'
                 }`
               }}
-              onClick={() => handleStorylineClick(storyline.story_id)}
+              onClick={() => handleStorylineClick(storyline.id)}
             >
               <CardContent sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column' }}>
                 {/* Header */}
                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 2 }}>
                   <Typography variant="h6" component="h3" noWrap sx={{ flexGrow: 1, mr: 1 }}>
-                    {storyline.name}
+                    {storyline.title}
                   </Typography>
                   <Box sx={{ display: 'flex', gap: 0.5 }}>
                     <Chip 
-                      label={`Priority ${storyline.priority_level}`} 
+                      label={storyline.status} 
                       size="small" 
-                      color={storyline.priority_level >= 8 ? 'error' : storyline.priority_level >= 5 ? 'warning' : 'success'}
+                      color={storyline.status === 'active' ? 'success' : 'default'}
                     />
                     <Chip 
-                      label={storyline.is_active ? 'Active' : 'Inactive'} 
+                      label={`${storyline.article_count} articles`} 
                       size="small" 
-                      color={storyline.is_active ? 'success' : 'default'}
+                      color="info"
                     />
+                    {storyline.ml_processing_status && (
+                      <Chip 
+                        label={storyline.ml_processing_status} 
+                        size="small" 
+                        color={
+                          storyline.ml_processing_status === 'completed' ? 'success' :
+                          storyline.ml_processing_status === 'processing' ? 'warning' :
+                          storyline.ml_processing_status === 'queued' ? 'info' : 'default'
+                        }
+                      />
+                    )}
                   </Box>
                 </Box>
-                
-                <Chip 
-                  label="Global Events" 
-                  size="small" 
-                  color="primary"
-                  sx={{ mb: 2, alignSelf: 'flex-start' }}
-                />
                 
                 {/* Description */}
                 <Typography 
@@ -488,7 +426,7 @@ const Storylines = () => {
                     <Box sx={{ display: 'flex', alignItems: 'center' }}>
                       <ArticleIcon sx={{ fontSize: 16, mr: 0.5, color: 'text.secondary' }} />
                       <Typography variant="caption" color="text.secondary">
-                        Max: {storyline.max_articles_per_day}/day
+                        {storyline.article_count} articles
                       </Typography>
                     </Box>
                     <Box sx={{ display: 'flex', alignItems: 'center' }}>
@@ -500,26 +438,25 @@ const Storylines = () => {
                   </Box>
                 </Box>
 
-                {/* Keywords */}
-                {storyline.keywords && storyline.keywords.length > 0 && (
-                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mb: 2 }}>
-                    {(storyline.keywords || []).slice(0, 3).map((keyword, index) => (
-                      <Chip 
-                        key={index}
-                        label={keyword} 
-                        size="small" 
-                        variant="outlined"
-                        sx={{ fontSize: '0.7rem' }}
-                      />
-                    ))}
-                    {storyline.keywords.length > 3 && (
-                      <Chip 
-                        label={`+${storyline.keywords.length - 3}`} 
-                        size="small" 
-                        variant="outlined"
-                        sx={{ fontSize: '0.7rem' }}
-                      />
-                    )}
+                {/* Master Summary Preview */}
+                {storyline.master_summary && (
+                  <Box sx={{ mb: 2 }}>
+                    <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 'bold', display: 'block', mb: 0.5 }}>
+                      AI Summary:
+                    </Typography>
+                    <Typography 
+                      variant="body2" 
+                      color="text.secondary" 
+                      sx={{ 
+                        display: '-webkit-box',
+                        WebkitLineClamp: 2,
+                        WebkitBoxOrient: 'vertical',
+                        overflow: 'hidden',
+                        fontSize: '0.8rem'
+                      }}
+                    >
+                      {storyline.master_summary}
+                    </Typography>
                   </Box>
                 )}
 
@@ -545,7 +482,7 @@ const Storylines = () => {
                         size="small" 
                         onClick={(e) => {
                           e.stopPropagation();
-                          handleDeleteStoryline(storyline.story_id);
+                          handleDeleteStoryline(storyline.id);
                         }}
                       >
                         <DeleteIcon fontSize="small" />

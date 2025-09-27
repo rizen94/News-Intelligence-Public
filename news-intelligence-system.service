@@ -1,0 +1,25 @@
+[Unit]
+Description=News Intelligence System - Complete Stack
+After=network.target docker.service
+Wants=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/pete/Documents/projects/Projects/News Intelligence
+ExecStart=/bin/bash /home/pete/Documents/projects/Projects/News Intelligence/start.sh
+RemainAfterExit=yes
+StandardOutput=journal
+StandardError=journal
+TimeoutStartSec=600
+
+# Restart policy
+Restart=on-failure
+RestartSec=30
+
+# Environment variables
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+Environment=DOCKER_HOST=unix:///var/run/docker.sock
+
+[Install]
+WantedBy=default.target

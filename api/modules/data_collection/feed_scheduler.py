@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 import schedule
 import atexit
 
-from .rss_feed_service import RSSFeedService
+from modules.rss_feed_service import RSSFeedService
 
 logger = logging.getLogger(__name__)
 
