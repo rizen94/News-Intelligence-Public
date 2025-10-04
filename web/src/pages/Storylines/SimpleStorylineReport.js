@@ -7,7 +7,7 @@ import {
   CardContent,
   Button,
   CircularProgress,
-  Alert
+  Alert,
 } from '@mui/material';
 import { ArrowBack as ArrowBackIcon } from '@mui/icons-material';
 
@@ -19,12 +19,12 @@ const SimpleStorylineReport = () => {
   const [error, setError] = useState(null);
 
   useEffect(() => {
-    const loadStoryline = async () => {
+    const loadStoryline = async() => {
       try {
         setLoading(true);
         const response = await fetch(`/api/storylines/${id}/report`);
         const data = await response.json();
-        
+
         if (data.success) {
           setStoryline(data.data.storyline);
         } else {

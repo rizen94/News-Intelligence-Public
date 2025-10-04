@@ -74,7 +74,7 @@ import {
 } from '@mui/material';
 import React, { useState, useEffect, useCallback } from 'react';
 
-import { apiService } from '../../services/apiService';
+import { apiService } from '../../services/apiService.ts';
 
 const EnhancedStorylines = () => {
   const [storylines, setStorylines] = useState([]);
@@ -475,7 +475,7 @@ const EnhancedStorylines = () => {
           <Grid item xs={12} md={4}>
             <TextField
               fullWidth
-              placeholder="Search storylines..."
+              placeholder="Search storylines by title or description..."
               value={searchQuery}
               onChange={handleSearch}
               InputProps={{

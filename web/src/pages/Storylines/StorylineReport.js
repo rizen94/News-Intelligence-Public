@@ -51,7 +51,7 @@ import {
   ExpandMore as ExpandMoreIcon,
 } from '@mui/icons-material';
 import { useParams, useNavigate } from 'react-router-dom';
-import apiService from '../../services/apiService';
+import apiService from '../../services/apiService.ts';
 
 const StorylineReport = () => {
   const { id } = useParams();
@@ -279,7 +279,7 @@ const StorylineReport = () => {
   console.log('StorylineReport: Rendering with storyline:', storyline);
   console.log('StorylineReport: Articles count:', articles.length);
   console.log('StorylineReport: Events count:', events.length);
-  
+
   return (
     <Box sx={{ p: 3 }}>
       {/* Header */}

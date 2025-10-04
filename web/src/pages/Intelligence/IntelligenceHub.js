@@ -65,7 +65,7 @@ import {
 } from '@mui/material';
 import React, { useState, useEffect, useCallback } from 'react';
 
-import { apiService } from '../../services/apiService';
+import { apiService } from '../../services/apiService.ts';
 
 const IntelligenceHub = () => {
   const [activeTab, setActiveTab] = useState(0);
@@ -453,7 +453,7 @@ const IntelligenceHub = () => {
           </Typography>
           <Box display="flex" gap={2}>
             <TextField
-              placeholder="Search articles..."
+              placeholder="Search articles for intelligence analysis..."
               value={searchQuery}
               onChange={handleSearch}
               onKeyPress={(e) => e.key === 'Enter' && handleSearchSubmit()}

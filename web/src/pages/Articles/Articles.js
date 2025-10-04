@@ -6,6 +6,11 @@ import {
   Schedule as ScheduleIcon,
   Refresh as RefreshIcon,
   ReadMore as ReadMoreIcon,
+  Psychology as PsychologyIcon,
+  TrendingUp as TrendingUpIcon,
+  Warning as WarningIcon,
+  CheckCircle as CheckCircleIcon,
+  Info as InfoIcon,
 } from '@mui/icons-material';
 import {
   Box,
@@ -24,11 +29,19 @@ import {
   Pagination,
   CircularProgress,
   Paper,
+  List,
+  ListItem,
+  ListItemText,
+  ListItemIcon,
+  Divider,
+  Tooltip,
+  Badge,
+  LinearProgress,
 } from '@mui/material';
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 
-import { apiService } from '../../services/apiService';
+import { apiService } from '../../services/apiService.ts';
 
 const Articles = () => {
   const [articles, setArticles] = useState([]);
@@ -36,14 +49,21 @@ const Articles = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('');
   const [sourceFilter, setSourceFilter] = useState('');
+  const [biasFilter, setBiasFilter] = useState('');
   const [sortBy, setSortBy] = useState('published_at');
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [totalArticles, setTotalArticles] = useState(0);
   const [sources, setSources] = useState([]);
   const [categories, setCategories] = useState([]);
+  const [biasStats, setBiasStats] = useState({
+    total: 0,
+    leftBias: 0,
+    centerBias: 0,
+    rightBias: 0,
+    analyzed: 0,
+  });
   const navigate = useNavigate();
-  // const { showSuccess, showError, showLoading } = useNotifications();
 
   const fetchArticles = useCallback(async(isManualRefresh = false) => {
     try {
@@ -51,100 +71,87 @@ const Articles = () => {
 
       const params = {
         page,
-        limit: 12,
-        search: searchTerm,
-        category: categoryFilter,
-        source: sourceFilter,
-        sort: sortBy,
-        sort_order: 'desc',
+        limit: 20,
+        search: searchTerm || undefined,
+        category: categoryFilter || undefined,
+        source: sourceFilter || undefined,
+        sort_by: sortBy,
+        bias_filter: biasFilter || undefined,
       };
 
-      // Add cache-busting parameter for manual refresh
-      if (isManualRefresh) {
-        params._t = Date.now();
-      }
-
-      const response = await apiService.getArticles(params);
+      const response = await apiService.articles.getArticles(params);
 
       if (response.success) {
-        setArticles(response.data?.articles || []);
-        // Calculate total pages correctly
-        const totalPages = Math.ceil((response.data?.total || 0) / 12);
-        setTotalPages(totalPages);
-        setTotalArticles(response.data?.total || 0);
-      } else {
-        console.error('Articles API Error:', response);
-        throw new Error(response.message || 'Failed to fetch articles');
+        setArticles(response.data.articles || []);
+        setTotalPages(response.data.total_pages || 1);
+        setTotalArticles(response.data.total_count || 0);
+
+        // Calculate bias statistics
+        const articles = response.data.articles || [];
+        const biasStats = {
+          total: articles.length,
+          leftBias: articles.filter(a => a.bias_score < -0.3).length,
+          centerBias: articles.filter(a => Math.abs(a.bias_score) <= 0.3).length,
+          rightBias: articles.filter(a => a.bias_score > 0.3).length,
+          analyzed: articles.filter(a => a.bias_score !== null && a.bias_score !== undefined).length,
+        };
+        setBiasStats(biasStats);
       }
     } catch (error) {
       console.error('Error fetching articles:', error);
-
-      // Set empty state instead of mock data
-      setArticles([]);
-      setTotalPages(1);
-      setTotalArticles(0);
     } finally {
       setLoading(false);
     }
-  }, [page, searchTerm, categoryFilter, sourceFilter, sortBy]);
+  }, [page, searchTerm, categoryFilter, sourceFilter, sortBy, biasFilter]);
 
   const fetchSourcesAndCategories = useCallback(async() => {
     try {
-      // Fetch sources and categories for filters
-      const [sourcesResponse, categoriesResponse] = await Promise.all([
-        apiService.getSources(),
-        apiService.getCategories(),
+      const [sourcesRes, categoriesRes] = await Promise.all([
+        apiService.articles.getSources(),
+        apiService.articles.getCategories(),
       ]);
 
-      if (sourcesResponse.success) {
-        setSources(sourcesResponse.data || []);
+      if (sourcesRes.success) {
+        setSources(sourcesRes.data.sources || []);
       }
-      if (categoriesResponse.success) {
-        setCategories(categoriesResponse.data || []);
+      if (categoriesRes.success) {
+        setCategories(categoriesRes.data.categories || []);
       }
     } catch (error) {
       console.error('Error fetching sources and categories:', error);
-      // Set default values
-      setSources(['BBC News', 'Reuters', 'The Guardian', 'CNN', 'Associated Press']);
-      setCategories(['Global Events', 'Business', 'Politics', 'Technology', 'Health']);
     }
   }, []);
-
-  useEffect(() => {
-    fetchSourcesAndCategories();
-  }, [fetchSourcesAndCategories]);
 
   useEffect(() => {
     fetchArticles();
   }, [fetchArticles]);
 
-  // Auto-search when filters change
   useEffect(() => {
-    const timeoutId = setTimeout(() => {
-      if (searchTerm || categoryFilter || sourceFilter) {
-        setPage(1);
-        fetchArticles();
-      }
-    }, 500); // Debounce search
+    fetchSourcesAndCategories();
+  }, [fetchSourcesAndCategories]);
 
-    return () => clearTimeout(timeoutId);
-  }, [searchTerm, categoryFilter, sourceFilter, fetchArticles]);
-
-  const handleSearch = () => {
-    setPage(1);
-    fetchArticles();
+  const getBiasColor = (biasScore) => {
+    if (biasScore < -0.3) return 'error';
+    if (biasScore > 0.3) return 'warning';
+    return 'success';
   };
 
-  const handleClearFilters = () => {
-    setSearchTerm('');
-    setCategoryFilter('');
-    setSourceFilter('');
-    setSortBy('published_at');
-    setPage(1);
+  const getBiasLabel = (biasScore) => {
+    if (biasScore < -0.3) return 'Left Bias';
+    if (biasScore > 0.3) return 'Right Bias';
+    return 'Center';
   };
 
-  const handleArticleClick = (articleId) => {
-    navigate(`/articles/${articleId}`);
+  const getBiasIcon = (biasScore) => {
+    if (biasScore < -0.3) return <WarningIcon />;
+    if (biasScore > 0.3) return <TrendingUpIcon />;
+    return <CheckCircleIcon />;
+  };
+
+  const getCredibilityColor = (score) => {
+    if (score >= 0.8) return 'success';
+    if (score >= 0.6) return 'warning';
+    return 'error';
   };
 
   const formatDate = (dateString) => {
@@ -157,56 +164,102 @@ const Articles = () => {
     });
   };
 
-  const getSentimentColor = (score) => {
-    if (score > 0.1) return 'success';
-    if (score < -0.1) return 'error';
-    return 'default';
-  };
-
-  const getSentimentLabel = (score) => {
-    if (score > 0.1) return 'Positive';
-    if (score < -0.1) return 'Negative';
-    return 'Neutral';
-  };
-
-  if (loading && articles.length === 0) {
-    return (
-      <Box display="flex" justifyContent="center" alignItems="center" minHeight="400px">
-        <CircularProgress size={60} />
-        <Typography variant="h6" sx={{ ml: 2 }}>
-          Loading articles...
-        </Typography>
-      </Box>
-    );
-  }
-
   return (
     <Box>
-      {/* Header */}
-      <Box sx={{ mb: 4, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <Box>
-          <Typography variant="h3" component="h1" gutterBottom>
-            Articles
-          </Typography>
-          <Typography variant="h6" color="text.secondary" gutterBottom>
-            {totalArticles} articles found
-          </Typography>
-        </Box>
+      <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
+        <Typography variant="h4" component="h1" sx={{ fontWeight: 'bold' }}>
+          📰 Articles with Bias Analysis
+        </Typography>
         <Button
           variant="outlined"
-          startIcon={loading ? <CircularProgress size={16} /> : <RefreshIcon />}
+          startIcon={<RefreshIcon />}
           onClick={() => fetchArticles(true)}
           disabled={loading}
-          sx={{ minWidth: 120 }}
         >
-          {loading ? 'Refreshing...' : 'Refresh'}
+          Refresh
         </Button>
       </Box>
 
-      {/* Search and Filters */}
-      <Paper sx={{ p: 3, mb: 3 }}>
+      {/* Bias Statistics Overview */}
+      <Grid container spacing={2} sx={{ mb: 3 }}>
+        <Grid item xs={12} md={2}>
+          <Card>
+            <CardContent sx={{ textAlign: 'center' }}>
+              <Typography variant="h6" color="primary">
+                {biasStats.total}
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                Total Articles
+              </Typography>
+            </CardContent>
+          </Card>
+        </Grid>
+        <Grid item xs={12} md={2}>
+          <Card>
+            <CardContent sx={{ textAlign: 'center' }}>
+              <Typography variant="h6" color="error">
+                {biasStats.leftBias}
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                Left Bias
+              </Typography>
+            </CardContent>
+          </Card>
+        </Grid>
+        <Grid item xs={12} md={2}>
+          <Card>
+            <CardContent sx={{ textAlign: 'center' }}>
+              <Typography variant="h6" color="success">
+                {biasStats.centerBias}
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                Center
+              </Typography>
+            </CardContent>
+          </Card>
+        </Grid>
+        <Grid item xs={12} md={2}>
+          <Card>
+            <CardContent sx={{ textAlign: 'center' }}>
+              <Typography variant="h6" color="warning">
+                {biasStats.rightBias}
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                Right Bias
+              </Typography>
+            </CardContent>
+          </Card>
+        </Grid>
+        <Grid item xs={12} md={2}>
+          <Card>
+            <CardContent sx={{ textAlign: 'center' }}>
+              <Typography variant="h6" color="info">
+                {biasStats.analyzed}
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                Analyzed
+              </Typography>
+            </CardContent>
+          </Card>
+        </Grid>
+        <Grid item xs={12} md={2}>
+          <Card>
+            <CardContent sx={{ textAlign: 'center' }}>
+              <Typography variant="h6" color="primary">
+                {biasStats.total > 0 ? Math.round((biasStats.analyzed / biasStats.total) * 100) : 0}%
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                Analysis Rate
+              </Typography>
+            </CardContent>
+          </Card>
+        </Grid>
+      </Grid>
+
+      {/* Filters */}
+      <Paper sx={{ p: 2, mb: 3 }}>
         <Grid container spacing={2} alignItems="center">
-          <Grid item xs={12} md={4}>
+          <Grid item xs={12} md={3}>
             <TextField
               fullWidth
               placeholder="Search articles..."
@@ -219,10 +272,8 @@ const Articles = () => {
                   </InputAdornment>
                 ),
               }}
-              onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
             />
           </Grid>
-
           <Grid item xs={12} md={2}>
             <FormControl fullWidth>
               <InputLabel>Category</InputLabel>
@@ -240,7 +291,6 @@ const Articles = () => {
               </Select>
             </FormControl>
           </Grid>
-
           <Grid item xs={12} md={2}>
             <FormControl fullWidth>
               <InputLabel>Source</InputLabel>
@@ -258,7 +308,21 @@ const Articles = () => {
               </Select>
             </FormControl>
           </Grid>
-
+          <Grid item xs={12} md={2}>
+            <FormControl fullWidth>
+              <InputLabel>Bias</InputLabel>
+              <Select
+                value={biasFilter}
+                onChange={(e) => setBiasFilter(e.target.value)}
+                label="Bias"
+              >
+                <MenuItem value="">All Bias</MenuItem>
+                <MenuItem value="left">Left Bias</MenuItem>
+                <MenuItem value="center">Center</MenuItem>
+                <MenuItem value="right">Right Bias</MenuItem>
+              </Select>
+            </FormControl>
+          </Grid>
           <Grid item xs={12} md={2}>
             <FormControl fullWidth>
               <InputLabel>Sort By</InputLabel>
@@ -267,215 +331,129 @@ const Articles = () => {
                 onChange={(e) => setSortBy(e.target.value)}
                 label="Sort By"
               >
-                <MenuItem value="published_at">Date</MenuItem>
-                <MenuItem value="quality_score">Quality</MenuItem>
+                <MenuItem value="published_at">Published Date</MenuItem>
                 <MenuItem value="title">Title</MenuItem>
-                <MenuItem value="source">Source</MenuItem>
-                <MenuItem value="category">Category</MenuItem>
+                <MenuItem value="bias_score">Bias Score</MenuItem>
+                <MenuItem value="credibility_score">Credibility</MenuItem>
               </Select>
             </FormControl>
           </Grid>
-
-          <Grid item xs={12} md={2}>
-            <Box sx={{ display: 'flex', gap: 1 }}>
-              <Button
-                variant="contained"
-                onClick={handleSearch}
-                startIcon={<SearchIcon />}
-                fullWidth
-              >
-                Search
-              </Button>
-              <Button
-                variant="outlined"
-                onClick={handleClearFilters}
-                startIcon={<FilterIcon />}
-              >
-                Clear
-              </Button>
-            </Box>
+          <Grid item xs={12} md={1}>
+            <Button
+              variant="contained"
+              startIcon={<FilterIcon />}
+              onClick={() => fetchArticles(true)}
+              disabled={loading}
+              fullWidth
+            >
+              Filter
+            </Button>
           </Grid>
         </Grid>
       </Paper>
 
-      {/* Articles Grid */}
-      <Grid container spacing={3}>
-        {articles.map((article) => (
-          <Grid item xs={12} md={6} lg={4} key={article.id}>
-            <Card
-              sx={{
-                height: '100%',
-                cursor: 'pointer',
-                '&:hover': {
-                  boxShadow: 4,
-                  transform: 'translateY(-2px)',
-                  transition: 'all 0.2s ease-in-out',
-                },
-                display: 'flex',
-                flexDirection: 'column',
-              }}
-              onClick={() => handleArticleClick(article.id)}
-            >
-              <CardContent sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column' }}>
-                {/* Header */}
-                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 2 }}>
-                  <Chip
-                    label={article.category}
-                    size="small"
-                    color="primary"
-                    variant="outlined"
-                  />
-                  <Chip
-                    label={getSentimentLabel(article.sentiment_score)}
-                    size="small"
-                    color={getSentimentColor(article.sentiment_score)}
-                  />
-                </Box>
+      {/* Articles List */}
+      {loading ? (
+        <Box display="flex" justifyContent="center" p={4}>
+          <CircularProgress />
+        </Box>
+      ) : (
+        <Grid container spacing={2}>
+          {articles.map((article) => (
+            <Grid item xs={12} key={article.id}>
+              <Card>
+                <CardContent>
+                  <Box display="flex" justifyContent="space-between" alignItems="flex-start">
+                    <Box flex={1}>
+                      <Typography variant="h6" component="h2" sx={{ mb: 1 }}>
+                        {article.title}
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                        {article.summary || 'No summary available'}
+                      </Typography>
+                      <Box display="flex" alignItems="center" gap={1} mb={1}>
+                        <Chip
+                          icon={<SourceIcon />}
+                          label={article.source}
+                          size="small"
+                          variant="outlined"
+                        />
+                        <Chip
+                          icon={<ScheduleIcon />}
+                          label={formatDate(article.published_at)}
+                          size="small"
+                          variant="outlined"
+                        />
+                        {article.category && (
+                          <Chip
+                            label={article.category}
+                            size="small"
+                            color="primary"
+                          />
+                        )}
+                      </Box>
+                    </Box>
+                    <Box display="flex" flexDirection="column" alignItems="flex-end" gap={1}>
+                      {/* Bias Analysis */}
+                      {article.bias_score !== null && article.bias_score !== undefined && (
+                        <Tooltip title={`Bias Score: ${article.bias_score.toFixed(2)}`}>
+                          <Chip
+                            icon={getBiasIcon(article.bias_score)}
+                            label={getBiasLabel(article.bias_score)}
+                            color={getBiasColor(article.bias_score)}
+                            size="small"
+                          />
+                        </Tooltip>
+                      )}
 
-                {/* Title */}
-                <Typography
-                  variant="h6"
-                  component="h3"
-                  gutterBottom
-                  sx={{
-                    fontWeight: 600,
-                    lineHeight: 1.3,
-                    display: '-webkit-box',
-                    WebkitLineClamp: 2,
-                    WebkitBoxOrient: 'vertical',
-                    overflow: 'hidden',
-                  }}
-                >
-                  {article.title}
-                </Typography>
+                      {/* Credibility Score */}
+                      {article.credibility_score && (
+                        <Tooltip title={`Credibility Score: ${article.credibility_score.toFixed(2)}`}>
+                          <Chip
+                            icon={<CheckCircleIcon />}
+                            label={`${Math.round(article.credibility_score * 100)}%`}
+                            color={getCredibilityColor(article.credibility_score)}
+                            size="small"
+                            variant="outlined"
+                          />
+                        </Tooltip>
+                      )}
 
-                {/* Summary */}
-                <Typography
-                  variant="body2"
-                  color="text.secondary"
-                  sx={{
-                    mb: 2,
-                    flexGrow: 1,
-                    display: '-webkit-box',
-                    WebkitLineClamp: 3,
-                    WebkitBoxOrient: 'vertical',
-                    overflow: 'hidden',
-                  }}
-                >
-                  {article.summary || article.content?.substring(0, 200) + '...'}
-                </Typography>
-
-                {/* Source and Date */}
-                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                  <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                    <SourceIcon sx={{ fontSize: 16, mr: 0.5, color: 'text.secondary' }} />
-                    <Typography variant="caption" color="text.secondary">
-                      {article.source}
-                    </Typography>
-                  </Box>
-                  <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                    <ScheduleIcon sx={{ fontSize: 16, mr: 0.5, color: 'text.secondary' }} />
-                    <Typography variant="caption" color="text.secondary">
-                      {formatDate(article.published_date)}
-                    </Typography>
-                  </Box>
-                </Box>
-
-                {/* Quality Score */}
-                <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
-                  <Typography variant="caption" color="text.secondary" sx={{ mr: 1 }}>
-                    Quality:
-                  </Typography>
-                  <Box sx={{
-                    width: '100%',
-                    height: 4,
-                    backgroundColor: 'grey.300',
-                    borderRadius: 2,
-                    overflow: 'hidden',
-                  }}>
-                    <Box sx={{
-                      width: `${(article.quality_score || 0) * 100}%`,
-                      height: '100%',
-                      backgroundColor: article.quality_score > 0.8 ? 'success.main' :
-                        article.quality_score > 0.6 ? 'warning.main' : 'error.main',
-                    }} />
-                  </Box>
-                  <Typography variant="caption" color="text.secondary" sx={{ ml: 1 }}>
-                    {Math.round((article.quality_score || 0) * 100)}%
-                  </Typography>
-                </Box>
-
-                {/* Topics */}
-                {article.topics_extracted && article.topics_extracted.length > 0 && (
-                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mt: 1, mb: 2 }}>
-                    {(article.topics_extracted || []).slice(0, 3).map((topic, index) => (
-                      <Chip
-                        key={index}
-                        label={topic}
+                      {/* Read More Button */}
+                      <Button
                         size="small"
-                        variant="outlined"
-                        sx={{ fontSize: '0.7rem' }}
-                      />
-                    ))}
-                    {article.topics_extracted.length > 3 && (
-                      <Chip
-                        label={`+${article.topics_extracted.length - 3}`}
-                        size="small"
-                        variant="outlined"
-                        sx={{ fontSize: '0.7rem' }}
-                      />
-                    )}
+                        startIcon={<ReadMoreIcon />}
+                        onClick={() => navigate(`/articles/${article.id}`)}
+                      >
+                        Read More
+                      </Button>
+                    </Box>
                   </Box>
-                )}
-
-                {/* Read Full Article Button */}
-                <Button
-                  variant="contained"
-                  fullWidth
-                  startIcon={<ReadMoreIcon />}
-                  onClick={(e) => {
-                    e.stopPropagation(); // Prevent card click
-                    handleArticleClick(article.id);
-                  }}
-                  sx={{
-                    mt: 'auto',
-                    textTransform: 'none',
-                    fontWeight: 500,
-                  }}
-                >
-                  Read Full Article
-                </Button>
-              </CardContent>
-            </Card>
-          </Grid>
-        ))}
-      </Grid>
+                </CardContent>
+              </Card>
+            </Grid>
+          ))}
+        </Grid>
+      )}
 
       {/* Pagination */}
       {totalPages > 1 && (
-        <Box sx={{ display: 'flex', justifyContent: 'center', mt: 4 }}>
+        <Box display="flex" justifyContent="center" mt={3}>
           <Pagination
             count={totalPages}
             page={page}
             onChange={(event, value) => setPage(value)}
             color="primary"
-            size="large"
           />
         </Box>
       )}
 
-      {/* No Articles */}
-      {!loading && articles.length === 0 && (
-        <Box sx={{ textAlign: 'center', py: 8 }}>
-          <ArticleIcon sx={{ fontSize: 64, color: 'text.secondary', mb: 2 }} />
-          <Typography variant="h6" color="text.secondary" gutterBottom>
-            No articles found
-          </Typography>
-          <Typography variant="body2" color="text.secondary">
-            Try adjusting your search criteria or filters
-          </Typography>
-        </Box>
-      )}
+      {/* Results Summary */}
+      <Box mt={2}>
+        <Typography variant="body2" color="text.secondary">
+          Showing {articles.length} of {totalArticles} articles
+        </Typography>
+      </Box>
     </Box>
   );
 };

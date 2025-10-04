@@ -64,7 +64,7 @@ import {
 } from '@mui/material';
 import React, { useState, useEffect, useCallback } from 'react';
 
-import { apiService } from '../../services/apiService';
+import { apiService } from '../../services/apiService.ts';
 
 const EnhancedRSSFeeds = () => {
   const [feeds, setFeeds] = useState([]);
@@ -509,7 +509,7 @@ const EnhancedRSSFeeds = () => {
           <Grid item xs={12} md={4}>
             <TextField
               fullWidth
-              placeholder="Search RSS feeds..."
+              placeholder="Search RSS feeds by name or URL..."
               value={searchQuery}
               onChange={handleSearch}
               InputProps={{
@@ -676,7 +676,7 @@ const EnhancedRSSFeeds = () => {
                 label="Feed URL"
                 value={newFeed.url}
                 onChange={(e) => setNewFeed({ ...newFeed, url: e.target.value })}
-                placeholder="https://example.com/rss.xml"
+                placeholder="https://feeds.bbci.co.uk/news/rss.xml"
               />
             </Grid>
             <Grid item xs={12} md={6}>

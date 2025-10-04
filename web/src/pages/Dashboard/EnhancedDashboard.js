@@ -44,7 +44,7 @@ import {
 } from '@mui/material';
 import React, { useState, useEffect, useCallback } from 'react';
 
-import { apiService } from '../../services/apiService';
+import { apiService } from '../../services/apiService.ts';
 
 const EnhancedDashboard = () => {
   const [loading, setLoading] = useState(true);
@@ -88,20 +88,20 @@ const EnhancedDashboard = () => {
           data: {
             total_articles: monitoringData?.data?.database_metrics?.total_articles || 0,
             articles_today: monitoringData?.data?.database_metrics?.recent_articles || 0,
-            articles_this_week: 0, // TODO: Add weekly calculation
+            articles_this_week: systemStatus?.articleStats?.data?.articles_this_week || 0,
             top_sources: [],
           },
         },
         rssStats: {
           data: {
-            total_feeds: 0, // TODO: Add RSS feed count
+            total_feeds: systemStatus?.rssStats?.data?.total_feeds || 0,
             active_feeds: 0,
             feeds_with_errors: 0,
           },
         },
         storylineStats: {
           data: {
-            total_storylines: 0, // TODO: Add when storylines endpoint is fixed
+            total_storylines: systemStatus?.storylineStats?.data?.total_storylines || 0,
             active_storylines: 0,
           },
         },

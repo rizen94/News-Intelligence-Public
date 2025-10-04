@@ -18,7 +18,7 @@ import {
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 
-import { apiService } from '../../services/apiService';
+import { apiService } from '../../services/apiService.ts';
 
 const ArticleDetail = () => {
   const { id } = useParams();
