@@ -40,6 +40,37 @@ except ImportError:
         'options': '-c statement_timeout=30000'  # 30 second query timeout
     }
 
+def clean_content_preserve_paragraphs(content: str) -> str:
+    """
+    Clean content while preserving paragraph structure
+    Args:
+        content: Raw content string
+    Returns:
+        Cleaned content with preserved paragraph breaks
+    """
+    if not content:
+        return ""
+    
+    # Split into lines and clean each line
+    lines = content.split('\n')
+    cleaned_lines = []
+    
+    for line in lines:
+        # Clean the line but preserve structure
+        cleaned_line = ' '.join(line.split())  # Remove extra whitespace within line
+        if cleaned_line.strip():  # Only keep non-empty lines
+            cleaned_lines.append(cleaned_line.strip())
+    
+    # Join lines, preserving paragraph breaks
+    # Use double newlines to separate paragraphs
+    content = '\n\n'.join(cleaned_lines)
+    
+    # Clean up excessive whitespace while preserving structure
+    content = content.replace('\n\n\n', '\n\n')  # Remove triple newlines
+    content = content.replace('  ', ' ')  # Remove double spaces
+    
+    return content
+
 def get_db_connection():
     """Get database connection with timeout protection"""
     try:
@@ -94,8 +125,8 @@ def extract_article_content(url: str, timeout: int = 10) -> str:
         if not content:
             content = soup.get_text(strip=True)
         
-        # Clean up content
-        content = ' '.join(content.split())
+        # Clean up content while preserving paragraph breaks
+        content = clean_content_preserve_paragraphs(content)
         
         return content[:10000]  # Limit content length
         
@@ -152,13 +183,13 @@ def collect_enhanced_rss() -> int:
                         summary = entry.get('summary', '') or entry.get('description', '')
                         
                         # Parse published date
-                        published_date = None
+                        published_at = None
                         if hasattr(entry, 'published_parsed') and entry.published_parsed:
-                            published_date = datetime(*entry.published_parsed[:6])
+                            published_at = datetime(*entry.published_parsed[:6])
                         elif hasattr(entry, 'updated_parsed') and entry.updated_parsed:
-                            published_date = datetime(*entry.updated_parsed[:6])
+                            published_at = datetime(*entry.updated_parsed[:6])
                         else:
-                            published_date = datetime.now()
+                            published_at = datetime.now()
                         
                         # Check if article already exists
                         cur.execute("""
@@ -189,11 +220,11 @@ def collect_enhanced_rss() -> int:
                             
                             cur.execute("""
                                 INSERT INTO articles
-                                (title, url, content, published_date, created_at)
+                                (title, url, content, published_at, created_at)
                                 VALUES (%s, %s, %s, %s, %s)
                                 ON CONFLICT (url) DO NOTHING
                             """, (
-                                title, url, enhanced_content, published_date, datetime.now()
+                                title, url, enhanced_content, published_at, datetime.now()
                             ))
                             
                             if cur.rowcount > 0:

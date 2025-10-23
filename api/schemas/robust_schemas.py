@@ -320,3 +320,21 @@ class SearchResult(BaseModel):
     page: int = Field(..., ge=1, description="Current page")
     limit: int = Field(..., ge=1, description="Items per page")
     pages: int = Field(..., ge=1, description="Total pages")
+
+class StorylineResponse(BaseModel):
+    """Response model for storyline operations"""
+    success: bool
+    message: str
+    data: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+
+class CreateStorylineRequest(BaseModel):
+    """Request model for creating storylines"""
+    title: str
+    description: Optional[str] = None
+
+class AddArticleRequest(BaseModel):
+    """Request model for adding articles to storylines"""
+    article_id: str
+    relevance_score: Optional[float] = 0.5
+    importance_score: Optional[float] = 0.5

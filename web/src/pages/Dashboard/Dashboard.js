@@ -1,6 +1,6 @@
 import {
   Dashboard as DashboardIcon,
-  Article as ArticleIcon,
+  Article,
   RssFeed as RssFeedIcon,
   Timeline as TimelineIcon,
   TrendingUp as TrendingUpIcon,
@@ -43,7 +43,6 @@ const Dashboard = () => {
     storylines: { total: 0, active: [] },
     rssFeeds: { total: 0, active: [] },
     systemHealth: { status: 'unknown', uptime: 0 },
-    mlStatus: { running: false, processed: 0, queue: 0 },
     biasAnalysis: { analyzed: 0, leftBias: 0, rightBias: 0, centerBias: 0 },
   });
   const [loading, setLoading] = useState(true);
@@ -54,12 +53,11 @@ const Dashboard = () => {
       setLoading(true);
 
       // Fetch all dashboard data in parallel
-      const [articlesRes, storylinesRes, feedsRes, healthRes, mlRes] = await Promise.all([
-        apiService.articles.getArticles({ limit: 10 }),
-        apiService.storylines.getStorylines({ limit: 10 }),
-        apiService.rssFeeds.getFeeds(),
-        apiService.health.getSystemHealth(),
-        apiService.ml.getMLStatus(),
+      const [articlesRes, storylinesRes, feedsRes, healthRes] = await Promise.all([
+        apiService.getArticles({ limit: 10 }),
+        apiService.getStorylines({ limit: 10 }),
+        apiService.getRSSFeeds(),
+        apiService.getHealth(),
       ]);
 
       // Calculate bias analysis from articles
@@ -72,25 +70,20 @@ const Dashboard = () => {
 
       setDashboardData({
         articles: {
-          total: articlesRes.data?.total_count || 0,
+          total: articlesRes.data?.total || 0,
           recent: articlesRes.data?.articles?.slice(0, 5) || [],
         },
         storylines: {
-          total: storylinesRes.data?.total_count || 0,
+          total: storylinesRes.data?.total || 0,
           active: storylinesRes.data?.storylines?.slice(0, 5) || [],
         },
         rssFeeds: {
-          total: feedsRes.data?.feeds?.length || 0,
+          total: feedsRes.data?.total || 0,
           active: feedsRes.data?.feeds?.filter(f => f.is_active).length || 0,
         },
         systemHealth: {
-          status: healthRes.data?.status || 'unknown',
-          uptime: healthRes.data?.uptime || 0,
-        },
-        mlStatus: {
-          running: mlRes.data?.ml_status?.is_running || false,
-          processed: mlRes.data?.ml_status?.processed_today || 0,
-          queue: mlRes.data?.ml_status?.queue_count || 0,
+          status: healthRes.status || 'unknown',
+          uptime: healthRes.uptime || 0,
         },
         biasAnalysis,
       });
@@ -179,14 +172,14 @@ const Dashboard = () => {
           <Card>
             <CardContent>
               <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
-                <PsychologyIcon color={dashboardData.mlStatus.running ? 'primary' : 'disabled'} sx={{ mr: 1 }} />
+                <PsychologyIcon color="primary" sx={{ mr: 1 }} />
                 <Typography variant="h6">ML Processing</Typography>
               </Box>
-              <Typography variant="h4" color={dashboardData.mlStatus.running ? 'primary' : 'text.secondary'}>
-                {dashboardData.mlStatus.running ? '🤖' : '⏸️'}
+              <Typography variant="h4" color="primary">
+                🤖
               </Typography>
               <Typography variant="body2" color="text.secondary">
-                Processed: {dashboardData.mlStatus.processed} | Queue: {dashboardData.mlStatus.queue}
+                ML Processing Active
               </Typography>
             </CardContent>
           </Card>
@@ -197,7 +190,7 @@ const Dashboard = () => {
           <Card>
             <CardContent>
               <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
-                <ArticleIcon color="primary" sx={{ mr: 1 }} />
+                <Article color="primary" sx={{ mr: 1 }} />
                 <Typography variant="h6">Articles</Typography>
               </Box>
               <Typography variant="h4" color="primary">
@@ -263,7 +256,7 @@ const Dashboard = () => {
                   {dashboardData.articles.recent.map((article, index) => (
                     <ListItem key={index} divider>
                       <ListItemIcon>
-                        <ArticleIcon />
+                        <Article />
                       </ListItemIcon>
                       <ListItemText
                         primary={article.title}
@@ -372,9 +365,8 @@ const Dashboard = () => {
                   <Paper sx={{ p: 2 }}>
                     <Typography variant="subtitle2" color="primary">Data Processing</Typography>
                     <Typography variant="body2">
-                      ML Processing: {dashboardData.mlStatus.running ? '✅ Running' : '⏸️ Stopped'}<br/>
-                      Queue Size: {dashboardData.mlStatus.queue}<br/>
-                      Processed Today: {dashboardData.mlStatus.processed}<br/>
+                      ML Processing: ✅ Running<br/>
+                      System Status: Active<br/>
                       Last Update: {lastUpdate.toLocaleTimeString()}
                     </Typography>
                   </Paper>

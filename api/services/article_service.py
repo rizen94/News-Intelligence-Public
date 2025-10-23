@@ -164,7 +164,7 @@ class ArticleService:
                 )
             
             if search_data.source:
-                query = query.filter(Article.source == search_data.source)
+                query = query.filter(Article.source_domain == search_data.source)
             
             if search_data.category:
                 query = query.filter(Article.category == search_data.category)

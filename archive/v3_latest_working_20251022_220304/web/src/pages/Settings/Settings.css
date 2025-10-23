@@ -1,0 +1,13 @@
+.settings {
+  padding: 20px;
+}
+
+.settings-header {
+  margin-bottom: 30px;
+}
+
+.settings-header h1 {
+  color: #2c3e50;
+  font-size: 2em;
+  margin: 0;
+}

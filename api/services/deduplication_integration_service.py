@@ -327,7 +327,7 @@ class DeduplicationIntegrationService:
                     cm.similarity_threshold,
                     cm.created_at,
                     COUNT(ac.article_id) as actual_articles,
-                    ARRAY_AGG(DISTINCT a.source) as sources,
+                    ARRAY_AGG(DISTINCT a.source_domain) as sources,
                     ARRAY_AGG(DISTINCT a.title ORDER BY a.created_at DESC) as article_titles
                 FROM cluster_metadata cm
                 LEFT JOIN article_clusters ac ON cm.cluster_id = ac.cluster_id

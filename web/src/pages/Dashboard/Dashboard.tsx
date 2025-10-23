@@ -6,6 +6,9 @@ interface DashboardData {
   storylines: any[];
   rssFeeds: any[];
   systemHealth: any;
+  totalArticles: number;
+  totalStorylines: number;
+  totalRssFeeds: number;
 }
 
 const Dashboard: React.FC = () => {
@@ -21,10 +24,10 @@ const Dashboard: React.FC = () => {
     try {
       setLoading(true);
       const [articlesRes, storylinesRes, rssFeedsRes, healthRes] = await Promise.all([
-        fetch('http://localhost:8000/api/articles/'),
-        fetch('http://localhost:8000/api/storylines/'),
-        fetch('http://localhost:8000/api/rss-feeds/'),
-        fetch('http://localhost:8000/api/health/'),
+        fetch('http://localhost:8001/api/articles/'),
+        fetch('http://localhost:8001/api/storylines/'),
+        fetch('http://localhost:8001/api/rss-feeds/'),
+        fetch('http://localhost:8001/api/health/'),
       ]);
 
       const [articles, storylines, rssFeeds, health] = await Promise.all([
@@ -35,10 +38,13 @@ const Dashboard: React.FC = () => {
       ]);
 
       setData({
-        articles: articles.data || [],
+        articles: articles.data?.articles || [],
         storylines: storylines.data || [],
         rssFeeds: rssFeeds.data || [],
         systemHealth: health,
+        totalArticles: articles.data?.total || 0,
+        totalStorylines: storylines.data?.total || 0,
+        totalRssFeeds: rssFeeds.data?.total || 0,
       });
     } catch (err) {
       setError('Failed to load dashboard data');
@@ -82,7 +88,7 @@ const Dashboard: React.FC = () => {
           <div className="card-header">
             <h3 className="card-title">Articles</h3>
           </div>
-          <div className="stat-number">{data?.articles?.length || 0}</div>
+          <div className="stat-number">{data?.totalArticles || 0}</div>
           <p>Total articles processed</p>
         </div>
 
@@ -90,7 +96,7 @@ const Dashboard: React.FC = () => {
           <div className="card-header">
             <h3 className="card-title">Storylines</h3>
           </div>
-          <div className="stat-number">{data?.storylines?.length || 0}</div>
+          <div className="stat-number">{data?.totalStorylines || 0}</div>
           <p>Active storylines</p>
         </div>
 
@@ -98,7 +104,7 @@ const Dashboard: React.FC = () => {
           <div className="card-header">
             <h3 className="card-title">RSS Feeds</h3>
           </div>
-          <div className="stat-number">{data?.rssFeeds?.length || 0}</div>
+          <div className="stat-number">{data?.totalRssFeeds || 0}</div>
           <p>Configured feeds</p>
         </div>
       </div>

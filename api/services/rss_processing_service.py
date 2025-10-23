@@ -64,12 +64,12 @@ class RSSProcessor:
         """Get all active RSS feeds from database"""
         try:
             query = text("""
-                SELECT id, name, url, category, language, max_articles, 
-                       update_frequency, last_checked, status
+                SELECT id, feed_name, feed_url, category, language, max_articles, 
+                       fetch_interval_seconds, last_fetched_at, is_active
                 FROM rss_feeds 
-                WHERE status = 'active' 
-                AND (last_checked IS NULL OR last_checked < NOW() - INTERVAL '30 minutes')
-                ORDER BY priority DESC, last_checked ASC
+                WHERE is_active = true 
+                AND (last_fetched_at IS NULL OR last_fetched_at < NOW() - INTERVAL '30 minutes')
+                ORDER BY last_fetched_at ASC
             """)
             
             result = self.session.execute(query)
@@ -78,14 +78,14 @@ class RSSProcessor:
             for row in result:
                 feeds.append({
                     "id": row.id,
-                    "name": row.name,
-                    "url": row.url,
+                    "name": row.feed_name,
+                    "url": row.feed_url,
                     "category": row.category,
                     "language": row.language,
                     "max_articles": row.max_articles or 50,
-                    "update_frequency": row.update_frequency or 30,
-                    "last_checked": row.last_checked,
-                    "status": row.status
+                    "update_frequency": row.fetch_interval_seconds or 30,
+                    "last_checked": row.last_fetched_at,
+                    "status": "active" if row.is_active else "inactive"
                 })
             
             return feeds
@@ -111,9 +111,9 @@ class RSSProcessor:
                     "content": entry.get('description', ''),
                     "url": entry.get('link', ''),
                     "published_at": self._parse_date(entry.get('published', '')),
-                    "source": feed['name'],
+                    "source_domain": feed['name'],
                     "category": feed['category'],
-                    "language": feed['language'],
+                    "language_code": feed['language'],
                     "feed_id": feed['id'],
                     "processing_status": "raw"
                 }
@@ -138,11 +138,11 @@ class RSSProcessor:
             for article in articles:
                 query = text("""
                     INSERT INTO articles (
-                        title, content, url, published_at, source, category, 
-                        language, feed_id, processing_status, created_at
+                        title, content, url, published_at, source_domain, category, 
+                        language_code, feed_id, processing_status, created_at
                     ) VALUES (
-                        :title, :content, :url, :published_at, :source, :category,
-                        :language, :feed_id, :processing_status, NOW()
+                        :title, :content, :url, :published_at, :source_domain, :category,
+                        :language_code, :feed_id, :processing_status, NOW()
                     )
                     ON CONFLICT (url) DO NOTHING
                 """)
@@ -162,7 +162,7 @@ class RSSProcessor:
         try:
             query = text("""
                 UPDATE rss_feeds 
-                SET last_checked = NOW(), status = 'active'
+                SET last_fetched_at = NOW(), is_active = true
                 WHERE id = :feed_id
             """)
             
@@ -178,11 +178,12 @@ class RSSProcessor:
         try:
             query = text("""
                 UPDATE rss_feeds 
-                SET status = :status, last_checked = NOW()
+                SET is_active = :is_active, last_fetched_at = NOW()
                 WHERE id = :feed_id
             """)
             
-            self.session.execute(query, {"feed_id": feed_id, "status": status})
+            is_active = status == 'active'
+            self.session.execute(query, {"feed_id": feed_id, "is_active": is_active})
             self.session.commit()
             
         except Exception as e:

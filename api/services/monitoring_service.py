@@ -410,7 +410,7 @@ class MonitoringService:
                             f.id, f.name, f.success_rate, f.avg_response_time,
                             COUNT(a.id) as article_count
                         FROM rss_feeds f
-                        LEFT JOIN articles a ON f.name = a.source
+                        LEFT JOIN articles a ON f.feed_name = a.source_domain
                         WHERE f.is_active = true
                         GROUP BY f.id, f.name, f.success_rate, f.avg_response_time
                         ORDER BY f.success_rate DESC

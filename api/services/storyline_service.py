@@ -264,7 +264,7 @@ class StorylineService:
                 
                 # Get articles in storyline
                 articles_query = text("""
-                    SELECT a.id, a.title, a.content, a.url, a.published_at, a.source, 
+                    SELECT a.id, a.title, a.content, a.url, a.published_at, a.source_domain, 
                            a.summary, a.sentiment_score, a.entities, a.tags,
                            sa.relevance_score, sa.importance_score, sa.added_at
                     FROM storyline_articles sa

@@ -18,7 +18,7 @@ import Logger from '../utils/logger';
 //   APIError
 // } from '../types';
 
-const API_BASE_URL = process.env['REACT_APP_API_URL'] || 'http://localhost:8000';
+const API_BASE_URL = process.env['REACT_APP_API_URL'] || 'http://localhost:8001';
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -162,9 +162,72 @@ export const apiService = {
   },
 
   // RSS Feeds endpoints
+
+  // Topics endpoints
+  getTopics: async(params = {}) => {
+    try {
+      const response = await api.get('/api/topics/', { params });
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch topics:', error);
+      throw error;
+    }
+  },
+
+  getTopicArticles: async(topicName, params = {}) => {
+    try {
+      const response = await api.get(`/api/topics/${encodeURIComponent(topicName)}/articles`, { params });
+      return response.data;
+    } catch (error) {
+      console.error(`Failed to fetch articles for topic ${topicName}:`, error);
+      throw error;
+    }
+  },
+
+  getTopicSummary: async(topicName) => {
+    try {
+      const response = await api.get(`/api/topics/${encodeURIComponent(topicName)}/summary`);
+      return response.data;
+    } catch (error) {
+      console.error(`Failed to fetch summary for topic ${topicName}:`, error);
+      throw error;
+    }
+  },
+
+  clusterArticles: async(params = {}) => {
+    try {
+      const response = await api.post('/api/topics/cluster', params);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to cluster articles:', error);
+      throw error;
+    }
+  },
+
+  convertTopicToStoryline: async(topicName, storylineTitle = null) => {
+    try {
+      const response = await api.post(`/api/topics/${encodeURIComponent(topicName)}/convert-to-storyline`, {
+        storyline_title: storylineTitle,
+      });
+      return response.data;
+    } catch (error) {
+      console.error(`Failed to convert topic ${topicName} to storyline:`, error);
+      throw error;
+    }
+  },
+
+  getCategoryStats: async() => {
+    try {
+      const response = await api.get('/api/topics/categories/stats');
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch category stats:', error);
+      throw error;
+    }
+  },
   getRSSFeeds: async(params = {}) => {
     try {
-      const response = await api.get('/api/rss/feeds/', { params });
+      const response = await api.get('/api/rss-feeds/', { params });
       return response.data;
     } catch (error) {
       console.error('Failed to fetch RSS feeds:', error);
@@ -183,7 +246,7 @@ export const apiService = {
 
   getRSSStats: async() => {
     try {
-      const response = await api.get('/api/rss/feeds/stats/overview');
+      const response = await api.get('/api/rss-feeds/stats/overview');
       return response.data;
     } catch (error) {
       console.error('Failed to fetch RSS stats:', error);
@@ -320,11 +383,11 @@ export const apiService = {
   updateRSSFeeds: async() => {
     try {
       // Get all feeds and refresh them individually
-      const feedsResponse = await api.get('/api/rss/feeds/');
+      const feedsResponse = await api.get('/api/rss-feeds/');
       const feeds = feedsResponse.data.data.feeds || [];
 
       const refreshPromises = feeds.map((feed: any) =>
-        api.post(`/api/rss/feeds/${feed.id}/refresh`).catch(err => {
+        api.post(`/api/rss-feeds/${feed.id}/refresh`).catch(err => {
           console.warn(`Failed to refresh feed ${feed.id}:`, err);
           return { success: false, feed_id: feed.id };
         }),

@@ -335,7 +335,7 @@ class EnhancedRSSService:
                             COUNT(CASE WHEN a.created_at >= CURRENT_DATE - INTERVAL '7 days' THEN a.id END) as articles_this_week,
                             MAX(a.created_at) as last_article_date
                         FROM rss_feeds f
-                        LEFT JOIN articles a ON f.name = a.source
+                        LEFT JOIN articles a ON f.feed_name = a.source_domain
                         WHERE f.id = :feed_id
                         GROUP BY f.id, f.name, f.tier, f.category, f.status, f.success_rate, f.avg_response_time, f.reliability_score
                     """), {"feed_id": feed_id}).fetchone()
