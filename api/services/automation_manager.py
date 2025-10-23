@@ -105,6 +105,17 @@ class AutomationManager:
                 'estimated_duration': 240  # 4 minutes
             },
             
+            # PHASE 5: Topic Clustering (Starts 10 minutes after RSS)
+            'topic_clustering': {
+                'interval': 600,  # 10 minutes - Same cycle as RSS
+                'last_run': None,
+                'enabled': True,
+                'priority': TaskPriority.NORMAL,
+                'phase': 5,
+                'depends_on': ['ml_processing'],
+                'estimated_duration': 120  # 2 minutes
+            },
+            
             # PHASE 4: Parallel ML & Entity Processing (Starts 6 minutes after RSS)
             'entity_extraction': {
                 'interval': 600,  # 10 minutes - Same cycle as RSS
@@ -676,6 +687,8 @@ class AutomationManager:
                 await self._execute_quality_scoring(task)
             elif task.name == 'timeline_generation':
                 await self._execute_timeline_generation(task)
+            elif task.name == 'topic_clustering':
+                await self._execute_topic_clustering(task)
             else:
                 raise ValueError(f"Unknown task type: {task.name}")
             
@@ -1139,6 +1152,25 @@ class AutomationManager:
             
         except Exception as e:
             logger.error(f"Error during cache cleanup: {e}")
+    
+    async def _execute_topic_clustering(self, task: Task):
+        """Execute topic clustering task"""
+        try:
+            logger.info("Starting topic clustering task")
+            
+            # Import the topic clustering service
+            from domains.content_analysis.services.advanced_topic_extractor import AdvancedTopicExtractor
+            
+            # Initialize the topic extractor
+            topic_extractor = AdvancedTopicExtractor()
+            
+            # Process articles for topic clustering
+            result = await topic_extractor.process_article_clustering()
+            
+            logger.info(f"Topic clustering completed: {result.get('clusters_created', 0)} clusters created")
+            
+        except Exception as e:
+            logger.error(f"Error during topic clustering: {e}")
         
     async def _get_db_connection(self):
         """Get database connection"""

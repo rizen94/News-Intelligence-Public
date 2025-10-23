@@ -840,7 +840,7 @@ Do you want to proceed with running AI sentiment analysis?`,
                 <Grid item xs={12} md={3}>
                   <Box textAlign="center">
                     <Typography variant="h4" color="primary">
-                      {systemStatus?.health?.data?.services?.database === 'healthy' ? '✓' : '✗'}
+                      {systemStatus?.monitoringData?.data?.database?.status === 'healthy' ? '✓' : '✗'}
                     </Typography>
                     <Typography variant="body2" color="text.secondary">
                       Database
@@ -850,7 +850,7 @@ Do you want to proceed with running AI sentiment analysis?`,
                 <Grid item xs={12} md={3}>
                   <Box textAlign="center">
                     <Typography variant="h4" color="primary">
-                      {systemStatus?.health?.data?.services?.redis === 'healthy' ? '✓' : '✗'}
+                      {systemStatus?.monitoringData?.data?.redis?.status === 'healthy' ? '✓' : '✗'}
                     </Typography>
                     <Typography variant="body2" color="text.secondary">
                       Redis Cache

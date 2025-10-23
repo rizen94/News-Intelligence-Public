@@ -112,7 +112,7 @@ export const apiService = {
   // Articles endpoints
   getArticles: async(params = {}) => {
     try {
-      const response = await api.get('/api/articles/', { params });
+      const response = await api.get('/api/v4/content-analysis/articles', { params });
       return response.data;
     } catch (error) {
       console.error('Failed to fetch articles:', error);
@@ -132,7 +132,7 @@ export const apiService = {
 
   getArticle: async(id: string | number) => {
     try {
-      const response = await api.get(`/api/articles/${id}`);
+      const response = await api.get(`/api/v4/content-analysis/articles/${id}`);
       return response.data;
     } catch (error) {
       console.error('Failed to fetch article:', error);
@@ -142,7 +142,7 @@ export const apiService = {
 
   getArticleStats: async() => {
     try {
-      const response = await api.get('/api/articles/stats/overview');
+      const response = await api.get('/api/v4/content-analysis/articles/stats');
       return response.data;
     } catch (error) {
       console.error('Failed to fetch article stats:', error);
@@ -267,7 +267,7 @@ export const apiService = {
   // Storylines endpoints
   getStorylines: async(params = {}) => {
     try {
-      const response = await api.get('/api/storylines/', { params });
+      const response = await api.get('/api/v4/storyline-management/storylines', { params });
       return response.data;
     } catch (error) {
       console.error('Failed to fetch storylines:', error);
@@ -286,11 +286,95 @@ export const apiService = {
 
   getStoryline: async(id: string | number) => {
     try {
-      const response = await api.get(`/api/storylines/${id}/report`);
+      const response = await api.get(`/api/v4/storyline-management/storylines/${id}`);
       return response.data;
     } catch (error) {
       console.error('Failed to fetch storyline:', error);
       throw error;
+    }
+  },
+
+  getStorylineTimeline: async(id: string | number) => {
+    try {
+      const response = await api.get(`/api/v4/storyline-management/storylines/${id}/timeline`);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch storyline timeline:', error);
+      throw error;
+    }
+  },
+
+  createStoryline: async(storylineData) => {
+    try {
+      const response = await api.post('/api/v4/storyline-management/storylines', storylineData);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to create storyline:', error);
+      throw error;
+    }
+  },
+
+  updateStoryline: async(id, storylineData) => {
+    try {
+      const response = await api.put(`/api/v4/storyline-management/storylines/${id}`, storylineData);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to update storyline:', error);
+      throw error;
+    }
+  },
+
+  deleteStoryline: async(id) => {
+    try {
+      const response = await api.delete(`/api/v4/storyline-management/storylines/${id}`);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to delete storyline:', error);
+      throw error;
+    }
+  },
+
+  addArticleToStoryline: async(storylineId, articleId, relevanceScore = 0.5) => {
+    try {
+      const response = await api.post(`/api/v4/storyline-management/storylines/${storylineId}/articles/${articleId}`, {
+        relevance_score: relevanceScore,
+      });
+      return response.data;
+    } catch (error) {
+      console.error('Failed to add article to storyline:', error);
+      throw error;
+    }
+  },
+
+  removeArticleFromStoryline: async(storylineId, articleId) => {
+    try {
+      const response = await api.delete(`/api/v4/storyline-management/storylines/${storylineId}/articles/${articleId}`);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to remove article from storyline:', error);
+      throw error;
+    }
+  },
+
+  getAvailableArticlesForStoryline: async(storylineId, limit = 50) => {
+    try {
+      const response = await api.get(`/api/v4/storyline-management/storylines/${storylineId}/available-articles`, {
+        params: { limit },
+      });
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch available articles:', error);
+      throw error;
+    }
+  },
+
+  getPipelineStatus: async() => {
+    try {
+      const response = await api.get('/api/v4/system-monitoring/pipeline-status');
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch pipeline status:', error);
+      return null;
     }
   },
 
@@ -316,20 +400,6 @@ export const apiService = {
   },
 
   // Pipeline Monitoring endpoints
-  getPipelineStatus: async() => {
-    try {
-      const response = await api.get('/api/pipeline-monitoring/live-status');
-      return response.data;
-    } catch (error) {
-      console.error('Failed to fetch pipeline status:', error);
-      return {
-        active_traces_count: 0,
-        active_traces: [],
-        system_status: 'error',
-        timestamp: new Date().toISOString(),
-      };
-    }
-  },
 
   getPipelineTraces: async(params = {}) => {
     try {
@@ -382,25 +452,13 @@ export const apiService = {
 
   updateRSSFeeds: async() => {
     try {
-      // Get all feeds and refresh them individually
-      const feedsResponse = await api.get('/api/rss-feeds/');
-      const feeds = feedsResponse.data.data.feeds || [];
-
-      const refreshPromises = feeds.map((feed: any) =>
-        api.post(`/api/rss-feeds/${feed.id}/refresh`).catch(err => {
-          console.warn(`Failed to refresh feed ${feed.id}:`, err);
-          return { success: false, feed_id: feed.id };
-        }),
-      );
-
-      const results = await Promise.allSettled(refreshPromises);
-      const successful = results.filter(r => r.status === 'fulfilled' && r.value.data?.success !== false).length;
-
+      // Use the v4 API endpoint to fetch articles from all RSS feeds
+      const response = await api.post('/api/v4/news-aggregation/fetch-articles');
       return {
-        success: true,
-        message: `Refreshed ${successful} out of ${feeds.length} RSS feeds`,
-        refreshed_count: successful,
-        total_feeds: feeds.length,
+        success: response.data.success,
+        message: response.data.message || 'RSS feeds updated successfully',
+        feeds_count: response.data.feeds_count || 0,
+        timestamp: response.data.timestamp,
       };
     } catch (error) {
       console.error('Failed to update RSS feeds:', error);
@@ -502,7 +560,7 @@ export const apiService = {
   // Sources and Categories endpoints
   getSources: async() => {
     try {
-      const response = await api.get('/api/articles/sources');
+      const response = await api.get('/api/v4/content-analysis/articles/sources');
       return response.data;
     } catch (error) {
       console.error('Failed to fetch sources:', error);
@@ -516,7 +574,7 @@ export const apiService = {
 
   getCategories: async() => {
     try {
-      const response = await api.get('/api/articles/categories');
+      const response = await api.get('/api/v4/content-analysis/articles/categories');
       return response.data;
     } catch (error) {
       console.error('Failed to fetch categories:', error);
@@ -540,7 +598,7 @@ export const apiService = {
 
   getMonitoringDashboard: async() => {
     try {
-      const response = await api.get('/api/monitoring/dashboard');
+      const response = await api.get('/api/v4/system-monitoring/status');
       return response.data;
     } catch (error) {
       console.error('Failed to fetch monitoring dashboard:', error);
@@ -584,7 +642,7 @@ export const apiService = {
           },
         },
         monitoringData,
-        overall: health.data?.status === 'healthy' ? 'healthy' : 'degraded',
+        overall: health.status === 'healthy' ? 'healthy' : 'degraded',
       };
     } catch (error) {
       console.error('Failed to get system status:', error);
@@ -601,3 +659,4 @@ export const apiService = {
 };
 
 export default apiService;
+

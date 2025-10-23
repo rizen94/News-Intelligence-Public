@@ -309,8 +309,134 @@ async def get_aggregation_statistics():
 async def process_rss_feeds(feeds: List[tuple]):
     """Background task to process RSS feeds"""
     logger.info(f"Processing {len(feeds)} RSS feeds")
-    # Implementation would go here - RSS parsing, article extraction, etc.
-    pass
+    
+    try:
+        import feedparser
+        import requests
+        from urllib.parse import urlparse
+        
+        processed_count = 0
+        error_count = 0
+        
+        for feed_data in feeds:
+            feed_id, feed_name, feed_url, fetch_interval, last_fetched = feed_data
+            
+            # Get a fresh database connection for each feed
+            conn = get_db_connection()
+            if not conn:
+                logger.error(f"Database connection failed for feed: {feed_name}")
+                error_count += 1
+                continue
+                
+            try:
+                logger.info(f"Processing feed: {feed_name} ({feed_url})")
+                
+                # Fetch RSS feed with better error handling
+                try:
+                    response = requests.get(feed_url, timeout=30, headers={
+                        'User-Agent': 'Mozilla/5.0 (compatible; News Intelligence Bot/1.0)'
+                    })
+                    response.raise_for_status()
+                except Exception as e:
+                    logger.error(f"Error fetching feed {feed_name}: {e}")
+                    error_count += 1
+                    continue
+                
+                # Parse RSS feed
+                feed = feedparser.parse(response.content)
+                
+                if not feed.entries:
+                    logger.warning(f"No entries found in feed: {feed_name}")
+                    continue
+                
+                # Process each entry
+                for entry in feed.entries[:10]:  # Limit to 10 most recent articles
+                    try:
+                        # Extract article data
+                        title = entry.get('title', 'No Title')
+                        link = entry.get('link', '')
+                        description = entry.get('description', '')
+                        published = entry.get('published_parsed')
+                        
+                        # Convert published date
+                        published_at = None
+                        if published:
+                            from datetime import datetime
+                            published_at = datetime(*published[:6])
+                        
+                        # Extract domain from URL
+                        domain = urlparse(link).netloc if link else 'unknown'
+                        
+                        # Check if article already exists and insert new article
+                        with conn.cursor() as cur:
+                            # Check for duplicates
+                            cur.execute("""
+                                SELECT id FROM articles 
+                                WHERE url = %s OR (title = %s AND source_domain = %s)
+                            """, (link, title, domain))
+                            
+                            if cur.fetchone():
+                                continue  # Skip duplicate
+                            
+                            # Insert new article with proper error handling
+                            try:
+                                cur.execute("""
+                                    INSERT INTO articles (
+                                        title, url, content, summary, source_domain,
+                                        published_at, word_count, processing_status,
+                                        created_at, updated_at
+                                    ) VALUES (
+                                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                                    )
+                                """, (
+                                    title,
+                                    link,
+                                    description,
+                                    description[:500] + "..." if len(description) > 500 else description,
+                                    domain,
+                                    published_at,
+                                    len(description.split()) if description else 0,
+                                    'pending',
+                                    datetime.now(),
+                                    datetime.now()
+                                ))
+                                
+                                processed_count += 1
+                                logger.info(f"Added article: {title[:50]}...")
+                                
+                            except Exception as db_error:
+                                logger.error(f"Database error inserting article '{title[:30]}...': {db_error}")
+                                conn.rollback()  # Rollback the transaction
+                                error_count += 1
+                                continue
+                    
+                    except Exception as e:
+                        logger.error(f"Error processing article from {feed_name}: {e}")
+                        error_count += 1
+                
+                # Update feed timestamp
+                try:
+                    with conn.cursor() as cur:
+                        cur.execute("""
+                            UPDATE rss_feeds 
+                            SET last_fetched_at = %s 
+                            WHERE id = %s
+                        """, (datetime.now(), feed_id))
+                    conn.commit()
+                except Exception as e:
+                    logger.error(f"Error updating feed timestamp for {feed_name}: {e}")
+                    conn.rollback()
+                
+            except Exception as e:
+                logger.error(f"Error processing feed {feed_name}: {e}")
+                error_count += 1
+            finally:
+                conn.close()
+        
+        logger.info(f"RSS processing completed: {processed_count} articles processed, {error_count} errors")
+        
+    except Exception as e:
+        logger.error(f"RSS processing failed: {e}")
 
 async def process_article_quality(article: tuple):
     """Background task to analyze article quality using LLM"""

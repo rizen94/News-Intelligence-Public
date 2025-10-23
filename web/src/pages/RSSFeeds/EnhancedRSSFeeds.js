@@ -145,8 +145,29 @@ const EnhancedRSSFeeds = () => {
     setPage(1);
   };
 
-  const handleRefresh = () => {
-    loadFeeds();
+  const handleRefresh = async() => {
+    try {
+      setLoading(true);
+      setError(null);
+
+      // Call the RSS update API
+      const result = await apiService.updateRSSFeeds();
+
+      if (result.success) {
+        // Show success message
+        console.log('RSS feeds updated:', result.message);
+
+        // Reload the feeds list to show updated data
+        await loadFeeds();
+      } else {
+        setError('Failed to update RSS feeds');
+      }
+    } catch (err) {
+      console.error('Error updating RSS feeds:', err);
+      setError('Failed to update RSS feeds: ' + err.message);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleAddFeed = () => {

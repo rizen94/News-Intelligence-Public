@@ -16,7 +16,7 @@ const TopicsEnhanced = () => {
   const [timePeriod, setTimePeriod] = useState(24);
   const [refreshing, setRefreshing] = useState(false);
 
-  const fetchData = async () => {
+  const fetchData = async() => {
     try {
       setLoading(true);
       setError(null);
@@ -50,7 +50,7 @@ const TopicsEnhanced = () => {
     }
   };
 
-  const triggerClustering = async () => {
+  const triggerClustering = async() => {
     try {
       setRefreshing(true);
       const response = await fetch('http://localhost:8001/api/v4/content-analysis/topics/cluster', {
@@ -89,19 +89,19 @@ const TopicsEnhanced = () => {
       'social': 'bg-yellow-100 text-yellow-800',
       'business': 'bg-indigo-100 text-indigo-800',
       'general': 'bg-gray-100 text-gray-800',
-      'semantic': 'bg-gray-100 text-gray-800'
+      'semantic': 'bg-gray-100 text-gray-800',
     };
     return colors[category] || colors['general'];
   };
 
   const getTrendIcon = (direction) => {
     switch (direction) {
-      case 'rising':
-        return <TrendingUp className="h-4 w-4 text-green-500" />;
-      case 'falling':
-        return <TrendingUp className="h-4 w-4 text-red-500 rotate-180" />;
-      default:
-        return <BarChart3 className="h-4 w-4 text-gray-500" />;
+    case 'rising':
+      return <TrendingUp className="h-4 w-4 text-green-500" />;
+    case 'falling':
+      return <TrendingUp className="h-4 w-4 text-red-500 rotate-180" />;
+    default:
+      return <BarChart3 className="h-4 w-4 text-gray-500" />;
     }
   };
 
@@ -121,7 +121,7 @@ const TopicsEnhanced = () => {
         {words.map((word, index) => {
           const size = Math.max(12, Math.min(32, word.size / 2));
           const opacity = Math.max(0.6, word.relevance);
-          
+
           return (
             <div
               key={index}
@@ -129,12 +129,12 @@ const TopicsEnhanced = () => {
               style={{
                 fontSize: `${size}px`,
                 opacity: opacity,
-                fontWeight: word.frequency > 5 ? 'bold' : 'normal'
+                fontWeight: word.frequency > 5 ? 'bold' : 'normal',
               }}
               title={`${word.text}: ${word.frequency} articles, ${(word.relevance * 100).toFixed(1)}% relevance`}
             >
-              <Badge 
-                variant="outline" 
+              <Badge
+                variant="outline"
                 className={`px-3 py-1 text-sm hover:bg-opacity-80 ${getCategoryColor(word.category || 'general')}`}
               >
                 {word.text}
@@ -225,8 +225,8 @@ const TopicsEnhanced = () => {
                     </div>
                     <div className="flex items-center space-x-2">
                       <div className="w-24 bg-gray-200 rounded-full h-2">
-                        <div 
-                          className="bg-blue-500 h-2 rounded-full" 
+                        <div
+                          className="bg-blue-500 h-2 rounded-full"
                           style={{ width: `${topic.percentage}%` }}
                         ></div>
                       </div>
@@ -292,11 +292,11 @@ const TopicsEnhanced = () => {
                     </Badge>
                     {getTrendIcon(topic.trend_direction)}
                   </div>
-                  
+
                   {topic.description && (
                     <p className="text-sm text-gray-600 mb-3">{topic.description}</p>
                   )}
-                  
+
                   <div className="flex items-center space-x-4 text-sm text-gray-500">
                     <span>{topic.recent_articles} articles</span>
                     <span>{(topic.avg_relevance * 100).toFixed(1)}% relevance</span>
@@ -304,7 +304,7 @@ const TopicsEnhanced = () => {
                     <span className="font-medium text-blue-600">Score: {topic.trend_score}</span>
                   </div>
                 </div>
-                
+
                 <div className="text-right">
                   <div className="text-sm text-gray-500">
                     {topic.latest_article_date && new Date(topic.latest_article_date).toLocaleDateString()}
@@ -337,7 +337,7 @@ const TopicsEnhanced = () => {
             <h1 className="text-3xl font-bold text-gray-900">Topic Analysis & Word Cloud</h1>
             <p className="text-gray-600 mt-2">Discover trending topics and see the big picture of current news</p>
           </div>
-          
+
           <div className="flex items-center space-x-4">
             <select
               value={timePeriod}
@@ -349,9 +349,9 @@ const TopicsEnhanced = () => {
               <option value={168}>Last 7 Days</option>
               <option value={720}>Last 30 Days</option>
             </select>
-            
-            <Button 
-              onClick={triggerClustering} 
+
+            <Button
+              onClick={triggerClustering}
               disabled={refreshing}
               className="flex items-center space-x-2"
             >

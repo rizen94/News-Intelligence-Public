@@ -11,6 +11,7 @@ import feedparser
 import requests
 from sqlalchemy import text
 from config.database import get_db
+from services.pipeline_logger import get_pipeline_logger
 
 logger = logging.getLogger(__name__)
 
@@ -19,18 +20,26 @@ class RSSProcessor:
     
     def __init__(self):
         self.session = None
+        self.pipeline_logger = get_pipeline_logger()
         
     async def process_all_feeds(self) -> Dict[str, Any]:
         """Process all active RSS feeds"""
+        
         try:
             logger.info("Starting RSS feed processing")
             self.session = next(get_db())
+            
+            # Start pipeline trace
+            trace_id = self.pipeline_logger.start_trace(
+                rss_feed_id="all_feeds"
+            )
             
             # Get all active feeds
             feeds = await self._get_active_feeds()
             
             if not feeds:
                 logger.info("No active feeds found")
+                self.pipeline_logger.end_trace(trace_id, success=True)
                 return {"success": True, "processed": 0, "errors": 0}
             
             processed_count = 0
@@ -44,13 +53,28 @@ class RSSProcessor:
                 except Exception as e:
                     error_count += 1
                     logger.error(f"Error processing feed {feed['name']}: {e}")
+                    self.pipeline_logger.log_checkpoint(
+                        trace_id=trace_id,
+                        stage="feed_processing",
+                        status="error",
+                        error_message=str(e),
+                        metadata={"feed_name": feed['name']}
+                    )
             
             logger.info(f"RSS processing completed: {processed_count} feeds processed, {error_count} errors")
+            
+            # End pipeline trace
+            self.pipeline_logger.end_trace(
+                trace_id=trace_id, 
+                success=error_count == 0
+            )
+            
             return {
                 "success": True,
                 "processed": processed_count,
                 "errors": error_count,
-                "total_feeds": len(feeds)
+                "total_feeds": len(feeds),
+                "trace_id": trace_id
             }
             
         except Exception as e:

@@ -28,6 +28,21 @@ async def health_check():
         cpu_percent = psutil.cpu_percent(interval=1)
         memory = psutil.virtual_memory()
         disk = psutil.disk_usage('/')
+
+                # Get GPU info if available
+                gpu_vram_percent = None
+                gpu_utilization_percent = None
+                try:
+                    import GPUtil
+                    gpus = GPUtil.getGPUs()
+                    if gpus:
+                        gpu = gpus[0]
+                        gpu_vram_percent = gpu.memoryUtil * 100
+                        gpu_utilization_percent = gpu.load * 100
+                except ImportError:
+                    pass
+                except Exception:
+                    pass
         
         return {
             "success": True,
@@ -37,6 +52,8 @@ async def health_check():
                 "cpu_percent": cpu_percent,
                 "memory_percent": memory.percent,
                 "disk_percent": disk.percent,
+                "gpu_vram_percent": gpu_vram_percent,
+                "gpu_utilization_percent": gpu_utilization_percent,
                 "timestamp": datetime.now().isoformat()
             },
             "timestamp": datetime.now().isoformat()
@@ -296,6 +313,21 @@ async def get_system_status():
                 cpu_percent = psutil.cpu_percent(interval=1)
                 memory = psutil.virtual_memory()
                 disk = psutil.disk_usage('/')
+
+                # Get GPU info if available
+                gpu_vram_percent = None
+                gpu_utilization_percent = None
+                try:
+                    import GPUtil
+                    gpus = GPUtil.getGPUs()
+                    if gpus:
+                        gpu = gpus[0]
+                        gpu_vram_percent = gpu.memoryUtil * 100
+                        gpu_utilization_percent = gpu.load * 100
+                except ImportError:
+                    pass
+                except Exception:
+                    pass
                 
                 # Get database metrics
                 cur.execute("SELECT COUNT(*) FROM articles")
@@ -306,6 +338,20 @@ async def get_system_status():
                 
                 cur.execute("SELECT COUNT(*) FROM rss_feeds WHERE is_active = true")
                 active_feeds = cur.fetchone()[0]
+                
+                # Get articles per week
+                cur.execute("""
+                    SELECT COUNT(*) FROM articles 
+                    WHERE created_at >= %s
+                """, (datetime.now() - timedelta(days=7),))
+                articles_this_week = cur.fetchone()[0]
+                
+                # Get articles today
+                cur.execute("""
+                    SELECT COUNT(*) FROM articles 
+                    WHERE DATE(created_at) = CURRENT_DATE
+                """)
+                articles_today = cur.fetchone()[0]
                 
                 # Get active alerts
                 cur.execute("SELECT COUNT(*) FROM system_alerts WHERE is_active = true")
@@ -318,6 +364,16 @@ async def get_system_status():
                 """, (datetime.now() - timedelta(hours=24),))
                 recent_errors = cur.fetchone()[0]
                 
+                # Check Redis status
+                redis_status = "healthy"
+                try:
+                    import redis
+                    r = redis.Redis(host='localhost', port=6379, decode_responses=True)
+                    r.ping()
+                except Exception as e:
+                    redis_status = "unhealthy"
+                    logger.warning(f"Redis connection failed: {e}")
+                
                 return {
                     "success": True,
                     "data": {
@@ -325,13 +381,22 @@ async def get_system_status():
                             "cpu_percent": cpu_percent,
                             "memory_percent": memory.percent,
                             "disk_percent": disk.percent,
+                "gpu_vram_percent": gpu_vram_percent,
+                "gpu_utilization_percent": gpu_utilization_percent,
                             "status": "healthy" if cpu_percent < 80 and memory.percent < 80 and disk.percent < 90 else "warning"
                         },
                         "database": {
                             "total_articles": total_articles,
                             "total_storylines": total_storylines,
                             "active_feeds": active_feeds,
+                            "articles_this_week": articles_this_week,
+                            "articles_today": articles_today,
                             "status": "healthy"
+                        },
+                        "redis": {
+                            "status": redis_status,
+                            "host": "localhost",
+                            "port": 6379
                         },
                         "alerts": {
                             "active_alerts": active_alerts,
@@ -406,6 +471,21 @@ async def process_metric_collection():
                 cpu_percent = psutil.cpu_percent(interval=1)
                 memory = psutil.virtual_memory()
                 disk = psutil.disk_usage('/')
+
+                # Get GPU info if available
+                gpu_vram_percent = None
+                gpu_utilization_percent = None
+                try:
+                    import GPUtil
+                    gpus = GPUtil.getGPUs()
+                    if gpus:
+                        gpu = gpus[0]
+                        gpu_vram_percent = gpu.memoryUtil * 100
+                        gpu_utilization_percent = gpu.load * 100
+                except ImportError:
+                    pass
+                except Exception:
+                    pass
                 
                 # Store metrics in database
                 metrics = [
@@ -434,3 +514,85 @@ async def process_metric_collection():
             
     except Exception as e:
         logger.error(f"Error in metric collection: {e}")
+
+@router.get("/pipeline-status")
+async def get_pipeline_status():
+    """Get pipeline monitoring status and traces"""
+    try:
+        conn = get_db_connection()
+        if not conn:
+            raise HTTPException(status_code=500, detail="Database connection failed")
+        
+        try:
+            with conn.cursor() as cur:
+                # Get pipeline trace statistics
+                cur.execute("""
+                    SELECT 
+                        COUNT(*) as total_traces,
+                        COUNT(CASE WHEN success = true THEN 1 END) as successful_traces,
+                        COUNT(CASE WHEN success = false THEN 1 END) as error_traces,
+                        COUNT(CASE WHEN created_at >= NOW() - INTERVAL '1 hour' THEN 1 END) as recent_traces
+                    FROM pipeline_traces
+                """)
+                
+                trace_stats = cur.fetchone()
+                total_traces = trace_stats[0] if trace_stats[0] else 0
+                successful_traces = trace_stats[1] if trace_stats[1] else 0
+                error_traces = trace_stats[2] if trace_stats[2] else 0
+                recent_traces = trace_stats[3] if trace_stats[3] else 0
+                
+                # Calculate success rate
+                success_rate = (successful_traces / total_traces * 100) if total_traces > 0 else 0
+                
+                # Get recent pipeline traces
+                cur.execute("""
+                    SELECT id, trace_id, stage, status, created_at, error_message
+                    FROM pipeline_traces
+                    ORDER BY created_at DESC
+                    LIMIT 10
+                """)
+                
+                recent_traces_data = []
+                for row in cur.fetchall():
+                    recent_traces_data.append({
+                        "id": row[0],
+                        "trace_id": row[1],
+                        "stage": row[2],
+                        "status": row[3],
+                        "created_at": row[4].isoformat() if row[4] else None,
+                        "error_message": row[5]
+                    })
+                
+                # Get processing statistics
+                cur.execute("""
+                    SELECT 
+                        COUNT(CASE WHEN processing_status = 'completed' THEN 1 END) as articles_processed,
+                        COUNT(CASE WHEN created_at >= NOW() - INTERVAL '1 hour' THEN 1 END) as feeds_processed
+                    FROM articles
+                """)
+                
+                processing_stats = cur.fetchone()
+                articles_processed = processing_stats[0] if processing_stats[0] else 0
+                feeds_processed = processing_stats[1] if processing_stats[1] else 0
+                
+                return {
+                    "success": True,
+                    "data": {
+                        "pipeline_status": "healthy" if error_traces == 0 else "error",
+                        "active_traces": recent_traces,
+                        "total_traces": total_traces,
+                        "success_rate": round(success_rate, 1),
+                        "articles_processed": articles_processed,
+                        "feeds_processed": feeds_processed,
+                        "errors": error_traces,
+                        "recent_traces": recent_traces_data
+                    },
+                    "timestamp": datetime.now().isoformat()
+                }
+                
+        finally:
+            conn.close()
+            
+    except Exception as e:
+        logger.error(f"Error fetching pipeline status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

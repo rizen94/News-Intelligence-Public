@@ -53,6 +53,7 @@ const EnhancedDashboard = () => {
   const [clustering, setClustering] = useState(false);
   const [loading, setLoading] = useState(true);
   const [systemStatus, setSystemStatus] = useState(null);
+  const [monitoringData, setMonitoringData] = useState(null);
   const [error, setError] = useState(null);
   const [lastUpdate, setLastUpdate] = useState(null);
 
@@ -86,27 +87,27 @@ const EnhancedDashboard = () => {
 
       // Combine the data into system status
       const status = {
-        overall: healthData.data?.status || 'unknown',
+        overall: monitoringData?.data?.overall_status || healthData.data?.status || 'unknown',
         health: healthData,
         articleStats: {
           data: {
-            total_articles: monitoringData?.data?.database_metrics?.total_articles || 0,
-            articles_today: monitoringData?.data?.database_metrics?.recent_articles || 0,
-            articles_this_week: systemStatus?.articleStats?.data?.articles_this_week || 0,
+            total_articles: monitoringData?.data?.database?.total_articles || 0,
+            articles_today: monitoringData?.data?.database?.articles_today || 0,
+            articles_this_week: monitoringData?.data?.database?.articles_this_week || 0,
             top_sources: [],
           },
         },
         rssStats: {
           data: {
-            total_feeds: systemStatus?.rssStats?.data?.total_feeds || 0,
-            active_feeds: 0,
+            total_feeds: monitoringData?.data?.database?.active_feeds || 0,
+            active_feeds: monitoringData?.data?.database?.active_feeds || 0,
             feeds_with_errors: 0,
           },
         },
         storylineStats: {
           data: {
-            total_storylines: systemStatus?.storylineStats?.data?.total_storylines || 0,
-            active_storylines: 0,
+            total_storylines: monitoringData?.data?.database?.total_storylines || 0,
+            active_storylines: monitoringData?.data?.database?.total_storylines || 0,
           },
         },
         pipelineStatus: {
@@ -119,10 +120,11 @@ const EnhancedDashboard = () => {
         },
         recentArticles: [],
         analytics: {},
-        systemMetrics: monitoringData?.data?.system_metrics || {},
+        systemMetrics: monitoringData?.data?.system || {},
       };
 
       setSystemStatus(status);
+      setMonitoringData(monitoringData);
       setLastUpdate(new Date());
     } catch (err) {
       console.error('Error loading system data:', err);
@@ -372,7 +374,7 @@ const EnhancedDashboard = () => {
                 <Grid item xs={12} md={3}>
                   <Box textAlign="center">
                     <Typography variant="h4" color="primary">
-                      {systemStatus?.health?.data?.services?.database === 'healthy' ? '✓' : '✗'}
+                      {monitoringData?.data?.database?.status === 'healthy' ? '✓' : '✗'}
                     </Typography>
                     <Typography variant="body2" color="text.secondary">
                       Database
@@ -382,7 +384,7 @@ const EnhancedDashboard = () => {
                 <Grid item xs={12} md={3}>
                   <Box textAlign="center">
                     <Typography variant="h4" color="primary">
-                      {systemStatus?.health?.data?.services?.redis === 'healthy' ? '✓' : '✗'}
+                      {monitoringData?.data?.redis?.status === 'healthy' ? '✓' : '✗'}
                     </Typography>
                     <Typography variant="body2" color="text.secondary">
                       Redis Cache
@@ -392,7 +394,7 @@ const EnhancedDashboard = () => {
                 <Grid item xs={12} md={3}>
                   <Box textAlign="center">
                     <Typography variant="h4" color="primary">
-                      {systemStatus?.health?.data?.services?.system === 'healthy' ? '✓' : '✗'}
+                      {monitoringData?.data?.system?.status === 'healthy' ? '✓' : '✗'}
                     </Typography>
                     <Typography variant="body2" color="text.secondary">
                       System

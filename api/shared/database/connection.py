@@ -16,8 +16,8 @@ def get_db_config() -> Dict[str, Any]:
         "host": os.getenv("DB_HOST", "localhost"),
         "port": os.getenv("DB_PORT", "5432"),
         "database": os.getenv("DB_NAME", "news_intelligence"),
-        "user": os.getenv("DB_USER", "postgres"),
-        "password": os.getenv("DB_PASSWORD", "password")
+        "user": os.getenv("DB_USER", "newsapp"),
+        "password": os.getenv("DB_PASSWORD", "newsapp_password")
     }
 
 def get_db_connection() -> Optional[psycopg2.extensions.connection]:

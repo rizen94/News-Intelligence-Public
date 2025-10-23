@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import './Storylines.css';
 
 interface Storyline {
@@ -10,6 +11,7 @@ interface Storyline {
 }
 
 const Storylines: React.FC = () => {
+  const navigate = useNavigate();
   const [storylines, setStorylines] = useState<Storyline[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -77,7 +79,7 @@ const Storylines: React.FC = () => {
               <p>{storyline.description}</p>
             </div>
             <div className="storyline-actions">
-              <button className="button">View Details</button>
+              <button className="button" onClick={() => navigate(`/storylines/${storyline.id}`)}>View Details</button>
             </div>
           </div>
         ))}

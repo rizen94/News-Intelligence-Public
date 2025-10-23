@@ -39,6 +39,9 @@ from domains.intelligence_hub.routes.intelligence_hub import router as intellige
 from domains.user_management.routes.user_management import router as user_management_router
 from domains.system_monitoring.routes.system_monitoring import router as system_monitoring_router
 
+# Import pipeline monitoring
+# from routes.pipeline_monitoring import router as pipeline_monitoring_router
+
 # Import compatibility layer
 from compatibility.v3_compatibility import compatibility_router
 
@@ -261,6 +264,7 @@ app.include_router(storyline_management_router)
 app.include_router(intelligence_hub_router)
 app.include_router(user_management_router)
 app.include_router(system_monitoring_router)
+# app.include_router(pipeline_monitoring_router)
 
 # Include v3.0 compatibility layer
 app.include_router(compatibility_router)

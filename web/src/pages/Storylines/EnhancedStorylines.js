@@ -27,6 +27,9 @@ import {
   Science as ScienceIcon,
   School as SchoolIcon,
   Work as WorkIcon,
+  Add as AddIcon,
+  Edit as EditIcon,
+  Delete as DeleteIcon,
 } from '@mui/icons-material';
 import {
   Box,
@@ -73,10 +76,13 @@ import {
   TimelineOppositeContent,
 } from '@mui/material';
 import React, { useState, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 
 import { apiService } from '../../services/apiService.ts';
+import StorylineManagementDialog from '../../components/StorylineManagementDialog';
 
 const EnhancedStorylines = () => {
+  const navigate = useNavigate();
   const [storylines, setStorylines] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -88,7 +94,10 @@ const EnhancedStorylines = () => {
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [bookmarkedStorylines, setBookmarkedStorylines] = useState(new Set());
-  const [expandedStoryline, setExpandedStoryline] = useState(null);
+
+  // Management dialog state
+  const [managementDialogOpen, setManagementDialogOpen] = useState(false);
+  const [selectedStoryline, setSelectedStoryline] = useState(null);
 
   const loadStorylines = useCallback(async() => {
     try {
@@ -150,6 +159,25 @@ const EnhancedStorylines = () => {
     loadStorylines();
   };
 
+  const handleCreateStoryline = () => {
+    setSelectedStoryline(null);
+    setManagementDialogOpen(true);
+  };
+
+  const handleEditStoryline = (storyline) => {
+    setSelectedStoryline(storyline);
+    setManagementDialogOpen(true);
+  };
+
+  const handleStorylineUpdated = () => {
+    loadStorylines();
+  };
+
+  const handleCloseManagementDialog = () => {
+    setManagementDialogOpen(false);
+    setSelectedStoryline(null);
+  };
+
   const toggleBookmark = (storylineId) => {
     const newBookmarked = new Set(bookmarkedStorylines);
     if (newBookmarked.has(storylineId)) {
@@ -161,7 +189,8 @@ const EnhancedStorylines = () => {
   };
 
   const toggleExpanded = (storylineId) => {
-    setExpandedStoryline(expandedStoryline === storylineId ? null : storylineId);
+    // Navigate to storyline detail page instead of just toggling state
+    navigate(`/storylines/${storylineId}`);
   };
 
   const getStatusColor = (status) => {
@@ -293,9 +322,9 @@ const EnhancedStorylines = () => {
         <Button
           size="small"
           startIcon={<Visibility />}
-          onClick={() => toggleExpanded(storyline.id)}
+          onClick={() => navigate(`/storylines/${storyline.id}`)}
         >
-          {expandedStoryline === storyline.id ? 'Hide Details' : 'View Details'}
+          View Details
         </Button>
         <Button size="small" startIcon={<TimelineIcon />}>
           Timeline
@@ -303,6 +332,16 @@ const EnhancedStorylines = () => {
         <Button size="small" startIcon={<ShareIcon />}>
           Share
         </Button>
+        <Box sx={{ flexGrow: 1 }} />
+        <Tooltip title="Edit Storyline">
+          <IconButton
+            size="small"
+            onClick={() => handleEditStoryline(storyline)}
+            color="primary"
+          >
+            <EditIcon />
+          </IconButton>
+        </Tooltip>
       </CardActions>
     </Card>
   );
@@ -392,49 +431,11 @@ const EnhancedStorylines = () => {
               startIcon={<Visibility />}
               onClick={() => toggleExpanded(storyline.id)}
             >
-              {expandedStoryline === storyline.id ? 'Hide' : 'Details'}
+              Details
             </Button>
           </Box>
         </ListItemSecondaryAction>
       </Box>
-
-      {expandedStoryline === storyline.id && (
-        <Box width="100%" mt={2}>
-          <Divider sx={{ mb: 2 }} />
-          <Typography variant="h6" gutterBottom>
-            AI Analysis Features
-          </Typography>
-          <Grid container spacing={2}>
-            <Grid item xs={12} md={4}>
-              <Paper sx={{ p: 2, textAlign: 'center' }}>
-                <AutoAwesomeIcon color="primary" sx={{ fontSize: 30, mb: 1 }} />
-                <Typography variant="subtitle2">Multi-Perspective</Typography>
-                <Typography variant="caption" color="text.secondary">
-                  Available
-                </Typography>
-              </Paper>
-            </Grid>
-            <Grid item xs={12} md={4}>
-              <Paper sx={{ p: 2, textAlign: 'center' }}>
-                <AssessmentIcon color="primary" sx={{ fontSize: 30, mb: 1 }} />
-                <Typography variant="subtitle2">Impact Assessment</Typography>
-                <Typography variant="caption" color="text.secondary">
-                  Available
-                </Typography>
-              </Paper>
-            </Grid>
-            <Grid item xs={12} md={4}>
-              <Paper sx={{ p: 2, textAlign: 'center' }}>
-                <HistoryIcon color="primary" sx={{ fontSize: 30, mb: 1 }} />
-                <Typography variant="subtitle2">Historical Context</Typography>
-                <Typography variant="caption" color="text.secondary">
-                  Available
-                </Typography>
-              </Paper>
-            </Grid>
-          </Grid>
-        </Box>
-      )}
     </ListItem>
   );
 
@@ -445,6 +446,14 @@ const EnhancedStorylines = () => {
           Storylines
         </Typography>
         <Box display="flex" gap={2} alignItems="center">
+          <Button
+            variant="contained"
+            startIcon={<AddIcon />}
+            onClick={handleCreateStoryline}
+            sx={{ mr: 2 }}
+          >
+            Create Storyline
+          </Button>
           <Tooltip title="Refresh Storylines">
             <IconButton onClick={handleRefresh} disabled={loading}>
               <Refresh />
@@ -656,6 +665,14 @@ const EnhancedStorylines = () => {
           </Grid>
         </Grid>
       </Paper>
+
+      {/* Storyline Management Dialog */}
+      <StorylineManagementDialog
+        open={managementDialogOpen}
+        onClose={handleCloseManagementDialog}
+        storyline={selectedStoryline}
+        onStorylineUpdated={handleStorylineUpdated}
+      />
     </Box>
   );
 };

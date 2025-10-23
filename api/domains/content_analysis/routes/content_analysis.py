@@ -749,37 +749,43 @@ async def get_category_stats():
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/topics/word-cloud")
-async def get_word_cloud_data(
-    time_period_hours: int = 24,
-    min_frequency: int = 2
-):
-    """Get word cloud data for visualization"""
+async def get_word_cloud_data():
+    """Get intelligent word cloud data with ML/LLM filtering"""
     try:
-        from ..services.advanced_topic_extractor import AdvancedTopicExtractor
+        from ..services.topic_intelligence_service import topic_intelligence_service
         
-        # Initialize advanced topic extractor
-        extractor = AdvancedTopicExtractor(get_db_connection)
+        result = topic_intelligence_service.get_intelligent_word_cloud(limit=30)
         
-        # Extract topics from recent articles
-        topics = extractor.extract_topics_from_articles(time_period_hours=time_period_hours)
-        
-        # Filter by minimum frequency
-        filtered_topics = [t for t in topics if t.frequency >= min_frequency]
-        
-        # Generate word cloud data
-        word_cloud_data = extractor.generate_word_cloud_data(filtered_topics)
-        
-        return {
-            "success": True,
-            "data": word_cloud_data,
-            "message": f"Generated word cloud with {len(word_cloud_data['words'])} topics",
-            "timestamp": datetime.now().isoformat()
-        }
+        if result['success']:
+            # Convert to the format expected by frontend
+            word_cloud_data = []
+            for topic in result['data']['word_cloud']:
+                word_cloud_data.append({
+                    'text': topic['text'],
+                    'size': min(100, max(20, topic['value'] * 2)),  # Scale size based on article count
+                    'frequency': topic['value'],
+                    'relevance': topic['confidence'],
+                    'articles': topic['value'],
+                    'quality_score': topic['quality_score'],
+                    'category': topic['category']
+                })
+            
+            return {
+                'success': True,
+                'data': {
+                    'word_cloud': word_cloud_data,
+                    'total_topics': result['data']['total_topics'],
+                    'filtered_from': result['data']['filtered_from'],
+                    'categories': result['data']['categories']
+                },
+                'timestamp': result['timestamp']
+            }
+        else:
+            return result
         
     except Exception as e:
-        logger.error(f"Error generating word cloud data: {e}")
+        logger.error(f"Error fetching intelligent word cloud: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
 @router.get("/topics/big-picture")
 async def get_big_picture_analysis(
     time_period_hours: int = 24
@@ -1084,3 +1090,54 @@ async def process_simple_clustering(limit: int):
             
     except Exception as e:
         logger.error(f"Error in simple article clustering: {e}")
+
+@router.get("/articles/{article_id}")
+async def get_individual_article(article_id: int):
+    """Get a specific article by ID"""
+    try:
+        conn = get_db_connection()
+        if not conn:
+            raise HTTPException(status_code=500, detail="Database connection failed")
+        
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT id, title, url, content, summary, source_domain,
+                           published_at, word_count, processing_status,
+                           created_at, updated_at
+                    FROM articles 
+                    WHERE id = %s
+                """, (article_id,))
+                
+                row = cur.fetchone()
+                if not row:
+                    raise HTTPException(status_code=404, detail="Article not found")
+                
+                article = {
+                    "id": row[0],
+                    "title": row[1],
+                    "url": row[2],
+                    "content": row[3],
+                    "summary": row[4],
+                    "source_domain": row[5],
+                    "published_at": row[6].isoformat() if row[6] else None,
+                    "word_count": row[7],
+                    "processing_status": row[8],
+                    "created_at": row[9].isoformat() if row[9] else None,
+                    "updated_at": row[10].isoformat() if row[10] else None
+                }
+                
+                return {
+                    "success": True,
+                    "data": article,
+                    "timestamp": datetime.now().isoformat()
+                }
+                
+        finally:
+            conn.close()
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching article {article_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
