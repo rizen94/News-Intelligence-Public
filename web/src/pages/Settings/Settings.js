@@ -21,7 +21,11 @@ export default function Settings() {
 
   return (
     <Box>
-      <Typography variant="h4" component="h1" sx={{ fontWeight: 'bold', mb: 3 }}>
+      <Typography
+        variant='h4'
+        component='h1'
+        sx={{ fontWeight: 'bold', mb: 3 }}
+      >
         Settings
       </Typography>
 
@@ -29,13 +33,13 @@ export default function Settings() {
         <Grid item xs={12} md={6}>
           <Card>
             <CardContent>
-              <Typography variant="h6" gutterBottom>
+              <Typography variant='h6' gutterBottom>
                 User Interface
               </Typography>
-              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              <Typography variant='body2' color='text.secondary' sx={{ mb: 2 }}>
                 Interface customization options will be available here
               </Typography>
-              <Typography variant="body2" color="text.secondary">
+              <Typography variant='body2' color='text.secondary'>
                 Language: {ui.language}
               </Typography>
             </CardContent>
@@ -45,13 +49,13 @@ export default function Settings() {
         <Grid item xs={12} md={6}>
           <Card>
             <CardContent>
-              <Typography variant="h6" gutterBottom>
+              <Typography variant='h6' gutterBottom>
                 System Configuration
               </Typography>
-              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              <Typography variant='body2' color='text.secondary' sx={{ mb: 2 }}>
                 System settings and configuration options
               </Typography>
-              <Button variant="outlined" fullWidth>
+              <Button variant='outlined' fullWidth>
                 Export Configuration
               </Button>
             </CardContent>

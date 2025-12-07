@@ -72,14 +72,15 @@ const Monitoring = () => {
       setLoading(true);
 
       // Fetch all monitoring data in parallel
-      const [healthRes, mlRes, dbRes, apiRes, feedsRes, articlesRes] = await Promise.all([
-        apiService.health.getSystemHealth(),
-        apiService.ml.getMLStatus(),
-        apiService.health.getDatabaseHealth(),
-        apiService.health.getSystemHealth(), // Using health as proxy for API status
-        apiService.rssFeeds.getFeeds(),
-        apiService.articles.getArticles({ limit: 1 }),
-      ]);
+      const [healthRes, mlRes, dbRes, apiRes, feedsRes, articlesRes] =
+        await Promise.all([
+          apiService.health.getSystemHealth(),
+          apiService.ml.getMLStatus(),
+          apiService.health.getDatabaseHealth(),
+          apiService.health.getSystemHealth(), // Using health as proxy for API status
+          apiService.rssFeeds.getFeeds(),
+          apiService.articles.getArticles({ limit: 1 }),
+        ]);
 
       // Process system health
       const systemHealth = {
@@ -141,24 +142,56 @@ const Monitoring = () => {
 
       // Generate alerts based on data
       const newAlerts = [];
-      if (systemHealth.cpu > 80) newAlerts.push({ type: 'warning', message: 'High CPU usage detected' });
-      if (systemHealth.memory > 85) newAlerts.push({ type: 'error', message: 'High memory usage detected' });
-      if (mlStatus.queue > 100) newAlerts.push({ type: 'warning', message: 'ML processing queue is backed up' });
-      if (api.errors > 50) newAlerts.push({ type: 'error', message: 'High API error rate detected' });
-      if (feeds.errors > 0) newAlerts.push({ type: 'warning', message: `${feeds.errors} RSS feeds have errors` });
+      if (systemHealth.cpu > 80)
+        newAlerts.push({ type: 'warning', message: 'High CPU usage detected' });
+      if (systemHealth.memory > 85)
+        newAlerts.push({
+          type: 'error',
+          message: 'High memory usage detected',
+        });
+      if (mlStatus.queue > 100)
+        newAlerts.push({
+          type: 'warning',
+          message: 'ML processing queue is backed up',
+        });
+      if (api.errors > 50)
+        newAlerts.push({
+          type: 'error',
+          message: 'High API error rate detected',
+        });
+      if (feeds.errors > 0)
+        newAlerts.push({
+          type: 'warning',
+          message: `${feeds.errors} RSS feeds have errors`,
+        });
 
       setAlerts(newAlerts);
 
       // Generate logs
       const newLogs = [
-        { timestamp: new Date(), level: 'info', message: 'System health check completed' },
-        { timestamp: new Date(), level: 'info', message: `ML processing: ${mlStatus.running ? 'Running' : 'Stopped'}` },
-        { timestamp: new Date(), level: 'info', message: `Database: ${database.status}` },
+        {
+          timestamp: new Date(),
+          level: 'info',
+          message: 'System health check completed',
+        },
+        {
+          timestamp: new Date(),
+          level: 'info',
+          message: `ML processing: ${mlStatus.running ? 'Running' : 'Stopped'}`,
+        },
+        {
+          timestamp: new Date(),
+          level: 'info',
+          message: `Database: ${database.status}`,
+        },
         { timestamp: new Date(), level: 'info', message: `API: ${api.status}` },
-        { timestamp: new Date(), level: 'info', message: `Feeds: ${feeds.active}/${feeds.total} active` },
+        {
+          timestamp: new Date(),
+          level: 'info',
+          message: `Feeds: ${feeds.active}/${feeds.total} active`,
+        },
       ];
       setLogs(newLogs.slice(0, 10)); // Keep only last 10 logs
-
     } catch (error) {
       console.error('Error fetching monitoring data:', error);
     } finally {
@@ -179,34 +212,46 @@ const Monitoring = () => {
     };
   }, [fetchMonitoringData, autoRefresh, refreshInterval]);
 
-  const getStatusColor = (status) => {
+  const getStatusColor = status => {
     switch (status) {
-    case 'healthy': return 'success';
-    case 'warning': return 'warning';
-    case 'error': return 'error';
-    default: return 'default';
+    case 'healthy':
+      return 'success';
+    case 'warning':
+      return 'warning';
+    case 'error':
+      return 'error';
+    default:
+      return 'default';
     }
   };
 
-  const getStatusIcon = (status) => {
+  const getStatusIcon = status => {
     switch (status) {
-    case 'healthy': return <CheckCircleIcon />;
-    case 'warning': return <WarningIcon />;
-    case 'error': return <ErrorIcon />;
-    default: return <InfoIcon />;
+    case 'healthy':
+      return <CheckCircleIcon />;
+    case 'warning':
+      return <WarningIcon />;
+    case 'error':
+      return <ErrorIcon />;
+    default:
+      return <InfoIcon />;
     }
   };
 
-  const getLogColor = (level) => {
+  const getLogColor = level => {
     switch (level) {
-    case 'error': return 'error';
-    case 'warning': return 'warning';
-    case 'info': return 'info';
-    default: return 'default';
+    case 'error':
+      return 'error';
+    case 'warning':
+      return 'warning';
+    case 'info':
+      return 'info';
+    default:
+      return 'default';
     }
   };
 
-  const formatUptime = (seconds) => {
+  const formatUptime = seconds => {
     const days = Math.floor(seconds / 86400);
     const hours = Math.floor((seconds % 86400) / 3600);
     const minutes = Math.floor((seconds % 3600) / 60);
@@ -215,22 +260,27 @@ const Monitoring = () => {
 
   return (
     <Box>
-      <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
-        <Typography variant="h4" component="h1" sx={{ fontWeight: 'bold' }}>
+      <Box
+        display='flex'
+        justifyContent='space-between'
+        alignItems='center'
+        mb={3}
+      >
+        <Typography variant='h4' component='h1' sx={{ fontWeight: 'bold' }}>
           📊 Real-time System Monitoring
         </Typography>
-        <Box display="flex" alignItems="center" gap={2}>
+        <Box display='flex' alignItems='center' gap={2}>
           <FormControlLabel
             control={
               <Switch
                 checked={autoRefresh}
-                onChange={(e) => setAutoRefresh(e.target.checked)}
+                onChange={e => setAutoRefresh(e.target.checked)}
               />
             }
-            label="Auto Refresh"
+            label='Auto Refresh'
           />
           <Button
-            variant="outlined"
+            variant='outlined'
             startIcon={<Refresh />}
             onClick={fetchMonitoringData}
             disabled={loading}
@@ -243,7 +293,7 @@ const Monitoring = () => {
       {/* Alerts */}
       {alerts.length > 0 && (
         <Box mb={3}>
-          <Typography variant="h6" sx={{ mb: 2 }}>
+          <Typography variant='h6' sx={{ mb: 2 }}>
             🚨 Active Alerts
           </Typography>
           {alerts.map((alert, index) => (
@@ -252,13 +302,17 @@ const Monitoring = () => {
               sx={{
                 p: 2,
                 mb: 1,
-                bgcolor: alert.type === 'error' ? 'error.light' : 'warning.light',
-                color: alert.type === 'error' ? 'error.contrastText' : 'warning.contrastText',
+                bgcolor:
+                  alert.type === 'error' ? 'error.light' : 'warning.light',
+                color:
+                  alert.type === 'error'
+                    ? 'error.contrastText'
+                    : 'warning.contrastText',
               }}
             >
-              <Box display="flex" alignItems="center" gap={1}>
+              <Box display='flex' alignItems='center' gap={1}>
                 {alert.type === 'error' ? <ErrorIcon /> : <WarningIcon />}
-                <Typography variant="body2">{alert.message}</Typography>
+                <Typography variant='body2'>{alert.message}</Typography>
               </Box>
             </Paper>
           ))}
@@ -271,45 +325,59 @@ const Monitoring = () => {
         <Grid item xs={12} md={6}>
           <Card>
             <CardContent>
-              <Typography variant="h6" sx={{ mb: 2 }}>
+              <Typography variant='h6' sx={{ mb: 2 }}>
                 🖥️ System Health
               </Typography>
-              <Box display="flex" alignItems="center" gap={1} mb={2}>
+              <Box display='flex' alignItems='center' gap={1} mb={2}>
                 <Chip
                   icon={getStatusIcon(monitoringData.systemHealth.status)}
                   label={monitoringData.systemHealth.status}
                   color={getStatusColor(monitoringData.systemHealth.status)}
                 />
-                <Typography variant="body2" color="text.secondary">
+                <Typography variant='body2' color='text.secondary'>
                   Uptime: {formatUptime(monitoringData.systemHealth.uptime)}
                 </Typography>
               </Box>
               <Box mb={1}>
-                <Typography variant="body2">CPU Usage</Typography>
+                <Typography variant='body2'>CPU Usage</Typography>
                 <LinearProgress
-                  variant="determinate"
+                  variant='determinate'
                   value={monitoringData.systemHealth.cpu}
-                  color={monitoringData.systemHealth.cpu > 80 ? 'error' : 'primary'}
+                  color={
+                    monitoringData.systemHealth.cpu > 80 ? 'error' : 'primary'
+                  }
                 />
-                <Typography variant="caption">{monitoringData.systemHealth.cpu.toFixed(1)}%</Typography>
+                <Typography variant='caption'>
+                  {monitoringData.systemHealth.cpu.toFixed(1)}%
+                </Typography>
               </Box>
               <Box mb={1}>
-                <Typography variant="body2">Memory Usage</Typography>
+                <Typography variant='body2'>Memory Usage</Typography>
                 <LinearProgress
-                  variant="determinate"
+                  variant='determinate'
                   value={monitoringData.systemHealth.memory}
-                  color={monitoringData.systemHealth.memory > 85 ? 'error' : 'primary'}
+                  color={
+                    monitoringData.systemHealth.memory > 85
+                      ? 'error'
+                      : 'primary'
+                  }
                 />
-                <Typography variant="caption">{monitoringData.systemHealth.memory.toFixed(1)}%</Typography>
+                <Typography variant='caption'>
+                  {monitoringData.systemHealth.memory.toFixed(1)}%
+                </Typography>
               </Box>
               <Box>
-                <Typography variant="body2">Disk Usage</Typography>
+                <Typography variant='body2'>Disk Usage</Typography>
                 <LinearProgress
-                  variant="determinate"
+                  variant='determinate'
                   value={monitoringData.systemHealth.disk}
-                  color={monitoringData.systemHealth.disk > 90 ? 'error' : 'primary'}
+                  color={
+                    monitoringData.systemHealth.disk > 90 ? 'error' : 'primary'
+                  }
                 />
-                <Typography variant="caption">{monitoringData.systemHealth.disk.toFixed(1)}%</Typography>
+                <Typography variant='caption'>
+                  {monitoringData.systemHealth.disk.toFixed(1)}%
+                </Typography>
               </Box>
             </CardContent>
           </Card>
@@ -319,41 +387,53 @@ const Monitoring = () => {
         <Grid item xs={12} md={6}>
           <Card>
             <CardContent>
-              <Typography variant="h6" sx={{ mb: 2 }}>
+              <Typography variant='h6' sx={{ mb: 2 }}>
                 🤖 ML Processing
               </Typography>
-              <Box display="flex" alignItems="center" gap={1} mb={2}>
+              <Box display='flex' alignItems='center' gap={1} mb={2}>
                 <Chip
-                  icon={monitoringData.mlStatus.running ? <CheckCircleIcon /> : <InfoIcon />}
-                  label={monitoringData.mlStatus.running ? 'Running' : 'Stopped'}
-                  color={monitoringData.mlStatus.running ? 'success' : 'default'}
+                  icon={
+                    monitoringData.mlStatus.running ? (
+                      <CheckCircleIcon />
+                    ) : (
+                      <InfoIcon />
+                    )
+                  }
+                  label={
+                    monitoringData.mlStatus.running ? 'Running' : 'Stopped'
+                  }
+                  color={
+                    monitoringData.mlStatus.running ? 'success' : 'default'
+                  }
                 />
               </Box>
               <Grid container spacing={2}>
                 <Grid item xs={6}>
-                  <Typography variant="h4" color="primary">
+                  <Typography variant='h4' color='primary'>
                     {monitoringData.mlStatus.processed}
                   </Typography>
-                  <Typography variant="body2" color="text.secondary">
+                  <Typography variant='body2' color='text.secondary'>
                     Processed Today
                   </Typography>
                 </Grid>
                 <Grid item xs={6}>
-                  <Typography variant="h4" color="warning">
+                  <Typography variant='h4' color='warning'>
                     {monitoringData.mlStatus.queue}
                   </Typography>
-                  <Typography variant="body2" color="text.secondary">
+                  <Typography variant='body2' color='text.secondary'>
                     Queue Size
                   </Typography>
                 </Grid>
                 <Grid item xs={12}>
-                  <Typography variant="body2">Success Rate</Typography>
+                  <Typography variant='body2'>Success Rate</Typography>
                   <LinearProgress
-                    variant="determinate"
+                    variant='determinate'
                     value={monitoringData.mlStatus.successRate}
-                    color="success"
+                    color='success'
                   />
-                  <Typography variant="caption">{monitoringData.mlStatus.successRate.toFixed(1)}%</Typography>
+                  <Typography variant='caption'>
+                    {monitoringData.mlStatus.successRate.toFixed(1)}%
+                  </Typography>
                 </Grid>
               </Grid>
             </CardContent>
@@ -364,26 +444,26 @@ const Monitoring = () => {
         <Grid item xs={12} md={4}>
           <Card>
             <CardContent>
-              <Typography variant="h6" sx={{ mb: 2 }}>
+              <Typography variant='h6' sx={{ mb: 2 }}>
                 🗄️ Database
               </Typography>
-              <Box display="flex" alignItems="center" gap={1} mb={2}>
+              <Box display='flex' alignItems='center' gap={1} mb={2}>
                 <Chip
                   icon={getStatusIcon(monitoringData.database.status)}
                   label={monitoringData.database.status}
                   color={getStatusColor(monitoringData.database.status)}
                 />
               </Box>
-              <Typography variant="h6" color="primary">
+              <Typography variant='h6' color='primary'>
                 {monitoringData.database.connections}
               </Typography>
-              <Typography variant="body2" color="text.secondary">
+              <Typography variant='body2' color='text.secondary'>
                 Active Connections
               </Typography>
-              <Typography variant="h6" color="info" sx={{ mt: 1 }}>
+              <Typography variant='h6' color='info' sx={{ mt: 1 }}>
                 {monitoringData.database.queries}
               </Typography>
-              <Typography variant="body2" color="text.secondary">
+              <Typography variant='body2' color='text.secondary'>
                 Queries/Minute
               </Typography>
             </CardContent>
@@ -394,26 +474,26 @@ const Monitoring = () => {
         <Grid item xs={12} md={4}>
           <Card>
             <CardContent>
-              <Typography variant="h6" sx={{ mb: 2 }}>
+              <Typography variant='h6' sx={{ mb: 2 }}>
                 🌐 API Status
               </Typography>
-              <Box display="flex" alignItems="center" gap={1} mb={2}>
+              <Box display='flex' alignItems='center' gap={1} mb={2}>
                 <Chip
                   icon={getStatusIcon(monitoringData.api.status)}
                   label={monitoringData.api.status}
                   color={getStatusColor(monitoringData.api.status)}
                 />
               </Box>
-              <Typography variant="h6" color="primary">
+              <Typography variant='h6' color='primary'>
                 {monitoringData.api.requests}
               </Typography>
-              <Typography variant="body2" color="text.secondary">
+              <Typography variant='body2' color='text.secondary'>
                 Requests/Hour
               </Typography>
-              <Typography variant="h6" color="info" sx={{ mt: 1 }}>
+              <Typography variant='h6' color='info' sx={{ mt: 1 }}>
                 {monitoringData.api.responseTime.toFixed(0)}ms
               </Typography>
-              <Typography variant="body2" color="text.secondary">
+              <Typography variant='body2' color='text.secondary'>
                 Avg Response Time
               </Typography>
             </CardContent>
@@ -424,21 +504,21 @@ const Monitoring = () => {
         <Grid item xs={12} md={4}>
           <Card>
             <CardContent>
-              <Typography variant="h6" sx={{ mb: 2 }}>
+              <Typography variant='h6' sx={{ mb: 2 }}>
                 📡 RSS Feeds
               </Typography>
-              <Typography variant="h6" color="primary">
+              <Typography variant='h6' color='primary'>
                 {monitoringData.feeds.active}/{monitoringData.feeds.total}
               </Typography>
-              <Typography variant="body2" color="text.secondary">
+              <Typography variant='body2' color='text.secondary'>
                 Active Feeds
               </Typography>
               {monitoringData.feeds.errors > 0 && (
                 <Box mt={1}>
-                  <Typography variant="h6" color="error">
+                  <Typography variant='h6' color='error'>
                     {monitoringData.feeds.errors}
                   </Typography>
-                  <Typography variant="body2" color="text.secondary">
+                  <Typography variant='body2' color='text.secondary'>
                     Feed Errors
                   </Typography>
                 </Box>
@@ -453,39 +533,39 @@ const Monitoring = () => {
         <Grid item xs={12}>
           <Card>
             <CardContent>
-              <Typography variant="h6" sx={{ mb: 2 }}>
+              <Typography variant='h6' sx={{ mb: 2 }}>
                 📰 Articles Processing
               </Typography>
               <Grid container spacing={3}>
                 <Grid item xs={12} md={3}>
-                  <Typography variant="h4" color="primary">
+                  <Typography variant='h4' color='primary'>
                     {monitoringData.articles.total}
                   </Typography>
-                  <Typography variant="body2" color="text.secondary">
+                  <Typography variant='body2' color='text.secondary'>
                     Total Articles
                   </Typography>
                 </Grid>
                 <Grid item xs={12} md={3}>
-                  <Typography variant="h4" color="success">
+                  <Typography variant='h4' color='success'>
                     {monitoringData.articles.processed}
                   </Typography>
-                  <Typography variant="body2" color="text.secondary">
+                  <Typography variant='body2' color='text.secondary'>
                     Processed
                   </Typography>
                 </Grid>
                 <Grid item xs={12} md={3}>
-                  <Typography variant="h4" color="warning">
+                  <Typography variant='h4' color='warning'>
                     {monitoringData.articles.pending}
                   </Typography>
-                  <Typography variant="body2" color="text.secondary">
+                  <Typography variant='body2' color='text.secondary'>
                     Pending
                   </Typography>
                 </Grid>
                 <Grid item xs={12} md={3}>
-                  <Typography variant="h4" color="error">
+                  <Typography variant='h4' color='error'>
                     {monitoringData.articles.errors}
                   </Typography>
-                  <Typography variant="body2" color="text.secondary">
+                  <Typography variant='body2' color='text.secondary'>
                     Errors
                   </Typography>
                 </Grid>
@@ -500,7 +580,7 @@ const Monitoring = () => {
         <Grid item xs={12} md={6}>
           <Card>
             <CardContent>
-              <Typography variant="h6" sx={{ mb: 2 }}>
+              <Typography variant='h6' sx={{ mb: 2 }}>
                 📋 System Logs
               </Typography>
               <List dense>
@@ -509,7 +589,7 @@ const Monitoring = () => {
                     <ListItemIcon>
                       <Chip
                         label={log.level}
-                        size="small"
+                        size='small'
                         color={getLogColor(log.level)}
                       />
                     </ListItemIcon>
@@ -528,39 +608,53 @@ const Monitoring = () => {
         <Grid item xs={12} md={6}>
           <Card>
             <CardContent>
-              <Typography variant="h6" sx={{ mb: 2 }}>
+              <Typography variant='h6' sx={{ mb: 2 }}>
                 📈 Performance Metrics
               </Typography>
               <Box mb={2}>
-                <Typography variant="body2">System Load</Typography>
+                <Typography variant='body2'>System Load</Typography>
                 <LinearProgress
-                  variant="determinate"
-                  value={(monitoringData.systemHealth.cpu + monitoringData.systemHealth.memory) / 2}
-                  color="primary"
+                  variant='determinate'
+                  value={
+                    (monitoringData.systemHealth.cpu +
+                      monitoringData.systemHealth.memory) /
+                    2
+                  }
+                  color='primary'
                 />
-                <Typography variant="caption">
-                  {((monitoringData.systemHealth.cpu + monitoringData.systemHealth.memory) / 2).toFixed(1)}%
+                <Typography variant='caption'>
+                  {(
+                    (monitoringData.systemHealth.cpu +
+                      monitoringData.systemHealth.memory) /
+                    2
+                  ).toFixed(1)}
+                  %
                 </Typography>
               </Box>
               <Box mb={2}>
-                <Typography variant="body2">API Performance</Typography>
+                <Typography variant='body2'>API Performance</Typography>
                 <LinearProgress
-                  variant="determinate"
-                  value={Math.max(0, 100 - monitoringData.api.responseTime / 10)}
-                  color="success"
+                  variant='determinate'
+                  value={Math.max(
+                    0,
+                    100 - monitoringData.api.responseTime / 10,
+                  )}
+                  color='success'
                 />
-                <Typography variant="caption">
+                <Typography variant='caption'>
                   {monitoringData.api.responseTime.toFixed(0)}ms avg response
                 </Typography>
               </Box>
               <Box>
-                <Typography variant="body2">ML Processing Efficiency</Typography>
+                <Typography variant='body2'>
+                  ML Processing Efficiency
+                </Typography>
                 <LinearProgress
-                  variant="determinate"
+                  variant='determinate'
                   value={monitoringData.mlStatus.successRate}
-                  color="info"
+                  color='info'
                 />
-                <Typography variant="caption">
+                <Typography variant='caption'>
                   {monitoringData.mlStatus.successRate.toFixed(1)}% success rate
                 </Typography>
               </Box>

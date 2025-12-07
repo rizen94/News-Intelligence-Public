@@ -52,7 +52,11 @@ const NotificationContext = createContext();
 export const NotificationProvider = ({ children }) => {
   const [state, dispatch] = useReducer(notificationReducer, initialState);
 
-  const addNotification = (message, type = NOTIFICATION_TYPES.INFO, duration = 6000) => {
+  const addNotification = (
+    message,
+    type = NOTIFICATION_TYPES.INFO,
+    duration = 6000,
+  ) => {
     const id = Date.now() + Math.random();
     const notification = {
       id,
@@ -70,7 +74,7 @@ export const NotificationProvider = ({ children }) => {
     }
   };
 
-  const removeNotification = (id) => {
+  const removeNotification = id => {
     dispatch({ type: ActionTypes.REMOVE_NOTIFICATION, payload: id });
   };
 
@@ -78,10 +82,14 @@ export const NotificationProvider = ({ children }) => {
     dispatch({ type: ActionTypes.CLEAR_ALL });
   };
 
-  const showSuccess = (message, duration) => addNotification(message, NOTIFICATION_TYPES.SUCCESS, duration);
-  const showError = (message, duration) => addNotification(message, NOTIFICATION_TYPES.ERROR, duration);
-  const showWarning = (message, duration) => addNotification(message, NOTIFICATION_TYPES.WARNING, duration);
-  const showInfo = (message, duration) => addNotification(message, NOTIFICATION_TYPES.INFO, duration);
+  const showSuccess = (message, duration) =>
+    addNotification(message, NOTIFICATION_TYPES.SUCCESS, duration);
+  const showError = (message, duration) =>
+    addNotification(message, NOTIFICATION_TYPES.ERROR, duration);
+  const showWarning = (message, duration) =>
+    addNotification(message, NOTIFICATION_TYPES.WARNING, duration);
+  const showInfo = (message, duration) =>
+    addNotification(message, NOTIFICATION_TYPES.INFO, duration);
 
   const value = {
     notifications: state.notifications,
@@ -108,7 +116,7 @@ const NotificationContainer = () => {
 
   return (
     <>
-      {notifications.map((notification) => (
+      {notifications.map(notification => (
         <Snackbar
           key={notification.id}
           open={true}
@@ -120,12 +128,12 @@ const NotificationContainer = () => {
             severity={notification.type}
             action={
               <IconButton
-                size="small"
-                aria-label="close"
-                color="inherit"
+                size='small'
+                aria-label='close'
+                color='inherit'
                 onClick={() => removeNotification(notification.id)}
               >
-                <CloseIcon fontSize="small" />
+                <CloseIcon fontSize='small' />
               </IconButton>
             }
           >
@@ -141,7 +149,9 @@ const NotificationContainer = () => {
 export function useNotifications() {
   const context = useContext(NotificationContext);
   if (!context) {
-    throw new Error('useNotifications must be used within a NotificationProvider');
+    throw new Error(
+      'useNotifications must be used within a NotificationProvider',
+    );
   }
   return context;
 }

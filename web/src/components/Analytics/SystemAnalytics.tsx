@@ -78,10 +78,14 @@ const SystemAnalytics: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [tabValue, setTabValue] = useState(0);
   const [autoRefresh, setAutoRefresh] = useState(true);
-  const [refreshInterval, setRefreshInterval] = useState<NodeJS.Timeout | null>(null);
+  const [refreshInterval, setRefreshInterval] = useState<NodeJS.Timeout | null>(
+    null,
+  );
 
   // Data states
-  const [analyticsData, setAnalyticsData] = useState<AnalyticsData | null>(null);
+  const [analyticsData, setAnalyticsData] = useState<AnalyticsData | null>(
+    null,
+  );
   const [logStats, setLogStats] = useState<any>(null);
   const [systemMetrics, setSystemMetrics] = useState<any>(null);
   const [databaseMetrics, setDatabaseMetrics] = useState<any>(null);
@@ -99,17 +103,13 @@ const SystemAnalytics: React.FC = () => {
       Logger.info('Loading system analytics data');
 
       // Load analytics data in parallel
-      const [
-        logStatsData,
-        metricsData,
-        dbMetricsData,
-        dedupStatsData,
-      ] = await Promise.allSettled([
-        enhancedApiService.getLogStatistics(30), // Last 30 days
-        enhancedApiService.getSystemMetrics(),
-        enhancedApiService.getDatabaseMetrics(),
-        enhancedApiService.getDeduplicationStats(),
-      ]);
+      const [logStatsData, metricsData, dbMetricsData, dedupStatsData] =
+        await Promise.allSettled([
+          enhancedApiService.getLogStatistics(30), // Last 30 days
+          enhancedApiService.getSystemMetrics(),
+          enhancedApiService.getDatabaseMetrics(),
+          enhancedApiService.getDeduplicationStats(),
+        ]);
 
       // Process results
       if (logStatsData.status === 'fulfilled') {
@@ -127,10 +127,14 @@ const SystemAnalytics: React.FC = () => {
 
       // Generate analytics data from collected metrics
       const analytics = generateAnalyticsData({
-        logStats: logStatsData.status === 'fulfilled' ? logStatsData.value : null,
-        systemMetrics: metricsData.status === 'fulfilled' ? metricsData.value : null,
-        databaseMetrics: dbMetricsData.status === 'fulfilled' ? dbMetricsData.value : null,
-        deduplicationStats: dedupStatsData.status === 'fulfilled' ? dedupStatsData.value : null,
+        logStats:
+          logStatsData.status === 'fulfilled' ? logStatsData.value : null,
+        systemMetrics:
+          metricsData.status === 'fulfilled' ? metricsData.value : null,
+        databaseMetrics:
+          dbMetricsData.status === 'fulfilled' ? dbMetricsData.value : null,
+        deduplicationStats:
+          dedupStatsData.status === 'fulfilled' ? dedupStatsData.value : null,
       });
 
       setAnalyticsData(analytics);
@@ -146,12 +150,19 @@ const SystemAnalytics: React.FC = () => {
   }, []);
 
   const generateAnalyticsData = (data: any): AnalyticsData => {
-    const { logStats, systemMetrics, databaseMetrics, deduplicationStats } = data;
+    const { logStats, systemMetrics, databaseMetrics, deduplicationStats } =
+      data;
 
     // Calculate system health score
-    const errorRate = logStats ? (logStats.error_count / logStats.total_entries) * 100 : 0;
-    const performanceScore = systemMetrics ?
-      Math.max(0, 100 - (systemMetrics.cpu_percent + systemMetrics.memory_percent) / 2) : 0;
+    const errorRate = logStats
+      ? (logStats.error_count / logStats.total_entries) * 100
+      : 0;
+    const performanceScore = systemMetrics
+      ? Math.max(
+        0,
+        100 - (systemMetrics.cpu_percent + systemMetrics.memory_percent) / 2,
+      )
+      : 0;
     const reliabilityScore = Math.max(0, 100 - errorRate * 10);
     const overallScore = (performanceScore + reliabilityScore) / 2;
 
@@ -175,17 +186,23 @@ const SystemAnalytics: React.FC = () => {
 
     // Generate trends (mock data for now)
     const dailyArticles = Array.from({ length: 30 }, (_, i) => ({
-      date: new Date(Date.now() - (29 - i) * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+      date: new Date(Date.now() - (29 - i) * 24 * 60 * 60 * 1000)
+        .toISOString()
+        .split('T')[0],
       count: Math.floor(Math.random() * 50) + 10,
     }));
 
     const errorTrends = Array.from({ length: 30 }, (_, i) => ({
-      date: new Date(Date.now() - (29 - i) * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+      date: new Date(Date.now() - (29 - i) * 24 * 60 * 60 * 1000)
+        .toISOString()
+        .split('T')[0],
       errors: Math.floor(Math.random() * 20),
     }));
 
     const qualityTrends = Array.from({ length: 30 }, (_, i) => ({
-      date: new Date(Date.now() - (29 - i) * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+      date: new Date(Date.now() - (29 - i) * 24 * 60 * 60 * 1000)
+        .toISOString()
+        .split('T')[0],
       avg_quality: Math.random() * 0.4 + 0.6, // 0.6 to 1.0
     }));
 
@@ -204,8 +221,11 @@ const SystemAnalytics: React.FC = () => {
       },
       processing_metrics: {
         ml_processing_rate: 85.5, // Mock data
-        deduplication_efficiency: deduplicationStats ?
-          (deduplicationStats.total_duplicate_pairs / deduplicationStats.total_articles) * 100 : 0,
+        deduplication_efficiency: deduplicationStats
+          ? (deduplicationStats.total_duplicate_pairs /
+              deduplicationStats.total_articles) *
+            100
+          : 0,
         average_processing_time: 2.3, // Mock data
         error_rate: errorRate,
       },
@@ -245,7 +265,9 @@ const SystemAnalytics: React.FC = () => {
     setPage(newPage);
   };
 
-  const handleChangeRowsPerPage = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleChangeRowsPerPage = (
+    event: React.ChangeEvent<HTMLInputElement>,
+  ) => {
     setRowsPerPage(parseInt(event.target.value, 10));
     setPage(0);
   };
@@ -257,16 +279,21 @@ const SystemAnalytics: React.FC = () => {
   };
 
   const getTrendIcon = (current: number, previous: number) => {
-    if (current > previous) return <TrendingUpIcon color="success" />;
-    if (current < previous) return <TrendingDownIcon color="error" />;
-    return <TimelineIcon color="info" />;
+    if (current > previous) return <TrendingUpIcon color='success' />;
+    if (current < previous) return <TrendingDownIcon color='error' />;
+    return <TimelineIcon color='info' />;
   };
 
   if (loading) {
     return (
-      <Box display="flex" justifyContent="center" alignItems="center" minHeight="400px">
+      <Box
+        display='flex'
+        justifyContent='center'
+        alignItems='center'
+        minHeight='400px'
+      >
         <CircularProgress />
-        <Typography variant="h6" sx={{ ml: 2 }}>
+        <Typography variant='h6' sx={{ ml: 2 }}>
           Loading System Analytics...
         </Typography>
       </Box>
@@ -276,22 +303,27 @@ const SystemAnalytics: React.FC = () => {
   return (
     <Box sx={{ flexGrow: 1, p: 3 }}>
       {/* Header */}
-      <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
-        <Typography variant="h4" component="h1">
+      <Box
+        display='flex'
+        justifyContent='space-between'
+        alignItems='center'
+        mb={3}
+      >
+        <Typography variant='h4' component='h1'>
           System Analytics
         </Typography>
-        <Box display="flex" gap={2} alignItems="center">
+        <Box display='flex' gap={2} alignItems='center'>
           <FormControlLabel
             control={
               <Switch
                 checked={autoRefresh}
-                onChange={(e) => setAutoRefresh(e.target.checked)}
+                onChange={e => setAutoRefresh(e.target.checked)}
               />
             }
-            label="Auto Refresh (1m)"
+            label='Auto Refresh (1m)'
           />
           <Button
-            variant="outlined"
+            variant='outlined'
             startIcon={<RefreshIcon />}
             onClick={handleRefresh}
             disabled={refreshing}
@@ -302,19 +334,19 @@ const SystemAnalytics: React.FC = () => {
       </Box>
 
       {error && (
-        <Alert severity="error" sx={{ mb: 3 }}>
+        <Alert severity='error' sx={{ mb: 3 }}>
           {error}
         </Alert>
       )}
 
       {/* Tabs */}
       <Paper sx={{ mb: 3 }}>
-        <Tabs value={tabValue} onChange={handleTabChange} variant="scrollable">
-          <Tab icon={<AssessmentIcon />} label="Overview" />
-          <Tab icon={<DataUsageIcon />} label="Content Metrics" />
-          <Tab icon={<SpeedIcon />} label="Processing" />
-          <Tab icon={<TrendingUpIcon />} label="Trends" />
-          <Tab icon={<AnalyticsIcon />} label="Advanced" />
+        <Tabs value={tabValue} onChange={handleTabChange} variant='scrollable'>
+          <Tab icon={<AssessmentIcon />} label='Overview' />
+          <Tab icon={<DataUsageIcon />} label='Content Metrics' />
+          <Tab icon={<SpeedIcon />} label='Processing' />
+          <Tab icon={<TrendingUpIcon />} label='Trends' />
+          <Tab icon={<AnalyticsIcon />} label='Advanced' />
         </Tabs>
       </Paper>
 
@@ -326,16 +358,23 @@ const SystemAnalytics: React.FC = () => {
               <Grid item xs={12} md={3}>
                 <Card>
                   <CardContent>
-                    <Typography variant="h6" gutterBottom>
+                    <Typography variant='h6' gutterBottom>
                       Overall Health Score
                     </Typography>
-                    <Typography variant="h2" color={getHealthColor(analyticsData.system_health.overall_score)}>
+                    <Typography
+                      variant='h2'
+                      color={getHealthColor(
+                        analyticsData.system_health.overall_score,
+                      )}
+                    >
                       {analyticsData.system_health.overall_score.toFixed(1)}
                     </Typography>
                     <LinearProgress
-                      variant="determinate"
+                      variant='determinate'
                       value={analyticsData.system_health.overall_score}
-                      color={getHealthColor(analyticsData.system_health.overall_score)}
+                      color={getHealthColor(
+                        analyticsData.system_health.overall_score,
+                      )}
                       sx={{ mt: 2 }}
                     />
                   </CardContent>
@@ -345,10 +384,17 @@ const SystemAnalytics: React.FC = () => {
               <Grid item xs={12} md={3}>
                 <Card>
                   <CardContent>
-                    <Typography variant="h6" gutterBottom>
+                    <Typography variant='h6' gutterBottom>
                       Error Rate
                     </Typography>
-                    <Typography variant="h2" color={analyticsData.system_health.error_rate > 5 ? 'error' : 'success'}>
+                    <Typography
+                      variant='h2'
+                      color={
+                        analyticsData.system_health.error_rate > 5
+                          ? 'error'
+                          : 'success'
+                      }
+                    >
                       {analyticsData.system_health.error_rate.toFixed(2)}%
                     </Typography>
                   </CardContent>
@@ -358,10 +404,15 @@ const SystemAnalytics: React.FC = () => {
               <Grid item xs={12} md={3}>
                 <Card>
                   <CardContent>
-                    <Typography variant="h6" gutterBottom>
+                    <Typography variant='h6' gutterBottom>
                       Performance Score
                     </Typography>
-                    <Typography variant="h2" color={getHealthColor(analyticsData.system_health.performance_score)}>
+                    <Typography
+                      variant='h2'
+                      color={getHealthColor(
+                        analyticsData.system_health.performance_score,
+                      )}
+                    >
                       {analyticsData.system_health.performance_score.toFixed(1)}
                     </Typography>
                   </CardContent>
@@ -371,10 +422,15 @@ const SystemAnalytics: React.FC = () => {
               <Grid item xs={12} md={3}>
                 <Card>
                   <CardContent>
-                    <Typography variant="h6" gutterBottom>
+                    <Typography variant='h6' gutterBottom>
                       Reliability Score
                     </Typography>
-                    <Typography variant="h2" color={getHealthColor(analyticsData.system_health.reliability_score)}>
+                    <Typography
+                      variant='h2'
+                      color={getHealthColor(
+                        analyticsData.system_health.reliability_score,
+                      )}
+                    >
                       {analyticsData.system_health.reliability_score.toFixed(1)}
                     </Typography>
                   </CardContent>
@@ -393,28 +449,38 @@ const SystemAnalytics: React.FC = () => {
               <Grid item xs={12} md={6}>
                 <Card>
                   <CardContent>
-                    <Typography variant="h6" gutterBottom>
+                    <Typography variant='h6' gutterBottom>
                       Quality Distribution
                     </Typography>
                     <TableContainer>
-                      <Table size="small">
+                      <Table size='small'>
                         <TableHead>
                           <TableRow>
                             <TableCell>Score Range</TableCell>
-                            <TableCell align="right">Count</TableCell>
-                            <TableCell align="right">Percentage</TableCell>
+                            <TableCell align='right'>Count</TableCell>
+                            <TableCell align='right'>Percentage</TableCell>
                           </TableRow>
                         </TableHead>
                         <TableBody>
-                          {analyticsData.content_metrics.quality_distribution.map((item, index) => (
-                            <TableRow key={index}>
-                              <TableCell>{item.score_range}</TableCell>
-                              <TableCell align="right">{item.count}</TableCell>
-                              <TableCell align="right">
-                                {((item.count / analyticsData.content_metrics.total_articles) * 100).toFixed(1)}%
-                              </TableCell>
-                            </TableRow>
-                          ))}
+                          {analyticsData.content_metrics.quality_distribution.map(
+                            (item, index) => (
+                              <TableRow key={index}>
+                                <TableCell>{item.score_range}</TableCell>
+                                <TableCell align='right'>
+                                  {item.count}
+                                </TableCell>
+                                <TableCell align='right'>
+                                  {(
+                                    (item.count /
+                                      analyticsData.content_metrics
+                                        .total_articles) *
+                                    100
+                                  ).toFixed(1)}
+                                  %
+                                </TableCell>
+                              </TableRow>
+                            ),
+                          )}
                         </TableBody>
                       </Table>
                     </TableContainer>
@@ -425,28 +491,38 @@ const SystemAnalytics: React.FC = () => {
               <Grid item xs={12} md={6}>
                 <Card>
                   <CardContent>
-                    <Typography variant="h6" gutterBottom>
+                    <Typography variant='h6' gutterBottom>
                       Source Diversity
                     </Typography>
                     <TableContainer>
-                      <Table size="small">
+                      <Table size='small'>
                         <TableHead>
                           <TableRow>
                             <TableCell>Source</TableCell>
-                            <TableCell align="right">Articles</TableCell>
-                            <TableCell align="right">Percentage</TableCell>
+                            <TableCell align='right'>Articles</TableCell>
+                            <TableCell align='right'>Percentage</TableCell>
                           </TableRow>
                         </TableHead>
                         <TableBody>
-                          {analyticsData.content_metrics.source_diversity.map((item, index) => (
-                            <TableRow key={index}>
-                              <TableCell>{item.source}</TableCell>
-                              <TableCell align="right">{item.count}</TableCell>
-                              <TableCell align="right">
-                                {((item.count / analyticsData.content_metrics.total_articles) * 100).toFixed(1)}%
-                              </TableCell>
-                            </TableRow>
-                          ))}
+                          {analyticsData.content_metrics.source_diversity.map(
+                            (item, index) => (
+                              <TableRow key={index}>
+                                <TableCell>{item.source}</TableCell>
+                                <TableCell align='right'>
+                                  {item.count}
+                                </TableCell>
+                                <TableCell align='right'>
+                                  {(
+                                    (item.count /
+                                      analyticsData.content_metrics
+                                        .total_articles) *
+                                    100
+                                  ).toFixed(1)}
+                                  %
+                                </TableCell>
+                              </TableRow>
+                            ),
+                          )}
                         </TableBody>
                       </Table>
                     </TableContainer>
@@ -466,15 +542,20 @@ const SystemAnalytics: React.FC = () => {
               <Grid item xs={12} md={3}>
                 <Card>
                   <CardContent>
-                    <Typography variant="h6" gutterBottom>
+                    <Typography variant='h6' gutterBottom>
                       ML Processing Rate
                     </Typography>
-                    <Typography variant="h2" color="primary">
-                      {analyticsData.processing_metrics.ml_processing_rate.toFixed(1)}%
+                    <Typography variant='h2' color='primary'>
+                      {analyticsData.processing_metrics.ml_processing_rate.toFixed(
+                        1,
+                      )}
+                      %
                     </Typography>
                     <LinearProgress
-                      variant="determinate"
-                      value={analyticsData.processing_metrics.ml_processing_rate}
+                      variant='determinate'
+                      value={
+                        analyticsData.processing_metrics.ml_processing_rate
+                      }
                       sx={{ mt: 2 }}
                     />
                   </CardContent>
@@ -484,11 +565,14 @@ const SystemAnalytics: React.FC = () => {
               <Grid item xs={12} md={3}>
                 <Card>
                   <CardContent>
-                    <Typography variant="h6" gutterBottom>
+                    <Typography variant='h6' gutterBottom>
                       Deduplication Efficiency
                     </Typography>
-                    <Typography variant="h2" color="primary">
-                      {analyticsData.processing_metrics.deduplication_efficiency.toFixed(1)}%
+                    <Typography variant='h2' color='primary'>
+                      {analyticsData.processing_metrics.deduplication_efficiency.toFixed(
+                        1,
+                      )}
+                      %
                     </Typography>
                   </CardContent>
                 </Card>
@@ -497,11 +581,14 @@ const SystemAnalytics: React.FC = () => {
               <Grid item xs={12} md={3}>
                 <Card>
                   <CardContent>
-                    <Typography variant="h6" gutterBottom>
+                    <Typography variant='h6' gutterBottom>
                       Avg Processing Time
                     </Typography>
-                    <Typography variant="h2" color="primary">
-                      {analyticsData.processing_metrics.average_processing_time.toFixed(1)}s
+                    <Typography variant='h2' color='primary'>
+                      {analyticsData.processing_metrics.average_processing_time.toFixed(
+                        1,
+                      )}
+                      s
                     </Typography>
                   </CardContent>
                 </Card>
@@ -510,10 +597,17 @@ const SystemAnalytics: React.FC = () => {
               <Grid item xs={12} md={3}>
                 <Card>
                   <CardContent>
-                    <Typography variant="h6" gutterBottom>
+                    <Typography variant='h6' gutterBottom>
                       Processing Error Rate
                     </Typography>
-                    <Typography variant="h2" color={analyticsData.processing_metrics.error_rate > 5 ? 'error' : 'success'}>
+                    <Typography
+                      variant='h2'
+                      color={
+                        analyticsData.processing_metrics.error_rate > 5
+                          ? 'error'
+                          : 'success'
+                      }
+                    >
                       {analyticsData.processing_metrics.error_rate.toFixed(2)}%
                     </Typography>
                   </CardContent>
@@ -530,12 +624,13 @@ const SystemAnalytics: React.FC = () => {
           <Grid item xs={12}>
             <Card>
               <CardContent>
-                <Typography variant="h6" gutterBottom>
+                <Typography variant='h6' gutterBottom>
                   Daily Article Processing Trends
                 </Typography>
-                <Typography variant="body2" color="text.secondary">
-                  Advanced trend analysis and visualization will be implemented here using the structured data
-                  from our comprehensive logging and monitoring systems.
+                <Typography variant='body2' color='text.secondary'>
+                  Advanced trend analysis and visualization will be implemented
+                  here using the structured data from our comprehensive logging
+                  and monitoring systems.
                 </Typography>
               </CardContent>
             </Card>
@@ -549,12 +644,13 @@ const SystemAnalytics: React.FC = () => {
           <Grid item xs={12}>
             <Card>
               <CardContent>
-                <Typography variant="h6" gutterBottom>
+                <Typography variant='h6' gutterBottom>
                   Advanced Analytics
                 </Typography>
-                <Typography variant="body2" color="text.secondary">
-                  Machine learning-powered insights, predictive analytics, and advanced data mining
-                  capabilities will be implemented here using the structured data and schemas from Phase 1.
+                <Typography variant='body2' color='text.secondary'>
+                  Machine learning-powered insights, predictive analytics, and
+                  advanced data mining capabilities will be implemented here
+                  using the structured data and schemas from Phase 1.
                 </Typography>
               </CardContent>
             </Card>
@@ -576,7 +672,7 @@ function TabPanel(props: TabPanelProps) {
   const { children, value, index, ...other } = props;
   return (
     <div
-      role="tabpanel"
+      role='tabpanel'
       hidden={value !== index}
       id={`analytics-tabpanel-${index}`}
       aria-labelledby={`analytics-tab-${index}`}

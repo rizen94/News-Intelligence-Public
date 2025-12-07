@@ -64,7 +64,7 @@ body {
 .card {
   background: white;
   border-radius: 8px;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
   padding: 20px;
   margin: 20px 0;
 }
@@ -162,11 +162,11 @@ body {
     margin-left: 0;
     padding: 10px;
   }
-  
+
   .app-container {
     flex-direction: column;
   }
-  
+
   .card {
     margin: 10px 0;
     padding: 15px;

@@ -50,7 +50,11 @@ const MorningBriefing = () => {
         date: new Date().toLocaleDateString(),
         topStories: articlesResponse.data?.articles?.slice(0, 5) || [],
         storylines: storylinesResponse.data?.storylines?.slice(0, 3) || [],
-        summary: `Today's briefing covers ${articlesResponse.data?.articles?.length || 0} articles across ${storylinesResponse.data?.storylines?.length || 0} active storylines.`,
+        summary: `Today's briefing covers ${
+          articlesResponse.data?.articles?.length || 0
+        } articles across ${
+          storylinesResponse.data?.storylines?.length || 0
+        } active storylines.`,
       };
 
       setBriefing(briefing);
@@ -62,7 +66,7 @@ const MorningBriefing = () => {
     }
   };
 
-  const formatDate = (dateString) => {
+  const formatDate = dateString => {
     if (!dateString) return 'No date';
     try {
       return new Date(dateString).toLocaleDateString('en-US', {
@@ -87,7 +91,7 @@ const MorningBriefing = () => {
 
   if (error) {
     return (
-      <Alert severity="error" sx={{ mb: 2 }}>
+      <Alert severity='error' sx={{ mb: 2 }}>
         {error}
       </Alert>
     );
@@ -95,12 +99,19 @@ const MorningBriefing = () => {
 
   return (
     <Box>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
-        <Typography variant="h4" component="h1">
+      <Box
+        sx={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          mb: 3,
+        }}
+      >
+        <Typography variant='h4' component='h1'>
           Morning Briefing
         </Typography>
         <Button
-          variant="outlined"
+          variant='outlined'
           startIcon={<Refresh />}
           onClick={loadBriefing}
         >
@@ -113,13 +124,15 @@ const MorningBriefing = () => {
         <Grid item xs={12}>
           <Card>
             <CardContent>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
-                <Schedule color="primary" />
-                <Typography variant="h5">
+              <Box
+                sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}
+              >
+                <Schedule color='primary' />
+                <Typography variant='h5'>
                   {briefing?.date} - News Intelligence Briefing
                 </Typography>
               </Box>
-              <Typography variant="body1" color="text.secondary">
+              <Typography variant='body1' color='text.secondary'>
                 {briefing?.summary}
               </Typography>
             </CardContent>
@@ -130,9 +143,11 @@ const MorningBriefing = () => {
         <Grid item xs={12} md={6}>
           <Card>
             <CardContent>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
-                <Article color="primary" />
-                <Typography variant="h6">Top Stories</Typography>
+              <Box
+                sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}
+              >
+                <Article color='primary' />
+                <Typography variant='h6'>Top Stories</Typography>
               </Box>
               {briefing?.topStories?.length > 0 ? (
                 <List>
@@ -143,11 +158,19 @@ const MorningBriefing = () => {
                           primary={article.title || 'Untitled Article'}
                           secondary={
                             <Box>
-                              <Typography variant="body2" color="text.secondary">
-                                {article.source || 'Unknown Source'} • {formatDate(article.published_date)}
+                              <Typography
+                                variant='body2'
+                                color='text.secondary'
+                              >
+                                {article.source || 'Unknown Source'} •{' '}
+                                {formatDate(article.published_date)}
                               </Typography>
                               {article.category && (
-                                <Chip label={article.category} size="small" sx={{ mt: 0.5 }} />
+                                <Chip
+                                  label={article.category}
+                                  size='small'
+                                  sx={{ mt: 0.5 }}
+                                />
                               )}
                             </Box>
                           }
@@ -158,7 +181,7 @@ const MorningBriefing = () => {
                   ))}
                 </List>
               ) : (
-                <Typography variant="body2" color="text.secondary">
+                <Typography variant='body2' color='text.secondary'>
                   No stories available
                 </Typography>
               )}
@@ -170,9 +193,11 @@ const MorningBriefing = () => {
         <Grid item xs={12} md={6}>
           <Card>
             <CardContent>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
-                <TimelineIcon color="primary" />
-                <Typography variant="h6">Active Storylines</Typography>
+              <Box
+                sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}
+              >
+                <TimelineIcon color='primary' />
+                <Typography variant='h6'>Active Storylines</Typography>
               </Box>
               {briefing?.storylines?.length > 0 ? (
                 <List>
@@ -183,13 +208,20 @@ const MorningBriefing = () => {
                           primary={storyline.title || 'Untitled Storyline'}
                           secondary={
                             <Box>
-                              <Typography variant="body2" color="text.secondary">
-                                {storyline.article_count || 0} articles • {storyline.status || 'Unknown status'}
+                              <Typography
+                                variant='body2'
+                                color='text.secondary'
+                              >
+                                {storyline.article_count || 0} articles •{' '}
+                                {storyline.status || 'Unknown status'}
                               </Typography>
                               {storyline.description && (
-                                <Typography variant="body2" sx={{ mt: 0.5 }}>
+                                <Typography variant='body2' sx={{ mt: 0.5 }}>
                                   {storyline.description.length > 100
-                                    ? `${storyline.description.substring(0, 100)}...`
+                                    ? `${storyline.description.substring(
+                                      0,
+                                      100,
+                                    )}...`
                                     : storyline.description}
                                 </Typography>
                               )}
@@ -202,7 +234,7 @@ const MorningBriefing = () => {
                   ))}
                 </List>
               ) : (
-                <Typography variant="body2" color="text.secondary">
+                <Typography variant='body2' color='text.secondary'>
                   No active storylines
                 </Typography>
               )}

@@ -43,26 +43,37 @@ export default function Entities() {
     actions.fetchEntities(selectedType);
   };
 
-  const getEntityIcon = (type) => {
+  const getEntityIcon = type => {
     switch (type) {
-    case 'PERSON': return <PersonIcon fontSize="small" />;
-    case 'ORG': return <BusinessIcon fontSize="small" />;
-    case 'GPE': return <LocationIcon fontSize="small" />;
-    default: return <PersonIcon fontSize="small" />;
+    case 'PERSON':
+      return <PersonIcon fontSize='small' />;
+    case 'ORG':
+      return <BusinessIcon fontSize='small' />;
+    case 'GPE':
+      return <LocationIcon fontSize='small' />;
+    default:
+      return <PersonIcon fontSize='small' />;
     }
   };
 
-  const getEntityColor = (type) => {
+  const getEntityColor = type => {
     switch (type) {
-    case 'PERSON': return 'primary';
-    case 'ORG': return 'secondary';
-    case 'GPE': return 'success';
-    default: return 'default';
+    case 'PERSON':
+      return 'primary';
+    case 'ORG':
+      return 'secondary';
+    case 'GPE':
+      return 'success';
+    default:
+      return 'default';
     }
   };
 
   const filteredEntities = entities.list.filter(entity => {
-    if (searchQuery && !entity.text.toLowerCase().includes(searchQuery.toLowerCase())) {
+    if (
+      searchQuery &&
+      !entity.text.toLowerCase().includes(searchQuery.toLowerCase())
+    ) {
       return false;
     }
     return true;
@@ -70,22 +81,28 @@ export default function Entities() {
 
   return (
     <Box>
-      <Typography variant="h4" component="h1" sx={{ fontWeight: 'bold', mb: 3 }}>
+      <Typography
+        variant='h4'
+        component='h1'
+        sx={{ fontWeight: 'bold', mb: 3 }}
+      >
         Extracted Entities
       </Typography>
 
       <Card sx={{ mb: 3 }}>
         <CardContent>
-          <Grid container spacing={2} alignItems="center">
+          <Grid container spacing={2} alignItems='center'>
             <Grid item xs={12} md={4}>
               <TextField
                 fullWidth
-                label="Search Entities"
+                label='Search Entities'
                 value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
+                onChange={e => setSearchQuery(e.target.value)}
+                onKeyPress={e => e.key === 'Enter' && handleSearch()}
                 InputProps={{
-                  startAdornment: <Search sx={{ mr: 1, color: 'text.secondary' }} />,
+                  startAdornment: (
+                    <Search sx={{ mr: 1, color: 'text.secondary' }} />
+                  ),
                 }}
               />
             </Grid>
@@ -94,18 +111,18 @@ export default function Entities() {
                 <InputLabel>Entity Type</InputLabel>
                 <Select
                   value={selectedType}
-                  label="Entity Type"
-                  onChange={(e) => setSelectedType(e.target.value)}
+                  label='Entity Type'
+                  onChange={e => setSelectedType(e.target.value)}
                 >
-                  <MenuItem value="PERSON">People</MenuItem>
-                  <MenuItem value="ORG">Organizations</MenuItem>
-                  <MenuItem value="GPE">Locations</MenuItem>
+                  <MenuItem value='PERSON'>People</MenuItem>
+                  <MenuItem value='ORG'>Organizations</MenuItem>
+                  <MenuItem value='GPE'>Locations</MenuItem>
                 </Select>
               </FormControl>
             </Grid>
             <Grid item xs={12} md={4}>
               <Button
-                variant="outlined"
+                variant='outlined'
                 startIcon={<Refresh />}
                 onClick={handleRefresh}
                 fullWidth
@@ -122,19 +139,27 @@ export default function Entities() {
           <Grid item xs={12} sm={6} md={4} key={index}>
             <Card>
               <CardContent>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+                <Box
+                  sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}
+                >
                   {getEntityIcon(entity.type)}
-                  <Typography variant="h6" component="div">
+                  <Typography variant='h6' component='div'>
                     {entity.text}
                   </Typography>
                 </Box>
-                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <Box
+                  sx={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                  }}
+                >
                   <Chip
                     label={entity.type}
                     color={getEntityColor(entity.type)}
-                    size="small"
+                    size='small'
                   />
-                  <Typography variant="body2" color="text.secondary">
+                  <Typography variant='body2' color='text.secondary'>
                     Frequency: {entity.frequency}
                   </Typography>
                 </Box>

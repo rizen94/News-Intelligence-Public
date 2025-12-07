@@ -42,7 +42,10 @@ export interface FilterParams {
   [key: string]: any;
 }
 
-export interface QueryParams extends PaginationParams, SortParams, FilterParams {}
+export interface QueryParams
+  extends PaginationParams,
+    SortParams,
+    FilterParams {}
 
 export interface HealthCheckResponse {
   status: 'healthy' | 'degraded' | 'error';

@@ -51,17 +51,13 @@ import newsSystemService from '../../services/newsSystemService';
 const TabPanel = ({ children, value, index, ...other }) => {
   return (
     <div
-      role="tabpanel"
+      role='tabpanel'
       hidden={value !== index}
       id={`rag-tabpanel-${index}`}
       aria-labelledby={`rag-tab-${index}`}
       {...other}
     >
-      {value === index && (
-        <Box sx={{ p: 3 }}>
-          {children}
-        </Box>
-      )}
+      {value === index && <Box sx={{ p: 3 }}>{children}</Box>}
     </div>
   );
 };
@@ -149,7 +145,7 @@ const RAGEnhanced = () => {
         storyTitle || null,
         true, // include historical
         true, // include related
-        true,  // include analysis
+        true, // include analysis
       );
 
       setDossier(response.dossier);
@@ -171,13 +167,16 @@ const RAGEnhanced = () => {
       setError(null);
       setComprehensiveResearch(null);
 
-      const keywords = storyKeywords.split(',').map(k => k.trim()).filter(k => k);
+      const keywords = storyKeywords
+        .split(',')
+        .map(k => k.trim())
+        .filter(k => k);
 
       const response = await newsSystemService.performComprehensiveResearch(
         researchQuery,
         keywords,
         true, // include external
-        true,  // include internal
+        true, // include internal
       );
 
       setComprehensiveResearch(response.context);
@@ -188,12 +187,12 @@ const RAGEnhanced = () => {
     }
   };
 
-  const formatDateTime = (dateString) => {
+  const formatDateTime = dateString => {
     if (!dateString) return 'N/A';
     return new Date(dateString).toLocaleString();
   };
 
-  const formatDuration = (seconds) => {
+  const formatDuration = seconds => {
     if (!seconds) return 'N/A';
     if (seconds < 60) return `${seconds.toFixed(1)}s`;
     const minutes = Math.floor(seconds / 60);
@@ -206,7 +205,7 @@ const RAGEnhanced = () => {
 
     return (
       <Box>
-        <Typography variant="h6" gutterBottom>
+        <Typography variant='h6' gutterBottom>
           Search Results for: "{searchResults.query}"
         </Typography>
 
@@ -214,27 +213,33 @@ const RAGEnhanced = () => {
           <Grid item xs={12} md={3}>
             <Card>
               <CardContent>
-                <Typography variant="subtitle2" gutterBottom>
+                <Typography variant='subtitle2' gutterBottom>
                   Search Statistics
                 </Typography>
                 <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                  <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <Typography variant="body2">Articles Found:</Typography>
-                    <Typography variant="body2" fontWeight="bold">
+                  <Box
+                    sx={{ display: 'flex', justifyContent: 'space-between' }}
+                  >
+                    <Typography variant='body2'>Articles Found:</Typography>
+                    <Typography variant='body2' fontWeight='bold'>
                       {searchResults.articles_found}
                     </Typography>
                   </Box>
-                  <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <Typography variant="body2">ML Enhanced:</Typography>
+                  <Box
+                    sx={{ display: 'flex', justifyContent: 'space-between' }}
+                  >
+                    <Typography variant='body2'>ML Enhanced:</Typography>
                     <Chip
                       label={searchResults.ml_enhanced ? 'Yes' : 'No'}
                       color={searchResults.ml_enhanced ? 'success' : 'default'}
-                      size="small"
+                      size='small'
                     />
                   </Box>
-                  <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <Typography variant="body2">Processing Time:</Typography>
-                    <Typography variant="body2">
+                  <Box
+                    sx={{ display: 'flex', justifyContent: 'space-between' }}
+                  >
+                    <Typography variant='body2'>Processing Time:</Typography>
+                    <Typography variant='body2'>
                       {formatDuration(searchResults.processing_time)}
                     </Typography>
                   </Box>
@@ -246,11 +251,13 @@ const RAGEnhanced = () => {
           <Grid item xs={12} md={9}>
             <Card>
               <CardContent>
-                <Typography variant="subtitle2" gutterBottom>
+                <Typography variant='subtitle2' gutterBottom>
                   Context Summary
                 </Typography>
-                <Typography variant="body2">
-                  {searchResults.base_summary || searchResults.context_summary || 'No summary available'}
+                <Typography variant='body2'>
+                  {searchResults.base_summary ||
+                    searchResults.context_summary ||
+                    'No summary available'}
                 </Typography>
               </CardContent>
             </Card>
@@ -261,23 +268,25 @@ const RAGEnhanced = () => {
         {searchResults.ml_analysis && (
           <Card sx={{ mb: 3 }}>
             <CardContent>
-              <Typography variant="h6" gutterBottom>
+              <Typography variant='h6' gutterBottom>
                 <PsychologyIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
                 ML-Enhanced Analysis
               </Typography>
-              <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
+              <Typography variant='body2' sx={{ whiteSpace: 'pre-wrap' }}>
                 {searchResults.ml_analysis.summary}
               </Typography>
               <Box sx={{ mt: 2, display: 'flex', gap: 1, flexWrap: 'wrap' }}>
                 <Chip
                   label={`Model: ${searchResults.ml_analysis.model_used}`}
-                  size="small"
-                  variant="outlined"
+                  size='small'
+                  variant='outlined'
                 />
                 <Chip
-                  label={`Generated: ${formatDateTime(searchResults.ml_analysis.generated_at)}`}
-                  size="small"
-                  variant="outlined"
+                  label={`Generated: ${formatDateTime(
+                    searchResults.ml_analysis.generated_at,
+                  )}`}
+                  size='small'
+                  variant='outlined'
                 />
               </Box>
             </CardContent>
@@ -288,11 +297,11 @@ const RAGEnhanced = () => {
         {searchResults.argument_analysis && (
           <Card sx={{ mb: 3 }}>
             <CardContent>
-              <Typography variant="h6" gutterBottom>
+              <Typography variant='h6' gutterBottom>
                 <TrendingUpIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
                 Argument Analysis
               </Typography>
-              <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
+              <Typography variant='body2' sx={{ whiteSpace: 'pre-wrap' }}>
                 {searchResults.argument_analysis.argument_analysis}
               </Typography>
             </CardContent>
@@ -300,17 +309,18 @@ const RAGEnhanced = () => {
         )}
 
         {/* Key Insights */}
-        {searchResults.key_insights && searchResults.key_insights.length > 0 && (
+        {searchResults.key_insights &&
+          searchResults.key_insights.length > 0 && (
           <Card sx={{ mb: 3 }}>
             <CardContent>
-              <Typography variant="h6" gutterBottom>
-                Key Insights
+              <Typography variant='h6' gutterBottom>
+                  Key Insights
               </Typography>
               <List dense>
                 {searchResults.key_insights.map((insight, index) => (
                   <ListItem key={index}>
                     <ListItemIcon>
-                      <TrendingUpIcon color="primary" />
+                      <TrendingUpIcon color='primary' />
                     </ListItemIcon>
                     <ListItemText primary={insight} />
                   </ListItem>
@@ -324,7 +334,7 @@ const RAGEnhanced = () => {
         {searchResults.articles && searchResults.articles.length > 0 && (
           <Card>
             <CardContent>
-              <Typography variant="h6" gutterBottom>
+              <Typography variant='h6' gutterBottom>
                 <Article sx={{ mr: 1, verticalAlign: 'middle' }} />
                 Relevant Articles ({searchResults.articles.length})
               </Typography>
@@ -334,15 +344,21 @@ const RAGEnhanced = () => {
                     <ListItem>
                       <ListItemText
                         primary={
-                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                            <Typography variant="subtitle1">
+                          <Box
+                            sx={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 1,
+                            }}
+                          >
+                            <Typography variant='subtitle1'>
                               {article.title}
                             </Typography>
                             {article.ml_processed && (
                               <Chip
-                                label="ML Processed"
-                                color="success"
-                                size="small"
+                                label='ML Processed'
+                                color='success'
+                                size='small'
                                 icon={<PsychologyIcon />}
                               />
                             )}
@@ -350,25 +366,41 @@ const RAGEnhanced = () => {
                         }
                         secondary={
                           <Box>
-                            <Typography variant="body2" color="text.secondary">
-                              {article.summary || article.content?.substring(0, 200) + '...'}
+                            <Typography variant='body2' color='text.secondary'>
+                              {article.summary ||
+                                article.content?.substring(0, 200) + '...'}
                             </Typography>
-                            <Box sx={{ mt: 1, display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                            <Box
+                              sx={{
+                                mt: 1,
+                                display: 'flex',
+                                gap: 1,
+                                flexWrap: 'wrap',
+                              }}
+                            >
                               <Chip
                                 label={article.source}
-                                size="small"
-                                variant="outlined"
+                                size='small'
+                                variant='outlined'
                                 icon={<Source />}
                               />
                               <Chip
                                 label={formatDateTime(article.published_date)}
-                                size="small"
-                                variant="outlined"
+                                size='small'
+                                variant='outlined'
                               />
                               <Chip
-                                label={`Quality: ${(article.quality_score * 100).toFixed(0)}%`}
-                                size="small"
-                                color={article.quality_score > 0.7 ? 'success' : article.quality_score > 0.4 ? 'warning' : 'error'}
+                                label={`Quality: ${(
+                                  article.quality_score * 100
+                                ).toFixed(0)}%`}
+                                size='small'
+                                color={
+                                  article.quality_score > 0.7
+                                    ? 'success'
+                                    : article.quality_score > 0.4
+                                      ? 'warning'
+                                      : 'error'
+                                }
                               />
                             </Box>
                           </Box>
@@ -391,7 +423,7 @@ const RAGEnhanced = () => {
 
     return (
       <Box>
-        <Typography variant="h6" gutterBottom>
+        <Typography variant='h6' gutterBottom>
           Story Dossier: {dossier.story_title || dossier.story_id}
         </Typography>
 
@@ -399,25 +431,31 @@ const RAGEnhanced = () => {
           <Grid item xs={12} md={6}>
             <Card>
               <CardContent>
-                <Typography variant="subtitle2" gutterBottom>
+                <Typography variant='subtitle2' gutterBottom>
                   Dossier Statistics
                 </Typography>
                 <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                  <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <Typography variant="body2">Processing Time:</Typography>
-                    <Typography variant="body2">
+                  <Box
+                    sx={{ display: 'flex', justifyContent: 'space-between' }}
+                  >
+                    <Typography variant='body2'>Processing Time:</Typography>
+                    <Typography variant='body2'>
                       {formatDuration(dossier.processing_time)}
                     </Typography>
                   </Box>
-                  <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <Typography variant="body2">Sections:</Typography>
-                    <Typography variant="body2">
+                  <Box
+                    sx={{ display: 'flex', justifyContent: 'space-between' }}
+                  >
+                    <Typography variant='body2'>Sections:</Typography>
+                    <Typography variant='body2'>
                       {Object.keys(dossier.sections || {}).length}
                     </Typography>
                   </Box>
-                  <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <Typography variant="body2">Generated:</Typography>
-                    <Typography variant="body2">
+                  <Box
+                    sx={{ display: 'flex', justifyContent: 'space-between' }}
+                  >
+                    <Typography variant='body2'>Generated:</Typography>
+                    <Typography variant='body2'>
                       {formatDateTime(dossier.generated_at)}
                     </Typography>
                   </Box>
@@ -429,12 +467,10 @@ const RAGEnhanced = () => {
           <Grid item xs={12} md={6}>
             <Card>
               <CardContent>
-                <Typography variant="subtitle2" gutterBottom>
+                <Typography variant='subtitle2' gutterBottom>
                   Summary
                 </Typography>
-                <Typography variant="body2">
-                  {dossier.summary}
-                </Typography>
+                <Typography variant='body2'>{dossier.summary}</Typography>
               </CardContent>
             </Card>
           </Grid>
@@ -444,14 +480,14 @@ const RAGEnhanced = () => {
         {dossier.key_insights && dossier.key_insights.length > 0 && (
           <Card sx={{ mb: 3 }}>
             <CardContent>
-              <Typography variant="h6" gutterBottom>
+              <Typography variant='h6' gutterBottom>
                 Key Insights
               </Typography>
               <List dense>
                 {dossier.key_insights.map((insight, index) => (
                   <ListItem key={index}>
                     <ListItemIcon>
-                      <TrendingUpIcon color="primary" />
+                      <TrendingUpIcon color='primary' />
                     </ListItemIcon>
                     <ListItemText primary={insight} />
                   </ListItem>
@@ -464,49 +500,66 @@ const RAGEnhanced = () => {
         {/* Dossier Sections */}
         {dossier.sections && Object.keys(dossier.sections).length > 0 && (
           <Box>
-            {Object.entries(dossier.sections).map(([sectionName, sectionData]) => (
-              <Accordion key={sectionName} sx={{ mb: 2 }}>
-                <AccordionSummary expandIcon={<ExpandMore />}>
-                  <Typography variant="h6" sx={{ textTransform: 'capitalize' }}>
-                    {sectionName.replace('_', ' ')}
-                  </Typography>
-                </AccordionSummary>
-                <AccordionDetails>
-                  {sectionName === 'expert_analysis' && sectionData.analysis ? (
-                    <Box>
-                      <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
-                        {sectionData.analysis}
-                      </Typography>
-                      <Box sx={{ mt: 2, display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-                        <Chip
-                          label={`Model: ${sectionData.model_used}`}
-                          size="small"
-                          variant="outlined"
-                        />
-                        <Chip
-                          label={`Articles: ${sectionData.articles_analyzed}`}
-                          size="small"
-                          variant="outlined"
-                        />
-                      </Box>
-                    </Box>
-                  ) : sectionData.articles_found ? (
-                    <Box>
-                      <Typography variant="body2" sx={{ mb: 2 }}>
-                        {sectionData.base_summary || sectionData.context_summary}
-                      </Typography>
-                      <Typography variant="subtitle2">
-                        Found {sectionData.articles_found} articles
-                      </Typography>
-                    </Box>
-                  ) : (
-                    <Typography variant="body2">
-                      {JSON.stringify(sectionData, null, 2)}
+            {Object.entries(dossier.sections).map(
+              ([sectionName, sectionData]) => (
+                <Accordion key={sectionName} sx={{ mb: 2 }}>
+                  <AccordionSummary expandIcon={<ExpandMore />}>
+                    <Typography
+                      variant='h6'
+                      sx={{ textTransform: 'capitalize' }}
+                    >
+                      {sectionName.replace('_', ' ')}
                     </Typography>
-                  )}
-                </AccordionDetails>
-              </Accordion>
-            ))}
+                  </AccordionSummary>
+                  <AccordionDetails>
+                    {sectionName === 'expert_analysis' &&
+                    sectionData.analysis ? (
+                        <Box>
+                          <Typography
+                            variant='body2'
+                            sx={{ whiteSpace: 'pre-wrap' }}
+                          >
+                            {sectionData.analysis}
+                          </Typography>
+                          <Box
+                            sx={{
+                              mt: 2,
+                              display: 'flex',
+                              gap: 1,
+                              flexWrap: 'wrap',
+                            }}
+                          >
+                            <Chip
+                              label={`Model: ${sectionData.model_used}`}
+                              size='small'
+                              variant='outlined'
+                            />
+                            <Chip
+                              label={`Articles: ${sectionData.articles_analyzed}`}
+                              size='small'
+                              variant='outlined'
+                            />
+                          </Box>
+                        </Box>
+                      ) : sectionData.articles_found ? (
+                        <Box>
+                          <Typography variant='body2' sx={{ mb: 2 }}>
+                            {sectionData.base_summary ||
+                            sectionData.context_summary}
+                          </Typography>
+                          <Typography variant='subtitle2'>
+                          Found {sectionData.articles_found} articles
+                          </Typography>
+                        </Box>
+                      ) : (
+                        <Typography variant='body2'>
+                          {JSON.stringify(sectionData, null, 2)}
+                        </Typography>
+                      )}
+                  </AccordionDetails>
+                </Accordion>
+              ),
+            )}
           </Box>
         )}
       </Box>
@@ -515,12 +568,19 @@ const RAGEnhanced = () => {
 
   return (
     <Box sx={{ p: 3 }}>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
-        <Typography variant="h4" component="h1">
+      <Box
+        sx={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          mb: 3,
+        }}
+      >
+        <Typography variant='h4' component='h1'>
           RAG Enhanced Intelligence
         </Typography>
         <Box sx={{ display: 'flex', gap: 1 }}>
-          <Tooltip title="Refresh Statistics">
+          <Tooltip title='Refresh Statistics'>
             <IconButton onClick={loadRAGStatistics}>
               <Refresh />
             </IconButton>
@@ -529,7 +589,7 @@ const RAGEnhanced = () => {
       </Box>
 
       {error && (
-        <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
+        <Alert severity='error' sx={{ mb: 2 }} onClose={() => setError(null)}>
           {error}
         </Alert>
       )}
@@ -538,40 +598,40 @@ const RAGEnhanced = () => {
       {ragStats && (
         <Card sx={{ mb: 3 }}>
           <CardContent>
-            <Typography variant="h6" gutterBottom>
+            <Typography variant='h6' gutterBottom>
               RAG Service Statistics
             </Typography>
             <Grid container spacing={2}>
               <Grid item xs={12} sm={6} md={3}>
                 <Box sx={{ textAlign: 'center' }}>
-                  <Typography variant="h4" color="primary">
+                  <Typography variant='h4' color='primary'>
                     {ragStats.total_requests}
                   </Typography>
-                  <Typography variant="body2">Total Requests</Typography>
+                  <Typography variant='body2'>Total Requests</Typography>
                 </Box>
               </Grid>
               <Grid item xs={12} sm={6} md={3}>
                 <Box sx={{ textAlign: 'center' }}>
-                  <Typography variant="h4" color="success.main">
+                  <Typography variant='h4' color='success.main'>
                     {ragStats.ml_enhanced_requests}
                   </Typography>
-                  <Typography variant="body2">ML Enhanced</Typography>
+                  <Typography variant='body2'>ML Enhanced</Typography>
                 </Box>
               </Grid>
               <Grid item xs={12} sm={6} md={3}>
                 <Box sx={{ textAlign: 'center' }}>
-                  <Typography variant="h4" color="info.main">
+                  <Typography variant='h4' color='info.main'>
                     {formatDuration(ragStats.avg_processing_time)}
                   </Typography>
-                  <Typography variant="body2">Avg Processing Time</Typography>
+                  <Typography variant='body2'>Avg Processing Time</Typography>
                 </Box>
               </Grid>
               <Grid item xs={12} sm={6} md={3}>
                 <Box sx={{ textAlign: 'center' }}>
-                  <Typography variant="h4" color="warning.main">
+                  <Typography variant='h4' color='warning.main'>
                     {(ragStats.success_rate * 100).toFixed(1)}%
                   </Typography>
-                  <Typography variant="body2">Success Rate</Typography>
+                  <Typography variant='body2'>Success Rate</Typography>
                 </Box>
               </Grid>
             </Grid>
@@ -580,28 +640,31 @@ const RAGEnhanced = () => {
       )}
 
       <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}>
-        <Tabs value={activeTab} onChange={(e, newValue) => setActiveTab(newValue)}>
-          <Tab label="RAG Search" icon={<Search />} />
-          <Tab label="Story Dossier" icon={<Bookmark />} />
-          <Tab label="Comprehensive Research" icon={<AutoAwesomeIcon />} />
+        <Tabs
+          value={activeTab}
+          onChange={(e, newValue) => setActiveTab(newValue)}
+        >
+          <Tab label='RAG Search' icon={<Search />} />
+          <Tab label='Story Dossier' icon={<Bookmark />} />
+          <Tab label='Comprehensive Research' icon={<AutoAwesomeIcon />} />
         </Tabs>
       </Box>
 
       <TabPanel value={activeTab} index={0}>
         <Card sx={{ mb: 3 }}>
           <CardContent>
-            <Typography variant="h6" gutterBottom>
+            <Typography variant='h6' gutterBottom>
               Enhanced RAG Search
             </Typography>
-            <Grid container spacing={2} alignItems="center">
+            <Grid container spacing={2} alignItems='center'>
               <Grid item xs={12} md={4}>
                 <TextField
                   fullWidth
-                  label="Search Query"
+                  label='Search Query'
                   value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Enter your search query..."
-                  variant="outlined"
+                  onChange={e => setSearchQuery(e.target.value)}
+                  placeholder='Enter your search query...'
+                  variant='outlined'
                 />
               </Grid>
               <Grid item xs={12} md={2}>
@@ -609,33 +672,35 @@ const RAGEnhanced = () => {
                   <InputLabel>Search Type</InputLabel>
                   <Select
                     value={searchType}
-                    onChange={(e) => setSearchType(e.target.value)}
-                    label="Search Type"
+                    onChange={e => setSearchType(e.target.value)}
+                    label='Search Type'
                   >
-                    <MenuItem value="comprehensive">Comprehensive</MenuItem>
-                    <MenuItem value="historical">Historical</MenuItem>
-                    <MenuItem value="related">Related</MenuItem>
-                    <MenuItem value="expert">Expert Analysis</MenuItem>
+                    <MenuItem value='comprehensive'>Comprehensive</MenuItem>
+                    <MenuItem value='historical'>Historical</MenuItem>
+                    <MenuItem value='related'>Related</MenuItem>
+                    <MenuItem value='expert'>Expert Analysis</MenuItem>
                   </Select>
                 </FormControl>
               </Grid>
               <Grid item xs={12} md={2}>
                 <TextField
                   fullWidth
-                  label="Max Results"
-                  type="number"
+                  label='Max Results'
+                  type='number'
                   value={maxResults}
-                  onChange={(e) => setMaxResults(parseInt(e.target.value) || 20)}
+                  onChange={e => setMaxResults(parseInt(e.target.value) || 20)}
                   inputProps={{ min: 1, max: 50 }}
                 />
               </Grid>
               <Grid item xs={12} md={2}>
                 <Button
                   fullWidth
-                  variant="contained"
+                  variant='contained'
                   onClick={handleRAGSearch}
                   disabled={loading}
-                  startIcon={loading ? <CircularProgress size={20} /> : <Search />}
+                  startIcon={
+                    loading ? <CircularProgress size={20} /> : <Search />
+                  }
                 >
                   {loading ? 'Searching...' : 'Search'}
                 </Button>
@@ -650,37 +715,39 @@ const RAGEnhanced = () => {
       <TabPanel value={activeTab} index={1}>
         <Card sx={{ mb: 3 }}>
           <CardContent>
-            <Typography variant="h6" gutterBottom>
+            <Typography variant='h6' gutterBottom>
               Build Story Dossier
             </Typography>
-            <Grid container spacing={2} alignItems="center">
+            <Grid container spacing={2} alignItems='center'>
               <Grid item xs={12} md={4}>
                 <TextField
                   fullWidth
-                  label="Story ID"
+                  label='Story ID'
                   value={storyId}
-                  onChange={(e) => setStoryId(e.target.value)}
-                  placeholder="Enter story identifier..."
-                  variant="outlined"
+                  onChange={e => setStoryId(e.target.value)}
+                  placeholder='Enter story identifier...'
+                  variant='outlined'
                 />
               </Grid>
               <Grid item xs={12} md={4}>
                 <TextField
                   fullWidth
-                  label="Story Title (Optional)"
+                  label='Story Title (Optional)'
                   value={storyTitle}
-                  onChange={(e) => setStoryTitle(e.target.value)}
-                  placeholder="Enter story title..."
-                  variant="outlined"
+                  onChange={e => setStoryTitle(e.target.value)}
+                  placeholder='Enter story title...'
+                  variant='outlined'
                 />
               </Grid>
               <Grid item xs={12} md={4}>
                 <Button
                   fullWidth
-                  variant="contained"
+                  variant='contained'
                   onClick={handleBuildDossier}
                   disabled={loading}
-                  startIcon={loading ? <CircularProgress size={20} /> : <Bookmark />}
+                  startIcon={
+                    loading ? <CircularProgress size={20} /> : <Bookmark />
+                  }
                 >
                   {loading ? 'Building...' : 'Build Dossier'}
                 </Button>
@@ -695,37 +762,43 @@ const RAGEnhanced = () => {
       <TabPanel value={activeTab} index={2}>
         <Card sx={{ mb: 3 }}>
           <CardContent>
-            <Typography variant="h6" gutterBottom>
+            <Typography variant='h6' gutterBottom>
               Comprehensive Research with External Sources
             </Typography>
-            <Grid container spacing={2} alignItems="center">
+            <Grid container spacing={2} alignItems='center'>
               <Grid item xs={12} md={4}>
                 <TextField
                   fullWidth
-                  label="Research Query"
+                  label='Research Query'
                   value={researchQuery}
-                  onChange={(e) => setResearchQuery(e.target.value)}
-                  placeholder="Enter your research topic..."
-                  variant="outlined"
+                  onChange={e => setResearchQuery(e.target.value)}
+                  placeholder='Enter your research topic...'
+                  variant='outlined'
                 />
               </Grid>
               <Grid item xs={12} md={4}>
                 <TextField
                   fullWidth
-                  label="Story Keywords (comma-separated)"
+                  label='Story Keywords (comma-separated)'
                   value={storyKeywords}
-                  onChange={(e) => setStoryKeywords(e.target.value)}
-                  placeholder="tech, AI, innovation..."
-                  variant="outlined"
+                  onChange={e => setStoryKeywords(e.target.value)}
+                  placeholder='tech, AI, innovation...'
+                  variant='outlined'
                 />
               </Grid>
               <Grid item xs={12} md={4}>
                 <Button
                   fullWidth
-                  variant="contained"
+                  variant='contained'
                   onClick={handleComprehensiveResearch}
                   disabled={loading}
-                  startIcon={loading ? <CircularProgress size={20} /> : <AutoAwesomeIcon />}
+                  startIcon={
+                    loading ? (
+                      <CircularProgress size={20} />
+                    ) : (
+                      <AutoAwesomeIcon />
+                    )
+                  }
                 >
                   {loading ? 'Researching...' : 'Start Research'}
                 </Button>
@@ -738,27 +811,31 @@ const RAGEnhanced = () => {
         {externalServicesStatus && (
           <Card sx={{ mb: 3 }}>
             <CardContent>
-              <Typography variant="h6" gutterBottom>
+              <Typography variant='h6' gutterBottom>
                 External Services Status
               </Typography>
               <Grid container spacing={2}>
-                {Object.entries(externalServicesStatus).map(([service, status]) => (
-                  <Grid item xs={12} sm={6} md={4} key={service}>
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                      <Chip
-                        label={service.replace('_', ' ').toUpperCase()}
-                        color={status.available ? 'success' : 'default'}
-                        size="small"
-                      />
-                      <Typography variant="body2">
-                        {status.available ? 'Available' : 'Not Available'}
+                {Object.entries(externalServicesStatus).map(
+                  ([service, status]) => (
+                    <Grid item xs={12} sm={6} md={4} key={service}>
+                      <Box
+                        sx={{ display: 'flex', alignItems: 'center', gap: 1 }}
+                      >
+                        <Chip
+                          label={service.replace('_', ' ').toUpperCase()}
+                          color={status.available ? 'success' : 'default'}
+                          size='small'
+                        />
+                        <Typography variant='body2'>
+                          {status.available ? 'Available' : 'Not Available'}
+                        </Typography>
+                      </Box>
+                      <Typography variant='caption' color='text.secondary'>
+                        {status.description}
                       </Typography>
-                    </Box>
-                    <Typography variant="caption" color="text.secondary">
-                      {status.description}
-                    </Typography>
-                  </Grid>
-                ))}
+                    </Grid>
+                  ),
+                )}
               </Grid>
             </CardContent>
           </Card>
@@ -767,105 +844,134 @@ const RAGEnhanced = () => {
         {/* Comprehensive Research Results */}
         {comprehensiveResearch && (
           <Box>
-            <Typography variant="h6" gutterBottom>
+            <Typography variant='h6' gutterBottom>
               Research Results for: "{comprehensiveResearch.query}"
             </Typography>
 
             {/* Summary */}
             <Card sx={{ mb: 3 }}>
               <CardContent>
-                <Typography variant="subtitle2" gutterBottom>
+                <Typography variant='subtitle2' gutterBottom>
                   Comprehensive Summary
                 </Typography>
-                <Typography variant="body2">
+                <Typography variant='body2'>
                   {comprehensiveResearch.comprehensive_summary}
                 </Typography>
                 <Box sx={{ mt: 2, display: 'flex', gap: 1, flexWrap: 'wrap' }}>
                   <Chip
-                    label={`Processing Time: ${formatDuration(comprehensiveResearch.processing_time)}`}
-                    size="small"
-                    variant="outlined"
+                    label={`Processing Time: ${formatDuration(
+                      comprehensiveResearch.processing_time,
+                    )}`}
+                    size='small'
+                    variant='outlined'
                   />
                   <Chip
                     label={`Sources: ${comprehensiveResearch.total_sources}`}
-                    size="small"
-                    variant="outlined"
+                    size='small'
+                    variant='outlined'
                   />
                   <Chip
-                    label={`Generated: ${formatDateTime(comprehensiveResearch.generated_at)}`}
-                    size="small"
-                    variant="outlined"
+                    label={`Generated: ${formatDateTime(
+                      comprehensiveResearch.generated_at,
+                    )}`}
+                    size='small'
+                    variant='outlined'
                   />
                 </Box>
               </CardContent>
             </Card>
 
             {/* Sources */}
-            {comprehensiveResearch.sources && Object.keys(comprehensiveResearch.sources).length > 0 && (
+            {comprehensiveResearch.sources &&
+              Object.keys(comprehensiveResearch.sources).length > 0 && (
               <Box>
-                {Object.entries(comprehensiveResearch.sources).map(([sourceName, sourceData]) => (
-                  <Accordion key={sourceName} sx={{ mb: 2 }}>
-                    <AccordionSummary expandIcon={<ExpandMore />}>
-                      <Typography variant="h6" sx={{ textTransform: 'capitalize' }}>
-                        {sourceName.replace('_', ' ')} ({sourceData.count || 'N/A'})
-                      </Typography>
-                    </AccordionSummary>
-                    <AccordionDetails>
-                      {sourceName === 'internal_database' ? (
-                        <Box>
-                          <Typography variant="body2" sx={{ mb: 2 }}>
-                            {sourceData.summary}
-                          </Typography>
-                          <Typography variant="subtitle2">
-                            Found {sourceData.count} articles in internal database
-                          </Typography>
-                        </Box>
-                      ) : sourceName === 'external_services' ? (
-                        <Box>
-                          {sourceData.sources && Object.keys(sourceData.sources).length > 0 && (
-                            <Box>
-                              {Object.entries(sourceData.sources).map(([service, serviceData]) => (
-                                <Box key={service} sx={{ mb: 2 }}>
-                                  <Typography variant="subtitle2" sx={{ textTransform: 'capitalize' }}>
-                                    {service} ({serviceData.count} items)
-                                  </Typography>
-                                  {service === 'wikipedia' && serviceData.articles && (
-                                    <List dense>
-                                      {serviceData.articles.slice(0, 3).map((article, index) => (
-                                        <ListItem key={index}>
-                                          <ListItemText
-                                            primary={article.title}
-                                            secondary={article.snippet}
-                                          />
-                                        </ListItem>
-                                      ))}
-                                    </List>
-                                  )}
-                                  {service === 'newsapi' && serviceData.articles && (
-                                    <List dense>
-                                      {serviceData.articles.slice(0, 3).map((article, index) => (
-                                        <ListItem key={index}>
-                                          <ListItemText
-                                            primary={article.title}
-                                            secondary={article.description}
-                                          />
-                                        </ListItem>
-                                      ))}
-                                    </List>
-                                  )}
-                                </Box>
-                              ))}
-                            </Box>
-                          )}
-                        </Box>
-                      ) : (
-                        <Typography variant="body2">
-                          {JSON.stringify(sourceData, null, 2)}
+                {Object.entries(comprehensiveResearch.sources).map(
+                  ([sourceName, sourceData]) => (
+                    <Accordion key={sourceName} sx={{ mb: 2 }}>
+                      <AccordionSummary expandIcon={<ExpandMore />}>
+                        <Typography
+                          variant='h6'
+                          sx={{ textTransform: 'capitalize' }}
+                        >
+                          {sourceName.replace('_', ' ')} (
+                          {sourceData.count || 'N/A'})
                         </Typography>
-                      )}
-                    </AccordionDetails>
-                  </Accordion>
-                ))}
+                      </AccordionSummary>
+                      <AccordionDetails>
+                        {sourceName === 'internal_database' ? (
+                          <Box>
+                            <Typography variant='body2' sx={{ mb: 2 }}>
+                              {sourceData.summary}
+                            </Typography>
+                            <Typography variant='subtitle2'>
+                                Found {sourceData.count} articles in internal
+                                database
+                            </Typography>
+                          </Box>
+                        ) : sourceName === 'external_services' ? (
+                          <Box>
+                            {sourceData.sources &&
+                                Object.keys(sourceData.sources).length > 0 && (
+                              <Box>
+                                {Object.entries(sourceData.sources).map(
+                                  ([service, serviceData]) => (
+                                    <Box key={service} sx={{ mb: 2 }}>
+                                      <Typography
+                                        variant='subtitle2'
+                                        sx={{ textTransform: 'capitalize' }}
+                                      >
+                                        {service} ({serviceData.count}{' '}
+                                            items)
+                                      </Typography>
+                                      {service === 'wikipedia' &&
+                                            serviceData.articles && (
+                                        <List dense>
+                                          {serviceData.articles
+                                            .slice(0, 3)
+                                            .map((article, index) => (
+                                              <ListItem key={index}>
+                                                <ListItemText
+                                                  primary={article.title}
+                                                  secondary={
+                                                    article.snippet
+                                                  }
+                                                />
+                                              </ListItem>
+                                            ))}
+                                        </List>
+                                      )}
+                                      {service === 'newsapi' &&
+                                            serviceData.articles && (
+                                        <List dense>
+                                          {serviceData.articles
+                                            .slice(0, 3)
+                                            .map((article, index) => (
+                                              <ListItem key={index}>
+                                                <ListItemText
+                                                  primary={article.title}
+                                                  secondary={
+                                                    article.description
+                                                  }
+                                                />
+                                              </ListItem>
+                                            ))}
+                                        </List>
+                                      )}
+                                    </Box>
+                                  ),
+                                )}
+                              </Box>
+                            )}
+                          </Box>
+                        ) : (
+                          <Typography variant='body2'>
+                            {JSON.stringify(sourceData, null, 2)}
+                          </Typography>
+                        )}
+                      </AccordionDetails>
+                    </Accordion>
+                  ),
+                )}
               </Box>
             )}
 
@@ -873,11 +979,11 @@ const RAGEnhanced = () => {
             {comprehensiveResearch.ml_analysis && (
               <Card sx={{ mb: 3 }}>
                 <CardContent>
-                  <Typography variant="h6" gutterBottom>
+                  <Typography variant='h6' gutterBottom>
                     <PsychologyIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
                     ML-Enhanced Analysis
                   </Typography>
-                  <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
+                  <Typography variant='body2' sx={{ whiteSpace: 'pre-wrap' }}>
                     {comprehensiveResearch.ml_analysis.summary}
                   </Typography>
                 </CardContent>
@@ -885,21 +991,24 @@ const RAGEnhanced = () => {
             )}
 
             {/* Key Insights */}
-            {comprehensiveResearch.key_insights && comprehensiveResearch.key_insights.length > 0 && (
+            {comprehensiveResearch.key_insights &&
+              comprehensiveResearch.key_insights.length > 0 && (
               <Card>
                 <CardContent>
-                  <Typography variant="h6" gutterBottom>
-                    Key Insights
+                  <Typography variant='h6' gutterBottom>
+                      Key Insights
                   </Typography>
                   <List dense>
-                    {comprehensiveResearch.key_insights.map((insight, index) => (
-                      <ListItem key={index}>
-                        <ListItemIcon>
-                          <TrendingUpIcon color="primary" />
-                        </ListItemIcon>
-                        <ListItemText primary={insight} />
-                      </ListItem>
-                    ))}
+                    {comprehensiveResearch.key_insights.map(
+                      (insight, index) => (
+                        <ListItem key={index}>
+                          <ListItemIcon>
+                            <TrendingUpIcon color='primary' />
+                          </ListItemIcon>
+                          <ListItemText primary={insight} />
+                        </ListItem>
+                      ),
+                    )}
                   </List>
                 </CardContent>
               </Card>

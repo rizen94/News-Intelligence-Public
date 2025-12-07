@@ -138,7 +138,9 @@ const StoryControlDashboard = () => {
 
       showLoading('Creating story...', 'Story Creation');
 
-      const response = await newsSystemService.createStoryExpectation(storyForm);
+      const response = await newsSystemService.createStoryExpectation(
+        storyForm,
+      );
 
       showSuccess('Story created successfully!', 'Story Created');
 
@@ -157,17 +159,27 @@ const StoryControlDashboard = () => {
     try {
       setButtonLoading(prev => ({ ...prev, ukraine: true }));
 
-      showLoading('Creating Ukraine-Russia conflict story...', 'Story Creation');
+      showLoading(
+        'Creating Ukraine-Russia conflict story...',
+        'Story Creation',
+      );
 
-      const response = await newsSystemService.createUkraineRussiaConflictStory();
+      const response =
+        await newsSystemService.createUkraineRussiaConflictStory();
 
-      showSuccess('Ukraine-Russia conflict story created successfully!', 'Story Created');
+      showSuccess(
+        'Ukraine-Russia conflict story created successfully!',
+        'Story Created',
+      );
 
       setShowUkraineDialog(false);
       await fetchStories();
     } catch (err) {
       console.error('Error creating Ukraine story:', err);
-      showError(`Failed to create Ukraine story: ${err.message}`, 'Creation Error');
+      showError(
+        `Failed to create Ukraine story: ${err.message}`,
+        'Creation Error',
+      );
     } finally {
       setButtonLoading(prev => ({ ...prev, ukraine: false }));
     }
@@ -181,7 +193,10 @@ const StoryControlDashboard = () => {
 
       await newsSystemService.startFeedbackLoop();
 
-      showSuccess('Feedback loop started successfully!', 'Feedback Loop Started');
+      showSuccess(
+        'Feedback loop started successfully!',
+        'Feedback Loop Started',
+      );
 
       await fetchFeedbackLoopStatus();
     } catch (err) {
@@ -200,7 +215,10 @@ const StoryControlDashboard = () => {
 
       await newsSystemService.stopFeedbackLoop();
 
-      showSuccess('Feedback loop stopped successfully!', 'Feedback Loop Stopped');
+      showSuccess(
+        'Feedback loop stopped successfully!',
+        'Feedback Loop Stopped',
+      );
 
       await fetchFeedbackLoopStatus();
     } catch (err) {
@@ -224,7 +242,10 @@ const StoryControlDashboard = () => {
       await fetchWeeklyDigest();
     } catch (err) {
       console.error('Error generating digest:', err);
-      showError(`Failed to generate digest: ${err.message}`, 'Generation Error');
+      showError(
+        `Failed to generate digest: ${err.message}`,
+        'Generation Error',
+      );
     } finally {
       setButtonLoading(prev => ({ ...prev, digest: false }));
     }
@@ -274,35 +295,35 @@ const StoryControlDashboard = () => {
     }
   };
 
-  const removeKeyword = (index) => {
+  const removeKeyword = index => {
     setStoryForm(prev => ({
       ...prev,
       keywords: prev.keywords.filter((_, i) => i !== index),
     }));
   };
 
-  const removeEntity = (index) => {
+  const removeEntity = index => {
     setStoryForm(prev => ({
       ...prev,
       entities: prev.entities.filter((_, i) => i !== index),
     }));
   };
 
-  const removeRegion = (index) => {
+  const removeRegion = index => {
     setStoryForm(prev => ({
       ...prev,
       geographic_regions: prev.geographic_regions.filter((_, i) => i !== index),
     }));
   };
 
-  const getPriorityColor = (priority) => {
+  const getPriorityColor = priority => {
     if (priority >= 8) return 'error';
     if (priority >= 6) return 'warning';
     if (priority >= 4) return 'info';
     return 'success';
   };
 
-  const getPriorityLabel = (priority) => {
+  const getPriorityLabel = priority => {
     if (priority >= 8) return 'Critical';
     if (priority >= 6) return 'High';
     if (priority >= 4) return 'Medium';
@@ -311,7 +332,12 @@ const StoryControlDashboard = () => {
 
   if (loading) {
     return (
-      <Box display="flex" justifyContent="center" alignItems="center" minHeight="400px">
+      <Box
+        display='flex'
+        justifyContent='center'
+        alignItems='center'
+        minHeight='400px'
+      >
         <CircularProgress />
       </Box>
     );
@@ -319,11 +345,14 @@ const StoryControlDashboard = () => {
 
   if (error) {
     return (
-      <Alert severity="error" action={
-        <Button color="inherit" size="small" onClick={fetchStories}>
-          Retry
-        </Button>
-      }>
+      <Alert
+        severity='error'
+        action={
+          <Button color='inherit' size='small' onClick={fetchStories}>
+            Retry
+          </Button>
+        }
+      >
         Error loading story control dashboard: {error}
       </Alert>
     );
@@ -332,13 +361,18 @@ const StoryControlDashboard = () => {
   return (
     <Box sx={{ p: 3 }}>
       {/* Header */}
-      <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
-        <Typography variant="h4" component="h1">
+      <Box
+        display='flex'
+        justifyContent='space-between'
+        alignItems='center'
+        mb={3}
+      >
+        <Typography variant='h4' component='h1'>
           Story Control Dashboard
         </Typography>
-        <Box display="flex" gap={2}>
+        <Box display='flex' gap={2}>
           <Button
-            variant="outlined"
+            variant='outlined'
             startIcon={<Refresh />}
             onClick={fetchStories}
             disabled={loading}
@@ -346,15 +380,15 @@ const StoryControlDashboard = () => {
             Refresh
           </Button>
           <Button
-            variant="contained"
+            variant='contained'
             startIcon={<Add />}
             onClick={() => setShowCreateDialog(true)}
           >
             Create Story
           </Button>
           <Button
-            variant="contained"
-            color="secondary"
+            variant='contained'
+            color='secondary'
             startIcon={<AutoAwesomeIcon />}
             onClick={() => setShowUkraineDialog(true)}
           >
@@ -367,13 +401,13 @@ const StoryControlDashboard = () => {
       {feedbackLoopStatus && (
         <Card sx={{ mb: 3 }}>
           <CardHeader
-            title="Feedback Loop Status"
+            title='Feedback Loop Status'
             action={
-              <Box display="flex" gap={1}>
+              <Box display='flex' gap={1}>
                 {feedbackLoopStatus.is_running ? (
                   <Button
-                    variant="outlined"
-                    color="error"
+                    variant='outlined'
+                    color='error'
                     startIcon={<StopIcon />}
                     onClick={handleStopFeedbackLoop}
                     disabled={buttonLoading.stop}
@@ -382,8 +416,8 @@ const StoryControlDashboard = () => {
                   </Button>
                 ) : (
                   <Button
-                    variant="outlined"
-                    color="success"
+                    variant='outlined'
+                    color='success'
                     startIcon={<PlayIcon />}
                     onClick={handleStartFeedbackLoop}
                     disabled={buttonLoading.start}
@@ -397,41 +431,48 @@ const StoryControlDashboard = () => {
           <CardContent>
             <Grid container spacing={2}>
               <Grid item xs={12} md={3}>
-                <Box textAlign="center">
-                  <Typography variant="h6" color={feedbackLoopStatus.is_running ? 'success.main' : 'error.main'}>
+                <Box textAlign='center'>
+                  <Typography
+                    variant='h6'
+                    color={
+                      feedbackLoopStatus.is_running
+                        ? 'success.main'
+                        : 'error.main'
+                    }
+                  >
                     {feedbackLoopStatus.is_running ? 'Running' : 'Stopped'}
                   </Typography>
-                  <Typography variant="body2" color="textSecondary">
+                  <Typography variant='body2' color='textSecondary'>
                     Status
                   </Typography>
                 </Box>
               </Grid>
               <Grid item xs={12} md={3}>
-                <Box textAlign="center">
-                  <Typography variant="h6">
+                <Box textAlign='center'>
+                  <Typography variant='h6'>
                     {feedbackLoopStatus.stories_being_tracked}
                   </Typography>
-                  <Typography variant="body2" color="textSecondary">
+                  <Typography variant='body2' color='textSecondary'>
                     Stories Tracked
                   </Typography>
                 </Box>
               </Grid>
               <Grid item xs={12} md={3}>
-                <Box textAlign="center">
-                  <Typography variant="h6">
+                <Box textAlign='center'>
+                  <Typography variant='h6'>
                     {feedbackLoopStatus.articles_processed_today}
                   </Typography>
-                  <Typography variant="body2" color="textSecondary">
+                  <Typography variant='body2' color='textSecondary'>
                     Articles Today
                   </Typography>
                 </Box>
               </Grid>
               <Grid item xs={12} md={3}>
-                <Box textAlign="center">
-                  <Typography variant="h6">
+                <Box textAlign='center'>
+                  <Typography variant='h6'>
                     {feedbackLoopStatus.rag_enhancements_triggered}
                   </Typography>
-                  <Typography variant="body2" color="textSecondary">
+                  <Typography variant='body2' color='textSecondary'>
                     RAG Enhancements
                   </Typography>
                 </Box>
@@ -445,10 +486,10 @@ const StoryControlDashboard = () => {
       {weeklyDigest && (
         <Card sx={{ mb: 3 }}>
           <CardHeader
-            title="Weekly Digest"
+            title='Weekly Digest'
             action={
               <Button
-                variant="outlined"
+                variant='outlined'
                 startIcon={<AssessmentIcon />}
                 onClick={handleGenerateDigest}
                 disabled={buttonLoading.digest}
@@ -460,26 +501,26 @@ const StoryControlDashboard = () => {
           <CardContent>
             <Grid container spacing={2}>
               <Grid item xs={12} md={4}>
-                <Typography variant="h6">
+                <Typography variant='h6'>
                   {weeklyDigest.total_articles_analyzed}
                 </Typography>
-                <Typography variant="body2" color="textSecondary">
+                <Typography variant='body2' color='textSecondary'>
                   Articles Analyzed
                 </Typography>
               </Grid>
               <Grid item xs={12} md={4}>
-                <Typography variant="h6">
+                <Typography variant='h6'>
                   {weeklyDigest.new_stories_suggested}
                 </Typography>
-                <Typography variant="body2" color="textSecondary">
+                <Typography variant='body2' color='textSecondary'>
                   New Stories Suggested
                 </Typography>
               </Grid>
               <Grid item xs={12} md={4}>
-                <Typography variant="h6">
+                <Typography variant='h6'>
                   {weeklyDigest.story_suggestions.length}
                 </Typography>
-                <Typography variant="body2" color="textSecondary">
+                <Typography variant='body2' color='textSecondary'>
                   Story Suggestions
                 </Typography>
               </Grid>
@@ -490,14 +531,14 @@ const StoryControlDashboard = () => {
 
       {/* Stories List */}
       <Card>
-        <CardHeader title="Active Stories" />
+        <CardHeader title='Active Stories' />
         <CardContent>
           {stories.length === 0 ? (
-            <Box textAlign="center" py={4}>
-              <Typography variant="h6" color="textSecondary">
+            <Box textAlign='center' py={4}>
+              <Typography variant='h6' color='textSecondary'>
                 No stories configured yet
               </Typography>
-              <Typography variant="body2" color="textSecondary" sx={{ mt: 1 }}>
+              <Typography variant='body2' color='textSecondary' sx={{ mt: 1 }}>
                 Create your first story to start tracking
               </Typography>
             </Box>
@@ -515,14 +556,14 @@ const StoryControlDashboard = () => {
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {stories.map((story) => (
+                  {stories.map(story => (
                     <TableRow key={story.story_id}>
                       <TableCell>
                         <Box>
-                          <Typography variant="subtitle1">
+                          <Typography variant='subtitle1'>
                             {story.name}
                           </Typography>
-                          <Typography variant="body2" color="textSecondary">
+                          <Typography variant='body2' color='textSecondary'>
                             {story.description}
                           </Typography>
                         </Box>
@@ -531,64 +572,70 @@ const StoryControlDashboard = () => {
                         <Chip
                           label={getPriorityLabel(story.priority_level)}
                           color={getPriorityColor(story.priority_level)}
-                          size="small"
+                          size='small'
                         />
                       </TableCell>
                       <TableCell>
-                        <Box display="flex" flexWrap="wrap" gap={0.5}>
+                        <Box display='flex' flexWrap='wrap' gap={0.5}>
                           {story.keywords.slice(0, 3).map((keyword, index) => (
                             <Chip
                               key={index}
                               label={keyword}
-                              size="small"
-                              variant="outlined"
+                              size='small'
+                              variant='outlined'
                             />
                           ))}
                           {story.keywords.length > 3 && (
                             <Chip
                               label={`+${story.keywords.length - 3}`}
-                              size="small"
-                              variant="outlined"
+                              size='small'
+                              variant='outlined'
                             />
                           )}
                         </Box>
                       </TableCell>
                       <TableCell>
-                        <Box display="flex" flexWrap="wrap" gap={0.5}>
+                        <Box display='flex' flexWrap='wrap' gap={0.5}>
                           {story.entities.slice(0, 2).map((entity, index) => (
                             <Chip
                               key={index}
                               label={entity}
-                              size="small"
-                              variant="outlined"
+                              size='small'
+                              variant='outlined'
                             />
                           ))}
                           {story.entities.length > 2 && (
                             <Chip
                               label={`+${story.entities.length - 2}`}
-                              size="small"
-                              variant="outlined"
+                              size='small'
+                              variant='outlined'
                             />
                           )}
                         </Box>
                       </TableCell>
                       <TableCell>
                         <Chip
-                          icon={story.auto_enhance ? <CheckCircleIcon /> : <ErrorIcon />}
+                          icon={
+                            story.auto_enhance ? (
+                              <CheckCircleIcon />
+                            ) : (
+                              <ErrorIcon />
+                            )
+                          }
                           label={story.auto_enhance ? 'Enabled' : 'Disabled'}
                           color={story.auto_enhance ? 'success' : 'error'}
-                          size="small"
+                          size='small'
                         />
                       </TableCell>
                       <TableCell>
-                        <Box display="flex" gap={1}>
-                          <Tooltip title="Edit Story">
-                            <IconButton size="small">
+                        <Box display='flex' gap={1}>
+                          <Tooltip title='Edit Story'>
+                            <IconButton size='small'>
                               <Edit />
                             </IconButton>
                           </Tooltip>
-                          <Tooltip title="Delete Story">
-                            <IconButton size="small" color="error">
+                          <Tooltip title='Delete Story'>
+                            <IconButton size='small' color='error'>
                               <Delete />
                             </IconButton>
                           </Tooltip>
@@ -607,7 +654,7 @@ const StoryControlDashboard = () => {
       <Dialog
         open={showCreateDialog}
         onClose={() => setShowCreateDialog(false)}
-        maxWidth="md"
+        maxWidth='md'
         fullWidth
       >
         <DialogTitle>Create New Story</DialogTitle>
@@ -617,19 +664,26 @@ const StoryControlDashboard = () => {
               <Grid item xs={12}>
                 <TextField
                   fullWidth
-                  label="Story Name"
+                  label='Story Name'
                   value={storyForm.name}
-                  onChange={(e) => setStoryForm(prev => ({ ...prev, name: e.target.value }))}
+                  onChange={e =>
+                    setStoryForm(prev => ({ ...prev, name: e.target.value }))
+                  }
                 />
               </Grid>
               <Grid item xs={12}>
                 <TextField
                   fullWidth
-                  label="Description"
+                  label='Description'
                   multiline
                   rows={3}
                   value={storyForm.description}
-                  onChange={(e) => setStoryForm(prev => ({ ...prev, description: e.target.value }))}
+                  onChange={e =>
+                    setStoryForm(prev => ({
+                      ...prev,
+                      description: e.target.value,
+                    }))
+                  }
                 />
               </Grid>
               <Grid item xs={12} md={6}>
@@ -637,7 +691,12 @@ const StoryControlDashboard = () => {
                   <InputLabel>Priority Level</InputLabel>
                   <Select
                     value={storyForm.priority_level}
-                    onChange={(e) => setStoryForm(prev => ({ ...prev, priority_level: e.target.value }))}
+                    onChange={e =>
+                      setStoryForm(prev => ({
+                        ...prev,
+                        priority_level: e.target.value,
+                      }))
+                    }
                   >
                     {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(level => (
                       <MenuItem key={level} value={level}>
@@ -650,20 +709,30 @@ const StoryControlDashboard = () => {
               <Grid item xs={12} md={6}>
                 <TextField
                   fullWidth
-                  label="Quality Threshold"
-                  type="number"
+                  label='Quality Threshold'
+                  type='number'
                   inputProps={{ min: 0, max: 1, step: 0.1 }}
                   value={storyForm.quality_threshold}
-                  onChange={(e) => setStoryForm(prev => ({ ...prev, quality_threshold: parseFloat(e.target.value) }))}
+                  onChange={e =>
+                    setStoryForm(prev => ({
+                      ...prev,
+                      quality_threshold: parseFloat(e.target.value),
+                    }))
+                  }
                 />
               </Grid>
               <Grid item xs={12} md={6}>
                 <TextField
                   fullWidth
-                  label="Max Articles Per Day"
-                  type="number"
+                  label='Max Articles Per Day'
+                  type='number'
                   value={storyForm.max_articles_per_day}
-                  onChange={(e) => setStoryForm(prev => ({ ...prev, max_articles_per_day: parseInt(e.target.value) }))}
+                  onChange={e =>
+                    setStoryForm(prev => ({
+                      ...prev,
+                      max_articles_per_day: parseInt(e.target.value),
+                    }))
+                  }
                 />
               </Grid>
               <Grid item xs={12} md={6}>
@@ -671,38 +740,43 @@ const StoryControlDashboard = () => {
                   control={
                     <Switch
                       checked={storyForm.auto_enhance}
-                      onChange={(e) => setStoryForm(prev => ({ ...prev, auto_enhance: e.target.checked }))}
+                      onChange={e =>
+                        setStoryForm(prev => ({
+                          ...prev,
+                          auto_enhance: e.target.checked,
+                        }))
+                      }
                     />
                   }
-                  label="Auto Enhance with RAG"
+                  label='Auto Enhance with RAG'
                 />
               </Grid>
 
               {/* Keywords */}
               <Grid item xs={12}>
-                <Typography variant="h6" gutterBottom>
+                <Typography variant='h6' gutterBottom>
                   Keywords
                 </Typography>
-                <Box display="flex" gap={1} mb={2}>
+                <Box display='flex' gap={1} mb={2}>
                   <TextField
-                    size="small"
-                    label="Add Keyword"
+                    size='small'
+                    label='Add Keyword'
                     value={newKeyword}
-                    onChange={(e) => setNewKeyword(e.target.value)}
-                    onKeyPress={(e) => e.key === 'Enter' && addKeyword()}
+                    onChange={e => setNewKeyword(e.target.value)}
+                    onKeyPress={e => e.key === 'Enter' && addKeyword()}
                   />
                   <Button onClick={addKeyword} disabled={!newKeyword.trim()}>
                     Add
                   </Button>
                 </Box>
-                <Box display="flex" flexWrap="wrap" gap={1}>
+                <Box display='flex' flexWrap='wrap' gap={1}>
                   {storyForm.keywords.map((keyword, index) => (
                     <Chip
                       key={index}
                       label={keyword}
                       onDelete={() => removeKeyword(index)}
-                      color="primary"
-                      variant="outlined"
+                      color='primary'
+                      variant='outlined'
                     />
                   ))}
                 </Box>
@@ -710,29 +784,29 @@ const StoryControlDashboard = () => {
 
               {/* Entities */}
               <Grid item xs={12}>
-                <Typography variant="h6" gutterBottom>
+                <Typography variant='h6' gutterBottom>
                   Entities
                 </Typography>
-                <Box display="flex" gap={1} mb={2}>
+                <Box display='flex' gap={1} mb={2}>
                   <TextField
-                    size="small"
-                    label="Add Entity"
+                    size='small'
+                    label='Add Entity'
                     value={newEntity}
-                    onChange={(e) => setNewEntity(e.target.value)}
-                    onKeyPress={(e) => e.key === 'Enter' && addEntity()}
+                    onChange={e => setNewEntity(e.target.value)}
+                    onKeyPress={e => e.key === 'Enter' && addEntity()}
                   />
                   <Button onClick={addEntity} disabled={!newEntity.trim()}>
                     Add
                   </Button>
                 </Box>
-                <Box display="flex" flexWrap="wrap" gap={1}>
+                <Box display='flex' flexWrap='wrap' gap={1}>
                   {storyForm.entities.map((entity, index) => (
                     <Chip
                       key={index}
                       label={entity}
                       onDelete={() => removeEntity(index)}
-                      color="secondary"
-                      variant="outlined"
+                      color='secondary'
+                      variant='outlined'
                     />
                   ))}
                 </Box>
@@ -740,29 +814,29 @@ const StoryControlDashboard = () => {
 
               {/* Geographic Regions */}
               <Grid item xs={12}>
-                <Typography variant="h6" gutterBottom>
+                <Typography variant='h6' gutterBottom>
                   Geographic Regions
                 </Typography>
-                <Box display="flex" gap={1} mb={2}>
+                <Box display='flex' gap={1} mb={2}>
                   <TextField
-                    size="small"
-                    label="Add Region"
+                    size='small'
+                    label='Add Region'
                     value={newRegion}
-                    onChange={(e) => setNewRegion(e.target.value)}
-                    onKeyPress={(e) => e.key === 'Enter' && addRegion()}
+                    onChange={e => setNewRegion(e.target.value)}
+                    onKeyPress={e => e.key === 'Enter' && addRegion()}
                   />
                   <Button onClick={addRegion} disabled={!newRegion.trim()}>
                     Add
                   </Button>
                 </Box>
-                <Box display="flex" flexWrap="wrap" gap={1}>
+                <Box display='flex' flexWrap='wrap' gap={1}>
                   {storyForm.geographic_regions.map((region, index) => (
                     <Chip
                       key={index}
                       label={region}
                       onDelete={() => removeRegion(index)}
-                      color="info"
-                      variant="outlined"
+                      color='info'
+                      variant='outlined'
                     />
                   ))}
                 </Box>
@@ -771,15 +845,17 @@ const StoryControlDashboard = () => {
           </Box>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setShowCreateDialog(false)}>
-            Cancel
-          </Button>
+          <Button onClick={() => setShowCreateDialog(false)}>Cancel</Button>
           <Button
             onClick={handleCreateStory}
-            variant="contained"
+            variant='contained'
             disabled={buttonLoading.create || !storyForm.name.trim()}
           >
-            {buttonLoading.create ? <CircularProgress size={20} /> : 'Create Story'}
+            {buttonLoading.create ? (
+              <CircularProgress size={20} />
+            ) : (
+              'Create Story'
+            )}
           </Button>
         </DialogActions>
       </Dialog>
@@ -788,60 +864,63 @@ const StoryControlDashboard = () => {
       <Dialog
         open={showUkraineDialog}
         onClose={() => setShowUkraineDialog(false)}
-        maxWidth="sm"
+        maxWidth='sm'
         fullWidth
       >
         <DialogTitle>Create Ukraine-Russia Conflict Story</DialogTitle>
         <DialogContent>
           <Box sx={{ pt: 2 }}>
-            <Alert severity="info" sx={{ mb: 2 }}>
-              This will create a pre-configured story for tracking the Ukraine-Russia conflict with:
+            <Alert severity='info' sx={{ mb: 2 }}>
+              This will create a pre-configured story for tracking the
+              Ukraine-Russia conflict with:
             </Alert>
             <List>
               <ListItem>
                 <ListItemText
-                  primary="High Priority (10/10)"
-                  secondary="Critical international conflict"
+                  primary='High Priority (10/10)'
+                  secondary='Critical international conflict'
                 />
               </ListItem>
               <ListItem>
                 <ListItemText
-                  primary="Comprehensive Keywords"
-                  secondary="Ukraine, Russia, conflict, war, invasion, military, defense, etc."
+                  primary='Comprehensive Keywords'
+                  secondary='Ukraine, Russia, conflict, war, invasion, military, defense, etc.'
                 />
               </ListItem>
               <ListItem>
                 <ListItemText
-                  primary="Key Entities"
-                  secondary="Volodymyr Zelensky, Vladimir Putin, NATO, EU, etc."
+                  primary='Key Entities'
+                  secondary='Volodymyr Zelensky, Vladimir Putin, NATO, EU, etc.'
                 />
               </ListItem>
               <ListItem>
                 <ListItemText
-                  primary="Quality Filters"
-                  secondary="Trusted sources, high-quality content only"
+                  primary='Quality Filters'
+                  secondary='Trusted sources, high-quality content only'
                 />
               </ListItem>
               <ListItem>
                 <ListItemText
-                  primary="Auto-Enhancement"
-                  secondary="RAG system will continuously enhance context"
+                  primary='Auto-Enhancement'
+                  secondary='RAG system will continuously enhance context'
                 />
               </ListItem>
             </List>
           </Box>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setShowUkraineDialog(false)}>
-            Cancel
-          </Button>
+          <Button onClick={() => setShowUkraineDialog(false)}>Cancel</Button>
           <Button
             onClick={handleCreateUkraineStory}
-            variant="contained"
-            color="secondary"
+            variant='contained'
+            color='secondary'
             disabled={buttonLoading.ukraine}
           >
-            {buttonLoading.ukraine ? <CircularProgress size={20} /> : 'Create Story'}
+            {buttonLoading.ukraine ? (
+              <CircularProgress size={20} />
+            ) : (
+              'Create Story'
+            )}
           </Button>
         </DialogActions>
       </Dialog>

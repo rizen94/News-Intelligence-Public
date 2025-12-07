@@ -5,16 +5,16 @@ import React from 'react';
 const StorylineTimeline = () => {
   return (
     <Box>
-      <Typography variant="h4" component="h1" sx={{ mb: 3 }}>
+      <Typography variant='h4' component='h1' sx={{ mb: 3 }}>
         Storyline Timeline
       </Typography>
 
       <Paper sx={{ p: 4, textAlign: 'center' }}>
         <TimelineIcon sx={{ fontSize: 64, color: 'text.secondary', mb: 2 }} />
-        <Typography variant="h6" color="text.secondary">
+        <Typography variant='h6' color='text.secondary'>
           Timeline View
         </Typography>
-        <Typography variant="body2" color="text.secondary">
+        <Typography variant='body2' color='text.secondary'>
           Interactive timeline visualization coming soon...
         </Typography>
       </Paper>

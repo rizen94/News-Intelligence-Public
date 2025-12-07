@@ -93,11 +93,15 @@ const RealtimeMonitor: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [tabValue, setTabValue] = useState(0);
   const [autoRefresh, setAutoRefresh] = useState(true);
-  const [refreshInterval, setRefreshInterval] = useState<NodeJS.Timeout | null>(null);
+  const [refreshInterval, setRefreshInterval] = useState<NodeJS.Timeout | null>(
+    null,
+  );
 
   // Data states
   const [realtimeLogs, setRealtimeLogs] = useState<LogEntry[]>([]);
-  const [systemHealth, setSystemHealth] = useState<SystemHealthMetrics | null>(null);
+  const [systemHealth, setSystemHealth] = useState<SystemHealthMetrics | null>(
+    null,
+  );
   const [logStats, setLogStats] = useState<any>(null);
   const [systemMetrics, setSystemMetrics] = useState<any>(null);
 
@@ -118,17 +122,13 @@ const RealtimeMonitor: React.FC = () => {
       Logger.info('Loading real-time monitoring data');
 
       // Load real-time data in parallel
-      const [
-        logsData,
-        healthData,
-        statsData,
-        metricsData,
-      ] = await Promise.allSettled([
-        enhancedApiService.getRealtimeLogs(maxLogs),
-        enhancedApiService.getSystemHealthFromLogs(),
-        enhancedApiService.getLogStatistics(1), // Last 24 hours
-        enhancedApiService.getSystemMetrics(),
-      ]);
+      const [logsData, healthData, statsData, metricsData] =
+        await Promise.allSettled([
+          enhancedApiService.getRealtimeLogs(maxLogs),
+          enhancedApiService.getSystemHealthFromLogs(),
+          enhancedApiService.getLogStatistics(1), // Last 24 hours
+          enhancedApiService.getSystemMetrics(),
+        ]);
 
       // Process results
       if (logsData.status === 'fulfilled') {
@@ -194,7 +194,9 @@ const RealtimeMonitor: React.FC = () => {
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = `realtime_logs_${new Date().toISOString().split('T')[0]}.json`;
+      link.download = `realtime_logs_${
+        new Date().toISOString().split('T')[0]
+      }.json`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
@@ -206,27 +208,38 @@ const RealtimeMonitor: React.FC = () => {
 
   const getLogLevelColor = (level: string) => {
     switch (level?.toUpperCase()) {
-    case 'ERROR': return 'error';
-    case 'WARNING': return 'warning';
-    case 'INFO': return 'info';
-    case 'DEBUG': return 'default';
-    default: return 'default';
+    case 'ERROR':
+      return 'error';
+    case 'WARNING':
+      return 'warning';
+    case 'INFO':
+      return 'info';
+    case 'DEBUG':
+      return 'default';
+    default:
+      return 'default';
     }
   };
 
   const getLogLevelIcon = (level: string) => {
     switch (level?.toUpperCase()) {
-    case 'ERROR': return <ErrorIcon />;
-    case 'WARNING': return <WarningIcon />;
-    case 'INFO': return <InfoIcon />;
-    case 'DEBUG': return <BugReportIcon />;
-    default: return <InfoIcon />;
+    case 'ERROR':
+      return <ErrorIcon />;
+    case 'WARNING':
+      return <WarningIcon />;
+    case 'INFO':
+      return <InfoIcon />;
+    case 'DEBUG':
+      return <BugReportIcon />;
+    default:
+      return <InfoIcon />;
     }
   };
 
   const filteredLogs = realtimeLogs.filter(log => {
     if (logLevelFilter !== 'ALL' && log.level !== logLevelFilter) return false;
-    if (loggerFilter !== 'ALL' && !log.logger.includes(loggerFilter)) return false;
+    if (loggerFilter !== 'ALL' && !log.logger.includes(loggerFilter))
+      return false;
     return true;
   });
 
@@ -238,9 +251,14 @@ const RealtimeMonitor: React.FC = () => {
 
   if (loading) {
     return (
-      <Box display="flex" justifyContent="center" alignItems="center" minHeight="400px">
+      <Box
+        display='flex'
+        justifyContent='center'
+        alignItems='center'
+        minHeight='400px'
+      >
         <CircularProgress />
-        <Typography variant="h6" sx={{ ml: 2 }}>
+        <Typography variant='h6' sx={{ ml: 2 }}>
           Loading Real-time Monitor...
         </Typography>
       </Box>
@@ -250,22 +268,27 @@ const RealtimeMonitor: React.FC = () => {
   return (
     <Box sx={{ flexGrow: 1, p: 3 }}>
       {/* Header */}
-      <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
-        <Typography variant="h4" component="h1">
+      <Box
+        display='flex'
+        justifyContent='space-between'
+        alignItems='center'
+        mb={3}
+      >
+        <Typography variant='h4' component='h1'>
           Real-time System Monitor
         </Typography>
-        <Box display="flex" gap={2} alignItems="center">
+        <Box display='flex' gap={2} alignItems='center'>
           <FormControlLabel
             control={
               <Switch
                 checked={autoRefresh}
-                onChange={(e) => setAutoRefresh(e.target.checked)}
+                onChange={e => setAutoRefresh(e.target.checked)}
               />
             }
-            label="Auto Refresh (10s)"
+            label='Auto Refresh (10s)'
           />
           <Button
-            variant="outlined"
+            variant='outlined'
             startIcon={<RefreshIcon />}
             onClick={handleRefresh}
             disabled={refreshing}
@@ -276,18 +299,18 @@ const RealtimeMonitor: React.FC = () => {
       </Box>
 
       {error && (
-        <Alert severity="error" sx={{ mb: 3 }}>
+        <Alert severity='error' sx={{ mb: 3 }}>
           {error}
         </Alert>
       )}
 
       {/* Tabs */}
       <Paper sx={{ mb: 3 }}>
-        <Tabs value={tabValue} onChange={handleTabChange} variant="scrollable">
-          <Tab icon={<BugReportIcon />} label="Live Logs" />
-          <Tab icon={<AssessmentIcon />} label="System Health" />
-          <Tab icon={<SpeedIcon />} label="Performance" />
-          <Tab icon={<VisibilityIcon />} label="Log Analysis" />
+        <Tabs value={tabValue} onChange={handleTabChange} variant='scrollable'>
+          <Tab icon={<BugReportIcon />} label='Live Logs' />
+          <Tab icon={<AssessmentIcon />} label='System Health' />
+          <Tab icon={<SpeedIcon />} label='Performance' />
+          <Tab icon={<VisibilityIcon />} label='Log Analysis' />
         </Tabs>
       </Paper>
 
@@ -298,53 +321,53 @@ const RealtimeMonitor: React.FC = () => {
           <Grid item xs={12}>
             <Card>
               <CardContent>
-                <Typography variant="h6" gutterBottom>
+                <Typography variant='h6' gutterBottom>
                   Log Filters
                 </Typography>
-                <Grid container spacing={2} alignItems="center">
+                <Grid container spacing={2} alignItems='center'>
                   <Grid item xs={12} sm={3}>
-                    <FormControl fullWidth size="small">
+                    <FormControl fullWidth size='small'>
                       <InputLabel>Log Level</InputLabel>
                       <Select
                         value={logLevelFilter}
-                        onChange={(e) => setLogLevelFilter(e.target.value)}
+                        onChange={e => setLogLevelFilter(e.target.value)}
                       >
-                        <MenuItem value="ALL">All Levels</MenuItem>
-                        <MenuItem value="ERROR">Error</MenuItem>
-                        <MenuItem value="WARNING">Warning</MenuItem>
-                        <MenuItem value="INFO">Info</MenuItem>
-                        <MenuItem value="DEBUG">Debug</MenuItem>
+                        <MenuItem value='ALL'>All Levels</MenuItem>
+                        <MenuItem value='ERROR'>Error</MenuItem>
+                        <MenuItem value='WARNING'>Warning</MenuItem>
+                        <MenuItem value='INFO'>Info</MenuItem>
+                        <MenuItem value='DEBUG'>Debug</MenuItem>
                       </Select>
                     </FormControl>
                   </Grid>
                   <Grid item xs={12} sm={3}>
-                    <FormControl fullWidth size="small">
+                    <FormControl fullWidth size='small'>
                       <InputLabel>Logger</InputLabel>
                       <Select
                         value={loggerFilter}
-                        onChange={(e) => setLoggerFilter(e.target.value)}
+                        onChange={e => setLoggerFilter(e.target.value)}
                       >
-                        <MenuItem value="ALL">All Loggers</MenuItem>
-                        <MenuItem value="api">API</MenuItem>
-                        <MenuItem value="database">Database</MenuItem>
-                        <MenuItem value="ml">ML Processing</MenuItem>
-                        <MenuItem value="error">Error Handler</MenuItem>
+                        <MenuItem value='ALL'>All Loggers</MenuItem>
+                        <MenuItem value='api'>API</MenuItem>
+                        <MenuItem value='database'>Database</MenuItem>
+                        <MenuItem value='ml'>ML Processing</MenuItem>
+                        <MenuItem value='error'>Error Handler</MenuItem>
                       </Select>
                     </FormControl>
                   </Grid>
                   <Grid item xs={12} sm={3}>
                     <TextField
                       fullWidth
-                      size="small"
-                      label="Max Logs"
-                      type="number"
+                      size='small'
+                      label='Max Logs'
+                      type='number'
                       value={maxLogs}
-                      onChange={(e) => setMaxLogs(parseInt(e.target.value) || 50)}
+                      onChange={e => setMaxLogs(parseInt(e.target.value) || 50)}
                     />
                   </Grid>
                   <Grid item xs={12} sm={3}>
                     <Button
-                      variant="outlined"
+                      variant='outlined'
                       startIcon={<DownloadIcon />}
                       onClick={handleExportLogs}
                       fullWidth
@@ -361,11 +384,16 @@ const RealtimeMonitor: React.FC = () => {
           <Grid item xs={12}>
             <Card>
               <CardContent>
-                <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
-                  <Typography variant="h6">
+                <Box
+                  display='flex'
+                  justifyContent='space-between'
+                  alignItems='center'
+                  mb={2}
+                >
+                  <Typography variant='h6'>
                     Real-time Logs ({filteredLogs.length} entries)
                   </Typography>
-                  <Badge badgeContent={realtimeLogs.length} color="primary">
+                  <Badge badgeContent={realtimeLogs.length} color='primary'>
                     <Chip
                       icon={autoRefresh ? <PlayArrowIcon /> : <StopIcon />}
                       label={autoRefresh ? 'Live' : 'Paused'}
@@ -387,12 +415,14 @@ const RealtimeMonitor: React.FC = () => {
                           icon={getLogLevelIcon(log.level)}
                           label={log.level}
                           color={getLogLevelColor(log.level)}
-                          size="small"
+                          size='small'
                         />
                       </ListItemIcon>
                       <ListItemText
                         primary={log.message}
-                        secondary={`${log.logger} - ${new Date(log.timestamp).toLocaleString()}`}
+                        secondary={`${log.logger} - ${new Date(
+                          log.timestamp,
+                        ).toLocaleString()}`}
                       />
                     </ListItem>
                   ))}
@@ -411,16 +441,23 @@ const RealtimeMonitor: React.FC = () => {
               <Grid item xs={12} md={4}>
                 <Card>
                   <CardContent>
-                    <Typography variant="h6" gutterBottom>
+                    <Typography variant='h6' gutterBottom>
                       System Health Score
                     </Typography>
-                    <Typography variant="h2" color={getHealthScoreColor(systemHealth.system_health_score)}>
+                    <Typography
+                      variant='h2'
+                      color={getHealthScoreColor(
+                        systemHealth.system_health_score,
+                      )}
+                    >
                       {systemHealth.system_health_score.toFixed(1)}
                     </Typography>
                     <LinearProgress
-                      variant="determinate"
+                      variant='determinate'
                       value={systemHealth.system_health_score}
-                      color={getHealthScoreColor(systemHealth.system_health_score)}
+                      color={getHealthScoreColor(
+                        systemHealth.system_health_score,
+                      )}
                       sx={{ mt: 2 }}
                     />
                   </CardContent>
@@ -430,10 +467,17 @@ const RealtimeMonitor: React.FC = () => {
               <Grid item xs={12} md={4}>
                 <Card>
                   <CardContent>
-                    <Typography variant="h6" gutterBottom>
+                    <Typography variant='h6' gutterBottom>
                       Error Rate (Last Hour)
                     </Typography>
-                    <Typography variant="h2" color={systemHealth.error_rate_last_hour > 0.1 ? 'error' : 'success'}>
+                    <Typography
+                      variant='h2'
+                      color={
+                        systemHealth.error_rate_last_hour > 0.1
+                          ? 'error'
+                          : 'success'
+                      }
+                    >
                       {(systemHealth.error_rate_last_hour * 100).toFixed(2)}%
                     </Typography>
                   </CardContent>
@@ -443,10 +487,17 @@ const RealtimeMonitor: React.FC = () => {
               <Grid item xs={12} md={4}>
                 <Card>
                   <CardContent>
-                    <Typography variant="h6" gutterBottom>
+                    <Typography variant='h6' gutterBottom>
                       Total Errors (24h)
                     </Typography>
-                    <Typography variant="h2" color={systemHealth.total_errors_last_24h > 10 ? 'error' : 'success'}>
+                    <Typography
+                      variant='h2'
+                      color={
+                        systemHealth.total_errors_last_24h > 10
+                          ? 'error'
+                          : 'success'
+                      }
+                    >
                       {systemHealth.total_errors_last_24h}
                     </Typography>
                   </CardContent>
@@ -465,14 +516,14 @@ const RealtimeMonitor: React.FC = () => {
               <Grid item xs={12} md={4}>
                 <Card>
                   <CardContent>
-                    <Typography variant="h6" gutterBottom>
+                    <Typography variant='h6' gutterBottom>
                       CPU Usage
                     </Typography>
-                    <Typography variant="h4" color="primary">
+                    <Typography variant='h4' color='primary'>
                       {systemMetrics.cpu_percent?.toFixed(1)}%
                     </Typography>
                     <LinearProgress
-                      variant="determinate"
+                      variant='determinate'
                       value={systemMetrics.cpu_percent}
                       sx={{ mt: 2 }}
                     />
@@ -483,14 +534,14 @@ const RealtimeMonitor: React.FC = () => {
               <Grid item xs={12} md={4}>
                 <Card>
                   <CardContent>
-                    <Typography variant="h6" gutterBottom>
+                    <Typography variant='h6' gutterBottom>
                       Memory Usage
                     </Typography>
-                    <Typography variant="h4" color="primary">
+                    <Typography variant='h4' color='primary'>
                       {systemMetrics.memory_percent?.toFixed(1)}%
                     </Typography>
                     <LinearProgress
-                      variant="determinate"
+                      variant='determinate'
                       value={systemMetrics.memory_percent}
                       sx={{ mt: 2 }}
                     />
@@ -501,14 +552,14 @@ const RealtimeMonitor: React.FC = () => {
               <Grid item xs={12} md={4}>
                 <Card>
                   <CardContent>
-                    <Typography variant="h6" gutterBottom>
+                    <Typography variant='h6' gutterBottom>
                       Disk Usage
                     </Typography>
-                    <Typography variant="h4" color="primary">
+                    <Typography variant='h4' color='primary'>
                       {systemMetrics.disk_percent?.toFixed(1)}%
                     </Typography>
                     <LinearProgress
-                      variant="determinate"
+                      variant='determinate'
                       value={systemMetrics.disk_percent}
                       sx={{ mt: 2 }}
                     />
@@ -528,39 +579,39 @@ const RealtimeMonitor: React.FC = () => {
               <Grid item xs={12} md={6}>
                 <Card>
                   <CardContent>
-                    <Typography variant="h6" gutterBottom>
+                    <Typography variant='h6' gutterBottom>
                       Log Statistics (24h)
                     </Typography>
                     <Grid container spacing={2}>
                       <Grid item xs={6}>
-                        <Typography variant="h4" color="primary">
+                        <Typography variant='h4' color='primary'>
                           {logStats.total_entries}
                         </Typography>
-                        <Typography variant="body2" color="text.secondary">
+                        <Typography variant='body2' color='text.secondary'>
                           Total Entries
                         </Typography>
                       </Grid>
                       <Grid item xs={6}>
-                        <Typography variant="h4" color="error">
+                        <Typography variant='h4' color='error'>
                           {logStats.error_count}
                         </Typography>
-                        <Typography variant="body2" color="text.secondary">
+                        <Typography variant='body2' color='text.secondary'>
                           Errors
                         </Typography>
                       </Grid>
                       <Grid item xs={6}>
-                        <Typography variant="h4" color="warning">
+                        <Typography variant='h4' color='warning'>
                           {logStats.warning_count}
                         </Typography>
-                        <Typography variant="body2" color="text.secondary">
+                        <Typography variant='body2' color='text.secondary'>
                           Warnings
                         </Typography>
                       </Grid>
                       <Grid item xs={6}>
-                        <Typography variant="h4" color="info">
+                        <Typography variant='h4' color='info'>
                           {logStats.info_count}
                         </Typography>
-                        <Typography variant="body2" color="text.secondary">
+                        <Typography variant='body2' color='text.secondary'>
                           Info
                         </Typography>
                       </Grid>
@@ -572,18 +623,20 @@ const RealtimeMonitor: React.FC = () => {
               <Grid item xs={12} md={6}>
                 <Card>
                   <CardContent>
-                    <Typography variant="h6" gutterBottom>
+                    <Typography variant='h6' gutterBottom>
                       Top Loggers
                     </Typography>
                     <List dense>
-                      {logStats.top_loggers?.slice(0, 5).map((logger: any, index: number) => (
-                        <ListItem key={index}>
-                          <ListItemText
-                            primary={logger.logger}
-                            secondary={`${logger.count} entries`}
-                          />
-                        </ListItem>
-                      ))}
+                      {logStats.top_loggers
+                        ?.slice(0, 5)
+                        .map((logger: any, index: number) => (
+                          <ListItem key={index}>
+                            <ListItemText
+                              primary={logger.logger}
+                              secondary={`${logger.count} entries`}
+                            />
+                          </ListItem>
+                        ))}
                     </List>
                   </CardContent>
                 </Card>
@@ -597,31 +650,50 @@ const RealtimeMonitor: React.FC = () => {
       <Dialog
         open={logDetailDialog}
         onClose={() => setLogDetailDialog(false)}
-        maxWidth="md"
+        maxWidth='md'
         fullWidth
       >
         <DialogTitle>Log Entry Details</DialogTitle>
         <DialogContent>
           {selectedLog && (
             <Box>
-              <Typography variant="h6" gutterBottom>
+              <Typography variant='h6' gutterBottom>
                 {selectedLog.message}
               </Typography>
-              <Typography variant="body2" color="text.secondary" paragraph>
-                <strong>Level:</strong> {selectedLog.level}<br />
-                <strong>Logger:</strong> {selectedLog.logger}<br />
-                <strong>Timestamp:</strong> {new Date(selectedLog.timestamp).toLocaleString()}<br />
-                {selectedLog.module && <><strong>Module:</strong> {selectedLog.module}<br /></>}
-                {selectedLog.function && <><strong>Function:</strong> {selectedLog.function}<br /></>}
-                {selectedLog.line && <><strong>Line:</strong> {selectedLog.line}<br /></>}
+              <Typography variant='body2' color='text.secondary' paragraph>
+                <strong>Level:</strong> {selectedLog.level}
+                <br />
+                <strong>Logger:</strong> {selectedLog.logger}
+                <br />
+                <strong>Timestamp:</strong>{' '}
+                {new Date(selectedLog.timestamp).toLocaleString()}
+                <br />
+                {selectedLog.module && (
+                  <>
+                    <strong>Module:</strong> {selectedLog.module}
+                    <br />
+                  </>
+                )}
+                {selectedLog.function && (
+                  <>
+                    <strong>Function:</strong> {selectedLog.function}
+                    <br />
+                  </>
+                )}
+                {selectedLog.line && (
+                  <>
+                    <strong>Line:</strong> {selectedLog.line}
+                    <br />
+                  </>
+                )}
               </Typography>
               {selectedLog.exception && (
                 <Box>
-                  <Typography variant="h6" gutterBottom>
+                  <Typography variant='h6' gutterBottom>
                     Exception Details:
                   </Typography>
                   <Paper sx={{ p: 2, bgcolor: 'grey.100' }}>
-                    <Typography variant="body2" component="pre">
+                    <Typography variant='body2' component='pre'>
                       {JSON.stringify(selectedLog.exception, null, 2)}
                     </Typography>
                   </Paper>
@@ -629,11 +701,11 @@ const RealtimeMonitor: React.FC = () => {
               )}
               {selectedLog.extra_data && (
                 <Box sx={{ mt: 2 }}>
-                  <Typography variant="h6" gutterBottom>
+                  <Typography variant='h6' gutterBottom>
                     Extra Data:
                   </Typography>
                   <Paper sx={{ p: 2, bgcolor: 'grey.100' }}>
-                    <Typography variant="body2" component="pre">
+                    <Typography variant='body2' component='pre'>
                       {JSON.stringify(selectedLog.extra_data, null, 2)}
                     </Typography>
                   </Paper>
@@ -661,7 +733,7 @@ function TabPanel(props: TabPanelProps) {
   const { children, value, index, ...other } = props;
   return (
     <div
-      role="tabpanel"
+      role='tabpanel'
       hidden={value !== index}
       id={`monitor-tabpanel-${index}`}
       aria-labelledby={`monitor-tab-${index}`}

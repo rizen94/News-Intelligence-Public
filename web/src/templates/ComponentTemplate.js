@@ -13,10 +13,9 @@ import {
   // Add other MUI components as needed
 } from '@mui/material';
 import React, { useState, useEffect } from 'react';
-import {
-// Icon imports - organize alphabetically
+import // Icon imports - organize alphabetically
 // Add icons as needed
-} from '@mui/icons-material';
+'@mui/icons-material';
 
 // Local imports - organize by type
 import { apiService } from '../services/apiService';
@@ -57,7 +56,7 @@ const ComponentName = ({ prop1, onAction, isVisible = true }) => {
   }, [prop1]);
 
   // 3. Event handlers - organize alphabetically
-  const handleAction = (event) => {
+  const handleAction = event => {
     Logger.userAction('ComponentName action triggered', { event });
     if (onAction) {
       onAction(event);
@@ -89,7 +88,7 @@ const ComponentName = ({ prop1, onAction, isVisible = true }) => {
     }
 
     if (error) {
-      return <Typography color="error">Error: {error}</Typography>;
+      return <Typography color='error'>Error: {error}</Typography>;
     }
 
     if (!data) {
@@ -99,7 +98,7 @@ const ComponentName = ({ prop1, onAction, isVisible = true }) => {
     return (
       <Box>
         {/* Render your content here */}
-        <Typography variant="h6">Component Content</Typography>
+        <Typography variant='h6'>Component Content</Typography>
       </Box>
     );
   };
@@ -112,18 +111,14 @@ const ComponentName = ({ prop1, onAction, isVisible = true }) => {
   return (
     <Card>
       <CardContent>
-        <Typography variant="h5" component="h2" gutterBottom>
+        <Typography variant='h5' component='h2' gutterBottom>
           Component Name
         </Typography>
 
         {renderContent()}
 
         <Box sx={{ mt: 2 }}>
-          <Button
-            variant="contained"
-            onClick={handleAction}
-            disabled={loading}
-          >
+          <Button variant='contained' onClick={handleAction} disabled={loading}>
             Action Button
           </Button>
         </Box>

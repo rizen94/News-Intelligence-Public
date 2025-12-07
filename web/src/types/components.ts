@@ -59,7 +59,13 @@ export interface DialogProps extends ModalProps {
   onCancel?: () => void;
   confirmText?: string;
   cancelText?: string;
-  confirmColor?: 'primary' | 'secondary' | 'error' | 'warning' | 'info' | 'success';
+  confirmColor?:
+    | 'primary'
+    | 'secondary'
+    | 'error'
+    | 'warning'
+    | 'info'
+    | 'success';
   loading?: boolean;
 }
 

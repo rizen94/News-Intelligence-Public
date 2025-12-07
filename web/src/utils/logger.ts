@@ -146,7 +146,11 @@ class Logger {
    * @param event - Lifecycle event
    * @param data - Optional data
    */
-  static componentLifecycle(componentName: string, event: string, data?: LogData): void {
+  static componentLifecycle(
+    componentName: string,
+    event: string,
+    data?: LogData,
+  ): void {
     const message = `Component ${componentName}: ${event}`;
     if (data) {
       this.debug(message, data);
@@ -175,7 +179,11 @@ class Logger {
    * @param duration - Duration in milliseconds
    * @param metadata - Optional metadata
    */
-  static performance(operation: string, duration: number, metadata?: LogData): void {
+  static performance(
+    operation: string,
+    duration: number,
+    metadata?: LogData,
+  ): void {
     const message = `Performance: ${operation} took ${duration}ms`;
     if (metadata) {
       this.info(message, metadata);

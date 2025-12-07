@@ -359,7 +359,15 @@ export interface SortConfig {
 export interface FilterConfig {
   key: string;
   value: any;
-  operator: 'equals' | 'contains' | 'startsWith' | 'endsWith' | 'gt' | 'lt' | 'gte' | 'lte';
+  operator:
+    | 'equals'
+    | 'contains'
+    | 'startsWith'
+    | 'endsWith'
+    | 'gt'
+    | 'lt'
+    | 'gte'
+    | 'lte';
 }
 
 // ============================================================================

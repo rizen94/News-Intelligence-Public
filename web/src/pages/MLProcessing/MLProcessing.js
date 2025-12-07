@@ -48,17 +48,13 @@ import newsSystemService from '../../services/newsSystemService';
 const TabPanel = ({ children, value, index, ...other }) => {
   return (
     <div
-      role="tabpanel"
+      role='tabpanel'
       hidden={value !== index}
       id={`ml-tabpanel-${index}`}
       aria-labelledby={`ml-tab-${index}`}
       {...other}
     >
-      {value === index && (
-        <Box sx={{ p: 3 }}>
-          {children}
-        </Box>
-      )}
+      {value === index && <Box sx={{ p: 3 }}>{children}</Box>}
     </div>
   );
 };
@@ -137,27 +133,37 @@ const MLProcessing = () => {
     }
   };
 
-  const getStatusColor = (status) => {
+  const getStatusColor = status => {
     switch (status) {
-    case 'completed': return 'success';
-    case 'processing': return 'warning';
-    case 'failed': return 'error';
-    case 'queued': return 'info';
-    default: return 'default';
+    case 'completed':
+      return 'success';
+    case 'processing':
+      return 'warning';
+    case 'failed':
+      return 'error';
+    case 'queued':
+      return 'info';
+    default:
+      return 'default';
     }
   };
 
-  const getStatusIcon = (status) => {
+  const getStatusIcon = status => {
     switch (status) {
-    case 'completed': return <CheckCircleIcon />;
-    case 'processing': return <CircularProgress size={16} />;
-    case 'failed': return <ErrorIcon />;
-    case 'queued': return <Schedule />;
-    default: return null;
+    case 'completed':
+      return <CheckCircleIcon />;
+    case 'processing':
+      return <CircularProgress size={16} />;
+    case 'failed':
+      return <ErrorIcon />;
+    case 'queued':
+      return <Schedule />;
+    default:
+      return null;
     }
   };
 
-  const formatDuration = (seconds) => {
+  const formatDuration = seconds => {
     if (!seconds) return 'N/A';
     if (seconds < 60) return `${seconds.toFixed(1)}s`;
     const minutes = Math.floor(seconds / 60);
@@ -165,25 +171,32 @@ const MLProcessing = () => {
     return `${minutes}m ${remainingSeconds.toFixed(1)}s`;
   };
 
-  const formatDateTime = (dateString) => {
+  const formatDateTime = dateString => {
     if (!dateString) return 'N/A';
     return new Date(dateString).toLocaleString();
   };
 
   return (
     <Box sx={{ p: 3 }}>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
-        <Typography variant="h4" component="h1">
+      <Box
+        sx={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          mb: 3,
+        }}
+      >
+        <Typography variant='h4' component='h1'>
           ML Processing Monitor
         </Typography>
         <Box>
-          <Tooltip title="Refresh Data">
+          <Tooltip title='Refresh Data'>
             <IconButton onClick={loadData} disabled={loading}>
               <Refresh />
             </IconButton>
           </Tooltip>
           <Button
-            variant="contained"
+            variant='contained'
             startIcon={<PlayIcon />}
             onClick={() => setQueueDialogOpen(true)}
             sx={{ ml: 1 }}
@@ -194,16 +207,19 @@ const MLProcessing = () => {
       </Box>
 
       {error && (
-        <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
+        <Alert severity='error' sx={{ mb: 2 }} onClose={() => setError(null)}>
           {error}
         </Alert>
       )}
 
       <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}>
-        <Tabs value={activeTab} onChange={(e, newValue) => setActiveTab(newValue)}>
-          <Tab label="Queue Status" icon={<QueueIcon />} />
-          <Tab label="Processing Status" icon={<TimelineIcon />} />
-          <Tab label="Timing Statistics" icon={<SpeedIcon />} />
+        <Tabs
+          value={activeTab}
+          onChange={(e, newValue) => setActiveTab(newValue)}
+        >
+          <Tab label='Queue Status' icon={<QueueIcon />} />
+          <Tab label='Processing Status' icon={<TimelineIcon />} />
+          <Tab label='Timing Statistics' icon={<SpeedIcon />} />
         </Tabs>
       </Box>
 
@@ -214,41 +230,78 @@ const MLProcessing = () => {
             <Grid item xs={12} md={6}>
               <Card>
                 <CardContent>
-                  <Typography variant="h6" gutterBottom>
+                  <Typography variant='h6' gutterBottom>
                     Worker Statistics
                   </Typography>
-                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                    <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <Box
+                    sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}
+                  >
+                    <Box
+                      sx={{ display: 'flex', justifyContent: 'space-between' }}
+                    >
                       <Typography>Status:</Typography>
                       <Chip
-                        label={queueStatus.worker_stats.is_running ? 'Running' : 'Stopped'}
-                        color={queueStatus.worker_stats.is_running ? 'success' : 'error'}
-                        size="small"
+                        label={
+                          queueStatus.worker_stats.is_running
+                            ? 'Running'
+                            : 'Stopped'
+                        }
+                        color={
+                          queueStatus.worker_stats.is_running
+                            ? 'success'
+                            : 'error'
+                        }
+                        size='small'
                       />
                     </Box>
-                    <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <Box
+                      sx={{ display: 'flex', justifyContent: 'space-between' }}
+                    >
                       <Typography>Active Workers:</Typography>
-                      <Typography>{queueStatus.worker_stats.active_workers}</Typography>
+                      <Typography>
+                        {queueStatus.worker_stats.active_workers}
+                      </Typography>
                     </Box>
-                    <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <Box
+                      sx={{ display: 'flex', justifyContent: 'space-between' }}
+                    >
                       <Typography>Queue Size:</Typography>
-                      <Typography>{queueStatus.worker_stats.queue_size}</Typography>
+                      <Typography>
+                        {queueStatus.worker_stats.queue_size}
+                      </Typography>
                     </Box>
-                    <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <Box
+                      sx={{ display: 'flex', justifyContent: 'space-between' }}
+                    >
                       <Typography>Total Processed:</Typography>
-                      <Typography>{queueStatus.worker_stats.total_processed}</Typography>
+                      <Typography>
+                        {queueStatus.worker_stats.total_processed}
+                      </Typography>
                     </Box>
-                    <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <Box
+                      sx={{ display: 'flex', justifyContent: 'space-between' }}
+                    >
                       <Typography>Success Rate:</Typography>
                       <Typography>
                         {queueStatus.worker_stats.total_processed > 0
-                          ? ((queueStatus.worker_stats.successful / queueStatus.worker_stats.total_processed) * 100).toFixed(1)
-                          : 0}%
+                          ? (
+                            (queueStatus.worker_stats.successful /
+                                queueStatus.worker_stats.total_processed) *
+                              100
+                          ).toFixed(1)
+                          : 0}
+                        %
                       </Typography>
                     </Box>
-                    <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <Box
+                      sx={{ display: 'flex', justifyContent: 'space-between' }}
+                    >
                       <Typography>Avg Processing Time:</Typography>
-                      <Typography>{formatDuration(queueStatus.worker_stats.avg_processing_time)}</Typography>
+                      <Typography>
+                        {formatDuration(
+                          queueStatus.worker_stats.avg_processing_time,
+                        )}
+                      </Typography>
                     </Box>
                   </Box>
                 </CardContent>
@@ -261,11 +314,11 @@ const MLProcessing = () => {
             <Grid item xs={12} md={6}>
               <Card>
                 <CardContent>
-                  <Typography variant="h6" gutterBottom>
+                  <Typography variant='h6' gutterBottom>
                     Queue Statistics
                   </Typography>
-                  <TableContainer component={Paper} variant="outlined">
-                    <Table size="small">
+                  <TableContainer component={Paper} variant='outlined'>
+                    <Table size='small'>
                       <TableHead>
                         <TableRow>
                           <TableCell>Status</TableCell>
@@ -281,13 +334,15 @@ const MLProcessing = () => {
                               <Chip
                                 label={stat.status}
                                 color={getStatusColor(stat.status)}
-                                size="small"
+                                size='small'
                                 icon={getStatusIcon(stat.status)}
                               />
                             </TableCell>
                             <TableCell>{stat.operation_type}</TableCell>
                             <TableCell>{stat.count}</TableCell>
-                            <TableCell>{formatDuration(stat.avg_wait_time_seconds)}</TableCell>
+                            <TableCell>
+                              {formatDuration(stat.avg_wait_time_seconds)}
+                            </TableCell>
                           </TableRow>
                         ))}
                       </TableBody>
@@ -304,10 +359,11 @@ const MLProcessing = () => {
         {processingStatus?.articles && (
           <Card>
             <CardContent>
-              <Typography variant="h6" gutterBottom>
-                Recent Processing Activity ({processingStatus.total_count} total)
+              <Typography variant='h6' gutterBottom>
+                Recent Processing Activity ({processingStatus.total_count}{' '}
+                total)
               </Typography>
-              <TableContainer component={Paper} variant="outlined">
+              <TableContainer component={Paper} variant='outlined'>
                 <Table>
                   <TableHead>
                     <TableRow>
@@ -321,24 +377,36 @@ const MLProcessing = () => {
                     </TableRow>
                   </TableHead>
                   <TableBody>
-                    {processingStatus.articles.map((article) => (
+                    {processingStatus.articles.map(article => (
                       <TableRow key={article.article_id}>
                         <TableCell>{article.article_id}</TableCell>
-                        <TableCell sx={{ maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        <TableCell
+                          sx={{
+                            maxWidth: 300,
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                          }}
+                        >
                           {article.title}
                         </TableCell>
                         <TableCell>
                           <Chip
                             label={article.status}
                             color={getStatusColor(article.status)}
-                            size="small"
+                            size='small'
                             icon={getStatusIcon(article.status)}
                           />
                         </TableCell>
                         <TableCell>{article.model_used || 'N/A'}</TableCell>
-                        <TableCell>{formatDuration(article.duration_seconds)}</TableCell>
-                        <TableCell>{formatDateTime(article.started_at)}</TableCell>
-                        <TableCell>{formatDateTime(article.completed_at)}</TableCell>
+                        <TableCell>
+                          {formatDuration(article.duration_seconds)}
+                        </TableCell>
+                        <TableCell>
+                          {formatDateTime(article.started_at)}
+                        </TableCell>
+                        <TableCell>
+                          {formatDateTime(article.completed_at)}
+                        </TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -356,10 +424,10 @@ const MLProcessing = () => {
             <Grid item xs={12}>
               <Card>
                 <CardContent>
-                  <Typography variant="h6" gutterBottom>
+                  <Typography variant='h6' gutterBottom>
                     Daily Timing Statistics
                   </Typography>
-                  <TableContainer component={Paper} variant="outlined">
+                  <TableContainer component={Paper} variant='outlined'>
                     <Table>
                       <TableHead>
                         <TableRow>
@@ -378,13 +446,24 @@ const MLProcessing = () => {
                             <TableCell>{stat.processing_date}</TableCell>
                             <TableCell>{stat.model_used}</TableCell>
                             <TableCell>{stat.total_processed}</TableCell>
-                            <TableCell>{formatDuration(stat.avg_duration_seconds)}</TableCell>
-                            <TableCell>{formatDuration(stat.min_duration_seconds)}</TableCell>
-                            <TableCell>{formatDuration(stat.max_duration_seconds)}</TableCell>
+                            <TableCell>
+                              {formatDuration(stat.avg_duration_seconds)}
+                            </TableCell>
+                            <TableCell>
+                              {formatDuration(stat.min_duration_seconds)}
+                            </TableCell>
+                            <TableCell>
+                              {formatDuration(stat.max_duration_seconds)}
+                            </TableCell>
                             <TableCell>
                               {stat.total_processed > 0
-                                ? ((stat.successful_count / stat.total_processed) * 100).toFixed(1)
-                                : 0}%
+                                ? (
+                                  (stat.successful_count /
+                                      stat.total_processed) *
+                                    100
+                                ).toFixed(1)
+                                : 0}
+                              %
                             </TableCell>
                           </TableRow>
                         ))}
@@ -401,10 +480,10 @@ const MLProcessing = () => {
             <Grid item xs={12}>
               <Card>
                 <CardContent>
-                  <Typography variant="h6" gutterBottom>
+                  <Typography variant='h6' gutterBottom>
                     Recent Processing Logs
                   </Typography>
-                  <TableContainer component={Paper} variant="outlined">
+                  <TableContainer component={Paper} variant='outlined'>
                     <Table>
                       <TableHead>
                         <TableRow>
@@ -421,17 +500,27 @@ const MLProcessing = () => {
                           <TableRow key={index}>
                             <TableCell>{log.operation_type}</TableCell>
                             <TableCell>{log.model_name}</TableCell>
-                            <TableCell>{formatDuration(log.duration_seconds)}</TableCell>
+                            <TableCell>
+                              {formatDuration(log.duration_seconds)}
+                            </TableCell>
                             <TableCell>
                               <Chip
                                 label={log.status}
                                 color={getStatusColor(log.status)}
-                                size="small"
+                                size='small'
                                 icon={getStatusIcon(log.status)}
                               />
                             </TableCell>
-                            <TableCell>{formatDateTime(log.started_at)}</TableCell>
-                            <TableCell sx={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            <TableCell>
+                              {formatDateTime(log.started_at)}
+                            </TableCell>
+                            <TableCell
+                              sx={{
+                                maxWidth: 200,
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                              }}
+                            >
                               {log.article_title}
                             </TableCell>
                           </TableRow>
@@ -447,45 +536,50 @@ const MLProcessing = () => {
       </TabPanel>
 
       {/* Queue Article Dialog */}
-      <Dialog open={queueDialogOpen} onClose={() => setQueueDialogOpen(false)} maxWidth="sm" fullWidth>
+      <Dialog
+        open={queueDialogOpen}
+        onClose={() => setQueueDialogOpen(false)}
+        maxWidth='sm'
+        fullWidth
+      >
         <DialogTitle>Queue Article for ML Processing</DialogTitle>
         <DialogContent>
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 1 }}>
             <TextField
-              label="Article ID"
+              label='Article ID'
               value={selectedArticleId}
-              onChange={(e) => setSelectedArticleId(e.target.value)}
-              type="number"
+              onChange={e => setSelectedArticleId(e.target.value)}
+              type='number'
               fullWidth
             />
             <FormControl fullWidth>
               <InputLabel>Operation Type</InputLabel>
               <Select
                 value={operationType}
-                onChange={(e) => setOperationType(e.target.value)}
-                label="Operation Type"
+                onChange={e => setOperationType(e.target.value)}
+                label='Operation Type'
               >
-                <MenuItem value="summarization">Summarization</MenuItem>
-                <MenuItem value="key_points">Key Points</MenuItem>
-                <MenuItem value="argument_analysis">Argument Analysis</MenuItem>
-                <MenuItem value="sentiment">Sentiment Analysis</MenuItem>
-                <MenuItem value="full_analysis">Full Analysis</MenuItem>
+                <MenuItem value='summarization'>Summarization</MenuItem>
+                <MenuItem value='key_points'>Key Points</MenuItem>
+                <MenuItem value='argument_analysis'>Argument Analysis</MenuItem>
+                <MenuItem value='sentiment'>Sentiment Analysis</MenuItem>
+                <MenuItem value='full_analysis'>Full Analysis</MenuItem>
               </Select>
             </FormControl>
             <TextField
-              label="Priority"
+              label='Priority'
               value={priority}
-              onChange={(e) => setPriority(parseInt(e.target.value) || 0)}
-              type="number"
+              onChange={e => setPriority(parseInt(e.target.value) || 0)}
+              type='number'
               fullWidth
-              helperText="Higher number = higher priority"
+              helperText='Higher number = higher priority'
             />
             <TextField
-              label="Model Name (Optional)"
+              label='Model Name (Optional)'
               value={modelName}
-              onChange={(e) => setModelName(e.target.value)}
+              onChange={e => setModelName(e.target.value)}
               fullWidth
-              helperText="Leave empty to use default model"
+              helperText='Leave empty to use default model'
             />
           </Box>
         </DialogContent>
@@ -493,7 +587,7 @@ const MLProcessing = () => {
           <Button onClick={() => setQueueDialogOpen(false)}>Cancel</Button>
           <Button
             onClick={handleQueueArticle}
-            variant="contained"
+            variant='contained'
             disabled={loading || !selectedArticleId}
           >
             {loading ? <CircularProgress size={20} /> : 'Queue Article'}

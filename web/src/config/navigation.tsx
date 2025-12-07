@@ -135,7 +135,9 @@ export const navigationCategories = {
 };
 
 // Helper functions
-export const getNavigationByCategory = (category: 'main' | 'admin' | 'system') => {
+export const getNavigationByCategory = (
+  category: 'main' | 'admin' | 'system',
+) => {
   return [...mainNavigationItems, ...advancedNavigationItems].filter(
     item => item.category === category,
   );

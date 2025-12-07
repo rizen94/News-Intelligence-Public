@@ -39,13 +39,33 @@ function newsSystemReducer(state, action) {
   case ActionTypes.SET_ERROR:
     return { ...state, error: action.payload, loading: false };
   case ActionTypes.SET_ARTICLES:
-    return { ...state, articles: action.payload, loading: false, error: null };
+    return {
+      ...state,
+      articles: action.payload,
+      loading: false,
+      error: null,
+    };
   case ActionTypes.SET_STORYLINES:
-    return { ...state, storylines: action.payload, loading: false, error: null };
+    return {
+      ...state,
+      storylines: action.payload,
+      loading: false,
+      error: null,
+    };
   case ActionTypes.SET_RSS_FEEDS:
-    return { ...state, rssFeeds: action.payload, loading: false, error: null };
+    return {
+      ...state,
+      rssFeeds: action.payload,
+      loading: false,
+      error: null,
+    };
   case ActionTypes.SET_SYSTEM_HEALTH:
-    return { ...state, systemHealth: action.payload, loading: false, error: null };
+    return {
+      ...state,
+      systemHealth: action.payload,
+      loading: false,
+      error: null,
+    };
   case ActionTypes.SET_STATS:
     return { ...state, stats: action.payload, loading: false, error: null };
   case ActionTypes.UPDATE_LAST_UPDATED:
@@ -73,17 +93,34 @@ export const NewsSystemProvider = ({ children }) => {
     try {
       dispatch({ type: ActionTypes.SET_LOADING, payload: true });
 
-      const [articlesData, storylinesData, rssFeedsData, healthData] = await Promise.all([
-        apiService.getArticles().catch(err => ({ data: { articles: [], total_count: 0 } })),
-        apiService.getStorylines().catch(err => ({ data: { storylines: [], total_count: 0 } })),
-        apiService.getRSSFeeds().catch(err => ({ data: { feeds: [] } })),
-        apiService.getHealth().catch(err => ({ data: { status: 'error' } })),
-      ]);
+      const [articlesData, storylinesData, rssFeedsData, healthData] =
+        await Promise.all([
+          apiService
+            .getArticles()
+            .catch(err => ({ data: { articles: [], total_count: 0 } })),
+          apiService
+            .getStorylines()
+            .catch(err => ({ data: { storylines: [], total_count: 0 } })),
+          apiService.getRSSFeeds().catch(err => ({ data: { feeds: [] } })),
+          apiService.getHealth().catch(err => ({ data: { status: 'error' } })),
+        ]);
 
-      dispatch({ type: ActionTypes.SET_ARTICLES, payload: articlesData.data?.articles || [] });
-      dispatch({ type: ActionTypes.SET_STORYLINES, payload: storylinesData.data?.storylines || [] });
-      dispatch({ type: ActionTypes.SET_RSS_FEEDS, payload: rssFeedsData.data?.feeds || [] });
-      dispatch({ type: ActionTypes.SET_SYSTEM_HEALTH, payload: healthData.data });
+      dispatch({
+        type: ActionTypes.SET_ARTICLES,
+        payload: articlesData.data?.articles || [],
+      });
+      dispatch({
+        type: ActionTypes.SET_STORYLINES,
+        payload: storylinesData.data?.storylines || [],
+      });
+      dispatch({
+        type: ActionTypes.SET_RSS_FEEDS,
+        payload: rssFeedsData.data?.feeds || [],
+      });
+      dispatch({
+        type: ActionTypes.SET_SYSTEM_HEALTH,
+        payload: healthData.data,
+      });
 
       // Update stats
       const stats = {
@@ -94,21 +131,27 @@ export const NewsSystemProvider = ({ children }) => {
         },
         storylines: {
           total: storylinesData.data?.total_count || 0,
-          active: storylinesData.data?.storylines?.filter(s => s.status === 'active').length || 0,
+          active:
+            storylinesData.data?.storylines?.filter(s => s.status === 'active')
+              .length || 0,
         },
         rssFeeds: {
           total: rssFeedsData.data?.feeds?.length || 0,
-          active: rssFeedsData.data?.feeds?.filter(f => f.is_active !== false).length || 0,
+          active:
+            rssFeedsData.data?.feeds?.filter(f => f.is_active !== false)
+              .length || 0,
           errors: 0, // TODO: Calculate from error status
         },
       };
 
       dispatch({ type: ActionTypes.SET_STATS, payload: stats });
       dispatch({ type: ActionTypes.UPDATE_LAST_UPDATED });
-
     } catch (error) {
       console.error('Failed to load system data:', error);
-      dispatch({ type: ActionTypes.SET_ERROR, payload: 'Failed to load system data' });
+      dispatch({
+        type: ActionTypes.SET_ERROR,
+        payload: 'Failed to load system data',
+      });
     }
   };
 
@@ -123,7 +166,10 @@ export const NewsSystemProvider = ({ children }) => {
       await loadSystemData();
     } catch (error) {
       console.error('Failed to refresh RSS feeds:', error);
-      dispatch({ type: ActionTypes.SET_ERROR, payload: 'Failed to refresh RSS feeds' });
+      dispatch({
+        type: ActionTypes.SET_ERROR,
+        payload: 'Failed to refresh RSS feeds',
+      });
     }
   };
 
@@ -134,7 +180,10 @@ export const NewsSystemProvider = ({ children }) => {
       await loadSystemData();
     } catch (error) {
       console.error('Failed to run AI analysis:', error);
-      dispatch({ type: ActionTypes.SET_ERROR, payload: 'Failed to run AI analysis' });
+      dispatch({
+        type: ActionTypes.SET_ERROR,
+        payload: 'Failed to run AI analysis',
+      });
     }
   };
 

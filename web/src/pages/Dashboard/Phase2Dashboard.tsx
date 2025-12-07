@@ -87,7 +87,7 @@ function TabPanel(props: TabPanelProps) {
   const { children, value, index, ...other } = props;
   return (
     <div
-      role="tabpanel"
+      role='tabpanel'
       hidden={value !== index}
       id={`dashboard-tabpanel-${index}`}
       aria-labelledby={`dashboard-tab-${index}`}
@@ -104,7 +104,9 @@ const Phase2Dashboard: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [tabValue, setTabValue] = useState(0);
   const [autoRefresh, setAutoRefresh] = useState(true);
-  const [refreshInterval, setRefreshInterval] = useState<NodeJS.Timeout | null>(null);
+  const [refreshInterval, setRefreshInterval] = useState<NodeJS.Timeout | null>(
+    null,
+  );
 
   // System data states
   const [systemHealth, setSystemHealth] = useState<any>(null);
@@ -207,13 +209,17 @@ const Phase2Dashboard: React.FC = () => {
     try {
       const blob = await enhancedApiService.exportLogs({
         format: 'json',
-        start_time: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
+        start_time: new Date(
+          Date.now() - 7 * 24 * 60 * 60 * 1000,
+        ).toISOString(),
       });
 
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = `logs_export_${new Date().toISOString().split('T')[0]}.json`;
+      link.download = `logs_export_${
+        new Date().toISOString().split('T')[0]
+      }.json`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
@@ -234,28 +240,42 @@ const Phase2Dashboard: React.FC = () => {
 
   const getHealthColor = (status: string) => {
     switch (status?.toLowerCase()) {
-    case 'healthy': return 'success';
-    case 'warning': return 'warning';
-    case 'error': return 'error';
-    default: return 'default';
+    case 'healthy':
+      return 'success';
+    case 'warning':
+      return 'warning';
+    case 'error':
+      return 'error';
+    default:
+      return 'default';
     }
   };
 
   const getLogLevelColor = (level: string) => {
     switch (level?.toUpperCase()) {
-    case 'ERROR': return 'error';
-    case 'WARNING': return 'warning';
-    case 'INFO': return 'info';
-    case 'DEBUG': return 'default';
-    default: return 'default';
+    case 'ERROR':
+      return 'error';
+    case 'WARNING':
+      return 'warning';
+    case 'INFO':
+      return 'info';
+    case 'DEBUG':
+      return 'default';
+    default:
+      return 'default';
     }
   };
 
   if (loading) {
     return (
-      <Box display="flex" justifyContent="center" alignItems="center" minHeight="400px">
+      <Box
+        display='flex'
+        justifyContent='center'
+        alignItems='center'
+        minHeight='400px'
+      >
         <CircularProgress />
-        <Typography variant="h6" sx={{ ml: 2 }}>
+        <Typography variant='h6' sx={{ ml: 2 }}>
           Loading Phase 2 Dashboard...
         </Typography>
       </Box>
@@ -265,22 +285,27 @@ const Phase2Dashboard: React.FC = () => {
   return (
     <Box sx={{ flexGrow: 1, p: 3 }}>
       {/* Header */}
-      <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
-        <Typography variant="h4" component="h1">
+      <Box
+        display='flex'
+        justifyContent='space-between'
+        alignItems='center'
+        mb={3}
+      >
+        <Typography variant='h4' component='h1'>
           Phase 2 Enhanced Dashboard
         </Typography>
-        <Box display="flex" gap={2} alignItems="center">
+        <Box display='flex' gap={2} alignItems='center'>
           <FormControlLabel
             control={
               <Switch
                 checked={autoRefresh}
-                onChange={(e) => setAutoRefresh(e.target.checked)}
+                onChange={e => setAutoRefresh(e.target.checked)}
               />
             }
-            label="Auto Refresh"
+            label='Auto Refresh'
           />
           <Button
-            variant="outlined"
+            variant='outlined'
             startIcon={<RefreshIcon />}
             onClick={handleRefresh}
             disabled={refreshing}
@@ -291,19 +316,19 @@ const Phase2Dashboard: React.FC = () => {
       </Box>
 
       {error && (
-        <Alert severity="error" sx={{ mb: 3 }}>
+        <Alert severity='error' sx={{ mb: 3 }}>
           {error}
         </Alert>
       )}
 
       {/* Tabs */}
       <Paper sx={{ mb: 3 }}>
-        <Tabs value={tabValue} onChange={handleTabChange} variant="scrollable">
-          <Tab icon={<DashboardIcon />} label="Overview" />
-          <Tab icon={<MonitorIcon />} label="System Health" />
-          <Tab icon={<BugReportIcon />} label="Logs & Monitoring" />
-          <Tab icon={<AssessmentIcon />} label="Analytics" />
-          <Tab icon={<CodeIcon />} label="API Status" />
+        <Tabs value={tabValue} onChange={handleTabChange} variant='scrollable'>
+          <Tab icon={<DashboardIcon />} label='Overview' />
+          <Tab icon={<MonitorIcon />} label='System Health' />
+          <Tab icon={<BugReportIcon />} label='Logs & Monitoring' />
+          <Tab icon={<AssessmentIcon />} label='Analytics' />
+          <Tab icon={<CodeIcon />} label='API Status' />
         </Tabs>
       </Paper>
 
@@ -314,7 +339,7 @@ const Phase2Dashboard: React.FC = () => {
           <Grid item xs={12} md={6}>
             <Card>
               <CardContent>
-                <Typography variant="h6" gutterBottom>
+                <Typography variant='h6' gutterBottom>
                   System Health
                 </Typography>
                 {systemHealth ? (
@@ -327,21 +352,30 @@ const Phase2Dashboard: React.FC = () => {
                     <List dense>
                       <ListItem>
                         <ListItemIcon>
-                          <CheckCircleIcon color="success" />
+                          <CheckCircleIcon color='success' />
                         </ListItemIcon>
-                        <ListItemText primary="Database" secondary={systemHealth.services?.database} />
+                        <ListItemText
+                          primary='Database'
+                          secondary={systemHealth.services?.database}
+                        />
                       </ListItem>
                       <ListItem>
                         <ListItemIcon>
-                          <CheckCircleIcon color="success" />
+                          <CheckCircleIcon color='success' />
                         </ListItemIcon>
-                        <ListItemText primary="Redis" secondary={systemHealth.services?.redis} />
+                        <ListItemText
+                          primary='Redis'
+                          secondary={systemHealth.services?.redis}
+                        />
                       </ListItem>
                       <ListItem>
                         <ListItemIcon>
-                          <CheckCircleIcon color="success" />
+                          <CheckCircleIcon color='success' />
                         </ListItemIcon>
-                        <ListItemText primary="System" secondary={systemHealth.services?.system} />
+                        <ListItemText
+                          primary='System'
+                          secondary={systemHealth.services?.system}
+                        />
                       </ListItem>
                     </List>
                   </Box>
@@ -356,40 +390,40 @@ const Phase2Dashboard: React.FC = () => {
           <Grid item xs={12} md={6}>
             <Card>
               <CardContent>
-                <Typography variant="h6" gutterBottom>
+                <Typography variant='h6' gutterBottom>
                   Database Metrics
                 </Typography>
                 {databaseMetrics ? (
                   <Grid container spacing={2}>
                     <Grid item xs={6}>
-                      <Typography variant="h4" color="primary">
+                      <Typography variant='h4' color='primary'>
                         {databaseMetrics.total_articles}
                       </Typography>
-                      <Typography variant="body2" color="text.secondary">
+                      <Typography variant='body2' color='text.secondary'>
                         Total Articles
                       </Typography>
                     </Grid>
                     <Grid item xs={6}>
-                      <Typography variant="h4" color="primary">
+                      <Typography variant='h4' color='primary'>
                         {databaseMetrics.total_storylines}
                       </Typography>
-                      <Typography variant="body2" color="text.secondary">
+                      <Typography variant='body2' color='text.secondary'>
                         Storylines
                       </Typography>
                     </Grid>
                     <Grid item xs={6}>
-                      <Typography variant="h4" color="primary">
+                      <Typography variant='h4' color='primary'>
                         {databaseMetrics.total_rss_feeds}
                       </Typography>
-                      <Typography variant="body2" color="text.secondary">
+                      <Typography variant='body2' color='text.secondary'>
                         RSS Feeds
                       </Typography>
                     </Grid>
                     <Grid item xs={6}>
-                      <Typography variant="h4" color="primary">
+                      <Typography variant='h4' color='primary'>
                         {databaseMetrics.recent_articles}
                       </Typography>
-                      <Typography variant="body2" color="text.secondary">
+                      <Typography variant='body2' color='text.secondary'>
                         Recent (24h)
                       </Typography>
                     </Grid>
@@ -405,40 +439,40 @@ const Phase2Dashboard: React.FC = () => {
           <Grid item xs={12} md={6}>
             <Card>
               <CardContent>
-                <Typography variant="h6" gutterBottom>
+                <Typography variant='h6' gutterBottom>
                   Log Statistics (7 days)
                 </Typography>
                 {logStats ? (
                   <Grid container spacing={2}>
                     <Grid item xs={6}>
-                      <Typography variant="h4" color="primary">
+                      <Typography variant='h4' color='primary'>
                         {logStats.total_entries}
                       </Typography>
-                      <Typography variant="body2" color="text.secondary">
+                      <Typography variant='body2' color='text.secondary'>
                         Total Entries
                       </Typography>
                     </Grid>
                     <Grid item xs={6}>
-                      <Typography variant="h4" color="error">
+                      <Typography variant='h4' color='error'>
                         {logStats.error_count}
                       </Typography>
-                      <Typography variant="body2" color="text.secondary">
+                      <Typography variant='body2' color='text.secondary'>
                         Errors
                       </Typography>
                     </Grid>
                     <Grid item xs={6}>
-                      <Typography variant="h4" color="warning">
+                      <Typography variant='h4' color='warning'>
                         {logStats.warning_count}
                       </Typography>
-                      <Typography variant="body2" color="text.secondary">
+                      <Typography variant='body2' color='text.secondary'>
                         Warnings
                       </Typography>
                     </Grid>
                     <Grid item xs={6}>
-                      <Typography variant="h4" color="info">
+                      <Typography variant='h4' color='info'>
                         {logStats.info_count}
                       </Typography>
-                      <Typography variant="body2" color="text.secondary">
+                      <Typography variant='body2' color='text.secondary'>
                         Info
                       </Typography>
                     </Grid>
@@ -454,32 +488,32 @@ const Phase2Dashboard: React.FC = () => {
           <Grid item xs={12} md={6}>
             <Card>
               <CardContent>
-                <Typography variant="h6" gutterBottom>
+                <Typography variant='h6' gutterBottom>
                   Deduplication System
                 </Typography>
                 {deduplicationStats ? (
                   <Grid container spacing={2}>
                     <Grid item xs={6}>
-                      <Typography variant="h4" color="primary">
+                      <Typography variant='h4' color='primary'>
                         {deduplicationStats.total_articles}
                       </Typography>
-                      <Typography variant="body2" color="text.secondary">
+                      <Typography variant='body2' color='text.secondary'>
                         Articles Processed
                       </Typography>
                     </Grid>
                     <Grid item xs={6}>
-                      <Typography variant="h4" color="primary">
+                      <Typography variant='h4' color='primary'>
                         {deduplicationStats.total_clusters}
                       </Typography>
-                      <Typography variant="body2" color="text.secondary">
+                      <Typography variant='body2' color='text.secondary'>
                         Clusters
                       </Typography>
                     </Grid>
                     <Grid item xs={6}>
-                      <Typography variant="h4" color="primary">
+                      <Typography variant='h4' color='primary'>
                         {deduplicationStats.total_duplicate_pairs}
                       </Typography>
-                      <Typography variant="body2" color="text.secondary">
+                      <Typography variant='body2' color='text.secondary'>
                         Duplicate Pairs
                       </Typography>
                     </Grid>
@@ -507,14 +541,14 @@ const Phase2Dashboard: React.FC = () => {
               <Grid item xs={12} md={4}>
                 <Card>
                   <CardContent>
-                    <Typography variant="h6" gutterBottom>
+                    <Typography variant='h6' gutterBottom>
                       CPU Usage
                     </Typography>
-                    <Typography variant="h4" color="primary">
+                    <Typography variant='h4' color='primary'>
                       {systemMetrics.cpu_percent?.toFixed(1)}%
                     </Typography>
                     <LinearProgress
-                      variant="determinate"
+                      variant='determinate'
                       value={systemMetrics.cpu_percent}
                       sx={{ mt: 2 }}
                     />
@@ -525,14 +559,14 @@ const Phase2Dashboard: React.FC = () => {
               <Grid item xs={12} md={4}>
                 <Card>
                   <CardContent>
-                    <Typography variant="h6" gutterBottom>
+                    <Typography variant='h6' gutterBottom>
                       Memory Usage
                     </Typography>
-                    <Typography variant="h4" color="primary">
+                    <Typography variant='h4' color='primary'>
                       {systemMetrics.memory_percent?.toFixed(1)}%
                     </Typography>
                     <LinearProgress
-                      variant="determinate"
+                      variant='determinate'
                       value={systemMetrics.memory_percent}
                       sx={{ mt: 2 }}
                     />
@@ -543,14 +577,14 @@ const Phase2Dashboard: React.FC = () => {
               <Grid item xs={12} md={4}>
                 <Card>
                   <CardContent>
-                    <Typography variant="h6" gutterBottom>
+                    <Typography variant='h6' gutterBottom>
                       Disk Usage
                     </Typography>
-                    <Typography variant="h4" color="primary">
+                    <Typography variant='h4' color='primary'>
                       {systemMetrics.disk_percent?.toFixed(1)}%
                     </Typography>
                     <LinearProgress
-                      variant="determinate"
+                      variant='determinate'
                       value={systemMetrics.disk_percent}
                       sx={{ mt: 2 }}
                     />
@@ -568,13 +602,16 @@ const Phase2Dashboard: React.FC = () => {
           <Grid item xs={12}>
             <Card>
               <CardContent>
-                <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
-                  <Typography variant="h6">
-                    Real-time Logs
-                  </Typography>
+                <Box
+                  display='flex'
+                  justifyContent='space-between'
+                  alignItems='center'
+                  mb={2}
+                >
+                  <Typography variant='h6'>Real-time Logs</Typography>
                   <Box>
                     <Button
-                      variant="outlined"
+                      variant='outlined'
                       startIcon={<DownloadIcon />}
                       onClick={handleExportLogs}
                       sx={{ mr: 1 }}
@@ -582,7 +619,7 @@ const Phase2Dashboard: React.FC = () => {
                       Export
                     </Button>
                     <Button
-                      variant="outlined"
+                      variant='outlined'
                       startIcon={<CleanupIcon />}
                       onClick={handleCleanupLogs}
                     >
@@ -597,12 +634,14 @@ const Phase2Dashboard: React.FC = () => {
                         <Chip
                           label={log.level}
                           color={getLogLevelColor(log.level)}
-                          size="small"
+                          size='small'
                         />
                       </ListItemIcon>
                       <ListItemText
                         primary={log.message}
-                        secondary={`${log.logger} - ${new Date(log.timestamp).toLocaleString()}`}
+                        secondary={`${log.logger} - ${new Date(
+                          log.timestamp,
+                        ).toLocaleString()}`}
                       />
                     </ListItem>
                   ))}
@@ -619,12 +658,13 @@ const Phase2Dashboard: React.FC = () => {
           <Grid item xs={12}>
             <Card>
               <CardContent>
-                <Typography variant="h6" gutterBottom>
+                <Typography variant='h6' gutterBottom>
                   System Analytics
                 </Typography>
-                <Typography variant="body2" color="text.secondary">
-                  Advanced analytics and insights will be implemented here using the structured data
-                  from our comprehensive logging and monitoring systems.
+                <Typography variant='body2' color='text.secondary'>
+                  Advanced analytics and insights will be implemented here using
+                  the structured data from our comprehensive logging and
+                  monitoring systems.
                 </Typography>
               </CardContent>
             </Card>
@@ -638,12 +678,12 @@ const Phase2Dashboard: React.FC = () => {
           <Grid item xs={12}>
             <Card>
               <CardContent>
-                <Typography variant="h6" gutterBottom>
+                <Typography variant='h6' gutterBottom>
                   API Documentation Status
                 </Typography>
                 {apiStatus ? (
                   <Box>
-                    <Typography variant="h5" gutterBottom>
+                    <Typography variant='h5' gutterBottom>
                       {apiStatus.api?.name} v{apiStatus.api?.version}
                     </Typography>
                     <Chip
@@ -651,21 +691,23 @@ const Phase2Dashboard: React.FC = () => {
                       color={getHealthColor(apiStatus.api?.status)}
                       sx={{ mb: 2 }}
                     />
-                    <Typography variant="body1" paragraph>
+                    <Typography variant='body1' paragraph>
                       {apiStatus.api?.description}
                     </Typography>
-                    <Typography variant="h6" gutterBottom>
+                    <Typography variant='h6' gutterBottom>
                       Available Features:
                     </Typography>
                     <List>
-                      {apiStatus.api?.features?.map((feature: string, index: number) => (
-                        <ListItem key={index}>
-                          <ListItemIcon>
-                            <CheckCircleIcon color="success" />
-                          </ListItemIcon>
-                          <ListItemText primary={feature} />
-                        </ListItem>
-                      ))}
+                      {apiStatus.api?.features?.map(
+                        (feature: string, index: number) => (
+                          <ListItem key={index}>
+                            <ListItemIcon>
+                              <CheckCircleIcon color='success' />
+                            </ListItemIcon>
+                            <ListItemText primary={feature} />
+                          </ListItem>
+                        ),
+                      )}
                     </List>
                   </Box>
                 ) : (

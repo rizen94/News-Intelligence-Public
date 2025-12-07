@@ -32,28 +32,34 @@ export default function Search() {
 
   return (
     <Box>
-      <Typography variant="h4" component="h1" sx={{ fontWeight: 'bold', mb: 3 }}>
+      <Typography
+        variant='h4'
+        component='h1'
+        sx={{ fontWeight: 'bold', mb: 3 }}
+      >
         Search
       </Typography>
 
       <Card sx={{ mb: 3 }}>
         <CardContent>
-          <Grid container spacing={2} alignItems="center">
+          <Grid container spacing={2} alignItems='center'>
             <Grid item xs={12} md={10}>
               <TextField
                 fullWidth
-                label="Search across articles, clusters, and entities"
+                label='Search across articles, clusters, and entities'
                 value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
+                onChange={e => setQuery(e.target.value)}
+                onKeyPress={e => e.key === 'Enter' && handleSearch()}
                 InputProps={{
-                  startAdornment: <Search sx={{ mr: 1, color: 'text.secondary' }} />,
+                  startAdornment: (
+                    <Search sx={{ mr: 1, color: 'text.secondary' }} />
+                  ),
                 }}
               />
             </Grid>
             <Grid item xs={12} md={2}>
               <Button
-                variant="contained"
+                variant='contained'
                 onClick={handleSearch}
                 fullWidth
                 startIcon={<Search />}
@@ -74,7 +80,7 @@ export default function Search() {
 
       {search.results.length > 0 && (
         <Box>
-          <Typography variant="h6" gutterBottom>
+          <Typography variant='h6' gutterBottom>
             Search Results for: "{query}"
           </Typography>
 
@@ -83,15 +89,22 @@ export default function Search() {
               <Grid item xs={12} key={index}>
                 <Card>
                   <CardContent>
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
+                    <Box
+                      sx={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 1,
+                        mb: 1,
+                      }}
+                    >
                       {result.type === 'article' && <Article />}
                       {result.type === 'cluster' && <ClusterIcon />}
                       {result.type === 'entity' && <PersonIcon />}
-                      <Typography variant="h6">
+                      <Typography variant='h6'>
                         {result.title || result.text}
                       </Typography>
                     </Box>
-                    <Typography variant="body2" color="text.secondary">
+                    <Typography variant='body2' color='text.secondary'>
                       {result.content || result.summary}
                     </Typography>
                   </CardContent>

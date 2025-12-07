@@ -511,6 +511,23 @@ export const apiService = {
     }
   },
 
+  // Topic Management - Merge Topics
+  mergeTopics: async(topicIds: number[]) => {
+    try {
+      const response = await api.post(
+        '/api/v4/topic-management/topics/merge',
+        {
+          topic_ids: topicIds,
+          keep_primary: true,
+        },
+      );
+      return response.data;
+    } catch (error) {
+      console.error('Failed to merge topics:', error);
+      return { success: false, error: (error as any).message };
+    }
+  },
+
   // Pipeline Performance (placeholder)
   getPipelinePerformance: async() => {
     try {

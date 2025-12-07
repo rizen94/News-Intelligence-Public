@@ -49,34 +49,32 @@ class ErrorBoundary extends React.Component {
             }}
           >
             <ErrorIcon sx={{ fontSize: 64, color: 'error.main', mb: 2 }} />
-            <Typography variant="h4" gutterBottom>
+            <Typography variant='h4' gutterBottom>
               Something went wrong
             </Typography>
-            <Typography variant="body1" color="text.secondary" sx={{ mb: 3 }}>
-              We're sorry, but something unexpected happened. Please try refreshing the page.
+            <Typography variant='body1' color='text.secondary' sx={{ mb: 3 }}>
+              We're sorry, but something unexpected happened. Please try
+              refreshing the page.
             </Typography>
             <Button
-              variant="contained"
+              variant='contained'
               startIcon={<Refresh />}
               onClick={this.handleRetry}
               sx={{ mr: 2 }}
             >
               Try Again
             </Button>
-            <Button
-              variant="outlined"
-              onClick={() => window.location.reload()}
-            >
+            <Button variant='outlined' onClick={() => window.location.reload()}>
               Refresh Page
             </Button>
             {process.env.NODE_ENV === 'development' && this.state.error && (
               <Box sx={{ mt: 3, textAlign: 'left' }}>
-                <Typography variant="h6" gutterBottom>
+                <Typography variant='h6' gutterBottom>
                   Error Details (Development Mode):
                 </Typography>
                 <Typography
-                  variant="body2"
-                  component="pre"
+                  variant='body2'
+                  component='pre'
                   sx={{
                     backgroundColor: '#f0f0f0',
                     padding: 2,

@@ -129,7 +129,7 @@ export interface DateRange {
 
 export interface TimeRange {
   start: string; // HH:mm format
-  end: string;   // HH:mm format
+  end: string; // HH:mm format
 }
 
 export interface DateTimeRange {
@@ -177,7 +177,17 @@ export interface SearchConfig {
 
 export interface FilterConfig {
   field: string;
-  operator: 'equals' | 'contains' | 'startsWith' | 'endsWith' | 'gt' | 'lt' | 'gte' | 'lte' | 'in' | 'notIn';
+  operator:
+    | 'equals'
+    | 'contains'
+    | 'startsWith'
+    | 'endsWith'
+    | 'gt'
+    | 'lt'
+    | 'gte'
+    | 'lte'
+    | 'in'
+    | 'notIn';
   value: any;
 }
 

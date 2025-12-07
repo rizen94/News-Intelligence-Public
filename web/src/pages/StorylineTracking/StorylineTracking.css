@@ -118,12 +118,12 @@
   .storyline-tracking-container {
     padding: 16px;
   }
-  
+
   .deduplication-stats-grid .MuiGrid-item,
   .briefing-stats-grid .MuiGrid-item {
     margin-bottom: 16px;
   }
-  
+
   .topic-chips {
     justify-content: center;
   }
@@ -133,11 +133,11 @@
   .storyline-tracking-container {
     padding: 12px;
   }
-  
+
   .tab-content {
     margin-top: 16px;
   }
-  
+
   .dossier-content {
     font-size: 12px;
     padding: 12px;

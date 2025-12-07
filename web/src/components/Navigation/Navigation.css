@@ -72,16 +72,16 @@
     height: auto;
     position: relative;
   }
-  
+
   .nav-list {
     display: flex;
     overflow-x: auto;
   }
-  
+
   .nav-item {
     flex-shrink: 0;
   }
-  
+
   .nav-link {
     white-space: nowrap;
     padding: 10px 15px;
