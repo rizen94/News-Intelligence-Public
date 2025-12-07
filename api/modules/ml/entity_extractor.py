@@ -45,8 +45,8 @@ class LocalEntityExtractor:
     
     def __init__(self, ollama_url: str = "http://localhost:11434"):
         self.ollama_url = ollama_url
-        self.available_models = ["llama3.1:70b", "llama3.1:70b"]
-        self.default_model = "llama3.1:70b"
+        self.available_models = ["llama3.1:8b", "llama3.1:405b"]
+        self.default_model = "llama3.1:8b"  # Fast model (405b available for higher quality)
         self.cache = {}  # Simple in-memory cache
         self.cache_ttl = 3600  # 1 hour cache TTL
         

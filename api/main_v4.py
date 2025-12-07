@@ -33,8 +33,12 @@ logger = logging.getLogger(__name__)
 
 # Import domain routers
 from domains.news_aggregation.routes.news_aggregation import router as news_aggregation_router
+from domains.news_aggregation.routes.rss_duplicate_management import router as rss_duplicate_router
 from domains.content_analysis.routes.content_analysis import router as content_analysis_router
+from domains.content_analysis.routes.article_deduplication import router as article_deduplication_router
+from domains.content_analysis.routes.topic_management import router as topic_management_router
 from domains.storyline_management.routes.storyline_management import router as storyline_management_router
+from domains.storyline_management.routes.storyline_automation import router as storyline_automation_router
 from domains.intelligence_hub.routes.intelligence_hub import router as intelligence_hub_router
 from domains.user_management.routes.user_management import router as user_management_router
 from domains.system_monitoring.routes.system_monitoring import router as system_monitoring_router
@@ -259,8 +263,12 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 # Include domain routers
 app.include_router(news_aggregation_router)
+app.include_router(rss_duplicate_router)
 app.include_router(content_analysis_router)
+app.include_router(topic_management_router)
+app.include_router(article_deduplication_router)
 app.include_router(storyline_management_router)
+app.include_router(storyline_automation_router)
 app.include_router(intelligence_hub_router)
 app.include_router(user_management_router)
 app.include_router(system_monitoring_router)

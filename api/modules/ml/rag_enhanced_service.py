@@ -12,10 +12,10 @@ import psycopg2
 from collections import defaultdict, Counter
 import re
 
-from modules.summarization_service import MLSummarizationService
-from modules.background_processor import BackgroundMLProcessor
-from modules.rag_external_services import RAGExternalServicesManager
-from modules.gdelt_rag_service import GDELTRAGService
+from .summarization_service import MLSummarizationService
+from .background_processor import BackgroundMLProcessor
+from .rag_external_services import RAGExternalServicesManager
+from .gdelt_rag_service import GDELTRAGService
 
 logger = logging.getLogger(__name__)
 
@@ -344,8 +344,41 @@ class RAGEnhancedService:
             }
     
     def _retrieve_relevant_articles(self, query: str, max_articles: int) -> List[Dict[str, Any]]:
-        """Retrieve relevant articles based on query"""
+        """Retrieve relevant articles using enhanced RAG retrieval"""
         try:
+            # Use enhanced retrieval service if available
+            try:
+                from services.enhanced_rag_retrieval import EnhancedRAGRetrieval
+                retrieval_service = EnhancedRAGRetrieval(self.db_config)
+                
+                # Use async retrieval (wrap in sync if needed)
+                import asyncio
+                try:
+                    loop = asyncio.get_event_loop()
+                except RuntimeError:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                
+                articles = loop.run_until_complete(
+                    retrieval_service.retrieve_relevant_articles(
+                        query=query,
+                        max_results=max_articles,
+                        use_semantic=True,
+                        use_hybrid=True,
+                        expand_query=True,
+                        rerank=True
+                    )
+                )
+                
+                if articles:
+                    logger.info(f"Enhanced RAG retrieval found {len(articles)} articles")
+                    return articles
+            except ImportError:
+                logger.warning("Enhanced RAG retrieval not available, falling back to basic search")
+            except Exception as e:
+                logger.warning(f"Enhanced RAG retrieval failed: {e}, falling back to basic search")
+            
+            # Fallback to basic keyword search
             conn = psycopg2.connect(**self.db_config)
             cursor = conn.cursor()
             
@@ -357,7 +390,7 @@ class RAGEnhancedService:
             if not keywords:
                 # If no keywords, get recent articles
                 query_sql = """
-                    SELECT id, title, content, summary, source, published_at, category, url,
+                    SELECT id, title, content, excerpt, summary, source_domain, published_at, url,
                            quality_score, processing_status
                     FROM articles 
                     WHERE quality_score >= 0.3
@@ -368,17 +401,18 @@ class RAGEnhancedService:
             else:
                 # Build search query
                 keyword_conditions = []
+                params = []
                 for keyword in keywords:
-                    keyword_conditions.append(f"""
-                        (LOWER(title) LIKE '%{keyword.lower()}%' OR 
-                         LOWER(content) LIKE '%{keyword.lower()}%' OR
-                         LOWER(summary) LIKE '%{keyword.lower()}%')
-                    """)
+                    keyword_conditions.append(
+                        "(LOWER(title) LIKE %s OR LOWER(content) LIKE %s OR LOWER(excerpt) LIKE %s OR LOWER(summary) LIKE %s)"
+                    )
+                    pattern = f'%{keyword.lower()}%'
+                    params.extend([pattern, pattern, pattern, pattern])
                 
                 keyword_query = " OR ".join(keyword_conditions)
                 
                 query_sql = f"""
-                    SELECT id, title, content, summary, source, published_at, category, url,
+                    SELECT id, title, content, excerpt, summary, source_domain, published_at, url,
                            quality_score, processing_status
                     FROM articles 
                     WHERE ({keyword_query})
@@ -389,8 +423,9 @@ class RAGEnhancedService:
                     LIMIT %s
                 """
                 
-                logger.info(f"Executing query: {query_sql} with params: ({max_articles},)")
-                cursor.execute(query_sql, (max_articles,))
+                params.append(max_articles)
+                logger.info(f"Executing query with {len(keywords)} keywords")
+                cursor.execute(query_sql, params)
             
             articles = []
             rows = cursor.fetchall()
@@ -403,7 +438,6 @@ class RAGEnhancedService:
             
             for i, row in enumerate(rows):
                 try:
-                    logger.info(f"Processing row {i} with {len(row)} columns")
                     if len(row) < 10:
                         logger.warning(f"Row {i} has only {len(row)} columns, expected 10")
                         continue
@@ -412,18 +446,18 @@ class RAGEnhancedService:
                         'id': row[0],
                         'title': row[1] or "",
                         'content': row[2] or "",
-                        'summary': row[3] or "",
-                        'source': row[4] or "",
-                        'published_at': row[5].isoformat() if row[5] else None,
-                        'category': row[6] or "",
+                        'excerpt': row[3] or "",
+                        'summary': row[4] or "",
+                        'source': row[5] or "",
+                        'published_at': row[6].isoformat() if row[6] else None,
                         'url': row[7] or "",
-                        'ml_data': {},  # Empty for now
                         'quality_score': float(row[8]) if row[8] else 0.0,
                         'ml_processed': row[9] == 'completed' if row[9] else False,
-                        'ml_model_used': ""
+                        'relevance_score': 0.5,
+                        'retrieval_method': 'keyword'
                     })
                 except Exception as e:
-                    logger.warning(f"Error processing article row {i}: {e}, row length: {len(row) if row else 'None'}")
+                    logger.warning(f"Error processing article row {i}: {e}")
                     continue
             
             conn.close()
@@ -665,8 +699,43 @@ class RAGEnhancedService:
             return []
     
     def _extract_entities(self, articles: List[Dict[str, Any]]) -> List[str]:
-        """Extract key entities from articles"""
+        """Extract key entities from articles using enhanced extraction"""
         try:
+            # Use enhanced entity extractor if available
+            try:
+                from services.enhanced_entity_extractor import EnhancedEntityExtractor
+                extractor = EnhancedEntityExtractor()
+                
+                all_entities = {
+                    'people': [],
+                    'organizations': [],
+                    'locations': [],
+                    'topics': []
+                }
+                
+                # Extract from all articles
+                for article in articles[:10]:  # Limit to 10 articles for performance
+                    text = f"{article.get('title', '')} {article.get('excerpt', '')} {article.get('summary', '')}"
+                    entities = extractor.extract_entities(text)
+                    
+                    for entity_type in all_entities:
+                        all_entities[entity_type].extend(entities.get(entity_type, []))
+                
+                # Get top entities by frequency
+                entity_list = []
+                for entity_type, entity_list_type in all_entities.items():
+                    entity_counter = Counter(entity_list_type)
+                    top_entities = [entity for entity, count in entity_counter.most_common(5)]
+                    entity_list.extend(top_entities)
+                
+                return entity_list[:20]  # Limit to 20 total entities
+                
+            except ImportError:
+                logger.warning("Enhanced entity extractor not available, using basic extraction")
+            except Exception as e:
+                logger.warning(f"Enhanced entity extraction failed: {e}, using basic extraction")
+            
+            # Fallback to basic extraction
             entities = set()
             for article in articles:
                 title = article.get('title', '')

@@ -20,7 +20,7 @@ class TopicClusteringService:
         self.ollama_host = ollama_host
         self.ollama_port = ollama_port
         self.base_url = f"http://{ollama_host}:{ollama_port}"
-        self.model = "llama3.1:70b"
+        self.model = "llama3.1:8b"
         
     async def extract_topics_from_article(self, title: str, content: str = None) -> Dict[str, Any]:
         """Extract topics from a single article using Ollama"""

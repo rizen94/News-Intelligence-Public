@@ -45,7 +45,7 @@ class DatabaseManager:
         """Get unified database configuration with proper fallbacks"""
         # Standardized configuration - single source of truth
         config = {
-            'host': os.getenv('DB_HOST', 'news-intelligence-postgres'),
+            'host': os.getenv('DB_HOST', 'localhost'),
             'database': os.getenv('DB_NAME', 'news_intelligence'),
             'user': os.getenv('DB_USER', 'newsapp'),
             'password': os.getenv('DB_PASSWORD', 'newsapp_password'),

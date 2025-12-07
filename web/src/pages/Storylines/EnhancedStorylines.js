@@ -78,7 +78,7 @@ import {
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 
-import { apiService } from '../../services/apiService.ts';
+import { apiService } from '../../services/apiService';
 import StorylineManagementDialog from '../../components/StorylineManagementDialog';
 
 const EnhancedStorylines = () => {
@@ -132,7 +132,7 @@ const EnhancedStorylines = () => {
     loadStorylines();
   }, [loadStorylines]);
 
-  const handleSearch = (event) => {
+  const handleSearch = event => {
     setSearchQuery(event.target.value);
     setPage(1);
   };
@@ -164,7 +164,7 @@ const EnhancedStorylines = () => {
     setManagementDialogOpen(true);
   };
 
-  const handleEditStoryline = (storyline) => {
+  const handleEditStoryline = storyline => {
     setSelectedStoryline(storyline);
     setManagementDialogOpen(true);
   };
@@ -178,7 +178,7 @@ const EnhancedStorylines = () => {
     setSelectedStoryline(null);
   };
 
-  const toggleBookmark = (storylineId) => {
+  const toggleBookmark = storylineId => {
     const newBookmarked = new Set(bookmarkedStorylines);
     if (newBookmarked.has(storylineId)) {
       newBookmarked.delete(storylineId);
@@ -188,34 +188,46 @@ const EnhancedStorylines = () => {
     setBookmarkedStorylines(newBookmarked);
   };
 
-  const toggleExpanded = (storylineId) => {
+  const toggleExpanded = storylineId => {
     // Navigate to storyline detail page instead of just toggling state
     navigate(`/storylines/${storylineId}`);
   };
 
-  const getStatusColor = (status) => {
+  const getStatusColor = status => {
     switch (status?.toLowerCase()) {
-    case 'active': return 'success';
-    case 'developing': return 'warning';
-    case 'resolved': return 'info';
-    case 'archived': return 'default';
-    default: return 'default';
+    case 'active':
+      return 'success';
+    case 'developing':
+      return 'warning';
+    case 'resolved':
+      return 'info';
+    case 'archived':
+      return 'default';
+    default:
+      return 'default';
     }
   };
 
-  const getCategoryIcon = (category) => {
+  const getCategoryIcon = category => {
     switch (category?.toLowerCase()) {
-    case 'politics': return <PublicIcon />;
-    case 'business': return <BusinessIcon />;
-    case 'technology': return <ScienceIcon />;
-    case 'health': return <PersonIcon />;
-    case 'education': return <SchoolIcon />;
-    case 'employment': return <WorkIcon />;
-    default: return <Article />;
+    case 'politics':
+      return <PublicIcon />;
+    case 'business':
+      return <BusinessIcon />;
+    case 'technology':
+      return <ScienceIcon />;
+    case 'health':
+      return <PersonIcon />;
+    case 'education':
+      return <SchoolIcon />;
+    case 'employment':
+      return <WorkIcon />;
+    default:
+      return <Article />;
     }
   };
 
-  const formatDate = (dateString) => {
+  const formatDate = dateString => {
     if (!dateString) return 'Unknown date';
     return new Date(dateString).toLocaleDateString('en-US', {
       year: 'numeric',
@@ -228,38 +240,50 @@ const EnhancedStorylines = () => {
 
   const truncateText = (text, maxLength = 150) => {
     if (!text) return '';
-    return text.length > maxLength ? text.substring(0, maxLength) + '...' : text;
+    return text.length > maxLength
+      ? text.substring(0, maxLength) + '...'
+      : text;
   };
 
   const StorylineCard = ({ storyline }) => (
     <Card sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       <CardContent sx={{ flexGrow: 1 }}>
-        <Box display="flex" justifyContent="space-between" alignItems="flex-start" mb={2}>
-          <Typography variant="h6" component="h3" sx={{
-            fontWeight: 'bold',
-            lineHeight: 1.2,
-            display: '-webkit-box',
-            WebkitLineClamp: 2,
-            WebkitBoxOrient: 'vertical',
-            overflow: 'hidden',
-          }}>
+        <Box
+          display='flex'
+          justifyContent='space-between'
+          alignItems='flex-start'
+          mb={2}
+        >
+          <Typography
+            variant='h6'
+            component='h3'
+            sx={{
+              fontWeight: 'bold',
+              lineHeight: 1.2,
+              display: '-webkit-box',
+              WebkitLineClamp: 2,
+              WebkitBoxOrient: 'vertical',
+              overflow: 'hidden',
+            }}
+          >
             {storyline.title || 'Untitled Storyline'}
           </Typography>
           <IconButton
-            size="small"
+            size='small'
             onClick={() => toggleBookmark(storyline.id)}
             sx={{ ml: 1 }}
           >
-            {bookmarkedStorylines.has(storyline.id) ?
-              <Bookmark color="primary" /> :
+            {bookmarkedStorylines.has(storyline.id) ? (
+              <Bookmark color='primary' />
+            ) : (
               <BookmarkBorder />
-            }
+            )}
           </IconButton>
         </Box>
 
         <Typography
-          variant="body2"
-          color="text.secondary"
+          variant='body2'
+          color='text.secondary'
           sx={{
             mb: 2,
             display: '-webkit-box',
@@ -271,48 +295,58 @@ const EnhancedStorylines = () => {
           {truncateText(storyline.description || storyline.summary)}
         </Typography>
 
-        <Box display="flex" flexWrap="wrap" gap={1} mb={2}>
+        <Box display='flex' flexWrap='wrap' gap={1} mb={2}>
           {storyline.status && (
             <Chip
               label={storyline.status}
               color={getStatusColor(storyline.status)}
-              size="small"
+              size='small'
             />
           )}
           {storyline.category && (
             <Chip
               icon={getCategoryIcon(storyline.category)}
               label={storyline.category}
-              color="secondary"
-              size="small"
+              color='secondary'
+              size='small'
             />
           )}
           {storyline.impact_score && (
             <Chip
               label={`Impact: ${Math.round(storyline.impact_score * 100)}%`}
-              color="primary"
-              size="small"
+              color='primary'
+              size='small'
             />
           )}
         </Box>
 
-        <Box display="flex" alignItems="center" justifyContent="space-between" mb={1}>
-          <Box display="flex" alignItems="center" gap={1}>
-            <Article fontSize="small" color="action" />
-            <Typography variant="caption" color="text.secondary">
+        <Box
+          display='flex'
+          alignItems='center'
+          justifyContent='space-between'
+          mb={1}
+        >
+          <Box display='flex' alignItems='center' gap={1}>
+            <Article fontSize='small' color='action' />
+            <Typography variant='caption' color='text.secondary'>
               {storyline.article_count || 0} articles
             </Typography>
           </Box>
-          <Typography variant="caption" color="text.secondary">
+          <Typography variant='caption' color='text.secondary'>
             Updated: {formatDate(storyline.updated_at || storyline.created_at)}
           </Typography>
         </Box>
 
         {storyline.key_entities && storyline.key_entities.length > 0 && (
           <Box mt={1}>
-            <Typography variant="caption" color="text.secondary" display="block">
+            <Typography
+              variant='caption'
+              color='text.secondary'
+              display='block'
+            >
               Key Entities: {storyline.key_entities.slice(0, 3).join(', ')}
-              {storyline.key_entities.length > 3 && ` +${storyline.key_entities.length - 3} more`}
+              {storyline.key_entities.length > 3 &&
+                ` +${storyline.key_entities.length - 3} more`}
             </Typography>
           </Box>
         )}
@@ -320,24 +354,24 @@ const EnhancedStorylines = () => {
 
       <CardActions sx={{ p: 2, pt: 0 }}>
         <Button
-          size="small"
+          size='small'
           startIcon={<Visibility />}
           onClick={() => navigate(`/storylines/${storyline.id}`)}
         >
           View Details
         </Button>
-        <Button size="small" startIcon={<TimelineIcon />}>
+        <Button size='small' startIcon={<TimelineIcon />}>
           Timeline
         </Button>
-        <Button size="small" startIcon={<ShareIcon />}>
+        <Button size='small' startIcon={<ShareIcon />}>
           Share
         </Button>
         <Box sx={{ flexGrow: 1 }} />
-        <Tooltip title="Edit Storyline">
+        <Tooltip title='Edit Storyline'>
           <IconButton
-            size="small"
+            size='small'
             onClick={() => handleEditStoryline(storyline)}
-            color="primary"
+            color='primary'
           >
             <EditIcon />
           </IconButton>
@@ -358,34 +392,39 @@ const EnhancedStorylines = () => {
         alignItems: 'stretch',
       }}
     >
-      <Box display="flex" alignItems="center" justifyContent="space-between" width="100%">
+      <Box
+        display='flex'
+        alignItems='center'
+        justifyContent='space-between'
+        width='100%'
+      >
         <ListItemText
           primary={
-            <Box display="flex" alignItems="center" gap={1} mb={1}>
-              <Typography variant="h6" sx={{ flexGrow: 1 }}>
+            <Box display='flex' alignItems='center' gap={1} mb={1}>
+              <Typography variant='h6' sx={{ flexGrow: 1 }}>
                 {storyline.title || 'Untitled Storyline'}
               </Typography>
-              <Box display="flex" gap={1}>
+              <Box display='flex' gap={1}>
                 {storyline.status && (
                   <Chip
                     label={storyline.status}
                     color={getStatusColor(storyline.status)}
-                    size="small"
+                    size='small'
                   />
                 )}
                 {storyline.category && (
                   <Chip
                     icon={getCategoryIcon(storyline.category)}
                     label={storyline.category}
-                    color="secondary"
-                    size="small"
+                    color='secondary'
+                    size='small'
                   />
                 )}
                 {storyline.impact_score && (
                   <Chip
                     label={`${Math.round(storyline.impact_score * 100)}%`}
-                    color="primary"
-                    size="small"
+                    color='primary'
+                    size='small'
                   />
                 )}
               </Box>
@@ -393,22 +432,24 @@ const EnhancedStorylines = () => {
           }
           secondary={
             <Box>
-              <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+              <Typography variant='body2' color='text.secondary' sx={{ mb: 1 }}>
                 {truncateText(storyline.description || storyline.summary, 200)}
               </Typography>
-              <Box display="flex" alignItems="center" gap={2}>
-                <Box display="flex" alignItems="center" gap={0.5}>
-                  <Article fontSize="small" />
-                  <Typography variant="caption">
+              <Box display='flex' alignItems='center' gap={2}>
+                <Box display='flex' alignItems='center' gap={0.5}>
+                  <Article fontSize='small' />
+                  <Typography variant='caption'>
                     {storyline.article_count || 0} articles
                   </Typography>
                 </Box>
-                <Typography variant="caption">
-                  Updated: {formatDate(storyline.updated_at || storyline.created_at)}
+                <Typography variant='caption'>
+                  Updated:{' '}
+                  {formatDate(storyline.updated_at || storyline.created_at)}
                 </Typography>
-                {storyline.key_entities && storyline.key_entities.length > 0 && (
-                  <Typography variant="caption" color="text.secondary">
-                    Entities: {storyline.key_entities.slice(0, 3).join(', ')}
+                {storyline.key_entities &&
+                  storyline.key_entities.length > 0 && (
+                  <Typography variant='caption' color='text.secondary'>
+                      Entities: {storyline.key_entities.slice(0, 3).join(', ')}
                   </Typography>
                 )}
               </Box>
@@ -416,18 +457,19 @@ const EnhancedStorylines = () => {
           }
         />
         <ListItemSecondaryAction>
-          <Box display="flex" gap={1}>
+          <Box display='flex' gap={1}>
             <IconButton
-              size="small"
+              size='small'
               onClick={() => toggleBookmark(storyline.id)}
             >
-              {bookmarkedStorylines.has(storyline.id) ?
-                <Bookmark color="primary" /> :
+              {bookmarkedStorylines.has(storyline.id) ? (
+                <Bookmark color='primary' />
+              ) : (
                 <BookmarkBorder />
-              }
+              )}
             </IconButton>
             <Button
-              size="small"
+              size='small'
               startIcon={<Visibility />}
               onClick={() => toggleExpanded(storyline.id)}
             >
@@ -441,20 +483,25 @@ const EnhancedStorylines = () => {
 
   return (
     <Box>
-      <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
-        <Typography variant="h4" component="h1" sx={{ fontWeight: 'bold' }}>
+      <Box
+        display='flex'
+        justifyContent='space-between'
+        alignItems='center'
+        mb={3}
+      >
+        <Typography variant='h4' component='h1' sx={{ fontWeight: 'bold' }}>
           Storylines
         </Typography>
-        <Box display="flex" gap={2} alignItems="center">
+        <Box display='flex' gap={2} alignItems='center'>
           <Button
-            variant="contained"
+            variant='contained'
             startIcon={<AddIcon />}
             onClick={handleCreateStoryline}
             sx={{ mr: 2 }}
           >
             Create Storyline
           </Button>
-          <Tooltip title="Refresh Storylines">
+          <Tooltip title='Refresh Storylines'>
             <IconButton onClick={handleRefresh} disabled={loading}>
               <Refresh />
             </IconButton>
@@ -463,7 +510,7 @@ const EnhancedStorylines = () => {
             variant={viewMode === 'grid' ? 'contained' : 'outlined'}
             startIcon={<ViewModule />}
             onClick={() => setViewMode('grid')}
-            size="small"
+            size='small'
           >
             Grid
           </Button>
@@ -471,7 +518,7 @@ const EnhancedStorylines = () => {
             variant={viewMode === 'list' ? 'contained' : 'outlined'}
             startIcon={<ViewList />}
             onClick={() => setViewMode('list')}
-            size="small"
+            size='small'
           >
             List
           </Button>
@@ -480,16 +527,16 @@ const EnhancedStorylines = () => {
 
       {/* Search and Filters */}
       <Paper sx={{ p: 3, mb: 3 }}>
-        <Grid container spacing={2} alignItems="center">
+        <Grid container spacing={2} alignItems='center'>
           <Grid item xs={12} md={4}>
             <TextField
               fullWidth
-              placeholder="Search storylines by title or description..."
+              placeholder='Search storylines by title or description...'
               value={searchQuery}
               onChange={handleSearch}
               InputProps={{
                 startAdornment: (
-                  <InputAdornment position="start">
+                  <InputAdornment position='start'>
                     <Search />
                   </InputAdornment>
                 ),
@@ -501,14 +548,14 @@ const EnhancedStorylines = () => {
               <InputLabel>Status</InputLabel>
               <Select
                 value={filterStatus}
-                label="Status"
-                onChange={(e) => handleFilterChange('status', e.target.value)}
+                label='Status'
+                onChange={e => handleFilterChange('status', e.target.value)}
               >
-                <MenuItem value="">All Statuses</MenuItem>
-                <MenuItem value="active">Active</MenuItem>
-                <MenuItem value="developing">Developing</MenuItem>
-                <MenuItem value="resolved">Resolved</MenuItem>
-                <MenuItem value="archived">Archived</MenuItem>
+                <MenuItem value=''>All Statuses</MenuItem>
+                <MenuItem value='active'>Active</MenuItem>
+                <MenuItem value='developing'>Developing</MenuItem>
+                <MenuItem value='resolved'>Resolved</MenuItem>
+                <MenuItem value='archived'>Archived</MenuItem>
               </Select>
             </FormControl>
           </Grid>
@@ -517,16 +564,16 @@ const EnhancedStorylines = () => {
               <InputLabel>Category</InputLabel>
               <Select
                 value={filterCategory}
-                label="Category"
-                onChange={(e) => handleFilterChange('category', e.target.value)}
+                label='Category'
+                onChange={e => handleFilterChange('category', e.target.value)}
               >
-                <MenuItem value="">All Categories</MenuItem>
-                <MenuItem value="politics">Politics</MenuItem>
-                <MenuItem value="business">Business</MenuItem>
-                <MenuItem value="technology">Technology</MenuItem>
-                <MenuItem value="health">Health</MenuItem>
-                <MenuItem value="education">Education</MenuItem>
-                <MenuItem value="employment">Employment</MenuItem>
+                <MenuItem value=''>All Categories</MenuItem>
+                <MenuItem value='politics'>Politics</MenuItem>
+                <MenuItem value='business'>Business</MenuItem>
+                <MenuItem value='technology'>Technology</MenuItem>
+                <MenuItem value='health'>Health</MenuItem>
+                <MenuItem value='education'>Education</MenuItem>
+                <MenuItem value='employment'>Employment</MenuItem>
               </Select>
             </FormControl>
           </Grid>
@@ -535,21 +582,21 @@ const EnhancedStorylines = () => {
               <InputLabel>Sort By</InputLabel>
               <Select
                 value={sortBy}
-                label="Sort By"
-                onChange={(e) => handleFilterChange('sort', e.target.value)}
+                label='Sort By'
+                onChange={e => handleFilterChange('sort', e.target.value)}
               >
-                <MenuItem value="updated_at">Last Updated</MenuItem>
-                <MenuItem value="created_at">Created Date</MenuItem>
-                <MenuItem value="impact_score">Impact Score</MenuItem>
-                <MenuItem value="article_count">Article Count</MenuItem>
-                <MenuItem value="title">Title</MenuItem>
+                <MenuItem value='updated_at'>Last Updated</MenuItem>
+                <MenuItem value='created_at'>Created Date</MenuItem>
+                <MenuItem value='impact_score'>Impact Score</MenuItem>
+                <MenuItem value='article_count'>Article Count</MenuItem>
+                <MenuItem value='title'>Title</MenuItem>
               </Select>
             </FormControl>
           </Grid>
           <Grid item xs={12} md={2}>
             <Button
               fullWidth
-              variant="outlined"
+              variant='outlined'
               startIcon={<FilterList />}
               onClick={() => {
                 setSearchQuery('');
@@ -566,7 +613,7 @@ const EnhancedStorylines = () => {
       </Paper>
 
       {error && (
-        <Alert severity="error" sx={{ mb: 3 }}>
+        <Alert severity='error' sx={{ mb: 3 }}>
           {error}
         </Alert>
       )}
@@ -577,21 +624,20 @@ const EnhancedStorylines = () => {
       {storylines.length === 0 && !loading ? (
         <Paper sx={{ p: 4, textAlign: 'center' }}>
           <TimelineIcon sx={{ fontSize: 64, color: 'text.secondary', mb: 2 }} />
-          <Typography variant="h6" color="text.secondary" gutterBottom>
+          <Typography variant='h6' color='text.secondary' gutterBottom>
             No storylines found
           </Typography>
-          <Typography variant="body2" color="text.secondary">
+          <Typography variant='body2' color='text.secondary'>
             {searchQuery || filterStatus || filterCategory
               ? 'Try adjusting your search criteria or filters'
-              : 'Storylines will appear here once the system starts analyzing articles'
-            }
+              : 'Storylines will appear here once the system starts analyzing articles'}
           </Typography>
         </Paper>
       ) : (
         <>
           {viewMode === 'grid' ? (
             <Grid container spacing={3}>
-              {storylines.map((storyline) => (
+              {storylines.map(storyline => (
                 <Grid item xs={12} sm={6} md={4} key={storyline.id}>
                   <StorylineCard storyline={storyline} />
                 </Grid>
@@ -599,7 +645,7 @@ const EnhancedStorylines = () => {
             </Grid>
           ) : (
             <List>
-              {storylines.map((storyline) => (
+              {storylines.map(storyline => (
                 <StorylineListItem key={storyline.id} storyline={storyline} />
               ))}
             </List>
@@ -607,13 +653,13 @@ const EnhancedStorylines = () => {
 
           {/* Pagination */}
           {totalPages > 1 && (
-            <Box display="flex" justifyContent="center" mt={4}>
+            <Box display='flex' justifyContent='center' mt={4}>
               <Pagination
                 count={totalPages}
                 page={page}
                 onChange={(event, value) => setPage(value)}
-                color="primary"
-                size="large"
+                color='primary'
+                size='large'
               />
             </Box>
           )}
@@ -622,43 +668,43 @@ const EnhancedStorylines = () => {
 
       {/* AI Analysis Features */}
       <Paper sx={{ p: 3, mt: 4 }}>
-        <Typography variant="h6" gutterBottom>
+        <Typography variant='h6' gutterBottom>
           <PsychologyIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
           Advanced AI Analysis Features
         </Typography>
         <Grid container spacing={2}>
           <Grid item xs={12} md={3}>
-            <Box textAlign="center">
-              <AutoAwesomeIcon color="primary" sx={{ fontSize: 40, mb: 1 }} />
-              <Typography variant="h6">Multi-Perspective Analysis</Typography>
-              <Typography variant="body2" color="text.secondary">
+            <Box textAlign='center'>
+              <AutoAwesomeIcon color='primary' sx={{ fontSize: 40, mb: 1 }} />
+              <Typography variant='h6'>Multi-Perspective Analysis</Typography>
+              <Typography variant='body2' color='text.secondary'>
                 Analyze storylines from multiple viewpoints and sources
               </Typography>
             </Box>
           </Grid>
           <Grid item xs={12} md={3}>
-            <Box textAlign="center">
-              <AssessmentIcon color="primary" sx={{ fontSize: 40, mb: 1 }} />
-              <Typography variant="h6">Impact Assessment</Typography>
-              <Typography variant="body2" color="text.secondary">
+            <Box textAlign='center'>
+              <AssessmentIcon color='primary' sx={{ fontSize: 40, mb: 1 }} />
+              <Typography variant='h6'>Impact Assessment</Typography>
+              <Typography variant='body2' color='text.secondary'>
                 Evaluate potential impacts across different dimensions
               </Typography>
             </Box>
           </Grid>
           <Grid item xs={12} md={3}>
-            <Box textAlign="center">
-              <HistoryIcon color="primary" sx={{ fontSize: 40, mb: 1 }} />
-              <Typography variant="h6">Historical Context</Typography>
-              <Typography variant="body2" color="text.secondary">
+            <Box textAlign='center'>
+              <HistoryIcon color='primary' sx={{ fontSize: 40, mb: 1 }} />
+              <Typography variant='h6'>Historical Context</Typography>
+              <Typography variant='body2' color='text.secondary'>
                 Connect current events to historical patterns
               </Typography>
             </Box>
           </Grid>
           <Grid item xs={12} md={3}>
-            <Box textAlign="center">
-              <PredictionIcon color="primary" sx={{ fontSize: 40, mb: 1 }} />
-              <Typography variant="h6">Predictive Analysis</Typography>
-              <Typography variant="body2" color="text.secondary">
+            <Box textAlign='center'>
+              <PredictionIcon color='primary' sx={{ fontSize: 40, mb: 1 }} />
+              <Typography variant='h6'>Predictive Analysis</Typography>
+              <Typography variant='body2' color='text.secondary'>
                 Forecast future developments and trends
               </Typography>
             </Box>

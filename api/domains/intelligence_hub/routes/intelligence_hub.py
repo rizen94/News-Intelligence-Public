@@ -462,7 +462,7 @@ async def get_topic_clusters(
                            AVG(atc.relevance_score) as avg_relevance,
                            MAX(a.published_at) as latest_article_date
                     FROM topic_clusters tc
-                    LEFT JOIN article_topic_clusters atc ON tc.id = atc.topic_cluster_id
+                    LEFT JOIN article_topics atc ON tc.id = atc.topic_id
                     LEFT JOIN articles a ON atc.article_id = a.id
                     WHERE tc.is_active = true
                     GROUP BY tc.id, tc.cluster_name, tc.cluster_description, tc.cluster_type,
@@ -538,7 +538,7 @@ async def get_trending_topics(
                            AVG(a.sentiment_score) as avg_sentiment,
                            MAX(a.published_at) as latest_article_date
                     FROM topic_clusters tc
-                    JOIN article_topic_clusters atc ON tc.id = atc.topic_cluster_id
+                    JOIN article_topics atc ON tc.id = atc.topic_id
                     JOIN articles a ON atc.article_id = a.id
                     WHERE tc.is_active = true
                     AND a.created_at >= %s

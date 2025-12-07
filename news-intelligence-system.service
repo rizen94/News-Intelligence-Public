@@ -1,8 +1,9 @@
 [Unit]
-Description=News Intelligence System - Complete Stack
-After=network.target docker.service
+Description=News Intelligence System - Complete Stack (Redis, API, Frontend)
+After=network.target
 Wants=docker.service
-Requires=docker.service
+# Note: Using Wants instead of Requires to allow service to start even if Docker service is not available
+# Docker will be started automatically if needed via docker-compose
 
 [Service]
 Type=oneshot
@@ -17,9 +18,20 @@ TimeoutStartSec=600
 Restart=on-failure
 RestartSec=30
 
-# Environment variables
-Environment=PATH=/usr/local/bin:/usr/bin:/bin
+# Environment variables - include common paths for node, python, npm
+Environment=PATH=/home/pete/.nvm/versions/node/v20.19.5/bin:/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/home/pete/.local/bin
 Environment=DOCKER_HOST=unix:///var/run/docker.sock
+Environment=HOME=/home/pete
+Environment=USER=pete
+Environment=NVM_DIR=/home/pete/.nvm
+
+# User and permissions
+User=pete
+Group=pete
+
+# Keep logs for debugging
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=default.target

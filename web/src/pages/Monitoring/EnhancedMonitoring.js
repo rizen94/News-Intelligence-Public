@@ -49,7 +49,7 @@ import {
 } from '@mui/material';
 import React, { useState, useEffect } from 'react';
 
-import { apiService } from '../../services/apiService.ts';
+import { apiService } from '../../services/apiService';
 
 const EnhancedMonitoring = () => {
   const [systemStatus, setSystemStatus] = useState(null);
@@ -71,6 +71,16 @@ const EnhancedMonitoring = () => {
     title: '',
     content: '',
   });
+
+  // Debug logging for system status
+  console.log('🔍 Current system status:', {
+    overall: systemStatus?.overall,
+    hasMonitoringData: !!systemStatus?.monitoringData,
+    hasHealth: !!systemStatus?.health,
+    loading,
+    error,
+  });
+
   // Pipeline status
   const [pipelineRunning, setPipelineRunning] = useState(() => {
     const saved = localStorage.getItem('pipelineStatus');
@@ -79,7 +89,10 @@ const EnhancedMonitoring = () => {
       const now = new Date();
       const eta = new Date(data.eta);
       if (eta > now) return true;
-      else { localStorage.removeItem('pipelineStatus'); return false; }
+      else {
+        localStorage.removeItem('pipelineStatus');
+        return false;
+      }
     }
     return false;
   });
@@ -108,7 +121,10 @@ const EnhancedMonitoring = () => {
       const now = new Date();
       const eta = new Date(data.eta);
       if (eta > now) return true;
-      else { localStorage.removeItem('rssStatus'); return false; }
+      else {
+        localStorage.removeItem('rssStatus');
+        return false;
+      }
     }
     return false;
   });
@@ -137,7 +153,10 @@ const EnhancedMonitoring = () => {
       const now = new Date();
       const eta = new Date(data.eta);
       if (eta > now) return true;
-      else { localStorage.removeItem('analysisStatus'); return false; }
+      else {
+        localStorage.removeItem('analysisStatus');
+        return false;
+      }
     }
     return false;
   });
@@ -171,7 +190,10 @@ const EnhancedMonitoring = () => {
       const now = new Date();
       const eta = new Date(data.eta);
       if (eta > now) return true;
-      else { localStorage.removeItem('masterStatus'); return false; }
+      else {
+        localStorage.removeItem('masterStatus');
+        return false;
+      }
     }
     return false;
   });
@@ -260,24 +282,124 @@ const EnhancedMonitoring = () => {
       setLoading(true);
       setError(null);
 
-      const [systemResponse, pipelineResponse, performanceResponse, tracesResponse] = await Promise.all([
-        apiService.getSystemStatus(),
-        apiService.getPipelineStatus(),
-        apiService.getPipelinePerformance(),
-        apiService.getPipelineTraces({ limit: 10 }),
+      console.log('🔍 Starting to load monitoring data...');
+
+      const [systemResponse, pipelineStatusResponse, healthResponse] = await Promise.allSettled([
+        apiService.getMonitoringDashboard().catch(err => {
+          console.warn('Monitoring dashboard error:', err);
+          return { success: false, data: null };
+        }),
+        apiService.getPipelineStatus().catch(err => {
+          console.warn('Pipeline status error:', err);
+          return { success: false, data: {} };
+        }),
+        apiService.getHealth().catch(err => {
+          console.warn('Health check error:', err);
+          return { success: false, status: 'unknown' };
+        }),
       ]);
 
-      setSystemStatus(systemResponse);
+      const monitoringResult = systemResponse.status === 'fulfilled' && systemResponse.value?.success
+        ? systemResponse.value
+        : null;
+      const pipelineResult = pipelineStatusResponse.status === 'fulfilled' && pipelineStatusResponse.value?.success
+        ? pipelineStatusResponse.value
+        : null;
+      const healthResult = healthResponse.status === 'fulfilled' && healthResponse.value?.success
+        ? healthResponse.value
+        : null;
+
+      console.log('🔍 API Response received:', { monitoringResult, pipelineResult, healthResult });
+
+      // Extract pipeline data from API response
+      const pipelineResponse = pipelineResult?.data ? {
+        system_status: pipelineResult.data.pipeline_status || 'idle',
+        active_traces_count: pipelineResult.data.active_traces || 0,
+        current_stage: pipelineResult.data.current_stage || null,
+        overall_progress: pipelineResult.data.overall_progress || 0,
+      } : {
+        system_status: 'idle',
+        active_traces_count: 0,
+      };
+
+      const performanceResponse = pipelineResult?.data ? {
+        total_traces: pipelineResult.data.total_traces || 0,
+        success_rate: pipelineResult.data.success_rate || 0,
+        total_articles_processed: pipelineResult.data.articles_processed || 0,
+        total_feeds_processed: 0, // Not available in pipeline status
+        error_count: pipelineResult.data.errors || 0,
+      } : {
+        total_traces: 0,
+        success_rate: 0,
+        total_articles_processed: 0,
+        total_feeds_processed: 0,
+        error_count: 0,
+      };
+
+      const tracesResponse = {
+        data: {
+          traces: pipelineResult?.data?.recent_traces || [],
+        },
+      };
+
+      console.log('🔍 Setting system status with data:', {
+        overall: monitoringResult?.data?.overall_status || 'unknown',
+        hasMonitoringData: !!monitoringResult,
+        hasHealth: !!monitoringResult,
+        pipelineData: pipelineResult,
+      });
+
+      // Calculate overall status from component statuses
+      let overallStatus = 'unknown';
+      if (monitoringResult?.data) {
+        const systemStatus = monitoringResult.data.system?.status || 'unknown';
+        const databaseStatus = monitoringResult.data.database?.status || 'unknown';
+        const redisStatus = monitoringResult.data.redis?.status || 'unknown';
+        const alertsStatus = monitoringResult.data.alerts?.status || 'unknown';
+
+        // If all components are healthy, overall is healthy
+        if (systemStatus === 'healthy' && databaseStatus === 'healthy' &&
+            redisStatus === 'healthy' && alertsStatus === 'healthy') {
+          overallStatus = 'healthy';
+        } else if (systemStatus === 'warning' || databaseStatus === 'warning' ||
+                   redisStatus === 'unhealthy' || alertsStatus === 'warning') {
+          overallStatus = 'warning';
+        } else if (systemStatus === 'unhealthy' || databaseStatus === 'unhealthy' ||
+                   redisStatus === 'unhealthy' || alertsStatus === 'unhealthy') {
+          overallStatus = 'unhealthy';
+        } else {
+          // Use API's overall_status if available, otherwise use calculated
+          overallStatus = monitoringResult.data.overall_status || 'unknown';
+        }
+      } else if (healthResult?.status) {
+        // Fallback to health check status if monitoring dashboard fails
+        overallStatus = healthResult.status;
+      } else if (pipelineResult?.data?.pipeline_status) {
+        // Fallback to pipeline status if available
+        overallStatus = pipelineResult.data.pipeline_status === 'healthy' ? 'healthy' :
+          pipelineResult.data.pipeline_status === 'error' ? 'unhealthy' : 'warning';
+      }
+
+      setSystemStatus({
+        overall: overallStatus,
+        monitoringData: monitoringResult,
+        health: monitoringResult,
+      });
       setPipelineStatus(pipelineResponse);
       setPipelinePerformance(performanceResponse);
-      setPipelineTraces(Array.isArray(tracesResponse?.data?.traces) ? tracesResponse.data.traces : []);
+      setPipelineTraces(
+        Array.isArray(tracesResponse?.data?.traces)
+          ? tracesResponse.data.traces
+          : [],
+      );
       setLastUpdate(new Date());
 
       // Check if pipeline is running
       checkPipelineStatus(pipelineResponse);
 
+      console.log('✅ Monitoring data loaded successfully');
     } catch (err) {
-      console.error('Error loading monitoring data:', err);
+      console.error('❌ Error loading monitoring data:', err);
       setError('Failed to load monitoring data');
     } finally {
       setLoading(false);
@@ -299,7 +421,7 @@ const EnhancedMonitoring = () => {
     }
   };
 
-  const checkPipelineStatus = (pipelineResponse) => {
+  const checkPipelineStatus = pipelineResponse => {
     // If we already have a running pipeline from localStorage, don't override it
     if (pipelineRunning) {
       // Check if the stored ETA has passed
@@ -315,7 +437,10 @@ const EnhancedMonitoring = () => {
     }
 
     // Only check API response if we don't have a running pipeline
-    if (pipelineResponse?.system_status === 'running' || pipelineResponse?.active_traces_count > 0) {
+    if (
+      pipelineResponse?.system_status === 'running' ||
+      pipelineResponse?.active_traces_count > 0
+    ) {
       setPipelineRunning(true);
 
       // Calculate ETA based on pipeline performance data
@@ -416,7 +541,9 @@ Do you want to proceed with completing the remaining processes?`;
     if (pipelineRunning || rssRunning || analysisRunning || masterRunning) {
       setActionMessage({
         type: 'warning',
-        text: `Pipeline is already running or another process is active. ETA: ${formatETA(displayPipelineETA || pipelineETA)}`,
+        text: `Pipeline is already running or another process is active. ETA: ${formatETA(
+          displayPipelineETA || pipelineETA,
+        )}`,
       });
       return;
     }
@@ -495,7 +622,6 @@ Do you want to proceed with triggering the pipeline?`,
       setTimeout(() => {
         clearInterval(interval);
       }, 35 * 60 * 1000);
-
     } catch (error) {
       setActionMessage({
         type: 'error',
@@ -511,7 +637,9 @@ Do you want to proceed with triggering the pipeline?`,
     if (pipelineRunning || rssRunning || analysisRunning || masterRunning) {
       setActionMessage({
         type: 'warning',
-        text: `RSS feeds are already updating or another process is active. ETA: ${formatETA(displayRssETA || rssETA)}`,
+        text: `RSS feeds are already updating or another process is active. ETA: ${formatETA(
+          displayRssETA || rssETA,
+        )}`,
       });
       return;
     }
@@ -552,30 +680,53 @@ Do you want to proceed with updating RSS feeds?`,
       setActionLoading(prev => ({ ...prev, rss: true }));
       setActionMessage(null);
 
+      // Set RSS as running while processing
+      setRssRunning(true);
+      setRssProgress(50);
+      saveProcessStatus('rss', true, new Date(Date.now() + 2 * 60 * 1000), 50);
+
       const result = await apiService.updateRSSFeeds();
 
-      // Set RSS as running with ETA (5 minutes)
-      setRssRunning(true);
-      const eta = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes from now
-      setRssETA(eta);
-      setRssProgress(0);
-      saveProcessStatus('rss', true, eta, 0);
+      // Complete - API runs synchronously now
+      setRssProgress(100);
 
-      setActionMessage({
-        type: 'success',
-        text: result.message || 'RSS feeds update started',
-      });
+      if (result.success) {
+        setActionMessage({
+          type: 'success',
+          text:
+            result.message ||
+            `RSS feeds update completed - ${
+              result.articles_added || 0
+            } articles added`,
+        });
+      } else {
+        setActionMessage({
+          type: 'error',
+          text: result.error || 'RSS feeds update failed',
+        });
+      }
 
-      // Refresh data after a short delay
+      // Clear running state after brief display
+      setTimeout(() => {
+        setRssRunning(false);
+        setRssETA(null);
+        setRssProgress(0);
+        saveProcessStatus('rss', false, null, 0);
+      }, 2000);
+
+      // Refresh data after completion
       setTimeout(() => {
         loadMonitoringData();
       }, 2000);
-
     } catch (error) {
       setActionMessage({
         type: 'error',
         text: error.response?.data?.detail || 'Failed to update RSS feeds',
       });
+      setRssRunning(false);
+      setRssETA(null);
+      setRssProgress(0);
+      saveProcessStatus('rss', false, null, 0);
     } finally {
       setActionLoading(prev => ({ ...prev, rss: false }));
     }
@@ -586,7 +737,9 @@ Do you want to proceed with updating RSS feeds?`,
     if (pipelineRunning || rssRunning || analysisRunning || masterRunning) {
       setActionMessage({
         type: 'warning',
-        text: `AI analysis is already running or another process is active. ETA: ${formatETA(displayAnalysisETA || analysisETA)}`,
+        text: `AI analysis is already running or another process is active. ETA: ${formatETA(
+          displayAnalysisETA || analysisETA,
+        )}`,
       });
       return;
     }
@@ -645,7 +798,6 @@ Do you want to proceed with running AI sentiment analysis?`,
       setTimeout(() => {
         loadMonitoringData();
       }, 2000);
-
     } catch (error) {
       setActionMessage({
         type: 'error',
@@ -658,7 +810,12 @@ Do you want to proceed with running AI sentiment analysis?`,
 
   const executeMasterSwitch = async() => {
     try {
-      setActionLoading(prev => ({ ...prev, pipeline: true, rss: true, analysis: true }));
+      setActionLoading(prev => ({
+        ...prev,
+        pipeline: true,
+        rss: true,
+        analysis: true,
+      }));
       setActionMessage(null);
 
       // Calculate remaining time based on what's already running
@@ -711,42 +868,60 @@ Do you want to proceed with running AI sentiment analysis?`,
 
       setActionMessage({
         type: 'success',
-        text: `All processes completed successfully! Executed: ${executedProcesses.join(', ')}`,
+        text: `All processes completed successfully! Executed: ${executedProcesses.join(
+          ', ',
+        )}`,
       });
-
     } catch (error) {
       setActionMessage({
         type: 'error',
         text: error.response?.data?.detail || 'Failed to run master process',
       });
     } finally {
-      setActionLoading(prev => ({ ...prev, pipeline: false, rss: false, analysis: false }));
+      setActionLoading(prev => ({
+        ...prev,
+        pipeline: false,
+        rss: false,
+        analysis: false,
+      }));
     }
   };
 
-  const getStatusColor = (status) => {
+  const getStatusColor = status => {
     switch (status?.toLowerCase()) {
-    case 'healthy': return 'success';
-    case 'degraded': return 'warning';
-    case 'error': return 'error';
-    case 'idle': return 'info';
-    case 'running': return 'success';
-    default: return 'default';
+    case 'healthy':
+      return 'success';
+    case 'degraded':
+      return 'warning';
+    case 'error':
+      return 'error';
+    case 'idle':
+      return 'info';
+    case 'running':
+      return 'success';
+    default:
+      return 'default';
     }
   };
 
-  const getStatusIcon = (status) => {
+  const getStatusIcon = status => {
     switch (status?.toLowerCase()) {
-    case 'healthy': return <CheckCircleIcon />;
-    case 'degraded': return <WarningIcon />;
-    case 'error': return <ErrorIcon />;
-    case 'idle': return <Schedule />;
-    case 'running': return <SpeedIcon />;
-    default: return <WarningIcon />;
+    case 'healthy':
+      return <CheckCircleIcon />;
+    case 'degraded':
+      return <WarningIcon />;
+    case 'error':
+      return <ErrorIcon />;
+    case 'idle':
+      return <Schedule />;
+    case 'running':
+      return <SpeedIcon />;
+    default:
+      return <WarningIcon />;
     }
   };
 
-  const formatDate = (dateString) => {
+  const formatDate = dateString => {
     if (!dateString) return 'Never';
     return new Date(dateString).toLocaleDateString('en-US', {
       year: 'numeric',
@@ -758,14 +933,14 @@ Do you want to proceed with running AI sentiment analysis?`,
     });
   };
 
-  const formatDuration = (milliseconds) => {
+  const formatDuration = milliseconds => {
     if (!milliseconds) return '0ms';
     if (milliseconds < 1000) return `${milliseconds}ms`;
     if (milliseconds < 60000) return `${(milliseconds / 1000).toFixed(1)}s`;
     return `${(milliseconds / 60000).toFixed(1)}m`;
   };
 
-  const formatETA = (eta) => {
+  const formatETA = eta => {
     if (!eta) return 'Calculating...';
     const now = new Date();
     const diff = eta - now;
@@ -782,7 +957,12 @@ Do you want to proceed with running AI sentiment analysis?`,
 
   if (loading && !systemStatus) {
     return (
-      <Box display="flex" justifyContent="center" alignItems="center" minHeight="400px">
+      <Box
+        display='flex'
+        justifyContent='center'
+        alignItems='center'
+        minHeight='400px'
+      >
         <CircularProgress />
       </Box>
     );
@@ -790,15 +970,21 @@ Do you want to proceed with running AI sentiment analysis?`,
 
   return (
     <Box>
-      <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
-        <Typography variant="h4" component="h1" sx={{ fontWeight: 'bold' }}>
+      <Box
+        display='flex'
+        justifyContent='space-between'
+        alignItems='center'
+        mb={3}
+      >
+        <Typography variant='h4' component='h1' sx={{ fontWeight: 'bold' }}>
           System Monitoring
         </Typography>
-        <Box display="flex" alignItems="center" gap={2}>
-          <Typography variant="body2" color="text.secondary">
-            Last updated: {lastUpdate ? lastUpdate.toLocaleTimeString() : 'Never'}
+        <Box display='flex' alignItems='center' gap={2}>
+          <Typography variant='body2' color='text.secondary'>
+            Last updated:{' '}
+            {lastUpdate ? lastUpdate.toLocaleTimeString() : 'Never'}
           </Typography>
-          <Tooltip title="Refresh Data">
+          <Tooltip title='Refresh Data'>
             <IconButton onClick={handleRefresh} disabled={loading}>
               <Refresh />
             </IconButton>
@@ -807,7 +993,7 @@ Do you want to proceed with running AI sentiment analysis?`,
       </Box>
 
       {error && (
-        <Alert severity="error" sx={{ mb: 3 }}>
+        <Alert severity='error' sx={{ mb: 3 }}>
           {error}
         </Alert>
       )}
@@ -819,50 +1005,63 @@ Do you want to proceed with running AI sentiment analysis?`,
         <Grid item xs={12}>
           <Card>
             <CardContent>
-              <Typography variant="h6" gutterBottom>
+              <Typography variant='h6' gutterBottom>
                 <NetworkIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
                 System Health Overview
               </Typography>
               <Grid container spacing={2}>
                 <Grid item xs={12} md={3}>
-                  <Box textAlign="center">
+                  <Box textAlign='center'>
                     <Chip
                       icon={getStatusIcon(systemStatus?.overall)}
                       label={systemStatus?.overall?.toUpperCase() || 'UNKNOWN'}
                       color={getStatusColor(systemStatus?.overall)}
-                      size="large"
+                      size='large'
                     />
-                    <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                    <Typography
+                      variant='body2'
+                      color='text.secondary'
+                      sx={{ mt: 1 }}
+                    >
                       Overall Status
                     </Typography>
                   </Box>
                 </Grid>
                 <Grid item xs={12} md={3}>
-                  <Box textAlign="center">
-                    <Typography variant="h4" color="primary">
-                      {systemStatus?.monitoringData?.data?.database?.status === 'healthy' ? '✓' : '✗'}
+                  <Box textAlign='center'>
+                    <Typography variant='h4' color='primary'>
+                      {systemStatus?.monitoringData?.data?.database?.status ===
+                      'healthy'
+                        ? '✓'
+                        : '✗'}
                     </Typography>
-                    <Typography variant="body2" color="text.secondary">
+                    <Typography variant='body2' color='text.secondary'>
                       Database
                     </Typography>
                   </Box>
                 </Grid>
                 <Grid item xs={12} md={3}>
-                  <Box textAlign="center">
-                    <Typography variant="h4" color="primary">
-                      {systemStatus?.monitoringData?.data?.redis?.status === 'healthy' ? '✓' : '✗'}
+                  <Box textAlign='center'>
+                    <Typography variant='h4' color='primary'>
+                      {systemStatus?.monitoringData?.data?.redis?.status ===
+                      'healthy'
+                        ? '✓'
+                        : '✗'}
                     </Typography>
-                    <Typography variant="body2" color="text.secondary">
+                    <Typography variant='body2' color='text.secondary'>
                       Redis Cache
                     </Typography>
                   </Box>
                 </Grid>
                 <Grid item xs={12} md={3}>
-                  <Box textAlign="center">
-                    <Typography variant="h4" color="primary">
-                      {systemStatus?.health?.data?.services?.system === 'healthy' ? '✓' : '✗'}
+                  <Box textAlign='center'>
+                    <Typography variant='h4' color='primary'>
+                      {systemStatus?.health?.data?.services?.system ===
+                      'healthy'
+                        ? '✓'
+                        : '✗'}
                     </Typography>
-                    <Typography variant="body2" color="text.secondary">
+                    <Typography variant='body2' color='text.secondary'>
                       System
                     </Typography>
                   </Box>
@@ -874,40 +1073,44 @@ Do you want to proceed with running AI sentiment analysis?`,
 
         {/* Pipeline Status */}
         <Grid item xs={12} md={6}>
-          <Card sx={{ height: '300px', display: 'flex', flexDirection: 'column' }}>
-            <CardContent sx={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-              <Typography variant="h6" gutterBottom>
+          <Card
+            sx={{ height: '300px', display: 'flex', flexDirection: 'column' }}
+          >
+            <CardContent
+              sx={{ flex: 1, display: 'flex', flexDirection: 'column' }}
+            >
+              <Typography variant='h6' gutterBottom>
                 <SpeedIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
                 Pipeline Status
               </Typography>
-              <Box display="flex" alignItems="center" gap={2} mb={2}>
+              <Box display='flex' alignItems='center' gap={2} mb={2}>
                 <Chip
                   icon={getStatusIcon(pipelineStatus?.system_status)}
                   label={pipelineStatus?.system_status || 'Unknown'}
                   color={getStatusColor(pipelineStatus?.system_status)}
-                  size="large"
+                  size='large'
                 />
-                <Typography variant="body2" color="text.secondary">
+                <Typography variant='body2' color='text.secondary'>
                   Active traces: {pipelineStatus?.active_traces_count || 0}
                 </Typography>
               </Box>
               <Grid container spacing={2}>
                 <Grid item xs={6}>
-                  <Box textAlign="center">
-                    <Typography variant="h4" color="primary">
+                  <Box textAlign='center'>
+                    <Typography variant='h4' color='primary'>
                       {pipelinePerformance?.total_traces || 0}
                     </Typography>
-                    <Typography variant="body2" color="text.secondary">
+                    <Typography variant='body2' color='text.secondary'>
                       Total Traces
                     </Typography>
                   </Box>
                 </Grid>
                 <Grid item xs={6}>
-                  <Box textAlign="center">
-                    <Typography variant="h4" color="primary">
+                  <Box textAlign='center'>
+                    <Typography variant='h4' color='primary'>
                       {pipelinePerformance?.success_rate || 0}%
                     </Typography>
-                    <Typography variant="body2" color="text.secondary">
+                    <Typography variant='body2' color='text.secondary'>
                       Success Rate
                     </Typography>
                   </Box>
@@ -919,39 +1122,43 @@ Do you want to proceed with running AI sentiment analysis?`,
 
         {/* Performance Metrics */}
         <Grid item xs={12} md={6}>
-          <Card sx={{ height: '300px', display: 'flex', flexDirection: 'column' }}>
-            <CardContent sx={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-              <Typography variant="h6" gutterBottom>
+          <Card
+            sx={{ height: '300px', display: 'flex', flexDirection: 'column' }}
+          >
+            <CardContent
+              sx={{ flex: 1, display: 'flex', flexDirection: 'column' }}
+            >
+              <Typography variant='h6' gutterBottom>
                 <TrendingUpIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
                 Performance Metrics
               </Typography>
               <Grid container spacing={2}>
                 <Grid item xs={6}>
-                  <Box textAlign="center">
-                    <Typography variant="h4" color="primary">
+                  <Box textAlign='center'>
+                    <Typography variant='h4' color='primary'>
                       {pipelinePerformance?.total_articles_processed || 0}
                     </Typography>
-                    <Typography variant="body2" color="text.secondary">
+                    <Typography variant='body2' color='text.secondary'>
                       Articles Processed
                     </Typography>
                   </Box>
                 </Grid>
                 <Grid item xs={6}>
-                  <Box textAlign="center">
-                    <Typography variant="h4" color="primary">
+                  <Box textAlign='center'>
+                    <Typography variant='h4' color='primary'>
                       {pipelinePerformance?.total_feeds_processed || 0}
                     </Typography>
-                    <Typography variant="body2" color="text.secondary">
+                    <Typography variant='body2' color='text.secondary'>
                       Feeds Processed
                     </Typography>
                   </Box>
                 </Grid>
                 <Grid item xs={6}>
-                  <Box textAlign="center">
-                    <Typography variant="h4" color="primary">
+                  <Box textAlign='center'>
+                    <Typography variant='h4' color='primary'>
                       {pipelinePerformance?.error_count || 0}
                     </Typography>
-                    <Typography variant="body2" color="text.secondary">
+                    <Typography variant='body2' color='text.secondary'>
                       Errors
                     </Typography>
                   </Box>
@@ -965,18 +1172,21 @@ Do you want to proceed with running AI sentiment analysis?`,
         <Grid item xs={12}>
           <Card>
             <CardContent>
-              <Typography variant="h6" gutterBottom>
+              <Typography variant='h6' gutterBottom>
                 <TimelineIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
                 Recent Pipeline Traces
               </Typography>
-              {(!Array.isArray(pipelineTraces) || pipelineTraces.length === 0) ? (
-                <Box textAlign="center" py={4}>
-                  <TimelineIcon sx={{ fontSize: 64, color: 'text.secondary', mb: 2 }} />
-                  <Typography variant="h6" color="text.secondary" gutterBottom>
+              {!Array.isArray(pipelineTraces) || pipelineTraces.length === 0 ? (
+                <Box textAlign='center' py={4}>
+                  <TimelineIcon
+                    sx={{ fontSize: 64, color: 'text.secondary', mb: 2 }}
+                  />
+                  <Typography variant='h6' color='text.secondary' gutterBottom>
                     No pipeline traces found
                   </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    Pipeline traces will appear here once the system starts processing articles
+                  <Typography variant='body2' color='text.secondary'>
+                    Pipeline traces will appear here once the system starts
+                    processing articles
                   </Typography>
                 </Box>
               ) : (
@@ -985,47 +1195,46 @@ Do you want to proceed with running AI sentiment analysis?`,
                     <TableHead>
                       <TableRow>
                         <TableCell>Trace ID</TableCell>
+                        <TableCell>Stage</TableCell>
                         <TableCell>Status</TableCell>
-                        <TableCell>Start Time</TableCell>
-                        <TableCell>Duration</TableCell>
-                        <TableCell>Articles Processed</TableCell>
-                        <TableCell>Success Rate</TableCell>
+                        <TableCell>Created At</TableCell>
+                        <TableCell>Error Message</TableCell>
                       </TableRow>
                     </TableHead>
                     <TableBody>
-                      {(Array.isArray(pipelineTraces) ? pipelineTraces : []).map((trace) => (
-                        <TableRow key={trace.id}>
+                      {(Array.isArray(pipelineTraces)
+                        ? pipelineTraces
+                        : []
+                      ).map(trace => (
+                        <TableRow key={trace.id || trace.trace_id}>
                           <TableCell>
-                            <Typography variant="body2" fontFamily="monospace">
-                              {trace.id?.substring(0, 8)}...
+                            <Typography variant='body2' fontFamily='monospace'>
+                              {trace.trace_id || trace.id || 'N/A'}
                             </Typography>
+                          </TableCell>
+                          <TableCell>
+                            <Chip
+                              label={trace.stage || 'Unknown'}
+                              size='small'
+                              variant='outlined'
+                            />
                           </TableCell>
                           <TableCell>
                             <Chip
                               icon={getStatusIcon(trace.status)}
                               label={trace.status || 'Unknown'}
                               color={getStatusColor(trace.status)}
-                              size="small"
+                              size='small'
                             />
                           </TableCell>
                           <TableCell>
-                            <Typography variant="body2">
-                              {formatDate(trace.start_time)}
+                            <Typography variant='body2'>
+                              {trace.created_at ? formatDate(trace.created_at) : 'N/A'}
                             </Typography>
                           </TableCell>
                           <TableCell>
-                            <Typography variant="body2">
-                              {formatDuration(trace.duration)}
-                            </Typography>
-                          </TableCell>
-                          <TableCell>
-                            <Typography variant="body2">
-                              {trace.articles_processed || 0}
-                            </Typography>
-                          </TableCell>
-                          <TableCell>
-                            <Typography variant="body2">
-                              {trace.success_rate || 0}%
+                            <Typography variant='body2' color={trace.error_message ? 'error' : 'text.secondary'}>
+                              {trace.error_message || '-'}
                             </Typography>
                           </TableCell>
                         </TableRow>
@@ -1042,47 +1251,94 @@ Do you want to proceed with running AI sentiment analysis?`,
         <Grid item xs={12}>
           <Card>
             <CardContent>
-              <Typography variant="h6" gutterBottom>
+              <Typography variant='h6' gutterBottom>
                 <PsychologyIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
                 AI Analysis Features Status
               </Typography>
               <Grid container spacing={2}>
                 <Grid item xs={12} md={3}>
                   <Paper sx={{ p: 2, textAlign: 'center' }}>
-                    <AutoAwesomeIcon color="primary" sx={{ fontSize: 40, mb: 1 }} />
-                    <Typography variant="h6">Multi-Perspective Analysis</Typography>
-                    <Chip label="Available" color="success" size="small" sx={{ mt: 1 }} />
-                    <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                    <AutoAwesomeIcon
+                      color='primary'
+                      sx={{ fontSize: 40, mb: 1 }}
+                    />
+                    <Typography variant='h6'>
+                      Multi-Perspective Analysis
+                    </Typography>
+                    <Chip
+                      label='Available'
+                      color='success'
+                      size='small'
+                      sx={{ mt: 1 }}
+                    />
+                    <Typography
+                      variant='body2'
+                      color='text.secondary'
+                      sx={{ mt: 1 }}
+                    >
                       Analyze news from multiple viewpoints
                     </Typography>
                   </Paper>
                 </Grid>
                 <Grid item xs={12} md={3}>
                   <Paper sx={{ p: 2, textAlign: 'center' }}>
-                    <AssessmentIcon color="primary" sx={{ fontSize: 40, mb: 1 }} />
-                    <Typography variant="h6">Impact Assessment</Typography>
-                    <Chip label="Available" color="success" size="small" sx={{ mt: 1 }} />
-                    <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                    <AssessmentIcon
+                      color='primary'
+                      sx={{ fontSize: 40, mb: 1 }}
+                    />
+                    <Typography variant='h6'>Impact Assessment</Typography>
+                    <Chip
+                      label='Available'
+                      color='success'
+                      size='small'
+                      sx={{ mt: 1 }}
+                    />
+                    <Typography
+                      variant='body2'
+                      color='text.secondary'
+                      sx={{ mt: 1 }}
+                    >
                       Evaluate potential impacts across dimensions
                     </Typography>
                   </Paper>
                 </Grid>
                 <Grid item xs={12} md={3}>
                   <Paper sx={{ p: 2, textAlign: 'center' }}>
-                    <HistoryIcon color="primary" sx={{ fontSize: 40, mb: 1 }} />
-                    <Typography variant="h6">Historical Context</Typography>
-                    <Chip label="Available" color="success" size="small" sx={{ mt: 1 }} />
-                    <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                    <HistoryIcon color='primary' sx={{ fontSize: 40, mb: 1 }} />
+                    <Typography variant='h6'>Historical Context</Typography>
+                    <Chip
+                      label='Available'
+                      color='success'
+                      size='small'
+                      sx={{ mt: 1 }}
+                    />
+                    <Typography
+                      variant='body2'
+                      color='text.secondary'
+                      sx={{ mt: 1 }}
+                    >
                       Connect current events to historical patterns
                     </Typography>
                   </Paper>
                 </Grid>
                 <Grid item xs={12} md={3}>
                   <Paper sx={{ p: 2, textAlign: 'center' }}>
-                    <PredictionIcon color="primary" sx={{ fontSize: 40, mb: 1 }} />
-                    <Typography variant="h6">Predictive Analysis</Typography>
-                    <Chip label="Available" color="success" size="small" sx={{ mt: 1 }} />
-                    <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                    <PredictionIcon
+                      color='primary'
+                      sx={{ fontSize: 40, mb: 1 }}
+                    />
+                    <Typography variant='h6'>Predictive Analysis</Typography>
+                    <Chip
+                      label='Available'
+                      color='success'
+                      size='small'
+                      sx={{ mt: 1 }}
+                    />
+                    <Typography
+                      variant='body2'
+                      color='text.secondary'
+                      sx={{ mt: 1 }}
+                    >
                       Forecast future developments and trends
                     </Typography>
                   </Paper>
@@ -1096,7 +1352,7 @@ Do you want to proceed with running AI sentiment analysis?`,
         <Grid item xs={12} md={6}>
           <Card>
             <CardContent>
-              <Typography variant="h6" gutterBottom>
+              <Typography variant='h6' gutterBottom>
                 <MemoryIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
                 System Resources
               </Typography>
@@ -1106,12 +1362,18 @@ Do you want to proceed with running AI sentiment analysis?`,
                     <MemoryIcon />
                   </ListItemIcon>
                   <ListItemText
-                    primary="Memory Usage"
-                    secondary={`${systemStatus?.monitoringData?.data?.system_metrics?.memory_percent || 0}%`}
+                    primary='Memory Usage'
+                    secondary={`${
+                      systemStatus?.monitoringData?.data?.system
+                        ?.memory_percent || 0
+                    }%`}
                   />
                   <LinearProgress
-                    variant="determinate"
-                    value={systemStatus?.monitoringData?.data?.system_metrics?.memory_percent || 0}
+                    variant='determinate'
+                    value={
+                      systemStatus?.monitoringData?.data?.system
+                        ?.memory_percent || 0
+                    }
                     sx={{ width: 100, ml: 2 }}
                   />
                 </ListItem>
@@ -1120,12 +1382,18 @@ Do you want to proceed with running AI sentiment analysis?`,
                     <StorageIcon />
                   </ListItemIcon>
                   <ListItemText
-                    primary="Disk Usage"
-                    secondary={`${systemStatus?.monitoringData?.data?.system_metrics?.disk_percent || 0}%`}
+                    primary='Disk Usage'
+                    secondary={`${
+                      systemStatus?.monitoringData?.data?.system
+                        ?.disk_percent || 0
+                    }%`}
                   />
                   <LinearProgress
-                    variant="determinate"
-                    value={systemStatus?.monitoringData?.data?.system_metrics?.disk_percent || 0}
+                    variant='determinate'
+                    value={
+                      systemStatus?.monitoringData?.data?.system
+                        ?.disk_percent || 0
+                    }
                     sx={{ width: 100, ml: 2 }}
                   />
                 </ListItem>
@@ -1134,12 +1402,18 @@ Do you want to proceed with running AI sentiment analysis?`,
                     <SpeedIcon />
                   </ListItemIcon>
                   <ListItemText
-                    primary="CPU Usage"
-                    secondary={`${systemStatus?.monitoringData?.data?.system_metrics?.cpu_percent || 0}%`}
+                    primary='CPU Usage'
+                    secondary={`${
+                      systemStatus?.monitoringData?.data?.system?.cpu_percent ||
+                      0
+                    }%`}
                   />
                   <LinearProgress
-                    variant="determinate"
-                    value={systemStatus?.monitoringData?.data?.system_metrics?.cpu_percent || 0}
+                    variant='determinate'
+                    value={
+                      systemStatus?.monitoringData?.data?.system?.cpu_percent ||
+                      0
+                    }
                     sx={{ width: 100, ml: 2 }}
                   />
                 </ListItem>
@@ -1148,17 +1422,27 @@ Do you want to proceed with running AI sentiment analysis?`,
                     <MemoryIcon />
                   </ListItemIcon>
                   <ListItemText
-                    primary="GPU VRAM Usage"
-                    secondary={systemStatus?.monitoringData?.data?.system_metrics?.gpu_vram_percent
-                      ? `${systemStatus.monitoringData.data.system_metrics.gpu_vram_percent}% (${systemStatus.monitoringData.data.system_metrics.gpu_memory_used_mb || 0}MB / ${systemStatus.monitoringData.data.system_metrics.gpu_memory_total_mb || 0}MB)`
-                      : 'No GPU data available'
+                    primary='GPU VRAM Usage'
+                    secondary={
+                      systemStatus?.monitoringData?.data?.system
+                        ?.gpu_vram_percent
+                        ? `${systemStatus.monitoringData.data.system.gpu_vram_percent}%`
+                        : 'No GPU data available'
                     }
                   />
                   <LinearProgress
-                    variant="determinate"
-                    value={systemStatus?.monitoringData?.data?.system_metrics?.gpu_vram_percent || 0}
+                    variant='determinate'
+                    value={
+                      systemStatus?.monitoringData?.data?.system
+                        ?.gpu_vram_percent || 0
+                    }
                     sx={{ width: 100, ml: 2 }}
-                    color={(systemStatus?.monitoringData?.data?.system_metrics?.gpu_vram_percent || 0) > 80 ? 'error' : 'primary'}
+                    color={
+                      (systemStatus?.monitoringData?.data?.system
+                        ?.gpu_vram_percent || 0) > 80
+                        ? 'error'
+                        : 'primary'
+                    }
                   />
                 </ListItem>
                 <ListItem>
@@ -1166,17 +1450,22 @@ Do you want to proceed with running AI sentiment analysis?`,
                     <SpeedIcon />
                   </ListItemIcon>
                   <ListItemText
-                    primary="GPU Utilization"
-                    secondary={systemStatus?.monitoringData?.data?.system_metrics?.gpu_utilization_percent
-                      ? `${systemStatus.monitoringData.data.system_metrics.gpu_utilization_percent}%`
-                      : 'No GPU data available'
+                    primary='GPU Utilization'
+                    secondary={
+                      systemStatus?.monitoringData?.data?.system
+                        ?.gpu_utilization_percent
+                        ? `${systemStatus.monitoringData.data.system.gpu_utilization_percent}%`
+                        : 'No GPU data available'
                     }
                   />
                   <LinearProgress
-                    variant="determinate"
-                    value={systemStatus?.monitoringData?.data?.system_metrics?.gpu_utilization_percent || 0}
+                    variant='determinate'
+                    value={
+                      systemStatus?.monitoringData?.data?.system
+                        ?.gpu_utilization_percent || 0
+                    }
                     sx={{ width: 100, ml: 2 }}
-                    color="secondary"
+                    color='secondary'
                   />
                 </ListItem>
               </List>
@@ -1188,12 +1477,12 @@ Do you want to proceed with running AI sentiment analysis?`,
         <Grid item xs={12} md={6}>
           <Card>
             <CardContent>
-              <Typography variant="h6" gutterBottom>
+              <Typography variant='h6' gutterBottom>
                 Quick Actions
               </Typography>
-              <Box display="flex" flexDirection="column" gap={2}>
+              <Box display='flex' flexDirection='column' gap={2}>
                 <Button
-                  variant="contained"
+                  variant='contained'
                   startIcon={<Refresh />}
                   onClick={handleRefresh}
                   disabled={loading}
@@ -1201,140 +1490,297 @@ Do you want to proceed with running AI sentiment analysis?`,
                   Refresh All Data
                 </Button>
                 <Button
-                  variant="contained"
-                  color="secondary"
+                  variant='contained'
+                  color='secondary'
                   startIcon={<SpeedIcon />}
                   onClick={handleMasterSwitch}
-                  disabled={actionLoading.pipeline || actionLoading.rss || actionLoading.analysis || masterRunning || pipelineRunning || rssRunning || analysisRunning}
+                  disabled={
+                    actionLoading.pipeline ||
+                    actionLoading.rss ||
+                    actionLoading.analysis ||
+                    masterRunning ||
+                    pipelineRunning ||
+                    rssRunning ||
+                    analysisRunning
+                  }
                   sx={{ mt: 1 }}
                 >
-                  {masterRunning ? 'Master Process Running' : 'Complete All Processes'}
+                  {masterRunning
+                    ? 'Master Process Running'
+                    : 'Complete All Processes'}
                 </Button>
                 <Button
-                  variant="outlined"
+                  variant='outlined'
                   startIcon={<SpeedIcon />}
                   onClick={handleTriggerPipeline}
-                  disabled={actionLoading.pipeline || pipelineRunning || masterRunning || rssRunning || analysisRunning}
-                  color={pipelineRunning ? 'warning' : masterRunning && !pipelineRunning ? 'info' : 'primary'}
+                  disabled={
+                    actionLoading.pipeline ||
+                    pipelineRunning ||
+                    masterRunning ||
+                    rssRunning ||
+                    analysisRunning
+                  }
+                  color={
+                    pipelineRunning
+                      ? 'warning'
+                      : masterRunning && !pipelineRunning
+                        ? 'info'
+                        : 'primary'
+                  }
                 >
-                  {actionLoading.pipeline ? 'Triggering...' :
-                    pipelineRunning ? `Pipeline Running (${pipelineProgress.toFixed(0)}%)` :
-                      masterRunning && !pipelineRunning ? 'Pipeline Queued' :
-                        'Trigger Pipeline'}
+                  {actionLoading.pipeline
+                    ? 'Triggering...'
+                    : pipelineRunning
+                      ? `Pipeline Running (${pipelineProgress.toFixed(0)}%)`
+                      : masterRunning && !pipelineRunning
+                        ? 'Pipeline Queued'
+                        : 'Trigger Pipeline'}
                 </Button>
                 {pipelineRunning && (
-                  <Box sx={{ mt: 1, p: 2, bgcolor: 'warning.light', borderRadius: 1 }}>
-                    <Typography variant="body2" color="warning.contrastText" gutterBottom>
+                  <Box
+                    sx={{
+                      mt: 1,
+                      p: 2,
+                      bgcolor: 'warning.light',
+                      borderRadius: 1,
+                    }}
+                  >
+                    <Typography
+                      variant='body2'
+                      color='warning.contrastText'
+                      gutterBottom
+                    >
                       <strong>Pipeline Status:</strong> Running
                     </Typography>
-                    <Typography variant="body2" color="warning.contrastText" gutterBottom>
+                    <Typography
+                      variant='body2'
+                      color='warning.contrastText'
+                      gutterBottom
+                    >
                       <strong>Progress:</strong> {pipelineProgress.toFixed(0)}%
                     </Typography>
-                    <Typography variant="body2" color="warning.contrastText" gutterBottom>
+                    <Typography
+                      variant='body2'
+                      color='warning.contrastText'
+                      gutterBottom
+                    >
                       <strong>ETA:</strong> {formatETA(displayPipelineETA)}
                     </Typography>
                     <LinearProgress
-                      variant="determinate"
+                      variant='determinate'
                       value={pipelineProgress}
                       sx={{ mt: 1, bgcolor: 'warning.dark' }}
                     />
-                    <Typography variant="caption" color="warning.contrastText" sx={{ mt: 1, display: 'block' }}>
-                      ⚠️ Pipeline is running. Button is disabled until completion.
+                    <Typography
+                      variant='caption'
+                      color='warning.contrastText'
+                      sx={{ mt: 1, display: 'block' }}
+                    >
+                      ⚠️ Pipeline is running. Button is disabled until
+                      completion.
                     </Typography>
                   </Box>
                 )}
                 {masterRunning && !pipelineRunning && (
-                  <Box sx={{ mt: 1, p: 2, bgcolor: 'info.light', borderRadius: 1 }}>
-                    <Typography variant="body2" color="info.contrastText" gutterBottom>
+                  <Box
+                    sx={{ mt: 1, p: 2, bgcolor: 'info.light', borderRadius: 1 }}
+                  >
+                    <Typography
+                      variant='body2'
+                      color='info.contrastText'
+                      gutterBottom
+                    >
                       <strong>Pipeline Status:</strong> Queued for execution
                     </Typography>
-                    <Typography variant="caption" color="info.contrastText" sx={{ display: 'block' }}>
+                    <Typography
+                      variant='caption'
+                      color='info.contrastText'
+                      sx={{ display: 'block' }}
+                    >
                       ⏳ Pipeline will start after RSS feeds complete
                     </Typography>
                   </Box>
                 )}
                 <Button
-                  variant="outlined"
+                  variant='outlined'
                   startIcon={<Analytics />}
                   onClick={handleRunAIAnalysis}
-                  disabled={actionLoading.analysis || analysisRunning || masterRunning || pipelineRunning || rssRunning}
-                  color={analysisRunning ? 'warning' : masterRunning && !analysisRunning ? 'info' : 'primary'}
+                  disabled={
+                    actionLoading.analysis ||
+                    analysisRunning ||
+                    masterRunning ||
+                    pipelineRunning ||
+                    rssRunning
+                  }
+                  color={
+                    analysisRunning
+                      ? 'warning'
+                      : masterRunning && !analysisRunning
+                        ? 'info'
+                        : 'primary'
+                  }
                 >
-                  {actionLoading.analysis ? 'Running...' :
-                    analysisRunning ? `AI Analysis Running (${analysisProgress.toFixed(0)}%)` :
-                      masterRunning && !analysisRunning ? 'AI Analysis Queued' :
-                        'Run AI Analysis'}
+                  {actionLoading.analysis
+                    ? 'Running...'
+                    : analysisRunning
+                      ? `AI Analysis Running (${analysisProgress.toFixed(0)}%)`
+                      : masterRunning && !analysisRunning
+                        ? 'AI Analysis Queued'
+                        : 'Run AI Analysis'}
                 </Button>
                 {analysisRunning && (
-                  <Box sx={{ mt: 1, p: 2, bgcolor: 'warning.light', borderRadius: 1 }}>
-                    <Typography variant="body2" color="warning.contrastText" gutterBottom>
+                  <Box
+                    sx={{
+                      mt: 1,
+                      p: 2,
+                      bgcolor: 'warning.light',
+                      borderRadius: 1,
+                    }}
+                  >
+                    <Typography
+                      variant='body2'
+                      color='warning.contrastText'
+                      gutterBottom
+                    >
                       <strong>AI Analysis Status:</strong> Running
                     </Typography>
-                    <Typography variant="body2" color="warning.contrastText" gutterBottom>
+                    <Typography
+                      variant='body2'
+                      color='warning.contrastText'
+                      gutterBottom
+                    >
                       <strong>Progress:</strong> {analysisProgress.toFixed(0)}%
                     </Typography>
-                    <Typography variant="body2" color="warning.contrastText" gutterBottom>
+                    <Typography
+                      variant='body2'
+                      color='warning.contrastText'
+                      gutterBottom
+                    >
                       <strong>ETA:</strong> {formatETA(displayAnalysisETA)}
                     </Typography>
                     <LinearProgress
-                      variant="determinate"
+                      variant='determinate'
                       value={analysisProgress}
                       sx={{ mt: 1, bgcolor: 'warning.dark' }}
                     />
-                    <Typography variant="caption" color="warning.contrastText" sx={{ mt: 1, display: 'block' }}>
-                      ⚠️ AI Analysis is running. Button is disabled until completion.
+                    <Typography
+                      variant='caption'
+                      color='warning.contrastText'
+                      sx={{ mt: 1, display: 'block' }}
+                    >
+                      ⚠️ AI Analysis is running. Button is disabled until
+                      completion.
                     </Typography>
                   </Box>
                 )}
                 {masterRunning && !analysisRunning && (
-                  <Box sx={{ mt: 1, p: 2, bgcolor: 'info.light', borderRadius: 1 }}>
-                    <Typography variant="body2" color="info.contrastText" gutterBottom>
+                  <Box
+                    sx={{ mt: 1, p: 2, bgcolor: 'info.light', borderRadius: 1 }}
+                  >
+                    <Typography
+                      variant='body2'
+                      color='info.contrastText'
+                      gutterBottom
+                    >
                       <strong>AI Analysis Status:</strong> Queued for execution
                     </Typography>
-                    <Typography variant="caption" color="info.contrastText" sx={{ display: 'block' }}>
+                    <Typography
+                      variant='caption'
+                      color='info.contrastText'
+                      sx={{ display: 'block' }}
+                    >
                       ⏳ AI Analysis will start after pipeline completes
                     </Typography>
                   </Box>
                 )}
                 <Button
-                  variant="outlined"
+                  variant='outlined'
                   startIcon={<RssFeedIcon />}
                   onClick={handleUpdateRSSFeeds}
-                  disabled={actionLoading.rss || rssRunning || masterRunning || pipelineRunning || analysisRunning}
-                  color={rssRunning ? 'warning' : masterRunning && !rssRunning ? 'info' : 'primary'}
+                  disabled={
+                    actionLoading.rss ||
+                    rssRunning ||
+                    masterRunning ||
+                    pipelineRunning ||
+                    analysisRunning
+                  }
+                  color={
+                    rssRunning
+                      ? 'warning'
+                      : masterRunning && !rssRunning
+                        ? 'info'
+                        : 'primary'
+                  }
                 >
-                  {actionLoading.rss ? 'Updating...' :
-                    rssRunning ? `RSS Updating (${rssProgress.toFixed(0)}%)` :
-                      masterRunning && !rssRunning ? 'RSS Feeds Queued' :
-                        'Update RSS Feeds'}
+                  {actionLoading.rss
+                    ? 'Updating...'
+                    : rssRunning
+                      ? `RSS Updating (${rssProgress.toFixed(0)}%)`
+                      : masterRunning && !rssRunning
+                        ? 'RSS Feeds Queued'
+                        : 'Update RSS Feeds'}
                 </Button>
                 {rssRunning && (
-                  <Box sx={{ mt: 1, p: 2, bgcolor: 'warning.light', borderRadius: 1 }}>
-                    <Typography variant="body2" color="warning.contrastText" gutterBottom>
+                  <Box
+                    sx={{
+                      mt: 1,
+                      p: 2,
+                      bgcolor: 'warning.light',
+                      borderRadius: 1,
+                    }}
+                  >
+                    <Typography
+                      variant='body2'
+                      color='warning.contrastText'
+                      gutterBottom
+                    >
                       <strong>RSS Update Status:</strong> Running
                     </Typography>
-                    <Typography variant="body2" color="warning.contrastText" gutterBottom>
+                    <Typography
+                      variant='body2'
+                      color='warning.contrastText'
+                      gutterBottom
+                    >
                       <strong>Progress:</strong> {rssProgress.toFixed(0)}%
                     </Typography>
-                    <Typography variant="body2" color="warning.contrastText" gutterBottom>
+                    <Typography
+                      variant='body2'
+                      color='warning.contrastText'
+                      gutterBottom
+                    >
                       <strong>ETA:</strong> {formatETA(displayRssETA)}
                     </Typography>
                     <LinearProgress
-                      variant="determinate"
+                      variant='determinate'
                       value={rssProgress}
                       sx={{ mt: 1, bgcolor: 'warning.dark' }}
                     />
-                    <Typography variant="caption" color="warning.contrastText" sx={{ mt: 1, display: 'block' }}>
-                      ⚠️ RSS feeds are updating. Button is disabled until completion.
+                    <Typography
+                      variant='caption'
+                      color='warning.contrastText'
+                      sx={{ mt: 1, display: 'block' }}
+                    >
+                      ⚠️ RSS feeds are updating. Button is disabled until
+                      completion.
                     </Typography>
                   </Box>
                 )}
                 {masterRunning && !rssRunning && (
-                  <Box sx={{ mt: 1, p: 2, bgcolor: 'info.light', borderRadius: 1 }}>
-                    <Typography variant="body2" color="info.contrastText" gutterBottom>
+                  <Box
+                    sx={{ mt: 1, p: 2, bgcolor: 'info.light', borderRadius: 1 }}
+                  >
+                    <Typography
+                      variant='body2'
+                      color='info.contrastText'
+                      gutterBottom
+                    >
                       <strong>RSS Update Status:</strong> Queued for execution
                     </Typography>
-                    <Typography variant="caption" color="info.contrastText" sx={{ display: 'block' }}>
+                    <Typography
+                      variant='caption'
+                      color='info.contrastText'
+                      sx={{ display: 'block' }}
+                    >
                       ⏳ RSS feeds will update first in the sequence
                     </Typography>
                   </Box>
@@ -1361,29 +1807,36 @@ Do you want to proceed with running AI sentiment analysis?`,
       {/* Confirmation Dialog */}
       <Dialog
         open={confirmDialog.open}
-        onClose={() => setConfirmDialog({ open: false, type: null, title: '', content: '' })}
-        maxWidth="md"
+        onClose={() =>
+          setConfirmDialog({ open: false, type: null, title: '', content: '' })
+        }
+        maxWidth='md'
         fullWidth
       >
-        <DialogTitle>
-          {confirmDialog.title}
-        </DialogTitle>
+        <DialogTitle>{confirmDialog.title}</DialogTitle>
         <DialogContent>
-          <Typography variant="body1" sx={{ whiteSpace: 'pre-line', mt: 1 }}>
+          <Typography variant='body1' sx={{ whiteSpace: 'pre-line', mt: 1 }}>
             {confirmDialog.content}
           </Typography>
         </DialogContent>
         <DialogActions>
           <Button
-            onClick={() => setConfirmDialog({ open: false, type: null, title: '', content: '' })}
-            color="inherit"
+            onClick={() =>
+              setConfirmDialog({
+                open: false,
+                type: null,
+                title: '',
+                content: '',
+              })
+            }
+            color='inherit'
           >
             Cancel
           </Button>
           <Button
             onClick={handleConfirmAction}
-            variant="contained"
-            color="primary"
+            variant='contained'
+            color='primary'
             autoFocus
           >
             Proceed

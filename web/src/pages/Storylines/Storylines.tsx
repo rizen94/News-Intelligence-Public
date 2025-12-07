@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import './Storylines.css';
+import { apiService } from '../../services/apiService';
 
 interface Storyline {
   id: number;
@@ -23,15 +24,15 @@ const Storylines: React.FC = () => {
   const fetchStorylines = async() => {
     try {
       setLoading(true);
-      const response = await fetch('http://localhost:8000/api/storylines/');
-      const data = await response.json();
+      const response = await apiService.getStorylines({ limit: 100 });
 
-      if (data.success) {
-        setStorylines(data.data || []);
+      if (response.success) {
+        const items = response.data?.storylines || response.data || [];
+        setStorylines(items);
       } else {
         setError('Failed to load storylines');
       }
-    } catch (err) {
+    } catch (err: any) {
       setError('Failed to load storylines');
       console.error('Storylines error:', err);
     } finally {
@@ -40,46 +41,53 @@ const Storylines: React.FC = () => {
   };
 
   if (loading) {
-    return <div className="loading">Loading storylines...</div>;
+    return <div className='loading'>Loading storylines...</div>;
   }
 
   if (error) {
-    return <div className="error">{error}</div>;
+    return <div className='error'>{error}</div>;
   }
 
   return (
-    <div className="storylines">
-      <div className="storylines-header">
+    <div className='storylines'>
+      <div className='storylines-header'>
         <h1>Storylines</h1>
-        <button className="button" onClick={fetchStorylines}>
+        <button className='button' onClick={fetchStorylines}>
           Refresh
         </button>
       </div>
 
-      <div className="storylines-stats">
-        <div className="stat-card">
+      <div className='storylines-stats'>
+        <div className='stat-card'>
           <h3>Total Storylines</h3>
-          <div className="stat-number">{storylines.length}</div>
+          <div className='stat-number'>{storylines.length}</div>
         </div>
       </div>
 
-      <div className="storylines-list">
-        {storylines.map((storyline) => (
-          <div key={storyline.id} className="storyline-card">
-            <div className="storyline-header">
-              <h3 className="storyline-title">{storyline.title}</h3>
-              <div className="storyline-meta">
-                <span className="storyline-count">{storyline.article_count} articles</span>
-                <span className="storyline-date">
+      <div className='storylines-list'>
+        {storylines.map(storyline => (
+          <div key={storyline.id} className='storyline-card'>
+            <div className='storyline-header'>
+              <h3 className='storyline-title'>{storyline.title}</h3>
+              <div className='storyline-meta'>
+                <span className='storyline-count'>
+                  {storyline.article_count} articles
+                </span>
+                <span className='storyline-date'>
                   {new Date(storyline.created_at).toLocaleDateString()}
                 </span>
               </div>
             </div>
-            <div className="storyline-description">
+            <div className='storyline-description'>
               <p>{storyline.description}</p>
             </div>
-            <div className="storyline-actions">
-              <button className="button" onClick={() => navigate(`/storylines/${storyline.id}`)}>View Details</button>
+            <div className='storyline-actions'>
+              <button
+                className='button'
+                onClick={() => navigate(`/storylines/${storyline.id}`)}
+              >
+                View Details
+              </button>
             </div>
           </div>
         ))}

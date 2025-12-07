@@ -93,7 +93,9 @@ const StorylineManagementDialog = ({
 
     try {
       setLoading(true);
-      const response = await apiService.getAvailableArticlesForStoryline(storyline.id);
+      const response = await apiService.getAvailableArticlesForStoryline(
+        storyline.id,
+      );
       if (response.success) {
         setAvailableArticles(response.data.articles || []);
       }
@@ -136,10 +138,16 @@ const StorylineManagementDialog = ({
           onClose();
         }, 1500);
       } else {
-        setError(response.message || `Failed to ${storyline?.id ? 'update' : 'create'} storyline`);
+        setError(
+          response.message ||
+            `Failed to ${storyline?.id ? 'update' : 'create'} storyline`,
+        );
       }
     } catch (err) {
-      console.error(`Error ${storyline?.id ? 'updating' : 'creating'} storyline:`, err);
+      console.error(
+        `Error ${storyline?.id ? 'updating' : 'creating'} storyline:`,
+        err,
+      );
       setError(`Failed to ${storyline?.id ? 'update' : 'create'} storyline`);
     } finally {
       setLoading(false);
@@ -149,7 +157,11 @@ const StorylineManagementDialog = ({
   const handleDeleteStoryline = async() => {
     if (!storyline?.id) return;
 
-    if (!window.confirm(`Are you sure you want to delete "${storyline.title}"? This action cannot be undone.`)) {
+    if (
+      !window.confirm(
+        `Are you sure you want to delete "${storyline.title}"? This action cannot be undone.`,
+      )
+    ) {
       return;
     }
 
@@ -175,14 +187,17 @@ const StorylineManagementDialog = ({
     }
   };
 
-  const handleRemoveArticle = async(articleId) => {
+  const handleRemoveArticle = async articleId => {
     if (!storyline?.id) return;
 
     try {
       setLoading(true);
       setError(null);
 
-      const response = await apiService.removeArticleFromStoryline(storyline.id, articleId);
+      const response = await apiService.removeArticleFromStoryline(
+        storyline.id,
+        articleId,
+      );
       if (response.success) {
         setArticles(prev => prev.filter(article => article.id !== articleId));
         setSuccess('Article removed from storyline');
@@ -227,9 +242,10 @@ const StorylineManagementDialog = ({
     }
   };
 
-  const filteredAvailableArticles = availableArticles.filter(article =>
-    article.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    article.source_domain.toLowerCase().includes(searchTerm.toLowerCase()),
+  const filteredAvailableArticles = availableArticles.filter(
+    article =>
+      article.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      article.source_domain.toLowerCase().includes(searchTerm.toLowerCase()),
   );
 
   const isEditing = !!storyline;
@@ -238,18 +254,18 @@ const StorylineManagementDialog = ({
     <Dialog
       open={open}
       onClose={onClose}
-      maxWidth="md"
+      maxWidth='md'
       fullWidth
       PaperProps={{
         sx: { minHeight: '600px' },
       }}
     >
       <DialogTitle>
-        <Box display="flex" justifyContent="space-between" alignItems="center">
-          <Typography variant="h6">
+        <Box display='flex' justifyContent='space-between' alignItems='center'>
+          <Typography variant='h6'>
             {isEditing ? `Manage "${storyline.title}"` : 'Create New Storyline'}
           </Typography>
-          <IconButton onClick={onClose} size="small">
+          <IconButton onClick={onClose} size='small'>
             <CloseIcon />
           </IconButton>
         </Box>
@@ -257,13 +273,17 @@ const StorylineManagementDialog = ({
 
       <DialogContent>
         {error && (
-          <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
+          <Alert severity='error' sx={{ mb: 2 }} onClose={() => setError(null)}>
             {error}
           </Alert>
         )}
 
         {success && (
-          <Alert severity="success" sx={{ mb: 2 }} onClose={() => setSuccess(null)}>
+          <Alert
+            severity='success'
+            sx={{ mb: 2 }}
+            onClose={() => setSuccess(null)}
+          >
             {success}
           </Alert>
         )}
@@ -272,9 +292,9 @@ const StorylineManagementDialog = ({
         <Box sx={{ mb: 3 }}>
           <TextField
             fullWidth
-            label="Storyline Title"
+            label='Storyline Title'
             value={formData.title}
-            onChange={(e) => handleInputChange('title', e.target.value)}
+            onChange={e => handleInputChange('title', e.target.value)}
             disabled={loading}
             sx={{ mb: 2 }}
             required
@@ -282,9 +302,9 @@ const StorylineManagementDialog = ({
 
           <TextField
             fullWidth
-            label="Description"
+            label='Description'
             value={formData.description}
-            onChange={(e) => handleInputChange('description', e.target.value)}
+            onChange={e => handleInputChange('description', e.target.value)}
             disabled={loading}
             multiline
             rows={3}
@@ -294,12 +314,15 @@ const StorylineManagementDialog = ({
         {/* Article Management */}
         {isEditing && (
           <Box>
-            <Box display="flex" justifyContent="space-between" alignItems="center" sx={{ mb: 2 }}>
-              <Typography variant="h6">
-                Articles ({articles.length})
-              </Typography>
+            <Box
+              display='flex'
+              justifyContent='space-between'
+              alignItems='center'
+              sx={{ mb: 2 }}
+            >
+              <Typography variant='h6'>Articles ({articles.length})</Typography>
               <Button
-                variant="outlined"
+                variant='outlined'
                 startIcon={<AddIcon />}
                 onClick={() => {
                   setShowAddArticles(true);
@@ -315,7 +338,7 @@ const StorylineManagementDialog = ({
             <Card sx={{ mb: 2 }}>
               <CardContent>
                 {articles.length === 0 ? (
-                  <Typography color="text.secondary" textAlign="center" py={2}>
+                  <Typography color='text.secondary' textAlign='center' py={2}>
                     No articles in this storyline
                   </Typography>
                 ) : (
@@ -325,16 +348,18 @@ const StorylineManagementDialog = ({
                         <ListItem>
                           <ListItemText
                             primary={article.title}
-                            secondary={`${article.source_domain} • ${new Date(article.published_at).toLocaleDateString()}`}
+                            secondary={`${article.source_domain} • ${new Date(
+                              article.published_at,
+                            ).toLocaleDateString()}`}
                           />
                           <ListItemSecondaryAction>
-                            <Tooltip title="Remove from storyline">
+                            <Tooltip title='Remove from storyline'>
                               <IconButton
-                                edge="end"
+                                edge='end'
                                 onClick={() => handleRemoveArticle(article.id)}
                                 disabled={loading}
-                                color="error"
-                                size="small"
+                                color='error'
+                                size='small'
                               >
                                 <DeleteIcon />
                               </IconButton>
@@ -353,14 +378,19 @@ const StorylineManagementDialog = ({
             {showAddArticles && (
               <Card>
                 <CardContent>
-                  <Box display="flex" justifyContent="space-between" alignItems="center" sx={{ mb: 2 }}>
-                    <Typography variant="h6">
+                  <Box
+                    display='flex'
+                    justifyContent='space-between'
+                    alignItems='center'
+                    sx={{ mb: 2 }}
+                  >
+                    <Typography variant='h6'>
                       Add Articles ({selectedArticles.length} selected)
                     </Typography>
                     <Button
-                      variant="outlined"
+                      variant='outlined'
                       onClick={() => setShowAddArticles(false)}
-                      size="small"
+                      size='small'
                     >
                       Cancel
                     </Button>
@@ -368,18 +398,24 @@ const StorylineManagementDialog = ({
 
                   <TextField
                     fullWidth
-                    placeholder="Search articles..."
+                    placeholder='Search articles...'
                     value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
+                    onChange={e => setSearchTerm(e.target.value)}
                     InputProps={{
-                      startAdornment: <SearchIcon sx={{ mr: 1, color: 'text.secondary' }} />,
+                      startAdornment: (
+                        <SearchIcon sx={{ mr: 1, color: 'text.secondary' }} />
+                      ),
                     }}
                     sx={{ mb: 2 }}
                   />
 
                   <Box sx={{ maxHeight: '300px', overflow: 'auto' }}>
                     {filteredAvailableArticles.length === 0 ? (
-                      <Typography color="text.secondary" textAlign="center" py={2}>
+                      <Typography
+                        color='text.secondary'
+                        textAlign='center'
+                        py={2}
+                      >
                         No available articles found
                       </Typography>
                     ) : (
@@ -389,12 +425,20 @@ const StorylineManagementDialog = ({
                             <ListItem>
                               <ListItemText
                                 primary={article.title}
-                                secondary={`${article.source_domain} • ${new Date(article.published_at).toLocaleDateString()}`}
+                                secondary={`${
+                                  article.source_domain
+                                } • ${new Date(
+                                  article.published_at,
+                                ).toLocaleDateString()}`}
                               />
                               <ListItemSecondaryAction>
                                 <Button
-                                  variant={selectedArticles.includes(article.id) ? 'contained' : 'outlined'}
-                                  size="small"
+                                  variant={
+                                    selectedArticles.includes(article.id)
+                                      ? 'contained'
+                                      : 'outlined'
+                                  }
+                                  size='small'
                                   onClick={() => {
                                     setSelectedArticles(prev =>
                                       prev.includes(article.id)
@@ -403,11 +447,15 @@ const StorylineManagementDialog = ({
                                     );
                                   }}
                                 >
-                                  {selectedArticles.includes(article.id) ? 'Selected' : 'Select'}
+                                  {selectedArticles.includes(article.id)
+                                    ? 'Selected'
+                                    : 'Select'}
                                 </Button>
                               </ListItemSecondaryAction>
                             </ListItem>
-                            {index < filteredAvailableArticles.length - 1 && <Divider />}
+                            {index < filteredAvailableArticles.length - 1 && (
+                              <Divider />
+                            )}
                           </React.Fragment>
                         ))}
                       </List>
@@ -416,7 +464,7 @@ const StorylineManagementDialog = ({
                 </CardContent>
                 <CardActions>
                   <Button
-                    variant="contained"
+                    variant='contained'
                     onClick={handleAddSelectedArticles}
                     disabled={loading || selectedArticles.length === 0}
                     startIcon={<AddIcon />}
@@ -433,7 +481,7 @@ const StorylineManagementDialog = ({
       <DialogActions>
         {isEditing && (
           <Button
-            color="error"
+            color='error'
             onClick={handleDeleteStoryline}
             disabled={loading}
             startIcon={<DeleteIcon />}
@@ -449,7 +497,7 @@ const StorylineManagementDialog = ({
         </Button>
 
         <Button
-          variant="contained"
+          variant='contained'
           onClick={handleCreateStoryline}
           disabled={loading || !formData.title.trim()}
           startIcon={loading ? <CircularProgress size={20} /> : <AddIcon />}

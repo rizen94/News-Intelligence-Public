@@ -44,10 +44,9 @@ import {
 } from '@mui/material';
 import React, { useState, useEffect, useCallback } from 'react';
 
-import { apiService } from '../../services/apiService.ts';
+import { apiService } from '../../services/apiService';
 
 const EnhancedDashboard = () => {
-
   // Topic clustering state
   const [topics, setTopics] = useState([]);
   const [clustering, setClustering] = useState(false);
@@ -77,54 +76,121 @@ const EnhancedDashboard = () => {
       setLoading(true);
       setError(null);
 
-      // Load dashboard data from the proper endpoint
-      const [monitoringData, healthData, pipelineStatus, pipelinePerformance] = await Promise.all([
-        apiService.getMonitoringDashboard(),
-        apiService.getHealth(),
-        apiService.getPipelineStatus(),
-        apiService.getPipelinePerformance(),
+      // Load dashboard data from working endpoints with better error handling
+      const [
+        monitoringData,
+        healthData,
+        articlesData,
+        storylinesData,
+        rssData,
+        pipelineStatusData,
+      ] = await Promise.allSettled([
+        apiService.getMonitoringDashboard().catch(err => {
+          console.warn('Monitoring dashboard error:', err);
+          return null;
+        }),
+        apiService.getHealth().catch(err => {
+          console.warn('Health check error:', err);
+          return { success: false, status: 'unknown' };
+        }),
+        apiService.getArticles({ limit: 100 }).catch(err => {
+          console.warn('Articles fetch error:', err);
+          return { data: { articles: [], total: 0 } };
+        }),
+        apiService.getStorylines({ limit: 100 }).catch(err => {
+          console.warn('Storylines fetch error:', err);
+          return { data: { storylines: [], total: 0 } };
+        }),
+        apiService.getRSSFeeds({ limit: 100 }).catch(err => {
+          console.warn('RSS feeds fetch error:', err);
+          return { data: { feeds: [], total: 0 } };
+        }),
+        apiService.getPipelineStatus().catch(err => {
+          console.warn('Pipeline status error:', err);
+          return { success: false, data: { status: 'idle', success_rate: 0, total_traces: 0, active_traces: 0 } };
+        }),
       ]);
+
+      // Extract values from Promise.allSettled results
+      const monitoringResult = monitoringData.status === 'fulfilled' ? monitoringData.value : null;
+      const healthResult = healthData.status === 'fulfilled' ? healthData.value : { success: false, status: 'unknown' };
+      const articlesResult = articlesData.status === 'fulfilled' ? articlesData.value : { data: { articles: [], total: 0 } };
+      const storylinesResult = storylinesData.status === 'fulfilled' ? storylinesData.value : { data: { storylines: [], total: 0 } };
+      const rssResult = rssData.status === 'fulfilled' ? rssData.value : { data: { feeds: [], total: 0 } };
+      const pipelineResult = pipelineStatusData.status === 'fulfilled' ? pipelineStatusData.value : { success: false, data: { pipeline_status: 'idle', success_rate: 0, total_traces: 0, active_traces: 0 } };
+
+      // Extract articles from response (handle nested data structure)
+      const articlesList = articlesResult.data?.articles ||
+                          articlesResult.data?.data?.articles ||
+                          articlesResult.articles ||
+                          [];
+      const totalArticlesCount = articlesResult.data?.total ||
+                                 articlesResult.data?.data?.total ||
+                                 articlesResult.total ||
+                                 articlesList.length;
+
+      // Calculate today's articles
+      const today = new Date().toISOString().split('T')[0];
+      const todayArticles = articlesList.filter(
+        article =>
+          article.published_at && article.published_at.startsWith(today),
+      );
+
+      // Calculate this week's articles
+      const weekAgo = new Date();
+      weekAgo.setDate(weekAgo.getDate() - 7);
+      const weekArticles = articlesList.filter(
+        article =>
+          article.published_at && new Date(article.published_at) >= weekAgo,
+      );
 
       // Combine the data into system status
       const status = {
-        overall: monitoringData?.data?.overall_status || healthData.data?.status || 'unknown',
-        health: healthData,
+        overall:
+          monitoringResult?.data?.overall_status ||
+          healthResult?.status ||
+          monitoringResult?.data?.database?.status === 'healthy' && monitoringResult?.data?.redis?.status === 'healthy' ? 'healthy' : 'unknown',
+        health: healthResult,
         articleStats: {
           data: {
-            total_articles: monitoringData?.data?.database?.total_articles || 0,
-            articles_today: monitoringData?.data?.database?.articles_today || 0,
-            articles_this_week: monitoringData?.data?.database?.articles_this_week || 0,
+            total_articles: totalArticlesCount,
+            articles_today: todayArticles.length,
+            articles_this_week: weekArticles.length,
             top_sources: [],
           },
         },
         rssStats: {
           data: {
-            total_feeds: monitoringData?.data?.database?.active_feeds || 0,
-            active_feeds: monitoringData?.data?.database?.active_feeds || 0,
+            total_feeds: rssResult.data?.total || rssResult.data?.feeds?.length || 0,
+            active_feeds:
+              rssResult.data?.feeds?.filter(feed => feed.is_active)?.length || 0,
             feeds_with_errors: 0,
           },
         },
         storylineStats: {
           data: {
-            total_storylines: monitoringData?.data?.database?.total_storylines || 0,
-            active_storylines: monitoringData?.data?.database?.total_storylines || 0,
+            total_storylines: storylinesResult.data?.total || storylinesResult.data?.storylines?.length || 0,
+            active_storylines:
+              storylinesResult.data?.storylines?.filter(
+                s => s.status === 'active',
+              )?.length || 0,
           },
         },
         pipelineStatus: {
           data: {
-            status: pipelineStatus.active_traces_count > 0 ? 'running' : 'idle',
-            success_rate: pipelinePerformance.success_rate || 0,
-            total_traces: pipelinePerformance.total_traces || 0,
-            active_traces: pipelineStatus.active_traces_count || 0,
+            status: pipelineResult?.data?.pipeline_status === 'running' ? 'running' : (pipelineResult?.data?.pipeline_status || 'idle'),
+            success_rate: pipelineResult?.data?.success_rate || 0,
+            total_traces: pipelineResult?.data?.total_traces || 0,
+            active_traces: pipelineResult?.data?.active_traces || 0,
           },
         },
-        recentArticles: [],
+        recentArticles: articlesResult.data?.articles?.slice(0, 5) || [],
         analytics: {},
-        systemMetrics: monitoringData?.data?.system || {},
+        systemMetrics: monitoringResult?.data?.system || {},
       };
 
       setSystemStatus(status);
-      setMonitoringData(monitoringData);
+      setMonitoringData(monitoringResult);
       setLastUpdate(new Date());
     } catch (err) {
       console.error('Error loading system data:', err);
@@ -207,19 +273,33 @@ const EnhancedDashboard = () => {
       setDisplayRssETA('Updating...');
       saveProcessStatus('rss', true, 'Updating...');
 
-      await apiService.updateRSSFeeds();
+      const response = await apiService.updateRSSFeeds();
 
-      // Simulate processing time
-      setTimeout(() => {
-        setRssRunning(false);
-        setDisplayRssETA(null);
-        saveProcessStatus('rss', false);
-        loadSystemData(); // Refresh data after completion
-      }, 15000); // 15 seconds
+      // Wait for actual completion - API now runs synchronously
+      if (response.success) {
+        setDisplayRssETA(
+          `Complete - ${response.articles_added || 0} articles added`,
+        );
+        setTimeout(() => {
+          setDisplayRssETA(null);
+        }, 2000); // Show success message for 2 seconds
+      } else {
+        setDisplayRssETA('Failed');
+        setTimeout(() => {
+          setDisplayRssETA(null);
+        }, 2000);
+      }
+
+      setRssRunning(false);
+      saveProcessStatus('rss', false);
+      loadSystemData(); // Refresh data after completion
     } catch (error) {
       console.error('RSS update failed:', error);
       setRssRunning(false);
-      setDisplayRssETA(null);
+      setDisplayRssETA('Error');
+      setTimeout(() => {
+        setDisplayRssETA(null);
+      }, 2000);
       saveProcessStatus('rss', false);
     }
   };
@@ -250,27 +330,48 @@ const EnhancedDashboard = () => {
   const executeMasterSwitch = async() => {
     try {
       setMasterRunning(true);
+      setRssRunning(true);
+      setPipelineRunning(true);
+      setAnalysisRunning(true);
       saveProcessStatus('master', true);
 
-      // Execute processes in sequence
-      await executeUpdateRSSFeeds();
-      await new Promise(resolve => setTimeout(resolve, 2000)); // 2 second delay
+      // Use orchestrated pipeline endpoint
+      const response = await apiService.runAllPipelineProcesses();
 
-      await executeTriggerPipeline();
-      await new Promise(resolve => setTimeout(resolve, 2000)); // 2 second delay
+      if (response.success) {
+        setDisplayRssETA('Completed');
+        setDisplayPipelineETA('Completed');
+        setDisplayAnalysisETA('Completed');
 
-      await executeRunAIAnalysis();
-
-      setMasterRunning(false);
-      saveProcessStatus('master', false);
+        // Clear states after showing completion
+        setTimeout(() => {
+          setMasterRunning(false);
+          setRssRunning(false);
+          setPipelineRunning(false);
+          setAnalysisRunning(false);
+          setDisplayRssETA(null);
+          setDisplayPipelineETA(null);
+          setDisplayAnalysisETA(null);
+          saveProcessStatus('master', false);
+          loadSystemData(); // Refresh data after completion
+        }, 3000);
+      } else {
+        throw new Error(response.error || 'Pipeline orchestration failed');
+      }
     } catch (error) {
       console.error('Master switch execution failed:', error);
       setMasterRunning(false);
+      setRssRunning(false);
+      setPipelineRunning(false);
+      setAnalysisRunning(false);
+      setDisplayRssETA(null);
+      setDisplayPipelineETA(null);
+      setDisplayAnalysisETA(null);
       saveProcessStatus('master', false);
     }
   };
 
-  const handleProcessAction = (action) => {
+  const handleProcessAction = action => {
     setConfirmAction(action);
     setConfirmDialogOpen(true);
   };
@@ -296,27 +397,40 @@ const EnhancedDashboard = () => {
     }
   };
 
-  const getStatusColor = (status) => {
+  const getStatusColor = status => {
     switch (status) {
-    case 'healthy': return 'success';
-    case 'degraded': return 'warning';
-    case 'error': return 'error';
-    default: return 'default';
+    case 'healthy':
+      return 'success';
+    case 'degraded':
+      return 'warning';
+    case 'error':
+      return 'error';
+    default:
+      return 'default';
     }
   };
 
-  const getStatusIcon = (status) => {
+  const getStatusIcon = status => {
     switch (status) {
-    case 'healthy': return <CheckCircleIcon />;
-    case 'degraded': return <WarningIcon />;
-    case 'error': return <WarningIcon />;
-    default: return <WarningIcon />;
+    case 'healthy':
+      return <CheckCircleIcon />;
+    case 'degraded':
+      return <WarningIcon />;
+    case 'error':
+      return <WarningIcon />;
+    default:
+      return <WarningIcon />;
     }
   };
 
   if (loading && !systemStatus) {
     return (
-      <Box display="flex" justifyContent="center" alignItems="center" minHeight="400px">
+      <Box
+        display='flex'
+        justifyContent='center'
+        alignItems='center'
+        minHeight='400px'
+      >
         <CircularProgress />
       </Box>
     );
@@ -324,15 +438,21 @@ const EnhancedDashboard = () => {
 
   return (
     <Box>
-      <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
-        <Typography variant="h4" component="h1" sx={{ fontWeight: 'bold' }}>
+      <Box
+        display='flex'
+        justifyContent='space-between'
+        alignItems='center'
+        mb={3}
+      >
+        <Typography variant='h4' component='h1' sx={{ fontWeight: 'bold' }}>
           News Intelligence Dashboard
         </Typography>
-        <Box display="flex" alignItems="center" gap={2}>
-          <Typography variant="body2" color="text.secondary">
-            Last updated: {lastUpdate ? lastUpdate.toLocaleTimeString() : 'Never'}
+        <Box display='flex' alignItems='center' gap={2}>
+          <Typography variant='body2' color='text.secondary'>
+            Last updated:{' '}
+            {lastUpdate ? lastUpdate.toLocaleTimeString() : 'Never'}
           </Typography>
-          <Tooltip title="Refresh Data">
+          <Tooltip title='Refresh Data'>
             <IconButton onClick={handleRefresh} disabled={loading}>
               <Refresh />
             </IconButton>
@@ -341,7 +461,7 @@ const EnhancedDashboard = () => {
       </Box>
 
       {error && (
-        <Alert severity="error" sx={{ mb: 3 }}>
+        <Alert severity='error' sx={{ mb: 3 }}>
           {error}
         </Alert>
       )}
@@ -353,50 +473,60 @@ const EnhancedDashboard = () => {
         <Grid item xs={12}>
           <Card>
             <CardContent>
-              <Box display="flex" alignItems="center" mb={2}>
-                <DashboardIcon color="primary" sx={{ mr: 1 }} />
-                <Typography variant="h6">System Health</Typography>
+              <Box display='flex' alignItems='center' mb={2}>
+                <DashboardIcon color='primary' sx={{ mr: 1 }} />
+                <Typography variant='h6'>System Health</Typography>
               </Box>
               <Grid container spacing={2}>
                 <Grid item xs={12} md={3}>
-                  <Box textAlign="center">
+                  <Box textAlign='center'>
                     <Chip
                       icon={getStatusIcon(systemStatus?.overall)}
                       label={systemStatus?.overall?.toUpperCase() || 'UNKNOWN'}
                       color={getStatusColor(systemStatus?.overall)}
-                      size="large"
+                      size='large'
                     />
-                    <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                    <Typography
+                      variant='body2'
+                      color='text.secondary'
+                      sx={{ mt: 1 }}
+                    >
                       Overall Status
                     </Typography>
                   </Box>
                 </Grid>
                 <Grid item xs={12} md={3}>
-                  <Box textAlign="center">
-                    <Typography variant="h4" color="primary">
-                      {monitoringData?.data?.database?.status === 'healthy' ? '✓' : '✗'}
+                  <Box textAlign='center'>
+                    <Typography variant='h4' color='primary'>
+                      {monitoringData?.data?.database?.status === 'healthy'
+                        ? '✓'
+                        : '✗'}
                     </Typography>
-                    <Typography variant="body2" color="text.secondary">
+                    <Typography variant='body2' color='text.secondary'>
                       Database
                     </Typography>
                   </Box>
                 </Grid>
                 <Grid item xs={12} md={3}>
-                  <Box textAlign="center">
-                    <Typography variant="h4" color="primary">
-                      {monitoringData?.data?.redis?.status === 'healthy' ? '✓' : '✗'}
+                  <Box textAlign='center'>
+                    <Typography variant='h4' color='primary'>
+                      {monitoringData?.data?.redis?.status === 'healthy'
+                        ? '✓'
+                        : '✗'}
                     </Typography>
-                    <Typography variant="body2" color="text.secondary">
+                    <Typography variant='body2' color='text.secondary'>
                       Redis Cache
                     </Typography>
                   </Box>
                 </Grid>
                 <Grid item xs={12} md={3}>
-                  <Box textAlign="center">
-                    <Typography variant="h4" color="primary">
-                      {monitoringData?.data?.system?.status === 'healthy' ? '✓' : '✗'}
+                  <Box textAlign='center'>
+                    <Typography variant='h4' color='primary'>
+                      {monitoringData?.data?.system?.status === 'healthy'
+                        ? '✓'
+                        : '✗'}
                     </Typography>
-                    <Typography variant="body2" color="text.secondary">
+                    <Typography variant='body2' color='text.secondary'>
                       System
                     </Typography>
                   </Box>
@@ -410,22 +540,23 @@ const EnhancedDashboard = () => {
         <Grid item xs={12} md={3}>
           <Card>
             <CardContent>
-              <Box display="flex" alignItems="center" mb={2}>
-                <Article color="primary" sx={{ mr: 1 }} />
-                <Typography variant="h6">Articles</Typography>
+              <Box display='flex' alignItems='center' mb={2}>
+                <Article color='primary' sx={{ mr: 1 }} />
+                <Typography variant='h6'>Articles</Typography>
               </Box>
-              <Typography variant="h4" color="primary">
+              <Typography variant='h4' color='primary'>
                 {systemStatus?.articleStats?.data?.total_articles || 0}
               </Typography>
-              <Typography variant="body2" color="text.secondary">
+              <Typography variant='body2' color='text.secondary'>
                 Total Articles
               </Typography>
               <Divider sx={{ my: 1 }} />
-              <Typography variant="body2" color="text.secondary">
+              <Typography variant='body2' color='text.secondary'>
                 Today: {systemStatus?.articleStats?.data?.articles_today || 0}
               </Typography>
-              <Typography variant="body2" color="text.secondary">
-                This Week: {systemStatus?.articleStats?.data?.articles_this_week || 0}
+              <Typography variant='body2' color='text.secondary'>
+                This Week:{' '}
+                {systemStatus?.articleStats?.data?.articles_this_week || 0}
               </Typography>
             </CardContent>
           </Card>
@@ -434,21 +565,21 @@ const EnhancedDashboard = () => {
         <Grid item xs={12} md={3}>
           <Card>
             <CardContent>
-              <Box display="flex" alignItems="center" mb={2}>
-                <RssFeedIcon color="primary" sx={{ mr: 1 }} />
-                <Typography variant="h6">RSS Feeds</Typography>
+              <Box display='flex' alignItems='center' mb={2}>
+                <RssFeedIcon color='primary' sx={{ mr: 1 }} />
+                <Typography variant='h6'>RSS Feeds</Typography>
               </Box>
-              <Typography variant="h4" color="primary">
+              <Typography variant='h4' color='primary'>
                 {systemStatus?.rssStats?.data?.active_feeds || 0}
               </Typography>
-              <Typography variant="body2" color="text.secondary">
+              <Typography variant='body2' color='text.secondary'>
                 Active Feeds
               </Typography>
               <Divider sx={{ my: 1 }} />
-              <Typography variant="body2" color="text.secondary">
+              <Typography variant='body2' color='text.secondary'>
                 Total: {systemStatus?.rssStats?.data?.total_feeds || 0}
               </Typography>
-              <Typography variant="body2" color="text.secondary">
+              <Typography variant='body2' color='text.secondary'>
                 Errors: {systemStatus?.rssStats?.data?.feeds_with_errors || 0}
               </Typography>
             </CardContent>
@@ -458,21 +589,22 @@ const EnhancedDashboard = () => {
         <Grid item xs={12} md={3}>
           <Card>
             <CardContent>
-              <Box display="flex" alignItems="center" mb={2}>
-                <TimelineIcon color="primary" sx={{ mr: 1 }} />
-                <Typography variant="h6">Storylines</Typography>
+              <Box display='flex' alignItems='center' mb={2}>
+                <TimelineIcon color='primary' sx={{ mr: 1 }} />
+                <Typography variant='h6'>Storylines</Typography>
               </Box>
-              <Typography variant="h4" color="primary">
+              <Typography variant='h4' color='primary'>
                 {systemStatus?.storylineStats?.data?.active_storylines || 0}
               </Typography>
-              <Typography variant="body2" color="text.secondary">
+              <Typography variant='body2' color='text.secondary'>
                 Active Storylines
               </Typography>
               <Divider sx={{ my: 1 }} />
-              <Typography variant="body2" color="text.secondary">
-                Total: {systemStatus?.storylineStats?.data?.total_storylines || 0}
+              <Typography variant='body2' color='text.secondary'>
+                Total:{' '}
+                {systemStatus?.storylineStats?.data?.total_storylines || 0}
               </Typography>
-              <Typography variant="body2" color="text.secondary">
+              <Typography variant='body2' color='text.secondary'>
                 New Today: {systemStatus?.storylineStats?.data?.new_today || 0}
               </Typography>
             </CardContent>
@@ -482,104 +614,147 @@ const EnhancedDashboard = () => {
         <Grid item xs={12} md={3}>
           <Card>
             <CardContent>
-              <Box display="flex" alignItems="center" mb={2}>
-                <SpeedIcon color="primary" sx={{ mr: 1 }} />
-                <Typography variant="h6">Pipeline Status</Typography>
+              <Box display='flex' alignItems='center' mb={2}>
+                <SpeedIcon color='primary' sx={{ mr: 1 }} />
+                <Typography variant='h6'>Pipeline Status</Typography>
               </Box>
-              <Typography variant="h4" color={systemStatus?.pipelineStatus?.data?.status === 'running' ? 'warning' : 'primary'}>
-                {systemStatus?.pipelineStatus?.data?.status === 'running' ? 'RUNNING' : 'IDLE'}
+              <Typography
+                variant='h4'
+                color={
+                  systemStatus?.pipelineStatus?.data?.status === 'running'
+                    ? 'warning'
+                    : systemStatus?.pipelineStatus?.data?.status === 'healthy'
+                      ? 'success'
+                      : 'primary'
+                }
+              >
+                {systemStatus?.pipelineStatus?.data?.status === 'running'
+                  ? 'RUNNING'
+                  : systemStatus?.pipelineStatus?.data?.status === 'healthy'
+                    ? 'HEALTHY'
+                    : 'IDLE'}
               </Typography>
-              <Typography variant="body2" color="text.secondary">
+              <Typography variant='body2' color='text.secondary'>
                 Processing Status
               </Typography>
               <Divider sx={{ my: 1 }} />
-              <Typography variant="body2" color="text.secondary">
-                Success Rate: {systemStatus?.pipelineStatus?.data?.success_rate || 0}%
+              <Typography variant='body2' color='text.secondary'>
+                Success Rate:{' '}
+                {systemStatus?.pipelineStatus?.data?.success_rate || 0}%
               </Typography>
-              <Typography variant="body2" color="text.secondary">
-                Active Traces: {systemStatus?.pipelineStatus?.data?.active_traces || 0}
+              <Typography variant='body2' color='text.secondary'>
+                Active Traces:{' '}
+                {systemStatus?.pipelineStatus?.data?.active_traces || 0}
               </Typography>
-              <Typography variant="body2" color="text.secondary">
-                Total Traces: {systemStatus?.pipelineStatus?.data?.total_traces || 0}
+              <Typography variant='body2' color='text.secondary'>
+                Total Traces:{' '}
+                {systemStatus?.pipelineStatus?.data?.total_traces || 0}
               </Typography>
 
               {/* Process Control Buttons with ETA */}
               <Divider sx={{ my: 2 }} />
-              <Typography variant="subtitle2" gutterBottom>
+              <Typography variant='subtitle2' gutterBottom>
                 Process Controls
               </Typography>
 
-              <Box display="flex" flexDirection="column" gap={1}>
+              <Box display='flex' flexDirection='column' gap={1}>
                 <Button
                   variant={pipelineRunning ? 'contained' : 'outlined'}
                   color={pipelineRunning ? 'warning' : 'primary'}
-                  size="small"
+                  size='small'
                   startIcon={pipelineRunning ? <StopIcon /> : <PlayArrowIcon />}
                   onClick={() => handleProcessAction('pipeline')}
                   disabled={masterRunning || rssRunning || analysisRunning}
                   fullWidth
                 >
-                  {pipelineRunning ? `Pipeline Running ${displayPipelineETA ? `(${displayPipelineETA})` : ''}` : 'Trigger Pipeline'}
+                  {pipelineRunning
+                    ? `Pipeline Running ${
+                      displayPipelineETA ? `(${displayPipelineETA})` : ''
+                    }`
+                    : 'Trigger Pipeline'}
                 </Button>
 
                 <Button
                   variant={rssRunning ? 'contained' : 'outlined'}
                   color={rssRunning ? 'warning' : 'primary'}
-                  size="small"
+                  size='small'
                   startIcon={rssRunning ? <StopIcon /> : <RssFeedIcon />}
                   onClick={() => handleProcessAction('rss')}
                   disabled={masterRunning || pipelineRunning || analysisRunning}
                   fullWidth
                 >
-                  {rssRunning ? `RSS Updating ${displayRssETA ? `(${displayRssETA})` : ''}` : 'Update RSS Feeds'}
+                  {rssRunning
+                    ? `RSS Updating ${
+                      displayRssETA ? `(${displayRssETA})` : ''
+                    }`
+                    : 'Update RSS Feeds'}
                 </Button>
 
                 <Button
                   variant={analysisRunning ? 'contained' : 'outlined'}
                   color={analysisRunning ? 'warning' : 'primary'}
-                  size="small"
+                  size='small'
                   startIcon={analysisRunning ? <StopIcon /> : <Analytics />}
                   onClick={() => handleProcessAction('analysis')}
                   disabled={masterRunning || pipelineRunning || rssRunning}
                   fullWidth
                 >
-                  {analysisRunning ? `Analysis Running ${displayAnalysisETA ? `(${displayAnalysisETA})` : ''}` : 'Run AI Analysis'}
+                  {analysisRunning
+                    ? `Analysis Running ${
+                      displayAnalysisETA ? `(${displayAnalysisETA})` : ''
+                    }`
+                    : 'Run AI Analysis'}
                 </Button>
 
                 <Button
                   variant={masterRunning ? 'contained' : 'outlined'}
                   color={masterRunning ? 'warning' : 'secondary'}
-                  size="small"
+                  size='small'
                   startIcon={masterRunning ? <StopIcon /> : <QueueIcon />}
                   onClick={() => handleProcessAction('master')}
                   disabled={pipelineRunning || rssRunning || analysisRunning}
                   fullWidth
                 >
-                  {masterRunning ? 'Master Process Running' : 'Complete All Processes'}
+                  {masterRunning
+                    ? 'Master Process Running'
+                    : 'Complete All Processes'}
                 </Button>
               </Box>
 
               {/* Queue Status Indicators */}
               {masterRunning && (
                 <Box mt={2}>
-                  <Typography variant="caption" color="primary" display="block" gutterBottom>
+                  <Typography
+                    variant='caption'
+                    color='primary'
+                    display='block'
+                    gutterBottom
+                  >
                     Process Queue Status:
                   </Typography>
-                  <Box display="flex" gap={0.5} flexWrap="wrap">
+                  <Box display='flex' gap={0.5} flexWrap='wrap'>
                     <Chip
                       label={rssRunning ? 'RSS: Running' : 'RSS: Queued'}
                       color={rssRunning ? 'warning' : 'info'}
-                      size="small"
+                      size='small'
                     />
                     <Chip
-                      label={pipelineRunning ? 'Pipeline: Running' : 'Pipeline: Queued'}
+                      label={
+                        pipelineRunning
+                          ? 'Pipeline: Running'
+                          : 'Pipeline: Queued'
+                      }
                       color={pipelineRunning ? 'warning' : 'info'}
-                      size="small"
+                      size='small'
                     />
                     <Chip
-                      label={analysisRunning ? 'Analysis: Running' : 'Analysis: Queued'}
+                      label={
+                        analysisRunning
+                          ? 'Analysis: Running'
+                          : 'Analysis: Queued'
+                      }
                       color={analysisRunning ? 'warning' : 'info'}
-                      size="small"
+                      size='small'
                     />
                   </Box>
                 </Box>
@@ -592,39 +767,59 @@ const EnhancedDashboard = () => {
         <Grid item xs={12}>
           <Card>
             <CardContent>
-              <Typography variant="h6" gutterBottom>
+              <Typography variant='h6' gutterBottom>
                 <PsychologyIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
                 AI Analysis Features
               </Typography>
               <Grid container spacing={2}>
                 <Grid item xs={12} md={4}>
                   <Paper sx={{ p: 2, textAlign: 'center' }}>
-                    <AutoAwesomeIcon color="primary" sx={{ fontSize: 40, mb: 1 }} />
-                    <Typography variant="h6">Multi-Perspective Analysis</Typography>
-                    <Typography variant="body2" color="text.secondary">
+                    <AutoAwesomeIcon
+                      color='primary'
+                      sx={{ fontSize: 40, mb: 1 }}
+                    />
+                    <Typography variant='h6'>
+                      Multi-Perspective Analysis
+                    </Typography>
+                    <Typography variant='body2' color='text.secondary'>
                       Analyze news from multiple viewpoints
                     </Typography>
-                    <Chip label="Available" color="success" size="small" sx={{ mt: 1 }} />
+                    <Chip
+                      label='Available'
+                      color='success'
+                      size='small'
+                      sx={{ mt: 1 }}
+                    />
                   </Paper>
                 </Grid>
                 <Grid item xs={12} md={4}>
                   <Paper sx={{ p: 2, textAlign: 'center' }}>
-                    <Analytics color="primary" sx={{ fontSize: 40, mb: 1 }} />
-                    <Typography variant="h6">Impact Assessment</Typography>
-                    <Typography variant="body2" color="text.secondary">
+                    <Analytics color='primary' sx={{ fontSize: 40, mb: 1 }} />
+                    <Typography variant='h6'>Impact Assessment</Typography>
+                    <Typography variant='body2' color='text.secondary'>
                       Evaluate potential impacts across dimensions
                     </Typography>
-                    <Chip label="Available" color="success" size="small" sx={{ mt: 1 }} />
+                    <Chip
+                      label='Available'
+                      color='success'
+                      size='small'
+                      sx={{ mt: 1 }}
+                    />
                   </Paper>
                 </Grid>
                 <Grid item xs={12} md={4}>
                   <Paper sx={{ p: 2, textAlign: 'center' }}>
-                    <Schedule color="primary" sx={{ fontSize: 40, mb: 1 }} />
-                    <Typography variant="h6">Predictive Analysis</Typography>
-                    <Typography variant="body2" color="text.secondary">
+                    <Schedule color='primary' sx={{ fontSize: 40, mb: 1 }} />
+                    <Typography variant='h6'>Predictive Analysis</Typography>
+                    <Typography variant='body2' color='text.secondary'>
                       Forecast future developments
                     </Typography>
-                    <Chip label="Available" color="success" size="small" sx={{ mt: 1 }} />
+                    <Chip
+                      label='Available'
+                      color='success'
+                      size='small'
+                      sx={{ mt: 1 }}
+                    />
                   </Paper>
                 </Grid>
               </Grid>
@@ -636,24 +831,24 @@ const EnhancedDashboard = () => {
         <Grid item xs={12}>
           <Card>
             <CardContent>
-              <Typography variant="h6" gutterBottom>
+              <Typography variant='h6' gutterBottom>
                 Quick Actions
               </Typography>
-              <Box display="flex" gap={2} flexWrap="wrap">
-                <Button variant="contained" startIcon={<Article />}>
+              <Box display='flex' gap={2} flexWrap='wrap'>
+                <Button variant='contained' startIcon={<Article />}>
                   View Articles
                 </Button>
-                <Button variant="outlined" startIcon={<RssFeedIcon />}>
+                <Button variant='outlined' startIcon={<RssFeedIcon />}>
                   Manage RSS Feeds
                 </Button>
-                <Button variant="outlined" startIcon={<TimelineIcon />}>
+                <Button variant='outlined' startIcon={<TimelineIcon />}>
                   Create Storyline
                 </Button>
-                <Button variant="outlined" startIcon={<Analytics />}>
+                <Button variant='outlined' startIcon={<Analytics />}>
                   View Analytics
                 </Button>
                 <Button
-                  variant="outlined"
+                  variant='outlined'
                   startIcon={<Refresh />}
                   onClick={handleRefresh}
                   disabled={loading}
@@ -669,7 +864,7 @@ const EnhancedDashboard = () => {
         <Grid item xs={12}>
           <Card>
             <CardContent>
-              <Typography variant="h6" gutterBottom>
+              <Typography variant='h6' gutterBottom>
                 System Information
               </Typography>
               <Grid container spacing={2}>
@@ -680,8 +875,11 @@ const EnhancedDashboard = () => {
                         <NetworkIcon />
                       </ListItemIcon>
                       <ListItemText
-                        primary="API Endpoint"
-                        secondary={process.env.REACT_APP_API_URL || 'http://localhost:8001'}
+                        primary='API Endpoint'
+                        secondary={
+                          process.env.REACT_APP_API_URL ||
+                          'http://localhost:8001'
+                        }
                       />
                     </ListItem>
                     <ListItem>
@@ -689,8 +887,8 @@ const EnhancedDashboard = () => {
                         <MemoryIcon />
                       </ListItemIcon>
                       <ListItemText
-                        primary="Version"
-                        secondary="News Intelligence System v3.0"
+                        primary='Version'
+                        secondary='News Intelligence System v3.0'
                       />
                     </ListItem>
                     <ListItem>
@@ -698,8 +896,8 @@ const EnhancedDashboard = () => {
                         <StorageIcon />
                       </ListItemIcon>
                       <ListItemText
-                        primary="Database"
-                        secondary="PostgreSQL with Redis Cache"
+                        primary='Database'
+                        secondary='PostgreSQL with Redis Cache'
                       />
                     </ListItem>
                   </List>
@@ -711,7 +909,7 @@ const EnhancedDashboard = () => {
                         <CheckCircleIcon />
                       </ListItemIcon>
                       <ListItemText
-                        primary="Status"
+                        primary='Status'
                         secondary={systemStatus?.overall || 'Unknown'}
                       />
                     </ListItem>
@@ -720,8 +918,10 @@ const EnhancedDashboard = () => {
                         <Schedule />
                       </ListItemIcon>
                       <ListItemText
-                        primary="Last Update"
-                        secondary={lastUpdate ? lastUpdate.toLocaleString() : 'Never'}
+                        primary='Last Update'
+                        secondary={
+                          lastUpdate ? lastUpdate.toLocaleString() : 'Never'
+                        }
                       />
                     </ListItem>
                     <ListItem>
@@ -729,8 +929,8 @@ const EnhancedDashboard = () => {
                         <PsychologyIcon />
                       </ListItemIcon>
                       <ListItemText
-                        primary="AI Features"
-                        secondary="Multi-perspective, Impact Assessment, Predictive Analysis"
+                        primary='AI Features'
+                        secondary='Multi-perspective, Impact Assessment, Predictive Analysis'
                       />
                     </ListItem>
                   </List>
@@ -742,27 +942,30 @@ const EnhancedDashboard = () => {
       </Grid>
 
       {/* Confirmation Dialog */}
-      <Dialog open={confirmDialogOpen} onClose={() => setConfirmDialogOpen(false)}>
+      <Dialog
+        open={confirmDialogOpen}
+        onClose={() => setConfirmDialogOpen(false)}
+      >
         <DialogTitle>Confirm Process Action</DialogTitle>
         <DialogContent>
           <Typography>
             {confirmAction === 'pipeline' &&
-              'This will trigger the article processing pipeline. This may take several minutes and will process all pending articles. Continue?'
-            }
+              'This will trigger the article processing pipeline. This may take several minutes and will process all pending articles. Continue?'}
             {confirmAction === 'rss' &&
-              'This will update all RSS feeds and collect new articles. This may take a few minutes depending on the number of feeds. Continue?'
-            }
+              'This will update all RSS feeds and collect new articles. This may take a few minutes depending on the number of feeds. Continue?'}
             {confirmAction === 'analysis' &&
-              'This will run AI analysis on recent articles including sentiment analysis, entity extraction, and content classification. Continue?'
-            }
+              'This will run AI analysis on recent articles including sentiment analysis, entity extraction, and content classification. Continue?'}
             {confirmAction === 'master' &&
-              'This will execute all processes in sequence: RSS update, pipeline processing, and AI analysis. This may take several minutes. Continue?'
-            }
+              'This will execute all processes in sequence: RSS update, pipeline processing, and AI analysis. This may take several minutes. Continue?'}
           </Typography>
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setConfirmDialogOpen(false)}>Cancel</Button>
-          <Button onClick={confirmProcessAction} variant="contained" color="primary">
+          <Button
+            onClick={confirmProcessAction}
+            variant='contained'
+            color='primary'
+          >
             Confirm
           </Button>
         </DialogActions>

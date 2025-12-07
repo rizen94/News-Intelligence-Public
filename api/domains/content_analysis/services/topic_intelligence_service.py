@@ -225,26 +225,23 @@ class TopicIntelligenceService:
                 # Get topic clusters with article counts
                 cur.execute("""
                     SELECT 
-                        tc.cluster_name,
-                        tc.cluster_description,
-                        tc.cluster_type,
+                        tc.topic_name,
                         COUNT(atc.article_id) as article_count,
                         AVG(atc.relevance_score) as avg_confidence,
                         MAX(a.created_at) as latest_article_date
                     FROM topic_clusters tc
-                    LEFT JOIN article_topic_clusters atc ON tc.id = atc.topic_cluster_id
+                    LEFT JOIN article_topics atc ON tc.id = atc.topic_id
                     LEFT JOIN articles a ON atc.article_id = a.id
-                    WHERE tc.is_active = true
-                    GROUP BY tc.id, tc.cluster_name, tc.cluster_description, tc.cluster_type
+                    GROUP BY tc.id, tc.topic_name
                     ORDER BY article_count DESC, avg_confidence DESC
                 """)
                 
                 topics = []
                 for row in cur.fetchall():
                     topics.append({
-                        'name': row['cluster_name'],
-                        'description': row['cluster_description'],
-                        'type': row['cluster_type'],
+                        'name': row['topic_name'],
+                        'description': None,
+                        'type': 'semantic',
                         'article_count': row['article_count'] or 0,
                         'avg_confidence': float(row['avg_confidence'] or 0),
                         'latest_article_date': row['latest_article_date'].isoformat() if row['latest_article_date'] else None

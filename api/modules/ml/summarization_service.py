@@ -1,6 +1,6 @@
 """
 ML Summarization Service for News Intelligence System
-Provides AI-powered summarization using Ollama and Llama 3.1 70B
+Provides AI-powered summarization using Ollama and Llama 3.1
 """
 
 import requests
@@ -14,10 +14,10 @@ logger = logging.getLogger(__name__)
 
 class MLSummarizationService:
     """
-    AI-powered summarization service using Ollama and Llama 3.1 70B
+    AI-powered summarization service using Ollama and Llama 3.1
     """
     
-    def __init__(self, ollama_url: str = "http://localhost:11434", model_name: str = "llama3.1:70b-instruct-q4_K_M"):
+    def __init__(self, ollama_url: str = "http://localhost:11434", model_name: str = "llama3.1:8b"):
         """
         Initialize the ML Summarization Service
         

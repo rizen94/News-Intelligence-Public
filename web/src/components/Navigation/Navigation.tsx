@@ -9,7 +9,6 @@ const Navigation: React.FC = () => {
     { path: '/dashboard', label: 'Dashboard', icon: '📊' },
     { path: '/articles', label: 'Articles', icon: '📰' },
     { path: '/storylines', label: 'Storylines', icon: '📚' },
-
     { path: '/topics', label: 'Topics', icon: '🏷️' },
     { path: '/rss-feeds', label: 'RSS Feeds', icon: '📡' },
     { path: '/monitoring', label: 'Monitoring', icon: '🔍' },
@@ -18,19 +17,21 @@ const Navigation: React.FC = () => {
   ];
 
   return (
-    <nav className="navigation">
-      <div className="nav-header">
+    <nav className='navigation'>
+      <div className='nav-header'>
         <h3>News Intelligence</h3>
       </div>
-      <ul className="nav-list">
-        {navItems.map((item) => (
-          <li key={item.path} className="nav-item">
+      <ul className='nav-list'>
+        {navItems.map(item => (
+          <li key={item.path} className='nav-item'>
             <Link
               to={item.path}
-              className={`nav-link ${location.pathname === item.path ? 'active' : ''}`}
+              className={`nav-link ${
+                location.pathname === item.path ? 'active' : ''
+              }`}
             >
-              <span className="nav-icon">{item.icon}</span>
-              <span className="nav-label">{item.label}</span>
+              <span className='nav-icon'>{item.icon}</span>
+              <span className='nav-label'>{item.label}</span>
             </Link>
           </li>
         ))}

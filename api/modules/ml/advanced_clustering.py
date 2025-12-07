@@ -51,8 +51,8 @@ class LocalAdvancedClustering:
     
     def __init__(self, ollama_url: str = "http://localhost:11434"):
         self.ollama_url = ollama_url
-        self.available_models = ["llama3.1:70b", "llama3.1:70b", "nomic-embed-text"]
-        self.default_model = "nomic-embed-text"  # Best for embeddings
+        self.available_models = ["llama3.1:8b", "llama3.1:405b", "nomic-embed-text"]
+        self.default_model = "nomic-embed-text"  # Best for embeddings (8b/405b available for LLM)
         self.cache = {}  # Simple in-memory cache
         self.cache_ttl = 3600  # 1 hour cache TTL
         

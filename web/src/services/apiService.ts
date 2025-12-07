@@ -1,24 +1,6 @@
 import axios from 'axios';
 
-import Logger from '../utils/logger';
-// Types are imported but not used in this file - they're used in the actual implementation
-// import {
-//   APIResponse,
-//   Article,
-//   ArticleStats,
-//   RSSFeed,
-//   RSSStats,
-//   Storyline,
-//   DashboardData,
-//   PipelineStatus,
-//   PipelinePerformance,
-//   SearchResponse,
-//   SearchParams,
-//   APIConfig,
-//   APIError
-// } from '../types';
-
-const API_BASE_URL = process.env['REACT_APP_API_URL'] || 'http://localhost:8001';
+const API_BASE_URL = 'http://localhost:8000';
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -30,569 +12,353 @@ const api = axios.create({
 
 // Request interceptor
 api.interceptors.request.use(
-  (config) => {
-    Logger.apiRequest(config.method?.toUpperCase() || 'UNKNOWN', config.url || '');
+  config => {
+    console.log(`API Request: ${config.method?.toUpperCase()} ${config.url}`);
     return config;
   },
-  (error) => {
-    Logger.apiError('API Request Error', error);
+  error => {
+    console.error('API Request Error:', error);
     return Promise.reject(error);
   },
 );
 
 // Response interceptor
 api.interceptors.response.use(
-  (response) => {
-    Logger.apiResponse(response.status, response.config.url || '');
+  response => {
+    console.log(`API Response: ${response.status} ${response.config.url}`);
     return response;
   },
-  (error) => {
-    Logger.apiError('API Response Error', error, error.config?.url);
-    if (error.response) {
-      Logger.error('Error data', error.response.data);
-      Logger.error('Error status', error.response.status);
-    }
+  error => {
+    console.error(
+      'API Response Error:',
+      error.response?.status,
+      error.response?.data,
+    );
     return Promise.reject(error);
   },
 );
 
+export { api };
+
 export const apiService = {
-  // Generic HTTP methods
-  get: async(url: string, config = {}) => {
+  // Articles
+  getArticles: async(params: any = {}) => {
     try {
-      const response = await api.get(url, config);
-      return response.data;
-    } catch (error) {
-      Logger.apiError(`GET ${url} failed`, error as Error, url);
-      throw error;
-    }
-  },
-
-  post: async(url: string, data = {}, config = {}) => {
-    try {
-      const response = await api.post(url, data, config);
-      return response.data;
-    } catch (error) {
-      console.error(`POST ${url} failed:`, error);
-      throw error;
-    }
-  },
-
-  put: async(url: string, data = {}, config = {}) => {
-    try {
-      const response = await api.put(url, data, config);
-      return response.data;
-    } catch (error) {
-      console.error(`PUT ${url} failed:`, error);
-      throw error;
-    }
-  },
-
-  delete: async(url: string, config = {}) => {
-    try {
-      const response = await api.delete(url, config);
-      return response.data;
-    } catch (error) {
-      console.error(`DELETE ${url} failed:`, error);
-      throw error;
-    }
-  },
-
-  // Health endpoints
-  getHealth: async() => {
-    try {
-      const response = await api.get('/api/health/');
-      return response.data;
-    } catch (error) {
-      console.error('Health check failed:', error);
-      throw error;
-    }
-  },
-
-  // Articles endpoints
-  getArticles: async(params = {}) => {
-    try {
-      const response = await api.get('/api/v4/content-analysis/articles', { params });
+      // Don't set default hours - let the API return all articles by default
+      // Only include hours if explicitly provided
+      const requestParams: any = { ...params };
+      if (params.hours !== undefined) {
+        requestParams.hours = params.hours;
+      }
+      // Otherwise, don't include hours parameter so API returns all articles
+      const response = await api.get(
+        '/api/v4/news-aggregation/articles/recent',
+        { params: requestParams },
+      );
       return response.data;
     } catch (error) {
       console.error('Failed to fetch articles:', error);
-      // Return mock data for development
-      return {
-        success: true,
-        data: {
-          articles: [],
-          total: 0,
-          page: 1,
-          limit: 20,
-        },
-        message: 'No articles found - database schema needs initialization',
-      };
+      return { success: false, error: (error as any).message };
     }
   },
 
-  getArticle: async(id: string | number) => {
+  getArticle: async(id: string) => {
     try {
-      const response = await api.get(`/api/v4/content-analysis/articles/${id}`);
+      const response = await api.get(`/api/v4/news-aggregation/articles/${id}`);
       return response.data;
     } catch (error) {
       console.error('Failed to fetch article:', error);
-      throw error;
+      return { success: false, error: (error as any).message };
     }
   },
 
-  getArticleStats: async() => {
+  // RSS Feeds
+  getRSSFeeds: async(params: any = {}) => {
     try {
-      const response = await api.get('/api/v4/content-analysis/articles/stats');
-      return response.data;
-    } catch (error) {
-      console.error('Failed to fetch article stats:', error);
-      // Return mock data for development
-      return {
-        success: true,
-        data: {
-          total_articles: 0,
-          articles_today: 0,
-          articles_this_week: 0,
-          avg_quality_score: 0,
-          top_sources: [],
-          sentiment_distribution: { positive: 0, negative: 0, neutral: 0 },
-        },
-      };
-    }
-  },
-
-  // RSS Feeds endpoints
-
-  // Topics endpoints
-  getTopics: async(params = {}) => {
-    try {
-      const response = await api.get('/api/topics/', { params });
-      return response.data;
-    } catch (error) {
-      console.error('Failed to fetch topics:', error);
-      throw error;
-    }
-  },
-
-  getTopicArticles: async(topicName, params = {}) => {
-    try {
-      const response = await api.get(`/api/topics/${encodeURIComponent(topicName)}/articles`, { params });
-      return response.data;
-    } catch (error) {
-      console.error(`Failed to fetch articles for topic ${topicName}:`, error);
-      throw error;
-    }
-  },
-
-  getTopicSummary: async(topicName) => {
-    try {
-      const response = await api.get(`/api/topics/${encodeURIComponent(topicName)}/summary`);
-      return response.data;
-    } catch (error) {
-      console.error(`Failed to fetch summary for topic ${topicName}:`, error);
-      throw error;
-    }
-  },
-
-  clusterArticles: async(params = {}) => {
-    try {
-      const response = await api.post('/api/topics/cluster', params);
-      return response.data;
-    } catch (error) {
-      console.error('Failed to cluster articles:', error);
-      throw error;
-    }
-  },
-
-  convertTopicToStoryline: async(topicName, storylineTitle = null) => {
-    try {
-      const response = await api.post(`/api/topics/${encodeURIComponent(topicName)}/convert-to-storyline`, {
-        storyline_title: storylineTitle,
+      const response = await api.get('/api/v4/news-aggregation/rss-feeds', {
+        params,
       });
-      return response.data;
-    } catch (error) {
-      console.error(`Failed to convert topic ${topicName} to storyline:`, error);
-      throw error;
-    }
-  },
-
-  getCategoryStats: async() => {
-    try {
-      const response = await api.get('/api/topics/categories/stats');
-      return response.data;
-    } catch (error) {
-      console.error('Failed to fetch category stats:', error);
-      throw error;
-    }
-  },
-  getRSSFeeds: async(params = {}) => {
-    try {
-      const response = await api.get('/api/rss-feeds/', { params });
       return response.data;
     } catch (error) {
       console.error('Failed to fetch RSS feeds:', error);
-      // Return mock data for development
-      return {
-        success: true,
-        data: {
-          feeds: [],
-          total: 0,
-          page: 1,
-          limit: 20,
-        },
-      };
-    }
-  },
-
-  getRSSStats: async() => {
-    try {
-      const response = await api.get('/api/rss-feeds/stats/overview');
-      return response.data;
-    } catch (error) {
-      console.error('Failed to fetch RSS stats:', error);
-      // Return mock data for development
-      return {
-        success: true,
-        data: {
-          total_feeds: 0,
-          active_feeds: 0,
-          feeds_with_errors: 0,
-          last_update: null,
-          total_articles_collected: 0,
-        },
-      };
-    }
-  },
-
-  // Storylines endpoints
-  getStorylines: async(params = {}) => {
-    try {
-      const response = await api.get('/api/v4/storyline-management/storylines', { params });
-      return response.data;
-    } catch (error) {
-      console.error('Failed to fetch storylines:', error);
-      // Return mock data for development
-      return {
-        success: true,
-        data: {
-          storylines: [],
-          total: 0,
-          page: 1,
-          limit: 20,
-        },
-      };
-    }
-  },
-
-  getStoryline: async(id: string | number) => {
-    try {
-      const response = await api.get(`/api/v4/storyline-management/storylines/${id}`);
-      return response.data;
-    } catch (error) {
-      console.error('Failed to fetch storyline:', error);
-      throw error;
-    }
-  },
-
-  getStorylineTimeline: async(id: string | number) => {
-    try {
-      const response = await api.get(`/api/v4/storyline-management/storylines/${id}/timeline`);
-      return response.data;
-    } catch (error) {
-      console.error('Failed to fetch storyline timeline:', error);
-      throw error;
-    }
-  },
-
-  createStoryline: async(storylineData) => {
-    try {
-      const response = await api.post('/api/v4/storyline-management/storylines', storylineData);
-      return response.data;
-    } catch (error) {
-      console.error('Failed to create storyline:', error);
-      throw error;
-    }
-  },
-
-  updateStoryline: async(id, storylineData) => {
-    try {
-      const response = await api.put(`/api/v4/storyline-management/storylines/${id}`, storylineData);
-      return response.data;
-    } catch (error) {
-      console.error('Failed to update storyline:', error);
-      throw error;
-    }
-  },
-
-  deleteStoryline: async(id) => {
-    try {
-      const response = await api.delete(`/api/v4/storyline-management/storylines/${id}`);
-      return response.data;
-    } catch (error) {
-      console.error('Failed to delete storyline:', error);
-      throw error;
-    }
-  },
-
-  addArticleToStoryline: async(storylineId, articleId, relevanceScore = 0.5) => {
-    try {
-      const response = await api.post(`/api/v4/storyline-management/storylines/${storylineId}/articles/${articleId}`, {
-        relevance_score: relevanceScore,
-      });
-      return response.data;
-    } catch (error) {
-      console.error('Failed to add article to storyline:', error);
-      throw error;
-    }
-  },
-
-  removeArticleFromStoryline: async(storylineId, articleId) => {
-    try {
-      const response = await api.delete(`/api/v4/storyline-management/storylines/${storylineId}/articles/${articleId}`);
-      return response.data;
-    } catch (error) {
-      console.error('Failed to remove article from storyline:', error);
-      throw error;
-    }
-  },
-
-  getAvailableArticlesForStoryline: async(storylineId, limit = 50) => {
-    try {
-      const response = await api.get(`/api/v4/storyline-management/storylines/${storylineId}/available-articles`, {
-        params: { limit },
-      });
-      return response.data;
-    } catch (error) {
-      console.error('Failed to fetch available articles:', error);
-      throw error;
-    }
-  },
-
-  getPipelineStatus: async() => {
-    try {
-      const response = await api.get('/api/v4/system-monitoring/pipeline-status');
-      return response.data;
-    } catch (error) {
-      console.error('Failed to fetch pipeline status:', error);
-      return null;
-    }
-  },
-
-  // Dashboard endpoints
-  getDashboardData: async() => {
-    try {
-      const response = await api.get('/api/dashboard/stats');
-      return response.data;
-    } catch (error) {
-      console.error('Failed to fetch dashboard data:', error);
-      // Return mock data for development
-      return {
-        success: true,
-        data: {
-          system_health: { status: 'healthy' },
-          article_stats: { total: 0, today: 0 },
-          rss_stats: { total_feeds: 0, active_feeds: 0 },
-          storyline_stats: { total: 0, active: 0 },
-          recent_activity: [],
-        },
-      };
-    }
-  },
-
-  // Pipeline Monitoring endpoints
-
-  getPipelineTraces: async(params = {}) => {
-    try {
-      const response = await api.get('/api/pipeline-monitoring/traces', { params });
-      return response.data;
-    } catch (error) {
-      console.error('Failed to fetch pipeline traces:', error);
-      return {
-        success: true,
-        data: {
-          traces: [],
-          total: 0,
-        },
-      };
-    }
-  },
-
-  getPipelinePerformance: async() => {
-    try {
-      const response = await api.get('/api/pipeline-monitoring/performance');
-      return response.data;
-    } catch (error) {
-      console.error('Failed to fetch pipeline performance:', error);
-      return {
-        total_traces: 0,
-        successful_traces: 0,
-        failed_traces: 0,
-        success_rate: 0,
-        average_duration_ms: 0,
-        total_articles_processed: 0,
-        total_feeds_processed: 0,
-        error_count: 0,
-        bottlenecks: [],
-        stage_performance: {},
-      };
-    }
-  },
-
-  // Pipeline and RSS Feed Actions
-  triggerPipeline: async() => {
-    try {
-      // Use the ML pipeline endpoint as a proxy for triggering processing
-      const response = await api.post('/api/intelligence/ml/pipelines/article_classification/run?force=true');
-      return response.data;
-    } catch (error) {
-      console.error('Failed to trigger pipeline:', error);
-      throw error;
+      return { success: false, error: (error as any).message };
     }
   },
 
   updateRSSFeeds: async() => {
     try {
-      // Use the v4 API endpoint to fetch articles from all RSS feeds
-      const response = await api.post('/api/v4/news-aggregation/fetch-articles');
-      return {
-        success: response.data.success,
-        message: response.data.message || 'RSS feeds updated successfully',
-        feeds_count: response.data.feeds_count || 0,
-        timestamp: response.data.timestamp,
-      };
+      const response = await api.post(
+        '/api/v4/news-aggregation/rss/collect-now',
+      );
+      return response.data;
     } catch (error) {
       console.error('Failed to update RSS feeds:', error);
-      throw error;
+      return { success: false, error: (error as any).message };
     }
   },
 
-  runAIAnalysis: async() => {
+  // Storylines
+  getStorylines: async(params: any = {}) => {
     try {
-      const response = await api.post('/api/intelligence/ml/pipelines/sentiment_analysis/run?force=true');
+      const response = await api.get(
+        '/api/v4/storyline-management/storylines',
+        { params },
+      );
       return response.data;
     } catch (error) {
-      console.error('Failed to run AI analysis:', error);
-      throw error;
+      console.error('Failed to fetch storylines:', error);
+      return { success: false, error: (error as any).message };
     }
   },
 
-  // Enhanced Analysis endpoints
-  getMultiPerspectiveAnalysis: async(storylineId: string | number) => {
+  getStoryline: async(id: string) => {
     try {
-      const response = await api.post('/api/enhanced-analysis/multi-perspective', {
-        storyline_id: storylineId,
-      });
+      const response = await api.get(
+        `/api/v4/storyline-management/storylines/${id}`,
+      );
       return response.data;
     } catch (error) {
-      console.error('Failed to get multi-perspective analysis:', error);
-      throw error;
+      console.error('Failed to fetch storyline:', error);
+      return { success: false, error: (error as any).message };
     }
   },
 
-  getImpactAssessment: async(storylineId: string | number) => {
+  getStorylineTimeline: async(id: string | number) => {
     try {
-      const response = await api.post('/api/enhanced-analysis/impact-assessment', {
-        storyline_id: storylineId,
-      });
+      const response = await api.get(
+        `/api/v4/storyline-management/storylines/${id}/timeline`,
+      );
       return response.data;
     } catch (error) {
-      console.error('Failed to get impact assessment:', error);
-      throw error;
+      console.error('Failed to fetch storyline timeline:', error);
+      return { success: false, error: (error as any).message };
     }
   },
 
-  getHistoricalContext: async(storylineId: string | number) => {
+  createStoryline: async(storylineData: {
+    title: string;
+    description?: string;
+  }) => {
     try {
-      const response = await api.post('/api/enhanced-analysis/historical-context', {
-        storyline_id: storylineId,
-      });
+      const response = await api.post(
+        '/api/v4/storyline-management/storylines',
+        storylineData,
+      );
       return response.data;
     } catch (error) {
-      console.error('Failed to get historical context:', error);
-      throw error;
+      console.error('Failed to create storyline:', error);
+      return { success: false, error: (error as any).message };
     }
   },
 
-  getPredictiveAnalysis: async(storylineId: string | number) => {
+  updateStoryline: async(
+    id: string | number,
+    storylineData: { title: string; description?: string; status?: string },
+  ) => {
     try {
-      const response = await api.post('/api/enhanced-analysis/predictive-analysis', {
-        storyline_id: storylineId,
-      });
+      const response = await api.put(
+        `/api/v4/storyline-management/storylines/${id}`,
+        storylineData,
+      );
       return response.data;
     } catch (error) {
-      console.error('Failed to get predictive analysis:', error);
-      throw error;
+      console.error('Failed to update storyline:', error);
+      return { success: false, error: (error as any).message };
     }
   },
 
-  getExpertAnalysis: async(storylineId: string | number) => {
+  deleteStoryline: async(id: string | number) => {
     try {
-      const response = await api.post('/api/enhanced-analysis/expert-analysis', {
-        storyline_id: storylineId,
-      });
+      const response = await api.delete(
+        `/api/v4/storyline-management/storylines/${id}`,
+      );
       return response.data;
     } catch (error) {
-      console.error('Failed to get expert analysis:', error);
-      throw error;
+      console.error('Failed to delete storyline:', error);
+      return { success: false, error: (error as any).message };
     }
   },
 
-  // Search endpoints
-  searchArticles: async(query: string, params = {}) => {
+  convertTopicToStoryline: async(
+    topicName: string,
+    storylineTitle?: string,
+  ) => {
     try {
-      const response = await api.get('/api/search/', {
-        params: { q: query, ...params },
-      });
-      return response.data;
-    } catch (error) {
-      console.error('Search failed:', error);
-      return {
-        success: true,
-        data: {
-          results: [],
-          total: 0,
-          query: query,
+      const response = await api.post(
+        `/api/v4/content-analysis/topics/${encodeURIComponent(
+          topicName,
+        )}/convert-to-storyline`,
+        {
+          storyline_title: storylineTitle || `Storyline: ${topicName}`,
         },
-      };
-    }
-  },
-
-  // Sources and Categories endpoints
-  getSources: async() => {
-    try {
-      const response = await api.get('/api/v4/content-analysis/articles/sources');
+      );
       return response.data;
     } catch (error) {
-      console.error('Failed to fetch sources:', error);
-      // Return mock data for development
-      return {
-        success: true,
-        data: ['BBC News', 'Reuters', 'The Guardian', 'CNN', 'Associated Press'],
-      };
+      console.error(
+        `Failed to convert topic ${topicName} to storyline:`,
+        error,
+      );
+      return { success: false, error: (error as any).message };
     }
   },
 
-  getCategories: async() => {
+  // Automation endpoints
+  getAutomationSettings: async(storylineId: string | number) => {
     try {
-      const response = await api.get('/api/v4/content-analysis/articles/categories');
+      const response = await api.get(
+        `/api/v4/storyline-management/storylines/${storylineId}/automation/settings`,
+      );
       return response.data;
     } catch (error) {
-      console.error('Failed to fetch categories:', error);
-      // Return mock data for development
-      return {
-        success: true,
-        data: ['Global Events', 'Business', 'Politics', 'Technology', 'Health'],
-      };
+      console.error('Failed to get automation settings:', error);
+      return { success: false, error: (error as any).message };
     }
   },
 
-  // Utility methods
-  isHealthy: async() => {
+  updateAutomationSettings: async(storylineId: string | number, settings: any) => {
     try {
-      const health = await apiService.getHealth();
-      return health.data?.status === 'healthy';
+      const response = await api.put(
+        `/api/v4/storyline-management/storylines/${storylineId}/automation/settings`,
+        settings,
+      );
+      return response.data;
     } catch (error) {
-      return false;
+      console.error('Failed to update automation settings:', error);
+      return { success: false, error: (error as any).message };
+    }
+  },
+
+  discoverArticles: async(storylineId: string | number, forceRefresh: boolean = false) => {
+    try {
+      const response = await api.post(
+        `/api/v4/storyline-management/storylines/${storylineId}/automation/discover?force_refresh=${forceRefresh}`,
+      );
+      return response.data;
+    } catch (error) {
+      console.error('Failed to discover articles:', error);
+      return { success: false, error: (error as any).message };
+    }
+  },
+
+  getArticleSuggestions: async(storylineId: string | number, status?: string) => {
+    try {
+      const params: any = {};
+      if (status) {
+        params.status = status;
+      }
+      const response = await api.get(
+        `/api/v4/storyline-management/storylines/${storylineId}/automation/suggestions`,
+        { params },
+      );
+      return response.data;
+    } catch (error) {
+      console.error('Failed to get article suggestions:', error);
+      return { success: false, error: (error as any).message };
+    }
+  },
+
+  approveSuggestion: async(storylineId: string | number, suggestionId: number) => {
+    try {
+      const response = await api.post(
+        `/api/v4/storyline-management/storylines/${storylineId}/automation/suggestions/${suggestionId}/approve`,
+      );
+      return response.data;
+    } catch (error) {
+      console.error('Failed to approve suggestion:', error);
+      return { success: false, error: (error as any).message };
+    }
+  },
+
+  rejectSuggestion: async(storylineId: string | number, suggestionId: number, reason?: string) => {
+    try {
+      const params: any = {};
+      if (reason) {
+        params.reason = reason;
+      }
+      const response = await api.post(
+        `/api/v4/storyline-management/storylines/${storylineId}/automation/suggestions/${suggestionId}/reject`,
+        null,
+        { params },
+      );
+      return response.data;
+    } catch (error) {
+      console.error('Failed to reject suggestion:', error);
+      return { success: false, error: (error as any).message };
+    }
+  },
+
+  analyzeStoryline: async(id: string | number) => {
+    try {
+      const response = await api.post(
+        `/api/v4/storyline-management/storylines/${id}/analyze`,
+      );
+      return response.data;
+    } catch (error) {
+      console.error('Failed to analyze storyline:', error);
+      return { success: false, error: (error as any).message };
+    }
+  },
+
+  getAvailableArticlesForStoryline: async(
+    storylineId: string | number,
+    limit: number = 50,
+    search?: string,
+  ) => {
+    try {
+      const params: any = { limit };
+      if (search) {
+        params.search = search;
+      }
+      const response = await api.get(
+        `/api/v4/storyline-management/storylines/${storylineId}/available-articles`,
+        { params },
+      );
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch available articles:', error);
+      return { success: false, error: (error as any).message };
+    }
+  },
+
+  addArticleToStoryline: async(
+    storylineId: string | number,
+    articleId: string | number,
+  ) => {
+    try {
+      const response = await api.post(
+        `/api/v4/storyline-management/storylines/${storylineId}/articles/${articleId}`,
+      );
+      return response.data;
+    } catch (error: any) {
+      console.error('Failed to add article to storyline:', error);
+      const errorMessage = error.response?.data?.detail || error.message || 'Failed to add article to storyline';
+      return { success: false, error: errorMessage, message: errorMessage };
+    }
+  },
+
+  removeArticleFromStoryline: async(
+    storylineId: string | number,
+    articleId: string | number,
+  ) => {
+    try {
+      const response = await api.delete(
+        `/api/v4/storyline-management/storylines/${storylineId}/articles/${articleId}`,
+      );
+      return response.data;
+    } catch (error) {
+      console.error('Failed to remove article from storyline:', error);
+      return { success: false, error: (error as any).message };
+    }
+  },
+
+  // System Monitoring
+  getHealth: async() => {
+    try {
+      const response = await api.get('/api/v4/system-monitoring/health');
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch health:', error);
+      return { success: false, error: (error as any).message };
     }
   },
 
@@ -602,61 +368,448 @@ export const apiService = {
       return response.data;
     } catch (error) {
       console.error('Failed to fetch monitoring dashboard:', error);
-      return null;
+      return { success: false, error: (error as any).message };
     }
   },
 
-  getSystemStatus: async() => {
+  getPipelineStatus: async() => {
     try {
-      const [health, articles, rssFeeds, monitoringData] = await Promise.all([
-        apiService.getHealth(),
-        apiService.getArticles().catch(() => ({ data: { total_count: 0 } })),
-        apiService.getRSSFeeds().catch(() => ({ data: { feeds: [] } })),
-        apiService.getMonitoringDashboard().catch(() => null),
-      ]);
+      const response = await api.get('/api/v4/system-monitoring/pipeline-status');
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch pipeline status:', error);
+      return { success: false, error: (error as any).message };
+    }
+  },
 
+  // Content Analysis
+  getTopics: async(params: any = {}) => {
+    try {
+      const response = await api.get('/api/v4/content-analysis/topics', {
+        params,
+      });
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch topics:', error);
+      return { success: false, error: (error as any).message };
+    }
+  },
+
+  getCategoryStats: async() => {
+    try {
+      const response = await api.get(
+        '/api/v4/content-analysis/topics/categories/stats',
+      );
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch category stats:', error);
+      return { success: false, error: (error as any).message };
+    }
+  },
+
+  getTopicArticles: async(
+    topicName: string,
+    limit: number = 20,
+    offset: number = 0,
+  ) => {
+    try {
+      const response = await api.get(
+        `/api/v4/content-analysis/topics/${encodeURIComponent(
+          topicName,
+        )}/articles`,
+        {
+          params: { limit, offset },
+        },
+      );
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch topic articles:', error);
+      return { success: false, error: (error as any).message };
+    }
+  },
+
+  getTopicSummary: async(topicName: string) => {
+    try {
+      const response = await api.get(
+        `/api/v4/content-analysis/topics/${encodeURIComponent(
+          topicName,
+        )}/summary`,
+      );
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch topic summary:', error);
+      return { success: false, error: (error as any).message };
+    }
+  },
+
+  getWordCloud: async(
+    timePeriodHours: number = 24,
+    minFrequency: number = 1,
+  ) => {
+    try {
+      const response = await api.get(
+        '/api/v4/content-analysis/topics/word-cloud',
+        {
+          params: {
+            time_period_hours: timePeriodHours,
+            min_frequency: minFrequency,
+          },
+        },
+      );
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch word cloud:', error);
+      return { success: false, error: (error as any).message };
+    }
+  },
+
+  getBigPicture: async(timePeriodHours: number = 24) => {
+    try {
+      const response = await api.get(
+        '/api/v4/content-analysis/topics/big-picture',
+        {
+          params: { time_period_hours: timePeriodHours },
+        },
+      );
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch big picture:', error);
+      return { success: false, error: (error as any).message };
+    }
+  },
+
+  getTrendingTopics: async(
+    timePeriodHours: number = 24,
+    limit: number = 10,
+  ) => {
+    try {
+      const response = await api.get(
+        '/api/v4/content-analysis/topics/trending',
+        {
+          params: { time_period_hours: timePeriodHours, limit },
+        },
+      );
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch trending topics:', error);
+      return { success: false, error: (error as any).message };
+    }
+  },
+
+  clusterArticles: async(params: { limit?: number } = {}) => {
+    try {
+      const response = await api.post(
+        '/api/v4/content-analysis/topics/cluster',
+        {
+          limit: params.limit ?? 100,
+        },
+      );
+      return response.data;
+    } catch (error) {
+      console.error('Failed to start article clustering:', error);
+      return { success: false, error: (error as any).message };
+    }
+  },
+
+  // Pipeline Performance (placeholder)
+  getPipelinePerformance: async() => {
+    try {
+      console.warn(
+        'Pipeline performance endpoint not implemented, returning default data',
+      );
       return {
-        health,
-        articleStats: {
-          success: true,
-          data: {
-            total_articles: articles.data?.total_count || 0,
-            recent_articles: articles.data?.articles?.length || 0,
-            articles_today: 0, // TODO: Calculate from date filtering
-            articles_this_week: 0, // TODO: Calculate from date filtering
-          },
+        success: true,
+        data: {
+          total_traces: 0,
+          successful_traces: 0,
+          failed_traces: 0,
+          success_rate: 0,
+          average_duration_ms: 0,
+          total_articles_processed: 0,
+          total_feeds_processed: 0,
+          error_count: 0,
+          bottlenecks: [],
+          stage_performance: {},
         },
-        rssStats: {
-          success: true,
-          data: {
-            total_feeds: rssFeeds.data?.feeds?.length || 0,
-            active_feeds: rssFeeds.data?.feeds?.filter((feed: any) => feed.is_active !== false).length || 0,
-            feeds_with_errors: 0, // TODO: Calculate from feed error status
-          },
-        },
-        storylineStats: {
-          success: true,
-          data: {
-            total_storylines: 0, // TODO: Add when storylines endpoint is fixed
-            active_storylines: 0,
-          },
-        },
-        monitoringData,
-        overall: health.status === 'healthy' ? 'healthy' : 'degraded',
       };
     } catch (error) {
-      console.error('Failed to get system status:', error);
+      console.error('Failed to fetch pipeline performance:', error);
       return {
-        health: { data: { status: 'error', message: 'System unavailable' } },
-        articleStats: { data: { total_articles: 0, recent_articles: 0, articles_today: 0, articles_this_week: 0 } },
-        rssStats: { data: { total_feeds: 0, active_feeds: 0, feeds_with_errors: 0 } },
-        storylineStats: { data: { total_storylines: 0, active_storylines: 0 } },
-        monitoringData: null,
-        overall: 'error',
+        success: false,
+        error: 'Pipeline performance endpoint not available',
+        data: {
+          total_traces: 0,
+          successful_traces: 0,
+          failed_traces: 0,
+          success_rate: 0,
+          average_duration_ms: 0,
+          total_articles_processed: 0,
+          total_feeds_processed: 0,
+          error_count: 0,
+          bottlenecks: [],
+          stage_performance: {},
+        },
       };
+    }
+  },
+
+  // Article Deduplication methods
+  getArticleDeduplicationStats: async() => {
+    try {
+      const response = await api.get('/api/v4/articles/duplicates/stats');
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch article deduplication stats:', error);
+      return { success: false, error: (error as any).message };
+    }
+  },
+
+  detectArticleDuplicates: async(timePeriodHours: number = 24) => {
+    try {
+      const response = await api.get('/api/v4/articles/duplicates/detect', {
+        params: { time_period_hours: timePeriodHours },
+      });
+      return response.data;
+    } catch (error) {
+      console.error('Failed to detect article duplicates:', error);
+      return { success: false, error: (error as any).message };
+    }
+  },
+
+  getURLDuplicates: async(timePeriodHours: number = 24) => {
+    try {
+      const response = await api.get('/api/v4/articles/duplicates/url', {
+        params: { time_period_hours: timePeriodHours },
+      });
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch URL duplicates:', error);
+      return { success: false, error: (error as any).message };
+    }
+  },
+
+  getContentDuplicates: async(timePeriodHours: number = 24) => {
+    try {
+      const response = await api.get('/api/v4/articles/duplicates/content', {
+        params: { time_period_hours: timePeriodHours },
+      });
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch content duplicates:', error);
+      return { success: false, error: (error as any).message };
+    }
+  },
+
+  getSimilarArticles: async(
+    timePeriodHours: number = 24,
+    similarityThreshold: number = 0.85,
+  ) => {
+    try {
+      const response = await api.get('/api/v4/articles/duplicates/similar', {
+        params: {
+          time_period_hours: timePeriodHours,
+          similarity_threshold: similarityThreshold,
+        },
+      });
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch similar articles:', error);
+      return { success: false, error: (error as any).message };
+    }
+  },
+
+  autoMergeDuplicates: async(dryRun: boolean = true) => {
+    try {
+      const response = await api.post(
+        '/api/v4/articles/duplicates/auto-merge',
+        { dry_run: dryRun },
+      );
+      return response.data;
+    } catch (error) {
+      console.error('Failed to auto-merge duplicates:', error);
+      return { success: false, error: (error as any).message };
+    }
+  },
+
+  addDeduplicationPrevention: async() => {
+    try {
+      const response = await api.post('/api/v4/articles/duplicates/prevent');
+      return response.data;
+    } catch (error) {
+      console.error('Failed to add deduplication prevention:', error);
+      return { success: false, error: (error as any).message };
+    }
+  },
+
+  analyzeArticleSimilarity: async(articleId1: string, articleId2: string) => {
+    try {
+      const response = await api.post(
+        '/api/v4/articles/duplicates/analyze-similarity',
+        {
+          article_id1: articleId1,
+          article_id2: articleId2,
+        },
+      );
+      return response.data;
+    } catch (error) {
+      console.error('Failed to analyze article similarity:', error);
+      return { success: false, error: (error as any).message };
+    }
+  },
+
+  // Pipeline orchestration
+  runAllPipelineProcesses: async() => {
+    try {
+      const response = await api.post(
+        '/api/v4/system-monitoring/pipeline/run-all',
+      );
+      return response.data;
+    } catch (error) {
+      console.error('Failed to run all pipeline processes:', error);
+      return { success: false, error: (error as any).message };
+    }
+  },
+
+  triggerPipeline: async() => {
+    try {
+      // Trigger clustering which can act as pipeline trigger
+      const response = await api.post(
+        '/api/v4/content-analysis/topics/cluster',
+        { limit: 100 },
+      );
+      return response.data;
+    } catch (error) {
+      console.error('Failed to trigger pipeline:', error);
+      return { success: false, error: (error as any).message };
+    }
+  },
+
+  runAIAnalysis: async() => {
+    try {
+      // Trigger AI analysis via content analysis endpoint
+      const response = await api.post(
+        '/api/v4/content-analysis/sentiment/analyze',
+        {
+          content: 'Batch analysis trigger',
+        },
+      );
+      return {
+        success: true,
+        message: 'AI analysis started',
+        data: response.data,
+      };
+    } catch (error) {
+      console.error('Failed to run AI analysis:', error);
+      return { success: false, error: (error as any).message };
+    }
+  },
+
+  // Topic Management Methods (for topic-management domain)
+  getManagedTopics: async(params: any = {}) => {
+    try {
+      const { limit = 50, offset = 0, category, status, search, sort_by = 'accuracy_score' } = params;
+      const queryParams = new URLSearchParams({
+        limit: limit.toString(),
+        offset: offset.toString(),
+        sort_by,
+      });
+      if (category) queryParams.append('category', category);
+      if (status) queryParams.append('status', status);
+      if (search) queryParams.append('search', search);
+
+      const response = await api.get(`/api/v4/topic-management/topics?${queryParams}`);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch topics:', error);
+      return { success: false, error: (error as any).message };
+    }
+  },
+
+  getManagedTopic: async(topicId: number) => {
+    try {
+      const response = await api.get(`/api/v4/topic-management/topics/${topicId}`);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch topic:', error);
+      return { success: false, error: (error as any).message };
+    }
+  },
+
+  getManagedTopicArticles: async(topicId: number, params: any = {}) => {
+    try {
+      const { limit = 20, offset = 0 } = params;
+      const queryParams = new URLSearchParams({
+        limit: limit.toString(),
+        offset: offset.toString(),
+      });
+
+      const response = await api.get(`/api/v4/topic-management/topics/${topicId}/articles?${queryParams}`);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch topic articles:', error);
+      return { success: false, error: (error as any).message };
+    }
+  },
+
+  getArticleTopics: async(articleId: number) => {
+    try {
+      const response = await api.get(`/api/v4/topic-management/articles/${articleId}/topics`);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch article topics:', error);
+      return { success: false, error: (error as any).message };
+    }
+  },
+
+  processArticleTopics: async(articleId: number) => {
+    try {
+      const response = await api.post(`/api/v4/topic-management/articles/${articleId}/process-topics`);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to process article topics:', error);
+      return { success: false, error: (error as any).message };
+    }
+  },
+
+  submitTopicFeedback: async(assignmentId: number, feedback: { is_correct: boolean; feedback_notes?: string; validated_by?: string }) => {
+    try {
+      const response = await api.post(`/api/v4/topic-management/assignments/${assignmentId}/feedback`, feedback);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to submit topic feedback:', error);
+      return { success: false, error: (error as any).message };
+    }
+  },
+
+  getTopicsNeedingReview: async(threshold: number = 0.6, limit: number = 50) => {
+    try {
+      const response = await api.get(`/api/v4/topic-management/topics/needing-review?threshold=${threshold}&limit=${limit}`);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch topics needing review:', error);
+      return { success: false, error: (error as any).message };
+    }
+  },
+
+  createTopic: async(topic: { name: string; description?: string; category?: string; keywords?: string[] }) => {
+    try {
+      const response = await api.post('/api/v4/topic-management/topics', topic);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to create topic:', error);
+      return { success: false, error: (error as any).message };
+    }
+  },
+
+  updateTopic: async(topicId: number, updates: { description?: string; category?: string; keywords?: string[]; status?: string }) => {
+    try {
+      const response = await api.put(`/api/v4/topic-management/topics/${topicId}`, updates);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to update topic:', error);
+      return { success: false, error: (error as any).message };
     }
   },
 };
 
 export default apiService;
-

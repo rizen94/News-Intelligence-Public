@@ -64,7 +64,7 @@ import {
 } from '@mui/material';
 import React, { useState, useEffect, useCallback } from 'react';
 
-import { apiService } from '../../services/apiService.ts';
+import { apiService } from '../../services/apiService';
 
 const EnhancedRSSFeeds = () => {
   const [feeds, setFeeds] = useState([]);
@@ -103,8 +103,22 @@ const EnhancedRSSFeeds = () => {
       });
 
       if (response.success) {
-        setFeeds(response.data.feeds || []);
-        setTotalPages(Math.ceil((response.data.total || 0) / 12));
+        const items = (response.data.feeds || []).map(f => ({
+          id: f.id,
+          name: f.feed_name || f.name,
+          url: f.feed_url || f.url,
+          status: f.is_active ? 'active' : 'disabled',
+          enabled: !!f.is_active,
+          update_frequency: f.fetch_interval_seconds
+            ? Math.round(f.fetch_interval_seconds / 60)
+            : undefined,
+          last_update: f.last_fetched_at || f.last_update || null,
+          category: f.category,
+          description: f.description,
+          article_count: f.article_count,
+        }));
+        setFeeds(items);
+        setTotalPages(Math.ceil((response.data.total || items.length) / 12));
       } else {
         setFeeds([]);
         setTotalPages(1);
@@ -122,7 +136,7 @@ const EnhancedRSSFeeds = () => {
     loadFeeds();
   }, [loadFeeds]);
 
-  const handleSearch = (event) => {
+  const handleSearch = event => {
     setSearchQuery(event.target.value);
     setPage(1);
   };
@@ -182,7 +196,7 @@ const EnhancedRSSFeeds = () => {
     setAddDialogOpen(true);
   };
 
-  const handleEditFeed = (feed) => {
+  const handleEditFeed = feed => {
     setSelectedFeed(feed);
     setNewFeed({
       name: feed.name || '',
@@ -207,7 +221,7 @@ const EnhancedRSSFeeds = () => {
     }
   };
 
-  const handleDeleteFeed = async(feedId) => {
+  const handleDeleteFeed = async feedId => {
     if (window.confirm('Are you sure you want to delete this RSS feed?')) {
       try {
         // Here you would call the API to delete the feed
@@ -229,39 +243,56 @@ const EnhancedRSSFeeds = () => {
     }
   };
 
-  const getStatusColor = (status) => {
+  const getStatusColor = status => {
     switch (status?.toLowerCase()) {
-    case 'active': return 'success';
-    case 'error': return 'error';
-    case 'paused': return 'warning';
-    case 'disabled': return 'default';
-    default: return 'default';
+    case 'active':
+      return 'success';
+    case 'error':
+      return 'error';
+    case 'paused':
+      return 'warning';
+    case 'disabled':
+      return 'default';
+    default:
+      return 'default';
     }
   };
 
-  const getStatusIcon = (status) => {
+  const getStatusIcon = status => {
     switch (status?.toLowerCase()) {
-    case 'active': return <CheckCircleIcon />;
-    case 'error': return <ErrorIcon />;
-    case 'paused': return <PauseIcon />;
-    case 'disabled': return <PauseIcon />;
-    default: return <WarningIcon />;
+    case 'active':
+      return <CheckCircleIcon />;
+    case 'error':
+      return <ErrorIcon />;
+    case 'paused':
+      return <PauseIcon />;
+    case 'disabled':
+      return <PauseIcon />;
+    default:
+      return <WarningIcon />;
     }
   };
 
-  const getCategoryIcon = (category) => {
+  const getCategoryIcon = category => {
     switch (category?.toLowerCase()) {
-    case 'news': return <RssFeedIcon />;
-    case 'politics': return <LinkIcon />;
-    case 'business': return <LinkIcon />;
-    case 'technology': return <LinkIcon />;
-    case 'health': return <LinkIcon />;
-    case 'sports': return <LinkIcon />;
-    default: return <RssFeedIcon />;
+    case 'news':
+      return <RssFeedIcon />;
+    case 'politics':
+      return <LinkIcon />;
+    case 'business':
+      return <LinkIcon />;
+    case 'technology':
+      return <LinkIcon />;
+    case 'health':
+      return <LinkIcon />;
+    case 'sports':
+      return <LinkIcon />;
+    default:
+      return <RssFeedIcon />;
     }
   };
 
-  const formatDate = (dateString) => {
+  const formatDate = dateString => {
     if (!dateString) return 'Never';
     return new Date(dateString).toLocaleDateString('en-US', {
       year: 'numeric',
@@ -274,40 +305,48 @@ const EnhancedRSSFeeds = () => {
 
   const truncateText = (text, maxLength = 100) => {
     if (!text) return '';
-    return text.length > maxLength ? text.substring(0, maxLength) + '...' : text;
+    return text.length > maxLength
+      ? text.substring(0, maxLength) + '...'
+      : text;
   };
 
   const FeedCard = ({ feed }) => (
     <Card sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       <CardContent sx={{ flexGrow: 1 }}>
-        <Box display="flex" justifyContent="space-between" alignItems="flex-start" mb={2}>
-          <Typography variant="h6" component="h3" sx={{
-            fontWeight: 'bold',
-            lineHeight: 1.2,
-            display: '-webkit-box',
-            WebkitLineClamp: 2,
-            WebkitBoxOrient: 'vertical',
-            overflow: 'hidden',
-          }}>
+        <Box
+          display='flex'
+          justifyContent='space-between'
+          alignItems='flex-start'
+          mb={2}
+        >
+          <Typography
+            variant='h6'
+            component='h3'
+            sx={{
+              fontWeight: 'bold',
+              lineHeight: 1.2,
+              display: '-webkit-box',
+              WebkitLineClamp: 2,
+              WebkitBoxOrient: 'vertical',
+              overflow: 'hidden',
+            }}
+          >
             {feed.name || 'Unnamed Feed'}
           </Typography>
-          <Box display="flex" gap={1}>
+          <Box display='flex' gap={1}>
             <IconButton
-              size="small"
+              size='small'
               onClick={() => handleToggleFeed(feed.id, !feed.enabled)}
             >
               {feed.enabled ? <PauseIcon /> : <PlayIcon />}
             </IconButton>
-            <IconButton
-              size="small"
-              onClick={() => handleEditFeed(feed)}
-            >
+            <IconButton size='small' onClick={() => handleEditFeed(feed)}>
               <Edit />
             </IconButton>
             <IconButton
-              size="small"
+              size='small'
               onClick={() => handleDeleteFeed(feed.id)}
-              color="error"
+              color='error'
             >
               <Delete />
             </IconButton>
@@ -315,8 +354,8 @@ const EnhancedRSSFeeds = () => {
         </Box>
 
         <Typography
-          variant="body2"
-          color="text.secondary"
+          variant='body2'
+          color='text.secondary'
           sx={{
             mb: 2,
             display: '-webkit-box',
@@ -328,45 +367,54 @@ const EnhancedRSSFeeds = () => {
           {truncateText(feed.description || feed.url)}
         </Typography>
 
-        <Box display="flex" flexWrap="wrap" gap={1} mb={2}>
+        <Box display='flex' flexWrap='wrap' gap={1} mb={2}>
           <Chip
             icon={getStatusIcon(feed.status)}
             label={feed.status || 'Unknown'}
             color={getStatusColor(feed.status)}
-            size="small"
+            size='small'
           />
           {feed.category && (
             <Chip
               icon={getCategoryIcon(feed.category)}
               label={feed.category}
-              color="secondary"
-              size="small"
+              color='secondary'
+              size='small'
             />
           )}
           {feed.update_frequency && (
             <Chip
               label={`${feed.update_frequency}m`}
-              color="primary"
-              size="small"
+              color='primary'
+              size='small'
             />
           )}
         </Box>
 
-        <Box display="flex" alignItems="center" justifyContent="space-between" mb={1}>
-          <Box display="flex" alignItems="center" gap={1}>
-            <RssFeedIcon fontSize="small" color="action" />
-            <Typography variant="caption" color="text.secondary">
+        <Box
+          display='flex'
+          alignItems='center'
+          justifyContent='space-between'
+          mb={1}
+        >
+          <Box display='flex' alignItems='center' gap={1}>
+            <RssFeedIcon fontSize='small' color='action' />
+            <Typography variant='caption' color='text.secondary'>
               {feed.article_count || 0} articles
             </Typography>
           </Box>
-          <Typography variant="caption" color="text.secondary">
+          <Typography variant='caption' color='text.secondary'>
             Last: {formatDate(feed.last_update)}
           </Typography>
         </Box>
 
         {feed.url && (
           <Box mt={1}>
-            <Typography variant="caption" color="text.secondary" display="block">
+            <Typography
+              variant='caption'
+              color='text.secondary'
+              display='block'
+            >
               URL: {truncateText(feed.url, 50)}
             </Typography>
           </Box>
@@ -375,20 +423,20 @@ const EnhancedRSSFeeds = () => {
 
       <CardActions sx={{ p: 2, pt: 0 }}>
         <Button
-          size="small"
+          size='small'
           startIcon={<Visibility />}
           onClick={() => window.open(feed.url, '_blank')}
         >
           View Feed
         </Button>
         <Button
-          size="small"
+          size='small'
           startIcon={<UpdateIcon />}
           onClick={() => handleRefresh()}
         >
           Update Now
         </Button>
-        <Button size="small" startIcon={<SettingsIcon />}>
+        <Button size='small' startIcon={<SettingsIcon />}>
           Settings
         </Button>
       </CardActions>
@@ -407,30 +455,30 @@ const EnhancedRSSFeeds = () => {
     >
       <ListItemText
         primary={
-          <Box display="flex" alignItems="center" gap={1} mb={1}>
-            <Typography variant="h6" sx={{ flexGrow: 1 }}>
+          <Box display='flex' alignItems='center' gap={1} mb={1}>
+            <Typography variant='h6' sx={{ flexGrow: 1 }}>
               {feed.name || 'Unnamed Feed'}
             </Typography>
-            <Box display="flex" gap={1}>
+            <Box display='flex' gap={1}>
               <Chip
                 icon={getStatusIcon(feed.status)}
                 label={feed.status || 'Unknown'}
                 color={getStatusColor(feed.status)}
-                size="small"
+                size='small'
               />
               {feed.category && (
                 <Chip
                   icon={getCategoryIcon(feed.category)}
                   label={feed.category}
-                  color="secondary"
-                  size="small"
+                  color='secondary'
+                  size='small'
                 />
               )}
               {feed.update_frequency && (
                 <Chip
                   label={`${feed.update_frequency}m`}
-                  color="primary"
-                  size="small"
+                  color='primary'
+                  size='small'
                 />
               )}
             </Box>
@@ -438,21 +486,21 @@ const EnhancedRSSFeeds = () => {
         }
         secondary={
           <Box>
-            <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+            <Typography variant='body2' color='text.secondary' sx={{ mb: 1 }}>
               {truncateText(feed.description || feed.url, 200)}
             </Typography>
-            <Box display="flex" alignItems="center" gap={2}>
-              <Box display="flex" alignItems="center" gap={0.5}>
-                <RssFeedIcon fontSize="small" />
-                <Typography variant="caption">
+            <Box display='flex' alignItems='center' gap={2}>
+              <Box display='flex' alignItems='center' gap={0.5}>
+                <RssFeedIcon fontSize='small' />
+                <Typography variant='caption'>
                   {feed.article_count || 0} articles
                 </Typography>
               </Box>
-              <Typography variant="caption">
+              <Typography variant='caption'>
                 Last update: {formatDate(feed.last_update)}
               </Typography>
               {feed.url && (
-                <Typography variant="caption" color="text.secondary">
+                <Typography variant='caption' color='text.secondary'>
                   URL: {truncateText(feed.url, 50)}
                 </Typography>
               )}
@@ -461,23 +509,20 @@ const EnhancedRSSFeeds = () => {
         }
       />
       <ListItemSecondaryAction>
-        <Box display="flex" gap={1}>
+        <Box display='flex' gap={1}>
           <IconButton
-            size="small"
+            size='small'
             onClick={() => handleToggleFeed(feed.id, !feed.enabled)}
           >
             {feed.enabled ? <PauseIcon /> : <PlayIcon />}
           </IconButton>
-          <IconButton
-            size="small"
-            onClick={() => handleEditFeed(feed)}
-          >
+          <IconButton size='small' onClick={() => handleEditFeed(feed)}>
             <Edit />
           </IconButton>
           <IconButton
-            size="small"
+            size='small'
             onClick={() => handleDeleteFeed(feed.id)}
-            color="error"
+            color='error'
           >
             <Delete />
           </IconButton>
@@ -488,19 +533,24 @@ const EnhancedRSSFeeds = () => {
 
   return (
     <Box>
-      <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
-        <Typography variant="h4" component="h1" sx={{ fontWeight: 'bold' }}>
+      <Box
+        display='flex'
+        justifyContent='space-between'
+        alignItems='center'
+        mb={3}
+      >
+        <Typography variant='h4' component='h1' sx={{ fontWeight: 'bold' }}>
           RSS Feeds
         </Typography>
-        <Box display="flex" gap={2} alignItems="center">
+        <Box display='flex' gap={2} alignItems='center'>
           <Button
-            variant="contained"
+            variant='contained'
             startIcon={<Add />}
             onClick={handleAddFeed}
           >
             Add Feed
           </Button>
-          <Tooltip title="Refresh Feeds">
+          <Tooltip title='Refresh Feeds'>
             <IconButton onClick={handleRefresh} disabled={loading}>
               <Refresh />
             </IconButton>
@@ -509,7 +559,7 @@ const EnhancedRSSFeeds = () => {
             variant={viewMode === 'grid' ? 'contained' : 'outlined'}
             startIcon={<ViewModule />}
             onClick={() => setViewMode('grid')}
-            size="small"
+            size='small'
           >
             Grid
           </Button>
@@ -517,7 +567,7 @@ const EnhancedRSSFeeds = () => {
             variant={viewMode === 'list' ? 'contained' : 'outlined'}
             startIcon={<ViewList />}
             onClick={() => setViewMode('list')}
-            size="small"
+            size='small'
           >
             List
           </Button>
@@ -526,16 +576,16 @@ const EnhancedRSSFeeds = () => {
 
       {/* Search and Filters */}
       <Paper sx={{ p: 3, mb: 3 }}>
-        <Grid container spacing={2} alignItems="center">
+        <Grid container spacing={2} alignItems='center'>
           <Grid item xs={12} md={4}>
             <TextField
               fullWidth
-              placeholder="Search RSS feeds by name or URL..."
+              placeholder='Search RSS feeds by name or URL...'
               value={searchQuery}
               onChange={handleSearch}
               InputProps={{
                 startAdornment: (
-                  <InputAdornment position="start">
+                  <InputAdornment position='start'>
                     <Search />
                   </InputAdornment>
                 ),
@@ -547,14 +597,14 @@ const EnhancedRSSFeeds = () => {
               <InputLabel>Status</InputLabel>
               <Select
                 value={filterStatus}
-                label="Status"
-                onChange={(e) => handleFilterChange('status', e.target.value)}
+                label='Status'
+                onChange={e => handleFilterChange('status', e.target.value)}
               >
-                <MenuItem value="">All Statuses</MenuItem>
-                <MenuItem value="active">Active</MenuItem>
-                <MenuItem value="error">Error</MenuItem>
-                <MenuItem value="paused">Paused</MenuItem>
-                <MenuItem value="disabled">Disabled</MenuItem>
+                <MenuItem value=''>All Statuses</MenuItem>
+                <MenuItem value='active'>Active</MenuItem>
+                <MenuItem value='error'>Error</MenuItem>
+                <MenuItem value='paused'>Paused</MenuItem>
+                <MenuItem value='disabled'>Disabled</MenuItem>
               </Select>
             </FormControl>
           </Grid>
@@ -563,16 +613,16 @@ const EnhancedRSSFeeds = () => {
               <InputLabel>Category</InputLabel>
               <Select
                 value={filterCategory}
-                label="Category"
-                onChange={(e) => handleFilterChange('category', e.target.value)}
+                label='Category'
+                onChange={e => handleFilterChange('category', e.target.value)}
               >
-                <MenuItem value="">All Categories</MenuItem>
-                <MenuItem value="news">News</MenuItem>
-                <MenuItem value="politics">Politics</MenuItem>
-                <MenuItem value="business">Business</MenuItem>
-                <MenuItem value="technology">Technology</MenuItem>
-                <MenuItem value="health">Health</MenuItem>
-                <MenuItem value="sports">Sports</MenuItem>
+                <MenuItem value=''>All Categories</MenuItem>
+                <MenuItem value='news'>News</MenuItem>
+                <MenuItem value='politics'>Politics</MenuItem>
+                <MenuItem value='business'>Business</MenuItem>
+                <MenuItem value='technology'>Technology</MenuItem>
+                <MenuItem value='health'>Health</MenuItem>
+                <MenuItem value='sports'>Sports</MenuItem>
               </Select>
             </FormControl>
           </Grid>
@@ -581,21 +631,21 @@ const EnhancedRSSFeeds = () => {
               <InputLabel>Sort By</InputLabel>
               <Select
                 value={sortBy}
-                label="Sort By"
-                onChange={(e) => handleFilterChange('sort', e.target.value)}
+                label='Sort By'
+                onChange={e => handleFilterChange('sort', e.target.value)}
               >
-                <MenuItem value="name">Name</MenuItem>
-                <MenuItem value="last_update">Last Update</MenuItem>
-                <MenuItem value="article_count">Article Count</MenuItem>
-                <MenuItem value="status">Status</MenuItem>
-                <MenuItem value="created_at">Created Date</MenuItem>
+                <MenuItem value='name'>Name</MenuItem>
+                <MenuItem value='last_update'>Last Update</MenuItem>
+                <MenuItem value='article_count'>Article Count</MenuItem>
+                <MenuItem value='status'>Status</MenuItem>
+                <MenuItem value='created_at'>Created Date</MenuItem>
               </Select>
             </FormControl>
           </Grid>
           <Grid item xs={12} md={2}>
             <Button
               fullWidth
-              variant="outlined"
+              variant='outlined'
               startIcon={<FilterList />}
               onClick={() => {
                 setSearchQuery('');
@@ -612,7 +662,7 @@ const EnhancedRSSFeeds = () => {
       </Paper>
 
       {error && (
-        <Alert severity="error" sx={{ mb: 3 }}>
+        <Alert severity='error' sx={{ mb: 3 }}>
           {error}
         </Alert>
       )}
@@ -623,17 +673,16 @@ const EnhancedRSSFeeds = () => {
       {feeds.length === 0 && !loading ? (
         <Paper sx={{ p: 4, textAlign: 'center' }}>
           <RssFeedIcon sx={{ fontSize: 64, color: 'text.secondary', mb: 2 }} />
-          <Typography variant="h6" color="text.secondary" gutterBottom>
+          <Typography variant='h6' color='text.secondary' gutterBottom>
             No RSS feeds found
           </Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+          <Typography variant='body2' color='text.secondary' sx={{ mb: 3 }}>
             {searchQuery || filterStatus || filterCategory
               ? 'Try adjusting your search criteria or filters'
-              : 'Add your first RSS feed to start collecting news articles'
-            }
+              : 'Add your first RSS feed to start collecting news articles'}
           </Typography>
           <Button
-            variant="contained"
+            variant='contained'
             startIcon={<Add />}
             onClick={handleAddFeed}
           >
@@ -644,7 +693,7 @@ const EnhancedRSSFeeds = () => {
         <>
           {viewMode === 'grid' ? (
             <Grid container spacing={3}>
-              {feeds.map((feed) => (
+              {feeds.map(feed => (
                 <Grid item xs={12} sm={6} md={4} key={feed.id}>
                   <FeedCard feed={feed} />
                 </Grid>
@@ -652,7 +701,7 @@ const EnhancedRSSFeeds = () => {
             </Grid>
           ) : (
             <List>
-              {feeds.map((feed) => (
+              {feeds.map(feed => (
                 <FeedListItem key={feed.id} feed={feed} />
               ))}
             </List>
@@ -660,13 +709,13 @@ const EnhancedRSSFeeds = () => {
 
           {/* Pagination */}
           {totalPages > 1 && (
-            <Box display="flex" justifyContent="center" mt={4}>
+            <Box display='flex' justifyContent='center' mt={4}>
               <Pagination
                 count={totalPages}
                 page={page}
                 onChange={(event, value) => setPage(value)}
-                color="primary"
-                size="large"
+                color='primary'
+                size='large'
               />
             </Box>
           )}
@@ -674,10 +723,15 @@ const EnhancedRSSFeeds = () => {
       )}
 
       {/* Add/Edit Feed Dialog */}
-      <Dialog open={addDialogOpen || editDialogOpen} onClose={() => {
-        setAddDialogOpen(false);
-        setEditDialogOpen(false);
-      }} maxWidth="sm" fullWidth>
+      <Dialog
+        open={addDialogOpen || editDialogOpen}
+        onClose={() => {
+          setAddDialogOpen(false);
+          setEditDialogOpen(false);
+        }}
+        maxWidth='sm'
+        fullWidth
+      >
         <DialogTitle>
           {addDialogOpen ? 'Add New RSS Feed' : 'Edit RSS Feed'}
         </DialogTitle>
@@ -686,18 +740,18 @@ const EnhancedRSSFeeds = () => {
             <Grid item xs={12}>
               <TextField
                 fullWidth
-                label="Feed Name"
+                label='Feed Name'
                 value={newFeed.name}
-                onChange={(e) => setNewFeed({ ...newFeed, name: e.target.value })}
+                onChange={e => setNewFeed({ ...newFeed, name: e.target.value })}
               />
             </Grid>
             <Grid item xs={12}>
               <TextField
                 fullWidth
-                label="Feed URL"
+                label='Feed URL'
                 value={newFeed.url}
-                onChange={(e) => setNewFeed({ ...newFeed, url: e.target.value })}
-                placeholder="https://feeds.bbci.co.uk/news/rss.xml"
+                onChange={e => setNewFeed({ ...newFeed, url: e.target.value })}
+                placeholder='https://feeds.bbci.co.uk/news/rss.xml'
               />
             </Grid>
             <Grid item xs={12} md={6}>
@@ -705,35 +759,44 @@ const EnhancedRSSFeeds = () => {
                 <InputLabel>Category</InputLabel>
                 <Select
                   value={newFeed.category}
-                  label="Category"
-                  onChange={(e) => setNewFeed({ ...newFeed, category: e.target.value })}
+                  label='Category'
+                  onChange={e =>
+                    setNewFeed({ ...newFeed, category: e.target.value })
+                  }
                 >
-                  <MenuItem value="news">News</MenuItem>
-                  <MenuItem value="politics">Politics</MenuItem>
-                  <MenuItem value="business">Business</MenuItem>
-                  <MenuItem value="technology">Technology</MenuItem>
-                  <MenuItem value="health">Health</MenuItem>
-                  <MenuItem value="sports">Sports</MenuItem>
+                  <MenuItem value='news'>News</MenuItem>
+                  <MenuItem value='politics'>Politics</MenuItem>
+                  <MenuItem value='business'>Business</MenuItem>
+                  <MenuItem value='technology'>Technology</MenuItem>
+                  <MenuItem value='health'>Health</MenuItem>
+                  <MenuItem value='sports'>Sports</MenuItem>
                 </Select>
               </FormControl>
             </Grid>
             <Grid item xs={12} md={6}>
               <TextField
                 fullWidth
-                label="Update Frequency (minutes)"
-                type="number"
+                label='Update Frequency (minutes)'
+                type='number'
                 value={newFeed.update_frequency}
-                onChange={(e) => setNewFeed({ ...newFeed, update_frequency: parseInt(e.target.value) })}
+                onChange={e =>
+                  setNewFeed({
+                    ...newFeed,
+                    update_frequency: parseInt(e.target.value),
+                  })
+                }
               />
             </Grid>
             <Grid item xs={12}>
               <TextField
                 fullWidth
-                label="Description"
+                label='Description'
                 multiline
                 rows={3}
                 value={newFeed.description}
-                onChange={(e) => setNewFeed({ ...newFeed, description: e.target.value })}
+                onChange={e =>
+                  setNewFeed({ ...newFeed, description: e.target.value })
+                }
               />
             </Grid>
             <Grid item xs={12}>
@@ -741,22 +804,26 @@ const EnhancedRSSFeeds = () => {
                 control={
                   <Switch
                     checked={newFeed.enabled}
-                    onChange={(e) => setNewFeed({ ...newFeed, enabled: e.target.checked })}
+                    onChange={e =>
+                      setNewFeed({ ...newFeed, enabled: e.target.checked })
+                    }
                   />
                 }
-                label="Enable this feed"
+                label='Enable this feed'
               />
             </Grid>
           </Grid>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => {
-            setAddDialogOpen(false);
-            setEditDialogOpen(false);
-          }}>
+          <Button
+            onClick={() => {
+              setAddDialogOpen(false);
+              setEditDialogOpen(false);
+            }}
+          >
             Cancel
           </Button>
-          <Button onClick={handleSaveFeed} variant="contained">
+          <Button onClick={handleSaveFeed} variant='contained'>
             {addDialogOpen ? 'Add Feed' : 'Save Changes'}
           </Button>
         </DialogActions>
@@ -764,34 +831,34 @@ const EnhancedRSSFeeds = () => {
 
       {/* RSS Management Features */}
       <Paper sx={{ p: 3, mt: 4 }}>
-        <Typography variant="h6" gutterBottom>
+        <Typography variant='h6' gutterBottom>
           <RssFeedIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
           RSS Feed Management Features
         </Typography>
         <Grid container spacing={2}>
           <Grid item xs={12} md={4}>
-            <Box textAlign="center">
-              <SpeedIcon color="primary" sx={{ fontSize: 40, mb: 1 }} />
-              <Typography variant="h6">Automated Collection</Typography>
-              <Typography variant="body2" color="text.secondary">
+            <Box textAlign='center'>
+              <SpeedIcon color='primary' sx={{ fontSize: 40, mb: 1 }} />
+              <Typography variant='h6'>Automated Collection</Typography>
+              <Typography variant='body2' color='text.secondary'>
                 Automatic RSS feed monitoring and article collection
               </Typography>
             </Box>
           </Grid>
           <Grid item xs={12} md={4}>
-            <Box textAlign="center">
-              <NetworkIcon color="primary" sx={{ fontSize: 40, mb: 1 }} />
-              <Typography variant="h6">Health Monitoring</Typography>
-              <Typography variant="body2" color="text.secondary">
+            <Box textAlign='center'>
+              <NetworkIcon color='primary' sx={{ fontSize: 40, mb: 1 }} />
+              <Typography variant='h6'>Health Monitoring</Typography>
+              <Typography variant='body2' color='text.secondary'>
                 Real-time feed health monitoring and error detection
               </Typography>
             </Box>
           </Grid>
           <Grid item xs={12} md={4}>
-            <Box textAlign="center">
-              <MemoryIcon color="primary" sx={{ fontSize: 40, mb: 1 }} />
-              <Typography variant="h6">Smart Caching</Typography>
-              <Typography variant="body2" color="text.secondary">
+            <Box textAlign='center'>
+              <MemoryIcon color='primary' sx={{ fontSize: 40, mb: 1 }} />
+              <Typography variant='h6'>Smart Caching</Typography>
+              <Typography variant='body2' color='text.secondary'>
                 Intelligent caching and deduplication of articles
               </Typography>
             </Box>

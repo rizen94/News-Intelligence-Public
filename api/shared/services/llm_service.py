@@ -33,7 +33,7 @@ class LLMService:
     
     def __init__(self, ollama_base_url: str = "http://localhost:11434"):
         self.ollama_base_url = ollama_base_url
-        self.client = httpx.AsyncClient(timeout=30.0)
+        self.client = httpx.AsyncClient(timeout=180.0)  # Increased timeout to 180s for comprehensive analysis
         self.model_performance = {
             ModelType.LLAMA_8B: {
                 "speed": 2.93,  # seconds for 200 words
@@ -243,7 +243,7 @@ class LLMService:
         6. Quality assessment
         
         Storyline context:
-        {storyline_context[:3000]}
+        {storyline_context}
         
         Write a professional, journalistic analysis that would be suitable for publication.
         """
@@ -283,7 +283,7 @@ class LLMService:
                     "options": {
                         "temperature": 0.7,
                         "top_p": 0.9,
-                        "max_tokens": 1000
+                        "num_predict": 2000  # Increased for comprehensive analysis
                     }
                 }
             )

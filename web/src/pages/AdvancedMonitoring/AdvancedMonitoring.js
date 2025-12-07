@@ -63,17 +63,13 @@ import newsSystemService from '../../services/newsSystemService';
 const TabPanel = ({ children, value, index, ...other }) => {
   return (
     <div
-      role="tabpanel"
+      role='tabpanel'
       hidden={value !== index}
       id={`monitoring-tabpanel-${index}`}
       aria-labelledby={`monitoring-tab-${index}`}
       {...other}
     >
-      {value === index && (
-        <Box sx={{ p: 3 }}>
-          {children}
-        </Box>
-      )}
+      {value === index && <Box sx={{ p: 3 }}>{children}</Box>}
     </div>
   );
 };
@@ -144,7 +140,8 @@ const AdvancedMonitoring = () => {
       }
 
       // Load performance metrics
-      const performanceResponse = await newsSystemService.getPrometheusMetrics();
+      const performanceResponse =
+        await newsSystemService.getPrometheusMetrics();
       if (performanceResponse.success) {
         setPerformanceMetrics(performanceResponse.data);
       }
@@ -166,7 +163,10 @@ const AdvancedMonitoring = () => {
           level: 'info',
           component: 'API',
           message: 'Request processed successfully',
-          details: { endpoint: '/api/articles', response_time: 245 },
+          details: {
+            endpoint: '/api/v4/news-aggregation/articles/recent',
+            response_time: 245,
+          },
         },
         {
           id: 2,
@@ -185,7 +185,6 @@ const AdvancedMonitoring = () => {
           details: { model: 'summarization', error: 'CUDA out of memory' },
         },
       ]);
-
     } catch (err) {
       setError('Failed to load monitoring data: ' + err.message);
     } finally {
@@ -197,7 +196,7 @@ const AdvancedMonitoring = () => {
     setActiveTab(newValue);
   };
 
-  const handleViewLog = (log) => {
+  const handleViewLog = log => {
     setSelectedLog(log);
     setShowLogDialog(true);
   };
@@ -213,31 +212,45 @@ const AdvancedMonitoring = () => {
     return 'success';
   };
 
-  const getLogLevelColor = (level) => {
+  const getLogLevelColor = level => {
     switch (level) {
-    case 'error': return 'error';
-    case 'warning': return 'warning';
-    case 'info': return 'info';
-    default: return 'default';
+    case 'error':
+      return 'error';
+    case 'warning':
+      return 'warning';
+    case 'info':
+      return 'info';
+    default:
+      return 'default';
     }
   };
 
-  const getLogLevelIcon = (level) => {
+  const getLogLevelIcon = level => {
     switch (level) {
-    case 'error': return <Error />;
-    case 'warning': return <Warning />;
-    case 'info': return <Info />;
-    default: return <Info />;
+    case 'error':
+      return <Error />;
+    case 'warning':
+      return <Warning />;
+    case 'info':
+      return <Info />;
+    default:
+      return <Info />;
     }
   };
 
-  const filteredLogs = logLevel === 'all'
-    ? systemLogs
-    : systemLogs.filter(log => log.level === logLevel);
+  const filteredLogs =
+    logLevel === 'all'
+      ? systemLogs
+      : systemLogs.filter(log => log.level === logLevel);
 
   if (loading) {
     return (
-      <Box display="flex" justifyContent="center" alignItems="center" minHeight="400px">
+      <Box
+        display='flex'
+        justifyContent='center'
+        alignItems='center'
+        minHeight='400px'
+      >
         <CircularProgress />
       </Box>
     );
@@ -245,26 +258,26 @@ const AdvancedMonitoring = () => {
 
   return (
     <Box sx={{ p: 3 }}>
-      <Typography variant="h4" gutterBottom>
+      <Typography variant='h4' gutterBottom>
         Advanced Monitoring
       </Typography>
-      <Typography variant="subtitle1" color="text.secondary" gutterBottom>
+      <Typography variant='subtitle1' color='text.secondary' gutterBottom>
         Comprehensive system monitoring and performance analytics
       </Typography>
 
       {error && (
-        <Alert severity="error" sx={{ mb: 2 }}>
+        <Alert severity='error' sx={{ mb: 2 }}>
           {error}
         </Alert>
       )}
 
       <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}>
         <Tabs value={activeTab} onChange={handleTabChange}>
-          <Tab label="System Metrics" />
-          <Tab label="Performance" />
-          <Tab label="Security" />
-          <Tab label="Logs" />
-          <Tab label="Alerts" />
+          <Tab label='System Metrics' />
+          <Tab label='Performance' />
+          <Tab label='Security' />
+          <Tab label='Logs' />
+          <Tab label='Alerts' />
         </Tabs>
       </Box>
 
@@ -273,40 +286,67 @@ const AdvancedMonitoring = () => {
           <Grid item xs={12} md={6}>
             <Card>
               <CardContent>
-                <Typography variant="h6" gutterBottom>
+                <Typography variant='h6' gutterBottom>
                   System Resources
                 </Typography>
                 <Box sx={{ mb: 2 }}>
-                  <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+                  <Box
+                    sx={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      mb: 1,
+                    }}
+                  >
                     <Typography>CPU Usage</Typography>
                     <Typography>{systemMetrics.cpu_usage}%</Typography>
                   </Box>
                   <LinearProgress
-                    variant="determinate"
+                    variant='determinate'
                     value={systemMetrics.cpu_usage}
-                    color={getMetricColor(systemMetrics.cpu_usage, alertConfig.cpu_threshold)}
+                    color={getMetricColor(
+                      systemMetrics.cpu_usage,
+                      alertConfig.cpu_threshold,
+                    )}
                   />
                 </Box>
                 <Box sx={{ mb: 2 }}>
-                  <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+                  <Box
+                    sx={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      mb: 1,
+                    }}
+                  >
                     <Typography>Memory Usage</Typography>
                     <Typography>{systemMetrics.memory_usage}%</Typography>
                   </Box>
                   <LinearProgress
-                    variant="determinate"
+                    variant='determinate'
                     value={systemMetrics.memory_usage}
-                    color={getMetricColor(systemMetrics.memory_usage, alertConfig.memory_threshold)}
+                    color={getMetricColor(
+                      systemMetrics.memory_usage,
+                      alertConfig.memory_threshold,
+                    )}
                   />
                 </Box>
                 <Box sx={{ mb: 2 }}>
-                  <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+                  <Box
+                    sx={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      mb: 1,
+                    }}
+                  >
                     <Typography>Disk Usage</Typography>
                     <Typography>{systemMetrics.disk_usage}%</Typography>
                   </Box>
                   <LinearProgress
-                    variant="determinate"
+                    variant='determinate'
                     value={systemMetrics.disk_usage}
-                    color={getMetricColor(systemMetrics.disk_usage, alertConfig.disk_threshold)}
+                    color={getMetricColor(
+                      systemMetrics.disk_usage,
+                      alertConfig.disk_threshold,
+                    )}
                   />
                 </Box>
               </CardContent>
@@ -316,36 +356,42 @@ const AdvancedMonitoring = () => {
           <Grid item xs={12} md={6}>
             <Card>
               <CardContent>
-                <Typography variant="h6" gutterBottom>
+                <Typography variant='h6' gutterBottom>
                   System Status
                 </Typography>
                 <Grid container spacing={2}>
                   <Grid item xs={6}>
                     <Paper sx={{ p: 2, textAlign: 'center' }}>
-                      <NetworkCheck color="primary" />
-                      <Typography variant="h6">{systemMetrics.network_io} MB/s</Typography>
-                      <Typography variant="body2">Network I/O</Typography>
+                      <NetworkCheck color='primary' />
+                      <Typography variant='h6'>
+                        {systemMetrics.network_io} MB/s
+                      </Typography>
+                      <Typography variant='body2'>Network I/O</Typography>
                     </Paper>
                   </Grid>
                   <Grid item xs={6}>
                     <Paper sx={{ p: 2, textAlign: 'center' }}>
-                      <Storage color="primary" />
-                      <Typography variant="h6">{systemMetrics.database_connections}</Typography>
-                      <Typography variant="body2">DB Connections</Typography>
+                      <Storage color='primary' />
+                      <Typography variant='h6'>
+                        {systemMetrics.database_connections}
+                      </Typography>
+                      <Typography variant='body2'>DB Connections</Typography>
                     </Paper>
                   </Grid>
                   <Grid item xs={6}>
                     <Paper sx={{ p: 2, textAlign: 'center' }}>
-                      <Monitor color="primary" />
-                      <Typography variant="h6">{systemMetrics.active_processes}</Typography>
-                      <Typography variant="body2">Active Processes</Typography>
+                      <Monitor color='primary' />
+                      <Typography variant='h6'>
+                        {systemMetrics.active_processes}
+                      </Typography>
+                      <Typography variant='body2'>Active Processes</Typography>
                     </Paper>
                   </Grid>
                   <Grid item xs={6}>
                     <Paper sx={{ p: 2, textAlign: 'center' }}>
-                      <CheckCircle color="success" />
-                      <Typography variant="h6">Healthy</Typography>
-                      <Typography variant="body2">System Status</Typography>
+                      <CheckCircle color='success' />
+                      <Typography variant='h6'>Healthy</Typography>
+                      <Typography variant='body2'>System Status</Typography>
                     </Paper>
                   </Grid>
                 </Grid>
@@ -360,33 +406,72 @@ const AdvancedMonitoring = () => {
           <Grid item xs={12} md={6}>
             <Card>
               <CardContent>
-                <Typography variant="h6" gutterBottom>
+                <Typography variant='h6' gutterBottom>
                   API Performance
                 </Typography>
                 <Box sx={{ mb: 2 }}>
-                  <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+                  <Box
+                    sx={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      mb: 1,
+                    }}
+                  >
                     <Typography>Response Time</Typography>
-                    <Typography>{performanceMetrics.api_response_time}ms</Typography>
+                    <Typography>
+                      {performanceMetrics.api_response_time}ms
+                    </Typography>
                   </Box>
                   <LinearProgress
-                    variant="determinate"
-                    value={(performanceMetrics.api_response_time / alertConfig.response_time_threshold) * 100}
-                    color={getMetricColor(performanceMetrics.api_response_time, alertConfig.response_time_threshold)}
+                    variant='determinate'
+                    value={
+                      (performanceMetrics.api_response_time /
+                        alertConfig.response_time_threshold) *
+                      100
+                    }
+                    color={getMetricColor(
+                      performanceMetrics.api_response_time,
+                      alertConfig.response_time_threshold,
+                    )}
                   />
                 </Box>
                 <Box sx={{ mb: 2 }}>
-                  <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+                  <Box
+                    sx={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      mb: 1,
+                    }}
+                  >
                     <Typography>Database Queries</Typography>
-                    <Typography>{performanceMetrics.database_query_time}ms</Typography>
+                    <Typography>
+                      {performanceMetrics.database_query_time}ms
+                    </Typography>
                   </Box>
-                  <LinearProgress variant="determinate" value={75} color="info" />
+                  <LinearProgress
+                    variant='determinate'
+                    value={75}
+                    color='info'
+                  />
                 </Box>
                 <Box sx={{ mb: 2 }}>
-                  <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+                  <Box
+                    sx={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      mb: 1,
+                    }}
+                  >
                     <Typography>ML Processing</Typography>
-                    <Typography>{performanceMetrics.ml_processing_time}ms</Typography>
+                    <Typography>
+                      {performanceMetrics.ml_processing_time}ms
+                    </Typography>
                   </Box>
-                  <LinearProgress variant="determinate" value={60} color="success" />
+                  <LinearProgress
+                    variant='determinate'
+                    value={60}
+                    color='success'
+                  />
                 </Box>
               </CardContent>
             </Card>
@@ -395,36 +480,42 @@ const AdvancedMonitoring = () => {
           <Grid item xs={12} md={6}>
             <Card>
               <CardContent>
-                <Typography variant="h6" gutterBottom>
+                <Typography variant='h6' gutterBottom>
                   Throughput & Errors
                 </Typography>
                 <Grid container spacing={2}>
                   <Grid item xs={6}>
                     <Paper sx={{ p: 2, textAlign: 'center' }}>
-                      <TrendingUp color="success" />
-                      <Typography variant="h6">{performanceMetrics.throughput}</Typography>
-                      <Typography variant="body2">Requests/min</Typography>
+                      <TrendingUp color='success' />
+                      <Typography variant='h6'>
+                        {performanceMetrics.throughput}
+                      </Typography>
+                      <Typography variant='body2'>Requests/min</Typography>
                     </Paper>
                   </Grid>
                   <Grid item xs={6}>
                     <Paper sx={{ p: 2, textAlign: 'center' }}>
-                      <TrendingDown color="error" />
-                      <Typography variant="h6">{performanceMetrics.error_rate}%</Typography>
-                      <Typography variant="body2">Error Rate</Typography>
+                      <TrendingDown color='error' />
+                      <Typography variant='h6'>
+                        {performanceMetrics.error_rate}%
+                      </Typography>
+                      <Typography variant='body2'>Error Rate</Typography>
                     </Paper>
                   </Grid>
                   <Grid item xs={6}>
                     <Paper sx={{ p: 2, textAlign: 'center' }}>
-                      <Speed color="primary" />
-                      <Typography variant="h6">{performanceMetrics.search_response_time}ms</Typography>
-                      <Typography variant="body2">Search Time</Typography>
+                      <Speed color='primary' />
+                      <Typography variant='h6'>
+                        {performanceMetrics.search_response_time}ms
+                      </Typography>
+                      <Typography variant='body2'>Search Time</Typography>
                     </Paper>
                   </Grid>
                   <Grid item xs={6}>
                     <Paper sx={{ p: 2, textAlign: 'center' }}>
-                      <Assessment color="primary" />
-                      <Typography variant="h6">99.9%</Typography>
-                      <Typography variant="body2">Uptime</Typography>
+                      <Assessment color='primary' />
+                      <Typography variant='h6'>99.9%</Typography>
+                      <Typography variant='body2'>Uptime</Typography>
                     </Paper>
                   </Grid>
                 </Grid>
@@ -439,43 +530,53 @@ const AdvancedMonitoring = () => {
           <Grid item xs={12} md={6}>
             <Card>
               <CardContent>
-                <Typography variant="h6" gutterBottom>
+                <Typography variant='h6' gutterBottom>
                   Security Status
                 </Typography>
                 <List>
                   <ListItem>
                     <ListItemText
-                      primary="Failed Login Attempts"
-                      secondary="Last 24 hours"
+                      primary='Failed Login Attempts'
+                      secondary='Last 24 hours'
                     />
                     <ListItemSecondaryAction>
                       <Chip
                         label={securityMetrics.failed_logins}
-                        color={securityMetrics.failed_logins > 0 ? 'error' : 'success'}
+                        color={
+                          securityMetrics.failed_logins > 0
+                            ? 'error'
+                            : 'success'
+                        }
                       />
                     </ListItemSecondaryAction>
                   </ListItem>
                   <ListItem>
                     <ListItemText
-                      primary="Suspicious Requests"
-                      secondary="Blocked automatically"
+                      primary='Suspicious Requests'
+                      secondary='Blocked automatically'
                     />
                     <ListItemSecondaryAction>
                       <Chip
                         label={securityMetrics.suspicious_requests}
-                        color={securityMetrics.suspicious_requests > 0 ? 'warning' : 'success'}
+                        color={
+                          securityMetrics.suspicious_requests > 0
+                            ? 'warning'
+                            : 'success'
+                        }
                       />
                     </ListItemSecondaryAction>
                   </ListItem>
                   <ListItem>
                     <ListItemText
-                      primary="Blocked IPs"
-                      secondary="Currently blocked"
+                      primary='Blocked IPs'
+                      secondary='Currently blocked'
                     />
                     <ListItemSecondaryAction>
                       <Chip
                         label={securityMetrics.blocked_ips}
-                        color={securityMetrics.blocked_ips > 0 ? 'error' : 'success'}
+                        color={
+                          securityMetrics.blocked_ips > 0 ? 'error' : 'success'
+                        }
                       />
                     </ListItemSecondaryAction>
                   </ListItem>
@@ -487,37 +588,39 @@ const AdvancedMonitoring = () => {
           <Grid item xs={12} md={6}>
             <Card>
               <CardContent>
-                <Typography variant="h6" gutterBottom>
+                <Typography variant='h6' gutterBottom>
                   Security Certificates
                 </Typography>
                 <Box sx={{ mb: 2 }}>
-                  <Typography variant="body2" color="text.secondary">
+                  <Typography variant='body2' color='text.secondary'>
                     SSL Certificate Expiry
                   </Typography>
-                  <Typography variant="h6">
-                    {securityMetrics.ssl_cert_expiry ?
-                      new Date(securityMetrics.ssl_cert_expiry).toLocaleDateString() :
-                      'Unknown'
-                    }
+                  <Typography variant='h6'>
+                    {securityMetrics.ssl_cert_expiry
+                      ? new Date(
+                        securityMetrics.ssl_cert_expiry,
+                      ).toLocaleDateString()
+                      : 'Unknown'}
                   </Typography>
                   <Chip
-                    label="Valid"
-                    color="success"
-                    size="small"
+                    label='Valid'
+                    color='success'
+                    size='small'
                     sx={{ mt: 1 }}
                   />
                 </Box>
                 <Box>
-                  <Typography variant="body2" color="text.secondary">
+                  <Typography variant='body2' color='text.secondary'>
                     Last Security Scan
                   </Typography>
-                  <Typography variant="h6">
-                    {securityMetrics.last_security_scan ?
-                      new Date(securityMetrics.last_security_scan).toLocaleString() :
-                      'Never'
-                    }
+                  <Typography variant='h6'>
+                    {securityMetrics.last_security_scan
+                      ? new Date(
+                        securityMetrics.last_security_scan,
+                      ).toLocaleString()
+                      : 'Never'}
                   </Typography>
-                  <Button size="small" sx={{ mt: 1 }}>
+                  <Button size='small' sx={{ mt: 1 }}>
                     Run Security Scan
                   </Button>
                 </Box>
@@ -530,25 +633,30 @@ const AdvancedMonitoring = () => {
       <TabPanel value={activeTab} index={3}>
         <Card>
           <CardContent>
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-              <Typography variant="h6">
-                System Logs
-              </Typography>
+            <Box
+              sx={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                mb: 2,
+              }}
+            >
+              <Typography variant='h6'>System Logs</Typography>
               <Box sx={{ display: 'flex', gap: 2 }}>
-                <FormControl size="small" sx={{ minWidth: 120 }}>
+                <FormControl size='small' sx={{ minWidth: 120 }}>
                   <InputLabel>Log Level</InputLabel>
                   <Select
                     value={logLevel}
-                    onChange={(e) => setLogLevel(e.target.value)}
+                    onChange={e => setLogLevel(e.target.value)}
                   >
-                    <MenuItem value="all">All</MenuItem>
-                    <MenuItem value="error">Error</MenuItem>
-                    <MenuItem value="warning">Warning</MenuItem>
-                    <MenuItem value="info">Info</MenuItem>
+                    <MenuItem value='all'>All</MenuItem>
+                    <MenuItem value='error'>Error</MenuItem>
+                    <MenuItem value='warning'>Warning</MenuItem>
+                    <MenuItem value='info'>Info</MenuItem>
                   </Select>
                 </FormControl>
                 <Button
-                  variant="outlined"
+                  variant='outlined'
                   startIcon={<Refresh />}
                   onClick={loadMetrics}
                 >
@@ -568,7 +676,7 @@ const AdvancedMonitoring = () => {
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {filteredLogs.map((log) => (
+                  {filteredLogs.map(log => (
                     <TableRow key={log.id}>
                       <TableCell>
                         {new Date(log.timestamp).toLocaleString()}
@@ -577,14 +685,14 @@ const AdvancedMonitoring = () => {
                         <Chip
                           label={log.level}
                           color={getLogLevelColor(log.level)}
-                          size="small"
+                          size='small'
                           icon={getLogLevelIcon(log.level)}
                         />
                       </TableCell>
                       <TableCell>{log.component}</TableCell>
                       <TableCell>{log.message}</TableCell>
                       <TableCell>
-                        <Tooltip title="View Details">
+                        <Tooltip title='View Details'>
                           <IconButton onClick={() => handleViewLog(log)}>
                             <Info />
                           </IconButton>
@@ -604,39 +712,59 @@ const AdvancedMonitoring = () => {
           <Grid item xs={12} md={6}>
             <Card>
               <CardContent>
-                <Typography variant="h6" gutterBottom>
+                <Typography variant='h6' gutterBottom>
                   Alert Thresholds
                 </Typography>
                 <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                   <TextField
-                    label="CPU Threshold (%)"
-                    type="number"
+                    label='CPU Threshold (%)'
+                    type='number'
                     value={alertConfig.cpu_threshold}
-                    onChange={(e) => setAlertConfig({ ...alertConfig, cpu_threshold: parseInt(e.target.value) })}
-                    size="small"
+                    onChange={e =>
+                      setAlertConfig({
+                        ...alertConfig,
+                        cpu_threshold: parseInt(e.target.value),
+                      })
+                    }
+                    size='small'
                   />
                   <TextField
-                    label="Memory Threshold (%)"
-                    type="number"
+                    label='Memory Threshold (%)'
+                    type='number'
                     value={alertConfig.memory_threshold}
-                    onChange={(e) => setAlertConfig({ ...alertConfig, memory_threshold: parseInt(e.target.value) })}
-                    size="small"
+                    onChange={e =>
+                      setAlertConfig({
+                        ...alertConfig,
+                        memory_threshold: parseInt(e.target.value),
+                      })
+                    }
+                    size='small'
                   />
                   <TextField
-                    label="Disk Threshold (%)"
-                    type="number"
+                    label='Disk Threshold (%)'
+                    type='number'
                     value={alertConfig.disk_threshold}
-                    onChange={(e) => setAlertConfig({ ...alertConfig, disk_threshold: parseInt(e.target.value) })}
-                    size="small"
+                    onChange={e =>
+                      setAlertConfig({
+                        ...alertConfig,
+                        disk_threshold: parseInt(e.target.value),
+                      })
+                    }
+                    size='small'
                   />
                   <TextField
-                    label="Response Time Threshold (ms)"
-                    type="number"
+                    label='Response Time Threshold (ms)'
+                    type='number'
                     value={alertConfig.response_time_threshold}
-                    onChange={(e) => setAlertConfig({ ...alertConfig, response_time_threshold: parseInt(e.target.value) })}
-                    size="small"
+                    onChange={e =>
+                      setAlertConfig({
+                        ...alertConfig,
+                        response_time_threshold: parseInt(e.target.value),
+                      })
+                    }
+                    size='small'
                   />
-                  <Button variant="contained" startIcon={<Settings />}>
+                  <Button variant='contained' startIcon={<Settings />}>
                     Save Configuration
                   </Button>
                 </Box>
@@ -647,32 +775,20 @@ const AdvancedMonitoring = () => {
           <Grid item xs={12} md={6}>
             <Card>
               <CardContent>
-                <Typography variant="h6" gutterBottom>
+                <Typography variant='h6' gutterBottom>
                   Quick Actions
                 </Typography>
                 <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                  <Button
-                    variant="outlined"
-                    startIcon={<Download />}
-                  >
+                  <Button variant='outlined' startIcon={<Download />}>
                     Export Logs
                   </Button>
-                  <Button
-                    variant="outlined"
-                    startIcon={<Assessment />}
-                  >
+                  <Button variant='outlined' startIcon={<Assessment />}>
                     Generate Report
                   </Button>
-                  <Button
-                    variant="outlined"
-                    startIcon={<Security />}
-                  >
+                  <Button variant='outlined' startIcon={<Security />}>
                     Security Audit
                   </Button>
-                  <Button
-                    variant="outlined"
-                    startIcon={<Timeline />}
-                  >
+                  <Button variant='outlined' startIcon={<Timeline />}>
                     Performance Analysis
                   </Button>
                 </Box>
@@ -686,16 +802,14 @@ const AdvancedMonitoring = () => {
       <Dialog
         open={showLogDialog}
         onClose={handleCloseLogDialog}
-        maxWidth="md"
+        maxWidth='md'
         fullWidth
       >
-        <DialogTitle>
-          Log Details
-        </DialogTitle>
+        <DialogTitle>Log Details</DialogTitle>
         <DialogContent>
           {selectedLog && (
             <Box>
-              <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap' }}>
+              <Typography variant='body1' sx={{ whiteSpace: 'pre-wrap' }}>
                 {JSON.stringify(selectedLog.details, null, 2)}
               </Typography>
             </Box>

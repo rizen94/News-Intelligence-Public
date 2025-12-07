@@ -9,8 +9,8 @@ import json
 from typing import Dict, List, Optional
 from datetime import datetime, timedelta
 import psycopg2
-from modules.storyline_tracker import StorylineTracker
-from modules.deduplication_service import ContentDeduplicationService
+from .storyline_tracker import StorylineTracker
+from .deduplication_service import ContentDeduplicationService
 
 logger = logging.getLogger(__name__)
 

@@ -16,7 +16,7 @@ class MLSummarizationService:
         self.ollama_host = ollama_host
         self.ollama_port = ollama_port
         self.base_url = f"http://{ollama_host}:{ollama_port}"
-        self.model = "llama3.1:70b"
+        self.model = "llama3.1:8b"
         
     async def summarize_content(self, content: str, max_length: int = 200) -> Dict[str, Any]:
         """Summarize content using Ollama"""

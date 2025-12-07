@@ -12,6 +12,7 @@ import requests
 from sqlalchemy import text
 from config.database import get_db
 from services.pipeline_logger import get_pipeline_logger
+from services.pipeline_deduplication_service import PipelineDeduplicationService
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +22,7 @@ class RSSProcessor:
     def __init__(self):
         self.session = None
         self.pipeline_logger = get_pipeline_logger()
+        self.deduplication_service = PipelineDeduplicationService()
         
     async def process_all_feeds(self) -> Dict[str, Any]:
         """Process all active RSS feeds"""
@@ -53,7 +55,7 @@ class RSSProcessor:
                 except Exception as e:
                     error_count += 1
                     logger.error(f"Error processing feed {feed['name']}: {e}")
-                    self.pipeline_logger.log_checkpoint(
+                    self.pipeline_logger.add_checkpoint(
                         trace_id=trace_id,
                         stage="feed_processing",
                         status="error",
@@ -62,6 +64,16 @@ class RSSProcessor:
                     )
             
             logger.info(f"RSS processing completed: {processed_count} feeds processed, {error_count} errors")
+            
+            # Run deduplication pipeline after article import
+            if processed_count > 0:
+                logger.info("Starting automatic deduplication pipeline")
+                deduplication_results = await self.deduplication_service.run_deduplication_pipeline(trace_id)
+                
+                if deduplication_results["success"]:
+                    logger.info(f"Deduplication completed: {deduplication_results['duplicates_found']} duplicates found, {deduplication_results['duplicates_merged']} merged")
+                else:
+                    logger.error(f"Deduplication failed: {deduplication_results.get('error', 'Unknown error')}")
             
             # End pipeline trace
             self.pipeline_logger.end_trace(
@@ -87,8 +99,12 @@ class RSSProcessor:
     async def _get_active_feeds(self) -> List[Dict[str, Any]]:
         """Get all active RSS feeds from database"""
         try:
+            # Only select columns that exist in the table
+            # Check which language column exists
             query = text("""
-                SELECT id, feed_name, feed_url, category, language, max_articles, 
+                SELECT id, feed_name, feed_url, 
+                       COALESCE(language_code, language, 'en') as language, 
+                       max_articles, 
                        fetch_interval_seconds, last_fetched_at, is_active
                 FROM rss_feeds 
                 WHERE is_active = true 
@@ -104,7 +120,7 @@ class RSSProcessor:
                     "id": row.id,
                     "name": row.feed_name,
                     "url": row.feed_url,
-                    "category": row.category,
+                    "category": None,  # Category column doesn't exist, set to None
                     "language": row.language,
                     "max_articles": row.max_articles or 50,
                     "update_frequency": row.fetch_interval_seconds or 30,
@@ -146,6 +162,16 @@ class RSSProcessor:
             # Save articles to database
             if articles:
                 await self._save_articles(articles)
+                
+                # Run deduplication for this feed's articles
+                logger.info(f"Running deduplication for {feed['name']} ({len(articles)} articles)")
+                deduplication_results = await self.deduplication_service.run_deduplication_pipeline(
+                    trace_id="feed_deduplication", 
+                    feed_id=str(feed['id'])
+                )
+                
+                if deduplication_results["success"] and deduplication_results["duplicates_found"] > 0:
+                    logger.info(f"Feed deduplication: {deduplication_results['duplicates_found']} duplicates found, {deduplication_results['duplicates_merged']} merged")
             
             # Update feed last_checked timestamp
             await self._update_feed_timestamp(feed['id'])
@@ -157,24 +183,40 @@ class RSSProcessor:
             raise
     
     async def _save_articles(self, articles: List[Dict[str, Any]]) -> None:
-        """Save articles to database"""
+        """Save articles to database with deduplication"""
         try:
+            from scripts.article_deduplication import ArticleDeduplicationSystem
+            
+            deduplicator = ArticleDeduplicationSystem()
+            
             for article in articles:
+                # Generate content hash for deduplication
+                content_hash = deduplicator.generate_content_hash(article.get('content', ''))
+                
                 query = text("""
                     INSERT INTO articles (
                         title, content, url, published_at, source_domain, category, 
-                        language_code, feed_id, processing_status, created_at
+                        language_code, feed_id, processing_status, content_hash, created_at
                     ) VALUES (
                         :title, :content, :url, :published_at, :source_domain, :category,
-                        :language_code, :feed_id, :processing_status, NOW()
+                        :language_code, :feed_id, :processing_status, :content_hash, NOW()
                     )
-                    ON CONFLICT (url) DO NOTHING
+                    ON CONFLICT (url) DO UPDATE SET
+                        title = EXCLUDED.title,
+                        content = EXCLUDED.content,
+                        content_hash = EXCLUDED.content_hash,
+                        updated_at = NOW()
                 """)
                 
-                self.session.execute(query, article)
+                article_data = {
+                    **article,
+                    'content_hash': content_hash
+                }
+                
+                self.session.execute(query, article_data)
             
             self.session.commit()
-            logger.info(f"Saved {len(articles)} articles to database")
+            logger.info(f"Saved {len(articles)} articles to database with deduplication")
             
         except Exception as e:
             logger.error(f"Error saving articles: {e}")

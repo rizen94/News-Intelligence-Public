@@ -450,31 +450,29 @@ async def get_topics(
         
         try:
             with conn.cursor() as cur:
-                # Build query with filters
-                where_conditions = ["tc.is_active = true"]
+                # Build query with filters (no is_active column in current schema)
+                where_conditions = ["1=1"]
                 params = []
                 
                 if search:
-                    where_conditions.append("tc.cluster_name ILIKE %s")
+                    where_conditions.append("tc.topic_name ILIKE %s")
                     params.append(f"%{search}%")
                 
-                if category:
-                    where_conditions.append("tc.cluster_type = %s")
-                    params.append(category)
-                
+                # category filter not supported in current schema
+ 
                 where_clause = "WHERE " + " AND ".join(where_conditions)
-                
+ 
                 # Get topics with article counts
                 query = f"""
-                    SELECT tc.id, tc.cluster_name, tc.cluster_description, tc.cluster_type,
-                           tc.created_at, tc.updated_at, tc.metadata,
+                    SELECT tc.id, tc.topic_name, NULL as cluster_description, NULL as cluster_type,
+                           tc.created_at, NULL as updated_at, NULL as metadata,
                            COUNT(atc.article_id) as article_count,
                            AVG(atc.relevance_score) as avg_relevance
                     FROM topic_clusters tc
-                    LEFT JOIN article_topic_clusters atc ON tc.id = atc.topic_cluster_id
+                    LEFT JOIN article_topics atc ON tc.id = atc.topic_id
                     {where_clause}
-                    GROUP BY tc.id, tc.cluster_name, tc.cluster_description, tc.cluster_type,
-                             tc.created_at, tc.updated_at, tc.metadata
+                    GROUP BY tc.id, tc.topic_name,
+                             tc.created_at
                     ORDER BY article_count DESC, tc.created_at DESC
                     LIMIT %s OFFSET %s
                 """
@@ -558,7 +556,7 @@ async def get_topic_articles(
         try:
             with conn.cursor() as cur:
                 # Get topic ID
-                cur.execute("SELECT id FROM topic_clusters WHERE cluster_name = %s", (topic_name,))
+                cur.execute("SELECT id FROM topic_clusters WHERE topic_name = %s", (topic_name,))
                 topic_result = cur.fetchone()
                 if not topic_result:
                     raise HTTPException(status_code=404, detail="Topic not found")
@@ -569,10 +567,10 @@ async def get_topic_articles(
                 cur.execute("""
                     SELECT a.id, a.title, a.content, a.url, a.source_domain, a.published_at,
                            a.summary, a.quality_score, a.sentiment_score, a.sentiment_label,
-                           atc.relevance_score, atc.assigned_at
+                           atc.relevance_score
                     FROM articles a
-                    JOIN article_topic_clusters atc ON a.id = atc.article_id
-                    WHERE atc.topic_cluster_id = %s
+                    JOIN article_topics atc ON a.id = atc.article_id
+                    WHERE atc.topic_id = %s
                     ORDER BY atc.relevance_score DESC, a.published_at DESC
                     LIMIT %s OFFSET %s
                 """, (topic_id, limit, offset))
@@ -582,7 +580,7 @@ async def get_topic_articles(
                     articles.append({
                         "id": row[0],
                         "title": row[1],
-                        "content": row[2][:500] + "..." if len(row[2]) > 500 else row[2],
+                        "content": row[2][:500] + "..." if len(row[2]) > 500 else row[2] if row[2] else "",
                         "url": row[3],
                         "source_domain": row[4],
                         "published_at": row[5].isoformat() if row[5] else None,
@@ -590,15 +588,14 @@ async def get_topic_articles(
                         "quality_score": row[7],
                         "sentiment_score": row[8],
                         "sentiment_label": row[9],
-                        "relevance_score": float(row[10]) if row[10] else 0.0,
-                        "assigned_at": row[11].isoformat() if row[11] else None
+                        "relevance_score": float(row[10]) if row[10] else 0.0
                     })
                 
                 # Get total count
                 cur.execute("""
                     SELECT COUNT(*)
-                    FROM article_topic_clusters
-                    WHERE topic_cluster_id = %s
+                    FROM article_topics
+                    WHERE topic_id = %s
                 """, (topic_id,))
                 total_count = cur.fetchone()[0]
                 
@@ -634,9 +631,9 @@ async def get_topic_summary(topic_name: str):
             with conn.cursor() as cur:
                 # Get topic info
                 cur.execute("""
-                    SELECT id, cluster_name, cluster_description, metadata
+                    SELECT id, topic_name, NULL as cluster_description, NULL as metadata
                     FROM topic_clusters 
-                    WHERE cluster_name = %s
+                    WHERE topic_name = %s
                 """, (topic_name,))
                 
                 topic_result = cur.fetchone()
@@ -649,8 +646,8 @@ async def get_topic_summary(topic_name: str):
                 cur.execute("""
                     SELECT a.title, a.summary, a.published_at, a.sentiment_score
                     FROM articles a
-                    JOIN article_topic_clusters atc ON a.id = atc.article_id
-                    WHERE atc.topic_cluster_id = %s
+                    JOIN article_topics atc ON a.id = atc.article_id
+                    WHERE atc.topic_id = %s
                     ORDER BY a.published_at DESC
                     LIMIT 10
                 """, (topic_id,))
@@ -699,6 +696,108 @@ async def get_topic_summary(topic_name: str):
         logger.error(f"Error generating topic summary: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.post("/topics/{topic_name}/convert-to-storyline")
+async def convert_topic_to_storyline(topic_name: str, request: Dict[str, Any]):
+    """Convert a topic to a storyline, adding all topic articles"""
+    try:
+        storyline_title = request.get("storyline_title", f"Storyline: {topic_name}")
+        
+        conn = get_db_connection()
+        if not conn:
+            raise HTTPException(status_code=500, detail="Database connection failed")
+        
+        try:
+            with conn.cursor() as cur:
+                # Get topic info
+                cur.execute("""
+                    SELECT id FROM topic_clusters 
+                    WHERE topic_name = %s
+                """, (topic_name,))
+                
+                topic_result = cur.fetchone()
+                if not topic_result:
+                    raise HTTPException(status_code=404, detail="Topic not found")
+                
+                topic_id = topic_result[0]
+                
+                # Create new storyline
+                cur.execute("""
+                    INSERT INTO storylines (title, description, created_at, updated_at, status)
+                    VALUES (%s, %s, %s, %s, %s)
+                    RETURNING id
+                """, (
+                    storyline_title,
+                    f"Auto-generated storyline from topic: {topic_name}",
+                    datetime.now(),
+                    datetime.now(),
+                    "active"
+                ))
+                
+                storyline_id = cur.fetchone()[0]
+                
+                # Get all articles for this topic
+                cur.execute("""
+                    SELECT article_id, relevance_score
+                    FROM article_topics
+                    WHERE topic_id = %s
+                """, (topic_id,))
+                
+                topic_articles = cur.fetchall()
+                
+                # Add articles to storyline
+                articles_added = 0
+                for article_row in topic_articles:
+                    article_id, relevance_score = article_row
+                    try:
+                        cur.execute("""
+                            INSERT INTO storyline_articles (storyline_id, article_id, added_at, relevance_score)
+                            VALUES (%s, %s, %s, %s)
+                            ON CONFLICT (storyline_id, article_id) DO NOTHING
+                        """, (
+                            storyline_id,
+                            article_id,
+                            datetime.now(),
+                            float(relevance_score) if relevance_score else 0.5
+                        ))
+                        articles_added += cur.rowcount
+                    except Exception as e:
+                        logger.warning(f"Error adding article {article_id} to storyline: {e}")
+                        continue
+                
+                # Update article count
+                cur.execute("""
+                    UPDATE storylines 
+                    SET article_count = (
+                        SELECT COUNT(*) FROM storyline_articles 
+                        WHERE storyline_id = %s
+                    ),
+                    updated_at = %s
+                    WHERE id = %s
+                """, (storyline_id, datetime.now(), storyline_id))
+                
+                conn.commit()
+                
+                return {
+                    "success": True,
+                    "data": {
+                        "storyline_id": storyline_id,
+                        "storyline_title": storyline_title,
+                        "articles_added": articles_added,
+                        "total_topic_articles": len(topic_articles)
+                    },
+                    "message": f"Successfully converted topic '{topic_name}' to storyline with {articles_added} articles",
+                    "timestamp": datetime.now().isoformat()
+                }
+                
+        finally:
+            conn.close()
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error converting topic to storyline: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @router.get("/topics/categories/stats")
 async def get_category_stats():
     """Get statistics for topic categories"""
@@ -709,28 +808,11 @@ async def get_category_stats():
         
         try:
             with conn.cursor() as cur:
-                # Get category statistics
-                cur.execute("""
-                    SELECT tc.cluster_type,
-                           COUNT(tc.id) as topic_count,
-                           COUNT(atc.article_id) as total_articles,
-                           AVG(atc.relevance_score) as avg_relevance
-                    FROM topic_clusters tc
-                    LEFT JOIN article_topic_clusters atc ON tc.id = atc.topic_cluster_id
-                    WHERE tc.is_active = true
-                    GROUP BY tc.cluster_type
-                    ORDER BY total_articles DESC
-                """)
-                
+                # Current schema has no cluster_type; return empty categories list for now
                 categories = []
-                for row in cur.fetchall():
-                    categories.append({
-                        "category": row[0],
-                        "topic_count": row[1],
-                        "total_articles": row[2] or 0,
-                        "avg_relevance": float(row[3]) if row[3] else 0.0
-                    })
-                
+ 
+                # (Optional) derive categories heuristically in future
+ 
                 return {
                     "success": True,
                     "data": {
@@ -807,16 +889,15 @@ async def get_big_picture_analysis(
                 
                 # Get topic distribution
                 cur.execute("""
-                    SELECT tc.cluster_type, COUNT(atc.article_id) as article_count
+                    SELECT tc.topic_name, COUNT(atc.article_id) as article_count
                     FROM topic_clusters tc
-                    LEFT JOIN article_topic_clusters atc ON tc.id = atc.topic_cluster_id
+                    LEFT JOIN article_topics atc ON tc.id = atc.topic_id
                     LEFT JOIN articles a ON atc.article_id = a.id
-                    WHERE tc.is_active = true
-                    AND (a.created_at >= %s OR a.created_at IS NULL)
-                    GROUP BY tc.cluster_type
+                    WHERE (a.created_at >= %s OR a.created_at IS NULL)
+                    GROUP BY tc.topic_name
                     ORDER BY article_count DESC
                 """, (cutoff_time,))
-                
+ 
                 topic_distribution = []
                 for row in cur.fetchall():
                     topic_distribution.append({
@@ -824,21 +905,20 @@ async def get_big_picture_analysis(
                         "article_count": row[1] or 0,
                         "percentage": round((row[1] or 0) / max(recent_articles_count, 1) * 100, 1)
                     })
-                
+ 
                 # Get trending topics (most active in recent period)
                 cur.execute("""
-                    SELECT tc.cluster_name, COUNT(atc.article_id) as recent_articles,
+                    SELECT tc.topic_name, COUNT(atc.article_id) as recent_articles,
                            AVG(atc.relevance_score) as avg_relevance
                     FROM topic_clusters tc
-                    JOIN article_topic_clusters atc ON tc.id = atc.topic_cluster_id
+                    JOIN article_topics atc ON tc.id = atc.topic_id
                     JOIN articles a ON atc.article_id = a.id
-                    WHERE tc.is_active = true
-                    AND a.created_at >= %s
-                    GROUP BY tc.id, tc.cluster_name
+                    WHERE a.created_at >= %s
+                    GROUP BY tc.id, tc.topic_name
                     ORDER BY recent_articles DESC, avg_relevance DESC
                     LIMIT 10
                 """, (cutoff_time,))
-                
+ 
                 trending_topics = []
                 for row in cur.fetchall():
                     trending_topics.append({
@@ -918,18 +998,17 @@ async def get_trending_topics(
                 
                 # Get trending topics with trend analysis
                 cur.execute("""
-                    SELECT tc.cluster_name, tc.cluster_description, tc.cluster_type,
+                    SELECT tc.topic_name,
                            COUNT(atc.article_id) as recent_articles,
                            AVG(atc.relevance_score) as avg_relevance,
                            AVG(a.sentiment_score) as avg_sentiment,
                            MAX(a.published_at) as latest_article_date,
                            COUNT(DISTINCT a.source_domain) as source_diversity
                     FROM topic_clusters tc
-                    JOIN article_topic_clusters atc ON tc.id = atc.topic_cluster_id
+                    JOIN article_topics atc ON tc.id = atc.topic_id
                     JOIN articles a ON atc.article_id = a.id
-                    WHERE tc.is_active = true
-                    AND a.created_at >= %s
-                    GROUP BY tc.id, tc.cluster_name, tc.cluster_description, tc.cluster_type
+                    WHERE a.created_at >= %s
+                    GROUP BY tc.id, tc.topic_name
                     ORDER BY recent_articles DESC, avg_relevance DESC
                     LIMIT %s
                 """, (cutoff_time, limit))
@@ -937,19 +1016,19 @@ async def get_trending_topics(
                 trending_topics = []
                 for row in cur.fetchall():
                     # Calculate trend score
-                    trend_score = row[3] * (float(row[4]) if row[4] else 0.0) * row[7]  # articles * relevance * diversity
+                    trend_score = row[1] * (float(row[2]) if row[2] else 0.0) * (row[5] or 1)
                     
                     trending_topics.append({
                         "name": row[0],
-                        "description": row[1],
-                        "category": row[2],
-                        "recent_articles": row[3],
-                        "avg_relevance": float(row[4]) if row[4] else 0.0,
-                        "avg_sentiment": float(row[5]) if row[5] else 0.0,
-                        "latest_article_date": row[6].isoformat() if row[6] else None,
-                        "source_diversity": row[7],
+                        "description": None,
+                        "category": 'semantic',
+                        "recent_articles": row[1],
+                        "avg_relevance": float(row[2]) if row[2] else 0.0,
+                        "avg_sentiment": float(row[3]) if row[3] else 0.0,
+                        "latest_article_date": row[4].isoformat() if row[4] else None,
+                        "source_diversity": row[5] or 0,
                         "trend_score": round(trend_score, 2),
-                        "trend_direction": "rising" if row[3] > 5 else "stable"  # Simple trend logic
+                        "trend_direction": "rising" if row[1] > 5 else "stable"
                     })
                 
                 return {
@@ -999,97 +1078,7 @@ async def process_article_clustering(limit: int):
             
     except Exception as e:
         logger.error(f"Error in advanced article clustering: {e}")
-        # Fallback to simple clustering
-        await process_simple_clustering(limit)
-
-async def process_simple_clustering(limit: int):
-    """Fallback simple clustering method"""
-    try:
-        conn = get_db_connection()
-        if not conn:
-            return
-        
-        try:
-            with conn.cursor() as cur:
-                # Get unclustered articles
-                cur.execute("""
-                    SELECT a.id, a.title, a.content, a.summary
-                    FROM articles a
-                    LEFT JOIN article_topic_clusters atc ON a.id = atc.article_id
-                    WHERE atc.article_id IS NULL
-                    AND a.content IS NOT NULL
-                    AND LENGTH(a.content) > 100
-                    ORDER BY a.created_at DESC
-                    LIMIT %s
-                """, (limit,))
-                
-                articles = cur.fetchall()
-                
-                if not articles:
-                    logger.info("No articles available for clustering")
-                    return
-                
-                # Simple topic clustering based on keywords
-                topic_clusters = {}
-                
-                for article_id, title, content, summary in articles:
-                    # Extract keywords from title and content
-                    text = f"{title} {summary or ''}".lower()
-                    
-                    # Simple keyword-based clustering
-                    topic = "General News"
-                    if any(word in text for word in ['election', 'vote', 'president', 'campaign']):
-                        topic = "Politics"
-                    elif any(word in text for word in ['climate', 'environment', 'global warming', 'carbon']):
-                        topic = "Environment"
-                    elif any(word in text for word in ['tech', 'ai', 'software', 'technology', 'digital']):
-                        topic = "Technology"
-                    elif any(word in text for word in ['economy', 'market', 'inflation', 'economic', 'financial']):
-                        topic = "Economy"
-                    elif any(word in text for word in ['health', 'medical', 'covid', 'pandemic', 'vaccine']):
-                        topic = "Health"
-                    elif any(word in text for word in ['war', 'conflict', 'military', 'defense', 'security']):
-                        topic = "International"
-                    
-                    if topic not in topic_clusters:
-                        topic_clusters[topic] = []
-                    topic_clusters[topic].append((article_id, 0.8))  # Default relevance score
-                
-                # Create or update topic clusters
-                for topic_name, articles_list in topic_clusters.items():
-                    # Check if topic exists
-                    cur.execute("SELECT id FROM topic_clusters WHERE cluster_name = %s", (topic_name,))
-                    topic_result = cur.fetchone()
-                    
-                    if topic_result:
-                        topic_id = topic_result[0]
-                    else:
-                        # Create new topic cluster
-                        cur.execute("""
-                            INSERT INTO topic_clusters (cluster_name, cluster_description, cluster_type, is_active)
-                            VALUES (%s, %s, %s, %s)
-                            RETURNING id
-                        """, (topic_name, f"AI-generated cluster for {topic_name}", "semantic", True))
-                        topic_id = cur.fetchone()[0]
-                    
-                    # Assign articles to topic
-                    for article_id, relevance_score in articles_list:
-                        cur.execute("""
-                            INSERT INTO article_topic_clusters (article_id, topic_cluster_id, relevance_score)
-                            VALUES (%s, %s, %s)
-                            ON CONFLICT (article_id, topic_cluster_id) DO UPDATE SET
-                                relevance_score = EXCLUDED.relevance_score,
-                                assigned_at = CURRENT_TIMESTAMP
-                        """, (article_id, topic_id, relevance_score))
-                
-                conn.commit()
-                logger.info(f"Simple clustering completed: {len(articles)} articles into {len(topic_clusters)} topics")
-                
-        finally:
-            conn.close()
-            
-    except Exception as e:
-        logger.error(f"Error in simple article clustering: {e}")
+        # No fallback run here; keep a single clustering path to reduce complexity
 
 @router.get("/articles/{article_id}")
 async def get_individual_article(article_id: int):

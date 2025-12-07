@@ -8,7 +8,7 @@ import json
 import logging
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Any, Optional, Union
 from dataclasses import dataclass, asdict
 from enum import Enum
@@ -192,15 +192,25 @@ class PipelineLogger:
             checkpoint_id: Unique identifier for this checkpoint
         """
         if trace_id not in self.active_traces:
-            self.pipeline_logger.warning(f"Trace {trace_id} not found in active traces - may have been completed")
+            # Trace may have been completed or not started yet
+            # Log as debug instead of warning to reduce noise
+            self.pipeline_logger.debug(f"Trace {trace_id} not found in active traces - may have been completed or not started")
             return None
         
         trace = self.active_traces[trace_id]
         
         # Check if trace is already completed
         if trace.end_time is not None:
-            self.pipeline_logger.warning(f"Attempted to add checkpoint to completed trace {trace_id}")
-            return None
+            # Allow checkpoints for a short grace period after completion
+            # This handles race conditions where checkpoints arrive just after completion
+            completed_at = getattr(trace, '_completed_at', trace.end_time)
+            grace_period = timedelta(seconds=getattr(trace, '_cleanup_after', 60))
+            if datetime.now(timezone.utc) - completed_at > grace_period:
+                self.pipeline_logger.debug(f"Attempted to add checkpoint to completed trace {trace_id} (grace period expired)")
+                return None
+            else:
+                # Within grace period, allow checkpoint but log as debug
+                self.pipeline_logger.debug(f"Adding checkpoint to recently completed trace {trace_id} (within grace period)")
             
         checkpoint_id = str(uuid.uuid4())
         timestamp = datetime.now(timezone.utc)
@@ -254,7 +264,9 @@ class PipelineLogger:
             Completed trace object
         """
         if trace_id not in self.active_traces:
-            self.pipeline_logger.warning(f"Trace {trace_id} not found in active traces - may have been completed")
+            # Trace may have been completed or not started yet
+            # Log as debug instead of warning to reduce noise
+            self.pipeline_logger.debug(f"Trace {trace_id} not found in active traces - may have been completed or not started")
             return None
         
         trace = self.active_traces[trace_id]
@@ -275,8 +287,12 @@ class PipelineLogger:
         # Store trace in database
         asyncio.create_task(self._store_trace(trace))
         
-        # Remove from active traces
-        del self.active_traces[trace_id]
+        # Keep trace in active traces for a short period to allow late checkpoints
+        # This prevents warnings when checkpoints are added just after completion
+        # Mark as completed but keep for 60 seconds
+        trace._completed_at = datetime.now(timezone.utc)
+        trace._cleanup_after = 60  # seconds
+        # Note: Trace will be cleaned up by periodic cleanup task or when memory is needed
         
         return trace
     

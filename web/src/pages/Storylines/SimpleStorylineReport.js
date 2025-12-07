@@ -1,98 +1,39 @@
-import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import {
-  Box,
-  Typography,
-  Card,
-  CardContent,
-  Button,
-  CircularProgress,
-  Alert,
-} from '@mui/material';
-import { ArrowBack as ArrowBackIcon } from '@mui/icons-material';
+import React, { useEffect, useState } from 'react';
+import { useParams } from 'react-router-dom';
+import { api } from '../../services/apiService';
 
 const SimpleStorylineReport = () => {
   const { id } = useParams();
-  const navigate = useNavigate();
-  const [storyline, setStoryline] = useState(null);
+  const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
   useEffect(() => {
-    const loadStoryline = async() => {
+    const load = async() => {
       try {
-        setLoading(true);
-        const response = await fetch(`/api/storylines/${id}/report`);
-        const data = await response.json();
-
-        if (data.success) {
-          setStoryline(data.data.storyline);
-        } else {
-          setError('Failed to load storyline');
-        }
-      } catch (err) {
-        setError('Error loading storyline');
+        const response = await api.get(
+          `/api/v4/storyline-management/storylines/${id}`,
+        );
+        const payload = response.data;
+        if (payload.success) setData(payload.data);
+        else setError('Failed to load report');
+      } catch (e) {
+        setError(e.message || 'Failed to load');
       } finally {
         setLoading(false);
       }
     };
-
-    if (id) {
-      loadStoryline();
-    }
+    load();
   }, [id]);
 
-  if (loading) {
-    return (
-      <Box display="flex" justifyContent="center" alignItems="center" minHeight="400px">
-        <CircularProgress />
-        <Typography variant="h6" sx={{ ml: 2 }}>Loading Storyline Report...</Typography>
-      </Box>
-    );
-  }
-
-  if (error) {
-    return (
-      <Box sx={{ p: 3 }}>
-        <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>
-        <Button startIcon={<ArrowBackIcon />} onClick={() => navigate('/storylines')}>
-          Back to Storylines
-        </Button>
-      </Box>
-    );
-  }
+  if (loading) return <div>Loading report...</div>;
+  if (error) return <div>Error: {error}</div>;
 
   return (
-    <Box sx={{ p: 3 }}>
-      <Box display="flex" alignItems="center" gap={2} mb={3}>
-        <Button startIcon={<ArrowBackIcon />} onClick={() => navigate('/storylines')}>
-          Back to Storylines
-        </Button>
-        <Typography variant="h4">Storyline Report</Typography>
-      </Box>
-
-      {storyline && (
-        <Card>
-          <CardContent>
-            <Typography variant="h5" gutterBottom>
-              {storyline.title}
-            </Typography>
-            <Typography variant="body1" paragraph>
-              {storyline.description}
-            </Typography>
-            <Typography variant="h6" gutterBottom>
-              Master Summary
-            </Typography>
-            <Typography variant="body2" paragraph>
-              {storyline.master_summary || 'No summary available'}
-            </Typography>
-            <Typography variant="body2" color="text.secondary">
-              Status: {storyline.status} | Articles: {storyline.article_count}
-            </Typography>
-          </CardContent>
-        </Card>
-      )}
-    </Box>
+    <div>
+      <h2>Storyline Report</h2>
+      <pre>{JSON.stringify(data, null, 2)}</pre>
+    </div>
   );
 };
 

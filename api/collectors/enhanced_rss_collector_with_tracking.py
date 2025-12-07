@@ -317,7 +317,7 @@ class EnhancedRSSCollectorWithTracking:
                     self.pipeline_logger.log_ml_step(
                         trace_id=trace_id,
                         stage=PipelineStage.ML_SUMMARIZATION,
-                        model_name="llama-3.1-70b",
+                        model_name="llama3.1:8b",
                         input_tokens=len(article_content['content'].split()),
                         output_tokens=len(summary_result.get('summary', '').split()),
                         processing_time_ms=ml_duration,
@@ -329,7 +329,7 @@ class EnhancedRSSCollectorWithTracking:
                     self.pipeline_logger.log_ml_step(
                         trace_id=trace_id,
                         stage=PipelineStage.ML_SUMMARIZATION,
-                        model_name="llama-3.1-70b",
+                        model_name="llama3.1:8b",
                         input_tokens=len(article_content['content'].split()),
                         output_tokens=0,
                         processing_time_ms=ml_duration,

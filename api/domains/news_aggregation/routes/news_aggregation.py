@@ -67,7 +67,7 @@ async def get_rss_feeds():
             with conn.cursor() as cur:
                 cur.execute("""
                     SELECT id, feed_name, feed_url, is_active, last_fetched_at, 
-                           fetch_interval_seconds, quality_score, created_at
+                           fetch_interval_seconds,  created_at
                     FROM rss_feeds 
                     ORDER BY feed_name
                 """)
@@ -81,8 +81,7 @@ async def get_rss_feeds():
                         "is_active": row[3],
                         "last_fetched_at": row[4].isoformat() if row[4] else None,
                         "fetch_interval_seconds": row[5],
-                        "quality_score": row[6],
-                        "created_at": row[7].isoformat() if row[7] else None
+                        "created_at": row[6].isoformat() if row[6] else None
                     })
                 
                 return {
@@ -101,21 +100,73 @@ async def get_rss_feeds():
 
 @router.post("/rss-feeds")
 async def create_rss_feed(feed_data: Dict[str, Any]):
-    """Create a new RSS feed"""
+    """Create a new RSS feed with duplicate prevention"""
     try:
         conn = get_db_connection()
         if not conn:
             raise HTTPException(status_code=500, detail="Database connection failed")
         
         try:
+            feed_url = feed_data.get("feed_url")
+            feed_name = feed_data.get("feed_name")
+            
+            # Check for existing feed with same URL
             with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT id, feed_name, is_active 
+                    FROM rss_feeds 
+                    WHERE feed_url = %s
+                """, (feed_url,))
+                
+                existing_feed = cur.fetchone()
+                
+                if existing_feed:
+                    existing_id, existing_name, existing_active = existing_feed
+                    return {
+                        "success": False,
+                        "error": "duplicate_url",
+                        "data": {
+                            "existing_feed": {
+                                "id": existing_id,
+                                "name": existing_name,
+                                "is_active": existing_active
+                            }
+                        },
+                        "message": f"RSS feed with URL '{feed_url}' already exists (ID: {existing_id}, Name: '{existing_name}')"
+                    }
+                
+                # Check for similar feed names
+                cur.execute("""
+                    SELECT id, feed_name, feed_url 
+                    FROM rss_feeds 
+                    WHERE LOWER(feed_name) = LOWER(%s)
+                """, (feed_name,))
+                
+                similar_feed = cur.fetchone()
+                
+                if similar_feed:
+                    similar_id, similar_name, similar_url = similar_feed
+                    return {
+                        "success": False,
+                        "error": "similar_name",
+                        "data": {
+                            "similar_feed": {
+                                "id": similar_id,
+                                "name": similar_name,
+                                "url": similar_url
+                            }
+                        },
+                        "message": f"RSS feed with similar name '{feed_name}' already exists (ID: {similar_id}, URL: '{similar_url}')"
+                    }
+                
+                # Create new feed
                 cur.execute("""
                     INSERT INTO rss_feeds (feed_name, feed_url, is_active, fetch_interval_seconds, created_at)
                     VALUES (%s, %s, %s, %s, %s)
                     RETURNING id
                 """, (
-                    feed_data.get("feed_name"),
-                    feed_data.get("feed_url"),
+                    feed_name,
+                    feed_url,
                     feed_data.get("is_active", True),
                     feed_data.get("fetch_interval_seconds", 3600),  # 1 hour default
                     datetime.now()
@@ -137,6 +188,37 @@ async def create_rss_feed(feed_data: Dict[str, Any]):
     except Exception as e:
         logger.error(f"Error creating RSS feed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/rss/collect-now")
+async def collect_rss_feeds_now():
+    """Trigger immediate RSS feed collection and wait for completion"""
+    try:
+        # Import collector function
+        import sys
+        import os
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..'))
+        from collectors.rss_collector import collect_rss_feeds
+        
+        logger.info("Starting RSS feed collection via API")
+        
+        # Run collection synchronously
+        articles_added = collect_rss_feeds()
+        
+        return {
+            "success": True,
+            "message": "RSS feed collection completed",
+            "articles_added": articles_added,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Error collecting RSS feeds: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "message": "RSS feed collection failed",
+            "timestamp": datetime.now().isoformat()
+        }
 
 @router.post("/fetch-articles")
 async def fetch_articles_from_feeds(background_tasks: BackgroundTasks):
@@ -174,25 +256,74 @@ async def fetch_articles_from_feeds(background_tasks: BackgroundTasks):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/articles/recent")
-async def get_recent_articles(limit: int = 50, hours: int = 24):
-    """Get recently ingested articles"""
+async def get_recent_articles(
+    limit: int = 50,
+    hours: Optional[int] = None,
+    page: Optional[int] = None,
+    offset: Optional[int] = None,
+    search: Optional[str] = None,
+    source_domain: Optional[str] = None,
+    sort: Optional[str] = None
+):
+    """Get recently ingested articles with optional filtering and pagination"""
     try:
         conn = get_db_connection()
         if not conn:
             raise HTTPException(status_code=500, detail="Database connection failed")
         
         try:
-            cutoff_time = datetime.now() - timedelta(hours=hours)
+            # Build query with optional filters
+            query = "SELECT id, title, url, source_domain, published_at, content, created_at FROM articles WHERE 1=1"
+            params = []
+            
+            # Time filter (optional - if hours is None, show all articles)
+            if hours is not None:
+                cutoff_time = datetime.now() - timedelta(hours=hours)
+                query += " AND created_at >= %s"
+                params.append(cutoff_time)
+            
+            # Search filter
+            if search:
+                query += " AND (title ILIKE %s OR content ILIKE %s)"
+                search_pattern = f"%{search}%"
+                params.extend([search_pattern, search_pattern])
+            
+            # Source domain filter
+            if source_domain:
+                query += " AND source_domain ILIKE %s"
+                params.append(f"%{source_domain}%")
+            
+            # Sorting
+            if sort == 'published_at' or sort == 'published_at_desc':
+                query += " ORDER BY published_at DESC"
+            elif sort == 'published_at_asc':
+                query += " ORDER BY published_at ASC"
+            elif sort == 'created_at_asc':
+                query += " ORDER BY created_at ASC"
+            else:  # Default: created_at DESC
+                query += " ORDER BY created_at DESC"
+            
+            # Get total count for pagination (before ORDER BY and LIMIT)
+            count_query = query.split("ORDER BY")[0]  # Remove ORDER BY and everything after
+            count_query = count_query.replace("SELECT id, title, url, source_domain, published_at, content, created_at", "SELECT COUNT(*)")
+            with conn.cursor() as count_cur:
+                count_cur.execute(count_query, params)
+                total_count = count_cur.fetchone()[0]
+            
+            # Pagination
+            if offset is not None:
+                query += " LIMIT %s OFFSET %s"
+                params.extend([limit, offset])
+            elif page is not None:
+                offset_val = (page - 1) * limit
+                query += " LIMIT %s OFFSET %s"
+                params.extend([limit, offset_val])
+            else:
+                query += " LIMIT %s"
+                params.append(limit)
             
             with conn.cursor() as cur:
-                cur.execute("""
-                    SELECT id, title, url, source_domain, published_at, 
-                           summary, quality_score, word_count, created_at
-                    FROM articles 
-                    WHERE created_at >= %s
-                    ORDER BY created_at DESC
-                    LIMIT %s
-                """, (cutoff_time, limit))
+                cur.execute(query, params)
                 
                 articles = []
                 for row in cur.fetchall():
@@ -202,17 +333,21 @@ async def get_recent_articles(limit: int = 50, hours: int = 24):
                         "url": row[2],
                         "source_domain": row[3],
                         "published_at": row[4].isoformat() if row[4] else None,
-                        "summary": row[5],
-                        "quality_score": row[6],
-                        "word_count": row[7],
-                        "created_at": row[8].isoformat() if row[8] else None
+                        "content": row[5],
+                        "created_at": row[6].isoformat() if row[6] else None
                     })
                 
                 return {
                     "success": True,
-                    "data": {"articles": articles},
+                    "data": {
+                        "articles": articles,
+                        "total": total_count,
+                        "total_count": total_count
+                    },
                     "count": len(articles),
                     "timeframe_hours": hours,
+                    "page": page if page else 1,
+                    "limit": limit,
                     "timestamp": datetime.now().isoformat()
                 }
                 
@@ -284,7 +419,7 @@ async def get_aggregation_statistics():
                 active_feeds = cur.fetchone()[0]
                 
                 # Average quality score
-                cur.execute("SELECT AVG(quality_score) FROM articles WHERE quality_score IS NOT NULL")
+                cur.execute("SELECT AVG(LENGTH(content)) FROM articles WHERE quality_score IS NOT NULL")
                 avg_quality = cur.fetchone()[0] or 0
                 
                 return {
@@ -319,7 +454,7 @@ async def process_rss_feeds(feeds: List[tuple]):
         error_count = 0
         
         for feed_data in feeds:
-            feed_id, feed_name, feed_url, fetch_interval, last_fetched = feed_data
+            feed_id, feed_name, feed_url, fetch_interval, last_fetched_at = feed_data
             
             # Get a fresh database connection for each feed
             conn = get_db_connection()
@@ -382,8 +517,8 @@ async def process_rss_feeds(feeds: List[tuple]):
                             try:
                                 cur.execute("""
                                     INSERT INTO articles (
-                                        title, url, content, summary, source_domain,
-                                        published_at, word_count, processing_status,
+                                        title, url, content, content, source_domain,
+                                        published_at,  processing_status,
                                         created_at, updated_at
                                     ) VALUES (
                                         %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
@@ -441,7 +576,7 @@ async def process_rss_feeds(feeds: List[tuple]):
 async def process_article_quality(article: tuple):
     """Background task to analyze article quality using LLM"""
     try:
-        article_id, title, content, url, source = article
+        article_id, title, content, url, source_domain = article
         
         # Use LLM to analyze quality
         quality_analysis = await llm_service.generate_summary(

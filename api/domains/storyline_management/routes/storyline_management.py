@@ -58,7 +58,7 @@ async def get_storylines():
             with conn.cursor() as cur:
                 cur.execute("""
                     SELECT id, title, description, created_at, updated_at,
-                           article_count, quality_score, status
+                             status
                     FROM storylines 
                     ORDER BY updated_at DESC
                 """)
@@ -71,9 +71,7 @@ async def get_storylines():
                         "description": row[2],
                         "created_at": row[3].isoformat() if row[3] else None,
                         "updated_at": row[4].isoformat() if row[4] else None,
-                        "article_count": row[5] or 0,
-                        "quality_score": row[6],
-                        "status": row[7]
+                        "status": row[5]
                     })
                 
                 return {
@@ -152,12 +150,17 @@ async def update_storyline(storyline_id: int, storyline_data: Dict[str, Any]):
                 # Update storyline
                 cur.execute("""
                     UPDATE storylines 
-                    SET title = %s, description = %s, updated_at = %s
+                    SET title = %s, description = %s, updated_at = %s,
+                        article_count = (
+                            SELECT COUNT(*) FROM storyline_articles 
+                            WHERE storyline_id = %s
+                        )
                     WHERE id = %s
                 """, (
                     storyline_data.get("title"),
                     storyline_data.get("description", ""),
                     datetime.now(),
+                    storyline_id,
                     storyline_id
                 ))
                 
@@ -236,14 +239,31 @@ async def remove_article_from_storyline(storyline_id: int, article_id: int):
         
         try:
             with conn.cursor() as cur:
+                # Check if article exists in storyline before removing
+                cur.execute("""
+                    SELECT storyline_id FROM storyline_articles 
+                    WHERE storyline_id = %s AND article_id = %s
+                """, (storyline_id, article_id))
+                
+                if not cur.fetchone():
+                    raise HTTPException(status_code=404, detail="Article not found in storyline")
+                
                 # Remove the article from the storyline
                 cur.execute("""
                     DELETE FROM storyline_articles 
                     WHERE storyline_id = %s AND article_id = %s
                 """, (storyline_id, article_id))
                 
-                if cur.rowcount == 0:
-                    raise HTTPException(status_code=404, detail="Article not found in storyline")
+                # Update article count
+                cur.execute("""
+                    UPDATE storylines 
+                    SET article_count = (
+                        SELECT COUNT(*) FROM storyline_articles 
+                        WHERE storyline_id = %s
+                    ),
+                    updated_at = %s
+                    WHERE id = %s
+                """, (storyline_id, datetime.now(), storyline_id))
                 
                 conn.commit()
                 
@@ -272,9 +292,19 @@ async def add_article_to_storyline(storyline_id: int, article_id: int, request: 
         
         try:
             with conn.cursor() as cur:
+                # Check if storyline exists
+                cur.execute("SELECT id FROM storylines WHERE id = %s", (storyline_id,))
+                if not cur.fetchone():
+                    raise HTTPException(status_code=404, detail="Storyline not found")
+                
+                # Check if article exists
+                cur.execute("SELECT id FROM articles WHERE id = %s", (article_id,))
+                if not cur.fetchone():
+                    raise HTTPException(status_code=404, detail=f"Article with ID {article_id} not found")
+                
                 # Check if article is already in storyline
                 cur.execute("""
-                    SELECT id FROM storyline_articles 
+                    SELECT storyline_id FROM storyline_articles 
                     WHERE storyline_id = %s AND article_id = %s
                 """, (storyline_id, article_id))
                 
@@ -291,6 +321,17 @@ async def add_article_to_storyline(storyline_id: int, article_id: int, request: 
                     datetime.now(),
                     request.get("relevance_score", 0.5) if request else 0.5
                 ))
+                
+                # Update article count
+                cur.execute("""
+                    UPDATE storylines 
+                    SET article_count = (
+                        SELECT COUNT(*) FROM storyline_articles 
+                        WHERE storyline_id = %s
+                    ),
+                    updated_at = %s
+                    WHERE id = %s
+                """, (storyline_id, datetime.now(), storyline_id))
                 
                 conn.commit()
                 
@@ -310,7 +351,11 @@ async def add_article_to_storyline(storyline_id: int, article_id: int, request: 
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/storylines/{storyline_id}/available-articles")
-async def get_available_articles_for_storyline(storyline_id: int, limit: int = 50):
+async def get_available_articles_for_storyline(
+    storyline_id: int, 
+    limit: int = 50,
+    search: Optional[str] = None
+):
     """Get articles that can be added to a storyline (not already in it)"""
     try:
         conn = get_db_connection()
@@ -319,18 +364,30 @@ async def get_available_articles_for_storyline(storyline_id: int, limit: int = 5
         
         try:
             with conn.cursor() as cur:
-                cur.execute("""
+                # Build query with optional search filter
+                where_conditions = [
+                    "a.id NOT IN (SELECT sa.article_id FROM storyline_articles sa WHERE sa.storyline_id = %s)"
+                ]
+                params = [storyline_id]
+                
+                # Add search filter if provided
+                if search:
+                    where_conditions.append("(a.title ILIKE %s OR a.source_domain ILIKE %s)")
+                    search_pattern = f"%{search}%"
+                    params.extend([search_pattern, search_pattern])
+                
+                where_clause = "WHERE " + " AND ".join(where_conditions)
+                
+                query = f"""
                     SELECT a.id, a.title, a.url, a.source_domain, a.published_at, a.summary
                     FROM articles a
-                    WHERE a.id NOT IN (
-                        SELECT sa.article_id 
-                        FROM storyline_articles sa 
-                        WHERE sa.storyline_id = %s
-                    )
-                    AND a.processing_status = 'completed'
+                    {where_clause}
                     ORDER BY a.published_at DESC
                     LIMIT %s
-                """, (storyline_id, limit))
+                """
+                params.append(limit)
+                
+                cur.execute(query, params)
                 
                 articles = []
                 for row in cur.fetchall():
@@ -366,10 +423,10 @@ async def get_storyline(storyline_id: int):
         
         try:
             with conn.cursor() as cur:
-                # Get storyline details
+                # Get storyline details - selecting all available columns
                 cur.execute("""
                     SELECT id, title, description, created_at, updated_at,
-                           article_count, quality_score, status, analysis_summary
+                           status, analysis_summary, quality_score, article_count
                     FROM storylines 
                     WHERE id = %s
                 """, (storyline_id,))
@@ -407,10 +464,10 @@ async def get_storyline(storyline_id: int):
                             "description": storyline[2],
                             "created_at": storyline[3].isoformat() if storyline[3] else None,
                             "updated_at": storyline[4].isoformat() if storyline[4] else None,
-                            "article_count": storyline[5] or 0,
-                            "quality_score": storyline[6],
-                            "status": storyline[7],
-                            "analysis_summary": storyline[8]
+                            "status": storyline[5],
+                            "analysis_summary": storyline[6],
+                            "quality_score": float(storyline[7]) if storyline[7] else None,
+                            "article_count": storyline[8] or 0
                         },
                         "articles": articles
                     },
@@ -505,7 +562,7 @@ async def analyze_storyline(storyline_id: int, background_tasks: BackgroundTasks
                     raise HTTPException(status_code=404, detail="Storyline not found")
                 
                 cur.execute("""
-                    SELECT a.title, a.content, a.summary, a.published_at, a.source_domain
+                    SELECT a.id, a.title, a.content, a.summary, a.published_at, a.source_domain, a.url
                     FROM articles a
                     JOIN storyline_articles sa ON a.id = sa.article_id
                     WHERE sa.storyline_id = %s
@@ -670,7 +727,8 @@ async def process_storyline_rag_analysis(storyline_id: int, storyline: tuple, ar
         
         context_parts.append("\nArticles in storyline:")
         for article in articles:
-            article_title, content, summary, published_at, source = article
+            # articles tuple format: (id, title, content, summary, published_at, source_domain, url)
+            article_id, article_title, content, summary, published_at, source, url = article
             context_parts.append(f"\n- {article_title} ({source}, {published_at})")
             if summary:
                 context_parts.append(f"  Summary: {summary}")
@@ -683,7 +741,8 @@ async def process_storyline_rag_analysis(storyline_id: int, storyline: tuple, ar
         analysis_result = await llm_service.generate_storyline_analysis(storyline_context)
         
         if analysis_result["success"]:
-            # Update storyline with analysis
+            # Update storyline with analysis and extract timeline events
+            # Use a new connection since this is a background task
             conn = get_db_connection()
             if conn:
                 try:
@@ -696,14 +755,116 @@ async def process_storyline_rag_analysis(storyline_id: int, storyline: tuple, ar
                             WHERE id = %s
                         """, (
                             analysis_result["analysis"],
-                            90,  # High quality score for RAG analysis
+                            0.90,  # High quality score for RAG analysis (0.0-1.0 scale)
                             datetime.now(),
                             storyline_id
                         ))
                         conn.commit()
                         logger.info(f"Updated RAG analysis for storyline {storyline_id}")
+                    
+                    # Extract and store timeline events from articles
+                    # Use the same connection but after commit
+                    _extract_timeline_events_from_articles(conn, storyline_id, articles, title)
+                        
+                except Exception as e:
+                    logger.error(f"Error updating storyline or extracting timeline: {e}", exc_info=True)
                 finally:
                     conn.close()
         
     except Exception as e:
         logger.error(f"Error in storyline RAG analysis: {e}")
+
+
+def _extract_timeline_events_from_articles(conn, storyline_id: int, articles: List[tuple], storyline_title: str):
+    """Extract timeline events from articles and store them in timeline_events table"""
+    try:
+        from datetime import datetime as dt
+        import json
+        
+        logger.info(f"Starting timeline extraction for storyline {storyline_id} with {len(articles)} articles")
+        
+        with conn.cursor() as cur:
+            # Process each article and create timeline events
+            # articles tuple format: (id, title, content, summary, published_at, source_domain, url)
+            events_created = 0
+            articles_skipped = 0
+            
+            for article in articles:
+                if len(article) != 7:
+                    logger.warning(f"Article tuple has unexpected length: {len(article)}, expected 7. Article: {article[:3]}")
+                    articles_skipped += 1
+                    continue
+                    
+                article_id, article_title, content, summary, published_at, source, url = article
+                
+                if not published_at:
+                    logger.debug(f"Skipping article {article_id}: no published_at date")
+                    articles_skipped += 1
+                    continue
+                
+                # Parse published_at date
+                event_date = None
+                if isinstance(published_at, dt):
+                    event_date = published_at.date()
+                elif hasattr(published_at, 'date'):
+                    event_date = published_at.date()
+                elif isinstance(published_at, str):
+                    try:
+                        # Handle ISO format strings
+                        pub_str = published_at.replace('Z', '+00:00')
+                        event_date = dt.fromisoformat(pub_str).date()
+                    except Exception as parse_error:
+                        logger.warning(f"Could not parse date {published_at}: {parse_error}")
+                        continue
+                
+                if not event_date:
+                    continue
+                
+                # Create timeline event from article
+                event_title = article_title[:200] if article_title else "Untitled Event"  # Limit title length
+                event_description = summary[:500] if summary else (content[:500] if content else "")
+                
+                # Generate unique event_id
+                event_id = f"storyline_{storyline_id}_article_{article_id}_{event_date.isoformat()}"
+                
+                # Insert timeline event
+                cur.execute("""
+                    INSERT INTO timeline_events (
+                        event_id, storyline_id, title, description, event_date, event_time,
+                        source, url, importance_score, event_type, location, entities, tags,
+                        ml_generated, confidence_score, source_article_ids, created_at, updated_at
+                    ) VALUES (
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                    ) ON CONFLICT (event_id) DO UPDATE SET
+                        title = EXCLUDED.title,
+                        description = EXCLUDED.description,
+                        updated_at = EXCLUDED.updated_at
+                """, (
+                    event_id,
+                    str(storyline_id),
+                    event_title,
+                    event_description,
+                    event_date,
+                    None,  # event_time
+                    source,
+                    url,  # url
+                    0.7,  # importance_score
+                    'general',  # event_type
+                    None,  # location
+                    json.dumps([]),  # entities
+                    [],  # tags
+                    True,  # ml_generated
+                    0.8,  # confidence_score
+                    [article_id],  # source_article_ids
+                    dt.now(),
+                    dt.now()
+                ))
+                
+                events_created += 1
+            
+            conn.commit()
+            logger.info(f"Extracted and stored {events_created} timeline events for storyline {storyline_id} (skipped {articles_skipped} articles)")
+            
+    except Exception as e:
+        logger.error(f"Error extracting timeline events from articles: {e}", exc_info=True)
+        # Don't fail the whole analysis if timeline extraction fails

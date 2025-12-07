@@ -19,6 +19,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 
 import { apiService } from '../../services/apiService.ts';
+import ArticleTopics from '../../components/ArticleTopics/ArticleTopics';
 
 const ArticleDetail = () => {
   const { id } = useParams();
@@ -52,7 +53,7 @@ const ArticleDetail = () => {
     }
   };
 
-  const formatDate = (dateString) => {
+  const formatDate = dateString => {
     if (!dateString) return 'No date';
     try {
       return new Date(dateString).toLocaleDateString('en-US', {
@@ -77,7 +78,7 @@ const ArticleDetail = () => {
 
   if (error) {
     return (
-      <Alert severity="error" sx={{ mb: 2 }}>
+      <Alert severity='error' sx={{ mb: 2 }}>
         {error}
       </Alert>
     );
@@ -85,7 +86,7 @@ const ArticleDetail = () => {
 
   if (!article) {
     return (
-      <Alert severity="warning" sx={{ mb: 2 }}>
+      <Alert severity='warning' sx={{ mb: 2 }}>
         Article not found
       </Alert>
     );
@@ -101,10 +102,10 @@ const ArticleDetail = () => {
           Back to Articles
         </Button>
         <Box sx={{ display: 'flex', gap: 1 }}>
-          <Button startIcon={<ShareIcon />} variant="outlined">
+          <Button startIcon={<ShareIcon />} variant='outlined'>
             Share
           </Button>
-          <Button startIcon={<Bookmark />} variant="outlined">
+          <Button startIcon={<Bookmark />} variant='outlined'>
             Bookmark
           </Button>
         </Box>
@@ -112,32 +113,36 @@ const ArticleDetail = () => {
 
       <Paper sx={{ p: 3 }}>
         <Box sx={{ mb: 3 }}>
-          <Typography variant="h4" component="h1" sx={{ mb: 2 }}>
+          <Typography variant='h4' component='h1' sx={{ mb: 2 }}>
             {article.title || 'Untitled Article'}
           </Typography>
 
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
-            <Typography variant="body2" color="text.secondary">
+            <Typography variant='body2' color='text.secondary'>
               {article.source || 'Unknown Source'}
             </Typography>
-            <Typography variant="body2" color="text.secondary">
+            <Typography variant='body2' color='text.secondary'>
               •
             </Typography>
-            <Typography variant="body2" color="text.secondary">
+            <Typography variant='body2' color='text.secondary'>
               {formatDate(article.published_date)}
             </Typography>
             {article.category && (
               <>
-                <Typography variant="body2" color="text.secondary">
+                <Typography variant='body2' color='text.secondary'>
                   •
                 </Typography>
-                <Chip label={article.category} size="small" />
+                <Chip label={article.category} size='small' />
               </>
             )}
           </Box>
 
           {article.summary && (
-            <Typography variant="h6" color="text.secondary" sx={{ mb: 3, fontStyle: 'italic' }}>
+            <Typography
+              variant='h6'
+              color='text.secondary'
+              sx={{ mb: 3, fontStyle: 'italic' }}
+            >
               {article.summary}
             </Typography>
           )}
@@ -146,27 +151,35 @@ const ArticleDetail = () => {
         <Divider sx={{ mb: 3 }} />
 
         <Box sx={{ mb: 3 }}>
-          <Typography variant="body1" sx={{ lineHeight: 1.8, whiteSpace: 'pre-wrap' }}>
+          <Typography
+            variant='body1'
+            sx={{ lineHeight: 1.8, whiteSpace: 'pre-wrap' }}
+          >
             {article.content || 'No content available for this article.'}
           </Typography>
         </Box>
 
         {article.url && (
           <Box sx={{ mt: 3, pt: 3, borderTop: 1, borderColor: 'divider' }}>
-            <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+            <Typography variant='body2' color='text.secondary' sx={{ mb: 1 }}>
               Original Source:
             </Typography>
             <Button
-              variant="outlined"
+              variant='outlined'
               href={article.url}
-              target="_blank"
-              rel="noopener noreferrer"
+              target='_blank'
+              rel='noopener noreferrer'
             >
               View Original Article
             </Button>
           </Box>
         )}
       </Paper>
+
+      {/* Article Topics Section */}
+      <Box sx={{ mt: 3 }}>
+        <ArticleTopics articleId={parseInt(id)} />
+      </Box>
     </Box>
   );
 };

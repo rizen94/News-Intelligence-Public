@@ -12,7 +12,7 @@ from typing import Dict, List, Optional, Any
 from queue import Queue, Empty
 import json
 
-from modules.summarization_service import MLSummarizationService
+from .summarization_service import MLSummarizationService
 
 logger = logging.getLogger(__name__)
 

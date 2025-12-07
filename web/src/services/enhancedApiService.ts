@@ -84,7 +84,8 @@ export interface APIResponse<T = any> {
   meta?: any;
 }
 
-const API_BASE_URL = process.env['REACT_APP_API_URL'] || 'http://localhost:8001';
+const API_BASE_URL =
+  process.env['REACT_APP_API_URL'] || 'http://localhost:8001';
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -96,7 +97,7 @@ const api = axios.create({
 
 // Request interceptor for logging
 api.interceptors.request.use(
-  (config) => {
+  config => {
     Logger.info(`API Request: ${config.method?.toUpperCase()} ${config.url}`, {
       method: config.method,
       url: config.url,
@@ -105,7 +106,7 @@ api.interceptors.request.use(
     });
     return config;
   },
-  (error) => {
+  error => {
     Logger.error('API Request Error', error);
     return Promise.reject(error);
   },
@@ -189,13 +190,15 @@ export const enhancedApiService = {
     }
   },
 
-  getLogEntries: async(params: {
-    start_time?: string;
-    end_time?: string;
-    level?: string;
-    logger_name?: string;
-    limit?: number;
-  } = {}): Promise<LogEntry[]> => {
+  getLogEntries: async(
+    params: {
+      start_time?: string;
+      end_time?: string;
+      level?: string;
+      logger_name?: string;
+      limit?: number;
+    } = {},
+  ): Promise<LogEntry[]> => {
     try {
       const response = await api.get('/api/logs/entries', { params });
       return response.data.data.entries;
@@ -294,17 +297,19 @@ export const enhancedApiService = {
   },
 
   // Enhanced Article Management
-  getArticles: async(params: {
-    page?: number;
-    limit?: number;
-    status?: string;
-    source?: string;
-    category?: string;
-    date_from?: string;
-    date_to?: string;
-    quality_min?: number;
-    quality_max?: number;
-  } = {}): Promise<{
+  getArticles: async(
+    params: {
+      page?: number;
+      limit?: number;
+      status?: string;
+      source?: string;
+      category?: string;
+      date_from?: string;
+      date_to?: string;
+      quality_min?: number;
+      quality_max?: number;
+    } = {},
+  ): Promise<{
     items: any[];
     total: number;
     page: number;
@@ -365,13 +370,15 @@ export const enhancedApiService = {
   },
 
   // Enhanced Storyline Management
-  getStorylines: async(params: {
-    status?: string;
-    category?: string;
-    min_articles?: number;
-    max_articles?: number;
-    ml_processed?: boolean;
-  } = {}): Promise<any[]> => {
+  getStorylines: async(
+    params: {
+      status?: string;
+      category?: string;
+      min_articles?: number;
+      max_articles?: number;
+      ml_processed?: boolean;
+    } = {},
+  ): Promise<any[]> => {
     try {
       const response = await api.get('/api/storylines', { params });
       return response.data.data.storylines;
@@ -414,11 +421,14 @@ export const enhancedApiService = {
     importanceScore?: number,
   ): Promise<any> => {
     try {
-      const response = await api.post(`/api/storylines/${storylineId}/add-article`, {
-        article_id: articleId,
-        relevance_score: relevanceScore,
-        importance_score: importanceScore,
-      });
+      const response = await api.post(
+        `/api/storylines/${storylineId}/add-article`,
+        {
+          article_id: articleId,
+          relevance_score: relevanceScore,
+          importance_score: importanceScore,
+        },
+      );
       return response.data.data;
     } catch (error) {
       Logger.error('Failed to add article to storyline', error);
@@ -429,7 +439,9 @@ export const enhancedApiService = {
   // Pipeline Operations
   processRSSFeeds: async(): Promise<any> => {
     try {
-      const response = await api.post('/api/article-processing/process-rss-feeds');
+      const response = await api.post(
+        '/api/article-processing/process-rss-feeds',
+      );
       return response.data;
     } catch (error) {
       Logger.error('Failed to process RSS feeds', error);
@@ -439,7 +451,9 @@ export const enhancedApiService = {
 
   runAIAnalysis: async(): Promise<any> => {
     try {
-      const response = await api.post('/api/intelligence/ml/pipelines/sentiment_analysis/run?force=true');
+      const response = await api.post(
+        '/api/intelligence/ml/pipelines/sentiment_analysis/run?force=true',
+      );
       return response.data;
     } catch (error) {
       Logger.error('Failed to run AI analysis', error);
@@ -448,11 +462,13 @@ export const enhancedApiService = {
   },
 
   // Utility functions
-  exportLogs: async(params: {
-    start_time?: string;
-    end_time?: string;
-    format?: 'json' | 'csv';
-  } = {}): Promise<Blob> => {
+  exportLogs: async(
+    params: {
+      start_time?: string;
+      end_time?: string;
+      format?: 'json' | 'csv';
+    } = {},
+  ): Promise<Blob> => {
     try {
       const response = await api.post('/api/logs/export', null, {
         params,
