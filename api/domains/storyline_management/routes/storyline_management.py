@@ -330,38 +330,49 @@ async def remove_article_from_domain_storyline(
         logger.error(f"Error removing article from storyline: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/storylines/{storyline_id}/articles/{article_id}")
-async def add_article_to_storyline(storyline_id: int, article_id: int, request: Dict[str, Any] = None):
-    """Add an article to a storyline"""
+@router.post("/{domain}/storylines/{storyline_id}/articles/{article_id}")
+async def add_article_to_domain_storyline(
+    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    storyline_id: int = Path(..., description="Storyline ID"),
+    article_id: int = Path(..., description="Article ID"),
+    request: Dict[str, Any] = None
+):
+    """Add an article to a storyline in a specific domain"""
     try:
+        # Validate domain
+        if not validate_domain(domain):
+            raise HTTPException(status_code=400, detail=f"Invalid or inactive domain: {domain}")
+        
+        schema = domain.replace('-', '_')
+        
         conn = get_db_connection()
         if not conn:
             raise HTTPException(status_code=500, detail="Database connection failed")
         
         try:
             with conn.cursor() as cur:
-                # Check if storyline exists
-                cur.execute("SELECT id FROM storylines WHERE id = %s", (storyline_id,))
+                # Check if storyline exists in domain schema
+                cur.execute(f"SELECT id FROM {schema}.storylines WHERE id = %s", (storyline_id,))
                 if not cur.fetchone():
                     raise HTTPException(status_code=404, detail="Storyline not found")
                 
-                # Check if article exists
-                cur.execute("SELECT id FROM articles WHERE id = %s", (article_id,))
+                # Check if article exists in domain schema
+                cur.execute(f"SELECT id FROM {schema}.articles WHERE id = %s", (article_id,))
                 if not cur.fetchone():
                     raise HTTPException(status_code=404, detail=f"Article with ID {article_id} not found")
                 
                 # Check if article is already in storyline
-                cur.execute("""
-                    SELECT storyline_id FROM storyline_articles 
+                cur.execute(f"""
+                    SELECT storyline_id FROM {schema}.storyline_articles 
                     WHERE storyline_id = %s AND article_id = %s
                 """, (storyline_id, article_id))
                 
                 if cur.fetchone():
                     raise HTTPException(status_code=400, detail="Article already in storyline")
                 
-                # Add the article to the storyline
-                cur.execute("""
-                    INSERT INTO storyline_articles (storyline_id, article_id, added_at, relevance_score)
+                # Add the article to the storyline in domain schema
+                cur.execute(f"""
+                    INSERT INTO {schema}.storyline_articles (storyline_id, article_id, added_at, relevance_score)
                     VALUES (%s, %s, %s, %s)
                 """, (
                     storyline_id,
@@ -370,11 +381,11 @@ async def add_article_to_storyline(storyline_id: int, article_id: int, request: 
                     request.get("relevance_score", 0.5) if request else 0.5
                 ))
                 
-                # Update article count
-                cur.execute("""
-                    UPDATE storylines 
+                # Update article count in domain schema
+                cur.execute(f"""
+                    UPDATE {schema}.storylines 
                     SET article_count = (
-                        SELECT COUNT(*) FROM storyline_articles 
+                        SELECT COUNT(*) FROM {schema}.storyline_articles 
                         WHERE storyline_id = %s
                     ),
                     updated_at = %s
@@ -398,14 +409,21 @@ async def add_article_to_storyline(storyline_id: int, article_id: int, request: 
         logger.error(f"Error adding article to storyline: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/storylines/{storyline_id}/available-articles")
-async def get_available_articles_for_storyline(
-    storyline_id: int, 
-    limit: int = 50,
-    search: Optional[str] = None
+@router.get("/{domain}/storylines/{storyline_id}/available-articles")
+async def get_domain_available_articles_for_storyline(
+    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    storyline_id: int = Path(..., description="Storyline ID"),
+    limit: int = Query(50, ge=1, le=500),
+    search: Optional[str] = Query(None)
 ):
-    """Get articles that can be added to a storyline (not already in it)"""
+    """Get articles that can be added to a storyline (not already in it) from a specific domain"""
     try:
+        # Validate domain
+        if not validate_domain(domain):
+            raise HTTPException(status_code=400, detail=f"Invalid or inactive domain: {domain}")
+        
+        schema = domain.replace('-', '_')
+        
         conn = get_db_connection()
         if not conn:
             raise HTTPException(status_code=500, detail="Database connection failed")
@@ -414,7 +432,7 @@ async def get_available_articles_for_storyline(
             with conn.cursor() as cur:
                 # Build query with optional search filter
                 where_conditions = [
-                    "a.id NOT IN (SELECT sa.article_id FROM storyline_articles sa WHERE sa.storyline_id = %s)"
+                    f"a.id NOT IN (SELECT sa.article_id FROM {schema}.storyline_articles sa WHERE sa.storyline_id = %s)"
                 ]
                 params = [storyline_id]
                 
@@ -428,7 +446,7 @@ async def get_available_articles_for_storyline(
                 
                 query = f"""
                     SELECT a.id, a.title, a.url, a.source_domain, a.published_at, a.summary
-                    FROM articles a
+                    FROM {schema}.articles a
                     {where_clause}
                     ORDER BY a.published_at DESC
                     LIMIT %s
@@ -462,20 +480,30 @@ async def get_available_articles_for_storyline(
         logger.error(f"Error getting available articles: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/storylines/{storyline_id}")
-async def get_storyline(storyline_id: int):
+@router.get("/{domain}/storylines/{storyline_id}")
+async def get_domain_storyline(
+    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    storyline_id: int = Path(..., description="Storyline ID")
+):
+    """Get a single storyline with all its articles from a specific domain"""
     try:
+        # Validate domain
+        if not validate_domain(domain):
+            raise HTTPException(status_code=400, detail=f"Invalid or inactive domain: {domain}")
+        
+        schema = domain.replace('-', '_')
+        
         conn = get_db_connection()
         if not conn:
             raise HTTPException(status_code=500, detail="Database connection failed")
         
         try:
             with conn.cursor() as cur:
-                # Get storyline details - selecting all available columns
-                cur.execute("""
+                # Get storyline details from domain schema
+                cur.execute(f"""
                     SELECT id, title, description, created_at, updated_at,
                            status, analysis_summary, quality_score, article_count
-                    FROM storylines 
+                    FROM {schema}.storylines 
                     WHERE id = %s
                 """, (storyline_id,))
                 
@@ -483,11 +511,11 @@ async def get_storyline(storyline_id: int):
                 if not storyline:
                     raise HTTPException(status_code=404, detail="Storyline not found")
                 
-                # Get articles in storyline
-                cur.execute("""
+                # Get articles in storyline from domain schema
+                cur.execute(f"""
                     SELECT a.id, a.title, a.url, a.source_domain, a.published_at, a.summary
-                    FROM articles a
-                    JOIN storyline_articles sa ON a.id = sa.article_id
+                    FROM {schema}.articles a
+                    JOIN {schema}.storyline_articles sa ON a.id = sa.article_id
                     WHERE sa.storyline_id = %s
                     ORDER BY a.published_at ASC
                 """, (storyline_id,))
@@ -529,11 +557,21 @@ async def get_storyline(storyline_id: int):
         logger.error(f"Error fetching storyline: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/storylines/{storyline_id}/add-article")
-async def add_article_to_storyline(storyline_id: int, request: Dict[str, Any]):
-    """Add an article to a storyline"""
+@router.post("/{domain}/storylines/{storyline_id}/add-article")
+async def add_article_to_domain_storyline_by_id(
+    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    storyline_id: int = Path(..., description="Storyline ID"),
+    request: Dict[str, Any] = None
+):
+    """Add an article to a storyline by article ID in a specific domain"""
     try:
-        article_id = request.get("article_id")
+        # Validate domain
+        if not validate_domain(domain):
+            raise HTTPException(status_code=400, detail=f"Invalid or inactive domain: {domain}")
+        
+        schema = domain.replace('-', '_')
+        
+        article_id = request.get("article_id") if request else None
         if not article_id:
             raise HTTPException(status_code=400, detail="Article ID is required")
         
@@ -543,13 +581,13 @@ async def add_article_to_storyline(storyline_id: int, request: Dict[str, Any]):
         
         try:
             with conn.cursor() as cur:
-                # Check if storyline exists
-                cur.execute("SELECT id FROM storylines WHERE id = %s", (storyline_id,))
+                # Check if storyline exists in domain schema
+                cur.execute(f"SELECT id FROM {schema}.storylines WHERE id = %s", (storyline_id,))
                 if not cur.fetchone():
                     raise HTTPException(status_code=404, detail="Storyline not found")
                 
-                # Check if article exists
-                cur.execute("SELECT id FROM articles WHERE id = %s", (article_id,))
+                # Check if article exists in domain schema
+                cur.execute(f"SELECT id FROM {schema}.articles WHERE id = %s", (article_id,))
                 if not cur.fetchone():
                     raise HTTPException(status_code=404, detail="Article not found")
                 
@@ -588,20 +626,30 @@ async def add_article_to_storyline(storyline_id: int, request: Dict[str, Any]):
         logger.error(f"Error adding article to storyline: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/storylines/{storyline_id}/analyze")
-async def analyze_storyline(storyline_id: int, background_tasks: BackgroundTasks):
-    """Generate comprehensive storyline analysis using RAG"""
+@router.post("/{domain}/storylines/{storyline_id}/analyze")
+async def analyze_domain_storyline(
+    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    storyline_id: int = Path(..., description="Storyline ID"),
+    background_tasks: BackgroundTasks = None
+):
+    """Generate comprehensive storyline analysis using RAG in a specific domain"""
     try:
+        # Validate domain
+        if not validate_domain(domain):
+            raise HTTPException(status_code=400, detail=f"Invalid or inactive domain: {domain}")
+        
+        schema = domain.replace('-', '_')
+        
         conn = get_db_connection()
         if not conn:
             raise HTTPException(status_code=500, detail="Database connection failed")
         
         try:
             with conn.cursor() as cur:
-                # Get storyline and articles
-                cur.execute("""
+                # Get storyline and articles from domain schema
+                cur.execute(f"""
                     SELECT s.title, s.description, s.analysis_summary
-                    FROM storylines s
+                    FROM {schema}.storylines s
                     WHERE s.id = %s
                 """, (storyline_id,))
                 
@@ -609,10 +657,10 @@ async def analyze_storyline(storyline_id: int, background_tasks: BackgroundTasks
                 if not storyline:
                     raise HTTPException(status_code=404, detail="Storyline not found")
                 
-                cur.execute("""
+                cur.execute(f"""
                     SELECT a.id, a.title, a.content, a.summary, a.published_at, a.source_domain, a.url
-                    FROM articles a
-                    JOIN storyline_articles sa ON a.id = sa.article_id
+                    FROM {schema}.articles a
+                    JOIN {schema}.storyline_articles sa ON a.id = sa.article_id
                     WHERE sa.storyline_id = %s
                     ORDER BY a.published_at ASC
                 """, (storyline_id,))
@@ -640,17 +688,27 @@ async def analyze_storyline(storyline_id: int, background_tasks: BackgroundTasks
         logger.error(f"Error starting storyline analysis: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/storylines/{storyline_id}/timeline")
-async def get_storyline_timeline(storyline_id: int):
-    """Get chronological timeline for a storyline"""
+@router.get("/{domain}/storylines/{storyline_id}/timeline")
+async def get_domain_storyline_timeline(
+    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    storyline_id: int = Path(..., description="Storyline ID")
+):
+    """Get chronological timeline for a storyline in a specific domain"""
     try:
+        # Validate domain
+        if not validate_domain(domain):
+            raise HTTPException(status_code=400, detail=f"Invalid or inactive domain: {domain}")
+        
+        schema = domain.replace('-', '_')
+        
         conn = get_db_connection()
         if not conn:
             raise HTTPException(status_code=500, detail="Database connection failed")
         
         try:
             with conn.cursor() as cur:
-                # Get timeline events directly from timeline_events table
+                # Get timeline events directly from timeline_events table (in public schema for now)
+                # Note: timeline_events may need to be domain-aware in future
                 cur.execute("""
                     SELECT id, event_id, title, description, event_date, event_time,
                            source, url, importance_score, event_type, location,
@@ -699,20 +757,29 @@ async def get_storyline_timeline(storyline_id: int):
         logger.error(f"Error fetching timeline: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/storylines/{storyline_id}/suggestions")
-async def get_storyline_suggestions(storyline_id: int):
-    """Get AI-powered storyline suggestions"""
+@router.get("/{domain}/storylines/{storyline_id}/suggestions")
+async def get_domain_storyline_suggestions(
+    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    storyline_id: int = Path(..., description="Storyline ID")
+):
+    """Get AI-powered storyline suggestions in a specific domain"""
     try:
+        # Validate domain
+        if not validate_domain(domain):
+            raise HTTPException(status_code=400, detail=f"Invalid or inactive domain: {domain}")
+        
+        schema = domain.replace('-', '_')
+        
         conn = get_db_connection()
         if not conn:
             raise HTTPException(status_code=500, detail="Database connection failed")
         
         try:
             with conn.cursor() as cur:
-                # Get storyline context
-                cur.execute("""
+                # Get storyline context from domain schema
+                cur.execute(f"""
                     SELECT s.title, s.description, s.analysis_summary
-                    FROM storylines s
+                    FROM {schema}.storylines s
                     WHERE s.id = %s
                 """, (storyline_id,))
                 
@@ -720,12 +787,12 @@ async def get_storyline_suggestions(storyline_id: int):
                 if not storyline:
                     raise HTTPException(status_code=404, detail="Storyline not found")
                 
-                # Get related articles (not in storyline)
-                cur.execute("""
+                # Get related articles (not in storyline) from domain schema
+                cur.execute(f"""
                     SELECT a.id, a.title, a.summary, a.published_at, a.source_domain
-                    FROM articles a
+                    FROM {schema}.articles a
                     WHERE a.id NOT IN (
-                        SELECT sa.article_id FROM storyline_articles sa 
+                        SELECT sa.article_id FROM {schema}.storyline_articles sa 
                         WHERE sa.storyline_id = %s
                     )
                     AND a.published_at >= %s
