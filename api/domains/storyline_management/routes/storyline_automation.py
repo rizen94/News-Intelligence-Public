@@ -3,7 +3,7 @@ Storyline Automation Routes
 API endpoints for managing RAG-enhanced article discovery and automation controls
 """
 
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Path, Query, Body
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
 import logging
@@ -11,17 +11,18 @@ import json
 import psycopg2.extras
 
 from shared.database.connection import get_db_connection
+from shared.services.domain_aware_service import validate_domain
 from services.storyline_automation_service import StorylineAutomationService
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
-    prefix="/api/v4/storyline-management",
+    prefix="/api/v4",
     tags=["Storyline Automation"],
     responses={404: {"description": "Not found"}}
 )
 
-automation_service = StorylineAutomationService()
+# Note: StorylineAutomationService will need domain context per request
 
 
 @router.get("/storylines/{storyline_id}/automation/settings")
