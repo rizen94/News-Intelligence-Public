@@ -18,30 +18,42 @@ logger = logging.getLogger(__name__)
 class TopicClusteringService:
     """
     Intelligent topic clustering service using LLM with iterative learning
+    Now supports domain-aware operations via DomainAwareService
     """
     
-    def __init__(self, db_config: Dict[str, str], ollama_url: str = "http://localhost:11434"):
+    def __init__(self, db_config: Dict[str, str], ollama_url: str = "http://localhost:11434", domain: str = "politics"):
         """
         Initialize the topic clustering service
         
         Args:
             db_config: Database configuration dictionary
             ollama_url: URL of the Ollama service
+            domain: Domain key (e.g., 'politics', 'finance', 'science-tech')
         """
         self.db_config = db_config
         self.ollama_url = ollama_url
         self.model_name = "llama3.1:8b"
         self.timeout = 120  # 2 minutes timeout
+        self.domain = domain
+        self.schema = self._get_schema_name(domain)
+        
+    def _get_schema_name(self, domain: str) -> str:
+        """Convert domain key to schema name"""
+        return domain.replace('-', '_')
         
     def _get_db_connection(self):
-        """Get database connection"""
-        return psycopg2.connect(
+        """Get database connection with domain schema context"""
+        conn = psycopg2.connect(
             host=self.db_config.get('host', 'localhost'),
             database=self.db_config.get('database', 'news_intelligence'),
             user=self.db_config.get('user', 'newsapp'),
             password=self.db_config.get('password', 'newsapp_password'),
             port=self.db_config.get('port', 5432)
         )
+        # Set search path to domain schema
+        with conn.cursor() as cur:
+            cur.execute(f"SET search_path TO {self.schema}, public")
+        return conn
     
     async def _call_ollama(self, prompt: str, system_prompt: str = None) -> str:
         """
@@ -199,9 +211,9 @@ JSON Response:"""
                 if not topic_name:
                     continue
                 
-                # Check if topic exists
+                # Check if topic exists in domain schema
                 cur.execute(
-                    "SELECT id, confidence_score, accuracy_score FROM topics WHERE name = %s",
+                    f"SELECT id, confidence_score, accuracy_score FROM {self.schema}.topics WHERE name = %s",
                     (topic_name,)
                 )
                 existing_topic = cur.fetchone()
@@ -213,9 +225,9 @@ JSON Response:"""
                     new_confidence = topic_data.get('confidence', 0.5)
                     blended_confidence = (existing_confidence * 0.7) + (new_confidence * 0.3)
                 else:
-                    # Create new topic
-                    cur.execute("""
-                        INSERT INTO topics (
+                    # Create new topic in domain schema
+                    cur.execute(f"""
+                        INSERT INTO {self.schema}.topics (
                             name, description, category, keywords, 
                             confidence_score, is_auto_generated, status
                         )
@@ -234,16 +246,16 @@ JSON Response:"""
                     created_topics.append(topic_name)
                     blended_confidence = topic_data.get('confidence', 0.5)
                 
-                # Check if assignment already exists
-                cur.execute("""
-                    SELECT id FROM article_topic_assignments 
+                # Check if assignment already exists in domain schema
+                cur.execute(f"""
+                    SELECT id FROM {self.schema}.article_topic_assignments 
                     WHERE article_id = %s AND topic_id = %s
                 """, (article_id, topic_id))
                 
                 if cur.fetchone():
-                    # Update existing assignment
-                    cur.execute("""
-                        UPDATE article_topic_assignments
+                    # Update existing assignment in domain schema
+                    cur.execute(f"""
+                        UPDATE {self.schema}.article_topic_assignments
                         SET confidence_score = %s,
                             relevance_score = %s,
                             assignment_context = %s,
@@ -257,9 +269,9 @@ JSON Response:"""
                         topic_id
                     ))
                 else:
-                    # Create new assignment
-                    cur.execute("""
-                        INSERT INTO article_topic_assignments (
+                    # Create new assignment in domain schema
+                    cur.execute(f"""
+                        INSERT INTO {self.schema}.article_topic_assignments (
                             article_id, topic_id, confidence_score, 
                             relevance_score, assignment_method, 
                             assignment_context, model_version
@@ -281,11 +293,10 @@ JSON Response:"""
                     'confidence': blended_confidence
                 })
             
-            # Update article's topics JSONB field
-            cur.execute("""
-                UPDATE articles
-                SET topics = %s,
-                    updated_at = CURRENT_TIMESTAMP
+            # Update article's topics JSONB field in domain schema
+            cur.execute(f"""
+                UPDATE {self.schema}.articles
+                SET updated_at = CURRENT_TIMESTAMP
                 WHERE id = %s
             """, (
                 Json([t['topic_name'] for t in assigned_topics]),
@@ -393,9 +404,9 @@ JSON Response:"""
             conn = self._get_db_connection()
             cur = conn.cursor()
             
-            # Update assignment
-            cur.execute("""
-                UPDATE article_topic_assignments
+            # Update assignment in domain schema
+            cur.execute(f"""
+                UPDATE {self.schema}.article_topic_assignments
                 SET is_validated = TRUE,
                     is_correct = %s,
                     feedback_notes = %s,
@@ -415,11 +426,11 @@ JSON Response:"""
             # The trigger will automatically update topic accuracy
             conn.commit()
             
-            # Get updated topic metrics
-            cur.execute("""
+            # Get updated topic metrics from domain schema
+            cur.execute(f"""
                 SELECT accuracy_score, confidence_score, review_count,
                        correct_assignments, incorrect_assignments
-                FROM topics
+                FROM {self.schema}.topics
                 WHERE id = %s
             """, (topic_id,))
             

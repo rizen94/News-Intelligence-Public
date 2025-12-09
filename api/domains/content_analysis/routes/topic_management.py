@@ -3,19 +3,20 @@ Topic Clustering and Auto-Tagging Routes
 Handles topic extraction, assignment, and iterative learning feedback
 """
 
-from fastapi import APIRouter, HTTPException, BackgroundTasks, Query, Body
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Query, Body, Path
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
 import logging
 from datetime import datetime
 
 from shared.database.connection import get_db_connection
+from shared.services.domain_aware_service import validate_domain
 from domains.content_analysis.services.topic_clustering_service import TopicClusteringService
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
-    prefix="/api/v4/topic-management",
+    prefix="/api/v4",
     tags=["Topic Management"],
     responses={404: {"description": "Not found"}}
 )
@@ -29,8 +30,8 @@ DB_CONFIG = {
     "port": 5432
 }
 
-# Initialize service
-topic_service = TopicClusteringService(DB_CONFIG)
+# Note: TopicClusteringService is now domain-aware and should be initialized per-domain
+# For routes, we'll create service instances as needed
 
 # ============================================================================
 # Pydantic Models
@@ -94,8 +95,9 @@ async def health_check():
 # Topic CRUD Operations
 # ============================================================================
 
-@router.get("/topics")
-async def get_topics(
+@router.get("/{domain}/topics")
+async def get_domain_topics(
+    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
     category: Optional[str] = None,
@@ -104,9 +106,10 @@ async def get_topics(
     sort_by: str = Query("accuracy_score", regex="^(name|accuracy_score|confidence_score|review_count|created_at)$")
 ):
     """
-    Get list of topics with filtering and sorting
+    Get list of topics for a specific domain with filtering and sorting
     
     Args:
+        domain: Domain key (politics, finance, science-tech)
         limit: Maximum number of topics to return
         offset: Number of topics to skip
         category: Filter by category
@@ -115,22 +118,29 @@ async def get_topics(
         sort_by: Field to sort by
     """
     try:
+        # Validate domain
+        if not validate_domain(domain):
+            raise HTTPException(status_code=400, detail=f"Invalid or inactive domain: {domain}")
+        
+        # Get schema name
+        schema = domain.replace('-', '_')
+        
         conn = get_db_connection()
         if not conn:
             raise HTTPException(status_code=500, detail="Database connection failed")
         
         try:
             with conn.cursor() as cur:
-                # Build query
-                query = """
+                # Build query with schema qualification
+                query = f"""
                     SELECT 
                         t.id, t.topic_uuid, t.name, t.description, t.category,
                         t.keywords, t.confidence_score, t.accuracy_score,
                         t.review_count, t.correct_assignments, t.incorrect_assignments,
                         t.status, t.is_auto_generated, t.created_at, t.updated_at,
                         COUNT(DISTINCT ata.article_id) as article_count
-                    FROM topics t
-                    LEFT JOIN article_topic_assignments ata ON t.id = ata.topic_id
+                    FROM {schema}.topics t
+                    LEFT JOIN {schema}.article_topic_assignments ata ON t.id = ata.topic_id
                     WHERE 1=1
                 """
                 params = []
@@ -186,8 +196,8 @@ async def get_topics(
                         "updated_at": row[14].isoformat() if row[14] else None
                     })
                 
-                # Get total count
-                count_query = "SELECT COUNT(*) FROM topics WHERE 1=1"
+                # Get total count from domain schema
+                count_query = f"SELECT COUNT(*) FROM {schema}.topics WHERE 1=1"
                 count_params = []
                 if category:
                     count_query += " AND category = %s"
@@ -208,7 +218,8 @@ async def get_topics(
                         "topics": topics,
                         "total": total,
                         "limit": limit,
-                        "offset": offset
+                        "offset": offset,
+                        "domain": domain
                     }
                 }
                 
@@ -267,7 +278,8 @@ async def get_topic(topic_id: int):
                         "learning_data": row[15] or {},
                         "last_improved_at": row[16].isoformat() if row[16] else None,
                         "created_at": row[13].isoformat() if row[13] else None,
-                        "updated_at": row[14].isoformat() if row[14] else None
+                        "updated_at": row[14].isoformat() if row[14] else None,
+                        "domain": domain
                     }
                 }
                 
