@@ -176,12 +176,12 @@ async def update_domain_storyline(
                 if not cur.fetchone():
                     raise HTTPException(status_code=404, detail="Storyline not found")
                 
-                # Update storyline
-                cur.execute("""
-                    UPDATE storylines 
+                # Update storyline in domain schema
+                cur.execute(f"""
+                    UPDATE {schema}.storylines 
                     SET title = %s, description = %s, updated_at = %s,
                         article_count = (
-                            SELECT COUNT(*) FROM storyline_articles 
+                            SELECT COUNT(*) FROM {schema}.storyline_articles 
                             WHERE storyline_id = %s
                         )
                     WHERE id = %s
@@ -216,25 +216,34 @@ async def update_domain_storyline(
         logger.error(f"Error updating storyline: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.delete("/storylines/{storyline_id}")
-async def delete_storyline(storyline_id: int):
-    """Delete a storyline and all its associated articles"""
+@router.delete("/{domain}/storylines/{storyline_id}")
+async def delete_domain_storyline(
+    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    storyline_id: int = Path(..., description="Storyline ID")
+):
+    """Delete a storyline and all its associated articles in a specific domain"""
     try:
+        # Validate domain
+        if not validate_domain(domain):
+            raise HTTPException(status_code=400, detail=f"Invalid or inactive domain: {domain}")
+        
+        schema = domain.replace('-', '_')
+        
         conn = get_db_connection()
         if not conn:
             raise HTTPException(status_code=500, detail="Database connection failed")
         
         try:
             with conn.cursor() as cur:
-                # First, remove all articles from the storyline
-                cur.execute("""
-                    DELETE FROM storyline_articles 
+                # First, remove all articles from the storyline in domain schema
+                cur.execute(f"""
+                    DELETE FROM {schema}.storyline_articles 
                     WHERE storyline_id = %s
                 """, (storyline_id,))
                 
-                # Then delete the storyline itself
-                cur.execute("""
-                    DELETE FROM storylines 
+                # Then delete the storyline itself from domain schema
+                cur.execute(f"""
+                    DELETE FROM {schema}.storylines 
                     WHERE id = %s
                 """, (storyline_id,))
                 
@@ -258,10 +267,20 @@ async def delete_storyline(storyline_id: int):
         logger.error(f"Error deleting storyline: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.delete("/storylines/{storyline_id}/articles/{article_id}")
-async def remove_article_from_storyline(storyline_id: int, article_id: int):
-    """Remove an article from a storyline"""
+@router.delete("/{domain}/storylines/{storyline_id}/articles/{article_id}")
+async def remove_article_from_domain_storyline(
+    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    storyline_id: int = Path(..., description="Storyline ID"),
+    article_id: int = Path(..., description="Article ID")
+):
+    """Remove an article from a storyline in a specific domain"""
     try:
+        # Validate domain
+        if not validate_domain(domain):
+            raise HTTPException(status_code=400, detail=f"Invalid or inactive domain: {domain}")
+        
+        schema = domain.replace('-', '_')
+        
         conn = get_db_connection()
         if not conn:
             raise HTTPException(status_code=500, detail="Database connection failed")
@@ -269,8 +288,8 @@ async def remove_article_from_storyline(storyline_id: int, article_id: int):
         try:
             with conn.cursor() as cur:
                 # Check if article exists in storyline before removing
-                cur.execute("""
-                    SELECT storyline_id FROM storyline_articles 
+                cur.execute(f"""
+                    SELECT storyline_id FROM {schema}.storyline_articles 
                     WHERE storyline_id = %s AND article_id = %s
                 """, (storyline_id, article_id))
                 
@@ -278,16 +297,16 @@ async def remove_article_from_storyline(storyline_id: int, article_id: int):
                     raise HTTPException(status_code=404, detail="Article not found in storyline")
                 
                 # Remove the article from the storyline
-                cur.execute("""
-                    DELETE FROM storyline_articles 
+                cur.execute(f"""
+                    DELETE FROM {schema}.storyline_articles 
                     WHERE storyline_id = %s AND article_id = %s
                 """, (storyline_id, article_id))
                 
-                # Update article count
-                cur.execute("""
-                    UPDATE storylines 
+                # Update article count in domain schema
+                cur.execute(f"""
+                    UPDATE {schema}.storylines 
                     SET article_count = (
-                        SELECT COUNT(*) FROM storyline_articles 
+                        SELECT COUNT(*) FROM {schema}.storyline_articles 
                         WHERE storyline_id = %s
                     ),
                     updated_at = %s
@@ -534,18 +553,18 @@ async def add_article_to_storyline(storyline_id: int, request: Dict[str, Any]):
                 if not cur.fetchone():
                     raise HTTPException(status_code=404, detail="Article not found")
                 
-                # Add article to storyline
-                cur.execute("""
-                    INSERT INTO storyline_articles (storyline_id, article_id, added_at)
+                # Add article to storyline in domain schema
+                cur.execute(f"""
+                    INSERT INTO {schema}.storyline_articles (storyline_id, article_id, added_at)
                     VALUES (%s, %s, %s)
                     ON CONFLICT (storyline_id, article_id) DO NOTHING
                 """, (storyline_id, article_id, datetime.now()))
                 
-                # Update article count
-                cur.execute("""
-                    UPDATE storylines 
+                # Update article count in domain schema
+                cur.execute(f"""
+                    UPDATE {schema}.storylines 
                     SET article_count = (
-                        SELECT COUNT(*) FROM storyline_articles 
+                        SELECT COUNT(*) FROM {schema}.storyline_articles 
                         WHERE storyline_id = %s
                     ),
                     updated_at = %s
