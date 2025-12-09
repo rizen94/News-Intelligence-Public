@@ -3,18 +3,20 @@ Domain 1: News Aggregation Routes
 Handles RSS feed processing, article ingestion, and content quality assessment
 """
 
-from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
+from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks, Path, Query
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
 import logging
 
 from shared.services.llm_service import llm_service, TaskType
 from shared.database.connection import get_db_connection
+from shared.services.domain_aware_service import validate_domain
+from domains.news_aggregation.services.article_service import ArticleService
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
-    prefix="/api/v4/news-aggregation",
+    prefix="/api/v4",
     tags=["News Aggregation"],
     responses={404: {"description": "Not found"}}
 )
@@ -55,20 +57,32 @@ async def health_check():
             "error": str(e)
         }
 
-@router.get("/rss-feeds")
-async def get_rss_feeds():
-    """Get all configured RSS feeds"""
+@router.get("/{domain}/rss-feeds")
+async def get_domain_rss_feeds(
+    domain: str = Path(..., regex="^(politics|finance|science-tech)$")
+):
+    """Get all configured RSS feeds for a specific domain"""
     try:
-        conn = get_db_connection()
-        if not conn:
-            raise HTTPException(status_code=500, detail="Database connection failed")
+        # Validate domain
+        if not validate_domain(domain):
+            raise HTTPException(status_code=400, detail=f"Invalid or inactive domain: {domain}")
         
+        # Get schema name
+        conn = get_db_connection()
         try:
             with conn.cursor() as cur:
-                cur.execute("""
+                cur.execute("SELECT schema_name FROM domains WHERE domain_key = %s", (domain,))
+                result = cur.fetchone()
+                if not result:
+                    raise HTTPException(status_code=400, detail=f"Domain {domain} not found")
+                schema_name = result[0]
+            
+            # Get feeds from domain schema
+            with conn.cursor() as cur:
+                cur.execute(f"""
                     SELECT id, feed_name, feed_url, is_active, last_fetched_at, 
-                           fetch_interval_seconds,  created_at
-                    FROM rss_feeds 
+                           fetch_interval_seconds, created_at
+                    FROM {schema_name}.rss_feeds 
                     ORDER BY feed_name
                 """)
                 
@@ -86,7 +100,7 @@ async def get_rss_feeds():
                 
                 return {
                     "success": True,
-                    "data": {"feeds": feeds},
+                    "data": {"feeds": feeds, "domain": domain},
                     "count": len(feeds),
                     "timestamp": datetime.now().isoformat()
                 }
@@ -94,8 +108,10 @@ async def get_rss_feeds():
         finally:
             conn.close()
             
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error fetching RSS feeds: {e}")
+        logger.error(f"Error fetching RSS feeds for domain {domain}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/rss-feeds")
@@ -255,8 +271,101 @@ async def fetch_articles_from_feeds(background_tasks: BackgroundTasks):
         logger.error(f"Error starting RSS fetch: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.get("/{domain}/articles")
+async def get_domain_articles(
+    domain: str = Path(..., regex="^(politics|finance|science-tech)$", description="Domain key"),
+    limit: int = Query(50, ge=1, le=500, description="Maximum number of articles"),
+    offset: int = Query(0, ge=0, description="Number of articles to skip"),
+    hours: Optional[int] = Query(None, ge=1, description="Filter articles from last N hours"),
+    search: Optional[str] = Query(None, description="Search in title and content"),
+    source_domain: Optional[str] = Query(None, description="Filter by source domain"),
+    processing_status: Optional[str] = Query(None, description="Filter by processing status")
+):
+    """
+    Get articles for a specific domain with optional filtering and pagination.
+    
+    Domain-aware endpoint that returns articles from the specified domain schema.
+    """
+    try:
+        # Validate domain
+        if not validate_domain(domain):
+            raise HTTPException(status_code=400, detail=f"Invalid or inactive domain: {domain}")
+        
+        # Create domain-aware service
+        article_service = ArticleService(domain=domain)
+        
+        # Build filters
+        filters = {}
+        if source_domain:
+            filters['source_domain'] = source_domain
+        if processing_status:
+            filters['processing_status'] = processing_status
+        if hours:
+            from datetime import datetime, timedelta
+            filters['published_after'] = datetime.now() - timedelta(hours=hours)
+        
+        # Get articles
+        result = article_service.get_articles(limit=limit, offset=offset, filters=filters)
+        
+        # Apply search filter if provided (post-query for now, can be optimized)
+        if search:
+            articles = result['data']['articles']
+            search_lower = search.lower()
+            filtered_articles = [
+                a for a in articles
+                if search_lower in (a.get('title', '') or '').lower() or 
+                   search_lower in (a.get('content', '') or '').lower()
+            ]
+            result['data']['articles'] = filtered_articles
+            result['data']['count'] = len(filtered_articles)
+        
+        return result
+            
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error fetching articles for domain {domain}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/{domain}/articles/{article_id}")
+async def get_domain_article(
+    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    article_id: int = Path(..., description="Article ID")
+):
+    """Get a single article by ID from a specific domain"""
+    try:
+        # Validate domain
+        if not validate_domain(domain):
+            raise HTTPException(status_code=400, detail=f"Invalid or inactive domain: {domain}")
+        
+        # Create domain-aware service
+        article_service = ArticleService(domain=domain)
+        
+        # Get article
+        article = article_service.get_article(article_id)
+        
+        if not article:
+            raise HTTPException(status_code=404, detail=f"Article {article_id} not found in domain {domain}")
+        
+        return {
+            'success': True,
+            'data': article,
+            'domain': domain
+        }
+            
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error fetching article {article_id} from domain {domain}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Legacy endpoint for backward compatibility (redirects to politics domain)
 @router.get("/articles/recent")
-async def get_recent_articles(
+async def get_recent_articles_legacy(
     limit: int = 50,
     hours: Optional[int] = None,
     page: Optional[int] = None,
@@ -265,98 +374,20 @@ async def get_recent_articles(
     source_domain: Optional[str] = None,
     sort: Optional[str] = None
 ):
-    """Get recently ingested articles with optional filtering and pagination"""
-    try:
-        conn = get_db_connection()
-        if not conn:
-            raise HTTPException(status_code=500, detail="Database connection failed")
-        
-        try:
-            # Build query with optional filters
-            query = "SELECT id, title, url, source_domain, published_at, content, created_at FROM articles WHERE 1=1"
-            params = []
-            
-            # Time filter (optional - if hours is None, show all articles)
-            if hours is not None:
-                cutoff_time = datetime.now() - timedelta(hours=hours)
-                query += " AND created_at >= %s"
-                params.append(cutoff_time)
-            
-            # Search filter
-            if search:
-                query += " AND (title ILIKE %s OR content ILIKE %s)"
-                search_pattern = f"%{search}%"
-                params.extend([search_pattern, search_pattern])
-            
-            # Source domain filter
-            if source_domain:
-                query += " AND source_domain ILIKE %s"
-                params.append(f"%{source_domain}%")
-            
-            # Sorting
-            if sort == 'published_at' or sort == 'published_at_desc':
-                query += " ORDER BY published_at DESC"
-            elif sort == 'published_at_asc':
-                query += " ORDER BY published_at ASC"
-            elif sort == 'created_at_asc':
-                query += " ORDER BY created_at ASC"
-            else:  # Default: created_at DESC
-                query += " ORDER BY created_at DESC"
-            
-            # Get total count for pagination (before ORDER BY and LIMIT)
-            count_query = query.split("ORDER BY")[0]  # Remove ORDER BY and everything after
-            count_query = count_query.replace("SELECT id, title, url, source_domain, published_at, content, created_at", "SELECT COUNT(*)")
-            with conn.cursor() as count_cur:
-                count_cur.execute(count_query, params)
-                total_count = count_cur.fetchone()[0]
-            
-            # Pagination
-            if offset is not None:
-                query += " LIMIT %s OFFSET %s"
-                params.extend([limit, offset])
-            elif page is not None:
-                offset_val = (page - 1) * limit
-                query += " LIMIT %s OFFSET %s"
-                params.extend([limit, offset_val])
-            else:
-                query += " LIMIT %s"
-                params.append(limit)
-            
-            with conn.cursor() as cur:
-                cur.execute(query, params)
-                
-                articles = []
-                for row in cur.fetchall():
-                    articles.append({
-                        "id": row[0],
-                        "title": row[1],
-                        "url": row[2],
-                        "source_domain": row[3],
-                        "published_at": row[4].isoformat() if row[4] else None,
-                        "content": row[5],
-                        "created_at": row[6].isoformat() if row[6] else None
-                    })
-                
-                return {
-                    "success": True,
-                    "data": {
-                        "articles": articles,
-                        "total": total_count,
-                        "total_count": total_count
-                    },
-                    "count": len(articles),
-                    "timeframe_hours": hours,
-                    "page": page if page else 1,
-                    "limit": limit,
-                    "timestamp": datetime.now().isoformat()
-                }
-                
-        finally:
-            conn.close()
-            
-    except Exception as e:
-        logger.error(f"Error fetching recent articles: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    """
+    Legacy endpoint - redirects to politics domain.
+    Use /api/v4/{domain}/articles instead.
+    """
+    # Redirect to politics domain
+    return await get_domain_articles(
+        domain='politics',
+        limit=limit,
+        offset=offset if offset is not None else ((page - 1) * limit if page else 0),
+        hours=hours,
+        search=search,
+        source_domain=source_domain,
+        processing_status=None
+    )
 
 @router.post("/articles/{article_id}/analyze-quality")
 async def analyze_article_quality(article_id: int, background_tasks: BackgroundTasks):
