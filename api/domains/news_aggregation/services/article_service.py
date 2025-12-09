@@ -48,13 +48,11 @@ class ArticleService(DomainAwareService):
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 query = f"""
                     SELECT 
-                        id, title, content, excerpt, url, canonical_url,
-                        published_at, discovered_at, author, publisher, source_domain,
-                        language_code, word_count, reading_time_minutes, content_hash,
-                        processing_status, processing_stage,
-                        quality_score, readability_score, bias_score, credibility_score,
-                        summary, sentiment_label, sentiment_score, sentiment_confidence,
-                        created_at, updated_at
+                        id, title, content, url,
+                        published_at, source_domain, category,
+                        language_code, feed_id, content_hash,
+                        processing_status, created_at, updated_at,
+                        summary, quality_score, sentiment_label, sentiment_score
                     FROM {self.schema}.articles
                     WHERE 1=1
                 """
@@ -82,10 +80,39 @@ class ArticleService(DomainAwareService):
                         query += " AND published_at <= %s"
                         params.append(filters['published_before'])
                 
-                # Get total count
-                count_query = f"SELECT COUNT(*) FROM ({query}) AS filtered"
-                cur.execute(count_query, params)
-                total = cur.fetchone()[0]
+                # Get total count (before adding LIMIT/OFFSET)
+                count_query = f"""
+                    SELECT COUNT(*) 
+                    FROM {self.schema}.articles
+                    WHERE 1=1
+                """
+                count_params = []
+                
+                # Add same filters to count query
+                if filters:
+                    if filters.get('source_domain'):
+                        count_query += " AND source_domain = %s"
+                        count_params.append(filters['source_domain'])
+                    
+                    if filters.get('category'):
+                        count_query += " AND category = %s"
+                        count_params.append(filters['category'])
+                    
+                    if filters.get('processing_status'):
+                        count_query += " AND processing_status = %s"
+                        count_params.append(filters['processing_status'])
+                    
+                    if filters.get('published_after'):
+                        count_query += " AND published_at >= %s"
+                        count_params.append(filters['published_after'])
+                    
+                    if filters.get('published_before'):
+                        count_query += " AND published_at <= %s"
+                        count_params.append(filters['published_before'])
+                
+                cur.execute(count_query, count_params)
+                total_result = cur.fetchone()
+                total = total_result['count'] if isinstance(total_result, dict) else total_result[0]
                 
                 # Add ordering and pagination
                 query += " ORDER BY published_at DESC NULLS LAST, created_at DESC"
@@ -127,13 +154,11 @@ class ArticleService(DomainAwareService):
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute(f"""
                     SELECT 
-                        id, title, content, excerpt, url, canonical_url,
-                        published_at, discovered_at, author, publisher, source_domain,
-                        language_code, word_count, reading_time_minutes, content_hash,
-                        processing_status, processing_stage,
-                        quality_score, readability_score, bias_score, credibility_score,
-                        summary, sentiment_label, sentiment_score, sentiment_confidence,
-                        created_at, updated_at
+                        id, title, content, url,
+                        published_at, source_domain, category,
+                        language_code, feed_id, content_hash,
+                        processing_status, created_at, updated_at,
+                        summary, quality_score, sentiment_label, sentiment_score
                     FROM {self.schema}.articles
                     WHERE id = %s
                 """, (article_id,))
