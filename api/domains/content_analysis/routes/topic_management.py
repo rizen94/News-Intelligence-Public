@@ -404,25 +404,34 @@ async def update_topic(topic_id: int, topic_update: TopicUpdate):
 # Article-Topic Operations
 # ============================================================================
 
-@router.get("/articles/{article_id}/topics")
-async def get_article_topics(article_id: int):
-    """Get all topics assigned to an article"""
+@router.get("/{domain}/articles/{article_id}/topics")
+async def get_domain_article_topics(
+    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    article_id: int = Path(..., description="Article ID")
+):
+    """Get all topics assigned to an article in a specific domain"""
     try:
+        # Validate domain
+        if not validate_domain(domain):
+            raise HTTPException(status_code=400, detail=f"Invalid or inactive domain: {domain}")
+        
+        schema = domain.replace('-', '_')
+        
         conn = get_db_connection()
         if not conn:
             raise HTTPException(status_code=500, detail="Database connection failed")
         
         try:
             with conn.cursor() as cur:
-                cur.execute("""
+                cur.execute(f"""
                     SELECT 
                         ata.id as assignment_id,
                         t.id, t.name, t.category, t.description,
                         ata.confidence_score, ata.relevance_score,
                         ata.is_validated, ata.is_correct, ata.feedback_notes,
                         ata.assignment_method, ata.created_at
-                    FROM article_topic_assignments ata
-                    JOIN topics t ON ata.topic_id = t.id
+                    FROM {schema}.article_topic_assignments ata
+                    JOIN {schema}.topics t ON ata.topic_id = t.id
                     WHERE ata.article_id = %s
                     ORDER BY ata.confidence_score DESC
                 """, (article_id,))
@@ -449,7 +458,8 @@ async def get_article_topics(article_id: int):
                     "data": {
                         "article_id": article_id,
                         "topics": topics,
-                        "count": len(topics)
+                        "count": len(topics),
+                        "domain": domain
                     }
                 }
                 
