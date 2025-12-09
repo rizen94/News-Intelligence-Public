@@ -3,7 +3,7 @@ Domain 3: Storyline Management Routes
 Handles storyline creation, timeline generation, and RAG-enhanced analysis
 """
 
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Path, Query
 from typing import List, Dict, Any, Optional
 import asyncio
 from datetime import datetime, timedelta
@@ -11,11 +11,12 @@ import logging
 
 from shared.services.llm_service import llm_service, TaskType
 from shared.database.connection import get_db_connection
+from shared.services.domain_aware_service import validate_domain
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
-    prefix="/api/v4/storyline-management",
+    prefix="/api/v4",
     tags=["Storyline Management"],
     responses={404: {"description": "Not found"}}
 )
@@ -46,20 +47,28 @@ async def health_check():
             "error": str(e)
         }
 
-@router.get("/storylines")
-async def get_storylines():
-    """Get all storylines"""
+@router.get("/{domain}/storylines")
+async def get_domain_storylines(
+    domain: str = Path(..., regex="^(politics|finance|science-tech)$")
+):
+    """Get all storylines for a specific domain"""
     try:
+        # Validate domain
+        if not validate_domain(domain):
+            raise HTTPException(status_code=400, detail=f"Invalid or inactive domain: {domain}")
+        
+        schema = domain.replace('-', '_')
+        
         conn = get_db_connection()
         if not conn:
             raise HTTPException(status_code=500, detail="Database connection failed")
         
         try:
             with conn.cursor() as cur:
-                cur.execute("""
+                cur.execute(f"""
                     SELECT id, title, description, created_at, updated_at,
                              status
-                    FROM storylines 
+                    FROM {schema}.storylines 
                     ORDER BY updated_at DESC
                 """)
                 
@@ -76,7 +85,7 @@ async def get_storylines():
                 
                 return {
                     "success": True,
-                    "data": {"storylines": storylines},
+                    "data": {"storylines": storylines, "domain": domain},
                     "count": len(storylines),
                     "timestamp": datetime.now().isoformat()
                 }
@@ -88,18 +97,27 @@ async def get_storylines():
         logger.error(f"Error fetching storylines: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/storylines")
-async def create_storyline(storyline_data: Dict[str, Any]):
-    """Create a new storyline"""
+@router.post("/{domain}/storylines")
+async def create_domain_storyline(
+    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    storyline_data: Dict[str, Any] = None
+):
+    """Create a new storyline in a specific domain"""
     try:
+        # Validate domain
+        if not validate_domain(domain):
+            raise HTTPException(status_code=400, detail=f"Invalid or inactive domain: {domain}")
+        
+        schema = domain.replace('-', '_')
+        
         conn = get_db_connection()
         if not conn:
             raise HTTPException(status_code=500, detail="Database connection failed")
         
         try:
             with conn.cursor() as cur:
-                cur.execute("""
-                    INSERT INTO storylines (title, description, created_at, updated_at, status)
+                cur.execute(f"""
+                    INSERT INTO {schema}.storylines (title, description, created_at, updated_at, status)
                     VALUES (%s, %s, %s, %s, %s)
                     RETURNING id
                 """, (
@@ -119,7 +137,8 @@ async def create_storyline(storyline_data: Dict[str, Any]):
                         "storyline_id": storyline_id,
                         "title": storyline_data.get("title"),
                         "description": storyline_data.get("description", ""),
-                        "status": "active"
+                        "status": "active",
+                        "domain": domain
                     },
                     "message": "Storyline created successfully",
                     "timestamp": datetime.now().isoformat()
@@ -132,18 +151,28 @@ async def create_storyline(storyline_data: Dict[str, Any]):
         logger.error(f"Error creating storyline: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.put("/storylines/{storyline_id}")
-async def update_storyline(storyline_id: int, storyline_data: Dict[str, Any]):
-    """Update an existing storyline"""
+@router.put("/{domain}/storylines/{storyline_id}")
+async def update_domain_storyline(
+    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    storyline_id: int = Path(..., description="Storyline ID"),
+    storyline_data: Dict[str, Any] = None
+):
+    """Update an existing storyline in a specific domain"""
     try:
+        # Validate domain
+        if not validate_domain(domain):
+            raise HTTPException(status_code=400, detail=f"Invalid or inactive domain: {domain}")
+        
+        schema = domain.replace('-', '_')
+        
         conn = get_db_connection()
         if not conn:
             raise HTTPException(status_code=500, detail="Database connection failed")
         
         try:
             with conn.cursor() as cur:
-                # Check if storyline exists
-                cur.execute("SELECT id FROM storylines WHERE id = %s", (storyline_id,))
+                # Check if storyline exists in domain schema
+                cur.execute(f"SELECT id FROM {schema}.storylines WHERE id = %s", (storyline_id,))
                 if not cur.fetchone():
                     raise HTTPException(status_code=404, detail="Storyline not found")
                 
