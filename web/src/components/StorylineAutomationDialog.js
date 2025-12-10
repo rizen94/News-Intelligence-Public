@@ -69,7 +69,7 @@ const StorylineAutomationDialog = ({
     try {
       setLoading(true);
       setError(null);
-      const response = await apiService.getAutomationSettings(storylineId);
+      const response = await apiService.getAutomationSettings(storylineId, domain);
 
       if (response.success) {
         const data = response.data;
@@ -119,7 +119,7 @@ const StorylineAutomationDialog = ({
         },
       };
 
-      const response = await apiService.updateAutomationSettings(storylineId, updateData);
+      const response = await apiService.updateAutomationSettings(storylineId, updateData, domain);
 
       if (response && response.success) {
         setSuccess('Automation settings updated successfully');
