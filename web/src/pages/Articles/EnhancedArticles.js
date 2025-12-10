@@ -60,8 +60,10 @@ import React, { useState, useEffect, useCallback } from 'react';
 import ArticleReader from '../../components/ArticleReader';
 import { apiService } from '../../services/apiService';
 import { calculateReadingTime, formatReadingTime, getArticleReadingTime } from '../../utils/articleUtils';
+import { useDomain } from '../../contexts/DomainContext';
 
 const EnhancedArticles = () => {
+  const { domain } = useDomain();
   // Topic clustering state
   const [topics, setTopics] = useState([]);
   const [selectedTopic, setSelectedTopic] = useState(null);
@@ -106,14 +108,14 @@ const EnhancedArticles = () => {
 
   const loadStorylines = useCallback(async() => {
     try {
-      const response = await apiService.getStorylines();
+      const response = await apiService.getStorylines({}, domain);
       if (response.success) {
         setStorylines(response.data.storylines || []);
       }
     } catch (error) {
       console.error('Failed to load storylines:', error);
     }
-  }, []);
+  }, [domain]);
 
   const loadArticles = useCallback(async() => {
     try {
@@ -125,7 +127,7 @@ const EnhancedArticles = () => {
         search: searchQuery,
         source_domain: filterSource,
         sort: sortBy,
-      });
+      }, domain);
 
       if (response.success) {
         // Handle both response structures: {data: {articles, total}} or {articles, total}
@@ -146,7 +148,7 @@ const EnhancedArticles = () => {
     } finally {
       setLoading(false);
     }
-  }, [page, searchQuery, filterSource, sortBy]);
+  }, [page, searchQuery, filterSource, sortBy, domain]);
 
   useEffect(() => {
     loadArticles();

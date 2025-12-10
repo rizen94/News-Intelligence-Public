@@ -7,69 +7,79 @@ import {
 } from 'react-router-dom';
 import './App.css';
 
-// Import pages
-import Dashboard from './pages/Dashboard/EnhancedDashboard';
-import Articles from './pages/Articles/EnhancedArticles';
-import ArticleDeduplicationManager from './pages/Articles/ArticleDeduplicationManager';
-import Storylines from './pages/Storylines/EnhancedStorylines';
-import StorylineDetail from './pages/Storylines/StorylineDetail';
-import ArticleDetail from './pages/Articles/ArticleDetail';
-import RSSFeeds from './pages/RSSFeeds/EnhancedRSSFeeds';
-import RSSDuplicateManager from './pages/RSSFeeds/RSSDuplicateManager';
+// Import domain-agnostic pages
 import Monitoring from './pages/Monitoring/EnhancedMonitoring';
-import Intelligence from './pages/Intelligence/IntelligenceHub';
-import Topics from './pages/Topics/Topics';
-import TopicArticles from './pages/Topics/TopicArticles';
-import TopicManagement from './pages/Topics/TopicManagement';
 import Settings from './pages/Settings/Settings';
+
+// Import domain layout
+import DomainLayout from './components/shared/DomainLayout/DomainLayout';
+import LegacyRedirect from './components/shared/LegacyRedirect/LegacyRedirect';
 
 // Import components
 import Navigation from './components/Navigation/Navigation';
 import Header from './components/Header/Header';
 import Footer from './components/Footer/Footer';
 import StorylineManagementTest from './components/StorylineManagementTest';
+import { DomainProvider } from './contexts/DomainContext';
 
 function App() {
   return (
-    <Router>
-      <div className='App'>
-        <Header />
-        <div className='app-container'>
-          <Navigation />
-          <main className='main-content'>
+    <DomainProvider>
+      <Router>
+        <div className='App'>
+          <Header />
+          <div className='app-container'>
+            <Navigation />
+            <main className='main-content'>
             <Routes>
-              <Route path='/' element={<Navigate to='/dashboard' replace />} />
-              <Route path='/dashboard' element={<Dashboard />} />
-              <Route path='/articles' element={<Articles />} />
-              <Route
-                path='/articles/duplicates'
-                element={<ArticleDeduplicationManager />}
-              />
-              <Route path='/storylines' element={<Storylines />} />
-              <Route path='/storylines/:id' element={<StorylineDetail />} />
-              <Route path='/articles/:id' element={<ArticleDetail />} />
-              <Route path='/rss-feeds' element={<RSSFeeds />} />
-              <Route
-                path='/rss-feeds/duplicates'
-                element={<RSSDuplicateManager />}
-              />
+              {/* Root redirect to default domain */}
+              <Route path='/' element={<Navigate to='/politics/dashboard' replace />} />
+              
+              {/* Domain-agnostic routes (shared across all domains) */}
               <Route path='/monitoring' element={<Monitoring />} />
-              <Route path='/intelligence' element={<Intelligence />} />
-
-              <Route path='/topics' element={<Topics />} />
-              <Route path='/topics/manage' element={<Navigate to='/topics' replace />} />
-              <Route path='/topics/:topicName' element={<TopicArticles />} />
               <Route path='/settings' element={<Settings />} />
               <Route
                 path='/test-storyline-management'
                 element={<StorylineManagementTest />}
               />
+              
+              {/* Legacy route redirects (backward compatibility) */}
+              <Route path='/dashboard' element={<LegacyRedirect to='/dashboard' />} />
+              <Route path='/articles' element={<LegacyRedirect to='/articles' />} />
+              <Route 
+                path='/articles/duplicates' 
+                element={<LegacyRedirect to='/articles/duplicates' />} 
+              />
+              <Route 
+                path='/articles/:id' 
+                element={<LegacyRedirect to='/articles/:id' preserveParams />} 
+              />
+              <Route path='/storylines' element={<LegacyRedirect to='/storylines' />} />
+              <Route 
+                path='/storylines/:id' 
+                element={<LegacyRedirect to='/storylines/:id' preserveParams />} 
+              />
+              <Route path='/topics' element={<LegacyRedirect to='/topics' />} />
+              <Route 
+                path='/topics/:topicName' 
+                element={<LegacyRedirect to='/topics/:topicName' preserveParams />} 
+              />
+              <Route path='/rss-feeds' element={<LegacyRedirect to='/rss-feeds' />} />
+              <Route 
+                path='/rss-feeds/duplicates' 
+                element={<LegacyRedirect to='/rss-feeds/duplicates' />} 
+              />
+              <Route path='/intelligence' element={<LegacyRedirect to='/intelligence' />} />
+              
+              {/* Domain-specific routes */}
+              <Route path='/:domain/*' element={<DomainLayout />} />
             </Routes>
           </main>
         </div>
         <Footer />
       </div>
     </Router>
+    </DomainProvider>
   );
 }
 

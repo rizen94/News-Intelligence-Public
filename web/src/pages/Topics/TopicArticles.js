@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { useDomainNavigation } from '../../hooks/useDomainNavigation';
 import {
   Box,
   Card,
@@ -41,6 +42,7 @@ import { apiService } from '../../services/apiService';
 const TopicArticles = () => {
   const { topicName } = useParams();
   const navigate = useNavigate();
+  const { navigateToDomain } = useDomainNavigation();
   const [articles, setArticles] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -152,7 +154,7 @@ const TopicArticles = () => {
         <Alert severity='error' sx={{ mb: 3 }}>
           {error}
         </Alert>
-        <Button onClick={() => navigate('/topics')} startIcon={<ArrowBack />}>
+        <Button onClick={() => navigateToDomain('/topics')} startIcon={<ArrowBack />}>
           Back to Topics
         </Button>
       </Box>
@@ -169,7 +171,7 @@ const TopicArticles = () => {
         mb={3}
       >
         <Box display='flex' alignItems='center' gap={2}>
-          <IconButton onClick={() => navigate('/topics')} color='primary'>
+          <IconButton onClick={() => navigateToDomain('/topics')} color='primary'>
             <ArrowBack />
           </IconButton>
           <Box>
@@ -342,7 +344,7 @@ const TopicArticles = () => {
       <Box display='flex' justifyContent='center' mt={4}>
         <Button
           variant='contained'
-          onClick={() => navigate('/topics')}
+          onClick={() => navigateToDomain('/topics')}
           startIcon={<ArrowBack />}
         >
           Back to Topics

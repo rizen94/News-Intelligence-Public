@@ -23,6 +23,35 @@
   font-size: 1.2em;
 }
 
+.nav-domain-indicator {
+  margin-top: 12px;
+}
+
+.nav-domain-badge {
+  display: inline-block;
+  padding: 4px 12px;
+  background: #3498db;
+  color: white;
+  border-radius: 12px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* Domain-specific badge colors */
+.nav-domain-badge[data-domain="politics"] {
+  background: #1976d2;
+}
+
+.nav-domain-badge[data-domain="finance"] {
+  background: #2e7d32;
+}
+
+.nav-domain-badge[data-domain="science-tech"] {
+  background: #7b1fa2;
+}
+
 .nav-list {
   list-style: none;
   padding: 0;

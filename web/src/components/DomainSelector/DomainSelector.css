@@ -1,0 +1,25 @@
+.domain-selector {
+  margin-bottom: 16px;
+}
+
+.domain-selector-chips {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.domain-selector .MuiTabs-root {
+  min-height: 40px;
+}
+
+.domain-selector .MuiTab-root {
+  text-transform: none;
+  font-weight: 500;
+}
+
+.domain-selector .MuiTab-root.Mui-selected {
+  font-weight: 600;
+}
+
+

@@ -142,3 +142,4 @@ BEGIN
     RAISE NOTICE 'Migration 124: Missing timestamp columns added';
 END $$;
 
+

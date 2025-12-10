@@ -25,21 +25,30 @@ router = APIRouter(
 # Note: StorylineAutomationService will need domain context per request
 
 
-@router.get("/storylines/{storyline_id}/automation/settings")
-async def get_automation_settings(storyline_id: int):
-    """Get automation settings for a storyline"""
+@router.get("/{domain}/storylines/{storyline_id}/automation/settings")
+async def get_domain_automation_settings(
+    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    storyline_id: int = Path(..., description="Storyline ID")
+):
+    """Get automation settings for a storyline in a specific domain"""
     try:
+        # Validate domain
+        if not validate_domain(domain):
+            raise HTTPException(status_code=400, detail=f"Invalid or inactive domain: {domain}")
+        
+        schema = domain.replace('-', '_')
+        
         conn = get_db_connection()
         if not conn:
             raise HTTPException(status_code=500, detail="Database connection failed")
         
         try:
             with conn.cursor() as cur:
-                cur.execute("""
+                cur.execute(f"""
                     SELECT automation_enabled, automation_mode, automation_settings,
                            search_keywords, search_entities, search_exclude_keywords,
                            automation_frequency_hours, last_automation_run
-                    FROM storylines
+                    FROM {schema}.storylines
                     WHERE id = %s
                 """, (storyline_id,))
                 
@@ -69,7 +78,8 @@ async def get_automation_settings(storyline_id: int):
                         "search_entities": search_entities or [],
                         "search_exclude_keywords": search_exclude_keywords or [],
                         "frequency_hours": frequency_hours or 24,
-                        "last_automation_run": last_run.isoformat() if last_run else None
+                        "last_automation_run": last_run.isoformat() if last_run else None,
+                        "domain": domain
                     },
                     "storyline_id": storyline_id
                 }
@@ -84,18 +94,28 @@ async def get_automation_settings(storyline_id: int):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.put("/storylines/{storyline_id}/automation/settings")
-async def update_automation_settings(storyline_id: int, settings: Dict[str, Any]):
-    """Update automation settings for a storyline"""
+@router.put("/{domain}/storylines/{storyline_id}/automation/settings")
+async def update_domain_automation_settings(
+    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    storyline_id: int = Path(..., description="Storyline ID"),
+    settings: Dict[str, Any] = Body(...)
+):
+    """Update automation settings for a storyline in a specific domain"""
     try:
+        # Validate domain
+        if not validate_domain(domain):
+            raise HTTPException(status_code=400, detail=f"Invalid or inactive domain: {domain}")
+        
+        schema = domain.replace('-', '_')
+        
         conn = get_db_connection()
         if not conn:
             raise HTTPException(status_code=500, detail="Database connection failed")
         
         try:
             with conn.cursor() as cur:
-                # Verify storyline exists
-                cur.execute("SELECT id FROM storylines WHERE id = %s", (storyline_id,))
+                # Verify storyline exists in domain schema
+                cur.execute(f"SELECT id FROM {schema}.storylines WHERE id = %s", (storyline_id,))
                 if not cur.fetchone():
                     raise HTTPException(status_code=404, detail="Storyline not found")
                 
@@ -108,10 +128,10 @@ async def update_automation_settings(storyline_id: int, settings: Dict[str, Any]
                 search_exclude_keywords = settings.get("search_exclude_keywords", [])
                 frequency_hours = settings.get("frequency_hours", 24)
                 
-                # Update storyline
+                # Update storyline in domain schema
                 # Use psycopg2.extras.Json for proper JSONB handling
-                cur.execute("""
-                    UPDATE storylines
+                cur.execute(f"""
+                    UPDATE {schema}.storylines
                     SET automation_enabled = %s,
                         automation_mode = %s,
                         automation_settings = %s,
@@ -151,10 +171,22 @@ async def update_automation_settings(storyline_id: int, settings: Dict[str, Any]
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/storylines/{storyline_id}/automation/discover")
-async def discover_articles(storyline_id: int, force_refresh: bool = False):
-    """Trigger RAG-enhanced article discovery for a storyline"""
+@router.post("/{domain}/storylines/{storyline_id}/automation/discover")
+async def discover_domain_articles(
+    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    storyline_id: int = Path(..., description="Storyline ID"),
+    force_refresh: bool = Query(False)
+):
+    """Trigger RAG-enhanced article discovery for a storyline in a specific domain"""
     try:
+        # Validate domain
+        if not validate_domain(domain):
+            raise HTTPException(status_code=400, detail=f"Invalid or inactive domain: {domain}")
+        
+        # Note: StorylineAutomationService will need domain context
+        # For now, create service with domain context
+        automation_service = StorylineAutomationService(domain=domain)
+        
         result = await automation_service.discover_articles_for_storyline(
             storyline_id,
             force_refresh=force_refresh
@@ -166,10 +198,20 @@ async def discover_articles(storyline_id: int, force_refresh: bool = False):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/storylines/{storyline_id}/automation/suggestions")
-async def get_article_suggestions(storyline_id: int, status: Optional[str] = None):
-    """Get pending article suggestions for a storyline"""
+@router.get("/{domain}/storylines/{storyline_id}/automation/suggestions")
+async def get_domain_article_suggestions(
+    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    storyline_id: int = Path(..., description="Storyline ID"),
+    status: Optional[str] = Query(None)
+):
+    """Get pending article suggestions for a storyline in a specific domain"""
     try:
+        # Validate domain
+        if not validate_domain(domain):
+            raise HTTPException(status_code=400, detail=f"Invalid or inactive domain: {domain}")
+        
+        schema = domain.replace('-', '_')
+        
         conn = get_db_connection()
         if not conn:
             raise HTTPException(status_code=500, detail="Database connection failed")
@@ -177,15 +219,17 @@ async def get_article_suggestions(storyline_id: int, status: Optional[str] = Non
         try:
             with conn.cursor() as cur:
                 # Build query
-                where_clause = "WHERE storyline_id = %s"
+                where_clause = "WHERE s.storyline_id = %s"
                 params = [storyline_id]
                 
                 if status:
-                    where_clause += " AND status = %s"
+                    where_clause += " AND s.status = %s"
                     params.append(status)
                 else:
-                    where_clause += " AND status = 'pending'"
+                    where_clause += " AND s.status = 'pending'"
                 
+                # Note: storyline_article_suggestions may be in public schema for now
+                # TODO: Move to domain schemas if needed
                 cur.execute(f"""
                     SELECT s.id, s.article_id, s.relevance_score, s.semantic_score,
                            s.keyword_score, s.quality_score, s.combined_score,
@@ -193,7 +237,7 @@ async def get_article_suggestions(storyline_id: int, status: Optional[str] = Non
                            s.suggested_at, s.expires_at,
                            a.title, a.summary, a.url, a.source_domain, a.published_at
                     FROM storyline_article_suggestions s
-                    JOIN articles a ON s.article_id = a.id
+                    JOIN {schema}.articles a ON s.article_id = a.id
                     {where_clause}
                     ORDER BY s.combined_score DESC, s.suggested_at DESC
                     LIMIT 50
@@ -242,17 +286,27 @@ async def get_article_suggestions(storyline_id: int, status: Optional[str] = Non
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/storylines/{storyline_id}/automation/suggestions/{suggestion_id}/approve")
-async def approve_suggestion(storyline_id: int, suggestion_id: int):
-    """Approve a suggested article and add it to the storyline"""
+@router.post("/{domain}/storylines/{storyline_id}/automation/suggestions/{suggestion_id}/approve")
+async def approve_domain_suggestion(
+    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    storyline_id: int = Path(..., description="Storyline ID"),
+    suggestion_id: int = Path(..., description="Suggestion ID")
+):
+    """Approve a suggested article and add it to the storyline in a specific domain"""
     try:
+        # Validate domain
+        if not validate_domain(domain):
+            raise HTTPException(status_code=400, detail=f"Invalid or inactive domain: {domain}")
+        
+        schema = domain.replace('-', '_')
+        
         conn = get_db_connection()
         if not conn:
             raise HTTPException(status_code=500, detail="Database connection failed")
         
         try:
             with conn.cursor() as cur:
-                # Get suggestion
+                # Get suggestion (storyline_article_suggestions may be in public schema)
                 cur.execute("""
                     SELECT article_id FROM storyline_article_suggestions
                     WHERE id = %s AND storyline_id = %s AND status = 'pending'
@@ -264,9 +318,9 @@ async def approve_suggestion(storyline_id: int, suggestion_id: int):
                 
                 article_id = result[0]
                 
-                # Add article to storyline (reuse existing endpoint logic)
-                cur.execute("""
-                    INSERT INTO storyline_articles (storyline_id, article_id, added_at, relevance_score)
+                # Add article to storyline in domain schema
+                cur.execute(f"""
+                    INSERT INTO {schema}.storyline_articles (storyline_id, article_id, added_at, relevance_score)
                     VALUES (%s, %s, %s, %s)
                     ON CONFLICT (storyline_id, article_id) DO NOTHING
                 """, (storyline_id, article_id, datetime.now(), 0.7))
@@ -281,11 +335,11 @@ async def approve_suggestion(storyline_id: int, suggestion_id: int):
                     WHERE id = %s
                 """, (datetime.now(), suggestion_id))
                 
-                # Update storyline article count
-                cur.execute("""
-                    UPDATE storylines
+                # Update storyline article count in domain schema
+                cur.execute(f"""
+                    UPDATE {schema}.storylines
                     SET article_count = (
-                        SELECT COUNT(*) FROM storyline_articles WHERE storyline_id = %s
+                        SELECT COUNT(*) FROM {schema}.storyline_articles WHERE storyline_id = %s
                     ),
                     updated_at = %s
                     WHERE id = %s
@@ -311,16 +365,26 @@ async def approve_suggestion(storyline_id: int, suggestion_id: int):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/storylines/{storyline_id}/automation/suggestions/{suggestion_id}/reject")
-async def reject_suggestion(storyline_id: int, suggestion_id: int, reason: Optional[str] = None):
-    """Reject a suggested article"""
+@router.post("/{domain}/storylines/{storyline_id}/automation/suggestions/{suggestion_id}/reject")
+async def reject_domain_suggestion(
+    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    storyline_id: int = Path(..., description="Storyline ID"),
+    suggestion_id: int = Path(..., description="Suggestion ID"),
+    reason: Optional[str] = Body(None)
+):
+    """Reject a suggested article in a specific domain"""
     try:
+        # Validate domain
+        if not validate_domain(domain):
+            raise HTTPException(status_code=400, detail=f"Invalid or inactive domain: {domain}")
+        
         conn = get_db_connection()
         if not conn:
             raise HTTPException(status_code=500, detail="Database connection failed")
         
         try:
             with conn.cursor() as cur:
+                # Update suggestion status (storyline_article_suggestions may be in public schema)
                 cur.execute("""
                     UPDATE storyline_article_suggestions
                     SET status = 'rejected', reviewed_at = %s, review_notes = %s

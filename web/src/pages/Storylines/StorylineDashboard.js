@@ -55,9 +55,11 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import { apiService, api } from '../../services/apiService.ts';
+import { useDomainNavigation } from '../../hooks/useDomainNavigation';
 
 const StorylineDashboard = () => {
   const navigate = useNavigate();
+  const { navigateToDomain } = useDomainNavigation();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [storylines, setStorylines] = useState([]);
@@ -131,15 +133,15 @@ const StorylineDashboard = () => {
   }, [loadDashboardData]);
 
   const handleCreateStoryline = () => {
-    navigate('/storylines/new');
+    navigateToDomain('/storylines/new');
   };
 
   const handleViewStoryline = storylineId => {
-    navigate(`/storylines/${storylineId}`);
+    navigateToDomain(`/storylines/${storylineId}`);
   };
 
   const handleViewArticle = articleId => {
-    navigate(`/articles/${articleId}`);
+    navigateToDomain(`/articles/${articleId}`);
   };
 
   const formatDate = dateString => {
@@ -300,7 +302,7 @@ const StorylineDashboard = () => {
                     <Button
                       variant='outlined'
                       startIcon={<Article />}
-                      onClick={() => navigate('/articles')}
+                      onClick={() => navigateToDomain('/articles')}
                     >
                       Browse Articles
                     </Button>
@@ -531,7 +533,7 @@ const StorylineDashboard = () => {
                       <Article sx={{ mr: 1, verticalAlign: 'middle' }} />
                       Recent Articles
                     </Typography>
-                    <Button size='small' onClick={() => navigate('/articles')}>
+                    <Button size='small' onClick={() => navigateToDomain('/articles')}>
                       View All
                     </Button>
                   </Box>
@@ -612,7 +614,7 @@ const StorylineDashboard = () => {
                           size='small'
                           color='primary'
                           variant='outlined'
-                          onClick={() => navigate('/intelligence')}
+                          onClick={() => navigateToDomain('/intelligence')}
                         />
                       ))}
                     </Box>

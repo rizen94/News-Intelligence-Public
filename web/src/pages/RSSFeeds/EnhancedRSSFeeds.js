@@ -65,8 +65,10 @@ import {
 import React, { useState, useEffect, useCallback } from 'react';
 
 import { apiService } from '../../services/apiService';
+import { useDomain } from '../../contexts/DomainContext';
 
 const EnhancedRSSFeeds = () => {
+  const { domain } = useDomain();
   const [feeds, setFeeds] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -100,7 +102,7 @@ const EnhancedRSSFeeds = () => {
         status: filterStatus,
         category: filterCategory,
         sort: sortBy,
-      });
+      }, domain);
 
       if (response.success) {
         const items = (response.data.feeds || []).map(f => ({

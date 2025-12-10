@@ -20,10 +20,14 @@ import { useParams, useNavigate } from 'react-router-dom';
 
 import { apiService } from '../../services/apiService.ts';
 import ArticleTopics from '../../components/ArticleTopics/ArticleTopics';
+import { useDomainNavigation } from '../../hooks/useDomainNavigation';
+import { useDomain } from '../../contexts/DomainContext';
 
 const ArticleDetail = () => {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { navigateToDomain } = useDomainNavigation();
+  const { domain } = useDomain();
   const [article, setArticle] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -38,7 +42,7 @@ const ArticleDetail = () => {
     try {
       setLoading(true);
       setError(null);
-      const response = await apiService.getArticle(id);
+      const response = await apiService.getArticle(id, domain);
 
       if (response.success) {
         setArticle(response.data);
@@ -97,7 +101,7 @@ const ArticleDetail = () => {
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 3 }}>
         <Button
           startIcon={<ArrowBackIcon />}
-          onClick={() => navigate('/articles')}
+          onClick={() => navigateToDomain('/articles')}
         >
           Back to Articles
         </Button>

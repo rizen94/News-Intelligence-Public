@@ -27,6 +27,7 @@ import {
   Refresh as RefreshIcon,
 } from '@mui/icons-material';
 import { apiService } from '../services/apiService';
+import { useDomain } from '../contexts/DomainContext';
 
 const ArticleSuggestionsDialog = ({
   open,
@@ -34,6 +35,7 @@ const ArticleSuggestionsDialog = ({
   storylineId,
   onArticleAdded,
 }) => {
+  const { domain } = useDomain();
   const [loading, setLoading] = useState(false);
   const [suggestions, setSuggestions] = useState([]);
   const [processing, setProcessing] = useState(new Set());
@@ -64,7 +66,7 @@ const ArticleSuggestionsDialog = ({
   const handleApprove = async(suggestionId, articleId) => {
     try {
       setProcessing((prev) => new Set(prev).add(suggestionId));
-      const response = await apiService.approveSuggestion(storylineId, suggestionId);
+      const response = await apiService.approveSuggestion(storylineId, suggestionId, domain);
 
       if (response && response.success) {
         setSuggestions((prev) => prev.filter((s) => s.suggestion_id !== suggestionId));
@@ -94,7 +96,7 @@ const ArticleSuggestionsDialog = ({
   const handleReject = async(suggestionId) => {
     try {
       setProcessing((prev) => new Set(prev).add(suggestionId));
-      const response = await apiService.rejectSuggestion(storylineId, suggestionId, 'Not relevant');
+      const response = await apiService.rejectSuggestion(storylineId, suggestionId, 'Not relevant', domain);
 
       if (response && response.success) {
         setSuggestions((prev) => prev.filter((s) => s.suggestion_id !== suggestionId));
@@ -122,7 +124,7 @@ const ArticleSuggestionsDialog = ({
     try {
       setLoading(true);
       setDiscoverStatus({ message: 'Finding articles...', severity: 'info' });
-      const response = await apiService.discoverArticles(storylineId, true);
+      const response = await apiService.discoverArticles(storylineId, true, domain);
 
       if (response && response.success) {
         const message = `Found ${response.articles_found || 0} articles. ${response.articles_suggested || 0} added to suggestions.`;

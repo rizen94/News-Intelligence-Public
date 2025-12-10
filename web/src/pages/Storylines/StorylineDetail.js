@@ -56,10 +56,14 @@ import { apiService } from '../../services/apiService.ts';
 import StorylineManagementDialog from '../../components/StorylineManagementDialog';
 import StorylineAutomationDialog from '../../components/StorylineAutomationDialog';
 import ArticleSuggestionsDialog from '../../components/ArticleSuggestionsDialog';
+import { useDomainNavigation } from '../../hooks/useDomainNavigation';
+import { useDomain } from '../../contexts/DomainContext';
 
 const StorylineDetail = () => {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { navigateToDomain } = useDomainNavigation();
+  const { domain } = useDomain();
   const [storyline, setStoryline] = useState(null);
   const [articles, setArticles] = useState([]);
   const [timeline, setTimeline] = useState([]);
@@ -91,7 +95,7 @@ const StorylineDetail = () => {
       setError(null);
 
       console.log('Loading storyline with ID:', id);
-      const storylineResponse = await apiService.getStoryline(id);
+      const storylineResponse = await apiService.getStoryline(id, domain);
       console.log('Storyline response:', storylineResponse);
       console.log('Response success:', storylineResponse.success);
       console.log('Response data:', storylineResponse.data);
@@ -165,7 +169,7 @@ const StorylineDetail = () => {
   const loadTimeline = async() => {
     try {
       setTimelineLoading(true);
-      const timelineResponse = await apiService.getStorylineTimeline(id);
+      const timelineResponse = await apiService.getStorylineTimeline(id, domain);
 
       if (timelineResponse.success) {
         // First, try structured timeline events from database
@@ -202,6 +206,7 @@ const StorylineDetail = () => {
         id,
         100,
         searchTerm || undefined,
+        domain,
       );
       if (response.success) {
         setAvailableArticles(response.data.articles || []);
@@ -221,6 +226,7 @@ const StorylineDetail = () => {
       const response = await apiService.removeArticleFromStoryline(
         id,
         articleId,
+        domain,
       );
       if (response.success) {
         // Reload storyline to get updated article count and list
@@ -241,7 +247,7 @@ const StorylineDetail = () => {
     try {
       setAddArticlesLoading(true);
       const promises = selectedArticles.map(articleId =>
-        apiService.addArticleToStoryline(id, articleId),
+        apiService.addArticleToStoryline(id, articleId, domain),
       );
 
       await Promise.all(promises);
@@ -263,7 +269,7 @@ const StorylineDetail = () => {
     try {
       setAnalyzing(true);
       setError(null);
-      const response = await apiService.analyzeStoryline(id);
+      const response = await apiService.analyzeStoryline(id, domain);
       if (response.success) {
         // Show success message
         setError(null);
@@ -277,7 +283,7 @@ const StorylineDetail = () => {
         const pollInterval = setInterval(async() => {
           attempts++;
           try {
-            const response = await apiService.getStoryline(id);
+            const response = await apiService.getStoryline(id, domain);
             if (
               response.success &&
               response.data?.storyline?.analysis_summary
@@ -373,7 +379,7 @@ const StorylineDetail = () => {
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 3 }}>
         <Button
           startIcon={<ArrowBackIcon />}
-          onClick={() => navigate('/storylines')}
+          onClick={() => navigateToDomain('/storylines')}
         >
           Back to Storylines
         </Button>
@@ -654,7 +660,7 @@ const StorylineDetail = () => {
                               variant='h6'
                               sx={{ cursor: 'pointer' }}
                               onClick={() =>
-                                navigate(`/articles/${article.id}`)
+                                navigateToDomain(`/articles/${article.id}`)
                               }
                             >
                               {article.title || 'Untitled Article'}

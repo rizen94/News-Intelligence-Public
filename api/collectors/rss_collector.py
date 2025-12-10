@@ -220,7 +220,7 @@ def collect_rss_feeds() -> int:
     Collect articles from all active RSS feeds with deduplication
     Returns: Number of articles added
     """
-    logger.info("Starting RSS feed collection with deduplication...")
+    logger.info("Starting RSS feed collection with deduplication (v4.0 domain-aware)...")
     
     # Initialize deduplication manager if available
     dedup_manager = None
@@ -240,19 +240,36 @@ def collect_rss_feeds() -> int:
     try:
         cur = conn.cursor()
         
-        # Get all active RSS feeds
-        cur.execute("""
-            SELECT id, feed_name, feed_url, NULL as category 
-            FROM rss_feeds 
-            WHERE is_active = true
-        """)
-        feeds = cur.fetchall()
+        # Get all active RSS feeds from all domain schemas (v4.0)
+        # Query each domain schema: politics, finance, science_tech
+        feeds = []
+        domains = [
+            ('politics', 'politics'),
+            ('finance', 'finance'),
+            ('science-tech', 'science_tech')
+        ]
+        
+        for domain_key, schema_name in domains:
+            try:
+                cur.execute(f"""
+                    SELECT id, feed_name, feed_url, %s as domain_key
+                    FROM {schema_name}.rss_feeds 
+                    WHERE is_active = true
+                """, (domain_key,))
+                domain_feeds = cur.fetchall()
+                feeds.extend(domain_feeds)
+                logger.info(f"Found {len(domain_feeds)} active feeds in {domain_key} domain")
+            except Exception as e:
+                logger.warning(f"Error querying feeds from {schema_name} schema: {e}")
+                continue
         
         total_articles_added = 0
         total_duplicates_rejected = 0
         total_excluded = 0
         
-        for feed_id, feed_name, feed_url, feed_category in feeds:
+        for feed_id, feed_name, feed_url, domain_key in feeds:
+            # Determine schema name from domain_key
+            schema_name = domain_key.replace('-', '_') if domain_key else 'politics'
             logger.info(f"Processing feed: {feed_name} ({feed_url})")
             
             try:
@@ -291,9 +308,9 @@ def collect_rss_feeds() -> int:
                         else:
                             published_date = datetime.now()
                         
-                        # Check for duplicates before inserting
-                        cur.execute("""
-                            SELECT id FROM articles 
+                        # Check for duplicates before inserting (in domain schema)
+                        cur.execute(f"""
+                            SELECT id FROM {schema_name}.articles 
                             WHERE url = %s OR (title = %s AND source_domain = %s)
                         """, (url, title, feed_name))
                         
@@ -305,9 +322,9 @@ def collect_rss_feeds() -> int:
                         
                         # Per-article savepoint to avoid aborting whole transaction
                         cur.execute("SAVEPOINT sp_article")
-                        # Insert article (use canonical schema columns)
-                        cur.execute("""
-                            INSERT INTO articles
+                        # Insert article into domain schema (v4.0)
+                        cur.execute(f"""
+                            INSERT INTO {schema_name}.articles
                             (title, url, content, summary, published_at, created_at, source_domain)
                             VALUES (%s, %s, %s, %s, %s, %s, %s)
                         """, (
@@ -331,9 +348,9 @@ def collect_rss_feeds() -> int:
                             logger.warning(f"Failed to rollback to savepoint: {e2}")
                         continue
                 
-                # Update last fetched timestamp
-                cur.execute("""
-                    UPDATE rss_feeds 
+                # Update last fetched timestamp in domain schema
+                cur.execute(f"""
+                    UPDATE {schema_name}.rss_feeds 
                     SET last_fetched_at = NOW() 
                     WHERE id = %s
                 """, (feed_id,))
@@ -417,9 +434,27 @@ def collect_rss_feed(feed_url: str, feed_name: str = "Unknown") -> int:
                 else:
                     published_date = datetime.now()
                 
-                # Check for duplicates before inserting
+                # Determine domain for single feed collection (default to politics)
+                # Note: For single feed, we need to determine domain from feed_name or query all schemas
+                # For now, default to politics schema
+                schema_name = 'politics'
+                
+                # Try to find feed in any domain schema to determine correct schema
                 cur.execute("""
-                    SELECT id FROM articles 
+                    SELECT 'politics' as schema FROM politics.rss_feeds WHERE feed_url = %s
+                    UNION ALL
+                    SELECT 'finance' as schema FROM finance.rss_feeds WHERE feed_url = %s
+                    UNION ALL
+                    SELECT 'science_tech' as schema FROM science_tech.rss_feeds WHERE feed_url = %s
+                    LIMIT 1
+                """, (feed_url, feed_url, feed_url))
+                result = cur.fetchone()
+                if result:
+                    schema_name = result[0]
+                
+                # Check for duplicates before inserting (in domain schema)
+                cur.execute(f"""
+                    SELECT id FROM {schema_name}.articles 
                     WHERE url = %s OR (title = %s AND source_domain = %s)
                 """, (url, title, feed_name))
                 
@@ -428,8 +463,9 @@ def collect_rss_feed(feed_url: str, feed_name: str = "Unknown") -> int:
                     logger.debug(f"Skipping duplicate article: {title[:60]}...")
                     continue
                 
-                cur.execute("""
-                    INSERT INTO articles
+                # Insert article into domain schema (v4.0)
+                cur.execute(f"""
+                    INSERT INTO {schema_name}.articles
                     (title, url, content, summary, published_at, created_at, source_domain)
                     VALUES (%s, %s, %s, %s, %s, %s, %s)
                 """, (

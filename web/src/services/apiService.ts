@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { getCurrentDomain } from '../utils/domainHelper';
 
 const API_BASE_URL = 'http://localhost:8000';
 
@@ -42,8 +43,9 @@ export { api };
 
 export const apiService = {
   // Articles
-  getArticles: async(params: any = {}) => {
+  getArticles: async(params: any = {}, domain?: string) => {
     try {
+      const domainKey = domain || getCurrentDomain();
       // Don't set default hours - let the API return all articles by default
       // Only include hours if explicitly provided
       const requestParams: any = { ...params };
@@ -52,7 +54,7 @@ export const apiService = {
       }
       // Otherwise, don't include hours parameter so API returns all articles
       const response = await api.get(
-        '/api/v4/news-aggregation/articles/recent',
+        `/api/v4/${domainKey}/news-aggregation/articles/recent`,
         { params: requestParams },
       );
       return response.data;
@@ -62,9 +64,10 @@ export const apiService = {
     }
   },
 
-  getArticle: async(id: string) => {
+  getArticle: async(id: string, domain?: string) => {
     try {
-      const response = await api.get(`/api/v4/news-aggregation/articles/${id}`);
+      const domainKey = domain || getCurrentDomain();
+      const response = await api.get(`/api/v4/${domainKey}/news-aggregation/articles/${id}`);
       return response.data;
     } catch (error) {
       console.error('Failed to fetch article:', error);
@@ -73,9 +76,10 @@ export const apiService = {
   },
 
   // RSS Feeds
-  getRSSFeeds: async(params: any = {}) => {
+  getRSSFeeds: async(params: any = {}, domain?: string) => {
     try {
-      const response = await api.get('/api/v4/news-aggregation/rss-feeds', {
+      const domainKey = domain || getCurrentDomain();
+      const response = await api.get(`/api/v4/${domainKey}/rss-feeds`, {
         params,
       });
       return response.data;
@@ -85,10 +89,11 @@ export const apiService = {
     }
   },
 
-  updateRSSFeeds: async() => {
+  updateRSSFeeds: async(domain?: string) => {
     try {
+      const domainKey = domain || getCurrentDomain();
       const response = await api.post(
-        '/api/v4/news-aggregation/rss/collect-now',
+        `/api/v4/${domainKey}/rss-feeds/collect-now`,
       );
       return response.data;
     } catch (error) {
@@ -98,10 +103,11 @@ export const apiService = {
   },
 
   // Storylines
-  getStorylines: async(params: any = {}) => {
+  getStorylines: async(params: any = {}, domain?: string) => {
     try {
+      const domainKey = domain || getCurrentDomain();
       const response = await api.get(
-        '/api/v4/storyline-management/storylines',
+        `/api/v4/${domainKey}/storyline-management/storylines`,
         { params },
       );
       return response.data;
@@ -111,10 +117,11 @@ export const apiService = {
     }
   },
 
-  getStoryline: async(id: string) => {
+  getStoryline: async(id: string, domain?: string) => {
     try {
+      const domainKey = domain || getCurrentDomain();
       const response = await api.get(
-        `/api/v4/storyline-management/storylines/${id}`,
+        `/api/v4/${domainKey}/storyline-management/storylines/${id}`,
       );
       return response.data;
     } catch (error) {
@@ -123,10 +130,11 @@ export const apiService = {
     }
   },
 
-  getStorylineTimeline: async(id: string | number) => {
+  getStorylineTimeline: async(id: string | number, domain?: string) => {
     try {
+      const domainKey = domain || getCurrentDomain();
       const response = await api.get(
-        `/api/v4/storyline-management/storylines/${id}/timeline`,
+        `/api/v4/${domainKey}/storyline-management/storylines/${id}/timeline`,
       );
       return response.data;
     } catch (error) {
@@ -138,10 +146,11 @@ export const apiService = {
   createStoryline: async(storylineData: {
     title: string;
     description?: string;
-  }) => {
+  }, domain?: string) => {
     try {
+      const domainKey = domain || getCurrentDomain();
       const response = await api.post(
-        '/api/v4/storyline-management/storylines',
+        `/api/v4/${domainKey}/storyline-management/storylines`,
         storylineData,
       );
       return response.data;
@@ -154,10 +163,12 @@ export const apiService = {
   updateStoryline: async(
     id: string | number,
     storylineData: { title: string; description?: string; status?: string },
+    domain?: string,
   ) => {
     try {
+      const domainKey = domain || getCurrentDomain();
       const response = await api.put(
-        `/api/v4/storyline-management/storylines/${id}`,
+        `/api/v4/${domainKey}/storyline-management/storylines/${id}`,
         storylineData,
       );
       return response.data;
@@ -167,10 +178,11 @@ export const apiService = {
     }
   },
 
-  deleteStoryline: async(id: string | number) => {
+  deleteStoryline: async(id: string | number, domain?: string) => {
     try {
+      const domainKey = domain || getCurrentDomain();
       const response = await api.delete(
-        `/api/v4/storyline-management/storylines/${id}`,
+        `/api/v4/${domainKey}/storyline-management/storylines/${id}`,
       );
       return response.data;
     } catch (error) {
@@ -182,10 +194,12 @@ export const apiService = {
   convertTopicToStoryline: async(
     topicName: string,
     storylineTitle?: string,
+    domain?: string,
   ) => {
     try {
+      const domainKey = domain || getCurrentDomain();
       const response = await api.post(
-        `/api/v4/content-analysis/topics/${encodeURIComponent(
+        `/api/v4/${domainKey}/content-analysis/topics/${encodeURIComponent(
           topicName,
         )}/convert-to-storyline`,
         {
@@ -203,10 +217,11 @@ export const apiService = {
   },
 
   // Automation endpoints
-  getAutomationSettings: async(storylineId: string | number) => {
+  getAutomationSettings: async(storylineId: string | number, domain?: string) => {
     try {
+      const domainKey = domain || getCurrentDomain();
       const response = await api.get(
-        `/api/v4/storyline-management/storylines/${storylineId}/automation/settings`,
+        `/api/v4/${domainKey}/storyline-management/storylines/${storylineId}/automation/settings`,
       );
       return response.data;
     } catch (error) {
@@ -215,10 +230,11 @@ export const apiService = {
     }
   },
 
-  updateAutomationSettings: async(storylineId: string | number, settings: any) => {
+  updateAutomationSettings: async(storylineId: string | number, settings: any, domain?: string) => {
     try {
+      const domainKey = domain || getCurrentDomain();
       const response = await api.put(
-        `/api/v4/storyline-management/storylines/${storylineId}/automation/settings`,
+        `/api/v4/${domainKey}/storyline-management/storylines/${storylineId}/automation/settings`,
         settings,
       );
       return response.data;
@@ -228,10 +244,11 @@ export const apiService = {
     }
   },
 
-  discoverArticles: async(storylineId: string | number, forceRefresh: boolean = false) => {
+  discoverArticles: async(storylineId: string | number, forceRefresh: boolean = false, domain?: string) => {
     try {
+      const domainKey = domain || getCurrentDomain();
       const response = await api.post(
-        `/api/v4/storyline-management/storylines/${storylineId}/automation/discover?force_refresh=${forceRefresh}`,
+        `/api/v4/${domainKey}/storyline-management/storylines/${storylineId}/automation/discover?force_refresh=${forceRefresh}`,
       );
       return response.data;
     } catch (error) {
@@ -240,14 +257,15 @@ export const apiService = {
     }
   },
 
-  getArticleSuggestions: async(storylineId: string | number, status?: string) => {
+  getArticleSuggestions: async(storylineId: string | number, status?: string, domain?: string) => {
     try {
+      const domainKey = domain || getCurrentDomain();
       const params: any = {};
       if (status) {
         params.status = status;
       }
       const response = await api.get(
-        `/api/v4/storyline-management/storylines/${storylineId}/automation/suggestions`,
+        `/api/v4/${domainKey}/storyline-management/storylines/${storylineId}/automation/suggestions`,
         { params },
       );
       return response.data;
@@ -257,10 +275,11 @@ export const apiService = {
     }
   },
 
-  approveSuggestion: async(storylineId: string | number, suggestionId: number) => {
+  approveSuggestion: async(storylineId: string | number, suggestionId: number, domain?: string) => {
     try {
+      const domainKey = domain || getCurrentDomain();
       const response = await api.post(
-        `/api/v4/storyline-management/storylines/${storylineId}/automation/suggestions/${suggestionId}/approve`,
+        `/api/v4/${domainKey}/storyline-management/storylines/${storylineId}/automation/suggestions/${suggestionId}/approve`,
       );
       return response.data;
     } catch (error) {
@@ -269,14 +288,15 @@ export const apiService = {
     }
   },
 
-  rejectSuggestion: async(storylineId: string | number, suggestionId: number, reason?: string) => {
+  rejectSuggestion: async(storylineId: string | number, suggestionId: number, reason?: string, domain?: string) => {
     try {
+      const domainKey = domain || getCurrentDomain();
       const params: any = {};
       if (reason) {
         params.reason = reason;
       }
       const response = await api.post(
-        `/api/v4/storyline-management/storylines/${storylineId}/automation/suggestions/${suggestionId}/reject`,
+        `/api/v4/${domainKey}/storyline-management/storylines/${storylineId}/automation/suggestions/${suggestionId}/reject`,
         null,
         { params },
       );
@@ -287,10 +307,11 @@ export const apiService = {
     }
   },
 
-  analyzeStoryline: async(id: string | number) => {
+  analyzeStoryline: async(id: string | number, domain?: string) => {
     try {
+      const domainKey = domain || getCurrentDomain();
       const response = await api.post(
-        `/api/v4/storyline-management/storylines/${id}/analyze`,
+        `/api/v4/${domainKey}/storyline-management/storylines/${id}/analyze`,
       );
       return response.data;
     } catch (error) {
@@ -303,14 +324,16 @@ export const apiService = {
     storylineId: string | number,
     limit: number = 50,
     search?: string,
+    domain?: string,
   ) => {
     try {
+      const domainKey = domain || getCurrentDomain();
       const params: any = { limit };
       if (search) {
         params.search = search;
       }
       const response = await api.get(
-        `/api/v4/storyline-management/storylines/${storylineId}/available-articles`,
+        `/api/v4/${domainKey}/storyline-management/storylines/${storylineId}/available-articles`,
         { params },
       );
       return response.data;
@@ -323,10 +346,12 @@ export const apiService = {
   addArticleToStoryline: async(
     storylineId: string | number,
     articleId: string | number,
+    domain?: string,
   ) => {
     try {
+      const domainKey = domain || getCurrentDomain();
       const response = await api.post(
-        `/api/v4/storyline-management/storylines/${storylineId}/articles/${articleId}`,
+        `/api/v4/${domainKey}/storyline-management/storylines/${storylineId}/articles/${articleId}`,
       );
       return response.data;
     } catch (error: any) {
@@ -339,10 +364,12 @@ export const apiService = {
   removeArticleFromStoryline: async(
     storylineId: string | number,
     articleId: string | number,
+    domain?: string,
   ) => {
     try {
+      const domainKey = domain || getCurrentDomain();
       const response = await api.delete(
-        `/api/v4/storyline-management/storylines/${storylineId}/articles/${articleId}`,
+        `/api/v4/${domainKey}/storyline-management/storylines/${storylineId}/articles/${articleId}`,
       );
       return response.data;
     } catch (error) {
@@ -383,9 +410,10 @@ export const apiService = {
   },
 
   // Content Analysis
-  getTopics: async(params: any = {}) => {
+  getTopics: async(params: any = {}, domain?: string) => {
     try {
-      const response = await api.get('/api/v4/content-analysis/topics', {
+      const domainKey = domain || getCurrentDomain();
+      const response = await api.get(`/api/v4/${domainKey}/content-analysis/topics`, {
         params,
       });
       return response.data;
@@ -395,10 +423,11 @@ export const apiService = {
     }
   },
 
-  getCategoryStats: async() => {
+  getCategoryStats: async(domain?: string) => {
     try {
+      const domainKey = domain || getCurrentDomain();
       const response = await api.get(
-        '/api/v4/content-analysis/topics/categories/stats',
+        `/api/v4/${domainKey}/content-analysis/topics/categories/stats`,
       );
       return response.data;
     } catch (error) {
@@ -411,10 +440,12 @@ export const apiService = {
     topicName: string,
     limit: number = 20,
     offset: number = 0,
+    domain?: string,
   ) => {
     try {
+      const domainKey = domain || getCurrentDomain();
       const response = await api.get(
-        `/api/v4/content-analysis/topics/${encodeURIComponent(
+        `/api/v4/${domainKey}/content-analysis/topics/${encodeURIComponent(
           topicName,
         )}/articles`,
         {
@@ -428,10 +459,11 @@ export const apiService = {
     }
   },
 
-  getTopicSummary: async(topicName: string) => {
+  getTopicSummary: async(topicName: string, domain?: string) => {
     try {
+      const domainKey = domain || getCurrentDomain();
       const response = await api.get(
-        `/api/v4/content-analysis/topics/${encodeURIComponent(
+        `/api/v4/${domainKey}/content-analysis/topics/${encodeURIComponent(
           topicName,
         )}/summary`,
       );
@@ -445,10 +477,12 @@ export const apiService = {
   getWordCloud: async(
     timePeriodHours: number = 24,
     minFrequency: number = 1,
+    domain?: string,
   ) => {
     try {
+      const domainKey = domain || getCurrentDomain();
       const response = await api.get(
-        '/api/v4/content-analysis/topics/word-cloud',
+        `/api/v4/${domainKey}/content-analysis/topics/word-cloud`,
         {
           params: {
             time_period_hours: timePeriodHours,
@@ -463,10 +497,11 @@ export const apiService = {
     }
   },
 
-  getBigPicture: async(timePeriodHours: number = 24) => {
+  getBigPicture: async(timePeriodHours: number = 24, domain?: string) => {
     try {
+      const domainKey = domain || getCurrentDomain();
       const response = await api.get(
-        '/api/v4/content-analysis/topics/big-picture',
+        `/api/v4/${domainKey}/content-analysis/topics/big-picture`,
         {
           params: { time_period_hours: timePeriodHours },
         },
@@ -481,10 +516,12 @@ export const apiService = {
   getTrendingTopics: async(
     timePeriodHours: number = 24,
     limit: number = 10,
+    domain?: string,
   ) => {
     try {
+      const domainKey = domain || getCurrentDomain();
       const response = await api.get(
-        '/api/v4/content-analysis/topics/trending',
+        `/api/v4/${domainKey}/content-analysis/topics/trending`,
         {
           params: { time_period_hours: timePeriodHours, limit },
         },
@@ -496,10 +533,11 @@ export const apiService = {
     }
   },
 
-  clusterArticles: async(params: { limit?: number } = {}) => {
+  clusterArticles: async(params: { limit?: number } = {}, domain?: string) => {
     try {
+      const domainKey = domain || getCurrentDomain();
       const response = await api.post(
-        '/api/v4/content-analysis/topics/cluster',
+        `/api/v4/${domainKey}/content-analysis/topics/cluster`,
         {
           limit: params.limit ?? 100,
         },
@@ -512,10 +550,11 @@ export const apiService = {
   },
 
   // Topic Management - Merge Topics
-  mergeTopics: async(topicIds: number[]) => {
+  mergeTopics: async(topicIds: number[], domain?: string) => {
     try {
+      const domainKey = domain || getCurrentDomain();
       const response = await api.post(
-        '/api/v4/topic-management/topics/merge',
+        `/api/v4/${domainKey}/topic-management/topics/merge`,
         {
           topic_ids: topicIds,
           keep_primary: true,
@@ -722,8 +761,9 @@ export const apiService = {
   },
 
   // Topic Management Methods (for topic-management domain)
-  getManagedTopics: async(params: any = {}) => {
+  getManagedTopics: async(params: any = {}, domain?: string) => {
     try {
+      const domainKey = domain || getCurrentDomain();
       const { limit = 50, offset = 0, category, status, search, sort_by = 'accuracy_score' } = params;
       const queryParams = new URLSearchParams({
         limit: limit.toString(),
@@ -734,7 +774,7 @@ export const apiService = {
       if (status) queryParams.append('status', status);
       if (search) queryParams.append('search', search);
 
-      const response = await api.get(`/api/v4/topic-management/topics?${queryParams}`);
+      const response = await api.get(`/api/v4/${domainKey}/topic-management/topics?${queryParams}`);
       return response.data;
     } catch (error) {
       console.error('Failed to fetch topics:', error);
@@ -742,9 +782,10 @@ export const apiService = {
     }
   },
 
-  getManagedTopic: async(topicId: number) => {
+  getManagedTopic: async(topicId: number, domain?: string) => {
     try {
-      const response = await api.get(`/api/v4/topic-management/topics/${topicId}`);
+      const domainKey = domain || getCurrentDomain();
+      const response = await api.get(`/api/v4/${domainKey}/topic-management/topics/${topicId}`);
       return response.data;
     } catch (error) {
       console.error('Failed to fetch topic:', error);
@@ -752,15 +793,16 @@ export const apiService = {
     }
   },
 
-  getManagedTopicArticles: async(topicId: number, params: any = {}) => {
+  getManagedTopicArticles: async(topicId: number, params: any = {}, domain?: string) => {
     try {
+      const domainKey = domain || getCurrentDomain();
       const { limit = 20, offset = 0 } = params;
       const queryParams = new URLSearchParams({
         limit: limit.toString(),
         offset: offset.toString(),
       });
 
-      const response = await api.get(`/api/v4/topic-management/topics/${topicId}/articles?${queryParams}`);
+      const response = await api.get(`/api/v4/${domainKey}/topic-management/topics/${topicId}/articles?${queryParams}`);
       return response.data;
     } catch (error) {
       console.error('Failed to fetch topic articles:', error);
@@ -768,9 +810,10 @@ export const apiService = {
     }
   },
 
-  getArticleTopics: async(articleId: number) => {
+  getArticleTopics: async(articleId: number, domain?: string) => {
     try {
-      const response = await api.get(`/api/v4/topic-management/articles/${articleId}/topics`);
+      const domainKey = domain || getCurrentDomain();
+      const response = await api.get(`/api/v4/${domainKey}/topic-management/articles/${articleId}/topics`);
       return response.data;
     } catch (error) {
       console.error('Failed to fetch article topics:', error);
@@ -778,9 +821,10 @@ export const apiService = {
     }
   },
 
-  processArticleTopics: async(articleId: number) => {
+  processArticleTopics: async(articleId: number, domain?: string) => {
     try {
-      const response = await api.post(`/api/v4/topic-management/articles/${articleId}/process-topics`);
+      const domainKey = domain || getCurrentDomain();
+      const response = await api.post(`/api/v4/${domainKey}/topic-management/articles/${articleId}/process-topics`);
       return response.data;
     } catch (error) {
       console.error('Failed to process article topics:', error);
@@ -788,9 +832,10 @@ export const apiService = {
     }
   },
 
-  submitTopicFeedback: async(assignmentId: number, feedback: { is_correct: boolean; feedback_notes?: string; validated_by?: string }) => {
+  submitTopicFeedback: async(assignmentId: number, feedback: { is_correct: boolean; feedback_notes?: string; validated_by?: string }, domain?: string) => {
     try {
-      const response = await api.post(`/api/v4/topic-management/assignments/${assignmentId}/feedback`, feedback);
+      const domainKey = domain || getCurrentDomain();
+      const response = await api.post(`/api/v4/${domainKey}/topic-management/assignments/${assignmentId}/feedback`, feedback);
       return response.data;
     } catch (error) {
       console.error('Failed to submit topic feedback:', error);
@@ -798,9 +843,10 @@ export const apiService = {
     }
   },
 
-  getTopicsNeedingReview: async(threshold: number = 0.6, limit: number = 50) => {
+  getTopicsNeedingReview: async(threshold: number = 0.6, limit: number = 50, domain?: string) => {
     try {
-      const response = await api.get(`/api/v4/topic-management/topics/needing-review?threshold=${threshold}&limit=${limit}`);
+      const domainKey = domain || getCurrentDomain();
+      const response = await api.get(`/api/v4/${domainKey}/topic-management/topics/needing-review?threshold=${threshold}&limit=${limit}`);
       return response.data;
     } catch (error) {
       console.error('Failed to fetch topics needing review:', error);
@@ -808,9 +854,10 @@ export const apiService = {
     }
   },
 
-  createTopic: async(topic: { name: string; description?: string; category?: string; keywords?: string[] }) => {
+  createTopic: async(topic: { name: string; description?: string; category?: string; keywords?: string[] }, domain?: string) => {
     try {
-      const response = await api.post('/api/v4/topic-management/topics', topic);
+      const domainKey = domain || getCurrentDomain();
+      const response = await api.post(`/api/v4/${domainKey}/topic-management/topics`, topic);
       return response.data;
     } catch (error) {
       console.error('Failed to create topic:', error);
@@ -818,12 +865,113 @@ export const apiService = {
     }
   },
 
-  updateTopic: async(topicId: number, updates: { description?: string; category?: string; keywords?: string[]; status?: string }) => {
+  updateTopic: async(topicId: number, updates: { description?: string; category?: string; keywords?: string[]; status?: string }, domain?: string) => {
     try {
-      const response = await api.put(`/api/v4/topic-management/topics/${topicId}`, updates);
+      const domainKey = domain || getCurrentDomain();
+      const response = await api.put(`/api/v4/${domainKey}/topic-management/topics/${topicId}`, updates);
       return response.data;
     } catch (error) {
       console.error('Failed to update topic:', error);
+      return { success: false, error: (error as any).message };
+    }
+  },
+
+  // ============================================================================
+  // Finance-Specific API Methods
+  // ============================================================================
+
+  /**
+   * Get corporate announcements for finance domain
+   */
+  getCorporateAnnouncements: async(params: any = {}, domain?: string) => {
+    try {
+      const domainKey = domain || getCurrentDomain();
+      const queryParams = new URLSearchParams();
+      if (params.company) queryParams.append('company', params.company);
+      if (params.ticker) queryParams.append('ticker', params.ticker);
+      if (params.type) queryParams.append('type', params.type);
+      if (params.startDate) queryParams.append('start_date', params.startDate);
+      if (params.endDate) queryParams.append('end_date', params.endDate);
+      if (params.limit) queryParams.append('limit', params.limit.toString());
+      if (params.offset) queryParams.append('offset', params.offset.toString());
+      
+      const response = await api.get(
+        `/api/v4/${domainKey}/finance/corporate-announcements?${queryParams.toString()}`
+      );
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch corporate announcements:', error);
+      return { success: false, error: (error as any).message };
+    }
+  },
+
+  /**
+   * Get market patterns for finance domain
+   */
+  getMarketPatterns: async(params: any = {}, domain?: string) => {
+    try {
+      const domainKey = domain || getCurrentDomain();
+      const queryParams = new URLSearchParams();
+      if (params.patternType) queryParams.append('pattern_type', params.patternType);
+      if (params.company) queryParams.append('company', params.company);
+      if (params.minConfidence) queryParams.append('min_confidence', params.minConfidence.toString());
+      if (params.startDate) queryParams.append('start_date', params.startDate);
+      if (params.endDate) queryParams.append('end_date', params.endDate);
+      if (params.limit) queryParams.append('limit', params.limit.toString());
+      if (params.offset) queryParams.append('offset', params.offset.toString());
+      
+      const response = await api.get(
+        `/api/v4/${domainKey}/finance/market-patterns?${queryParams.toString()}`
+      );
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch market patterns:', error);
+      return { success: false, error: (error as any).message };
+    }
+  },
+
+  /**
+   * Get financial indicators for finance domain
+   */
+  getFinancialIndicators: async(params: any = {}, domain?: string) => {
+    try {
+      const domainKey = domain || getCurrentDomain();
+      const queryParams = new URLSearchParams();
+      if (params.company) queryParams.append('company', params.company);
+      if (params.ticker) queryParams.append('ticker', params.ticker);
+      if (params.indicatorType) queryParams.append('indicator_type', params.indicatorType);
+      if (params.periodType) queryParams.append('period_type', params.periodType);
+      if (params.fiscalYear) queryParams.append('fiscal_year', params.fiscalYear.toString());
+      if (params.limit) queryParams.append('limit', params.limit.toString());
+      if (params.offset) queryParams.append('offset', params.offset.toString());
+      
+      const response = await api.get(
+        `/api/v4/${domainKey}/finance/financial-indicators?${queryParams.toString()}`
+      );
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch financial indicators:', error);
+      return { success: false, error: (error as any).message };
+    }
+  },
+
+  /**
+   * Get market trends/analytics for finance domain
+   */
+  getMarketTrends: async(params: any = {}, domain?: string) => {
+    try {
+      const domainKey = domain || getCurrentDomain();
+      const queryParams = new URLSearchParams();
+      if (params.timeframe) queryParams.append('timeframe', params.timeframe);
+      if (params.sector) queryParams.append('sector', params.sector);
+      if (params.metric) queryParams.append('metric', params.metric);
+      
+      const response = await api.get(
+        `/api/v4/${domainKey}/finance/market-trends?${queryParams.toString()}`
+      );
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch market trends:', error);
       return { success: false, error: (error as any).message };
     }
   },

@@ -205,25 +205,32 @@ async def create_rss_feed(feed_data: Dict[str, Any]):
         logger.error(f"Error creating RSS feed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/rss/collect-now")
-async def collect_rss_feeds_now():
+@router.post("/{domain}/rss-feeds/collect-now")
+async def collect_rss_feeds_now(
+    domain: str = Path(..., regex="^(politics|finance|science-tech)$")
+):
     """Trigger immediate RSS feed collection and wait for completion"""
     try:
+        # Validate domain
+        if not validate_domain(domain):
+            raise HTTPException(status_code=400, detail=f"Invalid or inactive domain: {domain}")
+        
         # Import collector function
         import sys
         import os
         sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..'))
         from collectors.rss_collector import collect_rss_feeds
         
-        logger.info("Starting RSS feed collection via API")
+        logger.info(f"Starting RSS feed collection via API for domain: {domain}")
         
-        # Run collection synchronously
+        # Run collection synchronously (collects from all domains)
         articles_added = collect_rss_feeds()
         
         return {
             "success": True,
             "message": "RSS feed collection completed",
             "articles_added": articles_added,
+            "domain": domain,
             "timestamp": datetime.now().isoformat()
         }
         

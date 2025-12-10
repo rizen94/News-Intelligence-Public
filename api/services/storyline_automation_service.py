@@ -13,14 +13,22 @@ import asyncio
 
 from shared.services.llm_service import llm_service
 from shared.database.connection import get_db_connection
+from shared.services.domain_aware_service import DomainAwareService
 
 logger = logging.getLogger(__name__)
 
 
-class StorylineAutomationService:
+class StorylineAutomationService(DomainAwareService):
     """Service for RAG-enhanced article discovery and automation"""
     
-    def __init__(self):
+    def __init__(self, domain: str = 'politics'):
+        """
+        Initialize storyline automation service with domain context.
+        
+        Args:
+            domain: Domain key (e.g., 'politics', 'finance', 'science-tech')
+        """
+        super().__init__(domain)
         self.default_settings = {
             "min_relevance_score": 0.6,  # Minimum relevance to suggest
             "min_quality_score": 0.5,      # Minimum article quality
@@ -57,13 +65,13 @@ class StorylineAutomationService:
             
             try:
                 with conn.cursor() as cur:
-                    # Get storyline and automation settings
-                    cur.execute("""
+                    # Get storyline and automation settings from domain schema
+                    cur.execute(f"""
                         SELECT s.id, s.title, s.description, s.analysis_summary,
                                s.automation_enabled, s.automation_mode, s.automation_settings,
                                s.search_keywords, s.search_entities, s.search_exclude_keywords,
                                s.article_count, s.last_automation_run, s.automation_frequency_hours
-                        FROM storylines s
+                        FROM {self.schema}.storylines s
                         WHERE s.id = %s
                     """, (storyline_id,))
                     
@@ -97,9 +105,9 @@ class StorylineAutomationService:
                                 "articles": []
                             }
                     
-                    # Get existing article IDs to exclude
-                    cur.execute("""
-                        SELECT article_id FROM storyline_articles WHERE storyline_id = %s
+                    # Get existing article IDs to exclude from domain schema
+                    cur.execute(f"""
+                        SELECT article_id FROM {self.schema}.storyline_articles WHERE storyline_id = %s
                     """, (storyline_id,))
                     existing_article_ids = {row[0] for row in cur.fetchall()}
                     
@@ -137,9 +145,9 @@ class StorylineAutomationService:
                             conn, storyline_id, discovered_articles, settings, search_query
                         )
                         
-                        # Update last automation run
-                        cur.execute("""
-                            UPDATE storylines 
+                        # Update last automation run in domain schema
+                        cur.execute(f"""
+                            UPDATE {self.schema}.storylines 
                             SET last_automation_run = %s
                             WHERE id = %s
                         """, (datetime.now(), storyline_id))
@@ -304,7 +312,7 @@ class StorylineAutomationService:
                 query_sql = f"""
                     SELECT a.id, a.title, a.summary, a.content, a.url, 
                            a.source_domain, a.published_at, a.quality_score
-                    FROM articles a
+                    FROM {self.schema}.articles a
                     WHERE {' AND '.join(where_parts)}
                     ORDER BY a.published_at DESC, a.quality_score DESC
                     LIMIT %s
@@ -368,8 +376,9 @@ class StorylineAutomationService:
                         semantic >= min_semantic):
                         reasoning = f"Matched search query: {search_query[:200]}"
                         
+                        # Note: storyline_article_suggestions is in public schema (shared across domains)
                         cur.execute("""
-                            INSERT INTO storyline_article_suggestions (
+                            INSERT INTO public.storyline_article_suggestions (
                                 storyline_id, article_id, relevance_score, semantic_score,
                                 keyword_score, quality_score, combined_score, reasoning,
                                 status, suggested_at, expires_at
@@ -381,7 +390,7 @@ class StorylineAutomationService:
                                 reasoning = EXCLUDED.reasoning,
                                 suggested_at = EXCLUDED.suggested_at,
                                 status = 'pending'
-                            WHERE storyline_article_suggestions.status != 'added'
+                            WHERE public.storyline_article_suggestions.status != 'added'
                         """, (
                             storyline_id,
                             article.get("id"),
@@ -416,25 +425,47 @@ class StorylineAutomationService:
     ) -> int:
         """Auto-add articles that meet threshold criteria"""
         try:
-            from domains.storyline_management.routes.storyline_management import add_article_to_storyline
-            
             added_count = 0
             min_score = settings.get("min_relevance_score", 0.7)  # Higher threshold for auto-add
             
-            for article in articles:
-                relevance = article.get("relevance_score", 0.6)
-                quality = article.get("quality_score", 0.5)
-                combined = (relevance * 0.6 + quality * 0.4)
+            with conn.cursor() as cur:
+                for article in articles:
+                    relevance = article.get("relevance_score", 0.6)
+                    quality = article.get("quality_score", 0.5)
+                    combined = (relevance * 0.6 + quality * 0.4)
+                    
+                    if combined >= min_score:
+                        # Auto-add article to domain schema
+                        try:
+                            cur.execute(f"""
+                                INSERT INTO {self.schema}.storyline_articles 
+                                (storyline_id, article_id, added_at, relevance_score)
+                                VALUES (%s, %s, %s, %s)
+                                ON CONFLICT (storyline_id, article_id) DO NOTHING
+                            """, (storyline_id, article.get("id"), datetime.now(), relevance))
+                            
+                            if cur.rowcount > 0:
+                                added_count += 1
+                        except Exception as e:
+                            logger.warning(f"Error adding article {article.get('id')}: {e}")
+                            continue
                 
-                if combined >= min_score:
-                    # Auto-add article
-                    # Note: This would need to call the add endpoint or use direct DB insertion
-                    # For now, we'll just count eligible articles
-                    added_count += 1
+                # Update storyline article count
+                cur.execute(f"""
+                    UPDATE {self.schema}.storylines
+                    SET article_count = (
+                        SELECT COUNT(*) FROM {self.schema}.storyline_articles WHERE storyline_id = %s
+                    ),
+                    updated_at = %s
+                    WHERE id = %s
+                """, (storyline_id, datetime.now(), storyline_id))
+                
+                conn.commit()
             
             return added_count
             
         except Exception as e:
             logger.error(f"Error auto-adding articles: {e}")
+            conn.rollback()
             return 0
 

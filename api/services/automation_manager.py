@@ -1156,20 +1156,17 @@ class AutomationManager:
     async def _execute_topic_clustering(self, task: Task):
         """Execute topic clustering task - continuous iterative refinement with confidence-based stopping"""
         try:
-            logger.info("🔄 Starting iterative topic clustering task with confidence-based prioritization")
+            logger.info("🔄 Starting iterative topic clustering task with confidence-based prioritization (v4.0 - all domains)")
             
             # Import the topic clustering service
             from domains.content_analysis.services.topic_clustering_service import TopicClusteringService
+            from shared.services.domain_aware_service import get_all_domains
             
-            # Initialize the topic clustering service
-            db_config = {
-                "host": self.db_config.get('host', 'localhost'),
-                "database": self.db_config.get('database', 'news_intelligence'),
-                "user": self.db_config.get('user', 'newsapp'),
-                "password": self.db_config.get('password', 'newsapp_password'),
-                "port": self.db_config.get('port', 5432)
-            }
-            topic_service = TopicClusteringService(db_config)
+            # Get all active domains
+            domains = get_all_domains()
+            if not domains:
+                logger.warning("No active domains found, defaulting to 'politics'")
+                domains = [{'domain_key': 'politics', 'schema_name': 'politics'}]
             
             # Topic clustering configuration constants
             CONFIDENCE_THRESHOLD = 0.93
@@ -1179,183 +1176,212 @@ class AutomationManager:
             LOW_CONFIDENCE_COUNT = 6  # 30% of batch size
             MEDIUM_CONFIDENCE_COUNT = 6  # 30% of batch size
             
-            # Process articles incrementally with balanced prioritization
-            conn = await self._get_db_connection()
-            cursor = conn.cursor()
+            # Initialize database config
+            db_config = {
+                "host": self.db_config.get('host', 'localhost'),
+                "database": self.db_config.get('database', 'news_intelligence'),
+                "user": self.db_config.get('user', 'newsapp'),
+                "password": self.db_config.get('password', 'newsapp_password'),
+                "port": self.db_config.get('port', 5432)
+            }
             
-            # Get articles with their average confidence scores
-            # This query categorizes articles into priority groups
-            # Note: SQL CASE statements can't use parameters directly, so thresholds are embedded
-            cursor.execute("""
-                WITH article_confidence AS (
+            total_processed = 0
+            total_graduated = 0
+            
+            # Process each domain
+            for domain_info in domains:
+                domain_key = domain_info['domain_key']
+                schema_name = domain_info.get('schema_name', domain_key.replace('-', '_'))
+                
+                logger.info(f"📊 Processing domain: {domain_key} (schema: {schema_name})")
+                
+                # Initialize topic clustering service for this domain
+                topic_service = TopicClusteringService(db_config, domain=domain_key)
+                
+                # Process articles incrementally with balanced prioritization
+                conn = await self._get_db_connection()
+                cursor = conn.cursor()
+                
+                # Get articles with their average confidence scores from domain schema
+                # This query categorizes articles into priority groups
+                cursor.execute(f"""
+                    WITH article_confidence AS (
+                        SELECT 
+                            a.id,
+                            a.title,
+                            a.created_at,
+                            COUNT(ata.id) as assignment_count,
+                            COALESCE(AVG(ata.confidence_score), 0.0) as avg_confidence,
+                            COALESCE(MIN(ata.confidence_score), 0.0) as min_confidence,
+                            COALESCE(MAX(ata.confidence_score), 0.0) as max_confidence,
+                            CASE 
+                                WHEN COUNT(ata.id) = 0 THEN 'new'
+                                WHEN COALESCE(AVG(ata.confidence_score), 0.0) < %s THEN 'low_confidence'
+                                WHEN COALESCE(AVG(ata.confidence_score), 0.0) < %s THEN 'medium_confidence'
+                                ELSE 'high_confidence'
+                            END as priority_group
+                        FROM {schema_name}.articles a
+                        LEFT JOIN {schema_name}.article_topic_assignments ata ON a.id = ata.article_id
+                        WHERE a.content IS NOT NULL 
+                        AND LENGTH(a.content) > 100
+                        GROUP BY a.id, a.title, a.created_at
+                    )
                     SELECT 
-                        a.id,
-                        a.title,
-                        a.created_at,
-                        COUNT(ata.id) as assignment_count,
-                        COALESCE(AVG(ata.confidence_score), 0.0) as avg_confidence,
-                        COALESCE(MIN(ata.confidence_score), 0.0) as min_confidence,
-                        COALESCE(MAX(ata.confidence_score), 0.0) as max_confidence,
-                        CASE 
-                            WHEN COUNT(ata.id) = 0 THEN 'new'
-                            WHEN COALESCE(AVG(ata.confidence_score), 0.0) < %s THEN 'low_confidence'
-                            WHEN COALESCE(AVG(ata.confidence_score), 0.0) < %s THEN 'medium_confidence'
-                            ELSE 'high_confidence'
-                        END as priority_group
-                    FROM articles a
-                    LEFT JOIN article_topic_assignments ata ON a.id = ata.article_id
-                    WHERE a.content IS NOT NULL 
-                    AND LENGTH(a.content) > 100
-                    GROUP BY a.id, a.title, a.created_at
-                )
-                SELECT 
-                    id,
-                    title,
-                    assignment_count,
-                    avg_confidence,
-                    min_confidence,
-                    max_confidence,
-                    priority_group,
-                    created_at
-                FROM article_confidence
-                WHERE priority_group != 'high_confidence'  -- Exclude articles above threshold
-                ORDER BY 
-                    CASE priority_group
-                        WHEN 'new' THEN 1
-                        WHEN 'low_confidence' THEN 2
-                        WHEN 'medium_confidence' THEN 3
-                    END,
-                    avg_confidence ASC,  -- Lower confidence first within each group
-                    created_at DESC
-            """, (LOW_CONFIDENCE_THRESHOLD, CONFIDENCE_THRESHOLD))
-            
-            all_articles = cursor.fetchall()
-            cursor.close()
-            conn.close()
-            
-            if not all_articles:
-                logger.info("✅ No articles need topic clustering (all above confidence threshold)")
-                return
-            
-            # Balanced prioritization: Mix of new, low, and medium confidence articles
-            # This ensures we process new articles while refining existing ones
-            new_articles = [a for a in all_articles if a[6] == 'new']
-            low_confidence = [a for a in all_articles if a[6] == 'low_confidence']
-            medium_confidence = [a for a in all_articles if a[6] == 'medium_confidence']
-            
-            # Calculate balanced selection (40% new, 30% low, 30% medium)
-            # This mix ensures:
-            # - New articles get started (40%)
-            # - Low confidence articles get refined (30%)
-            # - Medium confidence articles graduate out (30%)
-            target_count = BATCH_SIZE
-            new_count = min(NEW_ARTICLE_COUNT, len(new_articles))  # 40% = 8 articles
-            low_count = min(LOW_CONFIDENCE_COUNT, len(low_confidence))  # 30% = 6 articles
-            medium_count = min(MEDIUM_CONFIDENCE_COUNT, len(medium_confidence))  # 30% = 6 articles
-            
-            # Select articles from each group
-            selected_articles = []
-            selected_articles.extend(new_articles[:new_count])
-            selected_articles.extend(low_confidence[:low_count])
-            selected_articles.extend(medium_confidence[:medium_count])
-            
-            # If we don't have enough, fill from remaining groups
-            # Priority: new > low > medium (to prevent backlog)
-            remaining = target_count - len(selected_articles)
-            if remaining > 0:
-                # Prioritize new articles first (to prevent backlog)
-                if len(new_articles) > new_count:
-                    remaining_new = new_articles[new_count:new_count + remaining]
-                    selected_articles.extend(remaining_new)
-                    remaining -= len(remaining_new)
+                        id,
+                        title,
+                        assignment_count,
+                        avg_confidence,
+                        min_confidence,
+                        max_confidence,
+                        priority_group,
+                        created_at
+                    FROM article_confidence
+                    WHERE priority_group != 'high_confidence'  -- Exclude articles above threshold
+                    ORDER BY 
+                        CASE priority_group
+                            WHEN 'new' THEN 1
+                            WHEN 'low_confidence' THEN 2
+                            WHEN 'medium_confidence' THEN 3
+                        END,
+                        avg_confidence ASC,  -- Lower confidence first within each group
+                        created_at DESC
+                """, (LOW_CONFIDENCE_THRESHOLD, CONFIDENCE_THRESHOLD))
                 
-                # Then low confidence articles
-                if remaining > 0 and len(low_confidence) > low_count:
-                    remaining_low = low_confidence[low_count:low_count + remaining]
-                    selected_articles.extend(remaining_low)
-                    remaining -= len(remaining_low)
+                all_articles = cursor.fetchall()
+                cursor.close()
+                conn.close()
                 
-                # Finally medium confidence articles
-                if remaining > 0 and len(medium_confidence) > medium_count:
-                    remaining_medium = medium_confidence[medium_count:medium_count + remaining]
-                    selected_articles.extend(remaining_medium)
-            
-            article_ids = [a[0] for a in selected_articles]
-            
-            if not article_ids:
-                logger.info("✅ No articles selected for processing")
-                return
-            
-            logger.info(
-                f"📊 Balanced selection: {len(new_articles[:new_count])} new, "
-                f"{len(low_confidence[:low_count])} low confidence, "
-                f"{len(medium_confidence[:medium_count])} medium confidence "
-                f"({len(article_ids)} total)"
-            )
-            
-            processed_count = 0
-            graduated_count = 0
-            topics_created = 0
-            topics_assigned = 0
-            
-            # Process articles one by one for iterative refinement
-            for article_data in selected_articles:
-                article_id = article_data[0]
-                current_avg_confidence = float(article_data[3]) if article_data[3] else 0.0
-                priority_group = article_data[6]
-                
-                try:
-                    # Skip if already above threshold (safety check)
-                    if current_avg_confidence >= CONFIDENCE_THRESHOLD:
-                        logger.debug(f"  Article {article_id} already above threshold ({current_avg_confidence:.2f}), skipping")
-                        continue
-                    
-                    result = await topic_service.process_article(article_id)
-                    
-                    if result.get('success'):
-                        processed_count += 1
-                        topics_created += len(result.get('created_topics', []))
-                        topics_assigned += result.get('total_assigned', 0)
-                        
-                        # Check if article graduated (above threshold)
-                        # Re-check confidence after processing
-                        conn_check = await self._get_db_connection()
-                        cursor_check = conn_check.cursor()
-                        cursor_check.execute("""
-                            SELECT COALESCE(AVG(confidence_score), 0.0) as avg_confidence
-                            FROM article_topic_assignments
-                            WHERE article_id = %s
-                        """, (article_id,))
-                        result_row = cursor_check.fetchone()
-                        new_confidence = float(result_row[0]) if result_row and result_row[0] else 0.0
-                        cursor_check.close()
-                        conn_check.close()
-                        
-                        if new_confidence >= CONFIDENCE_THRESHOLD:
-                            graduated_count += 1
-                            logger.info(
-                                f"  ✅ Article {article_id} graduated: "
-                                f"{current_avg_confidence:.2f} → {new_confidence:.2f}"
-                            )
-                        
-                        if processed_count % 5 == 0:
-                            logger.info(
-                                f"  Processed {processed_count}/{len(article_ids)} articles "
-                                f"({graduated_count} graduated)..."
-                            )
-                    else:
-                        logger.warning(f"  Failed to process article {article_id}: {result.get('error')}")
-                        
-                except Exception as e:
-                    logger.error(f"  Error processing article {article_id}: {e}")
+                if not all_articles:
+                    logger.info(f"  ✅ No articles need topic clustering in {domain_key} (all above confidence threshold)")
                     continue
             
+                # Balanced prioritization: Mix of new, low, and medium confidence articles
+                # This ensures we process new articles while refining existing ones
+                new_articles = [a for a in all_articles if a[6] == 'new']
+                low_confidence = [a for a in all_articles if a[6] == 'low_confidence']
+                medium_confidence = [a for a in all_articles if a[6] == 'medium_confidence']
+                
+                # Calculate balanced selection (40% new, 30% low, 30% medium)
+                # This mix ensures:
+                # - New articles get started (40%)
+                # - Low confidence articles get refined (30%)
+                # - Medium confidence articles graduate out (30%)
+                target_count = BATCH_SIZE
+                new_count = min(NEW_ARTICLE_COUNT, len(new_articles))  # 40% = 8 articles
+                low_count = min(LOW_CONFIDENCE_COUNT, len(low_confidence))  # 30% = 6 articles
+                medium_count = min(MEDIUM_CONFIDENCE_COUNT, len(medium_confidence))  # 30% = 6 articles
+                
+                # Select articles from each group
+                selected_articles = []
+                selected_articles.extend(new_articles[:new_count])
+                selected_articles.extend(low_confidence[:low_count])
+                selected_articles.extend(medium_confidence[:medium_count])
+                
+                # If we don't have enough, fill from remaining groups
+                # Priority: new > low > medium (to prevent backlog)
+                remaining = target_count - len(selected_articles)
+                if remaining > 0:
+                    # Prioritize new articles first (to prevent backlog)
+                    if len(new_articles) > new_count:
+                        remaining_new = new_articles[new_count:new_count + remaining]
+                        selected_articles.extend(remaining_new)
+                        remaining -= len(remaining_new)
+                    
+                    # Then low confidence articles
+                    if remaining > 0 and len(low_confidence) > low_count:
+                        remaining_low = low_confidence[low_count:low_count + remaining]
+                        selected_articles.extend(remaining_low)
+                        remaining -= len(remaining_low)
+                    
+                    # Finally medium confidence articles
+                    if remaining > 0 and len(medium_confidence) > medium_count:
+                        remaining_medium = medium_confidence[medium_count:medium_count + remaining]
+                        selected_articles.extend(remaining_medium)
+                
+                article_ids = [a[0] for a in selected_articles]
+                
+                if not article_ids:
+                    logger.info(f"  ✅ No articles selected for processing in {domain_key}")
+                    continue
+                
+                logger.info(
+                    f"  📊 Balanced selection: {len(new_articles[:new_count])} new, "
+                    f"{len(low_confidence[:low_count])} low confidence, "
+                    f"{len(medium_confidence[:medium_count])} medium confidence "
+                    f"({len(article_ids)} total)"
+                )
+                
+                processed_count = 0
+                graduated_count = 0
+                topics_created = 0
+                topics_assigned = 0
+                
+                # Process articles one by one for iterative refinement
+                for article_data in selected_articles:
+                    article_id = article_data[0]
+                    current_avg_confidence = float(article_data[3]) if article_data[3] else 0.0
+                    priority_group = article_data[6]
+                    
+                    try:
+                        # Skip if already above threshold (safety check)
+                        if current_avg_confidence >= CONFIDENCE_THRESHOLD:
+                            logger.debug(f"  Article {article_id} already above threshold ({current_avg_confidence:.2f}), skipping")
+                            continue
+                        
+                        result = await topic_service.process_article(article_id)
+                        
+                        if result.get('success'):
+                            processed_count += 1
+                            topics_created += len(result.get('created_topics', []))
+                            topics_assigned += result.get('total_assigned', 0)
+                            
+                            # Check if article graduated (above threshold)
+                            # Re-check confidence after processing
+                            conn_check = await self._get_db_connection()
+                            cursor_check = conn_check.cursor()
+                            cursor_check.execute(f"""
+                                SELECT COALESCE(AVG(confidence_score), 0.0) as avg_confidence
+                                FROM {schema_name}.article_topic_assignments
+                                WHERE article_id = %s
+                            """, (article_id,))
+                            result_row = cursor_check.fetchone()
+                            new_confidence = float(result_row[0]) if result_row and result_row[0] else 0.0
+                            cursor_check.close()
+                            conn_check.close()
+                            
+                            if new_confidence >= CONFIDENCE_THRESHOLD:
+                                graduated_count += 1
+                                logger.info(
+                                    f"  ✅ Article {article_id} graduated: "
+                                    f"{current_avg_confidence:.2f} → {new_confidence:.2f}"
+                                )
+                            
+                            if processed_count % 5 == 0:
+                                logger.info(
+                                    f"  Processed {processed_count}/{len(article_ids)} articles "
+                                    f"({graduated_count} graduated)..."
+                                )
+                        else:
+                            logger.warning(f"  Failed to process article {article_id}: {result.get('error')}")
+                            
+                    except Exception as e:
+                        logger.error(f"  Error processing article {article_id}: {e}")
+                        continue
+                
+                logger.info(
+                    f"  ✅ {domain_key} domain: {processed_count} articles processed, "
+                    f"{graduated_count} articles graduated (≥{CONFIDENCE_THRESHOLD}), "
+                    f"{topics_assigned} topic assignments made, "
+                    f"{topics_created} new topics created"
+                )
+                
+                total_processed += processed_count
+                total_graduated += graduated_count
+            
             logger.info(
-                f"✅ Topic clustering cycle completed: "
-                f"{processed_count} articles processed, "
-                f"{graduated_count} articles graduated (≥{CONFIDENCE_THRESHOLD}), "
-                f"{topics_assigned} topic assignments made, "
-                f"{topics_created} new topics created"
+                f"✅ Topic clustering cycle completed across all domains: "
+                f"{total_processed} articles processed, "
+                f"{total_graduated} articles graduated (≥{CONFIDENCE_THRESHOLD})"
             )
             
         except Exception as e:

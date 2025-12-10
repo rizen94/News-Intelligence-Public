@@ -57,6 +57,7 @@ const StorylineReport = () => {
   const { id } = useParams();
   console.log('StorylineReport: ID from useParams:', id);
   const navigate = useNavigate();
+  const { navigateToDomain } = useDomainNavigation();
   const [storyline, setStoryline] = useState(null);
   const [articles, setArticles] = useState([]);
   const [events, setEvents] = useState([]);
@@ -284,7 +285,7 @@ const StorylineReport = () => {
         </Alert>
         <Button
           startIcon={<ArrowBackIcon />}
-          onClick={() => navigate('/storylines')}
+          onClick={() => navigateToDomain('/storylines')}
         >
           Back to Storylines
         </Button>
@@ -298,7 +299,7 @@ const StorylineReport = () => {
         <Alert severity='warning'>Storyline not found</Alert>
         <Button
           startIcon={<ArrowBackIcon />}
-          onClick={() => navigate('/storylines')}
+          onClick={() => navigateToDomain('/storylines')}
         >
           Back to Storylines
         </Button>

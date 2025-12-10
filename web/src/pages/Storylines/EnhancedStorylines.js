@@ -80,9 +80,13 @@ import { useNavigate } from 'react-router-dom';
 
 import { apiService } from '../../services/apiService';
 import StorylineManagementDialog from '../../components/StorylineManagementDialog';
+import { useDomainNavigation } from '../../hooks/useDomainNavigation';
+import { useDomain } from '../../contexts/DomainContext';
 
 const EnhancedStorylines = () => {
   const navigate = useNavigate();
+  const { navigateToDomain } = useDomainNavigation();
+  const { domain } = useDomain();
   const [storylines, setStorylines] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -110,7 +114,7 @@ const EnhancedStorylines = () => {
         status: filterStatus,
         category: filterCategory,
         sort: sortBy,
-      });
+      }, domain);
 
       if (response.success) {
         setStorylines(response.data.storylines || []);
@@ -126,7 +130,7 @@ const EnhancedStorylines = () => {
     } finally {
       setLoading(false);
     }
-  }, [page, searchQuery, filterStatus, filterCategory, sortBy]);
+  }, [page, searchQuery, filterStatus, filterCategory, sortBy, domain]);
 
   useEffect(() => {
     loadStorylines();
@@ -190,7 +194,7 @@ const EnhancedStorylines = () => {
 
   const toggleExpanded = storylineId => {
     // Navigate to storyline detail page instead of just toggling state
-    navigate(`/storylines/${storylineId}`);
+    navigateToDomain(`/storylines/${storylineId}`);
   };
 
   const getStatusColor = status => {
@@ -356,7 +360,7 @@ const EnhancedStorylines = () => {
         <Button
           size='small'
           startIcon={<Visibility />}
-          onClick={() => navigate(`/storylines/${storyline.id}`)}
+          onClick={() => navigateToDomain(`/storylines/${storyline.id}`)}
         >
           View Details
         </Button>

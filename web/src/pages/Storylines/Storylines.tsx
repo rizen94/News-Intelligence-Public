@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import './Storylines.css';
 import { apiService } from '../../services/apiService';
+import { useDomainNavigation } from '../../hooks/useDomainNavigation';
 
 interface Storyline {
   id: number;
@@ -13,6 +14,7 @@ interface Storyline {
 
 const Storylines: React.FC = () => {
   const navigate = useNavigate();
+  const { navigateToDomain } = useDomainNavigation();
   const [storylines, setStorylines] = useState<Storyline[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -84,7 +86,7 @@ const Storylines: React.FC = () => {
             <div className='storyline-actions'>
               <button
                 className='button'
-                onClick={() => navigate(`/storylines/${storyline.id}`)}
+                onClick={() => navigateToDomain(`/storylines/${storyline.id}`)}
               >
                 View Details
               </button>
