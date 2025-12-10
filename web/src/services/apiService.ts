@@ -54,7 +54,7 @@ export const apiService = {
       }
       // Otherwise, don't include hours parameter so API returns all articles
       const response = await api.get(
-        `/api/v4/${domainKey}/news-aggregation/articles/recent`,
+        `/api/v4/${domainKey}/articles`,
         { params: requestParams },
       );
       return response.data;
@@ -67,7 +67,7 @@ export const apiService = {
   getArticle: async(id: string, domain?: string) => {
     try {
       const domainKey = domain || getCurrentDomain();
-      const response = await api.get(`/api/v4/${domainKey}/news-aggregation/articles/${id}`);
+      const response = await api.get(`/api/v4/${domainKey}/articles/${id}`);
       return response.data;
     } catch (error) {
       console.error('Failed to fetch article:', error);
@@ -107,7 +107,7 @@ export const apiService = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await api.get(
-        `/api/v4/${domainKey}/storyline-management/storylines`,
+        `/api/v4/${domainKey}/storylines`,
         { params },
       );
       return response.data;
@@ -121,7 +121,7 @@ export const apiService = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await api.get(
-        `/api/v4/${domainKey}/storyline-management/storylines/${id}`,
+        `/api/v4/${domainKey}/storylines/${id}`,
       );
       return response.data;
     } catch (error) {
@@ -134,7 +134,7 @@ export const apiService = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await api.get(
-        `/api/v4/${domainKey}/storyline-management/storylines/${id}/timeline`,
+        `/api/v4/${domainKey}/storylines/${id}/timeline`,
       );
       return response.data;
     } catch (error) {
@@ -894,9 +894,9 @@ export const apiService = {
       if (params.endDate) queryParams.append('end_date', params.endDate);
       if (params.limit) queryParams.append('limit', params.limit.toString());
       if (params.offset) queryParams.append('offset', params.offset.toString());
-      
+
       const response = await api.get(
-        `/api/v4/${domainKey}/finance/corporate-announcements?${queryParams.toString()}`
+        `/api/v4/${domainKey}/finance/corporate-announcements?${queryParams.toString()}`,
       );
       return response.data;
     } catch (error) {
@@ -919,9 +919,9 @@ export const apiService = {
       if (params.endDate) queryParams.append('end_date', params.endDate);
       if (params.limit) queryParams.append('limit', params.limit.toString());
       if (params.offset) queryParams.append('offset', params.offset.toString());
-      
+
       const response = await api.get(
-        `/api/v4/${domainKey}/finance/market-patterns?${queryParams.toString()}`
+        `/api/v4/${domainKey}/finance/market-patterns?${queryParams.toString()}`,
       );
       return response.data;
     } catch (error) {
@@ -944,9 +944,9 @@ export const apiService = {
       if (params.fiscalYear) queryParams.append('fiscal_year', params.fiscalYear.toString());
       if (params.limit) queryParams.append('limit', params.limit.toString());
       if (params.offset) queryParams.append('offset', params.offset.toString());
-      
+
       const response = await api.get(
-        `/api/v4/${domainKey}/finance/financial-indicators?${queryParams.toString()}`
+        `/api/v4/${domainKey}/finance/financial-indicators?${queryParams.toString()}`,
       );
       return response.data;
     } catch (error) {
@@ -965,9 +965,9 @@ export const apiService = {
       if (params.timeframe) queryParams.append('timeframe', params.timeframe);
       if (params.sector) queryParams.append('sector', params.sector);
       if (params.metric) queryParams.append('metric', params.metric);
-      
+
       const response = await api.get(
-        `/api/v4/${domainKey}/finance/market-trends?${queryParams.toString()}`
+        `/api/v4/${domainKey}/finance/market-trends?${queryParams.toString()}`,
       );
       return response.data;
     } catch (error) {

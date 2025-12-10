@@ -58,6 +58,3 @@ export const useDomainNavigation = () => {
     getDomainPath,
   };
 };
-
-
-

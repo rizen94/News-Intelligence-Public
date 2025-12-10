@@ -60,7 +60,7 @@ const MarketPatterns: React.FC = () => {
     try {
       setLoading(true);
       setError(null);
-      
+
       const response = await apiService.getMarketPatterns({
         ...filters,
         patternType: filters.patternType !== 'all' ? filters.patternType : undefined,
@@ -193,10 +193,10 @@ const MarketPatterns: React.FC = () => {
       {!loading && !error && (
         <>
           <Box sx={{ mb: 2 }}>
-            <Chip 
-              label="API Endpoint: /api/v4/finance/finance/market-patterns" 
-              color="info" 
-              size="small" 
+            <Chip
+              label="API Endpoint: /api/v4/finance/finance/market-patterns"
+              color="info"
+              size="small"
             />
           </Box>
 
@@ -211,9 +211,9 @@ const MarketPatterns: React.FC = () => {
                   <Accordion>
                     <AccordionSummary expandIcon={<ExpandMore />}>
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, width: '100%' }}>
-                        <Chip 
-                          label={pattern.pattern_type || 'Unknown'} 
-                          color="primary" 
+                        <Chip
+                          label={pattern.pattern_type || 'Unknown'}
+                          color="primary"
                           variant="outlined"
                         />
                         <Typography variant="h6" sx={{ flexGrow: 1 }}>
@@ -253,7 +253,7 @@ const MarketPatterns: React.FC = () => {
                           <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
                             <Typography variant="body2">
                               <strong>Detected:</strong>{' '}
-                              {pattern.detected_at 
+                              {pattern.detected_at
                                 ? new Date(pattern.detected_at).toLocaleString()
                                 : 'N/A'}
                             </Typography>
@@ -306,6 +306,3 @@ const MarketPatterns: React.FC = () => {
 };
 
 export default MarketPatterns;
-
-
-

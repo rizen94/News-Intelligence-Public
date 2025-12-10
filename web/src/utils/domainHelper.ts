@@ -26,12 +26,12 @@ export const getCurrentDomain = (): DomainKey => {
   if (typeof window === 'undefined') {
     return DEFAULT_DOMAIN;
   }
-  
+
   const stored = localStorage.getItem('news_intelligence_domain');
   if (stored && isValidDomain(stored)) {
     return stored as DomainKey;
   }
-  
+
   return DEFAULT_DOMAIN;
 };
 
@@ -42,7 +42,7 @@ export const setCurrentDomain = (domain: DomainKey): void => {
   if (typeof window === 'undefined') {
     return;
   }
-  
+
   if (isValidDomain(domain)) {
     localStorage.setItem('news_intelligence_domain', domain);
   }
@@ -69,6 +69,3 @@ export const getDomainSchema = (domain: DomainKey): string => {
   const domainObj = getDomain(domain);
   return domainObj?.schema || 'politics';
 };
-
-
-

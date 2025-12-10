@@ -45,8 +45,10 @@ import {
 import React, { useState, useEffect, useCallback } from 'react';
 
 import { apiService } from '../../services/apiService';
+import { useDomainRoute } from '../../hooks/useDomainRoute';
 
 const EnhancedDashboard = () => {
+  const { domain } = useDomainRoute();
   // Topic clustering state
   const [topics, setTopics] = useState([]);
   const [clustering, setClustering] = useState(false);
@@ -93,15 +95,15 @@ const EnhancedDashboard = () => {
           console.warn('Health check error:', err);
           return { success: false, status: 'unknown' };
         }),
-        apiService.getArticles({ limit: 100 }).catch(err => {
+        apiService.getArticles({ limit: 100 }, domain).catch(err => {
           console.warn('Articles fetch error:', err);
           return { data: { articles: [], total: 0 } };
         }),
-        apiService.getStorylines({ limit: 100 }).catch(err => {
+        apiService.getStorylines({ limit: 100 }, domain).catch(err => {
           console.warn('Storylines fetch error:', err);
           return { data: { storylines: [], total: 0 } };
         }),
-        apiService.getRSSFeeds({ limit: 100 }).catch(err => {
+        apiService.getRSSFeeds({ limit: 100 }, domain).catch(err => {
           console.warn('RSS feeds fetch error:', err);
           return { data: { feeds: [], total: 0 } };
         }),
@@ -198,7 +200,7 @@ const EnhancedDashboard = () => {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [domain]);
 
   useEffect(() => {
     loadSystemData();

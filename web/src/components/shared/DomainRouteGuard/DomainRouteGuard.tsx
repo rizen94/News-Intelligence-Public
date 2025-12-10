@@ -30,6 +30,3 @@ const DomainRouteGuard: React.FC<DomainRouteGuardProps> = ({ children }) => {
 };
 
 export default DomainRouteGuard;
-
-
-

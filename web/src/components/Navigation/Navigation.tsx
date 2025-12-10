@@ -74,7 +74,6 @@ const Navigation: React.FC = () => {
           const linkPath = (item.path === '/monitoring' || item.path === '/settings')
             ? item.path
             : getDomainPath(item.path);
-          
           return (
             <li key={item.path} className='nav-item'>
               <Link

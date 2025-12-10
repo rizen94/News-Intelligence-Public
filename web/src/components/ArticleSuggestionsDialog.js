@@ -27,7 +27,7 @@ import {
   Refresh as RefreshIcon,
 } from '@mui/icons-material';
 import { apiService } from '../services/apiService';
-import { useDomain } from '../contexts/DomainContext';
+import { useDomainRoute } from '../hooks/useDomainRoute';
 
 const ArticleSuggestionsDialog = ({
   open,
@@ -35,7 +35,7 @@ const ArticleSuggestionsDialog = ({
   storylineId,
   onArticleAdded,
 }) => {
-  const { domain } = useDomain();
+  const { domain } = useDomainRoute();
   const [loading, setLoading] = useState(false);
   const [suggestions, setSuggestions] = useState([]);
   const [processing, setProcessing] = useState(new Set());

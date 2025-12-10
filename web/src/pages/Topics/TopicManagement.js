@@ -262,10 +262,10 @@ const TopicManagement = () => {
     try {
       setFeedbackLoading(true);
       setError(null);
-      
+
       const topicIds = topicsToMerge.map(t => t.id);
       const result = await apiService.mergeTopics(topicIds);
-      
+
       if (result.success) {
         setSnackbar({
           open: true,

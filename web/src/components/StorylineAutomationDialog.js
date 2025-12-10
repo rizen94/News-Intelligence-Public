@@ -29,6 +29,7 @@ import {
   AutoAwesome as AutoAwesomeIcon,
 } from '@mui/icons-material';
 import { apiService } from '../services/apiService';
+import { useDomainRoute } from '../hooks/useDomainRoute';
 
 const StorylineAutomationDialog = ({
   open,
@@ -36,6 +37,7 @@ const StorylineAutomationDialog = ({
   storylineId,
   onSettingsUpdated,
 }) => {
+  const { domain } = useDomainRoute();
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
@@ -69,6 +71,7 @@ const StorylineAutomationDialog = ({
     try {
       setLoading(true);
       setError(null);
+      // eslint-disable-next-line no-undef
       const response = await apiService.getAutomationSettings(storylineId, domain);
 
       if (response.success) {
@@ -119,6 +122,7 @@ const StorylineAutomationDialog = ({
         },
       };
 
+      // eslint-disable-next-line no-undef
       const response = await apiService.updateAutomationSettings(storylineId, updateData, domain);
 
       if (response && response.success) {

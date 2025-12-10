@@ -31,54 +31,54 @@ function App() {
           <div className='app-container'>
             <Navigation />
             <main className='main-content'>
-            <Routes>
-              {/* Root redirect to default domain */}
-              <Route path='/' element={<Navigate to='/politics/dashboard' replace />} />
-              
-              {/* Domain-agnostic routes (shared across all domains) */}
-              <Route path='/monitoring' element={<Monitoring />} />
-              <Route path='/settings' element={<Settings />} />
-              <Route
-                path='/test-storyline-management'
-                element={<StorylineManagementTest />}
-              />
-              
-              {/* Legacy route redirects (backward compatibility) */}
-              <Route path='/dashboard' element={<LegacyRedirect to='/dashboard' />} />
-              <Route path='/articles' element={<LegacyRedirect to='/articles' />} />
-              <Route 
-                path='/articles/duplicates' 
-                element={<LegacyRedirect to='/articles/duplicates' />} 
-              />
-              <Route 
-                path='/articles/:id' 
-                element={<LegacyRedirect to='/articles/:id' preserveParams />} 
-              />
-              <Route path='/storylines' element={<LegacyRedirect to='/storylines' />} />
-              <Route 
-                path='/storylines/:id' 
-                element={<LegacyRedirect to='/storylines/:id' preserveParams />} 
-              />
-              <Route path='/topics' element={<LegacyRedirect to='/topics' />} />
-              <Route 
-                path='/topics/:topicName' 
-                element={<LegacyRedirect to='/topics/:topicName' preserveParams />} 
-              />
-              <Route path='/rss-feeds' element={<LegacyRedirect to='/rss-feeds' />} />
-              <Route 
-                path='/rss-feeds/duplicates' 
-                element={<LegacyRedirect to='/rss-feeds/duplicates' />} 
-              />
-              <Route path='/intelligence' element={<LegacyRedirect to='/intelligence' />} />
-              
-              {/* Domain-specific routes */}
-              <Route path='/:domain/*' element={<DomainLayout />} />
-            </Routes>
-          </main>
+              <Routes>
+                {/* Root redirect to default domain */}
+                <Route path='/' element={<Navigate to='/politics/dashboard' replace />} />
+
+                {/* Domain-agnostic routes (shared across all domains) */}
+                <Route path='/monitoring' element={<Monitoring />} />
+                <Route path='/settings' element={<Settings />} />
+                <Route
+                  path='/test-storyline-management'
+                  element={<StorylineManagementTest />}
+                />
+
+                {/* Legacy route redirects (backward compatibility) */}
+                <Route path='/dashboard' element={<LegacyRedirect to='/dashboard' />} />
+                <Route path='/articles' element={<LegacyRedirect to='/articles' />} />
+                <Route
+                  path='/articles/duplicates'
+                  element={<LegacyRedirect to='/articles/duplicates' />}
+                />
+                <Route
+                  path='/articles/:id'
+                  element={<LegacyRedirect to='/articles/:id' preserveParams />}
+                />
+                <Route path='/storylines' element={<LegacyRedirect to='/storylines' />} />
+                <Route
+                  path='/storylines/:id'
+                  element={<LegacyRedirect to='/storylines/:id' preserveParams />}
+                />
+                <Route path='/topics' element={<LegacyRedirect to='/topics' />} />
+                <Route
+                  path='/topics/:topicName'
+                  element={<LegacyRedirect to='/topics/:topicName' preserveParams />}
+                />
+                <Route path='/rss-feeds' element={<LegacyRedirect to='/rss-feeds' />} />
+                <Route
+                  path='/rss-feeds/duplicates'
+                  element={<LegacyRedirect to='/rss-feeds/duplicates' />}
+                />
+                <Route path='/intelligence' element={<LegacyRedirect to='/intelligence' />} />
+
+                {/* Domain-specific routes */}
+                <Route path='/:domain/*' element={<DomainLayout />} />
+              </Routes>
+            </main>
+          </div>
+          <Footer />
         </div>
-        <Footer />
-      </div>
-    </Router>
+      </Router>
     </DomainProvider>
   );
 }

@@ -51,7 +51,7 @@ const MarketResearch: React.FC = () => {
     try {
       setLoading(true);
       setError(null);
-      
+
       const response = await apiService.getMarketTrends({
         timeframe,
         sector: sector !== 'all' ? sector : undefined,
@@ -211,6 +211,3 @@ const MarketResearch: React.FC = () => {
 };
 
 export default MarketResearch;
-
-
-

@@ -58,7 +58,7 @@ const CorporateAnnouncements: React.FC = () => {
   const [total, setTotal] = useState(0);
   const limit = 20;
 
-  const loadAnnouncements = useCallback(async () => {
+  const loadAnnouncements = useCallback(async() => {
     if (domain !== 'finance') {
       setError('This page is only available for the Finance domain');
       setLoading(false);
@@ -68,7 +68,7 @@ const CorporateAnnouncements: React.FC = () => {
     try {
       setLoading(true);
       setError(null);
-      
+
       const response = await apiService.getCorporateAnnouncements({
         ...filters,
         limit,
@@ -205,10 +205,10 @@ const CorporateAnnouncements: React.FC = () => {
             <Typography variant="body2" color="text.secondary">
               {total} announcement{total !== 1 ? 's' : ''} found
             </Typography>
-            <Chip 
-              label="API Endpoint: /api/v4/finance/finance/corporate-announcements" 
-              color="info" 
-              size="small" 
+            <Chip
+              label="API Endpoint: /api/v4/finance/finance/corporate-announcements"
+              color="info"
+              size="small"
             />
           </Box>
 
@@ -235,7 +235,7 @@ const CorporateAnnouncements: React.FC = () => {
                   {announcements.map((announcement: any) => (
                     <TableRow key={announcement.id}>
                       <TableCell>
-                        {announcement.announcement_date 
+                        {announcement.announcement_date
                           ? new Date(announcement.announcement_date).toLocaleDateString()
                           : 'N/A'}
                       </TableCell>
@@ -244,9 +244,9 @@ const CorporateAnnouncements: React.FC = () => {
                         <Chip label={announcement.ticker_symbol || 'N/A'} size="small" />
                       </TableCell>
                       <TableCell>
-                        <Chip 
-                          label={announcement.announcement_type || 'N/A'} 
-                          size="small" 
+                        <Chip
+                          label={announcement.announcement_type || 'N/A'}
+                          size="small"
                           color="primary"
                           variant="outlined"
                         />
@@ -259,7 +259,7 @@ const CorporateAnnouncements: React.FC = () => {
                             size="small"
                             color={
                               announcement.sentiment_label === 'positive' ? 'success' :
-                              announcement.sentiment_label === 'negative' ? 'error' : 'default'
+                                announcement.sentiment_label === 'negative' ? 'error' : 'default'
                             }
                           />
                         )}
@@ -306,6 +306,4 @@ const CorporateAnnouncements: React.FC = () => {
 };
 
 export default CorporateAnnouncements;
-
-
 

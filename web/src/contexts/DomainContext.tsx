@@ -47,9 +47,11 @@ export const DomainProvider: React.FC<DomainProviderProps> = ({ children }) => {
       }
     };
 
+    // eslint-disable-next-line no-undef
     window.addEventListener('domainChanged', handleDomainChange as EventListener);
-    
+
     return () => {
+      // eslint-disable-next-line no-undef
       window.removeEventListener('domainChanged', handleDomainChange as EventListener);
     };
   }, [domain]);
@@ -85,6 +87,3 @@ export const useDomain = (): DomainContextType => {
 };
 
 export default DomainContext;
-
-
-

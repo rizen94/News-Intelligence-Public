@@ -42,14 +42,14 @@ const DomainLayout: React.FC = () => {
         }
       } else {
         // Invalid domain, redirect to default
-        navigate(`/politics/dashboard`, { replace: true });
+        navigate('/politics/dashboard', { replace: true });
       }
     }
   }, [urlDomain, contextDomain, setDomain, navigate]);
 
   // If no domain in URL or invalid, redirect
   if (!urlDomain || !isValidDomain(urlDomain)) {
-    return <Navigate to="/politics/dashboard" replace />;
+    return <Navigate to='/politics/dashboard' replace />;
   }
 
   return (
@@ -59,35 +59,35 @@ const DomainLayout: React.FC = () => {
             CORE FEATURES - AVAILABLE IN ALL DOMAINS
             These routes are the same for Politics, Finance, and Science & Tech
             ============================================ */}
-        
+
         {/* Dashboard - Domain-specific overview */}
         <Route path="dashboard" element={<Dashboard />} />
-        
+
         {/* Articles - Core feature with AI summarization and enhancement */}
         <Route path="articles" element={<Articles />} />
         <Route path="articles/:id" element={<ArticleDetail />} />
         <Route path="articles/duplicates" element={<ArticleDeduplicationManager />} />
-        
+
         {/* Storylines - Core feature with RAG-enhanced discovery and AI analysis */}
         <Route path="storylines" element={<Storylines />} />
         <Route path="storylines/:id" element={<StorylineDetail />} />
-        
+
         {/* Topics - Core feature with topic clustering and management */}
         <Route path="topics" element={<Topics />} />
         <Route path="topics/:topicName" element={<TopicArticles />} />
-        
+
         {/* RSS Feeds - Core feature for feed management */}
         <Route path="rss-feeds" element={<RSSFeeds />} />
         <Route path="rss-feeds/duplicates" element={<RSSDuplicateManager />} />
-        
+
         {/* Intelligence Hub - Core feature with AI-powered insights */}
         <Route path="intelligence" element={<Intelligence />} />
-        
+
         {/* ============================================
             DOMAIN-SPECIFIC FEATURES (ADDITIONS ONLY)
             These are additions to core features, not replacements
             ============================================ */}
-        
+
         {/* Finance-specific routes - Additional features for Finance domain */}
         {urlDomain === 'finance' && (
           <>
@@ -96,7 +96,7 @@ const DomainLayout: React.FC = () => {
             <Route path="market-patterns" element={<MarketPatterns />} />
           </>
         )}
-        
+
         {/* Future: Add other domain-specific routes here */}
         {/* Example: Science & Tech specific features */}
         {/* {urlDomain === 'science-tech' && (
@@ -105,7 +105,7 @@ const DomainLayout: React.FC = () => {
             <Route path="tech-trends" element={<TechTrends />} />
           </>
         )} */}
-        
+
         {/* Default redirect to dashboard */}
         <Route path="" element={<Navigate to={`/${urlDomain}/dashboard`} replace />} />
         <Route path="*" element={<Navigate to={`/${urlDomain}/dashboard`} replace />} />
@@ -115,4 +115,3 @@ const DomainLayout: React.FC = () => {
 };
 
 export default DomainLayout;
-

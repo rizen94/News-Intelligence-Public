@@ -57,13 +57,13 @@ import StorylineManagementDialog from '../../components/StorylineManagementDialo
 import StorylineAutomationDialog from '../../components/StorylineAutomationDialog';
 import ArticleSuggestionsDialog from '../../components/ArticleSuggestionsDialog';
 import { useDomainNavigation } from '../../hooks/useDomainNavigation';
-import { useDomain } from '../../contexts/DomainContext';
+import { useDomainRoute } from '../../hooks/useDomainRoute';
 
 const StorylineDetail = () => {
   const { id } = useParams();
   const navigate = useNavigate();
   const { navigateToDomain } = useDomainNavigation();
-  const { domain } = useDomain();
+  const { domain } = useDomainRoute();
   const [storyline, setStoryline] = useState(null);
   const [articles, setArticles] = useState([]);
   const [timeline, setTimeline] = useState([]);
@@ -318,7 +318,6 @@ const StorylineDetail = () => {
       setAnalyzing(false);
     }
   };
-
 
   const handleStorylineUpdated = () => {
     loadStoryline();

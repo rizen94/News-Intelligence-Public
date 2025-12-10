@@ -104,7 +104,7 @@ const Topics = () => {
       if (response.success) {
         const articles = response.data?.articles || response.data || [];
         console.log(`Found ${articles.length} articles for topic "${topicName}"`);
-        
+
         // If no articles found via topic assignment, try searching by keyword
         if (articles.length === 0) {
           console.log(`No articles assigned to topic, searching articles by keyword: "${topicName}"`);
@@ -112,7 +112,7 @@ const Topics = () => {
             search: topicName,
             limit: 100,
           });
-          
+
           if (searchResponse.success) {
             const searchArticles = searchResponse.data?.articles || searchResponse.data?.data?.articles || [];
             console.log(`Found ${searchArticles.length} articles matching keyword "${topicName}"`);
@@ -136,7 +136,7 @@ const Topics = () => {
           search: topicName,
           limit: 100,
         });
-        
+
         if (searchResponse.success) {
           const searchArticles = searchResponse.data?.articles || searchResponse.data?.data?.articles || [];
           if (searchArticles.length > 0) {

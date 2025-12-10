@@ -11,13 +11,13 @@ import { useDomainRoute } from '../../../hooks/useDomainRoute';
 import { useNavigate } from 'react-router-dom';
 
 interface DomainBreadcrumbProps {
-  items?: Array<{ label: string; path?: string }>;
+  items?: Array<{ label: string; path?: string; icon?: React.ReactElement }>;
   showDomain?: boolean;
 }
 
-const DomainBreadcrumb: React.FC<DomainBreadcrumbProps> = ({ 
-  items = [], 
-  showDomain = true 
+const DomainBreadcrumb: React.FC<DomainBreadcrumbProps> = ({
+  items = [],
+  showDomain = true,
 }) => {
   const { domainName, domain } = useDomain();
   const { getDomainPath } = useDomainRoute();
@@ -26,18 +26,18 @@ const DomainBreadcrumb: React.FC<DomainBreadcrumbProps> = ({
   // Domain-specific color
   const getDomainColor = () => {
     switch (domain) {
-      case 'politics':
-        return 'primary';
-      case 'finance':
-        return 'success';
-      case 'science-tech':
-        return 'secondary';
-      default:
-        return 'default';
+    case 'politics':
+      return 'primary';
+    case 'finance':
+      return 'success';
+    case 'science-tech':
+      return 'secondary';
+    default:
+      return 'default';
     }
   };
 
-  const breadcrumbItems = [
+  const breadcrumbItems: Array<{ label: string; path?: string; icon?: React.ReactElement }> = [
     {
       label: 'Home',
       path: getDomainPath('/dashboard'),
@@ -54,16 +54,16 @@ const DomainBreadcrumb: React.FC<DomainBreadcrumbProps> = ({
       >
         {breadcrumbItems.map((item, index) => {
           const isLast = index === breadcrumbItems.length - 1;
-          
+
           if (isLast) {
             return (
               <Typography key={index} color="text.primary" sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                {item.icon}
+                {item.icon || null}
                 {item.label}
               </Typography>
             );
           }
-          
+
           return (
             <Link
               key={index}
@@ -100,6 +100,4 @@ const DomainBreadcrumb: React.FC<DomainBreadcrumbProps> = ({
 };
 
 export default DomainBreadcrumb;
-
-
 

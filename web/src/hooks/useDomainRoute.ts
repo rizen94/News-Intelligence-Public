@@ -13,8 +13,8 @@ export const useDomainRoute = () => {
   const { pathname } = useLocation();
 
   // Use URL domain if available, otherwise fall back to context
-  const effectiveDomain = (urlDomain && isValidDomain(urlDomain)) 
-    ? urlDomain as DomainKey 
+  const effectiveDomain = (urlDomain && isValidDomain(urlDomain))
+    ? urlDomain as DomainKey
     : contextDomain;
 
   /**
@@ -50,6 +50,3 @@ export const useDomainRoute = () => {
     isInDomain,
   };
 };
-
-
-
