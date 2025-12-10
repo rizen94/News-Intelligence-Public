@@ -21,13 +21,13 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { apiService } from '../../services/apiService.ts';
 import ArticleTopics from '../../components/ArticleTopics/ArticleTopics';
 import { useDomainNavigation } from '../../hooks/useDomainNavigation';
-import { useDomain } from '../../contexts/DomainContext';
+import { useDomainRoute } from '../../hooks/useDomainRoute';
 
 const ArticleDetail = () => {
   const { id } = useParams();
   const navigate = useNavigate();
   const { navigateToDomain } = useDomainNavigation();
-  const { domain } = useDomain();
+  const { domain } = useDomainRoute();
   const [article, setArticle] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);

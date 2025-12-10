@@ -65,10 +65,10 @@ import {
 import React, { useState, useEffect, useCallback } from 'react';
 
 import { apiService } from '../../services/apiService';
-import { useDomain } from '../../contexts/DomainContext';
+import { useDomainRoute } from '../../hooks/useDomainRoute';
 
 const EnhancedRSSFeeds = () => {
-  const { domain } = useDomain();
+  const { domain } = useDomainRoute();
   const [feeds, setFeeds] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);

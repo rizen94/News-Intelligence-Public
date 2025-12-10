@@ -60,10 +60,10 @@ import React, { useState, useEffect, useCallback } from 'react';
 import ArticleReader from '../../components/ArticleReader';
 import { apiService } from '../../services/apiService';
 import { calculateReadingTime, formatReadingTime, getArticleReadingTime } from '../../utils/articleUtils';
-import { useDomain } from '../../contexts/DomainContext';
+import { useDomainRoute } from '../../hooks/useDomainRoute';
 
 const EnhancedArticles = () => {
-  const { domain } = useDomain();
+  const { domain } = useDomainRoute();
   // Topic clustering state
   const [topics, setTopics] = useState([]);
   const [selectedTopic, setSelectedTopic] = useState(null);

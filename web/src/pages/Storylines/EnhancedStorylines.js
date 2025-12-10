@@ -81,12 +81,13 @@ import { useNavigate } from 'react-router-dom';
 import { apiService } from '../../services/apiService';
 import StorylineManagementDialog from '../../components/StorylineManagementDialog';
 import { useDomainNavigation } from '../../hooks/useDomainNavigation';
+import { useDomainRoute } from '../../hooks/useDomainRoute';
 import { useDomain } from '../../contexts/DomainContext';
 
 const EnhancedStorylines = () => {
   const navigate = useNavigate();
   const { navigateToDomain } = useDomainNavigation();
-  const { domain } = useDomain();
+  const { domain } = useDomainRoute();
   const [storylines, setStorylines] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
