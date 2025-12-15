@@ -88,27 +88,51 @@ const EnhancedDashboard = () => {
         pipelineStatusData,
       ] = await Promise.allSettled([
         apiService.getMonitoringDashboard().catch(err => {
-          console.warn('Monitoring dashboard error:', err);
+          console.error('❌ Monitoring dashboard error:', err);
+          // Check if it's a connection error
+          if (err.code === 'ECONNREFUSED' || err.message?.includes('Network Error') || !err.response) {
+            setError('⚠️ API server is not running. Please start the API server on port 8000.');
+          }
           return null;
         }),
         apiService.getHealth().catch(err => {
-          console.warn('Health check error:', err);
-          return { success: false, status: 'unknown' };
+          console.error('❌ Health check error:', err);
+          // Check if it's a connection error
+          if (err.code === 'ECONNREFUSED' || err.message?.includes('Network Error') || !err.response) {
+            setError('⚠️ Cannot connect to API server. Please check if the API server is running.');
+          }
+          return { success: false, status: 'unknown', error: 'Connection failed' };
         }),
         apiService.getArticles({ limit: 100 }, domain).catch(err => {
-          console.warn('Articles fetch error:', err);
+          console.error('❌ Articles fetch error:', err);
+          // Only return empty data if it's not a connection error
+          if (err.code === 'ECONNREFUSED' || err.message?.includes('Network Error') || !err.response) {
+            throw err; // Re-throw connection errors so they're visible
+          }
           return { data: { articles: [], total: 0 } };
         }),
         apiService.getStorylines({ limit: 100 }, domain).catch(err => {
-          console.warn('Storylines fetch error:', err);
+          console.error('❌ Storylines fetch error:', err);
+          // Only return empty data if it's not a connection error
+          if (err.code === 'ECONNREFUSED' || err.message?.includes('Network Error') || !err.response) {
+            throw err; // Re-throw connection errors so they're visible
+          }
           return { data: { storylines: [], total: 0 } };
         }),
         apiService.getRSSFeeds({ limit: 100 }, domain).catch(err => {
-          console.warn('RSS feeds fetch error:', err);
+          console.error('❌ RSS feeds fetch error:', err);
+          // Only return empty data if it's not a connection error
+          if (err.code === 'ECONNREFUSED' || err.message?.includes('Network Error') || !err.response) {
+            throw err; // Re-throw connection errors so they're visible
+          }
           return { data: { feeds: [], total: 0 } };
         }),
         apiService.getPipelineStatus().catch(err => {
-          console.warn('Pipeline status error:', err);
+          console.error('❌ Pipeline status error:', err);
+          // Only return default data if it's not a connection error
+          if (err.code === 'ECONNREFUSED' || err.message?.includes('Network Error') || !err.response) {
+            throw err; // Re-throw connection errors so they're visible
+          }
           return { success: false, data: { status: 'idle', success_rate: 0, total_traces: 0, active_traces: 0 } };
         }),
       ]);
@@ -131,6 +155,19 @@ const EnhancedDashboard = () => {
                                  articlesResult.total ||
                                  articlesList.length;
 
+      // Extract storylines from response (handle new API format: { data: [...], pagination: {...} })
+      const storylinesList = Array.isArray(storylinesResult.data) 
+                          ? storylinesResult.data 
+                          : storylinesResult.data?.storylines ||
+                            storylinesResult.data?.data?.storylines ||
+                            storylinesResult.storylines ||
+                            [];
+      const totalStorylinesCount = storylinesResult.pagination?.total ||
+                                   storylinesResult.data?.total ||
+                                   storylinesResult.data?.data?.total ||
+                                   storylinesResult.total ||
+                                   storylinesList.length;
+
       // Calculate today's articles
       const today = new Date().toISOString().split('T')[0];
       const todayArticles = articlesList.filter(
@@ -146,12 +183,15 @@ const EnhancedDashboard = () => {
           article.published_at && new Date(article.published_at) >= weekAgo,
       );
 
+      // Determine overall health status
+      const healthStatus = healthResult?.status || 
+                          healthResult?.data?.status ||
+                          (monitoringResult?.data?.database?.status === 'healthy' && 
+                           monitoringResult?.data?.redis?.status === 'healthy' ? 'healthy' : 'unknown');
+
       // Combine the data into system status
       const status = {
-        overall:
-          monitoringResult?.data?.overall_status ||
-          healthResult?.status ||
-          monitoringResult?.data?.database?.status === 'healthy' && monitoringResult?.data?.redis?.status === 'healthy' ? 'healthy' : 'unknown',
+        overall: monitoringResult?.data?.overall_status || healthStatus,
         health: healthResult,
         articleStats: {
           data: {
@@ -171,9 +211,9 @@ const EnhancedDashboard = () => {
         },
         storylineStats: {
           data: {
-            total_storylines: storylinesResult.data?.total || storylinesResult.data?.storylines?.length || 0,
+            total_storylines: totalStorylinesCount,
             active_storylines:
-              storylinesResult.data?.storylines?.filter(
+              storylinesList.filter(
                 s => s.status === 'active',
               )?.length || 0,
           },

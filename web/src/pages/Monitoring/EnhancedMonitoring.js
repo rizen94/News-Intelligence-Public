@@ -514,7 +514,7 @@ const EnhancedMonitoring = () => {
 
     content += `\n• **Total estimated time:** ${remainingTime} minutes (remaining processes)
 • **Why sequential?** Each process depends on the previous one's output
-• **Resource usage:** 
+• **Resource usage:**
   - GPU: ~15-20GB VRAM during ML phases (Llama 3.1 70B model)
   - RAM: ~8-12GB for processing
   - CPU: Multi-core utilization during RSS phase

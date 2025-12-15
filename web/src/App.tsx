@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import {
   BrowserRouter as Router,
   Routes,
@@ -21,17 +21,68 @@ import Header from './components/Header/Header';
 import Footer from './components/Footer/Footer';
 import StorylineManagementTest from './components/StorylineManagementTest';
 import { DomainProvider } from './contexts/DomainContext';
+import { getAPIConnectionManager } from './services/apiConnectionManager';
+import { frontendHealthService } from './services/frontendHealthService';
+import loggingService from './services/loggingService';
+import errorHandler from './services/errorHandler';
+import ErrorBoundary from './components/ErrorBoundary/ErrorBoundary';
+// Import debug helpers (auto-initialized in development)
+import './utils/debugHelper';
+import './utils/featureTestHelper';
 
 function App() {
+  // Initialize logging and error handling on app start
+  useEffect(() => {
+    // Initialize error handler (already auto-initialized, but ensure it's ready)
+    errorHandler.initialize();
+
+    // Log app initialization
+    loggingService.info('News Intelligence System initialized', {
+      version: '4.0',
+      environment: process.env.NODE_ENV,
+      userAgent: navigator.userAgent,
+      url: window.location.href,
+    });
+
+    // Initialize API connection manager
+    const connectionManager = getAPIConnectionManager();
+
+    // Test connection on mount
+    connectionManager.testConnection().then((connected) => {
+      if (connected) {
+        loggingService.info('API connection established successfully');
+      } else {
+        loggingService.warn('API connection check failed - will retry automatically');
+      }
+    });
+
+    // Initialize frontend health monitoring
+    frontendHealthService.startMonitoring(30000); // Check every 30 seconds
+    loggingService.info('Frontend health monitoring started');
+
+    // Report health to API periodically
+    const healthReportInterval = setInterval(() => {
+      frontendHealthService.reportHealthToAPI();
+    }, 60000); // Report every minute
+
+    // Cleanup on unmount
+    return () => {
+      connectionManager.cleanup();
+      frontendHealthService.stopMonitoring();
+      clearInterval(healthReportInterval);
+    };
+  }, []);
+
   return (
-    <DomainProvider>
-      <Router>
-        <div className='App'>
-          <Header />
-          <div className='app-container'>
-            <Navigation />
-            <main className='main-content'>
-              <Routes>
+    <ErrorBoundary>
+      <DomainProvider>
+        <Router>
+          <div className='App'>
+            <Header />
+            <div className='app-container'>
+              <Navigation />
+              <main className='main-content'>
+                <Routes>
                 {/* Root redirect to default domain */}
                 <Route path='/' element={<Navigate to='/politics/dashboard' replace />} />
 
@@ -80,6 +131,7 @@ function App() {
         </div>
       </Router>
     </DomainProvider>
+    </ErrorBoundary>
   );
 }
 

@@ -12,9 +12,9 @@ interface DomainIndicatorProps {
   showLabel?: boolean;
 }
 
-const DomainIndicator: React.FC<DomainIndicatorProps> = ({ 
+const DomainIndicator: React.FC<DomainIndicatorProps> = ({
   variant = 'badge',
-  showLabel = true 
+  showLabel = true
 }) => {
   const { domainName, domain } = useDomain();
 

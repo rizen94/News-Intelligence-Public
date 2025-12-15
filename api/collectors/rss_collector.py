@@ -7,12 +7,13 @@ Excludes sports, entertainment, and pop culture content.
 
 import os
 import logging
-import signal
+import threading
 import feedparser
 import psycopg2
 import re
 from datetime import datetime
 from typing import Dict, List, Optional
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 
 # Import deduplication system
 try:
@@ -38,8 +39,13 @@ try:
     })
 except Exception as e:
     logger.error(f"Failed to load database config: {e}")
+    # Fallback config - default to NAS, never localhost
+    db_host = os.getenv('DB_HOST', '192.168.93.100')  # Default to NAS
+    if db_host in ['localhost', '127.0.0.1'] and os.getenv('ALLOW_LOCAL_DB', 'false').lower() != 'true':
+        logger.error("Local database is BLOCKED. System requires NAS database (192.168.93.100)")
+        raise ValueError("Local database connection blocked - use NAS database")
     DB_CONFIG = {
-        'host': os.getenv('DB_HOST', 'localhost'),
+        'host': db_host,
         'database': os.getenv('DB_NAME', 'news_intelligence'),
         'user': os.getenv('DB_USER', 'newsapp'),
         'password': os.getenv('DB_PASSWORD', 'newsapp_password'),
@@ -273,16 +279,17 @@ def collect_rss_feeds() -> int:
             logger.info(f"Processing feed: {feed_name} ({feed_url})")
             
             try:
-                # Set timeout for RSS parsing
-                def timeout_handler(signum, frame):
-                    raise TimeoutError("RSS parsing timeout")
+                # Parse RSS feed with thread-based timeout (works in background threads)
+                def parse_feed():
+                    return feedparser.parse(feed_url)
                 
-                signal.signal(signal.SIGALRM, timeout_handler)
-                signal.alarm(30)  # 30 second timeout
-                
-                # Parse RSS feed
-                feed = feedparser.parse(feed_url)
-                signal.alarm(0)  # Cancel timeout
+                # Use ThreadPoolExecutor for timeout (works in any thread)
+                with ThreadPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(parse_feed)
+                    try:
+                        feed = future.result(timeout=30)  # 30 second timeout
+                    except FutureTimeoutError:
+                        raise TimeoutError("RSS parsing timeout")
                 
                 articles_added = 0
                 
@@ -403,15 +410,17 @@ def collect_rss_feed(feed_url: str, feed_name: str = "Unknown") -> int:
     try:
         cur = conn.cursor()
         
-        # Parse RSS feed with timeout
-        def timeout_handler(signum, frame):
-            raise TimeoutError("RSS parsing timeout")
+        # Parse RSS feed with thread-based timeout (works in background threads)
+        def parse_feed():
+            return feedparser.parse(feed_url)
         
-        signal.signal(signal.SIGALRM, timeout_handler)
-        signal.alarm(30)
-        
-        feed = feedparser.parse(feed_url)
-        signal.alarm(0)
+        # Use ThreadPoolExecutor for timeout (works in any thread)
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(parse_feed)
+            try:
+                feed = future.result(timeout=30)  # 30 second timeout
+            except FutureTimeoutError:
+                raise TimeoutError("RSS parsing timeout")
         
         articles_added = 0
         

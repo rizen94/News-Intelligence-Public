@@ -17,7 +17,9 @@ logger = logging.getLogger(__name__)
 class TopicIntelligenceService:
     """Intelligent topic filtering and ranking service"""
     
-    def __init__(self):
+    def __init__(self, domain: str = 'politics'):
+        self.domain = domain
+        self.schema = domain.replace('-', '_')
         self.stop_words = self._load_stop_words()
         self.topic_patterns = self._load_topic_patterns()
         
@@ -222,16 +224,19 @@ class TopicIntelligenceService:
             )
             
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                # Set search path to domain schema
+                cur.execute(f"SET search_path TO {self.schema}, public")
+                
                 # Get topic clusters with article counts
-                cur.execute("""
+                cur.execute(f"""
                     SELECT 
                         tc.topic_name,
                         COUNT(atc.article_id) as article_count,
                         AVG(atc.relevance_score) as avg_confidence,
                         MAX(a.created_at) as latest_article_date
-                    FROM topic_clusters tc
-                    LEFT JOIN article_topics atc ON tc.id = atc.topic_id
-                    LEFT JOIN articles a ON atc.article_id = a.id
+                    FROM {self.schema}.topic_clusters tc
+                    LEFT JOIN {self.schema}.article_topic_assignments atc ON tc.id = atc.topic_id
+                    LEFT JOIN {self.schema}.articles a ON atc.article_id = a.id
                     GROUP BY tc.id, tc.topic_name
                     ORDER BY article_count DESC, avg_confidence DESC
                 """)

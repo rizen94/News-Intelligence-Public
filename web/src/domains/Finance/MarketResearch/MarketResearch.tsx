@@ -41,7 +41,7 @@ const MarketResearch: React.FC = () => {
   const [timeframe, setTimeframe] = useState('7d');
   const [sector, setSector] = useState('all');
 
-  const loadMarketTrends = useCallback(async () => {
+  const loadMarketTrends = useCallback(async() => {
     if (domain !== 'finance') {
       setError('This page is only available for the Finance domain');
       setLoading(false);

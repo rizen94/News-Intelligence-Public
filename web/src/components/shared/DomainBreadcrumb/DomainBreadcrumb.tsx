@@ -81,7 +81,7 @@ const DomainBreadcrumb: React.FC<DomainBreadcrumbProps> = ({
                 },
               }}
             >
-              {item.icon}
+              {item.icon || null}
               {item.label}
             </Link>
           );

@@ -1,6 +1,7 @@
 import React from 'react';
 import { useDomain } from '../../contexts/DomainContext';
 import { Chip, Box } from '@mui/material';
+import APIConnectionStatus from '../APIConnectionStatus/APIConnectionStatus';
 import './Header.css';
 
 const Header: React.FC = () => {
@@ -42,10 +43,13 @@ const Header: React.FC = () => {
           <p>AI-Powered Multi-Domain News Analysis Platform</p>
         </div>
         <div className='header-right'>
-          <div className='status-indicator'>
-            <span className='status-dot online'></span>
-            <span>System Online</span>
-          </div>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+            <APIConnectionStatus showDetails={false} />
+            <div className='status-indicator'>
+              <span className='status-dot online'></span>
+              <span>System Online</span>
+            </div>
+          </Box>
         </div>
       </div>
     </header>

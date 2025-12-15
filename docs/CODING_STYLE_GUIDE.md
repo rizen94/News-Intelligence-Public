@@ -1,11 +1,11 @@
-# 📝 News Intelligence System v3.0 - Coding Style Guide
+# 📝 News Intelligence System v4.0 - Coding Style Guide
 
 ## 📋 **OVERVIEW**
 
 This document establishes coding standards, naming conventions, and architectural patterns for the News Intelligence System to ensure consistency, maintainability, and prevent configuration fragmentation.
 
-**Last Updated**: 2025-09-11  
-**Version**: 3.0  
+**Last Updated**: 2025-12-12  
+**Version**: 4.0  
 **Status**: Active
 
 ---
@@ -240,6 +240,56 @@ CREATE INDEX idx_articles_category_idx ON articles(category);
 ---
 
 ## 🌐 **API STANDARDS**
+
+### **Router Prefix Convention (CRITICAL)**
+```python
+# ✅ CORRECT - Main domain routers (included directly in main_v4.py)
+# These should have the full /api/v4 prefix
+router = APIRouter(
+    prefix="/api/v4",
+    tags=["Domain Name"]
+)
+
+# ✅ CORRECT - Sub-routers (included in other routers)
+# These should NOT have a prefix - the parent router provides it
+router = APIRouter(
+    tags=["Sub-feature Name"]
+)
+
+# ✅ CORRECT - Feature-specific routers with sub-paths
+# These can have a sub-path prefix if they're included directly in main_v4.py
+router = APIRouter(
+    prefix="/api/v4/system-monitoring",  # Full path if included in main
+    tags=["System Monitoring"]
+)
+
+# ❌ WRONG - Double prefix (causes /api/v4/api/v4/...)
+# Parent router has /api/v4, child router also has /api/v4
+parent_router = APIRouter(prefix="/api/v4")
+child_router = APIRouter(prefix="/api/v4")  # ❌ WRONG!
+parent_router.include_router(child_router)  # Results in /api/v4/api/v4/...
+
+# ✅ CORRECT - Child router without prefix
+parent_router = APIRouter(prefix="/api/v4")
+child_router = APIRouter()  # ✅ No prefix - inherits from parent
+parent_router.include_router(child_router)  # Results in /api/v4/...
+```
+
+### **Router Inclusion Pattern**
+```python
+# ✅ CORRECT - Pattern for domain routers
+# In main_v4.py:
+from domains.storyline_management.routes import router as storyline_router
+app.include_router(storyline_router)  # Router has prefix="/api/v4"
+
+# In domains/storyline_management/routes/__init__.py:
+router = APIRouter(prefix="/api/v4")  # ✅ Main router has prefix
+router.include_router(crud_router)    # ✅ Sub-routers have NO prefix
+router.include_router(articles_router)
+
+# In domains/storyline_management/routes/storyline_crud.py:
+router = APIRouter()  # ✅ NO prefix - inherits from parent
+```
 
 ### **Route Naming Convention**
 ```python

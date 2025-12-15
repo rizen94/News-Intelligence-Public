@@ -3,7 +3,7 @@ Domain 2: Content Analysis Routes
 Handles sentiment analysis, entity extraction, summarization, and bias detection
 """
 
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Path, Query, Body
 from typing import List, Dict, Any, Optional
 import asyncio
 from datetime import datetime, timedelta
@@ -11,11 +11,12 @@ import logging
 
 from shared.services.llm_service import llm_service, TaskType
 from shared.database.connection import get_db_connection
+from shared.services.domain_aware_service import validate_domain
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
-    prefix="/api/v4/content-analysis",
+    prefix="/api/v4",
     tags=["Content Analysis"],
     responses={404: {"description": "Not found"}}
 )
@@ -435,21 +436,30 @@ async def process_batch_analysis(articles: List[tuple]):
 # TOPIC CLUSTERING ENDPOINTS
 # ============================================================================
 
-@router.get("/topics")
+@router.get("/{domain}/content-analysis/topics")
 async def get_topics(
-    limit: int = 50,
-    offset: int = 0,
-    search: Optional[str] = None,
-    category: Optional[str] = None
+    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    search: Optional[str] = Query(None),
+    category: Optional[str] = Query(None)
 ):
-    """Get topic clusters with optional filtering"""
+    """Get topic clusters with optional filtering for a specific domain"""
     try:
+        # Validate domain
+        if not validate_domain(domain):
+            raise HTTPException(status_code=400, detail=f"Invalid domain: {domain}")
+        
+        schema = domain.replace('-', '_')
         conn = get_db_connection()
         if not conn:
             raise HTTPException(status_code=500, detail="Database connection failed")
         
         try:
             with conn.cursor() as cur:
+                # Set search path to domain schema
+                cur.execute(f"SET search_path TO {schema}, public")
+                
                 # Build query with filters (no is_active column in current schema)
                 where_conditions = ["1=1"]
                 params = []
@@ -468,8 +478,8 @@ async def get_topics(
                            tc.created_at, NULL as updated_at, NULL as metadata,
                            COUNT(atc.article_id) as article_count,
                            AVG(atc.relevance_score) as avg_relevance
-                    FROM topic_clusters tc
-                    LEFT JOIN article_topics atc ON tc.id = atc.topic_id
+                    FROM {schema}.topic_clusters tc
+                    LEFT JOIN {schema}.article_topic_assignments atc ON tc.id = atc.topic_id
                     {where_clause}
                     GROUP BY tc.id, tc.topic_name,
                              tc.created_at
@@ -521,18 +531,27 @@ async def get_topics(
         logger.error(f"Error fetching topics: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/topics/cluster")
-async def cluster_articles(request: Dict[str, Any], background_tasks: BackgroundTasks):
-    """Cluster articles into topics using AI"""
+@router.post("/{domain}/content-analysis/topics/cluster")
+async def cluster_articles(
+    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    request: Dict[str, Any] = Body(...),
+    background_tasks: BackgroundTasks = BackgroundTasks()
+):
+    """Cluster articles into topics using AI for a specific domain"""
     try:
+        # Validate domain
+        if not validate_domain(domain):
+            raise HTTPException(status_code=400, detail=f"Invalid domain: {domain}")
+        
         limit = request.get("limit", 100)
         
-        # Start background clustering task
-        background_tasks.add_task(process_article_clustering, limit)
+        # Start background clustering task with domain
+        background_tasks.add_task(process_article_clustering, limit, domain)
         
         return {
             "success": True,
             "message": "Article clustering started",
+            "domain": domain,
             "limit": limit,
             "timestamp": datetime.now().isoformat()
         }
@@ -541,22 +560,31 @@ async def cluster_articles(request: Dict[str, Any], background_tasks: Background
         logger.error(f"Error starting article clustering: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/topics/{topic_name}/articles")
+@router.get("/{domain}/content-analysis/topics/{topic_name}/articles")
 async def get_topic_articles(
-    topic_name: str,
-    limit: int = 20,
-    offset: int = 0
+    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    topic_name: str = Path(...),
+    limit: int = Query(20, ge=1, le=500),
+    offset: int = Query(0, ge=0)
 ):
-    """Get articles for a specific topic"""
+    """Get articles for a specific topic in a specific domain"""
     try:
+        # Validate domain
+        if not validate_domain(domain):
+            raise HTTPException(status_code=400, detail=f"Invalid domain: {domain}")
+        
+        schema = domain.replace('-', '_')
         conn = get_db_connection()
         if not conn:
             raise HTTPException(status_code=500, detail="Database connection failed")
         
         try:
             with conn.cursor() as cur:
+                # Set search path to domain schema
+                cur.execute(f"SET search_path TO {schema}, public")
+                
                 # Get topic ID
-                cur.execute("SELECT id FROM topic_clusters WHERE topic_name = %s", (topic_name,))
+                cur.execute(f"SELECT id FROM {schema}.topic_clusters WHERE topic_name = %s", (topic_name,))
                 topic_result = cur.fetchone()
                 if not topic_result:
                     raise HTTPException(status_code=404, detail="Topic not found")
@@ -564,12 +592,12 @@ async def get_topic_articles(
                 topic_id = topic_result[0]
                 
                 # Get articles for this topic
-                cur.execute("""
+                cur.execute(f"""
                     SELECT a.id, a.title, a.content, a.url, a.source_domain, a.published_at,
                            a.summary, a.quality_score, a.sentiment_score, a.sentiment_label,
                            atc.relevance_score
-                    FROM articles a
-                    JOIN article_topics atc ON a.id = atc.article_id
+                    FROM {schema}.articles a
+                    JOIN {schema}.article_topic_assignments atc ON a.id = atc.article_id
                     WHERE atc.topic_id = %s
                     ORDER BY atc.relevance_score DESC, a.published_at DESC
                     LIMIT %s OFFSET %s
@@ -592,9 +620,9 @@ async def get_topic_articles(
                     })
                 
                 # Get total count
-                cur.execute("""
+                cur.execute(f"""
                     SELECT COUNT(*)
-                    FROM article_topics
+                    FROM {schema}.article_topic_assignments
                     WHERE topic_id = %s
                 """, (topic_id,))
                 total_count = cur.fetchone()[0]
@@ -619,20 +647,31 @@ async def get_topic_articles(
         logger.error(f"Error fetching topic articles: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/topics/{topic_name}/summary")
-async def get_topic_summary(topic_name: str):
-    """Get AI-generated summary for a topic"""
+@router.get("/{domain}/content-analysis/topics/{topic_name}/summary")
+async def get_topic_summary(
+    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    topic_name: str = Path(...)
+):
+    """Get AI-generated summary for a topic in a specific domain"""
     try:
+        # Validate domain
+        if not validate_domain(domain):
+            raise HTTPException(status_code=400, detail=f"Invalid domain: {domain}")
+        
+        schema = domain.replace('-', '_')
         conn = get_db_connection()
         if not conn:
             raise HTTPException(status_code=500, detail="Database connection failed")
         
         try:
             with conn.cursor() as cur:
+                # Set search path to domain schema
+                cur.execute(f"SET search_path TO {schema}, public")
+                
                 # Get topic info
-                cur.execute("""
+                cur.execute(f"""
                     SELECT id, topic_name, NULL as cluster_description, NULL as metadata
-                    FROM topic_clusters 
+                    FROM {schema}.topic_clusters 
                     WHERE topic_name = %s
                 """, (topic_name,))
                 
@@ -643,10 +682,10 @@ async def get_topic_summary(topic_name: str):
                 topic_id, cluster_name, description, metadata = topic_result
                 
                 # Get recent articles for summary
-                cur.execute("""
+                cur.execute(f"""
                     SELECT a.title, a.summary, a.published_at, a.sentiment_score
-                    FROM articles a
-                    JOIN article_topics atc ON a.id = atc.article_id
+                    FROM {schema}.articles a
+                    JOIN {schema}.article_topic_assignments atc ON a.id = atc.article_id
                     WHERE atc.topic_id = %s
                     ORDER BY a.published_at DESC
                     LIMIT 10
@@ -696,10 +735,19 @@ async def get_topic_summary(topic_name: str):
         logger.error(f"Error generating topic summary: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/topics/{topic_name}/convert-to-storyline")
-async def convert_topic_to_storyline(topic_name: str, request: Dict[str, Any]):
-    """Convert a topic to a storyline, adding all topic articles"""
+@router.post("/{domain}/content-analysis/topics/{topic_name}/convert-to-storyline")
+async def convert_topic_to_storyline(
+    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    topic_name: str = Path(...),
+    request: Dict[str, Any] = Body(...)
+):
+    """Convert a topic to a storyline, adding all topic articles for a specific domain"""
     try:
+        # Validate domain
+        if not validate_domain(domain):
+            raise HTTPException(status_code=400, detail=f"Invalid domain: {domain}")
+        
+        schema = domain.replace('-', '_')
         storyline_title = request.get("storyline_title", f"Storyline: {topic_name}")
         
         conn = get_db_connection()
@@ -708,9 +756,12 @@ async def convert_topic_to_storyline(topic_name: str, request: Dict[str, Any]):
         
         try:
             with conn.cursor() as cur:
+                # Set search path to domain schema
+                cur.execute(f"SET search_path TO {schema}, public")
+                
                 # Get topic info
-                cur.execute("""
-                    SELECT id FROM topic_clusters 
+                cur.execute(f"""
+                    SELECT id FROM {schema}.topic_clusters 
                     WHERE topic_name = %s
                 """, (topic_name,))
                 
@@ -721,8 +772,8 @@ async def convert_topic_to_storyline(topic_name: str, request: Dict[str, Any]):
                 topic_id = topic_result[0]
                 
                 # Create new storyline
-                cur.execute("""
-                    INSERT INTO storylines (title, description, created_at, updated_at, status)
+                cur.execute(f"""
+                    INSERT INTO {schema}.storylines (title, description, created_at, updated_at, status)
                     VALUES (%s, %s, %s, %s, %s)
                     RETURNING id
                 """, (
@@ -736,9 +787,9 @@ async def convert_topic_to_storyline(topic_name: str, request: Dict[str, Any]):
                 storyline_id = cur.fetchone()[0]
                 
                 # Get all articles for this topic
-                cur.execute("""
+                cur.execute(f"""
                     SELECT article_id, relevance_score
-                    FROM article_topics
+                    FROM {schema}.article_topic_assignments
                     WHERE topic_id = %s
                 """, (topic_id,))
                 
@@ -749,8 +800,8 @@ async def convert_topic_to_storyline(topic_name: str, request: Dict[str, Any]):
                 for article_row in topic_articles:
                     article_id, relevance_score = article_row
                     try:
-                        cur.execute("""
-                            INSERT INTO storyline_articles (storyline_id, article_id, added_at, relevance_score)
+                        cur.execute(f"""
+                            INSERT INTO {schema}.storyline_articles (storyline_id, article_id, added_at, relevance_score)
                             VALUES (%s, %s, %s, %s)
                             ON CONFLICT (storyline_id, article_id) DO NOTHING
                         """, (
@@ -830,12 +881,23 @@ async def get_category_stats():
         logger.error(f"Error fetching category stats: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/topics/word-cloud")
-async def get_word_cloud_data():
-    """Get intelligent word cloud data with ML/LLM filtering"""
+@router.get("/{domain}/content-analysis/topics/word-cloud")
+async def get_word_cloud_data(
+    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    time_period_hours: int = Query(24, ge=1, le=720),
+    min_frequency: int = Query(1, ge=1)
+):
+    """Get intelligent word cloud data with ML/LLM filtering for a specific domain"""
     try:
-        from ..services.topic_intelligence_service import topic_intelligence_service
+        # Validate domain
+        if not validate_domain(domain):
+            raise HTTPException(status_code=400, detail=f"Invalid domain: {domain}")
         
+        schema = domain.replace('-', '_')
+        from ..services.topic_intelligence_service import TopicIntelligenceService
+        
+        # Initialize service with domain
+        topic_intelligence_service = TopicIntelligenceService(domain=domain)
         result = topic_intelligence_service.get_intelligent_word_cloud(limit=30)
         
         if result['success']:
@@ -868,31 +930,40 @@ async def get_word_cloud_data():
     except Exception as e:
         logger.error(f"Error fetching intelligent word cloud: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-@router.get("/topics/big-picture")
+@router.get("/{domain}/content-analysis/topics/big-picture")
 async def get_big_picture_analysis(
-    time_period_hours: int = 24
+    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    time_period_hours: int = Query(24, ge=1, le=720)
 ):
-    """Get big picture analysis of current topics and trends"""
+    """Get big picture analysis of current topics and trends for a specific domain"""
     try:
+        # Validate domain
+        if not validate_domain(domain):
+            raise HTTPException(status_code=400, detail=f"Invalid domain: {domain}")
+        
+        schema = domain.replace('-', '_')
         conn = get_db_connection()
         if not conn:
             raise HTTPException(status_code=500, detail="Database connection failed")
         
         try:
             with conn.cursor() as cur:
+                # Set search path to domain schema
+                cur.execute(f"SET search_path TO {schema}, public")
+                
                 # Get recent articles count
                 cutoff_time = datetime.now() - timedelta(hours=time_period_hours)
-                cur.execute("""
-                    SELECT COUNT(*) FROM articles WHERE created_at >= %s
+                cur.execute(f"""
+                    SELECT COUNT(*) FROM {schema}.articles WHERE created_at >= %s
                 """, (cutoff_time,))
                 recent_articles_count = cur.fetchone()[0]
                 
                 # Get topic distribution
-                cur.execute("""
+                cur.execute(f"""
                     SELECT tc.topic_name, COUNT(atc.article_id) as article_count
-                    FROM topic_clusters tc
-                    LEFT JOIN article_topics atc ON tc.id = atc.topic_id
-                    LEFT JOIN articles a ON atc.article_id = a.id
+                    FROM {schema}.topic_clusters tc
+                    LEFT JOIN {schema}.article_topic_assignments atc ON tc.id = atc.topic_id
+                    LEFT JOIN {schema}.articles a ON atc.article_id = a.id
                     WHERE (a.created_at >= %s OR a.created_at IS NULL)
                     GROUP BY tc.topic_name
                     ORDER BY article_count DESC
@@ -907,12 +978,12 @@ async def get_big_picture_analysis(
                     })
  
                 # Get trending topics (most active in recent period)
-                cur.execute("""
+                cur.execute(f"""
                     SELECT tc.topic_name, COUNT(atc.article_id) as recent_articles,
                            AVG(atc.relevance_score) as avg_relevance
-                    FROM topic_clusters tc
-                    JOIN article_topics atc ON tc.id = atc.topic_id
-                    JOIN articles a ON atc.article_id = a.id
+                    FROM {schema}.topic_clusters tc
+                    JOIN {schema}.article_topic_assignments atc ON tc.id = atc.topic_id
+                    JOIN {schema}.articles a ON atc.article_id = a.id
                     WHERE a.created_at >= %s
                     GROUP BY tc.id, tc.topic_name
                     ORDER BY recent_articles DESC, avg_relevance DESC
@@ -929,9 +1000,9 @@ async def get_big_picture_analysis(
                     })
                 
                 # Get source diversity
-                cur.execute("""
+                cur.execute(f"""
                     SELECT source_domain, COUNT(*) as article_count
-                    FROM articles
+                    FROM {schema}.articles
                     WHERE created_at >= %s
                     GROUP BY source_domain
                     ORDER BY article_count DESC
@@ -981,32 +1052,41 @@ async def get_big_picture_analysis(
         logger.error(f"Error generating big picture analysis: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/topics/trending")
+@router.get("/{domain}/content-analysis/topics/trending")
 async def get_trending_topics(
-    time_period_hours: int = 24,
-    limit: int = 20
+    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    time_period_hours: int = Query(24, ge=1, le=720),
+    limit: int = Query(20, ge=1, le=100)
 ):
-    """Get trending topics with trend analysis"""
+    """Get trending topics with trend analysis for a specific domain"""
     try:
+        # Validate domain
+        if not validate_domain(domain):
+            raise HTTPException(status_code=400, detail=f"Invalid domain: {domain}")
+        
+        schema = domain.replace('-', '_')
         conn = get_db_connection()
         if not conn:
             raise HTTPException(status_code=500, detail="Database connection failed")
         
         try:
             with conn.cursor() as cur:
+                # Set search path to domain schema
+                cur.execute(f"SET search_path TO {schema}, public")
+                
                 cutoff_time = datetime.now() - timedelta(hours=time_period_hours)
                 
                 # Get trending topics with trend analysis
-                cur.execute("""
+                cur.execute(f"""
                     SELECT tc.topic_name,
                            COUNT(atc.article_id) as recent_articles,
                            AVG(atc.relevance_score) as avg_relevance,
                            AVG(a.sentiment_score) as avg_sentiment,
                            MAX(a.published_at) as latest_article_date,
                            COUNT(DISTINCT a.source_domain) as source_diversity
-                    FROM topic_clusters tc
-                    JOIN article_topics atc ON tc.id = atc.topic_id
-                    JOIN articles a ON atc.article_id = a.id
+                    FROM {schema}.topic_clusters tc
+                    JOIN {schema}.article_topic_assignments atc ON tc.id = atc.topic_id
+                    JOIN {schema}.articles a ON atc.article_id = a.id
                     WHERE a.created_at >= %s
                     GROUP BY tc.id, tc.topic_name
                     ORDER BY recent_articles DESC, avg_relevance DESC

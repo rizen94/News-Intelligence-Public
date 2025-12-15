@@ -110,17 +110,25 @@ const EnhancedStorylines = () => {
       setError(null);
       const response = await apiService.getStorylines({
         page,
-        limit: 12,
-        search: searchQuery,
+        page_size: 12,
         status: filterStatus,
-        category: filterCategory,
-        sort: sortBy,
       }, domain);
 
-      if (response.success) {
+      // Handle both response formats: new API format (data, pagination) and legacy format (success, data.storylines)
+      if (response.data && Array.isArray(response.data)) {
+        // New API format: { data: [...], pagination: {...}, domain: "..." }
+        setStorylines(response.data || []);
+        setTotalPages(response.pagination?.pages || 1);
+      } else if (response.success && response.data?.storylines) {
+        // Legacy format: { success: true, data: { storylines: [...], total: ... } }
+        setStorylines(response.data.storylines || []);
+        setTotalPages(Math.ceil((response.data.total || 0) / 12));
+      } else if (response.data?.storylines) {
+        // Alternative format: { data: { storylines: [...] } }
         setStorylines(response.data.storylines || []);
         setTotalPages(Math.ceil((response.data.total || 0) / 12));
       } else {
+        // Empty or unexpected format
         setStorylines([]);
         setTotalPages(1);
       }

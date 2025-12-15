@@ -50,7 +50,7 @@ const MarketPatterns: React.FC = () => {
     endDate: '',
   });
 
-  const loadPatterns = useCallback(async () => {
+  const loadPatterns = useCallback(async() => {
     if (domain !== 'finance') {
       setError('This page is only available for the Finance domain');
       setLoading(false);

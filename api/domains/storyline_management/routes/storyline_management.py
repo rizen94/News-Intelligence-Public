@@ -1,23 +1,30 @@
 """
-Domain 3: Storyline Management Routes
-Handles storyline creation, timeline generation, and RAG-enhanced analysis
+Domain 3: Storyline Management Routes - Background Tasks and Legacy Routes
+This file contains background task functions and legacy routes that are being migrated.
+New routes should be added to feature-specific files (storyline_crud.py, storyline_evolution.py, etc.)
 """
 
-from fastapi import APIRouter, HTTPException, BackgroundTasks, Path, Query
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Path, Query, Body
 from typing import List, Dict, Any, Optional
-import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime
 import logging
 
 from shared.services.llm_service import llm_service, TaskType
 from shared.database.connection import get_db_connection
 from shared.services.domain_aware_service import validate_domain
+from ..services.storyline_service import StorylineService
+from ..services.quality_assessment_service import QualityAssessmentService
+from ..services.rag_analysis_service import RAGAnalysisService
+from ..services.proactive_detection_service import ProactiveDetectionService
 
 logger = logging.getLogger(__name__)
 
+# Legacy router - routes are being migrated to feature-specific files
+# NOTE: This router is NOT included in main_v4.py - it's only used for background task functions
+# If this router needs to be included, it should be done via compatibility layer or with proper prefix
 router = APIRouter(
-    prefix="/api/v4",
-    tags=["Storyline Management"],
+    prefix="/api/v4",  # Keep prefix for potential compatibility use, but router is not actively included
+    tags=["Storyline Management (Legacy)"],
     responses={404: {"description": "Not found"}}
 )
 
@@ -46,6 +53,34 @@ async def health_check():
             "status": "unhealthy",
             "error": str(e)
         }
+
+# CRITICAL ROUTE ORDER: Specific routes (like /emerging) MUST come before parameterized routes (like /{storyline_id})
+# FastAPI matches routes in order, so /emerging would be matched as /{storyline_id} if defined after
+
+@router.get("/{domain}/storylines/emerging")
+async def get_domain_emerging_storylines(
+    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    hours: int = Query(24, ge=1, le=168),
+    min_articles: int = Query(3, ge=2, le=20)
+):
+    """Get emerging storylines - Route order critical: must be before {storyline_id} routes"""
+    try:
+        if not validate_domain(domain):
+            raise HTTPException(status_code=400, detail=f"Invalid domain: {domain}")
+        
+        detection_service = ProactiveDetectionService(domain=domain)
+        result = await detection_service.detect_emerging_storylines(hours, min_articles)
+        
+        if result.get("success"):
+            return result
+        else:
+            raise HTTPException(status_code=500, detail=result.get("error", "Detection failed"))
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error detecting emerging storylines: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/{domain}/storylines")
 async def get_domain_storylines(
@@ -108,45 +143,29 @@ async def create_domain_storyline(
         if not validate_domain(domain):
             raise HTTPException(status_code=400, detail=f"Invalid or inactive domain: {domain}")
         
-        schema = domain.replace('-', '_')
+        storyline_service = StorylineService(domain=domain)
         
-        conn = get_db_connection()
-        if not conn:
-            raise HTTPException(status_code=500, detail="Database connection failed")
+        result = await storyline_service.create_storyline_from_articles(
+            title=storyline_data.get("title") if storyline_data else "",
+            description=storyline_data.get("description") if storyline_data else None,
+            article_ids=storyline_data.get("article_ids") if storyline_data else None
+        )
         
-        try:
-            with conn.cursor() as cur:
-                cur.execute(f"""
-                    INSERT INTO {schema}.storylines (title, description, created_at, updated_at, status)
-                    VALUES (%s, %s, %s, %s, %s)
-                    RETURNING id
-                """, (
-                    storyline_data.get("title"),
-                    storyline_data.get("description", ""),
-                    datetime.now(),
-                    datetime.now(),
-                    "active"
-                ))
-                
-                storyline_id = cur.fetchone()[0]
-                conn.commit()
-                
-                return {
-                    "success": True,
-                    "data": {
-                        "storyline_id": storyline_id,
-                        "title": storyline_data.get("title"),
-                        "description": storyline_data.get("description", ""),
-                        "status": "active",
-                        "domain": domain
-                    },
-                    "message": "Storyline created successfully",
-                    "timestamp": datetime.now().isoformat()
-                }
-                
-        finally:
-            conn.close()
+        if result.get("success"):
+            return {
+                "success": True,
+                "data": {
+                    **result.get("data", {}),
+                    "domain": domain
+                },
+                "message": "Storyline created successfully",
+                "timestamp": datetime.now().isoformat()
+            }
+        else:
+            raise HTTPException(status_code=500, detail=result.get("error", "Creation failed"))
             
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error creating storyline: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -271,7 +290,8 @@ async def delete_domain_storyline(
 async def remove_article_from_domain_storyline(
     domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
     storyline_id: int = Path(..., description="Storyline ID"),
-    article_id: int = Path(..., description="Article ID")
+    article_id: int = Path(..., description="Article ID"),
+    background_tasks: BackgroundTasks = None
 ):
     """Remove an article from a storyline in a specific domain"""
     try:
@@ -315,9 +335,16 @@ async def remove_article_from_domain_storyline(
                 
                 conn.commit()
                 
+                # Trigger intelligent storyline evolution in background
+                # This will extract new information and update the summary
+                if background_tasks:
+                    background_tasks.add_task(
+                        trigger_storyline_evolution, domain, storyline_id, [article_id]
+                    )
+                
                 return {
                     "success": True,
-                    "message": "Article removed from storyline successfully",
+                    "message": "Article removed from storyline successfully. Storyline evolution triggered.",
                     "timestamp": datetime.now().isoformat()
                 }
                 
@@ -335,7 +362,8 @@ async def add_article_to_domain_storyline(
     domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
     storyline_id: int = Path(..., description="Storyline ID"),
     article_id: int = Path(..., description="Article ID"),
-    request: Dict[str, Any] = None
+    request: Dict[str, Any] = None,
+    background_tasks: BackgroundTasks = None
 ):
     """Add an article to a storyline in a specific domain"""
     try:
@@ -394,9 +422,15 @@ async def add_article_to_domain_storyline(
                 
                 conn.commit()
                 
+                # Trigger storyline evolution in background
+                if background_tasks:
+                    background_tasks.add_task(
+                        trigger_storyline_evolution, domain, storyline_id
+                    )
+                
                 return {
                     "success": True,
-                    "message": "Article added to storyline successfully",
+                    "message": "Article added to storyline successfully. Storyline evolution triggered.",
                     "timestamp": datetime.now().isoformat()
                 }
                 
@@ -827,6 +861,304 @@ async def get_domain_storyline_suggestions(
             
     except Exception as e:
         logger.error(f"Error fetching suggestions: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ============================================================================
+# NEW ENDPOINTS: Storyline Evolution, Quality Assessment, Proactive Detection
+# ============================================================================
+
+@router.post("/{domain}/storylines/{storyline_id}/evolve")
+async def evolve_domain_storyline(
+    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    storyline_id: int = Path(..., description="Storyline ID"),
+    new_article_ids: Optional[List[int]] = Body(None),
+    force_evolution: bool = Query(False)
+):
+    """Evolve storyline with new content"""
+    try:
+        if not validate_domain(domain):
+            raise HTTPException(status_code=400, detail=f"Invalid domain: {domain}")
+        
+        storyline_service = StorylineService(domain=domain)
+        result = await storyline_service.evolve_storyline_with_new_content(
+            storyline_id, new_article_ids, force_evolution
+        )
+        
+        if result.get("success"):
+            return result
+        else:
+            raise HTTPException(status_code=500, detail=result.get("error", "Evolution failed"))
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error evolving storyline: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/{domain}/storylines/{storyline_id}/assess-quality")
+async def assess_domain_storyline_quality(
+    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    storyline_id: int = Path(..., description="Storyline ID")
+):
+    """Assess storyline quality"""
+    try:
+        if not validate_domain(domain):
+            raise HTTPException(status_code=400, detail=f"Invalid domain: {domain}")
+        
+        quality_service = QualityAssessmentService(domain=domain)
+        result = await quality_service.assess_storyline_quality(storyline_id)
+        
+        if result.get("success"):
+            return result
+        else:
+            raise HTTPException(status_code=500, detail=result.get("error", "Assessment failed"))
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error assessing quality: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/{domain}/storylines/{storyline_id}/validate-accuracy")
+async def validate_domain_storyline_accuracy(
+    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    storyline_id: int = Path(..., description="Storyline ID")
+):
+    """Validate factual accuracy of storyline"""
+    try:
+        if not validate_domain(domain):
+            raise HTTPException(status_code=400, detail=f"Invalid domain: {domain}")
+        
+        quality_service = QualityAssessmentService(domain=domain)
+        result = await quality_service.validate_factual_accuracy(storyline_id)
+        
+        if result.get("success"):
+            return result
+        else:
+            raise HTTPException(status_code=500, detail=result.get("error", "Validation failed"))
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error validating accuracy: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/{domain}/storylines/{storyline_id}/suggestions-improvements")
+async def get_domain_storyline_improvements(
+    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    storyline_id: int = Path(..., description="Storyline ID")
+):
+    """Get improvement suggestions for storyline"""
+    try:
+        if not validate_domain(domain):
+            raise HTTPException(status_code=400, detail=f"Invalid domain: {domain}")
+        
+        quality_service = QualityAssessmentService(domain=domain)
+        result = await quality_service.suggest_improvements(storyline_id)
+        
+        if result.get("success"):
+            return result
+        else:
+            raise HTTPException(status_code=500, detail=result.get("error", "Failed to get suggestions"))
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting improvements: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/{domain}/storylines/{storyline_id}/report")
+async def get_domain_storyline_report(
+    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    storyline_id: int = Path(..., description="Storyline ID"),
+    report_type: str = Query("comprehensive", regex="^(comprehensive|executive|summary)$")
+):
+    """Get comprehensive storyline report"""
+    try:
+        if not validate_domain(domain):
+            raise HTTPException(status_code=400, detail=f"Invalid domain: {domain}")
+        
+        rag_service = RAGAnalysisService(domain=domain)
+        result = await rag_service.generate_storyline_report(storyline_id, report_type)
+        
+        if result.get("success"):
+            return result
+        else:
+            raise HTTPException(status_code=500, detail=result.get("error", "Report generation failed"))
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error generating report: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/{domain}/storylines/{storyline_id}/rag-analysis")
+async def perform_domain_rag_analysis(
+    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    storyline_id: int = Path(..., description="Storyline ID"),
+    background_tasks: BackgroundTasks = None
+):
+    """Perform comprehensive RAG analysis"""
+    try:
+        if not validate_domain(domain):
+            raise HTTPException(status_code=400, detail=f"Invalid domain: {domain}")
+        
+        rag_service = RAGAnalysisService(domain=domain)
+        
+        # Run in background for long-running analysis
+        if background_tasks:
+            background_tasks.add_task(
+                perform_rag_analysis_background, domain, storyline_id
+            )
+            return {
+                "success": True,
+                "message": "RAG analysis started in background",
+                "storyline_id": storyline_id
+            }
+        else:
+            result = await rag_service.perform_comprehensive_analysis(storyline_id)
+            if result.get("success"):
+                return result
+            else:
+                raise HTTPException(status_code=500, detail=result.get("error", "Analysis failed"))
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error performing RAG analysis: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+async def perform_rag_analysis_background(domain: str, storyline_id: int):
+    """Background task for RAG analysis"""
+    try:
+        rag_service = RAGAnalysisService(domain=domain)
+        result = await rag_service.perform_comprehensive_analysis(storyline_id)
+        if result.get("success"):
+            logger.info(f"RAG analysis completed for storyline {storyline_id}")
+        else:
+            logger.warning(f"RAG analysis failed: {result.get('error')}")
+    except Exception as e:
+        logger.error(f"Error in background RAG analysis: {e}")
+
+async def trigger_storyline_evolution(domain: str, storyline_id: int, new_article_ids: Optional[List[int]] = None):
+    """
+    Background task to trigger intelligent storyline evolution.
+    Extracts new information from articles and automatically updates summary and context.
+    """
+    try:
+        storyline_service = StorylineService(domain=domain)
+        result = await storyline_service.evolve_storyline_with_new_content(
+            storyline_id, new_article_ids, force_evolution=False
+        )
+        
+        if result.get("success"):
+            data = result.get("data", {})
+            logger.info(
+                f"Storyline {storyline_id} evolved successfully - "
+                f"Summary updated: {data.get('summary_updated', False)}, "
+                f"New articles processed: {data.get('new_articles', 0)}, "
+                f"Context updated: {data.get('context_updated', False)}, "
+                f"Summary length: {data.get('summary_length', 0)} chars"
+            )
+        else:
+            logger.warning(f"Storyline evolution failed: {result.get('error')}")
+    except Exception as e:
+        logger.error(f"Error in storyline evolution background task: {e}")
+
+@router.get("/{domain}/storylines/{storyline_id}/correlations")
+async def get_domain_storyline_correlations(
+    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    storyline_id: int = Path(..., description="Storyline ID")
+):
+    """Find correlations with other storylines"""
+    try:
+        if not validate_domain(domain):
+            raise HTTPException(status_code=400, detail=f"Invalid domain: {domain}")
+        
+        rag_service = RAGAnalysisService(domain=domain)
+        result = await rag_service.find_storyline_correlations(storyline_id)
+        
+        if result.get("success"):
+            return result
+        else:
+            raise HTTPException(status_code=500, detail=result.get("error", "Failed to find correlations"))
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error finding correlations: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/{domain}/storylines/detect")
+async def detect_domain_storylines(
+    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    hours: int = Query(24, ge=1, le=168),
+    min_articles: int = Query(3, ge=2, le=20)
+):
+    """Detect new storylines from recent articles"""
+    try:
+        if not validate_domain(domain):
+            raise HTTPException(status_code=400, detail=f"Invalid domain: {domain}")
+        
+        detection_service = ProactiveDetectionService(domain=domain)
+        result = await detection_service.detect_emerging_storylines(hours, min_articles)
+        
+        if result.get("success"):
+            return result
+        else:
+            raise HTTPException(status_code=500, detail=result.get("error", "Detection failed"))
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error detecting storylines: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/{domain}/storylines/correlations")
+async def get_domain_storyline_correlations_all(
+    domain: str = Path(..., regex="^(politics|finance|science-tech)$")
+):
+    """Get all storyline correlations"""
+    try:
+        if not validate_domain(domain):
+            raise HTTPException(status_code=400, detail=f"Invalid domain: {domain}")
+        
+        detection_service = ProactiveDetectionService(domain=domain)
+        result = await detection_service.identify_story_correlations()
+        
+        if result.get("success"):
+            return result
+        else:
+            raise HTTPException(status_code=500, detail=result.get("error", "Failed to get correlations"))
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting correlations: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/{domain}/storylines/{storyline_id}/predict")
+async def predict_domain_storyline_developments(
+    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    storyline_id: int = Path(..., description="Storyline ID")
+):
+    """Predict potential future developments in storyline"""
+    try:
+        if not validate_domain(domain):
+            raise HTTPException(status_code=400, detail=f"Invalid domain: {domain}")
+        
+        detection_service = ProactiveDetectionService(domain=domain)
+        result = await detection_service.predict_story_developments(storyline_id)
+        
+        if result.get("success"):
+            return result
+        else:
+            raise HTTPException(status_code=500, detail=result.get("error", "Prediction failed"))
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error predicting developments: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # Background task functions

@@ -37,11 +37,13 @@ from domains.news_aggregation.routes.rss_duplicate_management import router as r
 from domains.content_analysis.routes.content_analysis import router as content_analysis_router
 from domains.content_analysis.routes.article_deduplication import router as article_deduplication_router
 from domains.content_analysis.routes.topic_management import router as topic_management_router
-from domains.storyline_management.routes.storyline_management import router as storyline_management_router
+# Import consolidated storyline router (includes all feature modules)
+from domains.storyline_management.routes import router as storyline_management_router
 from domains.storyline_management.routes.storyline_automation import router as storyline_automation_router
 from domains.intelligence_hub.routes.intelligence_hub import router as intelligence_hub_router
 from domains.user_management.routes.user_management import router as user_management_router
 from domains.system_monitoring.routes.system_monitoring import router as system_monitoring_router
+from domains.system_monitoring.routes.route_supervisor import router as route_supervisor_router
 
 # Import pipeline monitoring
 # from routes.pipeline_monitoring import router as pipeline_monitoring_router
@@ -120,6 +122,30 @@ async def lifespan(app: FastAPI):
         app.state.automation = None
         app.state.automation_thread = None
     
+    # Start Route Supervisor
+    try:
+        from shared.services.route_supervisor import get_route_supervisor
+        import asyncio
+        
+        supervisor = get_route_supervisor()
+        
+        # Start monitoring in background
+        def start_supervisor():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(supervisor.start_monitoring())
+        
+        supervisor_thread = threading.Thread(target=start_supervisor, daemon=True)
+        supervisor_thread.start()
+        
+        logger.info("✅ Route Supervisor started - monitoring routes and database connections")
+        app.state.route_supervisor = supervisor
+        app.state.route_supervisor_thread = supervisor_thread
+    except Exception as e:
+        logger.error(f"❌ Failed to start Route Supervisor: {e}")
+        app.state.route_supervisor = None
+        app.state.route_supervisor_thread = None
+    
     yield
     
     # Shutdown
@@ -149,6 +175,14 @@ async def lifespan(app: FastAPI):
                     logger.info("Automation manager stopped")
     except Exception as e:
         logger.error(f"Error stopping automation manager: {e}")
+    
+    # Stop Route Supervisor
+    try:
+        if hasattr(app.state, 'route_supervisor') and app.state.route_supervisor:
+            app.state.route_supervisor.stop_monitoring()
+            logger.info("Route Supervisor stopped")
+    except Exception as e:
+        logger.error(f"Error stopping Route Supervisor: {e}")
 
 # Create FastAPI application
 app = FastAPI(
@@ -272,6 +306,7 @@ app.include_router(storyline_automation_router)
 app.include_router(intelligence_hub_router)
 app.include_router(user_management_router)
 app.include_router(system_monitoring_router)
+app.include_router(route_supervisor_router)
 # app.include_router(pipeline_monitoring_router)
 
 # Include v3.0 compatibility layer

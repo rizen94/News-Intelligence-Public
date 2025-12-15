@@ -1,17 +1,11 @@
-import axios from 'axios';
 import { getCurrentDomain } from '../utils/domainHelper';
+import { getAPIConnectionManager } from './apiConnectionManager';
 
-const API_BASE_URL = 'http://localhost:8000';
+// Get the managed API instance
+const connectionManager = getAPIConnectionManager();
+const api = connectionManager.getApiInstance();
 
-const api = axios.create({
-  baseURL: API_BASE_URL,
-  timeout: 10000,
-  headers: {
-    'Content-Type': 'application/json',
-  },
-});
-
-// Request interceptor
+// Request interceptor for logging
 api.interceptors.request.use(
   config => {
     console.log(`API Request: ${config.method?.toUpperCase()} ${config.url}`);
@@ -23,7 +17,7 @@ api.interceptors.request.use(
   },
 );
 
-// Response interceptor
+// Response interceptor for logging
 api.interceptors.response.use(
   response => {
     console.log(`API Response: ${response.status} ${response.config.url}`);
@@ -40,6 +34,7 @@ api.interceptors.response.use(
 );
 
 export { api };
+export { getAPIConnectionManager };
 
 export const apiService = {
   // Articles
@@ -106,9 +101,17 @@ export const apiService = {
   getStorylines: async(params: any = {}, domain?: string) => {
     try {
       const domainKey = domain || getCurrentDomain();
+      // Map frontend params to API params
+      const apiParams: any = {};
+      if (params.page) apiParams.page = params.page;
+      if (params.page_size) apiParams.page_size = params.page_size;
+      if (params.limit) apiParams.page_size = params.limit; // Map limit to page_size
+      if (params.status) apiParams.status = params.status;
+      // Note: search, category, sort are not yet supported by the API endpoint
+      
       const response = await api.get(
         `/api/v4/${domainKey}/storylines`,
-        { params },
+        { params: apiParams },
       );
       return response.data;
     } catch (error) {

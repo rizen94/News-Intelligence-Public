@@ -48,9 +48,11 @@ import {
 } from '@mui/icons-material';
 import { apiService } from '../../services/apiService';
 import TopicManagement from './TopicManagement';
+import { useDomainRoute } from '../../hooks/useDomainRoute';
 
 const Topics = () => {
   const navigate = useNavigate();
+  const { domain } = useDomainRoute();
   const [topics, setTopics] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -80,7 +82,7 @@ const Topics = () => {
         category: selectedCategory || undefined,
       };
 
-      const response = await apiService.getTopics(params);
+      const response = await apiService.getTopics(params, domain);
 
       if (response.success) {
         setTopics(response.data.topics || []);
@@ -98,7 +100,7 @@ const Topics = () => {
     try {
       console.log(`Loading articles for topic: "${topicName}"`);
       // Increase limit to get more articles
-      const response = await apiService.getTopicArticles(topicName, 100, 0);
+      const response = await apiService.getTopicArticles(topicName, 100, 0, domain);
       console.log('Topic articles response:', response);
 
       if (response.success) {
@@ -111,7 +113,7 @@ const Topics = () => {
           const searchResponse = await apiService.getArticles({
             search: topicName,
             limit: 100,
-          });
+          }, domain);
 
           if (searchResponse.success) {
             const searchArticles = searchResponse.data?.articles || searchResponse.data?.data?.articles || [];
@@ -135,7 +137,7 @@ const Topics = () => {
         const searchResponse = await apiService.getArticles({
           search: topicName,
           limit: 100,
-        });
+        }, domain);
 
         if (searchResponse.success) {
           const searchArticles = searchResponse.data?.articles || searchResponse.data?.data?.articles || [];
@@ -162,7 +164,7 @@ const Topics = () => {
 
   const loadTopicSummary = useCallback(async topicName => {
     try {
-      const response = await apiService.getTopicSummary(topicName);
+      const response = await apiService.getTopicSummary(topicName, domain);
 
       if (response.success) {
         setTopicSummary(response.data);
@@ -187,7 +189,7 @@ const Topics = () => {
   // New enhanced data loading functions
   const loadWordCloudData = useCallback(async() => {
     try {
-      const response = await apiService.getWordCloud(timePeriod, 1);
+      const response = await apiService.getWordCloud(timePeriod, 1, domain);
       if (response.success) {
         setWordCloudData(response.data);
       }
@@ -198,7 +200,7 @@ const Topics = () => {
 
   const loadBigPictureData = useCallback(async() => {
     try {
-      const response = await apiService.getBigPicture(timePeriod);
+      const response = await apiService.getBigPicture(timePeriod, domain);
       if (response.success) {
         setBigPictureData(response.data);
       }
@@ -209,7 +211,7 @@ const Topics = () => {
 
   const loadTrendingTopics = useCallback(async() => {
     try {
-      const response = await apiService.getTrendingTopics(timePeriod, 20);
+      const response = await apiService.getTrendingTopics(timePeriod, 20, domain);
       if (response.success) {
         setTrendingTopics(response.data?.trending_topics || []);
       }
@@ -231,7 +233,7 @@ const Topics = () => {
   const handleClusterArticles = async() => {
     try {
       setClustering(true);
-      const response = await apiService.clusterArticles({ limit: 50 });
+      const response = await apiService.clusterArticles({ limit: 50 }, domain);
 
       if (response.success) {
         await loadTopics();
@@ -248,7 +250,7 @@ const Topics = () => {
 
   const handleTransformToStoryline = async topicName => {
     try {
-      const response = await apiService.convertTopicToStoryline(topicName);
+      const response = await apiService.convertTopicToStoryline(topicName, undefined, domain);
 
       if (response.success) {
         setError(null);
@@ -275,6 +277,7 @@ const Topics = () => {
     loadWordCloudData,
     loadBigPictureData,
     loadTrendingTopics,
+    domain,
   ]);
 
   const getUrgencyColor = urgency => {
