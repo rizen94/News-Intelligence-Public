@@ -74,7 +74,7 @@ export const apiService = {
   getRSSFeeds: async(params: any = {}, domain?: string) => {
     try {
       const domainKey = domain || getCurrentDomain();
-      const response = await api.get(`/api/v4/${domainKey}/rss-feeds`, {
+      const response = await api.get(`/api/v4/${domainKey}/rss_feeds`, {
         params,
       });
       return response.data;
@@ -88,7 +88,7 @@ export const apiService = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await api.post(
-        `/api/v4/${domainKey}/rss-feeds/collect-now`,
+        `/api/v4/${domainKey}/rss_feeds/collect_now`,
       );
       return response.data;
     } catch (error) {
@@ -108,7 +108,7 @@ export const apiService = {
       if (params.limit) apiParams.page_size = params.limit; // Map limit to page_size
       if (params.status) apiParams.status = params.status;
       // Note: search, category, sort are not yet supported by the API endpoint
-      
+
       const response = await api.get(
         `/api/v4/${domainKey}/storylines`,
         { params: apiParams },
@@ -153,7 +153,7 @@ export const apiService = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await api.post(
-        `/api/v4/${domainKey}/storyline-management/storylines`,
+        `/api/v4/${domainKey}/storylines`,
         storylineData,
       );
       return response.data;
@@ -171,7 +171,7 @@ export const apiService = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await api.put(
-        `/api/v4/${domainKey}/storyline-management/storylines/${id}`,
+        `/api/v4/${domainKey}/storylines/${id}`,
         storylineData,
       );
       return response.data;
@@ -185,7 +185,7 @@ export const apiService = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await api.delete(
-        `/api/v4/${domainKey}/storyline-management/storylines/${id}`,
+        `/api/v4/${domainKey}/storylines/${id}`,
       );
       return response.data;
     } catch (error) {
@@ -202,9 +202,9 @@ export const apiService = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await api.post(
-        `/api/v4/${domainKey}/content-analysis/topics/${encodeURIComponent(
+        `/api/v4/${domainKey}/content_analysis/topics/${encodeURIComponent(
           topicName,
-        )}/convert-to-storyline`,
+        )}/convert_to_storyline`,
         {
           storyline_title: storylineTitle || `Storyline: ${topicName}`,
         },
@@ -224,7 +224,7 @@ export const apiService = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await api.get(
-        `/api/v4/${domainKey}/storyline-management/storylines/${storylineId}/automation/settings`,
+        `/api/v4/${domainKey}/storylines/${storylineId}/automation/settings`,
       );
       return response.data;
     } catch (error) {
@@ -237,7 +237,7 @@ export const apiService = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await api.put(
-        `/api/v4/${domainKey}/storyline-management/storylines/${storylineId}/automation/settings`,
+        `/api/v4/${domainKey}/storylines/${storylineId}/automation/settings`,
         settings,
       );
       return response.data;
@@ -251,7 +251,7 @@ export const apiService = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await api.post(
-        `/api/v4/${domainKey}/storyline-management/storylines/${storylineId}/automation/discover?force_refresh=${forceRefresh}`,
+        `/api/v4/${domainKey}/storylines/${storylineId}/automation/discover?force_refresh=${forceRefresh}`,
       );
       return response.data;
     } catch (error) {
@@ -268,7 +268,7 @@ export const apiService = {
         params.status = status;
       }
       const response = await api.get(
-        `/api/v4/${domainKey}/storyline-management/storylines/${storylineId}/automation/suggestions`,
+        `/api/v4/${domainKey}/storylines/${storylineId}/automation/suggestions`,
         { params },
       );
       return response.data;
@@ -282,7 +282,7 @@ export const apiService = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await api.post(
-        `/api/v4/${domainKey}/storyline-management/storylines/${storylineId}/automation/suggestions/${suggestionId}/approve`,
+        `/api/v4/${domainKey}/storylines/${storylineId}/automation/suggestions/${suggestionId}/approve`,
       );
       return response.data;
     } catch (error) {
@@ -299,7 +299,7 @@ export const apiService = {
         params.reason = reason;
       }
       const response = await api.post(
-        `/api/v4/${domainKey}/storyline-management/storylines/${storylineId}/automation/suggestions/${suggestionId}/reject`,
+        `/api/v4/${domainKey}/storylines/${storylineId}/automation/suggestions/${suggestionId}/reject`,
         null,
         { params },
       );
@@ -314,7 +314,7 @@ export const apiService = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await api.post(
-        `/api/v4/${domainKey}/storyline-management/storylines/${id}/analyze`,
+        `/api/v4/${domainKey}/storylines/${id}/analyze`,
       );
       return response.data;
     } catch (error) {
@@ -336,7 +336,7 @@ export const apiService = {
         params.search = search;
       }
       const response = await api.get(
-        `/api/v4/${domainKey}/storyline-management/storylines/${storylineId}/available-articles`,
+        `/api/v4/${domainKey}/storylines/${storylineId}/available_articles`,
         { params },
       );
       return response.data;
@@ -354,7 +354,7 @@ export const apiService = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await api.post(
-        `/api/v4/${domainKey}/storyline-management/storylines/${storylineId}/articles/${articleId}`,
+        `/api/v4/${domainKey}/storylines/${storylineId}/articles/${articleId}`,
       );
       return response.data;
     } catch (error: any) {
@@ -372,7 +372,7 @@ export const apiService = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await api.delete(
-        `/api/v4/${domainKey}/storyline-management/storylines/${storylineId}/articles/${articleId}`,
+        `/api/v4/${domainKey}/storylines/${storylineId}/articles/${articleId}`,
       );
       return response.data;
     } catch (error) {
@@ -384,7 +384,7 @@ export const apiService = {
   // System Monitoring
   getHealth: async() => {
     try {
-      const response = await api.get('/api/v4/system-monitoring/health');
+      const response = await api.get('/api/v4/system_monitoring/health');
       return response.data;
     } catch (error) {
       console.error('Failed to fetch health:', error);
@@ -394,7 +394,7 @@ export const apiService = {
 
   getMonitoringDashboard: async() => {
     try {
-      const response = await api.get('/api/v4/system-monitoring/status');
+      const response = await api.get('/api/v4/system_monitoring/status');
       return response.data;
     } catch (error) {
       console.error('Failed to fetch monitoring dashboard:', error);
@@ -404,7 +404,7 @@ export const apiService = {
 
   getPipelineStatus: async() => {
     try {
-      const response = await api.get('/api/v4/system-monitoring/pipeline-status');
+      const response = await api.get('/api/v4/system_monitoring/pipeline_status');
       return response.data;
     } catch (error) {
       console.error('Failed to fetch pipeline status:', error);
@@ -416,7 +416,7 @@ export const apiService = {
   getTopics: async(params: any = {}, domain?: string) => {
     try {
       const domainKey = domain || getCurrentDomain();
-      const response = await api.get(`/api/v4/${domainKey}/content-analysis/topics`, {
+      const response = await api.get(`/api/v4/${domainKey}/content_analysis/topics`, {
         params,
       });
       return response.data;
@@ -430,7 +430,7 @@ export const apiService = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await api.get(
-        `/api/v4/${domainKey}/content-analysis/topics/categories/stats`,
+        `/api/v4/${domainKey}/content_analysis/topics/categories/stats`,
       );
       return response.data;
     } catch (error) {
@@ -448,7 +448,7 @@ export const apiService = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await api.get(
-        `/api/v4/${domainKey}/content-analysis/topics/${encodeURIComponent(
+        `/api/v4/${domainKey}/content_analysis/topics/${encodeURIComponent(
           topicName,
         )}/articles`,
         {
@@ -466,7 +466,7 @@ export const apiService = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await api.get(
-        `/api/v4/${domainKey}/content-analysis/topics/${encodeURIComponent(
+        `/api/v4/${domainKey}/content_analysis/topics/${encodeURIComponent(
           topicName,
         )}/summary`,
       );
@@ -485,7 +485,7 @@ export const apiService = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await api.get(
-        `/api/v4/${domainKey}/content-analysis/topics/word-cloud`,
+        `/api/v4/${domainKey}/content_analysis/topics/word_cloud`,
         {
           params: {
             time_period_hours: timePeriodHours,
@@ -504,7 +504,7 @@ export const apiService = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await api.get(
-        `/api/v4/${domainKey}/content-analysis/topics/big-picture`,
+        `/api/v4/${domainKey}/content_analysis/topics/big_picture`,
         {
           params: { time_period_hours: timePeriodHours },
         },
@@ -524,7 +524,7 @@ export const apiService = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await api.get(
-        `/api/v4/${domainKey}/content-analysis/topics/trending`,
+        `/api/v4/${domainKey}/content_analysis/topics/trending`,
         {
           params: { time_period_hours: timePeriodHours, limit },
         },
@@ -540,7 +540,7 @@ export const apiService = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await api.post(
-        `/api/v4/${domainKey}/content-analysis/topics/cluster`,
+        `/api/v4/${domainKey}/content_analysis/topics/cluster`,
         {
           limit: params.limit ?? 100,
         },
@@ -557,7 +557,7 @@ export const apiService = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await api.post(
-        `/api/v4/${domainKey}/topic-management/topics/merge`,
+        `/api/v4/${domainKey}/topic_management/topics/merge`,
         {
           topic_ids: topicIds,
           keep_primary: true,
@@ -680,7 +680,7 @@ export const apiService = {
   autoMergeDuplicates: async(dryRun: boolean = true) => {
     try {
       const response = await api.post(
-        '/api/v4/articles/duplicates/auto-merge',
+        '/api/v4/articles/duplicates/auto_merge',
         { dry_run: dryRun },
       );
       return response.data;
@@ -703,7 +703,7 @@ export const apiService = {
   analyzeArticleSimilarity: async(articleId1: string, articleId2: string) => {
     try {
       const response = await api.post(
-        '/api/v4/articles/duplicates/analyze-similarity',
+        '/api/v4/articles/duplicates/analyze_similarity',
         {
           article_id1: articleId1,
           article_id2: articleId2,
@@ -720,7 +720,7 @@ export const apiService = {
   runAllPipelineProcesses: async() => {
     try {
       const response = await api.post(
-        '/api/v4/system-monitoring/pipeline/run-all',
+        '/api/v4/system_monitoring/pipeline/run_all',
       );
       return response.data;
     } catch (error) {
@@ -733,7 +733,7 @@ export const apiService = {
     try {
       // Trigger clustering which can act as pipeline trigger
       const response = await api.post(
-        '/api/v4/content-analysis/topics/cluster',
+        '/api/v4/content_analysis/topics/cluster',
         { limit: 100 },
       );
       return response.data;
@@ -747,7 +747,7 @@ export const apiService = {
     try {
       // Trigger AI analysis via content analysis endpoint
       const response = await api.post(
-        '/api/v4/content-analysis/sentiment/analyze',
+        '/api/v4/content_analysis/sentiment/analyze',
         {
           content: 'Batch analysis trigger',
         },
@@ -763,7 +763,7 @@ export const apiService = {
     }
   },
 
-  // Topic Management Methods (for topic-management domain)
+  // Topic Management Methods (for topic_management domain)
   getManagedTopics: async(params: any = {}, domain?: string) => {
     try {
       const domainKey = domain || getCurrentDomain();
@@ -777,7 +777,7 @@ export const apiService = {
       if (status) queryParams.append('status', status);
       if (search) queryParams.append('search', search);
 
-      const response = await api.get(`/api/v4/${domainKey}/topic-management/topics?${queryParams}`);
+      const response = await api.get(`/api/v4/${domainKey}/topic_management/topics?${queryParams}`);
       return response.data;
     } catch (error) {
       console.error('Failed to fetch topics:', error);
@@ -788,7 +788,7 @@ export const apiService = {
   getManagedTopic: async(topicId: number, domain?: string) => {
     try {
       const domainKey = domain || getCurrentDomain();
-      const response = await api.get(`/api/v4/${domainKey}/topic-management/topics/${topicId}`);
+      const response = await api.get(`/api/v4/${domainKey}/topic_management/topics/${topicId}`);
       return response.data;
     } catch (error) {
       console.error('Failed to fetch topic:', error);
@@ -805,7 +805,7 @@ export const apiService = {
         offset: offset.toString(),
       });
 
-      const response = await api.get(`/api/v4/${domainKey}/topic-management/topics/${topicId}/articles?${queryParams}`);
+      const response = await api.get(`/api/v4/${domainKey}/topic_management/topics/${topicId}/articles?${queryParams}`);
       return response.data;
     } catch (error) {
       console.error('Failed to fetch topic articles:', error);
@@ -816,7 +816,7 @@ export const apiService = {
   getArticleTopics: async(articleId: number, domain?: string) => {
     try {
       const domainKey = domain || getCurrentDomain();
-      const response = await api.get(`/api/v4/${domainKey}/topic-management/articles/${articleId}/topics`);
+      const response = await api.get(`/api/v4/${domainKey}/topic_management/articles/${articleId}/topics`);
       return response.data;
     } catch (error) {
       console.error('Failed to fetch article topics:', error);
@@ -827,7 +827,7 @@ export const apiService = {
   processArticleTopics: async(articleId: number, domain?: string) => {
     try {
       const domainKey = domain || getCurrentDomain();
-      const response = await api.post(`/api/v4/${domainKey}/topic-management/articles/${articleId}/process-topics`);
+      const response = await api.post(`/api/v4/${domainKey}/topic_management/articles/${articleId}/process_topics`);
       return response.data;
     } catch (error) {
       console.error('Failed to process article topics:', error);
@@ -838,7 +838,7 @@ export const apiService = {
   submitTopicFeedback: async(assignmentId: number, feedback: { is_correct: boolean; feedback_notes?: string; validated_by?: string }, domain?: string) => {
     try {
       const domainKey = domain || getCurrentDomain();
-      const response = await api.post(`/api/v4/${domainKey}/topic-management/assignments/${assignmentId}/feedback`, feedback);
+      const response = await api.post(`/api/v4/${domainKey}/topic_management/assignments/${assignmentId}/feedback`, feedback);
       return response.data;
     } catch (error) {
       console.error('Failed to submit topic feedback:', error);
@@ -849,7 +849,7 @@ export const apiService = {
   getTopicsNeedingReview: async(threshold: number = 0.6, limit: number = 50, domain?: string) => {
     try {
       const domainKey = domain || getCurrentDomain();
-      const response = await api.get(`/api/v4/${domainKey}/topic-management/topics/needing-review?threshold=${threshold}&limit=${limit}`);
+      const response = await api.get(`/api/v4/${domainKey}/topic_management/topics/needing_review?threshold=${threshold}&limit=${limit}`);
       return response.data;
     } catch (error) {
       console.error('Failed to fetch topics needing review:', error);
@@ -860,7 +860,7 @@ export const apiService = {
   createTopic: async(topic: { name: string; description?: string; category?: string; keywords?: string[] }, domain?: string) => {
     try {
       const domainKey = domain || getCurrentDomain();
-      const response = await api.post(`/api/v4/${domainKey}/topic-management/topics`, topic);
+      const response = await api.post(`/api/v4/${domainKey}/topic_management/topics`, topic);
       return response.data;
     } catch (error) {
       console.error('Failed to create topic:', error);
@@ -871,7 +871,7 @@ export const apiService = {
   updateTopic: async(topicId: number, updates: { description?: string; category?: string; keywords?: string[]; status?: string }, domain?: string) => {
     try {
       const domainKey = domain || getCurrentDomain();
-      const response = await api.put(`/api/v4/${domainKey}/topic-management/topics/${topicId}`, updates);
+      const response = await api.put(`/api/v4/${domainKey}/topic_management/topics/${topicId}`, updates);
       return response.data;
     } catch (error) {
       console.error('Failed to update topic:', error);
