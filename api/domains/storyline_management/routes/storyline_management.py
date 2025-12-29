@@ -84,9 +84,12 @@ async def get_domain_emerging_storylines(
 
 @router.get("/{domain}/storylines")
 async def get_domain_storylines(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$")
+    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    limit: int = Query(100, ge=1, le=500, description="Maximum number of storylines"),
+    offset: int = Query(0, ge=0, description="Number of storylines to skip"),
+    status: Optional[str] = Query(None, description="Filter by status")
 ):
-    """Get all storylines for a specific domain"""
+    """Get all storylines for a specific domain with pagination"""
     try:
         # Validate domain
         if not validate_domain(domain):
@@ -100,12 +103,31 @@ async def get_domain_storylines(
         
         try:
             with conn.cursor() as cur:
-                cur.execute(f"""
+                # Build query with optional status filter
+                where_clause = ""
+                params = []
+                
+                if status:
+                    where_clause = "WHERE status = %s"
+                    params.append(status)
+                
+                # Get total count
+                count_query = f"SELECT COUNT(*) FROM {schema}.storylines {where_clause}"
+                cur.execute(count_query, params)
+                total = cur.fetchone()[0]
+                
+                # Get paginated storylines
+                query = f"""
                     SELECT id, title, description, created_at, updated_at,
-                             status
+                           status, article_count
                     FROM {schema}.storylines 
+                    {where_clause}
                     ORDER BY updated_at DESC
-                """)
+                    LIMIT %s OFFSET %s
+                """
+                params.extend([limit, offset])
+                
+                cur.execute(query, params)
                 
                 storylines = []
                 for row in cur.fetchall():
@@ -115,12 +137,19 @@ async def get_domain_storylines(
                         "description": row[2],
                         "created_at": row[3].isoformat() if row[3] else None,
                         "updated_at": row[4].isoformat() if row[4] else None,
-                        "status": row[5]
+                        "status": row[5],
+                        "article_count": row[6] if len(row) > 6 else 0
                     })
                 
                 return {
                     "success": True,
-                    "data": {"storylines": storylines, "domain": domain},
+                    "data": {
+                        "storylines": storylines,
+                        "domain": domain,
+                        "total": total,
+                        "limit": limit,
+                        "offset": offset
+                    },
                     "count": len(storylines),
                     "timestamp": datetime.now().isoformat()
                 }
@@ -443,7 +472,7 @@ async def add_article_to_domain_storyline(
         logger.error(f"Error adding article to storyline: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/{domain}/storylines/{storyline_id}/available-articles")
+@router.get("/{domain}/storylines/{storyline_id}/available_articles")
 async def get_domain_available_articles_for_storyline(
     domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
     storyline_id: int = Path(..., description="Storyline ID"),
@@ -591,7 +620,7 @@ async def get_domain_storyline(
         logger.error(f"Error fetching storyline: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/{domain}/storylines/{storyline_id}/add-article")
+@router.post("/{domain}/storylines/{storyline_id}/add_article")
 async def add_article_to_domain_storyline_by_id(
     domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
     storyline_id: int = Path(..., description="Storyline ID"),
@@ -895,7 +924,7 @@ async def evolve_domain_storyline(
         logger.error(f"Error evolving storyline: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/{domain}/storylines/{storyline_id}/assess-quality")
+@router.post("/{domain}/storylines/{storyline_id}/assess_quality")
 async def assess_domain_storyline_quality(
     domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
     storyline_id: int = Path(..., description="Storyline ID")
@@ -919,7 +948,7 @@ async def assess_domain_storyline_quality(
         logger.error(f"Error assessing quality: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/{domain}/storylines/{storyline_id}/validate-accuracy")
+@router.get("/{domain}/storylines/{storyline_id}/validate_accuracy")
 async def validate_domain_storyline_accuracy(
     domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
     storyline_id: int = Path(..., description="Storyline ID")
@@ -943,7 +972,7 @@ async def validate_domain_storyline_accuracy(
         logger.error(f"Error validating accuracy: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/{domain}/storylines/{storyline_id}/suggestions-improvements")
+@router.get("/{domain}/storylines/{storyline_id}/suggestions_improvements")
 async def get_domain_storyline_improvements(
     domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
     storyline_id: int = Path(..., description="Storyline ID")
@@ -992,7 +1021,7 @@ async def get_domain_storyline_report(
         logger.error(f"Error generating report: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/{domain}/storylines/{storyline_id}/rag-analysis")
+@router.post("/{domain}/storylines/{storyline_id}/rag_analysis")
 async def perform_domain_rag_analysis(
     domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
     storyline_id: int = Path(..., description="Storyline ID"),

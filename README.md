@@ -1,6 +1,6 @@
-# News Intelligence System v3.0
+# News Intelligence System
 
-**Status**: 🟢 **FULLY OPERATIONAL** | **Last Updated**: September 26, 2025
+**Status**: 🟢 **FULLY OPERATIONAL** | **Last Updated**: December 2024
 
 ## 🎯 System Overview
 
@@ -18,7 +18,7 @@ The News Intelligence System is an AI-powered news aggregation and analysis plat
 ### **Start the System**
 ```bash
 # Start all services
-./start.sh
+./start_system.sh
 
 # Check system status
 curl http://localhost:8000/api/health/
@@ -30,36 +30,19 @@ open http://localhost:80
 ### **System Management**
 ```bash
 # Start system
-./start.sh
+./start_system.sh
+
+# Check status
+./status_system.sh
 
 # Stop system
-./stop.sh
+./stop_system.sh
 
 # Check system health
 curl http://localhost:8000/api/health/
-
-# Manage service
-./scripts/production/manage-service.sh
-
-# View logs
-docker logs news-intelligence-api --tail 20
 ```
 
-### **Development Workflow**
-```bash
-# Start development environment
-./development/scripts/start-dev.sh
-
-# Setup development environment
-./development/scripts/setup_dev_env.sh
-
-# Run tests
-cd tests/
-python3 test_article_service.py
-
-# Quick fixes
-./development/scripts/quick_fix_startup.sh
-```
+See [Setup and Deployment Guide](./docs/SETUP_AND_DEPLOYMENT.md) for detailed instructions.
 
 ---
 
@@ -102,7 +85,7 @@ python3 test_article_service.py
 - **Features**: REST API, ML pipelines, RSS processing, Database management
 
 ### **Database (PostgreSQL)**
-- **Location**: Docker container
+- **Location**: NAS (recommended) or Docker container
 - **Port**: 5432
 - **Features**: Articles, Storylines, RSS Feeds, User data
 
@@ -115,22 +98,25 @@ python3 test_article_service.py
 
 ## 📚 Documentation
 
-### **Core Documentation**
-- **[System Status](./docs/SYSTEM_STATUS.md)** - Current system health and status
+### **Getting Started**
+- **[Setup and Deployment](./docs/SETUP_AND_DEPLOYMENT.md)** - Complete installation and deployment guide
+- **[Quick Start](./QUICK_START.md)** - Fast setup instructions
+- **[Development Methodology](./docs/DEVELOPMENT_METHODOLOGY.md)** - Development workflow and standards
+
+### **System Configuration**
+- **[Ollama Setup](./docs/OLLAMA_SETUP.md)** - AI model configuration and management
+- **[NAS Storage Setup](./docs/NAS_PERSISTENT_STORAGE_SETUP.md)** - Network storage configuration
+- **[NAS Database Requirement](./docs/NAS_DATABASE_REQUIREMENT.md)** - Database migration to NAS
+
+### **Technical Reference**
 - **[API Reference](./docs/API_REFERENCE.md)** - Complete API documentation
-- **[Database Schema](./docs/DATABASE_SCHEMA.md)** - Database structure and relationships
-- **[Deployment Guide](./docs/DEPLOYMENT.md)** - Installation and deployment instructions
-
-### **Technical Documentation**
-- **[Architecture Overview](./docs/ARCHITECTURE.md)** - System architecture and design
-- **[Development Guide](./docs/DEVELOPMENT.md)** - Development workflow and standards
+- **[Database Schema](./docs/DATABASE_SCHEMA_DOCUMENTATION.md)** - Database structure and relationships
+- **[System Status](./docs/SYSTEM_STATUS.md)** - Current system health and status
 - **[Troubleshooting](./docs/TROUBLESHOOTING.md)** - Common issues and solutions
-- **[Performance Guide](./docs/PERFORMANCE.md)** - Performance optimization and monitoring
 
-### **User Guides**
-- **[User Manual](./docs/USER_MANUAL.md)** - How to use the system
-- **[RSS Management](./docs/RSS_MANAGEMENT.md)** - RSS feed configuration and management
-- **[Storyline Creation](./docs/STORYLINE_CREATION.md)** - Creating and managing storylines
+### **Architecture & Design**
+- **[V4 Architecture](./docs/V4_COMPLETE_ARCHITECTURE.md)** - Complete system architecture
+- **[Coding Standards](./docs/CODING_STYLE_GUIDE.md)** - Code style and standards guide
 
 ---
 
@@ -171,8 +157,9 @@ python3 test_article_service.py
 - Internet connection for RSS feeds
 
 ### **Important Notes**
-- System runs on ports 80, 8000, 5432, 6379
-- All data is stored in Docker volumes
+- System runs on ports 80, 8000, 5432, 6379, 11434
+- Database stored on NAS (recommended) or Docker volumes
+- Ollama models stored in `~/.ollama/models` (user-level)
 - Regular backups recommended
 - Monitor logs for any issues
 
@@ -243,6 +230,6 @@ python3 scripts/simple_integration.py
 ---
 
 **System Status**: 🟢 **FULLY OPERATIONAL**  
-**Last Verified**: September 26, 2025  
-**Version**: 3.0.1  
+**Last Verified**: December 2024  
+**Version**: 4.0  
 **Next Check**: Recommended weekly

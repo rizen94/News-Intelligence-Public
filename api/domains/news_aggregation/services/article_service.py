@@ -30,7 +30,8 @@ class ArticleService(DomainAwareService):
         self, 
         limit: int = 50, 
         offset: int = 0, 
-        filters: Optional[Dict[str, Any]] = None
+        filters: Optional[Dict[str, Any]] = None,
+        include_content: bool = False
     ) -> Dict[str, Any]:
         """
         Get articles from current domain.
@@ -39,6 +40,7 @@ class ArticleService(DomainAwareService):
             limit: Maximum number of articles to return
             offset: Number of articles to skip
             filters: Optional filters (source_domain, category, processing_status, etc.)
+            include_content: If False (default), excludes full content for faster loading
         
         Returns:
             Dictionary with articles and metadata
@@ -46,13 +48,28 @@ class ArticleService(DomainAwareService):
         conn = self.get_db_connection()
         try:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                query = f"""
-                    SELECT 
+                # OPTIMIZED: Only select lightweight fields for listings
+                # Full content is loaded only when viewing article details
+                if include_content:
+                    select_fields = """
                         id, title, content, url,
                         published_at, source_domain, category,
                         language_code, feed_id, content_hash,
                         processing_status, created_at, updated_at,
                         summary, quality_score, sentiment_label, sentiment_score
+                    """
+                else:
+                    # Lightweight query - excludes large content field
+                    select_fields = """
+                        id, title, 
+                        LEFT(summary, 200) as summary,
+                        url, published_at, source_domain, category,
+                        processing_status, created_at,
+                        quality_score, sentiment_label
+                    """
+                
+                query = f"""
+                    SELECT {select_fields}
                     FROM {self.schema}.articles
                     WHERE 1=1
                 """

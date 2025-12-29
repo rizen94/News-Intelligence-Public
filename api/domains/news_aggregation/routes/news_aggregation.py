@@ -57,7 +57,7 @@ async def health_check():
             "error": str(e)
         }
 
-@router.get("/{domain}/rss-feeds")
+@router.get("/{domain}/rss_feeds")
 async def get_domain_rss_feeds(
     domain: str = Path(..., regex="^(politics|finance|science-tech)$")
 ):
@@ -100,7 +100,11 @@ async def get_domain_rss_feeds(
                 
                 return {
                     "success": True,
-                    "data": {"feeds": feeds, "domain": domain},
+                    "data": {
+                        "feeds": feeds,
+                        "domain": domain,
+                        "total": len(feeds)
+                    },
                     "count": len(feeds),
                     "timestamp": datetime.now().isoformat()
                 }
@@ -114,7 +118,7 @@ async def get_domain_rss_feeds(
         logger.error(f"Error fetching RSS feeds for domain {domain}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/rss-feeds")
+@router.post("/rss_feeds")
 async def create_rss_feed(feed_data: Dict[str, Any]):
     """Create a new RSS feed with duplicate prevention"""
     try:
@@ -205,7 +209,7 @@ async def create_rss_feed(feed_data: Dict[str, Any]):
         logger.error(f"Error creating RSS feed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/{domain}/rss-feeds/collect-now")
+@router.post("/{domain}/rss_feeds/collect_now")
 async def collect_rss_feeds_now(
     domain: str = Path(..., regex="^(politics|finance|science-tech)$")
 ):
@@ -243,7 +247,7 @@ async def collect_rss_feeds_now(
             "timestamp": datetime.now().isoformat()
         }
 
-@router.post("/fetch-articles")
+@router.post("/fetch_articles")
 async def fetch_articles_from_feeds(background_tasks: BackgroundTasks):
     """Fetch articles from all active RSS feeds"""
     try:
@@ -396,7 +400,7 @@ async def get_recent_articles_legacy(
         processing_status=None
     )
 
-@router.post("/articles/{article_id}/analyze-quality")
+@router.post("/articles/{article_id}/analyze_quality")
 async def analyze_article_quality(article_id: int, background_tasks: BackgroundTasks):
     """Analyze article quality using LLM"""
     try:

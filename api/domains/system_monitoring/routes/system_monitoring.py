@@ -15,7 +15,7 @@ from shared.database.connection import get_db_connection
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
-    prefix="/api/v4/system-monitoring",
+    prefix="/api/v4/system_monitoring",
     tags=["System Monitoring"],
     responses={404: {"description": "Not found"}}
 )
@@ -44,10 +44,48 @@ async def health_check():
         except Exception:
             pass
         
+        # Check database connection
+        db_status = "healthy"
+        try:
+            conn = get_db_connection()
+            if conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT 1")
+                conn.close()
+            else:
+                db_status = "unhealthy"
+        except Exception as e:
+            db_status = f"unhealthy: {str(e)[:50]}"
+            logger.warning(f"Database health check failed: {e}")
+        
+        # Check Redis connection
+        redis_status = "healthy"
+        try:
+            import redis
+            r = redis.Redis(host='localhost', port=6379, decode_responses=True, socket_timeout=1)
+            r.ping()
+        except ImportError:
+            redis_status = "not_configured"
+        except Exception as e:
+            redis_status = f"unhealthy: {str(e)[:50]}"
+            logger.warning(f"Redis health check failed: {e}")
+        
+        # Determine overall status
+        overall_status = "healthy"
+        if db_status != "healthy" or redis_status not in ["healthy", "not_configured"]:
+            overall_status = "degraded"
+        if cpu_percent > 90 or memory.percent > 90 or disk.percent > 95:
+            overall_status = "warning"
+        
         return {
             "success": True,
             "domain": "system_monitoring",
-            "status": "healthy",
+            "status": overall_status,
+            "services": {
+                "database": db_status,
+                "redis": redis_status,
+                "system": "healthy" if cpu_percent < 80 and memory.percent < 80 else "warning"
+            },
             "system_metrics": {
                 "cpu_percent": cpu_percent,
                 "memory_percent": memory.percent,
@@ -65,8 +103,68 @@ async def health_check():
             "success": False,
             "domain": "system_monitoring",
             "status": "unhealthy",
+            "services": {
+                "database": "unknown",
+                "redis": "unknown",
+                "system": "unknown"
+            },
             "error": str(e)
         }
+
+
+@router.get("/fast_stats")
+async def get_fast_stats():
+    """
+    Fast dashboard stats using indexed queries.
+    Optimized for quick page loads by using a SINGLE query with UNION ALL.
+    """
+    try:
+        conn = get_db_connection()
+        if not conn:
+            raise HTTPException(status_code=500, detail="Database connection failed")
+        
+        try:
+            # Use a SINGLE query to get all stats at once (minimizes SSH round-trips)
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT 'politics' as domain, 'articles' as type, COUNT(*) as cnt FROM politics.articles
+                    UNION ALL SELECT 'politics', 'storylines', COUNT(*) FROM politics.storylines WHERE status = 'active'
+                    UNION ALL SELECT 'politics', 'feeds', COUNT(*) FROM politics.rss_feeds WHERE is_active = true
+                    UNION ALL SELECT 'finance', 'articles', COUNT(*) FROM finance.articles
+                    UNION ALL SELECT 'finance', 'storylines', COUNT(*) FROM finance.storylines WHERE status = 'active'
+                    UNION ALL SELECT 'finance', 'feeds', COUNT(*) FROM finance.rss_feeds WHERE is_active = true
+                    UNION ALL SELECT 'science-tech', 'articles', COUNT(*) FROM science_tech.articles
+                    UNION ALL SELECT 'science-tech', 'storylines', COUNT(*) FROM science_tech.storylines WHERE status = 'active'
+                    UNION ALL SELECT 'science-tech', 'feeds', COUNT(*) FROM science_tech.rss_feeds WHERE is_active = true
+                """)
+                
+                stats = {
+                    "domains": {
+                        "politics": {"articles": 0, "storylines": 0, "feeds": 0},
+                        "finance": {"articles": 0, "storylines": 0, "feeds": 0},
+                        "science-tech": {"articles": 0, "storylines": 0, "feeds": 0}
+                    },
+                    "totals": {"articles": 0, "storylines": 0, "feeds": 0},
+                    "timestamp": datetime.now().isoformat()
+                }
+                
+                for row in cur.fetchall():
+                    domain, stat_type, count = row
+                    stats["domains"][domain][stat_type] = count
+                    stats["totals"][stat_type] += count
+            
+            return {
+                "success": True,
+                "data": stats
+            }
+            
+        finally:
+            conn.close()
+            
+    except Exception as e:
+        logger.error(f"Fast stats error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @router.get("/metrics")
 async def get_system_metrics(
@@ -86,7 +184,7 @@ async def get_system_metrics(
             params = []
             
             if metric_name:
-                where_conditions.append("metric_name = %s")
+                where_conditions.append("metric_type = %s")
                 params.append(metric_name)
             
             where_conditions.append("timestamp >= %s")
@@ -95,8 +193,12 @@ async def get_system_metrics(
             where_clause = "WHERE " + " AND ".join(where_conditions)
             
             with conn.cursor() as cur:
+                # FIXED: Use correct column names from schema
+                # metric_type (not metric_name), labels (not tags)
+                # system_metrics stores individual metrics, not metric_value/unit
                 cur.execute(f"""
-                    SELECT id, timestamp, metric_name, metric_value, unit, tags
+                    SELECT id, timestamp, metric_type, cpu_percent, memory_percent, 
+                           disk_percent, load_avg_1m, labels
                     FROM system_metrics 
                     {where_clause}
                     ORDER BY timestamp DESC
@@ -108,10 +210,12 @@ async def get_system_metrics(
                     metrics.append({
                         "id": row[0],
                         "timestamp": row[1].isoformat(),
-                        "metric_name": row[2],
-                        "metric_value": row[3],
-                        "unit": row[4],
-                        "tags": row[5]
+                        "metric_type": row[2],
+                        "cpu_percent": float(row[3]) if row[3] else None,
+                        "memory_percent": float(row[4]) if row[4] else None,
+                        "disk_percent": float(row[5]) if row[5] else None,
+                        "load_avg_1m": float(row[6]) if row[6] else None,
+                        "labels": row[7] if row[7] else {}
                     })
                 
                 return {
@@ -172,9 +276,11 @@ async def get_system_alerts(
             where_clause = "WHERE " + " AND ".join(where_conditions) if where_conditions else ""
             
             with conn.cursor() as cur:
+                # FIXED: Use correct column names from schema
+                # category (not alert_type), message (not description), resolved (not resolved_at)
                 cur.execute(f"""
-                    SELECT id, alert_type, severity, title, description, 
-                           alert_data, created_at, updated_at, resolved_at
+                    SELECT id, category, severity, title, message, 
+                           alert_data, created_at, resolved_at, is_active
                     FROM system_alerts 
                     {where_clause}
                     ORDER BY created_at DESC
@@ -185,14 +291,14 @@ async def get_system_alerts(
                 for row in cur.fetchall():
                     alerts.append({
                         "id": row[0],
-                        "alert_type": row[1],
+                        "category": row[1],  # Using category instead of alert_type
                         "severity": row[2],
                         "title": row[3],
-                        "description": row[4],
+                        "message": row[4],  # Using message instead of description
                         "data": row[5],
                         "created_at": row[6].isoformat() if row[6] else None,
-                        "updated_at": row[7].isoformat() if row[7] else None,
-                        "resolved_at": row[8].isoformat() if row[8] else None
+                        "resolved_at": row[7].isoformat() if row[7] else None,
+                        "is_active": row[8] if row[8] is not None else True
                     })
                 
                 return {
@@ -340,29 +446,44 @@ async def get_system_status():
                 
                 logger.info(f"🔍 Final GPU values: VRAM={gpu_vram_percent}, Utilization={gpu_utilization_percent}")
                 
-                # Get database metrics
-                cur.execute("SELECT COUNT(*) FROM articles")
-                total_articles = cur.fetchone()[0]
-                
-                cur.execute("SELECT COUNT(*) FROM storylines")
-                total_storylines = cur.fetchone()[0]
-                
-                cur.execute("SELECT COUNT(*) FROM rss_feeds WHERE is_active = true")
-                active_feeds = cur.fetchone()[0]
-                
-                # Get articles per week
+                # Get database metrics from all domain schemas
                 cur.execute("""
-                    SELECT COUNT(*) FROM articles 
-                    WHERE created_at >= %s
-                """, (datetime.now() - timedelta(days=7),))
-                articles_this_week = cur.fetchone()[0]
-                
-                # Get articles today
-                cur.execute("""
-                    SELECT COUNT(*) FROM articles 
-                    WHERE DATE(created_at) = CURRENT_DATE
+                    SELECT 
+                        (SELECT COUNT(*) FROM politics.articles) +
+                        (SELECT COUNT(*) FROM finance.articles) +
+                        (SELECT COUNT(*) FROM science_tech.articles) as total_articles,
+                        (SELECT COUNT(*) FROM politics.storylines) +
+                        (SELECT COUNT(*) FROM finance.storylines) +
+                        (SELECT COUNT(*) FROM science_tech.storylines) as total_storylines,
+                        (SELECT COUNT(*) FROM politics.rss_feeds WHERE is_active = true) +
+                        (SELECT COUNT(*) FROM finance.rss_feeds WHERE is_active = true) +
+                        (SELECT COUNT(*) FROM science_tech.rss_feeds WHERE is_active = true) as active_feeds
                 """)
-                articles_today = cur.fetchone()[0]
+                stats = cur.fetchone()
+                total_articles = stats[0] if stats and stats[0] else 0
+                total_storylines = stats[1] if stats and stats[1] else 0
+                active_feeds = stats[2] if stats and stats[2] else 0
+                
+                # Get articles per week from all domains
+                week_ago = datetime.now() - timedelta(days=7)
+                cur.execute("""
+                    SELECT 
+                        (SELECT COUNT(*) FROM politics.articles WHERE created_at >= %s) +
+                        (SELECT COUNT(*) FROM finance.articles WHERE created_at >= %s) +
+                        (SELECT COUNT(*) FROM science_tech.articles WHERE created_at >= %s) as articles_this_week
+                """, (week_ago, week_ago, week_ago))
+                week_result = cur.fetchone()
+                articles_this_week = week_result[0] if week_result and week_result[0] else 0
+                
+                # Get articles today from all domains
+                cur.execute("""
+                    SELECT 
+                        (SELECT COUNT(*) FROM politics.articles WHERE DATE(created_at) = CURRENT_DATE) +
+                        (SELECT COUNT(*) FROM finance.articles WHERE DATE(created_at) = CURRENT_DATE) +
+                        (SELECT COUNT(*) FROM science_tech.articles WHERE DATE(created_at) = CURRENT_DATE) as articles_today
+                """)
+                today_result = cur.fetchone()
+                articles_today = today_result[0] if today_result and today_result[0] else 0
                 
                 # Get active alerts
                 cur.execute("SELECT COUNT(*) FROM system_alerts WHERE is_active = true")
@@ -375,34 +496,45 @@ async def get_system_status():
                 """, (datetime.now() - timedelta(hours=24),))
                 recent_errors = cur.fetchone()[0]
                 
-                # Get deduplication metrics
-                cur.execute("SELECT COUNT(*) FROM articles WHERE content_hash IS NOT NULL")
-                articles_with_hash = cur.fetchone()[0]
+                # Get deduplication metrics from all domains
+                cur.execute("""
+                    SELECT 
+                        (SELECT COUNT(*) FROM politics.articles WHERE content_hash IS NOT NULL) +
+                        (SELECT COUNT(*) FROM finance.articles WHERE content_hash IS NOT NULL) +
+                        (SELECT COUNT(*) FROM science_tech.articles WHERE content_hash IS NOT NULL) as articles_with_hash
+                """)
+                hash_result = cur.fetchone()
+                articles_with_hash = hash_result[0] if hash_result and hash_result[0] else 0
                 
+                # URL duplicates across all domains
                 cur.execute("""
                     SELECT COUNT(*) FROM (
-                        SELECT url, COUNT(*) as count
-                        FROM articles 
-                        GROUP BY url 
-                        HAVING COUNT(*) > 1
-                    ) duplicates
+                        SELECT url FROM politics.articles
+                        UNION ALL SELECT url FROM finance.articles
+                        UNION ALL SELECT url FROM science_tech.articles
+                    ) all_articles
+                    GROUP BY url 
+                    HAVING COUNT(*) > 1
                 """)
-                url_duplicates = cur.fetchone()[0]
+                url_result = cur.fetchone()
+                url_duplicates = url_result[0] if url_result and url_result[0] else 0
                 
+                # Content duplicates across all domains
                 cur.execute("""
                     SELECT COUNT(*) FROM (
-                        SELECT content_hash, COUNT(*) as count
-                        FROM articles 
-                        WHERE content_hash IS NOT NULL
-                        GROUP BY content_hash 
-                        HAVING COUNT(*) > 1
-                    ) duplicates
+                        SELECT content_hash FROM politics.articles WHERE content_hash IS NOT NULL
+                        UNION ALL SELECT content_hash FROM finance.articles WHERE content_hash IS NOT NULL
+                        UNION ALL SELECT content_hash FROM science_tech.articles WHERE content_hash IS NOT NULL
+                    ) all_hashes
+                    GROUP BY content_hash 
+                    HAVING COUNT(*) > 1
                 """)
-                content_duplicates = cur.fetchone()[0]
+                content_result = cur.fetchone()
+                content_duplicates = content_result[0] if content_result and content_result[0] else 0
                 
                 cur.execute("""
                     SELECT COUNT(*) FROM pipeline_traces 
-                    WHERE stage LIKE '%deduplication%' 
+                    WHERE error_stage LIKE '%deduplication%' 
                     AND (end_time >= NOW() - INTERVAL '24 hours' OR start_time >= NOW() - INTERVAL '24 hours')
                 """)
                 recent_deduplication_runs = cur.fetchone()[0]
@@ -464,6 +596,62 @@ async def get_system_status():
             
     except Exception as e:
         logger.error(f"Error getting system status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/dashboard")
+async def get_dashboard_metrics():
+    """Get dashboard-specific database metrics"""
+    try:
+        conn = get_db_connection()
+        if not conn:
+            raise HTTPException(status_code=500, detail="Database connection failed")
+        
+        try:
+            with conn.cursor() as cur:
+                # Get aggregated metrics from all domain schemas
+                week_ago = datetime.now() - timedelta(days=7)
+                cur.execute("""
+                    SELECT 
+                        (SELECT COUNT(*) FROM politics.articles) +
+                        (SELECT COUNT(*) FROM finance.articles) +
+                        (SELECT COUNT(*) FROM science_tech.articles) as total_articles,
+                        (SELECT COUNT(*) FROM politics.storylines) +
+                        (SELECT COUNT(*) FROM finance.storylines) +
+                        (SELECT COUNT(*) FROM science_tech.storylines) as total_storylines,
+                        (SELECT COUNT(*) FROM politics.rss_feeds) +
+                        (SELECT COUNT(*) FROM finance.rss_feeds) +
+                        (SELECT COUNT(*) FROM science_tech.rss_feeds) as total_feeds,
+                        (SELECT COUNT(*) FROM politics.rss_feeds WHERE is_active = true) +
+                        (SELECT COUNT(*) FROM finance.rss_feeds WHERE is_active = true) +
+                        (SELECT COUNT(*) FROM science_tech.rss_feeds WHERE is_active = true) as active_feeds,
+                        (SELECT COUNT(*) FROM politics.articles WHERE DATE(created_at) = CURRENT_DATE) +
+                        (SELECT COUNT(*) FROM finance.articles WHERE DATE(created_at) = CURRENT_DATE) +
+                        (SELECT COUNT(*) FROM science_tech.articles WHERE DATE(created_at) = CURRENT_DATE) as articles_today,
+                        (SELECT COUNT(*) FROM politics.articles WHERE created_at >= %s) +
+                        (SELECT COUNT(*) FROM finance.articles WHERE created_at >= %s) +
+                        (SELECT COUNT(*) FROM science_tech.articles WHERE created_at >= %s) as articles_this_week
+                """, (week_ago, week_ago, week_ago))
+                
+                stats = cur.fetchone()
+                
+                return {
+                    "success": True,
+                    "data": {
+                        "total_articles": stats[0] if stats and stats[0] else 0,
+                        "total_storylines": stats[1] if stats and stats[1] else 0,
+                        "total_feeds": stats[2] if stats and stats[2] else 0,
+                        "active_feeds": stats[3] if stats and stats[3] else 0,
+                        "articles_today": stats[4] if stats and stats[4] else 0,
+                        "articles_this_week": stats[5] if stats and stats[5] else 0,
+                    },
+                    "timestamp": datetime.now().isoformat()
+                }
+                
+        finally:
+            conn.close()
+            
+    except Exception as e:
+        logger.error(f"Error getting dashboard metrics: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/performance")
@@ -566,7 +754,7 @@ async def process_metric_collection():
     except Exception as e:
         logger.error(f"Error in metric collection: {e}")
 
-@router.get("/pipeline-status")
+@router.get("/pipeline_status")
 async def get_pipeline_status():
     """Get pipeline monitoring status with stage progress tracking"""
     try:
@@ -576,14 +764,15 @@ async def get_pipeline_status():
         
         try:
             with conn.cursor() as cur:
-                # Get pipeline trace statistics
+                # Get pipeline trace statistics (using correct column names)
+                # Table has: success (boolean), error_stage (varchar), not status/stage
                 cur.execute("""
                     SELECT 
                         COUNT(*) as total_traces,
-                        COUNT(CASE WHEN status = 'completed' THEN 1 END) as successful_traces,
-                        COUNT(CASE WHEN status = 'error' THEN 1 END) as error_traces,
+                        COUNT(CASE WHEN success = true THEN 1 END) as successful_traces,
+                        COUNT(CASE WHEN success = false THEN 1 END) as error_traces,
                         COUNT(CASE WHEN COALESCE(end_time, start_time) >= NOW() - INTERVAL '1 hour' THEN 1 END) as recent_traces,
-                        COUNT(CASE WHEN status NOT IN ('completed', 'error') AND end_time IS NULL THEN 1 END) as active_traces
+                        COUNT(CASE WHEN success IS NULL AND end_time IS NULL THEN 1 END) as active_traces
                     FROM pipeline_traces
                 """)
                 
@@ -595,7 +784,7 @@ async def get_pipeline_status():
                 truly_active_traces = trace_stats[4] if trace_stats[4] else 0
                 
                 # Calculate success rate
-                success_rate = (successful_traces / total_traces * 100) if total_traces > 0 else 0
+                success_rate = (successful_traces / total_traces * 100) if total_traces > 0 else 0.0
                 
                 # Get the most recent orchestration run
                 cur.execute("""
@@ -609,76 +798,16 @@ async def get_pipeline_status():
                 latest_trace_id = latest_trace[0] if latest_trace else None
                 
                 # Get stage progress for latest orchestration
+                # Note: pipeline_traces table doesn't have stage/status columns
+                # It has error_stage and success (boolean)
                 stage_progress = {}
-                if latest_trace_id:
-                    cur.execute("""
-                        SELECT stage, status, start_time, end_time,
-                               EXTRACT(EPOCH FROM (COALESCE(end_time, NOW()) - start_time)) as duration_seconds
-                        FROM pipeline_traces
-                        WHERE trace_id = %s
-                        ORDER BY start_time
-                    """, (latest_trace_id,))
-                    
-                    stages = {}
-                    total_duration = 0
-                    for row in cur.fetchall():
-                        stage, status, start_time, end_time, duration = row
-                        stages[stage] = {
-                            "status": status,
-                            "start_time": start_time.isoformat() if start_time else None,
-                            "end_time": end_time.isoformat() if end_time else None,
-                            "duration_seconds": duration if duration else None
-                        }
-                        if duration:
-                            total_duration += duration
-                    
-                    # Calculate progress percentages and ETA
-                    stage_order = ["rss_collection", "topic_clustering", "ai_analysis"]
-                    estimated_durations = {"rss_collection": 300, "topic_clustering": 1800, "ai_analysis": 1800}  # seconds
-                    
-                    current_stage = None
-                    completed_stages = []
-                    for stage_name in stage_order:
-                        if stage_name in stages:
-                            stage_info = stages[stage_name]
-                            if stage_info["status"] == "completed":
-                                completed_stages.append(stage_name)
-                                stage_progress[stage_name] = {
-                                    "status": "completed",
-                                    "progress": 100,
-                                    "start_time": stage_info["start_time"],
-                                    "end_time": stage_info["end_time"],
-                                    "duration_seconds": stage_info["duration_seconds"]
-                                }
-                            elif stage_info["status"] == "started":
-                                if current_stage is None:
-                                    current_stage = stage_name
-                                    # Estimate progress based on elapsed time
-                                    elapsed = stages[stage_name].get("duration_seconds", 0) or 0
-                                    estimated = estimated_durations.get(stage_name, 1800)
-                                    progress = min(95, int((elapsed / estimated) * 100))
-                                    stage_progress[stage_name] = {
-                                        "status": "running",
-                                        "progress": progress,
-                                        "start_time": stage_info["start_time"],
-                                        "eta_seconds": max(0, estimated - elapsed)
-                                    }
-                            elif stage_info["status"] == "error":
-                                stage_progress[stage_name] = {
-                                    "status": "error",
-                                    "progress": 0,
-                                    "start_time": stage_info["start_time"],
-                                    "error": True
-                                }
-                        else:
-                            stage_progress[stage_name] = {
-                                "status": "pending",
-                                "progress": 0
-                            }
+                current_stage = None
                 
-                # Get recent pipeline traces
+                # Get recent pipeline traces (using actual column names)
                 cur.execute("""
-                    SELECT id, trace_id, stage, status, COALESCE(end_time, start_time) as ts, error_message
+                    SELECT id, trace_id, error_stage, success, 
+                           COALESCE(end_time, start_time) as ts,
+                           performance_metrics
                     FROM pipeline_traces
                     ORDER BY COALESCE(end_time, start_time) DESC
                     LIMIT 10
@@ -686,22 +815,42 @@ async def get_pipeline_status():
                 
                 recent_traces_data = []
                 for row in cur.fetchall():
+                    trace_id = row[1]
+                    error_stage = row[2]
+                    success = row[3]
+                    ts = row[4]
+                    metrics = row[5]
+                    
+                    # Determine status from success boolean
+                    if success is None:
+                        status = "running"
+                    elif success:
+                        status = "completed"
+                    else:
+                        status = "error"
+                    
                     recent_traces_data.append({
-                        "id": row[0],
-                        "trace_id": row[1],
-                        "stage": row[2],
-                        "status": row[3],
-                        "created_at": row[4].isoformat() if row[4] else None,
-                        "error_message": row[5]
+                        "id": str(row[0]),
+                        "trace_id": trace_id,
+                        "stage": error_stage or "unknown",
+                        "status": status,
+                        "created_at": ts.isoformat() if ts else None,
+                        "error_message": None,  # No error_message column
+                        "success": success
                     })
                 
-                # Get processing statistics
+                # Get processing statistics (sum across all domain schemas)
                 cur.execute("""
                     SELECT 
-                        COUNT(*) as total_articles,
-                        COUNT(CASE WHEN sentiment_score IS NOT NULL THEN 1 END) as articles_analyzed,
-                        COUNT(CASE WHEN created_at >= NOW() - INTERVAL '1 hour' THEN 1 END) as recent_articles
-                    FROM articles
+                        (SELECT COUNT(*) FROM politics.articles) +
+                        (SELECT COUNT(*) FROM finance.articles) +
+                        (SELECT COUNT(*) FROM science_tech.articles) as total_articles,
+                        (SELECT COUNT(*) FROM politics.articles WHERE sentiment_score IS NOT NULL) +
+                        (SELECT COUNT(*) FROM finance.articles WHERE sentiment_score IS NOT NULL) +
+                        (SELECT COUNT(*) FROM science_tech.articles WHERE sentiment_score IS NOT NULL) as articles_analyzed,
+                        (SELECT COUNT(*) FROM politics.articles WHERE created_at >= NOW() - INTERVAL '1 hour') +
+                        (SELECT COUNT(*) FROM finance.articles WHERE created_at >= NOW() - INTERVAL '1 hour') +
+                        (SELECT COUNT(*) FROM science_tech.articles WHERE created_at >= NOW() - INTERVAL '1 hour') as recent_articles
                 """)
                 
                 processing_stats = cur.fetchone()
@@ -716,10 +865,20 @@ async def get_pipeline_status():
                     total_progress = sum(s.get("progress", 0) for s in stage_progress.values())
                     overall_progress = int(total_progress / stage_count) if stage_count > 0 else 0
                 
+                # Determine pipeline status
+                if total_traces == 0:
+                    pipeline_status = "idle"  # No traces yet
+                elif truly_active_traces > 0:
+                    pipeline_status = "running"
+                elif error_traces > 0 and error_traces > successful_traces:
+                    pipeline_status = "error"
+                else:
+                    pipeline_status = "healthy"
+                
                 return {
                     "success": True,
                     "data": {
-                        "pipeline_status": "running" if current_stage else ("healthy" if error_traces == 0 else "error"),
+                        "pipeline_status": pipeline_status,
                         "overall_progress": overall_progress,
                         "current_stage": current_stage,
                         "stage_progress": stage_progress,
@@ -744,7 +903,7 @@ async def get_pipeline_status():
         logger.error(f"Error fetching pipeline status: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/pipeline/run-all")
+@router.post("/pipeline/run_all")
 async def run_all_pipeline_processes(background_tasks: BackgroundTasks):
     """
     Orchestrate and run all pipeline processes in sequence:
@@ -928,3 +1087,168 @@ def _log_pipeline_trace(trace_id: str, stage: str, status: str, metadata: Dict[s
             conn.close()
     except Exception as e:
         logger.error(f"Error logging pipeline trace: {e}")
+
+
+@router.get("/logs/stats")
+async def get_log_statistics(days: int = 7):
+    """
+    Get log statistics aggregated by level
+    Returns counts of errors, warnings, info, and total entries
+    """
+    try:
+        conn = get_db_connection()
+        if not conn:
+            raise HTTPException(status_code=500, detail="Database connection failed")
+        
+        try:
+            with conn.cursor() as cur:
+                # Calculate date threshold
+                date_threshold = datetime.now() - timedelta(days=days)
+                
+                # Get statistics from system_alerts (which acts as our log system)
+                # Count by severity level
+                cur.execute("""
+                    SELECT 
+                        COUNT(*) as total_entries,
+                        SUM(CASE WHEN severity = 'error' OR severity = 'critical' THEN 1 ELSE 0 END) as error_count,
+                        SUM(CASE WHEN severity = 'warning' THEN 1 ELSE 0 END) as warning_count,
+                        SUM(CASE WHEN severity = 'info' THEN 1 ELSE 0 END) as info_count
+                    FROM system_alerts
+                    WHERE created_at >= %s
+                """, (date_threshold,))
+                
+                stats_row = cur.fetchone()
+                
+                # Also check processing logs for additional context
+                cur.execute("""
+                    SELECT COUNT(*) 
+                    FROM article_processing_log
+                    WHERE created_at >= %s
+                """, (date_threshold,))
+                processing_logs_count = cur.fetchone()[0] or 0
+                
+                cur.execute("""
+                    SELECT COUNT(*) 
+                    FROM storyline_processing_log
+                    WHERE created_at >= %s
+                """, (date_threshold,))
+                storyline_logs_count = cur.fetchone()[0] or 0
+                
+                # Aggregate totals
+                total_entries = (stats_row[0] or 0) + processing_logs_count + storyline_logs_count
+                error_count = stats_row[1] or 0
+                warning_count = stats_row[2] or 0
+                info_count = stats_row[3] or 0
+                
+                return {
+                    "success": True,
+                    "data": {
+                        "total_entries": total_entries,
+                        "error_count": error_count,
+                        "warning_count": warning_count,
+                        "info_count": info_count,
+                        "debug_count": 0,  # Not tracked separately
+                        "period_days": days,
+                        "timestamp": datetime.now().isoformat()
+                    },
+                    "timestamp": datetime.now().isoformat()
+                }
+                
+        finally:
+            conn.close()
+            
+    except Exception as e:
+        logger.error(f"Error getting log statistics: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/logs/realtime")
+async def get_realtime_logs(limit: int = 50):
+    """
+    Get real-time logs from system alerts and processing logs
+    Returns recent log entries in chronological order
+    """
+    try:
+        conn = get_db_connection()
+        if not conn:
+            raise HTTPException(status_code=500, detail="Database connection failed")
+        
+        try:
+            with conn.cursor() as cur:
+                # Get recent alerts (these are our primary log entries)
+                cur.execute("""
+                    SELECT 
+                        id,
+                        category,
+                        severity,
+                        title,
+                        message,
+                        created_at,
+                        is_active
+                    FROM system_alerts
+                    ORDER BY created_at DESC
+                    LIMIT %s
+                """, (limit,))
+                
+                logs = []
+                for row in cur.fetchall():
+                    logs.append({
+                        "id": row[0],
+                        "timestamp": row[5].isoformat() if row[5] else datetime.now().isoformat(),
+                        "level": (row[2] or 'INFO').upper(),  # severity -> level
+                        "logger": row[1] or 'system',  # category -> logger
+                        "message": row[4] or row[3] or 'System event',  # message or title
+                        "module": row[1] or 'system',  # category -> module
+                        "is_active": row[6] if row[6] is not None else True
+                    })
+                
+                # Also get recent processing log entries
+                cur.execute("""
+                    SELECT 
+                        id,
+                        'article_processing' as category,
+                        CASE 
+                            WHEN status = 'error' THEN 'ERROR'
+                            WHEN status = 'warning' THEN 'WARNING'
+                            ELSE 'INFO'
+                        END as severity,
+                        article_id::text as title,
+                        COALESCE(error_message, 'Article processed') as message,
+                        created_at
+                    FROM article_processing_log
+                    WHERE created_at >= NOW() - INTERVAL '24 hours'
+                    ORDER BY created_at DESC
+                    LIMIT %s
+                """, (limit // 2,))
+                
+                for row in cur.fetchall():
+                    logs.append({
+                        "id": f"proc_{row[0]}",
+                        "timestamp": row[5].isoformat() if row[5] else datetime.now().isoformat(),
+                        "level": (row[2] or 'INFO').upper(),
+                        "logger": row[1] or 'processing',
+                        "message": row[4] or 'Processing event',
+                        "module": row[1] or 'processing',
+                        "is_active": True
+                    })
+                
+                # Sort all logs by timestamp (most recent first)
+                logs.sort(key=lambda x: x['timestamp'], reverse=True)
+                logs = logs[:limit]  # Limit final results
+                
+                return {
+                    "success": True,
+                    "data": {
+                        "entries": logs,
+                        "count": len(logs),
+                        "timestamp": datetime.now().isoformat()
+                    },
+                    "timestamp": datetime.now().isoformat()
+                }
+                
+        finally:
+            conn.close()
+            
+    except Exception as e:
+        logger.error(f"Error getting realtime logs: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

@@ -46,7 +46,7 @@ import {
   ContentCopy,
   Link,
 } from '@mui/icons-material';
-import { apiService, api } from '../../services/apiService';
+import apiService, { api } from '../../services/apiService';
 
 const ArticleDeduplicationManager = () => {
   const [duplicates, setDuplicates] = useState([]);

@@ -6,18 +6,21 @@ from .summarization_service import MLSummarizationService
 from .content_analyzer import ContentAnalyzer
 from .quality_scorer import QualityScorer
 from .storyline_tracker import StorylineTracker
-from .deduplication_service import ContentDeduplicationService
+# Note: ContentDeduplicationService has been consolidated into AdvancedDeduplicationService
+# Use: from modules.deduplication.advanced_deduplication_service import AdvancedDeduplicationService
 from .daily_briefing_service import DailyBriefingService
 from .background_processor import BackgroundMLProcessor
-from .rag_enhanced_service import RAGEnhancedService
+from .ml_rag_service import MLRAGService
+# Backward compatibility alias
+from .ml_rag_service import MLRAGService as RAGEnhancedService
 
 __all__ = [
     'MLSummarizationService',
     'ContentAnalyzer', 
     'QualityScorer',
     'StorylineTracker',
-    'ContentDeduplicationService',
     'DailyBriefingService',
     'BackgroundMLProcessor',
-    'RAGEnhancedService'
+    'MLRAGService',
+    'RAGEnhancedService'  # Backward compatibility alias
 ]

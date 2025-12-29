@@ -190,7 +190,7 @@ async def merge_duplicates(request: DuplicateMergeRequest):
         logger.error(f"Error merging duplicates: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/duplicates/auto-merge")
+@router.post("/duplicates/auto_merge")
 async def auto_merge_url_duplicates(dry_run: bool = Query(True, description="Dry run mode")):
     """Automatically merge all URL duplicates"""
     try:
@@ -330,7 +330,7 @@ async def get_deduplication_stats():
         logger.error(f"Error getting deduplication stats: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/duplicates/analyze-similarity")
+@router.post("/duplicates/analyze_similarity")
 async def analyze_article_similarity(article_id: int, threshold: float = Query(0.85, description="Similarity threshold")):
     """Analyze similarity of a specific article with others"""
     try:

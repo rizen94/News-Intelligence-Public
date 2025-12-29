@@ -179,7 +179,7 @@ async def get_domain_topics(
                 for row in cur.fetchall():
                     topics.append({
                         "id": row[0],
-                        "topic_uuid": str(row[1]),
+                        "topic_uuid": str(row[1]) if row[1] else None,
                         "name": row[2],
                         "description": row[3],
                         "category": row[4],
@@ -191,7 +191,7 @@ async def get_domain_topics(
                         "incorrect_assignments": row[10] or 0,
                         "status": row[11],
                         "is_auto_generated": row[12],
-                        "article_count": row[16] or 0,
+                        "article_count": row[15] or 0,  # Fixed: COUNT is at index 15, not 16
                         "created_at": row[13].isoformat() if row[13] else None,
                         "updated_at": row[14].isoformat() if row[14] else None
                     })
@@ -470,7 +470,7 @@ async def get_domain_article_topics(
         logger.error(f"Error getting article topics: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/articles/{article_id}/process-topics")
+@router.post("/articles/{article_id}/process_topics")
 async def process_article_topics(article_id: int, background_tasks: BackgroundTasks):
     """
     Process an article to extract and assign topics using LLM
@@ -604,7 +604,7 @@ async def submit_feedback(assignment_id: int, feedback: TopicFeedback):
         logger.error(f"Error submitting feedback: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/topics/needing-review")
+@router.get("/topics/needing_review")
 async def get_topics_needing_review(
     threshold: float = Query(0.6, ge=0.0, le=1.0),
     limit: int = Query(50, ge=1, le=200)
@@ -635,7 +635,7 @@ async def get_topics_needing_review(
 # Batch Operations
 # ============================================================================
 
-@router.post("/articles/batch-process-topics")
+@router.post("/articles/batch_process_topics")
 async def batch_process_articles(
     article_ids: List[int] = Body(...),
     background_tasks: BackgroundTasks = None

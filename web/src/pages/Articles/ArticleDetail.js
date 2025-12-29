@@ -18,7 +18,7 @@ import {
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 
-import { apiService } from '../../services/apiService.ts';
+import apiService from '../../services/apiService.ts';
 import ArticleTopics from '../../components/ArticleTopics/ArticleTopics';
 import { useDomainNavigation } from '../../hooks/useDomainNavigation';
 import { useDomainRoute } from '../../hooks/useDomainRoute';

@@ -4,9 +4,10 @@
 
 This document establishes coding standards, naming conventions, and architectural patterns for the News Intelligence System to ensure consistency, maintainability, and prevent configuration fragmentation.
 
-**Last Updated**: 2025-12-12  
-**Version**: 4.0  
-**Status**: Active
+**Last Updated**: 2025-01-27  
+**Version**: 4.1  
+**Status**: Active  
+**Update**: Added "Improve Existing, Don't Duplicate" design philosophy
 
 ---
 
@@ -26,6 +27,71 @@ This document establishes coding standards, naming conventions, and architectura
 - Clear naming conventions
 - Explicit imports and dependencies
 - Obvious code structure
+
+### **4. Improve Existing, Don't Duplicate** ⭐ **NEW DESIGN PHILOSOPHY**
+- **Always improve existing code before creating new files**
+- **Use composition over duplication** - Add features to existing services, don't create "Enhanced" versions
+- **Consolidate, don't proliferate** - Merge duplicate functionality into single source
+- **Delete legacy files** - Remove old versions after migration, don't keep them as "legacy"
+
+#### **The "Improve Existing" Pattern**
+```python
+# ❌ WRONG - Creating duplicate services
+class RSSService:
+    def fetch(self): pass
+
+class EnhancedRSSService:  # ❌ Duplicate!
+    def fetch(self): pass  # Same logic duplicated
+    def fetch_with_cache(self): pass
+
+# ✅ CORRECT - Improve existing service with composition
+class RSSService:
+    def __init__(self, cache=None, deduplicator=None):
+        self.cache = cache  # Optional feature via composition
+        self.deduplicator = deduplicator  # Optional feature
+    
+    def fetch(self, use_cache=True):
+        if use_cache and self.cache:
+            return self.cache.get_or_fetch(...)
+        return self._fetch_raw()
+```
+
+#### **The "Consolidation" Pattern**
+```python
+# ❌ WRONG - Multiple versions of same functionality
+# Dashboard.js, Dashboard.tsx, EnhancedDashboard.js, UnifiedDashboard.js, Phase2Dashboard.tsx
+
+# ✅ CORRECT - Single source of truth
+# Dashboard.tsx (consolidates all features from other versions)
+```
+
+#### **The "Feature Module" Pattern**
+```python
+# ❌ WRONG - Separate files for each feature level
+# rag_service.py, enhanced_rag_service.py, enhanced_rag_retrieval.py, rag_enhanced_service.py
+
+# ✅ CORRECT - Feature modules within single service
+# services/rag/
+#   ├── __init__.py      # Main RAGService class
+#   ├── base.py          # Base RAG operations
+#   ├── retrieval.py     # Retrieval feature
+#   ├── enhancement.py   # Enhancement feature
+#   └── domain_knowledge.py  # Domain knowledge feature
+```
+
+#### **Red Flags to Avoid**
+- ❌ Creating "Enhanced" versions (EnhancedXService, EnhancedXPage)
+- ❌ Creating "Unified" versions (UnifiedXService, UnifiedXPage)
+- ❌ Creating "New" versions (NewXService, NewXPage)
+- ❌ Marking files as "Legacy" but keeping them active
+- ❌ Creating new files for small features instead of extending existing
+- ❌ Duplicating logic instead of extracting to shared utilities
+
+#### **Before Creating a New File, Ask:**
+1. Can I extend an existing file instead?
+2. Can I use composition to add this feature?
+3. Is there duplicate functionality I should consolidate first?
+4. Can I refactor existing code to support this feature?
 
 ---
 

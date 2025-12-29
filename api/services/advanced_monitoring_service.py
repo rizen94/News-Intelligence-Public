@@ -15,6 +15,14 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 import json
 
+# Try to import Prometheus client
+try:
+    from prometheus_client import Counter, Histogram, Gauge, CollectorRegistry, generate_latest
+    PROMETHEUS_AVAILABLE = True
+except ImportError:
+    PROMETHEUS_AVAILABLE = False
+    logging.warning("Prometheus client not available - metrics disabled")
+
 logger = logging.getLogger(__name__)
 
 class AlertSeverity(Enum):
@@ -66,6 +74,12 @@ class AdvancedMonitoringService:
         self.metric_history = []
         self.anomaly_thresholds = self._initialize_anomaly_thresholds()
         self.performance_baselines = {}
+        
+        # Prometheus metrics
+        self.registry = None
+        self.prometheus_metrics = {}
+        if PROMETHEUS_AVAILABLE:
+            self._initialize_prometheus_metrics()
         
         # Monitoring intervals
         self.monitoring_interval = 30  # seconds
@@ -664,6 +678,329 @@ class AdvancedMonitoringService:
         except Exception as e:
             logger.error(f"Error calculating performance trends: {e}")
             return {}
+    
+    def _initialize_prometheus_metrics(self):
+        """Initialize Prometheus metrics"""
+        try:
+            if not PROMETHEUS_AVAILABLE:
+                return
+            
+            self.registry = CollectorRegistry()
+            
+            # RSS Feed Metrics
+            self.prometheus_metrics['rss_feeds_total'] = Gauge(
+                'rss_feeds_total',
+                'Total number of RSS feeds',
+                ['status', 'tier'],
+                registry=self.registry
+            )
+            
+            self.prometheus_metrics['rss_feed_success_rate'] = Gauge(
+                'rss_feed_success_rate',
+                'Success rate of RSS feeds',
+                ['feed_id', 'feed_name'],
+                registry=self.registry
+            )
+            
+            self.prometheus_metrics['rss_feed_response_time'] = Histogram(
+                'rss_feed_response_time_seconds',
+                'Response time for RSS feed fetching',
+                ['feed_id', 'feed_name'],
+                buckets=[0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0],
+                registry=self.registry
+            )
+            
+            # Article Processing Metrics
+            self.prometheus_metrics['articles_total'] = Counter(
+                'articles_total',
+                'Total number of articles processed',
+                ['status', 'source_tier'],
+                registry=self.registry
+            )
+            
+            self.prometheus_metrics['articles_filtered'] = Counter(
+                'articles_filtered_total',
+                'Total number of articles filtered out',
+                ['filter_type', 'reason'],
+                registry=self.registry
+            )
+            
+            self.prometheus_metrics['articles_duplicates'] = Counter(
+                'articles_duplicates_total',
+                'Total number of duplicate articles found',
+                ['algorithm'],
+                registry=self.registry
+            )
+            
+            # Processing Performance Metrics
+            self.prometheus_metrics['processing_duration'] = Histogram(
+                'processing_duration_seconds',
+                'Duration of processing operations',
+                ['operation', 'status'],
+                buckets=[1.0, 5.0, 10.0, 30.0, 60.0, 300.0, 600.0],
+                registry=self.registry
+            )
+            
+            # System Health Metrics
+            self.prometheus_metrics['system_health'] = Gauge(
+                'system_health_score',
+                'Overall system health score',
+                ['component'],
+                registry=self.registry
+            )
+            
+            self.prometheus_metrics['active_connections'] = Gauge(
+                'active_connections',
+                'Number of active database connections',
+                registry=self.registry
+            )
+            
+            # Error Metrics
+            self.prometheus_metrics['errors_total'] = Counter(
+                'errors_total',
+                'Total number of errors',
+                ['error_type', 'component'],
+                registry=self.registry
+            )
+            
+            logger.info("Prometheus metrics initialized successfully")
+            
+        except Exception as e:
+            logger.error(f"Failed to initialize Prometheus metrics: {e}")
+            self.registry = None
+    
+    async def record_rss_feed_metrics(self, feed_id: int, feed_name: str, 
+                                    success: bool, response_time: float, 
+                                    articles_processed: int, articles_filtered: int):
+        """Record RSS feed processing metrics"""
+        try:
+            if not PROMETHEUS_AVAILABLE or not self.registry:
+                return
+            
+            # Update success rate
+            success_rate = 100.0 if success else 0.0
+            self.prometheus_metrics['rss_feed_success_rate'].labels(
+                feed_id=str(feed_id), 
+                feed_name=feed_name
+            ).set(success_rate)
+            
+            # Record response time
+            self.prometheus_metrics['rss_feed_response_time'].labels(
+                feed_id=str(feed_id), 
+                feed_name=feed_name
+            ).observe(response_time)
+            
+            # Record article counts
+            self.prometheus_metrics['articles_total'].labels(
+                status='processed',
+                source_tier='unknown'
+            ).inc(articles_processed)
+            
+            if articles_filtered > 0:
+                self.prometheus_metrics['articles_filtered'].labels(
+                    filter_type='content',
+                    reason='filtering_rules'
+                ).inc(articles_filtered)
+            
+        except Exception as e:
+            logger.error(f"Error recording RSS feed metrics: {e}")
+    
+    async def record_duplicate_detection(self, duplicates_found: int, algorithm: str):
+        """Record duplicate detection metrics"""
+        try:
+            if not PROMETHEUS_AVAILABLE or not self.registry:
+                return
+            
+            if duplicates_found > 0:
+                self.prometheus_metrics['articles_duplicates'].labels(
+                    algorithm=algorithm
+                ).inc(duplicates_found)
+            
+        except Exception as e:
+            logger.error(f"Error recording duplicate metrics: {e}")
+    
+    async def record_processing_duration(self, operation: str, duration: float, success: bool):
+        """Record processing duration metrics"""
+        try:
+            if not PROMETHEUS_AVAILABLE or not self.registry:
+                return
+            
+            status = 'success' if success else 'error'
+            self.prometheus_metrics['processing_duration'].labels(
+                operation=operation,
+                status=status
+            ).observe(duration)
+            
+        except Exception as e:
+            logger.error(f"Error recording processing duration: {e}")
+    
+    async def record_error(self, error_type: str, component: str):
+        """Record error metrics"""
+        try:
+            if not PROMETHEUS_AVAILABLE or not self.registry:
+                return
+            
+            self.prometheus_metrics['errors_total'].labels(
+                error_type=error_type,
+                component=component
+            ).inc()
+            
+        except Exception as e:
+            logger.error(f"Error recording error metrics: {e}")
+    
+    async def update_system_health_metric(self, component: str, health_score: float):
+        """Update system health score in Prometheus"""
+        try:
+            if not PROMETHEUS_AVAILABLE or not self.registry:
+                return
+            
+            self.prometheus_metrics['system_health'].labels(
+                component=component
+            ).set(health_score)
+            
+        except Exception as e:
+            logger.error(f"Error updating system health metric: {e}")
+    
+    async def get_prometheus_metrics(self) -> str:
+        """Get Prometheus metrics in text format"""
+        try:
+            if not PROMETHEUS_AVAILABLE or not self.registry:
+                return "# Prometheus metrics not available\n"
+            
+            # Update metrics from database
+            await self._update_prometheus_metrics_from_database()
+            
+            # Generate metrics
+            return generate_latest(self.registry).decode('utf-8')
+            
+        except Exception as e:
+            logger.error(f"Error generating Prometheus metrics: {e}")
+            return f"# Error generating metrics: {e}\n"
+    
+    async def _update_prometheus_metrics_from_database(self):
+        """Update Prometheus metrics from database data"""
+        try:
+            if not PROMETHEUS_AVAILABLE or not self.registry:
+                return
+            
+            conn = psycopg2.connect(**self.db_config)
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            
+            # Update RSS feed counts
+            cursor.execute("""
+                SELECT status, tier, COUNT(*) as count
+                FROM rss_feeds 
+                GROUP BY status, tier
+            """)
+            feed_counts = cursor.fetchall()
+            
+            # Clear and update feed counts
+            for status, tier, count in feed_counts:
+                self.prometheus_metrics['rss_feeds_total'].labels(
+                    status=status, 
+                    tier=str(tier)
+                ).set(count)
+            
+            # Update success rates
+            cursor.execute("""
+                SELECT id, name, success_rate
+                FROM rss_feeds 
+                WHERE is_active = true
+            """)
+            success_rates = cursor.fetchall()
+            
+            for row in success_rates:
+                self.prometheus_metrics['rss_feed_success_rate'].labels(
+                    feed_id=str(row['id']),
+                    feed_name=row['name']
+                ).set(float(row['success_rate']) if row['success_rate'] else 0.0)
+            
+            cursor.close()
+            conn.close()
+            
+        except Exception as e:
+            logger.error(f"Error updating Prometheus metrics from database: {e}")
+    
+    async def get_system_health(self) -> Dict[str, Any]:
+        """Get basic system health status (from health_service)"""
+        try:
+            current_metrics = self.metric_history[-1]['metrics'] if self.metric_history else {}
+            health_score = await self._calculate_health_score(current_metrics)
+            
+            # Check database connection
+            db_healthy = True
+            try:
+                conn = psycopg2.connect(**self.db_config)
+                conn.close()
+            except Exception:
+                db_healthy = False
+            
+            return {
+                "status": "healthy" if health_score > 0.7 and db_healthy else "degraded",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "health_score": health_score,
+                "services": {
+                    "database": "healthy" if db_healthy else "unhealthy",
+                    "monitoring": "healthy",
+                    "system": "healthy" if health_score > 0.7 else "degraded"
+                },
+                "details": {
+                    "database": {"status": "healthy" if db_healthy else "unhealthy"},
+                    "monitoring": {"status": "healthy", "health_score": health_score},
+                    "system": {"status": "healthy" if health_score > 0.7 else "degraded", "score": health_score}
+                }
+            }
+        except Exception as e:
+            logger.error(f"Error getting system health: {e}")
+            return {
+                "status": "error",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "error": str(e)
+            }
+    
+    async def get_readiness_status(self) -> Dict[str, Any]:
+        """Check if system is ready to serve requests (from health_service)"""
+        try:
+            # Check database connection
+            db_ready = True
+            try:
+                conn = psycopg2.connect(**self.db_config)
+                conn.close()
+            except Exception:
+                db_ready = False
+            
+            return {
+                "ready": db_ready,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "checks": {
+                    "database": "healthy" if db_ready else "unhealthy",
+                    "monitoring": "healthy"
+                }
+            }
+        except Exception as e:
+            logger.error(f"Error getting readiness status: {e}")
+            return {
+                "ready": False,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "error": str(e)
+            }
+    
+    async def get_liveness_status(self) -> Dict[str, Any]:
+        """Check if system is alive and responding (from health_service)"""
+        return {
+            "live": True,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "uptime": time.time()
+        }
+    
+    async def is_system_ready(self) -> bool:
+        """Check if system is ready to serve requests"""
+        status = await self.get_readiness_status()
+        return status.get("ready", False)
+    
+    async def is_system_live(self) -> bool:
+        """Check if system is alive and responding"""
+        return True
     
     async def resolve_alert(self, alert_id: str) -> bool:
         """Resolve an alert"""

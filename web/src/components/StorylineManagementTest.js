@@ -6,7 +6,7 @@ import {
   Alert,
   CircularProgress,
 } from '@mui/material';
-import { apiService } from '../services/apiService';
+import apiService from '../services/apiService';
 
 const StorylineManagementTest = () => {
   const [loading, setLoading] = useState(false);

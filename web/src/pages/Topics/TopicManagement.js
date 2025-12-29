@@ -60,7 +60,9 @@ import {
 import {
   Checkbox,
 } from '@mui/material';
-import { apiService } from '../../services/apiService';
+// Import with explicit default to avoid webpack issues
+import apiServiceDefault, { getApiService } from '../../services/apiService';
+const apiService = apiServiceDefault || getApiService();
 
 const TopicManagement = () => {
   const navigate = useNavigate();
@@ -263,8 +265,10 @@ const TopicManagement = () => {
       setFeedbackLoading(true);
       setError(null);
 
-      const topicIds = topicsToMerge.map(t => t.id);
-      const result = await apiService.mergeTopics(topicIds);
+      // mergeTopics expects two topic names (cluster names), not IDs
+      const primaryTopic = topicsToMerge[0].name || topicsToMerge[0].cluster_name;
+      const secondaryTopic = topicsToMerge[1].name || topicsToMerge[1].cluster_name;
+      const result = await apiService.mergeTopics(primaryTopic, secondaryTopic);
 
       if (result.success) {
         setSnackbar({

@@ -64,7 +64,7 @@ import {
   Stop as StopIcon,
 } from '@mui/icons-material';
 
-import { enhancedApiService } from '../../services/enhancedApiService';
+import apiService from '../../services/apiService';
 import Logger from '../../utils/logger';
 
 interface LogEntry {
@@ -124,23 +124,33 @@ const RealtimeMonitor: React.FC = () => {
       // Load real-time data in parallel
       const [logsData, healthData, statsData, metricsData] =
         await Promise.allSettled([
-          enhancedApiService.getRealtimeLogs(maxLogs),
-          enhancedApiService.getSystemHealthFromLogs(),
-          enhancedApiService.getLogStatistics(1), // Last 24 hours
-          enhancedApiService.getSystemMetrics(),
+          apiService.getRealtimeLogs(maxLogs), // v4 endpoint
+          apiService.getAPIStatus(), // v4 endpoint (includes health metrics)
+          apiService.getLogStatistics(7), // v4 endpoint
+          apiService.getSystemMetrics(),
         ]);
 
       // Process results
-      if (logsData.status === 'fulfilled') {
-        setRealtimeLogs(logsData.value);
+      if (logsData.status === 'fulfilled' && logsData.value?.success && logsData.value?.data?.entries) {
+        setRealtimeLogs(logsData.value.data.entries as LogEntry[]);
       }
-      if (healthData.status === 'fulfilled') {
-        setSystemHealth(healthData.value);
+      if (healthData.status === 'fulfilled' && healthData.value?.success) {
+        // Extract health metrics from API status response
+        const statusData = healthData.value.data;
+        if (statusData) {
+          setSystemHealth({
+            error_rate_last_hour: statusData.alerts?.recent_errors || 0,
+            total_errors_last_24h: statusData.alerts?.recent_errors || 0,
+            hourly_error_trend: [],
+            system_health_score: statusData.overall_status === 'healthy' ? 100 : 50,
+            timestamp: healthData.value.timestamp || new Date().toISOString(),
+          });
+        }
       }
-      if (statsData.status === 'fulfilled') {
+      if (statsData.status === 'fulfilled' && statsData.value?.success) {
         setLogStats(statsData.value);
       }
-      if (metricsData.status === 'fulfilled') {
+      if (metricsData.status === 'fulfilled' && metricsData.value) {
         setSystemMetrics(metricsData.value);
       }
 
@@ -186,7 +196,20 @@ const RealtimeMonitor: React.FC = () => {
 
   const handleExportLogs = async() => {
     try {
-      const blob = await enhancedApiService.exportLogs({
+      // Use log statistics endpoint for export
+      const logs = await apiService.getLogStatistics();
+      const logData = JSON.stringify(logs, null, 2);
+      const blob = new Blob([logData], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `realtime-logs-${new Date().toISOString()}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      /* Commented out until v4 API endpoint is available
+      const blob = await apiService.exportLogs({
         format: 'json',
         start_time: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
       });
@@ -201,6 +224,7 @@ const RealtimeMonitor: React.FC = () => {
       link.click();
       document.body.removeChild(link);
       window.URL.revokeObjectURL(url);
+      */
     } catch (err) {
       Logger.error('Failed to export logs', err);
     }

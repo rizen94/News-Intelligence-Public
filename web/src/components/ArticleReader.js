@@ -34,7 +34,7 @@ import {
 } from '@mui/material';
 import React, { useEffect, useState } from 'react';
 
-import { apiService } from '../services/apiService';
+import apiService from '../services/apiService';
 import Logger from '../utils/logger';
 import { api } from '../services/apiService';
 

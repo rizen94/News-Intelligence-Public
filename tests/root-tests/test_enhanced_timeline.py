@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """
-Test script to demonstrate the enhanced timeline system
+Test script to demonstrate the chronological timeline system
 Shows the difference between basic publication date grouping and chronological event extraction
+
+Note: Uses ChronologicalTimelineService (formerly EnhancedTimelineService)
 """
 
 import requests
@@ -9,9 +11,9 @@ import json
 from datetime import datetime, date
 
 def test_enhanced_timeline_system():
-    """Test the enhanced timeline system with real data"""
+    """Test the chronological timeline system with real data"""
     
-    print("🔍 ENHANCED TIMELINE SYSTEM DEMONSTRATION")
+    print("🔍 CHRONOLOGICAL TIMELINE SYSTEM DEMONSTRATION")
     print("=" * 60)
     print()
     
@@ -26,7 +28,7 @@ def test_enhanced_timeline_system():
     print("❌ Timeline shows article dates, not event dates")
     print()
     
-    print("2. ENHANCED SYSTEM (Chronological Event Extraction):")
+    print("2. CHRONOLOGICAL SYSTEM (Chronological Event Extraction):")
     print("-" * 50)
     print("✅ Extracts actual event dates from article content")
     print("✅ Recognizes temporal expressions like 'yesterday', 'last week'")
@@ -56,7 +58,7 @@ def test_enhanced_timeline_system():
                 print(f"  {i}. {pub_date} - {title}")
             print()
             
-            print("ENHANCED APPROACH (Chronological Events):")
+            print("CHRONOLOGICAL APPROACH (Chronological Events):")
             print("  Would extract events like:")
             print("  • 'Last time the government shut down in 2018, we saw...'")
             print("    → Tagged as: 2018-01-20 (2018 shutdown)")
@@ -108,11 +110,13 @@ def test_enhanced_timeline_system():
             print("• /timeline/{id}/statistics/ - Get timeline metrics")
             print()
             
-            print("✅ ENHANCED TIMELINE SYSTEM READY!")
+            print("✅ CHRONOLOGICAL TIMELINE SYSTEM READY!")
             print("=" * 60)
             print("This system transforms basic article grouping into")
             print("intelligent chronological analysis that shows the")
             print("true timeline of events as they actually occurred.")
+            print()
+            print("Note: Uses ChronologicalTimelineService")
             
         else:
             print(f"❌ Failed to get storyline data: {response.status_code}")

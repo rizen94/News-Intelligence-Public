@@ -7,7 +7,7 @@ import os
 import sys
 from modules.intelligence.article_processor import ArticleProcessor
 from modules.intelligence.content_clusterer import ContentClusterer
-from modules.intelligence.enhanced_entity_extractor import EnhancedEntityExtractor
+from services.pattern_entity_extractor import PatternEntityExtractor
 
 def process_articles():
     """Process articles and create clusters"""
@@ -25,7 +25,7 @@ def process_articles():
         # Create processors
         ap = ArticleProcessor(db_config)
         cc = ContentClusterer(db_config)
-        ee = EnhancedEntityExtractor(db_config)
+        ee = PatternEntityExtractor()
         
         print("✓ All processors created successfully")
         

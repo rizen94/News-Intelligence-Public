@@ -65,7 +65,7 @@ import {
 } from '@mui/material';
 import React, { useState, useEffect, useCallback } from 'react';
 
-import { apiService, api } from '../../services/apiService';
+import apiService, { api } from '../../services/apiService';
 
 const IntelligenceHub = () => {
   const [activeTab, setActiveTab] = useState(0);

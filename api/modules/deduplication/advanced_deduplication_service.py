@@ -7,7 +7,7 @@ import hashlib
 import logging
 import re
 import json
-from typing import Dict, List, Optional, Tuple, Set
+from typing import Dict, Any, List, Optional, Tuple, Set
 from datetime import datetime, timedelta
 from dataclasses import dataclass
 from collections import defaultdict
@@ -649,3 +649,268 @@ class AdvancedDeduplicationService:
         except Exception as e:
             logger.error(f"Error generating storyline suggestion: {e}")
             return f"Storyline: {centroid_title[:50]}..."
+    
+    async def detect_duplicates(
+        self,
+        article_ids: Optional[List[int]] = None,
+        time_window_hours: int = 24,
+        max_articles: Optional[int] = None,
+        **kwargs
+    ) -> Dict[str, Any]:
+        """
+        Detect duplicates among articles (alias for detect_duplicates_batch for compatibility).
+        
+        Args:
+            article_ids: Optional list of specific article IDs to check
+            time_window_hours: Time window for recent articles (default 24 hours)
+            max_articles: Maximum number of articles to process (ignored, uses limit in query)
+            **kwargs: Additional arguments for compatibility
+            
+        Returns:
+            Dictionary with duplicate detection results
+        """
+        return await self.detect_duplicates_batch(article_ids, time_window_hours)
+    
+    async def detect_duplicates_batch(
+        self,
+        article_ids: Optional[List[int]] = None,
+        time_window_hours: int = 24
+    ) -> Dict[str, Any]:
+        """
+        Detect duplicates in a batch of articles.
+        
+        Args:
+            article_ids: Optional list of specific article IDs to check
+            time_window_hours: Time window for recent articles (default 24 hours)
+            
+        Returns:
+            Dictionary with duplicate detection results
+        """
+        try:
+            conn = psycopg2.connect(**self.db_config)
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            
+            # Get articles to process
+            if article_ids:
+                placeholders = ','.join(['%s'] * len(article_ids))
+                cursor.execute(f"""
+                    SELECT id, title, content, url, source_domain as source, 
+                           published_at, content_hash, author, word_count
+                    FROM articles 
+                    WHERE id IN ({placeholders})
+                    AND LENGTH(content) >= %s
+                    ORDER BY published_at DESC
+                """, article_ids + [self.config['min_content_length']])
+            else:
+                cursor.execute("""
+                    SELECT id, title, content, url, source_domain as source,
+                           published_at, content_hash, author, word_count
+                    FROM articles 
+                    WHERE published_at >= %s
+                    AND LENGTH(content) >= %s
+                    AND is_duplicate = false
+                    ORDER BY published_at DESC
+                    LIMIT 1000
+                """, (
+                    datetime.now() - timedelta(hours=time_window_hours),
+                    self.config['min_content_length']
+                ))
+            
+            articles_data = cursor.fetchall()
+            conn.close()
+            
+            if len(articles_data) < 2:
+                return {
+                    "duplicates_found": 0,
+                    "clusters_created": 0,
+                    "articles_processed": len(articles_data),
+                    "message": "Not enough articles to process"
+                }
+            
+            # Convert to ArticleMetadata objects
+            articles = []
+            for row in articles_data:
+                article = ArticleMetadata(
+                    id=row['id'],
+                    title=row['title'] or '',
+                    content=row['content'] or '',
+                    url=row['url'] or '',
+                    source=row['source'] or '',
+                    published_at=row['published_at'],
+                    author=row.get('author'),
+                    content_hash=row.get('content_hash'),
+                    word_count=row.get('word_count', 0)
+                )
+                articles.append(article)
+            
+            # Detect duplicates
+            duplicate_pairs = []
+            for i, article1 in enumerate(articles):
+                for article2 in articles[i+1:]:
+                    # Check same source first
+                    if article1.source == article2.source:
+                        result = self.check_same_source_duplicates(article1)
+                        if result.is_duplicate and result.matched_article_id == article2.id:
+                            duplicate_pairs.append({
+                                'article1_id': article1.id,
+                                'article2_id': article2.id,
+                                'similarity_score': result.similarity_score,
+                                'duplicate_type': result.duplicate_type
+                            })
+                    else:
+                        # Check cross-source
+                        result = self.check_cross_source_duplicates(article1)
+                        if result.is_duplicate and result.matched_article_id == article2.id:
+                            duplicate_pairs.append({
+                                'article1_id': article1.id,
+                                'article2_id': article2.id,
+                                'similarity_score': result.similarity_score,
+                                'duplicate_type': result.duplicate_type
+                            })
+            
+            # Create clusters
+            clusters = self.cluster_similar_articles(articles)
+            
+            # Save results
+            await self._save_duplicate_results(duplicate_pairs, clusters)
+            
+            return {
+                "duplicates_found": len(duplicate_pairs),
+                "clusters_created": len(clusters),
+                "articles_processed": len(articles),
+                "duplicate_pairs": len(duplicate_pairs),
+                "clusters": len(clusters)
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in batch duplicate detection: {e}")
+            return {"error": str(e)}
+    
+    async def _save_duplicate_results(
+        self,
+        duplicate_pairs: List[Dict],
+        clusters: List[ClusterResult]
+    ):
+        """Save duplicate detection results to database"""
+        try:
+            conn = psycopg2.connect(**self.db_config)
+            cursor = conn.cursor()
+            
+            # Save duplicate pairs
+            for pair in duplicate_pairs:
+                cursor.execute("""
+                    INSERT INTO duplicate_pairs (
+                        article1_id, article2_id, similarity_score,
+                        duplicate_type, detected_at, status
+                    ) VALUES (%s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (article1_id, article2_id) DO UPDATE SET
+                        similarity_score = EXCLUDED.similarity_score,
+                        duplicate_type = EXCLUDED.duplicate_type,
+                        detected_at = EXCLUDED.detected_at
+                """, (
+                    pair['article1_id'],
+                    pair['article2_id'],
+                    pair['similarity_score'],
+                    pair['duplicate_type'],
+                    datetime.now(),
+                    'active'
+                ))
+            
+            # Save clusters and update articles
+            for cluster in clusters:
+                # Determine canonical article (first in cluster)
+                canonical_id = cluster.articles[0].id if cluster.articles else None
+                
+                for article in cluster.articles:
+                    is_canonical = article.id == canonical_id
+                    cursor.execute("""
+                        UPDATE articles 
+                        SET cluster_id = %s,
+                            is_duplicate = %s,
+                            canonical_article_id = %s
+                        WHERE id = %s
+                    """, (
+                        cluster.cluster_id,
+                        not is_canonical,
+                        canonical_id if not is_canonical else None,
+                        article.id
+                    ))
+            
+            conn.commit()
+            conn.close()
+            
+        except Exception as e:
+            logger.error(f"Error saving duplicate results: {e}")
+            if 'conn' in locals():
+                conn.rollback()
+                conn.close()
+    
+    def get_deduplication_stats(self) -> Dict[str, Any]:
+        """Get deduplication statistics"""
+        try:
+            conn = psycopg2.connect(**self.db_config)
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            
+            # Total articles
+            cursor.execute("SELECT COUNT(*) FROM articles")
+            total_articles = cursor.fetchone()[0]
+            
+            # Duplicate articles
+            cursor.execute("SELECT COUNT(*) FROM articles WHERE is_duplicate = true")
+            duplicate_articles = cursor.fetchone()[0]
+            
+            # Clusters
+            cursor.execute("SELECT COUNT(DISTINCT cluster_id) FROM articles WHERE cluster_id IS NOT NULL")
+            clusters = cursor.fetchone()[0]
+            
+            # Duplicate pairs
+            cursor.execute("SELECT COUNT(*) FROM duplicate_pairs WHERE status = 'active'")
+            duplicate_pairs = cursor.fetchone()[0]
+            
+            # Recent duplicates (last 24 hours)
+            cursor.execute("""
+                SELECT COUNT(*) FROM duplicate_pairs 
+                WHERE detected_at >= %s
+            """, (datetime.now() - timedelta(hours=24),))
+            recent_duplicates = cursor.fetchone()[0]
+            
+            conn.close()
+            
+            return {
+                "total_articles": total_articles,
+                "duplicate_articles": duplicate_articles,
+                "clusters": clusters,
+                "duplicate_pairs": duplicate_pairs,
+                "recent_duplicates": recent_duplicates,
+                "duplicate_rate": (duplicate_articles / total_articles * 100) if total_articles > 0 else 0,
+                "last_updated": datetime.now().isoformat()
+            }
+            
+        except Exception as e:
+            logger.error(f"Error getting deduplication stats: {e}")
+            return {"error": str(e)}
+
+
+# Global instance factory
+def get_deduplication_service(db_config: Optional[Dict] = None) -> AdvancedDeduplicationService:
+    """
+    Get or create deduplication service instance.
+    
+    Args:
+        db_config: Database configuration dictionary. If None, uses environment variables.
+        
+    Returns:
+        AdvancedDeduplicationService instance
+    """
+    import os
+    
+    if db_config is None:
+        db_config = {
+            'host': os.getenv('DB_HOST', 'localhost'),
+            'database': os.getenv('DB_NAME', 'newsintelligence'),
+            'user': os.getenv('DB_USER', 'newsapp'),
+            'password': os.getenv('DB_PASSWORD', 'Database@NEWSINT2025'),
+            'port': os.getenv('DB_PORT', '5432')
+        }
+    
+    return AdvancedDeduplicationService(db_config)

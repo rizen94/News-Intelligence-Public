@@ -436,7 +436,7 @@ async def process_batch_analysis(articles: List[tuple]):
 # TOPIC CLUSTERING ENDPOINTS
 # ============================================================================
 
-@router.get("/{domain}/content-analysis/topics")
+@router.get("/{domain}/content_analysis/topics")
 async def get_topics(
     domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
     limit: int = Query(50, ge=1, le=500),
@@ -465,7 +465,7 @@ async def get_topics(
                 params = []
                 
                 if search:
-                    where_conditions.append("tc.topic_name ILIKE %s")
+                    where_conditions.append("tc.cluster_name ILIKE %s")
                     params.append(f"%{search}%")
                 
                 # category filter not supported in current schema
@@ -473,16 +473,19 @@ async def get_topics(
                 where_clause = "WHERE " + " AND ".join(where_conditions)
  
                 # Get topics with article counts
+                # FIXED: Use article_topic_clusters (not article_topic_assignments)
+                # article_topic_assignments links to 'topics' table, not 'topic_clusters'
+                # article_topic_clusters links to 'topic_clusters' table via topic_cluster_id
                 query = f"""
-                    SELECT tc.id, tc.topic_name, NULL as cluster_description, NULL as cluster_type,
-                           tc.created_at, NULL as updated_at, NULL as metadata,
+                    SELECT tc.id, tc.cluster_name, tc.cluster_description, tc.cluster_type,
+                           tc.created_at, tc.updated_at, tc.metadata,
                            COUNT(atc.article_id) as article_count,
                            AVG(atc.relevance_score) as avg_relevance
                     FROM {schema}.topic_clusters tc
-                    LEFT JOIN {schema}.article_topic_assignments atc ON tc.id = atc.topic_id
+                    LEFT JOIN {schema}.article_topic_clusters atc ON tc.id = atc.topic_cluster_id
                     {where_clause}
-                    GROUP BY tc.id, tc.topic_name,
-                             tc.created_at
+                    GROUP BY tc.id, tc.cluster_name, tc.cluster_description, tc.cluster_type,
+                             tc.created_at, tc.updated_at, tc.metadata
                     ORDER BY article_count DESC, tc.created_at DESC
                     LIMIT %s OFFSET %s
                 """
@@ -493,12 +496,12 @@ async def get_topics(
                 for row in cur.fetchall():
                     topics.append({
                         "id": row[0],
-                        "name": row[1],
-                        "description": row[2],
-                        "type": row[3],
+                        "name": row[1],  # cluster_name
+                        "description": row[2],  # cluster_description
+                        "type": row[3],  # cluster_type
                         "created_at": row[4].isoformat() if row[4] else None,
                         "updated_at": row[5].isoformat() if row[5] else None,
-                        "metadata": row[6],
+                        "metadata": row[6] if row[6] else {},
                         "article_count": row[7] or 0,
                         "avg_relevance": float(row[8]) if row[8] else 0.0
                     })
@@ -506,7 +509,7 @@ async def get_topics(
                 # Get total count
                 count_query = f"""
                     SELECT COUNT(DISTINCT tc.id)
-                    FROM topic_clusters tc
+                    FROM {schema}.topic_clusters tc
                     {where_clause}
                 """
                 cur.execute(count_query, params)
@@ -531,7 +534,7 @@ async def get_topics(
         logger.error(f"Error fetching topics: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/{domain}/content-analysis/topics/cluster")
+@router.post("/{domain}/content_analysis/topics/cluster")
 async def cluster_articles(
     domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
     request: Dict[str, Any] = Body(...),
@@ -560,10 +563,10 @@ async def cluster_articles(
         logger.error(f"Error starting article clustering: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/{domain}/content-analysis/topics/{topic_name}/articles")
+@router.get("/{domain}/content_analysis/topics/{cluster_name}/articles")
 async def get_topic_articles(
     domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
-    topic_name: str = Path(...),
+    cluster_name: str = Path(...),
     limit: int = Query(20, ge=1, le=500),
     offset: int = Query(0, ge=0)
 ):
@@ -584,7 +587,7 @@ async def get_topic_articles(
                 cur.execute(f"SET search_path TO {schema}, public")
                 
                 # Get topic ID
-                cur.execute(f"SELECT id FROM {schema}.topic_clusters WHERE topic_name = %s", (topic_name,))
+                cur.execute(f"SELECT id FROM {schema}.topic_clusters WHERE cluster_name = %s", (cluster_name,))
                 topic_result = cur.fetchone()
                 if not topic_result:
                     raise HTTPException(status_code=404, detail="Topic not found")
@@ -597,8 +600,8 @@ async def get_topic_articles(
                            a.summary, a.quality_score, a.sentiment_score, a.sentiment_label,
                            atc.relevance_score
                     FROM {schema}.articles a
-                    JOIN {schema}.article_topic_assignments atc ON a.id = atc.article_id
-                    WHERE atc.topic_id = %s
+                    JOIN {schema}.article_topic_clusters atc ON a.id = atc.article_id
+                    WHERE atc.topic_cluster_id = %s
                     ORDER BY atc.relevance_score DESC, a.published_at DESC
                     LIMIT %s OFFSET %s
                 """, (topic_id, limit, offset))
@@ -622,8 +625,8 @@ async def get_topic_articles(
                 # Get total count
                 cur.execute(f"""
                     SELECT COUNT(*)
-                    FROM {schema}.article_topic_assignments
-                    WHERE topic_id = %s
+                    FROM {schema}.article_topic_clusters
+                    WHERE topic_cluster_id = %s
                 """, (topic_id,))
                 total_count = cur.fetchone()[0]
                 
@@ -631,12 +634,12 @@ async def get_topic_articles(
                     "success": True,
                     "data": {
                         "articles": articles,
-                        "topic_name": topic_name,
+                        "cluster_name": cluster_name,
                         "total": total_count,
                         "page": (offset // limit) + 1,
                         "limit": limit
                     },
-                    "message": f"Retrieved {len(articles)} articles for topic '{topic_name}'",
+                    "message": f"Retrieved {len(articles)} articles for topic '{cluster_name}'",
                     "timestamp": datetime.now().isoformat()
                 }
                 
@@ -647,10 +650,10 @@ async def get_topic_articles(
         logger.error(f"Error fetching topic articles: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/{domain}/content-analysis/topics/{topic_name}/summary")
+@router.get("/{domain}/content_analysis/topics/{cluster_name}/summary")
 async def get_topic_summary(
     domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
-    topic_name: str = Path(...)
+    cluster_name: str = Path(...)
 ):
     """Get AI-generated summary for a topic in a specific domain"""
     try:
@@ -670,10 +673,10 @@ async def get_topic_summary(
                 
                 # Get topic info
                 cur.execute(f"""
-                    SELECT id, topic_name, NULL as cluster_description, NULL as metadata
+                    SELECT id, cluster_name, NULL as cluster_description, NULL as metadata
                     FROM {schema}.topic_clusters 
-                    WHERE topic_name = %s
-                """, (topic_name,))
+                    WHERE cluster_name = %s
+                """, (cluster_name,))
                 
                 topic_result = cur.fetchone()
                 if not topic_result:
@@ -685,8 +688,8 @@ async def get_topic_summary(
                 cur.execute(f"""
                     SELECT a.title, a.summary, a.published_at, a.sentiment_score
                     FROM {schema}.articles a
-                    JOIN {schema}.article_topic_assignments atc ON a.id = atc.article_id
-                    WHERE atc.topic_id = %s
+                    JOIN {schema}.article_topic_clusters atc ON a.id = atc.article_id
+                    WHERE atc.topic_cluster_id = %s
                     ORDER BY a.published_at DESC
                     LIMIT 10
                 """, (topic_id,))
@@ -697,7 +700,7 @@ async def get_topic_summary(
                     return {
                         "success": True,
                         "data": {
-                            "topic_name": cluster_name,
+                            "cluster_name": cluster_name,
                             "summary": "No articles available for this topic yet.",
                             "article_count": 0,
                             "last_updated": None
@@ -719,7 +722,7 @@ async def get_topic_summary(
                 return {
                     "success": True,
                     "data": {
-                        "topic_name": cluster_name,
+                        "cluster_name": cluster_name,
                         "summary": summary_result.get("summary", "Summary generation failed"),
                         "article_count": len(articles),
                         "last_updated": datetime.now().isoformat(),
@@ -735,10 +738,10 @@ async def get_topic_summary(
         logger.error(f"Error generating topic summary: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/{domain}/content-analysis/topics/{topic_name}/convert-to-storyline")
+@router.post("/{domain}/content_analysis/topics/{cluster_name}/convert_to_storyline")
 async def convert_topic_to_storyline(
     domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
-    topic_name: str = Path(...),
+    cluster_name: str = Path(...),
     request: Dict[str, Any] = Body(...)
 ):
     """Convert a topic to a storyline, adding all topic articles for a specific domain"""
@@ -748,7 +751,7 @@ async def convert_topic_to_storyline(
             raise HTTPException(status_code=400, detail=f"Invalid domain: {domain}")
         
         schema = domain.replace('-', '_')
-        storyline_title = request.get("storyline_title", f"Storyline: {topic_name}")
+        storyline_title = request.get("storyline_title", f"Storyline: {cluster_name}")
         
         conn = get_db_connection()
         if not conn:
@@ -762,8 +765,8 @@ async def convert_topic_to_storyline(
                 # Get topic info
                 cur.execute(f"""
                     SELECT id FROM {schema}.topic_clusters 
-                    WHERE topic_name = %s
-                """, (topic_name,))
+                    WHERE cluster_name = %s
+                """, (cluster_name,))
                 
                 topic_result = cur.fetchone()
                 if not topic_result:
@@ -778,7 +781,7 @@ async def convert_topic_to_storyline(
                     RETURNING id
                 """, (
                     storyline_title,
-                    f"Auto-generated storyline from topic: {topic_name}",
+                    f"Auto-generated storyline from topic: {cluster_name}",
                     datetime.now(),
                     datetime.now(),
                     "active"
@@ -789,7 +792,7 @@ async def convert_topic_to_storyline(
                 # Get all articles for this topic
                 cur.execute(f"""
                     SELECT article_id, relevance_score
-                    FROM {schema}.article_topic_assignments
+                    FROM {schema}.article_topic_clusters
                     WHERE topic_id = %s
                 """, (topic_id,))
                 
@@ -836,7 +839,7 @@ async def convert_topic_to_storyline(
                         "articles_added": articles_added,
                         "total_topic_articles": len(topic_articles)
                     },
-                    "message": f"Successfully converted topic '{topic_name}' to storyline with {articles_added} articles",
+                    "message": f"Successfully converted topic '{cluster_name}' to storyline with {articles_added} articles",
                     "timestamp": datetime.now().isoformat()
                 }
                 
@@ -881,7 +884,7 @@ async def get_category_stats():
         logger.error(f"Error fetching category stats: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/{domain}/content-analysis/topics/word-cloud")
+@router.get("/{domain}/content_analysis/topics/word_cloud")
 async def get_word_cloud_data(
     domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
     time_period_hours: int = Query(24, ge=1, le=720),
@@ -930,7 +933,7 @@ async def get_word_cloud_data(
     except Exception as e:
         logger.error(f"Error fetching intelligent word cloud: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-@router.get("/{domain}/content-analysis/topics/big-picture")
+@router.get("/{domain}/content_analysis/topics/big_picture")
 async def get_big_picture_analysis(
     domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
     time_period_hours: int = Query(24, ge=1, le=720)
@@ -959,13 +962,14 @@ async def get_big_picture_analysis(
                 recent_articles_count = cur.fetchone()[0]
                 
                 # Get topic distribution
+                # FIXED: Use article_topic_clusters (not article_topic_assignments)
                 cur.execute(f"""
-                    SELECT tc.topic_name, COUNT(atc.article_id) as article_count
+                    SELECT tc.cluster_name, COUNT(atc.article_id) as article_count
                     FROM {schema}.topic_clusters tc
-                    LEFT JOIN {schema}.article_topic_assignments atc ON tc.id = atc.topic_id
+                    LEFT JOIN {schema}.article_topic_clusters atc ON tc.id = atc.topic_cluster_id
                     LEFT JOIN {schema}.articles a ON atc.article_id = a.id
                     WHERE (a.created_at >= %s OR a.created_at IS NULL)
-                    GROUP BY tc.topic_name
+                    GROUP BY tc.cluster_name
                     ORDER BY article_count DESC
                 """, (cutoff_time,))
  
@@ -979,13 +983,13 @@ async def get_big_picture_analysis(
  
                 # Get trending topics (most active in recent period)
                 cur.execute(f"""
-                    SELECT tc.topic_name, COUNT(atc.article_id) as recent_articles,
+                    SELECT tc.cluster_name, COUNT(atc.article_id) as recent_articles,
                            AVG(atc.relevance_score) as avg_relevance
                     FROM {schema}.topic_clusters tc
-                    JOIN {schema}.article_topic_assignments atc ON tc.id = atc.topic_id
+                    JOIN {schema}.article_topic_clusters atc ON tc.id = atc.topic_cluster_id
                     JOIN {schema}.articles a ON atc.article_id = a.id
                     WHERE a.created_at >= %s
-                    GROUP BY tc.id, tc.topic_name
+                    GROUP BY tc.id, tc.cluster_name
                     ORDER BY recent_articles DESC, avg_relevance DESC
                     LIMIT 10
                 """, (cutoff_time,))
@@ -1052,7 +1056,7 @@ async def get_big_picture_analysis(
         logger.error(f"Error generating big picture analysis: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/{domain}/content-analysis/topics/trending")
+@router.get("/{domain}/content_analysis/topics/trending")
 async def get_trending_topics(
     domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
     time_period_hours: int = Query(24, ge=1, le=720),
@@ -1078,17 +1082,17 @@ async def get_trending_topics(
                 
                 # Get trending topics with trend analysis
                 cur.execute(f"""
-                    SELECT tc.topic_name,
+                    SELECT tc.cluster_name,
                            COUNT(atc.article_id) as recent_articles,
                            AVG(atc.relevance_score) as avg_relevance,
                            AVG(a.sentiment_score) as avg_sentiment,
                            MAX(a.published_at) as latest_article_date,
                            COUNT(DISTINCT a.source_domain) as source_diversity
                     FROM {schema}.topic_clusters tc
-                    JOIN {schema}.article_topic_assignments atc ON tc.id = atc.topic_id
+                    JOIN {schema}.article_topic_clusters atc ON tc.id = atc.topic_cluster_id
                     JOIN {schema}.articles a ON atc.article_id = a.id
                     WHERE a.created_at >= %s
-                    GROUP BY tc.id, tc.topic_name
+                    GROUP BY tc.id, tc.cluster_name
                     ORDER BY recent_articles DESC, avg_relevance DESC
                     LIMIT %s
                 """, (cutoff_time, limit))

@@ -28,9 +28,12 @@ This directory contains all consolidated documentation from archives, backups, a
 - **LOG_ANALYSIS_AND_FIXES.md** - Log analysis and debugging techniques
 
 ### Development Methodology (`development-methodology/`)
-- **AI_DEVELOPMENT_METHODOLOGY.md** - AI-assisted development practices
-- **DEVELOPMENT_METHODOLOGY.md** - General development methodology
-- **CURSOR_AI_WORKFLOW.md** - Cursor AI workflow integration
+**Note**: These files have been consolidated into the main documentation:
+- **Current**: See `../DEVELOPMENT_METHODOLOGY.md` for the consolidated guide
+- **Archived**: The following files are preserved here for historical reference:
+  - **AI_DEVELOPMENT_METHODOLOGY.md** - AI-assisted development practices (archived)
+  - **DEVELOPMENT_METHODOLOGY.md** - General development methodology (archived)
+  - **CURSOR_AI_WORKFLOW.md** - Cursor AI workflow integration (archived)
 
 ### Feature Documentation (`feature-documentation/`)
 - **STORYLINE_SYSTEM_COMPLETE.md** - Complete storyline system documentation

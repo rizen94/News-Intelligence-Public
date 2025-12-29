@@ -72,7 +72,7 @@ class LoggingService {
     level: LogLevel,
     message: string,
     context?: Record<string, any>,
-    error?: Error
+    error?: Error,
   ): LogEntry {
     return {
       level,
@@ -327,7 +327,7 @@ class LoggingService {
     if (this.logBuffer.length >= this.maxBufferSize) {
       // Remove oldest logs, keep the most recent
       this.logBuffer = this.logBuffer.slice(-this.maxBufferSize);
-      
+
       // Flush if remote logging is enabled
       if (this.enableRemoteLogging) {
         this.flushLogs().catch(() => {

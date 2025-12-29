@@ -40,9 +40,10 @@ async def process_rss_feeds():
     logger.info("=" * 80)
     
     try:
-        from services.rss_processing_service import RSSProcessor
+        from services.rss import RSSService
         
-        processor = RSSProcessor()
+        service = RSSService()
+        processor = service.processing
         result = await processor.process_all_feeds()
         
         if result.get('success'):
@@ -118,85 +119,110 @@ async def process_articles_ml():
         return None
 
 async def process_topic_clustering():
-    """Process topic clustering for recent articles"""
+    """Process topic clustering for recent articles - domain-aware"""
     logger.info("=" * 80)
-    logger.info("PHASE 3: Topic Clustering")
+    logger.info("PHASE 3: Topic Clustering (Domain-Aware)")
     logger.info("=" * 80)
     
     try:
-        from shared.database.connection import get_db_connection
-        from sqlalchemy import text
+        from shared.database.connection import get_db_connection, get_db_config
         from domains.content_analysis.services.topic_clustering_service import TopicClusteringService
-        from shared.database.connection import get_db_config
-        topic_clustering_service = TopicClusteringService(get_db_config())
         
         conn = get_db_connection()
         if not conn:
             logger.error("❌ Database connection failed")
             return None
         
+        # Get all active domains
+        domains = []
         try:
             with conn.cursor() as cur:
-                # Get articles from last 24 hours that haven't been topic-processed
-                yesterday = datetime.now() - timedelta(days=1)
-                cur.execute("""
-                    SELECT id, title, content, summary, source_domain, published_at
-                    FROM articles
-                    WHERE (processing_status IS NULL OR processing_status != 'topic_clustering')
-                    AND created_at >= %s
-                    ORDER BY published_at DESC
-                    LIMIT 200
-                """, (yesterday,))
+                cur.execute("SELECT domain_key, schema_name FROM domains WHERE is_active = TRUE")
+                domains = cur.fetchall()
+                logger.info(f"Found {len(domains)} active domains for topic clustering")
+        except Exception as e:
+            logger.error(f"Error fetching domains: {e}")
+            return None
+        
+        total_processed = 0
+        
+        # Process each domain separately
+        for domain_key, schema_name in domains:
+            logger.info(f"\n📊 Processing domain: {domain_key} (schema: {schema_name})")
+            
+            try:
+                # Initialize service for this domain
+                topic_clustering_service = TopicClusteringService(
+                    get_db_config(),
+                    domain=domain_key
+                )
                 
-                articles = cur.fetchall()
-                logger.info(f"Found {len(articles)} articles for topic clustering")
-                
-                if len(articles) == 0:
-                    logger.info("No articles for topic clustering")
-                    return {"success": True, "processed": 0}
-                
-                # Convert to dict format
-                articles_list = []
-                for article in articles:
-                    articles_list.append({
-                        'id': article[0],
-                        'title': article[1],
-                        'content': article[2] or '',
-                        'summary': article[3] or '',
-                        'source_domain': article[4],
-                        'published_at': article[5].isoformat() if article[5] else None
-                    })
-                
-                # Process in batches of 20
-                batch_size = 20
-                total_processed = 0
-                
-                for i in range(0, len(articles_list), batch_size):
-                    batch = articles_list[i:i + batch_size]
-                    logger.info(f"Processing topic clustering batch {i//batch_size + 1} ({len(batch)} articles)...")
+                # Get articles from this domain schema (last 7 days, not just 24 hours)
+                with conn.cursor() as cur:
+                    cur.execute(f"SET search_path TO {schema_name}, public")
+                    seven_days_ago = datetime.now() - timedelta(days=7)
+                    cur.execute("""
+                        SELECT id, title, content, summary, source_domain, published_at
+                        FROM articles
+                        WHERE (processing_status IS NULL OR processing_status != 'topic_clustering')
+                        AND created_at >= %s
+                        ORDER BY published_at DESC
+                        LIMIT 200
+                    """, (seven_days_ago,))
                     
-                    try:
-                        # Cluster articles
-                        cluster_result = await topic_clustering_service.cluster_articles_by_topic(batch)
-                        
-                        if cluster_result.get('success'):
-                            # Save topics to database
-                            save_result = await topic_clustering_service.save_topics_to_database(
-                                cluster_result.get('data', {}),
-                                batch
-                            )
-                            
-                            if save_result:
-                                total_processed += len(batch)
-                                logger.info(f"✅ Batch processed: {len(batch)} articles, topics assigned")
-                            else:
-                                logger.warning(f"⚠️ Batch clustering succeeded but save failed")
-                        else:
-                            logger.error(f"❌ Batch clustering failed: {cluster_result.get('error')}")
-                            
-                    except Exception as e:
-                        logger.error(f"❌ Error in topic clustering batch: {e}")
+                    articles = cur.fetchall()
+                    logger.info(f"   Found {len(articles)} articles in {domain_key} domain")
+                    
+                    if len(articles) == 0:
+                        logger.info(f"   ⚠️  No articles to cluster in {domain_key}")
                         continue
+                    
+                    # Convert to dict format
+                    articles_list = []
+                    for article in articles:
+                        articles_list.append({
+                            'id': article[0],
+                            'title': article[1],
+                            'content': article[2] or '',
+                            'summary': article[3] or '',
+                            'source_domain': article[4],
+                            'published_at': article[5].isoformat() if article[5] else None
+                        })
+                    
+                    # Process articles one by one (TopicClusteringService processes individual articles)
+                    batch_size = 10
+                    domain_processed = 0
+                    
+                    for i in range(0, len(articles_list), batch_size):
+                        batch = articles_list[i:i + batch_size]
+                        logger.info(f"   Processing batch {i//batch_size + 1} ({len(batch)} articles)...")
+                        
+                        for article in batch:
+                            try:
+                                # Process individual article
+                                result = await topic_clustering_service.process_article(article['id'])
+                                
+                                if result.get('success'):
+                                    domain_processed += 1
+                                    logger.debug(f"   ✅ Article {article['id']} processed: {result.get('total_assigned', 0)} topics assigned")
+                                else:
+                                    logger.warning(f"   ⚠️  Article {article['id']} failed: {result.get('error', 'Unknown error')}")
+                                    
+                            except Exception as e:
+                                logger.error(f"   ❌ Error processing article {article.get('id', 'unknown')}: {e}")
+                                continue
+                        
+                        # Small delay between batches
+                        await asyncio.sleep(1)
+                    
+                    total_processed += domain_processed
+                    logger.info(f"   ✅ {domain_key} domain: {domain_processed} articles processed")
+                    
+            except Exception as e:
+                logger.error(f"❌ Error processing domain {domain_key}: {e}")
+                import traceback
+                traceback.print_exc()
+                continue
                 
                 logger.info(f"✅ Topic Clustering Complete: {total_processed}/{len(articles_list)} articles processed")
                 return {"success": True, "processed": total_processed, "total": len(articles_list)}

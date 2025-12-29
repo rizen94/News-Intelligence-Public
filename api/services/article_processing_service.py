@@ -21,6 +21,14 @@ import time
 # Import deduplication service
 from services.deduplication_integration_service import DeduplicationIntegrationService
 
+# Import topic clustering service (optional - for enhanced processing)
+try:
+    from services.topic_clustering_service import topic_clustering_service
+    TOPIC_CLUSTERING_AVAILABLE = True
+except ImportError:
+    TOPIC_CLUSTERING_AVAILABLE = False
+    logger.warning("Topic clustering service not available - topic features disabled")
+
 # Configure logging
 logger = logging.getLogger(__name__)
 
@@ -36,6 +44,7 @@ class ArticleProcessingService:
         self.processed_urls = set()
         self.early_quality_service = None
         self.deduplication_service = DeduplicationIntegrationService(db_config)
+        self.topic_clustering_enabled = TOPIC_CLUSTERING_AVAILABLE
         
     def _get_early_quality_service(self):
         """Get early quality service instance"""
@@ -662,6 +671,132 @@ class ArticleProcessingService:
             if 'conn' in locals():
                 conn.close()
 
+    async def process_articles_with_topics(self, articles: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Process articles and add topic clustering (from enhanced_article_processing_service)"""
+        if not self.topic_clustering_enabled:
+            logger.warning("Topic clustering not available - processing without topics")
+            return {
+                'success': True,
+                'processed_articles': articles,
+                'topic_stats': {
+                    'articles_processed': len(articles),
+                    'topics_extracted': 0,
+                    'clusters_created': 0,
+                    'errors': 0
+                }
+            }
+        
+        try:
+            logger.info(f"Processing {len(articles)} articles with topic clustering...")
+            
+            processed_articles = []
+            topic_stats = {
+                'articles_processed': 0,
+                'topics_extracted': 0,
+                'clusters_created': 0,
+                'errors': 0
+            }
+            
+            # Process articles in batches for topic clustering
+            batch_size = 5
+            for i in range(0, len(articles), batch_size):
+                batch = articles[i:i + batch_size]
+                
+                # Process each article in the batch
+                for article in batch:
+                    try:
+                        # Extract topics for individual article
+                        topic_result = await topic_clustering_service.extract_topics_from_article(
+                            article.get('title', ''),
+                            article.get('content', '')
+                        )
+                        
+                        if topic_result['success']:
+                            topic_data = topic_result['data']
+                            
+                            # Add topic data to article
+                            article['primary_topic'] = topic_data['primary_topic']
+                            article['secondary_topics'] = topic_data['secondary_topics']
+                            article['keywords'] = topic_data['keywords']
+                            article['entities'] = topic_data['entities']
+                            article['category'] = topic_data['category']
+                            article['subcategory'] = topic_data['subcategory']
+                            article['sentiment'] = topic_data['sentiment']
+                            article['urgency'] = topic_data['urgency']
+                            article['geographic_scope'] = topic_data['geographic_scope']
+                            article['topic_confidence'] = topic_data['confidence']
+                            
+                            topic_stats['topics_extracted'] += 1
+                            
+                        processed_articles.append(article)
+                        topic_stats['articles_processed'] += 1
+                        
+                    except Exception as e:
+                        logger.error(f"Error processing article topics: {e}")
+                        topic_stats['errors'] += 1
+                        # Add article without topic data
+                        processed_articles.append(article)
+                
+                # Cluster articles in this batch
+                if len(batch) > 1:
+                    try:
+                        cluster_result = await topic_clustering_service.cluster_articles_by_topic(batch)
+                        if cluster_result['success']:
+                            # Save clustering results to database
+                            await topic_clustering_service.save_topics_to_database(
+                                cluster_result['data'], 
+                                batch
+                            )
+                            topic_stats['clusters_created'] += len(cluster_result['data'].get('topics', []))
+                    except Exception as e:
+                        logger.error(f"Error clustering articles: {e}")
+                        topic_stats['errors'] += 1
+            
+            logger.info(f"Topic processing complete: {topic_stats}")
+            
+            return {
+                'success': True,
+                'processed_articles': processed_articles,
+                'topic_stats': topic_stats,
+                'timestamp': datetime.now(timezone.utc).isoformat()
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in topic processing: {e}")
+            return {
+                'success': False,
+                'error': str(e),
+                'processed_articles': articles,
+                'timestamp': datetime.now(timezone.utc).isoformat()
+            }
+    
+    async def process_rss_feeds_with_topics(self, feed_urls: List[str]) -> Dict[str, Any]:
+        """Process RSS feeds with topic clustering (from enhanced_article_processing_service)"""
+        try:
+            logger.info(f"Processing {len(feed_urls)} RSS feeds with topic clustering...")
+            
+            # First process feeds normally
+            result = await self.process_rss_feeds(feed_urls)
+            
+            if not result['success']:
+                return result
+            
+            return {
+                'success': True,
+                'stats': result.get('stats', {}),
+                'articles_processed': result.get('articles_processed', 0),
+                'topic_clustering_enabled': self.topic_clustering_enabled,
+                'timestamp': datetime.now(timezone.utc).isoformat()
+            }
+            
+        except Exception as e:
+            logger.error(f"Error processing RSS feeds with topics: {e}")
+            return {
+                'success': False,
+                'error': str(e),
+                'timestamp': datetime.now(timezone.utc).isoformat()
+            }
+
 # Global instance
 _article_processor = None
 
@@ -673,3 +808,8 @@ def get_article_processor() -> ArticleProcessingService:
         db_config = get_db_config()
         _article_processor = ArticleProcessingService(db_config)
     return _article_processor
+
+# Compatibility alias for enhanced_article_processing_service
+def get_enhanced_article_processor() -> ArticleProcessingService:
+    """Get enhanced article processor (compatibility alias)"""
+    return get_article_processor()

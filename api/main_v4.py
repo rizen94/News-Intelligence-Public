@@ -40,7 +40,12 @@ from domains.content_analysis.routes.topic_management import router as topic_man
 # Import consolidated storyline router (includes all feature modules)
 from domains.storyline_management.routes import router as storyline_management_router
 from domains.storyline_management.routes.storyline_automation import router as storyline_automation_router
+from domains.storyline_management.routes.storyline_discovery import router as storyline_discovery_router
+from domains.storyline_management.routes.storyline_consolidation import router as storyline_consolidation_router
 from domains.intelligence_hub.routes.intelligence_hub import router as intelligence_hub_router
+from domains.intelligence_hub.routes.intelligence_analysis import router as intelligence_analysis_router
+from domains.intelligence_hub.routes.rag_queries import router as rag_queries_router
+from domains.intelligence_hub.routes.content_synthesis import router as content_synthesis_router
 from domains.user_management.routes.user_management import router as user_management_router
 from domains.system_monitoring.routes.system_monitoring import router as system_monitoring_router
 from domains.system_monitoring.routes.route_supervisor import router as route_supervisor_router
@@ -63,6 +68,48 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("Starting News Intelligence System v4.0")
     
+    # Initialize database connection pool early (persistent connection)
+    try:
+        from shared.database.connection import _init_pool, get_db_config
+        
+        # Set default DB_HOST if not set (for SSH tunnel)
+        if not os.getenv("DB_HOST"):
+            # Check if SSH tunnel is running
+            import subprocess
+            tunnel_running = subprocess.run(
+                ["pgrep", "-f", "ssh.*5433.*5432"],
+                capture_output=True
+            ).returncode == 0
+            
+            if tunnel_running:
+                os.environ["DB_HOST"] = "localhost"
+                os.environ["DB_PORT"] = "5433"
+                logger.info("✅ Detected SSH tunnel, using localhost:5433")
+            else:
+                logger.warning("⚠️ DB_HOST not set and no SSH tunnel detected")
+                logger.warning("   Set DB_HOST=localhost DB_PORT=5433 for SSH tunnel")
+                logger.warning("   Or set DB_HOST=192.168.93.100 DB_PORT=5432 for direct connection")
+        
+        # Initialize connection pool (persistent connections)
+        try:
+            pool = _init_pool()
+            logger.info("✅ Database connection pool initialized (persistent connections)")
+            
+            # Test connection
+            conn = get_db_connection()
+            if conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT 1")
+                conn.close()
+                logger.info("✅ Database connection test successful")
+            else:
+                logger.error("❌ Database connection test failed")
+        except Exception as e:
+            logger.error(f"❌ Failed to initialize database connection pool: {e}")
+            logger.error("   API will not be able to access database without DB_HOST environment variable")
+    except Exception as e:
+        logger.error(f"❌ Database initialization error: {e}")
+    
     # Initialize LLM service
     try:
         llm_status = await llm_service.get_model_status()
@@ -82,13 +129,13 @@ async def lifespan(app: FastAPI):
         from services.ml_processing_service import MLProcessingService
         import threading
         
-        # Use localhost database configuration
+        # Use NAS database via SSH tunnel
         db_config = {
-            "host": "localhost",
-            "database": "news_intelligence", 
-            "user": "newsapp",
-            "password": "newsapp_password",
-            "port": "5432"
+            "host": os.getenv("DB_HOST", "localhost"),
+            "database": os.getenv("DB_NAME", "news_intelligence"), 
+            "user": os.getenv("DB_USER", "newsapp"),
+            "password": os.getenv("DB_PASSWORD", "newsapp_password"),
+            "port": os.getenv("DB_PORT", "5433")  # SSH tunnel port
         }
         automation = AutomationManager(db_config)
         
@@ -146,6 +193,47 @@ async def lifespan(app: FastAPI):
         app.state.route_supervisor = None
         app.state.route_supervisor_thread = None
     
+    # Start Storyline Consolidation Service
+    try:
+        from services.storyline_consolidation_service import (
+            get_consolidation_service,
+            CONSOLIDATION_INTERVAL_MINUTES
+        )
+        
+        consolidation_service = get_consolidation_service(db_config)
+        
+        # Background thread for periodic consolidation
+        consolidation_stop_event = threading.Event()
+        
+        def run_periodic_consolidation():
+            """Run consolidation periodically"""
+            interval_seconds = CONSOLIDATION_INTERVAL_MINUTES * 60
+            while not consolidation_stop_event.is_set():
+                try:
+                    logger.info("🔄 Running scheduled storyline consolidation...")
+                    result = consolidation_service.run_all_domains()
+                    logger.info(f"✅ Consolidation complete: {result.get('stats', {})}")
+                except Exception as e:
+                    logger.error(f"❌ Consolidation error: {e}")
+                
+                # Wait for next interval (or stop signal)
+                consolidation_stop_event.wait(interval_seconds)
+        
+        consolidation_thread = threading.Thread(
+            target=run_periodic_consolidation, 
+            daemon=True,
+            name="StorylineConsolidation"
+        )
+        consolidation_thread.start()
+        
+        logger.info(f"✅ Storyline Consolidation Service started - runs every {CONSOLIDATION_INTERVAL_MINUTES} minutes")
+        app.state.consolidation_service = consolidation_service
+        app.state.consolidation_thread = consolidation_thread
+        app.state.consolidation_stop_event = consolidation_stop_event
+    except Exception as e:
+        logger.error(f"❌ Failed to start Storyline Consolidation Service: {e}")
+        app.state.consolidation_service = None
+    
     yield
     
     # Shutdown
@@ -183,6 +271,16 @@ async def lifespan(app: FastAPI):
             logger.info("Route Supervisor stopped")
     except Exception as e:
         logger.error(f"Error stopping Route Supervisor: {e}")
+    
+    # Stop Consolidation Service
+    try:
+        if hasattr(app.state, 'consolidation_stop_event') and app.state.consolidation_stop_event:
+            app.state.consolidation_stop_event.set()
+            if hasattr(app.state, 'consolidation_thread') and app.state.consolidation_thread:
+                app.state.consolidation_thread.join(timeout=5)
+            logger.info("Storyline Consolidation Service stopped")
+    except Exception as e:
+        logger.error(f"Error stopping Consolidation Service: {e}")
 
 # Create FastAPI application
 app = FastAPI(
@@ -301,9 +399,16 @@ app.include_router(rss_duplicate_router)
 app.include_router(content_analysis_router)
 app.include_router(topic_management_router)
 app.include_router(article_deduplication_router)
-app.include_router(storyline_management_router)
+# Discovery router FIRST (has specific routes like /compare, /evolution)
+app.include_router(storyline_discovery_router)
+app.include_router(storyline_consolidation_router)
 app.include_router(storyline_automation_router)
+# Management router LAST (has catch-all /{storyline_id} route)
+app.include_router(storyline_management_router)
 app.include_router(intelligence_hub_router)
+app.include_router(intelligence_analysis_router)
+app.include_router(rag_queries_router)
+app.include_router(content_synthesis_router)
 app.include_router(user_management_router)
 app.include_router(system_monitoring_router)
 app.include_router(route_supervisor_router)

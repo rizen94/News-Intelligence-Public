@@ -30,7 +30,7 @@ import {
   ShowChart,
   Refresh,
 } from '@mui/icons-material';
-import { apiService } from '../../../services/apiService';
+import apiService from '../../../services/apiService';
 import { useDomainRoute } from '../../../hooks/useDomainRoute';
 
 const MarketResearch: React.FC = () => {

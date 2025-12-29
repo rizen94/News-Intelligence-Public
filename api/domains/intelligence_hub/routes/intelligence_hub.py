@@ -14,7 +14,7 @@ from shared.database.connection import get_db_connection
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
-    prefix="/api/v4/intelligence-hub",
+    prefix="/api/v4/intelligence_hub",
     tags=["Intelligence Hub"],
     responses={404: {"description": "Not found"}}
 )
@@ -429,7 +429,7 @@ async def process_trend_prediction(articles: List[tuple], timeframe: str, catego
     except Exception as e:
         logger.error(f"Error in trend prediction: {e}")
 
-@router.get("/topic-clusters")
+@router.get("/topic_clusters")
 async def get_topic_clusters(
     time_period: str = "7d",
     min_articles: int = 3,
@@ -507,7 +507,7 @@ async def get_topic_clusters(
         logger.error(f"Error fetching topic clusters: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/trending-topics")
+@router.get("/trending_topics")
 async def get_trending_topics(
     time_period: str = "24h",
     limit: int = 10

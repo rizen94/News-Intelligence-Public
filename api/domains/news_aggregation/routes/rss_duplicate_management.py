@@ -9,11 +9,11 @@ from datetime import datetime
 import logging
 from pydantic import BaseModel
 
-from config.database import get_db_connection
+from shared.database.connection import get_db_connection
 from scripts.rss_duplicate_detector import RSSDuplicateDetector
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/v4/rss-feeds", tags=["RSS Feed Duplicates"])
+router = APIRouter(prefix="/api/v4/rss_feeds", tags=["RSS Feed Duplicates"])
 
 class DuplicateDetectionResponse(BaseModel):
     success: bool
@@ -162,7 +162,7 @@ async def merge_duplicates(request: DuplicateMergeRequest):
         logger.error(f"Error merging duplicates: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/duplicates/auto-merge")
+@router.post("/duplicates/auto_merge")
 async def auto_merge_all_duplicates(dry_run: bool = Query(True, description="Dry run mode")):
     """Automatically merge all detected duplicates"""
     try:

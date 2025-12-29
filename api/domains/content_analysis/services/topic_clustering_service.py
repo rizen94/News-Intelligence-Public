@@ -226,18 +226,20 @@ JSON Response:"""
                     blended_confidence = (existing_confidence * 0.7) + (new_confidence * 0.3)
                 else:
                     # Create new topic in domain schema
+                    # Convert keywords list to JSONB
+                    keywords_list = topic_data.get('keywords', [])
                     cur.execute(f"""
                         INSERT INTO {self.schema}.topics (
                             name, description, category, keywords, 
                             confidence_score, is_auto_generated, status
                         )
-                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                        VALUES (%s, %s, %s, %s::jsonb, %s, %s, %s)
                         RETURNING id
                     """, (
                         topic_name,
                         f"Auto-generated topic: {topic_name}",
                         topic_data.get('category', 'other'),
-                        topic_data.get('keywords', []),
+                        Json(keywords_list),  # Convert to JSONB
                         topic_data.get('confidence', 0.5),
                         True,
                         'active'

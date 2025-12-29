@@ -8,7 +8,7 @@ import {
 import './App.css';
 
 // Import domain-agnostic pages
-import Monitoring from './pages/Monitoring/EnhancedMonitoring';
+import Monitoring from './pages/Monitoring/Monitoring';
 import Settings from './pages/Settings/Settings';
 
 // Import domain layout
@@ -56,20 +56,20 @@ function App() {
       }
     });
 
-    // Initialize frontend health monitoring
-    frontendHealthService.startMonitoring(30000); // Check every 30 seconds
-    loggingService.info('Frontend health monitoring started');
+    // Initialize frontend health monitoring (optional - disabled to prevent false disconnects)
+    // frontendHealthService.startMonitoring(30000); // Check every 30 seconds
+    // loggingService.info('Frontend health monitoring started');
 
-    // Report health to API periodically
-    const healthReportInterval = setInterval(() => {
-      frontendHealthService.reportHealthToAPI();
-    }, 60000); // Report every minute
+    // Report health to API periodically (optional)
+    // const healthReportInterval = setInterval(() => {
+    //   frontendHealthService.reportHealthToAPI();
+    // }, 60000); // Report every minute
 
     // Cleanup on unmount
     return () => {
       connectionManager.cleanup();
-      frontendHealthService.stopMonitoring();
-      clearInterval(healthReportInterval);
+      // frontendHealthService.stopMonitoring();
+      // clearInterval(healthReportInterval);
     };
   }, []);
 
@@ -83,54 +83,70 @@ function App() {
               <Navigation />
               <main className='main-content'>
                 <Routes>
-                {/* Root redirect to default domain */}
-                <Route path='/' element={<Navigate to='/politics/dashboard' replace />} />
+                  {/* Root redirect to default domain */}
+                  <Route path='/' element={<Navigate to='/politics/dashboard' replace />} />
 
-                {/* Domain-agnostic routes (shared across all domains) */}
-                <Route path='/monitoring' element={<Monitoring />} />
-                <Route path='/settings' element={<Settings />} />
-                <Route
-                  path='/test-storyline-management'
-                  element={<StorylineManagementTest />}
-                />
+                  {/* Domain-agnostic routes (shared across all domains) */}
+                  <Route path='/monitoring' element={<Monitoring />} />
+                  <Route path='/settings' element={<Settings />} />
+                  <Route
+                    path='/test-storyline-management'
+                    element={<StorylineManagementTest />}
+                  />
 
-                {/* Legacy route redirects (backward compatibility) */}
-                <Route path='/dashboard' element={<LegacyRedirect to='/dashboard' />} />
-                <Route path='/articles' element={<LegacyRedirect to='/articles' />} />
-                <Route
-                  path='/articles/duplicates'
-                  element={<LegacyRedirect to='/articles/duplicates' />}
-                />
-                <Route
-                  path='/articles/:id'
-                  element={<LegacyRedirect to='/articles/:id' preserveParams />}
-                />
-                <Route path='/storylines' element={<LegacyRedirect to='/storylines' />} />
-                <Route
-                  path='/storylines/:id'
-                  element={<LegacyRedirect to='/storylines/:id' preserveParams />}
-                />
-                <Route path='/topics' element={<LegacyRedirect to='/topics' />} />
-                <Route
-                  path='/topics/:topicName'
-                  element={<LegacyRedirect to='/topics/:topicName' preserveParams />}
-                />
-                <Route path='/rss-feeds' element={<LegacyRedirect to='/rss-feeds' />} />
-                <Route
-                  path='/rss-feeds/duplicates'
-                  element={<LegacyRedirect to='/rss-feeds/duplicates' />}
-                />
-                <Route path='/intelligence' element={<LegacyRedirect to='/intelligence' />} />
+                  {/* Legacy route redirects (backward compatibility) */}
+                  <Route path='/dashboard' element={<LegacyRedirect to='/dashboard' />} />
+                  <Route path='/articles' element={<LegacyRedirect to='/articles' />} />
+                  <Route
+                    path='/articles/duplicates'
+                    element={<LegacyRedirect to='/articles/duplicates' />}
+                  />
+                  <Route
+                    path='/articles/:id'
+                    element={<LegacyRedirect to='/articles/:id' preserveParams />}
+                  />
+                  <Route path='/storylines' element={<LegacyRedirect to='/storylines' />} />
+                  <Route
+                    path='/storylines/discover'
+                    element={<LegacyRedirect to='/storylines/discover' />}
+                  />
+                  <Route
+                    path='/storylines/consolidation'
+                    element={<LegacyRedirect to='/storylines/consolidation' />}
+                  />
+                  <Route
+                    path='/storylines/:id'
+                    element={<LegacyRedirect to='/storylines/:id' preserveParams />}
+                  />
+                  <Route path='/topics' element={<LegacyRedirect to='/topics' />} />
+                  <Route
+                    path='/topics/:topicName'
+                    element={<LegacyRedirect to='/topics/:topicName' preserveParams />}
+                  />
+                  <Route path='/rss-feeds' element={<LegacyRedirect to='/rss-feeds' />} />
+                  <Route
+                    path='/rss-feeds/duplicates'
+                    element={<LegacyRedirect to='/rss-feeds/duplicates' />}
+                  />
+                  <Route path='/intelligence' element={<LegacyRedirect to='/intelligence' />} />
+                  <Route
+                    path='/intelligence/analysis'
+                    element={<LegacyRedirect to='/intelligence/analysis' />}
+                  />
+                  <Route
+                    path='/intelligence/rag'
+                    element={<LegacyRedirect to='/intelligence/rag' />}
+                  />
 
-                {/* Domain-specific routes */}
-                <Route path='/:domain/*' element={<DomainLayout />} />
-              </Routes>
-            </main>
+                  {/* Domain-specific routes */}
+                  <Route path='/:domain/*' element={<DomainLayout />} />
+                </Routes>
+              </main>
+            </div>
+            <Footer />
           </div>
-          <Footer />
-        </div>
-      </Router>
-    </DomainProvider>
+        </Router>
+      </DomainProvider>
     </ErrorBoundary>
   );
 }

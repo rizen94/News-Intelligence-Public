@@ -26,7 +26,7 @@ import {
   AutoAwesome as AutoAwesomeIcon,
   Refresh as RefreshIcon,
 } from '@mui/icons-material';
-import { apiService } from '../services/apiService';
+import apiService from '../services/apiService';
 import { useDomainRoute } from '../hooks/useDomainRoute';
 
 const ArticleSuggestionsDialog = ({

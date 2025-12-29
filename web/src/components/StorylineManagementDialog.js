@@ -27,7 +27,7 @@ import {
   Close as CloseIcon,
   Search as SearchIcon,
 } from '@mui/icons-material';
-import { apiService } from '../services/apiService';
+import apiService from '../services/apiService';
 
 const StorylineManagementDialog = ({
   open,

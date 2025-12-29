@@ -205,7 +205,8 @@ class RAGSystemTester:
     def test_enhanced_rag_retrieval(self):
         """Test enhanced RAG retrieval service"""
         try:
-            from services.enhanced_rag_retrieval import EnhancedRAGRetrieval
+            from services.rag import RAGService
+            EnhancedRAGRetrieval = RAGService  # Alias for backward compatibility in tests
             from shared.database.connection import get_db_connection
             
             conn = get_db_connection()
@@ -269,9 +270,9 @@ class RAGSystemTester:
     def test_entity_extraction(self):
         """Test enhanced entity extraction"""
         try:
-            from services.enhanced_entity_extractor import EnhancedEntityExtractor
+            from services.pattern_entity_extractor import PatternEntityExtractor
             
-            extractor = EnhancedEntityExtractor()
+            extractor = PatternEntityExtractor()
             print(f"✓ Enhanced Entity Extractor initialized")
             
             # Test extraction

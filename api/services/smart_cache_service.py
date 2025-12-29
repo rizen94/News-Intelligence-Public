@@ -446,6 +446,19 @@ class SmartCacheService:
             logger.error(f"Error invalidating cache: {e}")
             return 0
 
+    # Compatibility methods for api_cache_service
+    async def get_cached_response(self, service: str, query: str) -> Optional[Dict[str, Any]]:
+        """Get cached API response (compatibility method from api_cache_service)"""
+        return await self.get(service, query)
+    
+    async def cache_response(self, service: str, query: str, response_data: Dict[str, Any]) -> None:
+        """Cache API response (compatibility method from api_cache_service)"""
+        await self.set(service, query, response_data)
+    
+    async def clear_expired_cache(self) -> int:
+        """Clear expired cache entries (compatibility method from api_cache_service)"""
+        return await self.cleanup_expired_entries()
+
 # Global instance
 _smart_cache_service = None
 
@@ -456,6 +469,11 @@ def get_smart_cache_service() -> SmartCacheService:
         from config.database import get_db_config
         _smart_cache_service = SmartCacheService(get_db_config())
     return _smart_cache_service
+
+# Compatibility alias for api_cache_service
+def get_cache_service() -> SmartCacheService:
+    """Get cache service (compatibility alias for api_cache_service)"""
+    return get_smart_cache_service()
 
 
 

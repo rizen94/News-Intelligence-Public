@@ -42,10 +42,47 @@ class DatabaseManager:
         self._initialize_connections()
     
     def _get_database_config(self) -> Dict[str, Any]:
-        """Get unified database configuration with proper fallbacks"""
+        """Get unified database configuration - REQUIRES NAS DATABASE"""
+        # CRITICAL: System requires NAS database - no localhost fallback allowed
+        # This prevents accidental use of local storage which has insufficient space
+        
+        db_host = os.getenv('DB_HOST')
+        
+        # Enforce NAS database requirement
+        if not db_host:
+            raise ValueError(
+                "DB_HOST environment variable is REQUIRED. "
+                "System must use NAS database (192.168.93.100). "
+                "Local storage is not permitted due to insufficient space."
+            )
+        
+        # Prevent localhost usage unless explicitly permitted via ALLOW_LOCAL_DB flag
+        # EXCEPTION: localhost:5433 is allowed (SSH tunnel to NAS)
+        db_port = int(os.getenv('DB_PORT', '5432'))
+        if db_host in ['localhost', '127.0.0.1', '::1']:
+            # Allow localhost:5433 (SSH tunnel to NAS)
+            if db_port == 5433:
+                logger.info(
+                    f"✅ Using SSH tunnel to NAS database (localhost:5433 -> 192.168.93.100:5432)"
+                )
+            else:
+                allow_local = os.getenv('ALLOW_LOCAL_DB', 'false').lower() == 'true'
+                if not allow_local:
+                    raise ValueError(
+                        f"Local database connection to '{db_host}:{db_port}' is BLOCKED. "
+                        "System requires NAS database (192.168.93.100) for storage. "
+                        "To use NAS via SSH tunnel, set: DB_HOST=localhost DB_PORT=5433. "
+                        "To override (NOT RECOMMENDED), set ALLOW_LOCAL_DB=true. "
+                        "This should only be used for emergency maintenance."
+                    )
+                logger.warning(
+                    f"⚠️  WARNING: Using local database ({db_host}:{db_port}) is NOT RECOMMENDED. "
+                    "Local storage has insufficient space. Use NAS database (192.168.93.100) instead."
+                )
+        
         # Standardized configuration - single source of truth
         config = {
-            'host': os.getenv('DB_HOST', 'localhost'),
+            'host': db_host,
             'database': os.getenv('DB_NAME', 'news_intelligence'),
             'user': os.getenv('DB_USER', 'newsapp'),
             'password': os.getenv('DB_PASSWORD', 'newsapp_password'),
@@ -300,42 +337,51 @@ class DatabaseManager:
             self.sqlalchemy_session = None
 
 # Global database manager instance - SINGLE SOURCE OF TRUTH
-db_manager = DatabaseManager()
+# Lazy initialization to avoid connection errors on import
+db_manager = None
+
+def _get_db_manager():
+    """Get or create database manager instance (lazy initialization)"""
+    global db_manager
+    if db_manager is None:
+        db_manager = DatabaseManager()
+    return db_manager
 
 # Standardized API functions - Use these throughout the application
 def get_db_connection():
     """Get a psycopg2 database connection"""
-    return db_manager.get_psycopg2_connection()
+    return _get_db_manager().get_psycopg2_connection()
 
 def get_db():
     """Get SQLAlchemy database session (for FastAPI dependency injection)"""
-    return db_manager.get_sqlalchemy_session()
+    return _get_db_manager().get_sqlalchemy_session()
 
 
 def get_db_session():
     """Get SQLAlchemy database session directly (for direct use)"""
-    if not db_manager.sqlalchemy_session:
+    manager = _get_db_manager()
+    if not manager.sqlalchemy_session:
         raise Exception("SQLAlchemy session not initialized")
-    return db_manager.sqlalchemy_session()
+    return manager.sqlalchemy_session()
 
 def get_db_config():
     """Get database configuration"""
-    return db_manager.config
+    return _get_db_manager().config
 
 def test_database_connection():
     """Test database connection"""
-    return db_manager.test_connection()
+    return _get_db_manager().test_connection()
 
 @contextmanager
 def get_db_cursor():
     """Context manager for psycopg2 database operations"""
-    with db_manager.get_psycopg2_cursor() as cursor:
+    with _get_db_manager().get_psycopg2_cursor() as cursor:
         yield cursor
 
 def check_database_health() -> Dict[str, Any]:
     """Check database health and return comprehensive status"""
     try:
-        status = db_manager.get_connection_status()
+        status = _get_db_manager().get_connection_status()
         
         return {
             "status": "healthy" if status["connection_test"] else "unhealthy",
@@ -352,9 +398,9 @@ def check_database_health() -> Dict[str, Any]:
 # Backward compatibility functions
 def get_database_url():
     """Get database URL for SQLAlchemy"""
-    config = db_manager.config
+    config = _get_db_manager().config
     return f"postgresql://{config['user']}:{config['password']}@{config['host']}:{config['port']}/{config['database']}"
 
 def get_database_config():
     """Get database configuration (legacy compatibility)"""
-    return db_manager.config
+    return _get_db_manager().config

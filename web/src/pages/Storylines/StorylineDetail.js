@@ -12,6 +12,8 @@ import {
   Close as CloseIcon,
   AutoAwesome as AutoAwesomeIcon,
   Settings as SettingsIcon,
+  MenuBook as SynthesisIcon,
+  Refresh as RefreshIcon,
 } from '@mui/icons-material';
 import {
   Box,
@@ -52,7 +54,7 @@ import {
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 
-import { apiService } from '../../services/apiService.ts';
+import apiService from '../../services/apiService.ts';
 import StorylineManagementDialog from '../../components/StorylineManagementDialog';
 import StorylineAutomationDialog from '../../components/StorylineAutomationDialog';
 import ArticleSuggestionsDialog from '../../components/ArticleSuggestionsDialog';
@@ -83,6 +85,11 @@ const StorylineDetail = () => {
   const [selectedArticles, setSelectedArticles] = useState([]);
   const [addArticlesLoading, setAddArticlesLoading] = useState(false);
 
+  // Synthesis state
+  const [synthesis, setSynthesis] = useState(null);
+  const [synthesisLoading, setSynthesisLoading] = useState(false);
+  const [showFullSynthesis, setShowFullSynthesis] = useState(false);
+
   useEffect(() => {
     if (id) {
       loadStoryline();
@@ -94,38 +101,93 @@ const StorylineDetail = () => {
       setLoading(true);
       setError(null);
 
-      console.log('Loading storyline with ID:', id);
+      console.log(`Loading storyline ID ${id} from domain ${domain}`);
       const storylineResponse = await apiService.getStoryline(id, domain);
       console.log('Storyline response:', storylineResponse);
-      console.log('Response success:', storylineResponse.success);
-      console.log('Response data:', storylineResponse.data);
 
-      // Handle both success: true and success: True (Python boolean)
-      if (storylineResponse.success === true || storylineResponse.success === 'True') {
-        const responseData = storylineResponse.data || {};
-        const storylineData = responseData.storyline || responseData;
-        const articlesData = responseData.articles || [];
-
-        console.log('Extracted storyline data:', storylineData);
-        console.log('Extracted articles data:', articlesData);
-        console.log('Article count from API:', storylineData?.article_count);
-        console.log('Articles array length:', articlesData?.length);
-
-        // Ensure article_count is set correctly
-        if (storylineData && !storylineData.article_count && articlesData.length > 0) {
-          storylineData.article_count = articlesData.length;
-          console.log('Set article_count from articles array length:', articlesData.length);
+      // Check for error in response
+      if (storylineResponse.error) {
+        const errorMsg = storylineResponse.error;
+        if (errorMsg.includes('404') || errorMsg.includes('not found')) {
+          setError(`Storyline #${id} not found in ${domain} domain. It may have been deleted or moved.`);
+        } else if (errorMsg.includes('500') || errorMsg.includes('Internal Server')) {
+          setError('Server error loading storyline. Please try again or contact support if the issue persists.');
+        } else if (errorMsg.includes('connection') || errorMsg.includes('ECONNREFUSED')) {
+          setError('Cannot connect to server. Please check your connection and try again.');
+        } else {
+          setError(`Failed to load storyline: ${errorMsg}`);
         }
-
-        setStoryline(storylineData);
-        setArticles(articlesData);
-      } else {
-        console.error('Storyline response not successful:', storylineResponse);
-        setError('Failed to load storyline');
+        return;
       }
+
+      // Handle both response formats:
+      // 1. Wrapped format: {success: true, data: {storyline: {...}, articles: [...]}}
+      // 2. Direct format: {id, title, articles: [...]}
+      let storylineData = null;
+      let articlesData = [];
+
+      if (storylineResponse.success === true || storylineResponse.success === 'True') {
+        // Wrapped format
+        const responseData = storylineResponse.data || {};
+        storylineData = responseData.storyline || responseData;
+        articlesData = responseData.articles || [];
+      } else if (storylineResponse.id || storylineResponse.title) {
+        // Direct format (StorylineDetailResponse)
+        storylineData = storylineResponse;
+        articlesData = storylineResponse.articles || [];
+      } else if (storylineResponse.detail) {
+        // FastAPI error format: {detail: "error message"}
+        const detail = storylineResponse.detail;
+        if (detail.includes('not found') || detail.includes('404')) {
+          setError(`Storyline #${id} not found in ${domain} domain.`);
+        } else {
+          setError(`Error: ${detail}`);
+        }
+        return;
+      } else {
+        console.error('Storyline response format not recognized:', storylineResponse);
+        setError('Unable to parse storyline data. Please refresh the page or contact support.');
+        return;
+      }
+
+      // Validate we got storyline data
+      if (!storylineData || !storylineData.id) {
+        setError(`Storyline #${id} data is incomplete. Please try refreshing the page.`);
+        return;
+      }
+
+      console.log('Extracted storyline data:', storylineData);
+      console.log('Extracted articles data:', articlesData);
+      console.log('Article count from API:', storylineData?.article_count);
+      console.log('Articles array length:', articlesData?.length);
+
+      // Ensure article_count is set correctly
+      if (storylineData && !storylineData.article_count && articlesData.length > 0) {
+        storylineData.article_count = articlesData.length;
+        console.log('Set article_count from articles array length:', articlesData.length);
+      }
+
+      setStoryline(storylineData);
+      setArticles(articlesData);
     } catch (err) {
       console.error('Error loading storyline:', err);
-      setError('Failed to load storyline');
+
+      // Provide specific error messages based on error type
+      let errorMessage = 'Failed to load storyline';
+
+      if (err.message) {
+        if (err.message.includes('Network') || err.message.includes('fetch')) {
+          errorMessage = 'Network error: Cannot connect to server. Please check your connection.';
+        } else if (err.message.includes('404')) {
+          errorMessage = `Storyline #${id} not found in ${domain} domain.`;
+        } else if (err.message.includes('500')) {
+          errorMessage = 'Server error. Please try again in a moment.';
+        } else {
+          errorMessage = `Error: ${err.message}`;
+        }
+      }
+
+      setError(errorMessage);
     } finally {
       setLoading(false);
     }
@@ -323,6 +385,69 @@ const StorylineDetail = () => {
     loadStoryline();
   };
 
+  // Check for cached synthesis on load
+  useEffect(() => {
+    if (id) {
+      checkCachedSynthesis();
+    }
+  }, [id, domain]);
+
+  const checkCachedSynthesis = async() => {
+    try {
+      const response = await fetch(`/api/v4/${domain}/synthesis/storyline/${id}/cached`);
+      if (response.ok) {
+        const data = await response.json();
+        if (data.has_synthesis) {
+          setSynthesis(data);
+        }
+      }
+    } catch (err) {
+      console.log('No cached synthesis available');
+    }
+  };
+
+  const handleGenerateSynthesis = async(regenerate = false) => {
+    try {
+      setSynthesisLoading(true);
+      const response = await fetch(`/api/v4/${domain}/synthesis/storyline/${id}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          depth: 'comprehensive',
+          include_terms: true,
+          include_timeline: true,
+          format: 'json',
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setSynthesis({
+          has_synthesis: true,
+          content: data.summary + '\n\n' + data.sections?.map(s =>
+            `## ${s.title}\n\n${s.content}`,
+          ).join('\n\n'),
+          markdown: data.markdown,
+          word_count: data.word_count,
+          quality_score: data.quality_score,
+          title: data.title,
+          key_terms: data.key_terms_explained,
+          timeline: data.timeline,
+          sources: data.source_articles,
+        });
+        setShowFullSynthesis(true);
+      } else {
+        const errorData = await response.json();
+        setError(errorData.detail || 'Failed to generate synthesis');
+      }
+    } catch (err) {
+      console.error('Error generating synthesis:', err);
+      setError('Failed to generate synthesis');
+    } finally {
+      setSynthesisLoading(false);
+    }
+  };
+
   const getStatusColor = status => {
     switch (status) {
     case 'active':
@@ -424,6 +549,22 @@ const StorylineDetail = () => {
         >
           Find Articles
         </Button>
+        <Button
+          startIcon={synthesisLoading ? <CircularProgress size={20} /> : <SynthesisIcon />}
+          variant='contained'
+          color='secondary'
+          onClick={() => synthesis?.has_synthesis ? setShowFullSynthesis(true) : handleGenerateSynthesis()}
+          disabled={synthesisLoading || articles.length === 0}
+        >
+          {synthesisLoading ? 'Generating...' : synthesis?.has_synthesis ? 'View Full Article' : 'Generate Article'}
+        </Button>
+        {synthesis?.has_synthesis && (
+          <Tooltip title="Regenerate synthesis">
+            <IconButton onClick={() => handleGenerateSynthesis(true)} disabled={synthesisLoading}>
+              <RefreshIcon />
+            </IconButton>
+          </Tooltip>
+        )}
       </Box>
 
       <Grid container spacing={3}>
@@ -855,6 +996,146 @@ const StorylineDetail = () => {
           loadStoryline();
         }}
       />
+
+      {/* Full Synthesis Reader Dialog */}
+      <Dialog
+        open={showFullSynthesis}
+        onClose={() => setShowFullSynthesis(false)}
+        maxWidth='lg'
+        fullWidth
+        PaperProps={{ sx: { minHeight: '80vh', maxHeight: '90vh' } }}
+      >
+        <DialogTitle>
+          <Box display='flex' justifyContent='space-between' alignItems='center'>
+            <Box>
+              <Typography variant='h5'>
+                {synthesis?.title || storyline?.title || 'Synthesized Article'}
+              </Typography>
+              <Box sx={{ display: 'flex', gap: 1, mt: 1 }}>
+                {synthesis?.word_count && (
+                  <Chip label={`${synthesis.word_count} words`} size='small' />
+                )}
+                {synthesis?.quality_score && (
+                  <Chip
+                    label={`Quality: ${Math.round(synthesis.quality_score * 100)}%`}
+                    size='small'
+                    color={synthesis.quality_score > 0.7 ? 'success' : 'warning'}
+                  />
+                )}
+                {synthesis?.sources?.length && (
+                  <Chip label={`${synthesis.sources.length} sources`} size='small' variant='outlined' />
+                )}
+              </Box>
+            </Box>
+            <IconButton onClick={() => setShowFullSynthesis(false)}>
+              <CloseIcon />
+            </IconButton>
+          </Box>
+        </DialogTitle>
+
+        <DialogContent dividers>
+          <Box sx={{
+            maxWidth: '800px',
+            mx: 'auto',
+            '& h2': { mt: 3, mb: 2, borderBottom: '1px solid #e0e0e0', pb: 1 },
+            '& h3': { mt: 2, mb: 1, color: 'primary.main' },
+            '& p': { lineHeight: 1.8, textAlign: 'justify', mb: 2 },
+          }}>
+            {synthesis?.content ? (
+              <Typography
+                variant='body1'
+                component='div'
+                sx={{ whiteSpace: 'pre-wrap', lineHeight: 1.8 }}
+              >
+                {synthesis.content}
+              </Typography>
+            ) : (
+              <Typography color='text.secondary'>
+                No synthesized content available.
+              </Typography>
+            )}
+
+            {/* Key Terms Section */}
+            {synthesis?.key_terms && Object.keys(synthesis.key_terms).length > 0 && (
+              <Box sx={{ mt: 4, p: 2, bgcolor: 'grey.50', borderRadius: 1 }}>
+                <Typography variant='h6' gutterBottom>Key Terms</Typography>
+                {Object.entries(synthesis.key_terms).map(([term, definition], idx) => (
+                  <Box key={idx} sx={{ mb: 1 }}>
+                    <Typography variant='subtitle2' component='span' fontWeight='bold'>
+                      {term}:
+                    </Typography>
+                    <Typography variant='body2' component='span' sx={{ ml: 1 }}>
+                      {definition}
+                    </Typography>
+                  </Box>
+                ))}
+              </Box>
+            )}
+
+            {/* Timeline Section */}
+            {synthesis?.timeline && synthesis.timeline.length > 0 && (
+              <Box sx={{ mt: 4, p: 2, bgcolor: 'grey.50', borderRadius: 1 }}>
+                <Typography variant='h6' gutterBottom>Timeline</Typography>
+                {synthesis.timeline.map((event, idx) => (
+                  <Box key={idx} sx={{ mb: 1, display: 'flex', gap: 2 }}>
+                    <Typography variant='body2' fontWeight='bold' sx={{ minWidth: 100 }}>
+                      {event.date || 'N/A'}
+                    </Typography>
+                    <Typography variant='body2'>
+                      {event.event}
+                    </Typography>
+                  </Box>
+                ))}
+              </Box>
+            )}
+
+            {/* Sources Section */}
+            {synthesis?.sources && synthesis.sources.length > 0 && (
+              <Box sx={{ mt: 4, p: 2, bgcolor: 'grey.50', borderRadius: 1 }}>
+                <Typography variant='h6' gutterBottom>Sources ({synthesis.sources.length})</Typography>
+                <List dense>
+                  {synthesis.sources.slice(0, 20).map((source, idx) => (
+                    <ListItem key={idx} sx={{ py: 0 }}>
+                      <ListItemText
+                        primary={
+                          <a
+                            href={source.url}
+                            target='_blank'
+                            rel='noopener noreferrer'
+                            style={{ color: '#1976d2', textDecoration: 'none' }}
+                          >
+                            {source.title}
+                          </a>
+                        }
+                        secondary={source.source_name}
+                        primaryTypographyProps={{ variant: 'body2' }}
+                      />
+                    </ListItem>
+                  ))}
+                </List>
+              </Box>
+            )}
+          </Box>
+        </DialogContent>
+
+        <DialogActions>
+          <Button onClick={() => setShowFullSynthesis(false)}>Close</Button>
+          <Button
+            variant='outlined'
+            onClick={() => handleGenerateSynthesis(true)}
+            disabled={synthesisLoading}
+            startIcon={<RefreshIcon />}
+          >
+            Regenerate
+          </Button>
+          <Button
+            variant='contained'
+            onClick={() => navigateToDomain(`/storylines/${id}/synthesis`)}
+          >
+            Open Full View
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 };

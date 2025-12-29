@@ -216,8 +216,10 @@ class StorylineAutomationService(DomainAwareService):
         try:
             # Try to import enhanced RAG retrieval if available
             try:
-                from services.enhanced_rag_retrieval import EnhancedRAGRetrieval
-                rag_service = EnhancedRAGRetrieval()
+                from services.rag import RAGService
+                rag_service = RAGService()
+                # Use retrieval module for advanced retrieval
+                # Note: EnhancedRAGRetrieval functionality is now in RAGService.retrieval
                 
                 # Build filters
                 filters = {

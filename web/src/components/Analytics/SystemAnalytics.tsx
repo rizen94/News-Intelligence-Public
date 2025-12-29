@@ -43,7 +43,7 @@ import {
   Timeline as TimelineIcon,
 } from '@mui/icons-material';
 
-import { enhancedApiService } from '../../services/enhancedApiService';
+import apiService from '../../services/apiService';
 import Logger from '../../utils/logger';
 
 interface AnalyticsData {
@@ -105,10 +105,10 @@ const SystemAnalytics: React.FC = () => {
       // Load analytics data in parallel
       const [logStatsData, metricsData, dbMetricsData, dedupStatsData] =
         await Promise.allSettled([
-          enhancedApiService.getLogStatistics(30), // Last 30 days
-          enhancedApiService.getSystemMetrics(),
-          enhancedApiService.getDatabaseMetrics(),
-          enhancedApiService.getDeduplicationStats(),
+          apiService.getLogStatistics(7), // v4 endpoint
+          apiService.getSystemMetrics(),
+          apiService.getDatabaseMetrics(),
+          apiService.getDeduplicationStats(), // v4 endpoint
         ]);
 
       // Process results

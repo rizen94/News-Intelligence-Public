@@ -10,17 +10,22 @@ import { isValidDomain } from '../../../utils/domainHelper';
 import DomainRouteGuard from '../DomainRouteGuard/DomainRouteGuard';
 
 // Import pages
-import Dashboard from '../../../pages/Dashboard/EnhancedDashboard';
-import Articles from '../../../pages/Articles/EnhancedArticles';
+import Dashboard from '../../../pages/Dashboard/Dashboard';
+import Articles from '../../../pages/Articles/Articles';
 import ArticleDeduplicationManager from '../../../pages/Articles/ArticleDeduplicationManager';
-import Storylines from '../../../pages/Storylines/EnhancedStorylines';
+import Storylines from '../../../pages/Storylines/Storylines';
 import StorylineDetail from '../../../pages/Storylines/StorylineDetail';
+import StorylineDiscovery from '../../../pages/Storylines/StorylineDiscovery';
+import SynthesizedView from '../../../pages/Storylines/SynthesizedView';
 import ArticleDetail from '../../../pages/Articles/ArticleDetail';
-import RSSFeeds from '../../../pages/RSSFeeds/EnhancedRSSFeeds';
+import RSSFeeds from '../../../pages/RSSFeeds/RSSFeeds';
 import RSSDuplicateManager from '../../../pages/RSSFeeds/RSSDuplicateManager';
 import Intelligence from '../../../pages/Intelligence/IntelligenceHub';
+import IntelligenceAnalysis from '../../../pages/Intelligence/IntelligenceAnalysis';
+import DomainRAG from '../../../pages/Intelligence/DomainRAG';
 import Topics from '../../../pages/Topics/Topics';
 import TopicArticles from '../../../pages/Topics/TopicArticles';
+import ConsolidationPanel from '../../../components/Storylines/ConsolidationPanel';
 
 // Finance-specific pages
 import MarketResearch from '../../../domains/Finance/MarketResearch/MarketResearch';
@@ -70,7 +75,10 @@ const DomainLayout: React.FC = () => {
 
         {/* Storylines - Core feature with RAG-enhanced discovery and AI analysis */}
         <Route path="storylines" element={<Storylines />} />
+        <Route path="storylines/discover" element={<StorylineDiscovery />} />
+        <Route path="storylines/consolidation" element={<ConsolidationPanel />} />
         <Route path="storylines/:id" element={<StorylineDetail />} />
+        <Route path="storylines/:id/synthesis" element={<SynthesizedView />} />
 
         {/* Topics - Core feature with topic clustering and management */}
         <Route path="topics" element={<Topics />} />
@@ -82,6 +90,8 @@ const DomainLayout: React.FC = () => {
 
         {/* Intelligence Hub - Core feature with AI-powered insights */}
         <Route path="intelligence" element={<Intelligence />} />
+        <Route path="intelligence/analysis" element={<IntelligenceAnalysis />} />
+        <Route path="intelligence/rag" element={<DomainRAG />} />
 
         {/* ============================================
             DOMAIN-SPECIFIC FEATURES (ADDITIONS ONLY)

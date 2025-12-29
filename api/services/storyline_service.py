@@ -215,8 +215,8 @@ class StorylineService:
         """Trigger automated ML processing for storyline"""
         try:
             # Import enhanced storyline service
-            from services.enhanced_storyline_service import EnhancedStorylineService
-            enhanced_service = EnhancedStorylineService()
+            from services.multi_perspective_storyline_service import MultiPerspectiveStorylineService
+            enhanced_service = MultiPerspectiveStorylineService()
             
             # Update processing status
             db_gen = get_db()

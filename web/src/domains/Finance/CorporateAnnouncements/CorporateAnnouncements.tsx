@@ -39,7 +39,7 @@ import {
   Article,
   OpenInNew,
 } from '@mui/icons-material';
-import { apiService } from '../../../services/apiService';
+import apiService from '../../../services/apiService';
 import { useDomainRoute } from '../../../hooks/useDomainRoute';
 
 const CorporateAnnouncements: React.FC = () => {

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useDomainNavigation } from '../../hooks/useDomainNavigation';
+import { useDomainRoute } from '../../hooks/useDomainRoute';
 import {
   Box,
   Card,
@@ -37,12 +38,15 @@ import {
   Psychology,
   BarChart,
 } from '@mui/icons-material';
-import { apiService } from '../../services/apiService';
+// Import with explicit default to avoid webpack issues
+import apiServiceDefault, { getApiService } from '../../services/apiService';
+const apiService = apiServiceDefault || getApiService();
 
 const TopicArticles = () => {
   const { topicName } = useParams();
   const navigate = useNavigate();
   const { navigateToDomain } = useDomainNavigation();
+  const { domain } = useDomainRoute();
   const [articles, setArticles] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -61,6 +65,7 @@ const TopicArticles = () => {
         topicName,
         limit,
         offset,
+        domain,
       );
       if (response.success) {
         setArticles(response.data.articles);
@@ -79,7 +84,7 @@ const TopicArticles = () => {
 
   const loadTopicSummary = async() => {
     try {
-      const response = await apiService.getTopicSummary(topicName);
+      const response = await apiService.getTopicSummary(topicName, domain);
       if (response.success) {
         setTopicSummary(response.data);
       }

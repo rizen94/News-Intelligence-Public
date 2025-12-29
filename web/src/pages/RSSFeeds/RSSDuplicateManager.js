@@ -42,7 +42,7 @@ import {
   AutoFixHigh,
   Security,
 } from '@mui/icons-material';
-import { apiService, api } from '../../services/apiService';
+import apiService, { api } from '../../services/apiService';
 
 const RSSDuplicateManager = () => {
   const [duplicates, setDuplicates] = useState([]);

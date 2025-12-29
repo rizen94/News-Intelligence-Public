@@ -16,6 +16,11 @@ import {
   BugReport as BugReportIcon,
   AdminPanelSettings as AdminIcon,
   Visibility as VisibilityIcon,
+  AutoAwesome as AIDiscoverIcon,
+  Merge as MergeIcon,
+  AccountTree as HierarchyIcon,
+  TrendingUp as ImpactIcon,
+  MenuBook as KnowledgeIcon,
 } from '@mui/icons-material';
 
 export interface NavigationItem {
@@ -52,10 +57,38 @@ export const mainNavigationItems: NavigationItem[] = [
     category: 'main',
   },
   {
+    text: 'AI Discovery',
+    icon: <AIDiscoverIcon />,
+    path: '/storylines/discover',
+    description: 'AI-powered storyline discovery',
+    category: 'main',
+  },
+  {
+    text: 'Consolidation',
+    icon: <MergeIcon />,
+    path: '/storylines/consolidation',
+    description: 'Storyline merging and mega-storylines',
+    category: 'main',
+  },
+  {
     text: 'Intelligence',
     icon: <PsychologyIcon />,
     path: '/intelligence',
     description: 'AI-powered insights and analysis',
+    category: 'main',
+  },
+  {
+    text: 'Analysis Hub',
+    icon: <ImpactIcon />,
+    path: '/intelligence/analysis',
+    description: 'RAG, Quality, Anomaly & Impact Analysis',
+    category: 'main',
+  },
+  {
+    text: 'Domain RAG',
+    icon: <KnowledgeIcon />,
+    path: '/intelligence/rag',
+    description: 'Domain-aware RAG with knowledge enrichment',
     category: 'main',
   },
   {

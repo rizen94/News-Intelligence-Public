@@ -728,7 +728,7 @@ class AutomationManager:
             
     async def _execute_rss_processing(self, task: Task):
         """Execute RSS processing task"""
-        from services.rss_processing_service import get_rss_processor
+        from services.rss import get_rss_processor
         
         rss_processor = get_rss_processor()
         await rss_processor.process_all_feeds()
@@ -842,7 +842,7 @@ class AutomationManager:
     
     async def _execute_rag_enhancement(self, task: Task):
         """Execute RAG enhancement task"""
-        from services.rag_service import get_rag_service
+        from services.rag import get_rag_service
         from services.storyline_service import get_storyline_service
         
         rag_service = get_rag_service()
@@ -1141,7 +1141,7 @@ class AutomationManager:
     
     async def _execute_cache_cleanup(self, task: Task):
         """Execute cache cleanup task"""
-        from services.api_cache_service import get_cache_service
+        from services.smart_cache_service import get_cache_service
         
         cache_service = get_cache_service()
         

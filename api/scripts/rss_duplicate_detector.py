@@ -19,7 +19,7 @@ from collections import defaultdict
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from config.database import get_db_connection
+from shared.database.connection import get_db_connection
 
 # Configure logging
 logging.basicConfig(
