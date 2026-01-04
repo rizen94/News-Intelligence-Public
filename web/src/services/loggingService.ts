@@ -45,7 +45,7 @@ class LoggingService {
 
   constructor() {
     this.sessionId = this.generateSessionId();
-    this.isProduction = process.env.NODE_ENV === 'production';
+    this.isProduction = import.meta.env.PROD;
     this.enableRemoteLogging = this.isProduction;
 
     // Load user ID from storage if available
@@ -379,7 +379,7 @@ class LoggingService {
 export const loggingService = new LoggingService();
 
 // Make available globally in development
-if (process.env.NODE_ENV === 'development' && typeof window !== 'undefined') {
+if (import.meta.env.DEV && typeof window !== 'undefined') {
   (window as any).loggingService = loggingService;
 }
 

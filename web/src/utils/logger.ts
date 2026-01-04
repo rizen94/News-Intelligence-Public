@@ -41,7 +41,7 @@ class Logger {
    * @param data - Optional data to log
    */
   static info(message: string, data?: LogData): void {
-    if (process.env['NODE_ENV'] === 'development') {
+    if (import.meta.env.DEV) {
       if (data) {
         console.log(`[INFO] ${message}`, data);
       } else {
@@ -58,7 +58,7 @@ class Logger {
    * @param error - Optional error object
    */
   static error(message: string, error?: Error | LogData): void {
-    if (process.env['NODE_ENV'] === 'development') {
+    if (import.meta.env.DEV) {
       if (error) {
         console.error(`[ERROR] ${message}`, error);
       } else {
@@ -75,7 +75,7 @@ class Logger {
    * @param data - Optional data to log
    */
   static warn(message: string, data?: LogData): void {
-    if (process.env['NODE_ENV'] === 'development') {
+    if (import.meta.env.DEV) {
       if (data) {
         console.warn(`[WARN] ${message}`, data);
       } else {
@@ -90,7 +90,7 @@ class Logger {
    * @param data - Optional data to log
    */
   static debug(message: string, data?: LogData): void {
-    if (process.env['NODE_ENV'] === 'development') {
+    if (import.meta.env.DEV) {
       if (data) {
         console.debug(`[DEBUG] ${message}`, data);
       } else {
