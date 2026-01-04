@@ -439,7 +439,7 @@ async def process_batch_analysis(articles: List[tuple]):
 @router.get("/{domain}/content_analysis/topics")
 async def get_topics(
     domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
-    limit: int = Query(50, ge=1, le=500),
+    limit: int = Query(50, ge=1, le=100),  # Max 100 for performance
     offset: int = Query(0, ge=0),
     search: Optional[str] = Query(None),
     category: Optional[str] = Query(None)
@@ -472,7 +472,7 @@ async def get_topics(
  
                 where_clause = "WHERE " + " AND ".join(where_conditions)
  
-                # Get topics with article counts
+                # Get topics with article counts and article IDs
                 # FIXED: Use article_topic_clusters (not article_topic_assignments)
                 # article_topic_assignments links to 'topics' table, not 'topic_clusters'
                 # article_topic_clusters links to 'topic_clusters' table via topic_cluster_id
@@ -480,7 +480,8 @@ async def get_topics(
                     SELECT tc.id, tc.cluster_name, tc.cluster_description, tc.cluster_type,
                            tc.created_at, tc.updated_at, tc.metadata,
                            COUNT(atc.article_id) as article_count,
-                           AVG(atc.relevance_score) as avg_relevance
+                           AVG(atc.relevance_score) as avg_relevance,
+                           ARRAY_AGG(atc.article_id) FILTER (WHERE atc.article_id IS NOT NULL) as article_ids
                     FROM {schema}.topic_clusters tc
                     LEFT JOIN {schema}.article_topic_clusters atc ON tc.id = atc.topic_cluster_id
                     {where_clause}
@@ -494,6 +495,14 @@ async def get_topics(
                 
                 topics = []
                 for row in cur.fetchall():
+                    # Handle article_ids (column 10, index 9)
+                    article_ids = []
+                    if len(row) > 9:
+                        article_ids_raw = row[9]
+                        if article_ids_raw:
+                            # Remove duplicates and None values
+                            article_ids = list(set([aid for aid in article_ids_raw if aid is not None]))
+                    
                     topics.append({
                         "id": row[0],
                         "name": row[1],  # cluster_name
@@ -503,7 +512,8 @@ async def get_topics(
                         "updated_at": row[5].isoformat() if row[5] else None,
                         "metadata": row[6] if row[6] else {},
                         "article_count": row[7] or 0,
-                        "avg_relevance": float(row[8]) if row[8] else 0.0
+                        "avg_relevance": float(row[8]) if row[8] else 0.0,
+                        "article_ids": article_ids  # Include article IDs for frontend matching
                     })
                 
                 # Get total count
@@ -547,27 +557,123 @@ async def cluster_articles(
             raise HTTPException(status_code=400, detail=f"Invalid domain: {domain}")
         
         limit = request.get("limit", 100)
+        time_period_hours = request.get("time_period_hours", 24)
         
-        # Start background clustering task with domain
-        background_tasks.add_task(process_article_clustering, limit, domain)
+        # Validate time period
+        if not isinstance(time_period_hours, int) or time_period_hours < 1 or time_period_hours > 720:
+            time_period_hours = 24
+            logger.warning(f"Invalid time_period_hours, defaulting to 24 hours")
+        
+        logger.info(f"📊 Clustering request received: domain={domain}, limit={limit}, time_period={time_period_hours}h")
+        
+        # Start background clustering task with domain and configurable time period
+        background_tasks.add_task(process_article_clustering, limit, domain, time_period_hours)
+        
+        logger.info(f"✅ Background clustering task queued for domain '{domain}'")
         
         return {
             "success": True,
             "message": "Article clustering started",
             "domain": domain,
             "limit": limit,
+            "time_period_hours": time_period_hours,
             "timestamp": datetime.now().isoformat()
         }
         
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error starting article clustering: {e}")
+        logger.error(f"❌ Error starting article clustering: {e}")
+        logger.exception("Full traceback:")
+        raise HTTPException(status_code=500, detail=f"Failed to start clustering: {str(e)}")
+
+@router.get("/{domain}/content_analysis/topics/cluster/status")
+async def get_clustering_status(
+    domain: str = Path(..., regex="^(politics|finance|science-tech)$")
+):
+    """Get the status of topic clustering - returns recent topic count and queue status"""
+    try:
+        # Validate domain
+        if not validate_domain(domain):
+            raise HTTPException(status_code=400, detail=f"Invalid domain: {domain}")
+        
+        schema = domain.replace('-', '_')
+        conn = get_db_connection()
+        if not conn:
+            raise HTTPException(status_code=500, detail="Database connection failed")
+        
+        try:
+            with conn.cursor() as cur:
+                cur.execute(f"SET search_path TO {schema}, public")
+                
+                # Get count of topics created in last hour (indicates recent clustering)
+                cur.execute(f"""
+                    SELECT COUNT(*) as recent_count
+                    FROM {schema}.topic_clusters
+                    WHERE created_at >= NOW() - INTERVAL '1 hour'
+                """)
+                recent_count = cur.fetchone()[0] or 0
+                
+                # Get total topic count
+                cur.execute(f"SELECT COUNT(*) FROM {schema}.topic_clusters")
+                total_count = cur.fetchone()[0] or 0
+                
+                # Get most recent clustering time
+                cur.execute(f"""
+                    SELECT MAX(created_at) as last_clustering
+                    FROM {schema}.topic_clusters
+                """)
+                last_clustering = cur.fetchone()[0]
+                
+                # Get queue statistics
+                queue_stats = {
+                    "pending": 0,
+                    "processing": 0,
+                    "completed": 0,
+                    "failed": 0
+                }
+                try:
+                    cur.execute(f"""
+                        SELECT 
+                            COUNT(*) FILTER (WHERE status = 'pending') as pending,
+                            COUNT(*) FILTER (WHERE status = 'processing') as processing,
+                            COUNT(*) FILTER (WHERE status = 'completed') as completed,
+                            COUNT(*) FILTER (WHERE status = 'failed') as failed
+                        FROM {schema}.topic_extraction_queue
+                    """)
+                    row = cur.fetchone()
+                    if row:
+                        queue_stats = {
+                            "pending": row[0] or 0,
+                            "processing": row[1] or 0,
+                            "completed": row[2] or 0,
+                            "failed": row[3] or 0
+                        }
+                except Exception:
+                    # Table might not exist yet (migration not applied)
+                    pass
+                
+                return {
+                    "success": True,
+                    "domain": domain,
+                    "total_topics": total_count,
+                    "recent_topics": recent_count,
+                    "last_clustering": last_clustering.isoformat() if last_clustering else None,
+                    "status": "active" if recent_count > 0 else "idle",
+                    "queue": queue_stats
+                }
+        finally:
+            conn.close()
+            
+    except Exception as e:
+        logger.error(f"Error getting clustering status: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/{domain}/content_analysis/topics/{cluster_name}/articles")
 async def get_topic_articles(
     domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
     cluster_name: str = Path(...),
-    limit: int = Query(20, ge=1, le=500),
+    limit: int = Query(20, ge=1, le=100),  # Max 100 for performance
     offset: int = Query(0, ge=0)
 ):
     """Get articles for a specific topic in a specific domain"""
@@ -793,7 +899,7 @@ async def convert_topic_to_storyline(
                 cur.execute(f"""
                     SELECT article_id, relevance_score
                     FROM {schema}.article_topic_clusters
-                    WHERE topic_id = %s
+                    WHERE topic_cluster_id = %s
                 """, (topic_id,))
                 
                 topic_articles = cur.fetchall()
@@ -819,10 +925,10 @@ async def convert_topic_to_storyline(
                         continue
                 
                 # Update article count
-                cur.execute("""
-                    UPDATE storylines 
+                cur.execute(f"""
+                    UPDATE {schema}.storylines 
                     SET article_count = (
-                        SELECT COUNT(*) FROM storyline_articles 
+                        SELECT COUNT(*) FROM {schema}.storyline_articles 
                         WHERE storyline_id = %s
                     ),
                     updated_at = %s
@@ -888,50 +994,263 @@ async def get_category_stats():
 async def get_word_cloud_data(
     domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
     time_period_hours: int = Query(24, ge=1, le=720),
-    min_frequency: int = Query(1, ge=1)
+    min_frequency: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=200)
 ):
-    """Get intelligent word cloud data with ML/LLM filtering for a specific domain"""
+    """Get word cloud data from stored topic_keywords table (incremental, gets better over time)"""
     try:
         # Validate domain
         if not validate_domain(domain):
             raise HTTPException(status_code=400, detail=f"Invalid domain: {domain}")
         
         schema = domain.replace('-', '_')
-        from ..services.topic_intelligence_service import TopicIntelligenceService
+        conn = get_db_connection()
+        if not conn:
+            raise HTTPException(status_code=500, detail="Database connection failed")
         
-        # Initialize service with domain
-        topic_intelligence_service = TopicIntelligenceService(domain=domain)
-        result = topic_intelligence_service.get_intelligent_word_cloud(limit=30)
-        
-        if result['success']:
-            # Convert to the format expected by frontend
-            word_cloud_data = []
-            for topic in result['data']['word_cloud']:
-                word_cloud_data.append({
-                    'text': topic['text'],
-                    'size': min(100, max(20, topic['value'] * 2)),  # Scale size based on article count
-                    'frequency': topic['value'],
-                    'relevance': topic['confidence'],
-                    'articles': topic['value'],
-                    'quality_score': topic['quality_score'],
-                    'category': topic['category']
-                })
-            
-            return {
-                'success': True,
-                'data': {
-                    'word_cloud': word_cloud_data,
-                    'total_topics': result['data']['total_topics'],
-                    'filtered_from': result['data']['filtered_from'],
-                    'categories': result['data']['categories']
-                },
-                'timestamp': result['timestamp']
-            }
-        else:
-            return result
+        try:
+            with conn.cursor() as cur:
+                cur.execute(f"SET search_path TO {schema}, public")
+                
+                # Check which topic tables exist
+                cur.execute("""
+                    SELECT 
+                        EXISTS (SELECT FROM information_schema.tables WHERE table_schema = %s AND table_name = 'topic_keywords') as has_keywords,
+                        EXISTS (SELECT FROM information_schema.tables WHERE table_schema = %s AND table_name = 'topic_clusters') as has_clusters,
+                        EXISTS (SELECT FROM information_schema.tables WHERE table_schema = %s AND table_name = 'topics') as has_topics
+                """, (schema, schema, schema))
+                table_check = cur.fetchone()
+                has_topic_keywords = table_check[0]
+                has_topic_clusters = table_check[1]
+                has_topics = table_check[2]
+                
+                word_cloud_data = []
+                categories = {}
+                
+                # Priority 1: Use topic_keywords if available (best - incremental data)
+                if has_topic_keywords:
+                    # Use topic_keywords table (preferred - incremental data)
+                    cur.execute(f"""
+                        SELECT 
+                            tk.keyword,
+                            tk.keyword_type,
+                            tk.frequency_count,
+                            tk.importance_score,
+                            tk.tf_idf_score,
+                            tc.cluster_name,
+                            tc.article_count,
+                            tc.relevance_score as topic_relevance
+                        FROM {schema}.topic_keywords tk
+                        JOIN {schema}.topic_clusters tc ON tk.topic_cluster_id = tc.id
+                        WHERE tk.frequency_count >= %s
+                        ORDER BY tk.importance_score DESC, tk.frequency_count DESC
+                        LIMIT %s
+                    """, (min_frequency, limit))
+                    
+                    for row in cur.fetchall():
+                        keyword, keyword_type, freq_count, importance, tf_idf, cluster_name, article_count, topic_relevance = row
+                        word_cloud_data.append({
+                            'text': keyword,
+                            'size': min(100, max(20, int(freq_count * 2))),
+                            'frequency': freq_count,
+                            'relevance': float(importance) if importance else 0.0,
+                            'articles': article_count or 0,
+                            'quality_score': float(topic_relevance) if topic_relevance else 0.0,
+                            'category': keyword_type or 'general',
+                            'topic': cluster_name,
+                            'tf_idf': float(tf_idf) if tf_idf else 0.0
+                        })
+                    
+                    # Get category stats
+                    cur.execute(f"""
+                        SELECT 
+                            tk.keyword_type,
+                            COUNT(*) as count,
+                            SUM(tk.frequency_count) as total_frequency
+                        FROM {schema}.topic_keywords tk
+                        WHERE tk.frequency_count >= %s
+                        GROUP BY tk.keyword_type
+                    """, (min_frequency,))
+                    
+                    for row in cur.fetchall():
+                        cat_type, count, total_freq = row
+                        categories[cat_type or 'general'] = {
+                            'count': count,
+                            'total_frequency': total_freq or 0
+                        }
+                else:
+                    # Fallback: Use topic_clusters directly - use cluster_name as the word cloud word
+                    # This is simpler and more direct - each topic cluster becomes a word in the cloud
+                    cur.execute(f"""
+                        SELECT 
+                            tc.cluster_name,
+                            tc.cluster_keywords,
+                            tc.article_count,
+                            tc.relevance_score,
+                            tc.cluster_type,
+                            COUNT(atc.article_id) as actual_article_count
+                        FROM {schema}.topic_clusters tc
+                        LEFT JOIN {schema}.article_topic_clusters atc ON tc.id = atc.topic_cluster_id
+                        GROUP BY tc.id, tc.cluster_name, tc.cluster_keywords, tc.article_count, tc.relevance_score, tc.cluster_type
+                        HAVING COUNT(atc.article_id) >= %s
+                        ORDER BY COUNT(atc.article_id) DESC, tc.relevance_score DESC
+                        LIMIT %s
+                    """, (min_frequency, limit))
+                    
+                    for row in cur.fetchall():
+                        cluster_name, cluster_keywords, article_count, relevance_score, cluster_type, actual_count = row
+                        
+                        if not cluster_name:
+                            continue
+                        
+                        # Use cluster_name as the primary word (it's the topic name)
+                        # This makes the word cloud show actual topic names, not individual keywords
+                        word_cloud_data.append({
+                            'text': cluster_name,
+                            'size': min(100, max(20, int((actual_count or article_count or 1) * 3))),  # Scale based on article count
+                            'frequency': actual_count or article_count or 1,
+                            'relevance': float(relevance_score) if relevance_score else 0.5,
+                            'articles': actual_count or article_count or 0,
+                            'quality_score': float(relevance_score) if relevance_score else 0.5,
+                            'category': cluster_type or 'general',
+                            'topic': cluster_name  # Same as text for topic-based word cloud
+                        })
+                        
+                        # Also extract individual keywords from cluster_keywords if available
+                        if cluster_keywords:
+                            keywords_to_add = []
+                            if isinstance(cluster_keywords, list):
+                                keywords_to_add.extend(cluster_keywords)
+                            elif isinstance(cluster_keywords, dict):
+                                keywords_to_add.extend(cluster_keywords.get('keywords', []))
+                            
+                            # Add keywords as additional words (smaller size)
+                            for keyword in set(keywords_to_add):
+                                if keyword and len(keyword) > 2 and keyword.lower() != cluster_name.lower():
+                                    word_cloud_data.append({
+                                        'text': keyword,
+                                        'size': min(80, max(15, int((actual_count or article_count or 1) * 2))),
+                                        'frequency': max(1, (actual_count or article_count or 1) // 2),
+                                        'relevance': float(relevance_score) if relevance_score else 0.4,
+                                        'articles': max(1, (actual_count or article_count or 1) // 2),
+                                        'quality_score': float(relevance_score) if relevance_score else 0.4,
+                                        'category': cluster_type or 'general',
+                                        'topic': cluster_name
+                                    })
+                    
+                    # Group by category
+                    for word in word_cloud_data:
+                        cat = word.get('category', 'general')
+                        if cat not in categories:
+                            categories[cat] = {'count': 0, 'total_frequency': 0}
+                        categories[cat]['count'] += 1
+                        categories[cat]['total_frequency'] += word.get('frequency', 0)
+                
+                # Priority 2: Fallback to 'topics' table (what management tab uses)
+                if len(word_cloud_data) == 0 and has_topics:
+                    # Show all active topics, even if they have 0 articles
+                    # This matches what the management tab shows
+                    cur.execute(f"""
+                        SELECT 
+                            t.name,
+                            t.category,
+                            t.keywords,
+                            COUNT(DISTINCT ata.article_id) as article_count,
+                            t.confidence_score
+                        FROM {schema}.topics t
+                        LEFT JOIN {schema}.article_topic_assignments ata ON t.id = ata.topic_id
+                        WHERE t.status = 'active'
+                        GROUP BY t.id, t.name, t.category, t.keywords, t.confidence_score
+                        ORDER BY COUNT(DISTINCT ata.article_id) DESC, t.confidence_score DESC
+                        LIMIT %s
+                    """, (limit,))
+                    
+                    for row in cur.fetchall():
+                        topic_name, category, keywords, article_count, confidence = row
+                        
+                        if not topic_name:
+                            continue
+                        
+                        # Use topic name as the word
+                        # Even if article_count is 0, show the topic (but with smaller size)
+                        actual_count = article_count or 0
+                        word_cloud_data.append({
+                            'text': topic_name,
+                            'size': min(100, max(20, int((actual_count + 1) * 3))),  # +1 to ensure minimum size
+                            'frequency': actual_count or 1,  # Show as 1 if 0 for visibility
+                            'relevance': float(confidence) if confidence else 0.5,
+                            'articles': actual_count,
+                            'quality_score': float(confidence) if confidence else 0.5,
+                            'category': category or 'general',
+                            'topic': topic_name
+                        })
+                        
+                        # Also add keywords from the topic if available
+                        if keywords:
+                            keyword_list = keywords if isinstance(keywords, list) else []
+                            for keyword in keyword_list[:5]:  # Limit to 5 keywords per topic
+                                if keyword and len(keyword) > 2 and keyword.lower() != topic_name.lower():
+                                    word_cloud_data.append({
+                                        'text': keyword,
+                                        'size': min(80, max(15, int((article_count or 1) * 2))),
+                                        'frequency': max(1, (article_count or 1) // 2),
+                                        'relevance': float(confidence) if confidence else 0.4,
+                                        'articles': max(1, (article_count or 1) // 2),
+                                        'quality_score': float(confidence) if confidence else 0.4,
+                                        'category': category or 'general',
+                                        'topic': topic_name
+                                    })
+                    
+                    # Update categories
+                    for word in word_cloud_data:
+                        cat = word.get('category', 'general')
+                        if cat not in categories:
+                            categories[cat] = {'count': 0, 'total_frequency': 0}
+                        categories[cat]['count'] += 1
+                        categories[cat]['total_frequency'] += word.get('frequency', 0)
+                
+                # If still no data found, check if any topics exist at all
+                if len(word_cloud_data) == 0:
+                    topic_count = 0
+                    if has_topics:
+                        cur.execute(f"SELECT COUNT(*) FROM {schema}.topics WHERE status = 'active'")
+                        topic_count = cur.fetchone()[0] or 0
+                    if has_topic_clusters and topic_count == 0:
+                        cur.execute(f"SELECT COUNT(*) FROM {schema}.topic_clusters")
+                        topic_count = cur.fetchone()[0] or 0
+                    
+                    if topic_count == 0:
+                        logger.info(f"No topics found in {schema} schema - clustering may be needed")
+                        return {
+                            'success': True,
+                            'data': {
+                                'word_cloud': [],
+                                'total_keywords': 0,
+                                'categories': {},
+                                'source': 'none',
+                                'incremental': False,
+                                'message': 'No topics found. Run topic clustering to create topics.'
+                            },
+                            'timestamp': datetime.now().isoformat()
+                        }
+                
+                return {
+                    'success': True,
+                    'data': {
+                        'word_cloud': word_cloud_data,
+                        'total_keywords': len(word_cloud_data),
+                        'categories': categories,
+                        'source': 'topic_keywords' if has_topic_keywords else 'topic_clusters',
+                        'incremental': has_topic_keywords  # Only incremental if using topic_keywords
+                    },
+                    'timestamp': datetime.now().isoformat()
+                }
+                
+        finally:
+            conn.close()
         
     except Exception as e:
-        logger.error(f"Error fetching intelligent word cloud: {e}")
+        logger.error(f"Error fetching word cloud data: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 @router.get("/{domain}/content_analysis/topics/big_picture")
 async def get_big_picture_analysis(
@@ -1134,35 +1453,121 @@ async def get_trending_topics(
         raise HTTPException(status_code=500, detail=str(e))
 
 # Background task for article clustering
-async def process_article_clustering(limit: int):
-    """Background task for clustering articles into topics using advanced extraction"""
+async def process_article_clustering(limit: int, domain: str = "politics", time_period_hours: int = 24):
+    """Background task for clustering articles into topics using LLM (with fallback)"""
+    start_time = datetime.now()
+    logger.info(f"🚀 Starting article clustering for domain '{domain}' (limit={limit}, time_period={time_period_hours}h)")
+    
     try:
-        from ..services.advanced_topic_extractor import AdvancedTopicExtractor
+        # Try LLM-based extraction first, fallback to rule-based if unavailable
+        try:
+            from ..services.llm_topic_extractor import LLMTopicExtractor
+            
+            schema = domain.replace('-', '_')
+            logger.debug(f"Using schema: {schema}")
+            
+            extractor = LLMTopicExtractor(get_db_connection, schema=schema)
+            logger.info("✅ Using LLM-based topic extraction (with resource management)")
+            
+            # Extract topics from recent articles using LLM
+            logger.info(f"Extracting topics from articles in last {time_period_hours} hours using LLM...")
+            topics = await extractor.extract_topics_from_articles(time_period_hours=time_period_hours)
+            
+        except Exception as llm_error:
+            logger.warning(f"⚠️ LLM extraction failed: {llm_error}")
+            logger.info("Articles will be queued for LLM processing when available")
+            
+            # Queue articles for LLM processing (no fallback - ensures eventual consistency)
+            schema = domain.replace('-', '_')
+            extractor = LLMTopicExtractor(get_db_connection, schema=schema)
+            
+            # Get articles and queue them
+            conn = get_db_connection()
+            if conn:
+                try:
+                    with conn.cursor() as cur:
+                        cutoff_time = datetime.now() - timedelta(hours=time_period_hours)
+                        cur.execute(f"""
+                            SELECT id FROM {schema}.articles 
+                            WHERE created_at >= %s 
+                            AND content IS NOT NULL 
+                            AND LENGTH(content) > 100
+                        """, (cutoff_time,))
+                        article_ids = [row[0] for row in cur.fetchall()]
+                        
+                        for article_id in article_ids:
+                            extractor._queue_article_for_llm_extraction(
+                                article_id, priority=2, 
+                                error_message=f"LLM unavailable during initial clustering: {llm_error}"
+                            )
+                        
+                        logger.info(f"✅ Queued {len(article_ids)} articles for LLM topic extraction")
+                finally:
+                    conn.close()
+            
+            # Return empty topics - will be processed by queue worker
+            topics = []
+            logger.info("Articles queued for LLM processing. Queue worker will process them when LLM is available.")
         
-        # Initialize advanced topic extractor
-        extractor = AdvancedTopicExtractor(get_db_connection)
-        
-        # Extract topics from recent articles (last 24 hours)
-        topics = extractor.extract_topics_from_articles(time_period_hours=24)
+        logger.info(f"Topic extraction completed: {len(topics)} topics found")
         
         if topics:
             # Generate word cloud data
+            logger.debug("Generating word cloud data...")
             word_cloud_data = extractor.generate_word_cloud_data(topics)
+            logger.debug(f"Word cloud generated: {len(word_cloud_data.get('words', []))} words")
             
             # Save topics to database
+            logger.info(f"Saving {len(topics)} topics to database...")
             success = extractor.save_topics_to_database(topics)
             
             if success:
-                logger.info(f"Advanced topic extraction completed: {len(topics)} topics extracted")
-                logger.info(f"Word cloud data generated: {len(word_cloud_data['words'])} words")
+                elapsed = (datetime.now() - start_time).total_seconds()
+                logger.info(f"✅ Advanced topic extraction completed successfully:")
+                logger.info(f"   - Topics extracted: {len(topics)}")
+                logger.info(f"   - Word cloud words: {len(word_cloud_data.get('words', []))}")
+                logger.info(f"   - Processing time: {elapsed:.2f}s")
+                logger.info(f"   - Domain: {domain}")
             else:
-                logger.error("Failed to save topics to database")
+                logger.error("❌ Failed to save topics to database")
         else:
-            logger.info("No topics extracted from recent articles")
+            elapsed = (datetime.now() - start_time).total_seconds()
+            # Check if articles were queued
+            schema = domain.replace('-', '_')
+            conn = get_db_connection()
+            if conn:
+                try:
+                    with conn.cursor() as cur:
+                        cur.execute(f"SET search_path TO {schema}, public")
+                        cur.execute(f"""
+                            SELECT COUNT(*) FROM {schema}.topic_extraction_queue
+                            WHERE status = 'pending'
+                        """)
+                        queued_count = cur.fetchone()[0] or 0
+                        if queued_count > 0:
+                            logger.info(f"📋 {queued_count} articles queued for LLM topic extraction")
+                            logger.info("   - Queue worker will process them when LLM is available")
+                except:
+                    pass
+                finally:
+                    conn.close()
             
+            logger.warning(f"⚠️  No topics extracted from recent articles (last {time_period_hours}h)")
+            logger.info(f"   - Processing time: {elapsed:.2f}s")
+            logger.info(f"   - Domain: {domain}")
+            logger.info("   - This may be normal if no articles exist in the time window or articles are queued")
+            
+    except ImportError as e:
+        logger.error(f"❌ Import error in article clustering: {e}")
+        logger.exception("Full traceback:")
     except Exception as e:
-        logger.error(f"Error in advanced article clustering: {e}")
-        # No fallback run here; keep a single clustering path to reduce complexity
+        elapsed = (datetime.now() - start_time).total_seconds()
+        logger.error(f"❌ Error in advanced article clustering (after {elapsed:.2f}s):")
+        logger.error(f"   - Error type: {type(e).__name__}")
+        logger.error(f"   - Error message: {str(e)}")
+        logger.exception("Full traceback:")
+        # Re-raise to ensure error is visible in logs
+        raise
 
 @router.get("/articles/{article_id}")
 async def get_individual_article(article_id: int):

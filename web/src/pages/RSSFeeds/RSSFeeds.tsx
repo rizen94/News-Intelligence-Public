@@ -73,7 +73,9 @@ import EmptyState from '../../components/shared/EmptyState';
 interface RSSFeed {
   id: number;
   name: string;
+  feed_name?: string; // Backward compatibility
   url: string;
+  feed_url?: string; // Backward compatibility
   description?: string;
   category?: string;
   is_active: boolean;
@@ -149,13 +151,47 @@ const RSSFeeds: React.FC = () => {
 
       const response = await apiService.rssFeeds.getFeeds(params, domain);
 
+      // Debug logging
+      console.log('🔍 RSS Feeds API Response:', response);
+      console.log('🔍 Response success:', response.success);
+      console.log('🔍 Response data:', response.data);
+
       if (response.success) {
-        setFeeds(response.data.feeds || []);
-        setTotalPages(response.data.total_pages || 1);
-        setTotalFeeds(response.data.total_count || 0);
+        // Handle different response structures - ONLY load from database
+        const feedsData = response.data?.feeds || response.data?.data?.feeds || response.feeds || [];
+
+        console.log('🔍 Raw feeds data:', feedsData);
+        console.log('🔍 Feeds data length:', feedsData.length);
+
+        // Normalize feed data to ensure all required fields are present
+        // Only process feeds that have an ID (from database) - no hard-coded examples
+        const normalizedFeeds = feedsData
+          .filter((feed: any) => feed.id != null) // Only database feeds
+          .map((feed: any) => {
+            const normalized = {
+              ...feed,
+              name: feed.name || feed.feed_name || feed.url || 'Unknown Source',
+              url: feed.url || feed.feed_url || '',
+              description: feed.description || null,
+              category: feed.category || null,
+              update_interval: feed.update_interval || (feed.fetch_interval_seconds ? feed.fetch_interval_seconds / 60 : 30),
+              article_count: feed.article_count || 0,
+              last_fetched_at: feed.last_fetched_at || null,
+              is_active: feed.is_active !== undefined ? feed.is_active : true,
+            };
+            console.log('🔍 Normalized feed:', normalized);
+            return normalized;
+          });
+
+        console.log('🔍 Final normalized feeds:', normalizedFeeds);
+        console.log('🔍 Setting feeds count:', normalizedFeeds.length);
+
+        setFeeds(normalizedFeeds);
+        setTotalPages(response.data?.total_pages || response.data?.total || 1);
+        setTotalFeeds(response.data?.total_count || response.data?.total || normalizedFeeds.length);
 
         // Calculate statistics
-        const feeds = response.data.feeds || [];
+        const feeds = normalizedFeeds;
         const stats = {
           total: feeds.length,
           active: feeds.filter(f => f.is_active).length,
@@ -170,7 +206,9 @@ const RSSFeeds: React.FC = () => {
       }
     } catch (error: any) {
       console.error('Error fetching feeds:', error);
-      setError('Failed to load RSS feeds');
+      setError('Failed to load RSS feeds from database');
+      // Ensure we don't show any feeds if there's an error
+      setFeeds([]);
     } finally {
       setLoading(false);
     }
@@ -499,138 +537,185 @@ const RSSFeeds: React.FC = () => {
         <Box display='flex' justifyContent='center' p={4}>
           <CircularProgress />
         </Box>
+      ) : feeds.length === 0 ? (
+        <EmptyState
+          title='No RSS Feeds Found'
+          message='No feeds are currently configured in the database. Add a feed to get started.'
+          actionLabel='Add Feed'
+          onAction={() => setFeedDialogOpen(true)}
+        />
       ) : (
-        <Grid container spacing={2}>
-          {feeds.map(feed => (
-            <Grid item xs={12} key={feed.id}>
-              <Card>
-                <CardContent>
-                  <Box
-                    display='flex'
-                    justifyContent='space-between'
-                    alignItems='flex-start'
-                  >
-                    <Box flex={1}>
-                      <Typography variant='h6' component='h2' sx={{ mb: 1 }}>
-                        {feed.name}
-                      </Typography>
-                      <Typography
-                        variant='body2'
-                        color='text.secondary'
-                        sx={{ mb: 2 }}
+        <Box>
+          <Typography variant='h6' sx={{ mb: 2, color: 'text.secondary' }}>
+            Displaying {feeds.length} feed{feeds.length !== 1 ? 's' : ''} from database
+          </Typography>
+          <Grid container spacing={2}>
+            {feeds.map((feed, index) => {
+              console.log(`🔍 Rendering feed ${index + 1}:`, feed);
+              return (
+                <Grid item xs={12} key={feed.id || `feed-${index}`}>
+                  <Card>
+                    <CardContent>
+                      <Box
+                        display='flex'
+                        justifyContent='space-between'
+                        alignItems='flex-start'
                       >
-                        {feed.description || feed.url}
-                      </Typography>
-                      <Box display='flex' alignItems='center' gap={1} mb={1}>
-                        <Chip
-                          icon={<Schedule />}
-                          label={`${feed.update_interval || 30}min interval`}
-                          size='small'
-                          variant='outlined'
-                        />
-                        <Chip
-                          icon={<RssFeedIcon />}
-                          label={`${feed.article_count || 0} articles`}
-                          size='small'
-                          variant='outlined'
-                        />
-                        {feed.category && (
-                          <Chip
-                            label={feed.category}
-                            size='small'
-                            color='primary'
-                          />
-                        )}
-                      </Box>
-                    </Box>
-                    <Box
-                      display='flex'
-                      flexDirection='column'
-                      alignItems='flex-end'
-                      gap={1}
-                    >
-                      {/* Status */}
-                      <Chip
-                        icon={getStatusIcon(feed)}
-                        label={getStatusLabel(feed)}
-                        color={getStatusColor(feed)}
-                        size='small'
-                      />
+                        <Box flex={1}>
+                          {/* Source Name - ALWAYS DISPLAYED */}
+                          <Box display='flex' alignItems='center' gap={1} mb={2}>
+                            <RssFeedIcon color='primary' fontSize='small' />
+                            <Typography variant='h5' component='h2' sx={{ fontWeight: 'bold', color: 'primary.main' }}>
+                              {feed.name || feed.feed_name || feed.url || 'Unknown Source'}
+                            </Typography>
+                          </Box>
 
-                      {/* Last Update */}
-                      <Typography variant='caption' color='text.secondary'>
-                        Last: {formatDate(feed.last_fetched_at)}
-                      </Typography>
+                          {/* Feed URL - ALWAYS VISIBLE */}
+                          <Box mb={2}>
+                            <Typography variant='caption' color='text.secondary' sx={{ fontWeight: 'bold', display: 'block', mb: 0.5 }}>
+                              Feed URL:
+                            </Typography>
+                            <Typography
+                              variant='body2'
+                              sx={{
+                                fontFamily: 'monospace',
+                                fontSize: '0.9rem',
+                                color: 'text.primary',
+                                backgroundColor: 'grey.100',
+                                padding: '8px',
+                                borderRadius: '4px',
+                                wordBreak: 'break-all',
+                              }}
+                            >
+                              {feed.url || feed.feed_url || 'No URL available'}
+                            </Typography>
+                          </Box>
 
-                      {/* Action Buttons */}
-                      <Box display='flex' gap={1}>
-                        <Tooltip title='Refresh Feed'>
-                          <IconButton
-                            size='small'
-                            onClick={() => handleRefreshFeed(feed.id)}
-                          >
-                            <Refresh />
-                          </IconButton>
-                        </Tooltip>
-                        <Tooltip
-                          title={
-                            feed.is_active ? 'Pause Feed' : 'Activate Feed'
-                          }
+                          {/* Description - ALWAYS SHOW SOMETHING */}
+                          <Box mb={2}>
+                            <Typography variant='caption' color='text.secondary' sx={{ fontWeight: 'bold', display: 'block', mb: 0.5 }}>
+                              Description:
+                            </Typography>
+                            <Typography
+                              variant='body2'
+                              color='text.secondary'
+                              sx={{ fontStyle: feed.description ? 'normal' : 'italic' }}
+                            >
+                              {feed.description || 'No description available'}
+                            </Typography>
+                          </Box>
+                          <Box display='flex' alignItems='center' gap={1} mb={1}>
+                            <Chip
+                              icon={<Schedule />}
+                              label={`${feed.update_interval || 30}min interval`}
+                              size='small'
+                              variant='outlined'
+                            />
+                            <Chip
+                              icon={<RssFeedIcon />}
+                              label={`${feed.article_count || 0} articles`}
+                              size='small'
+                              variant='outlined'
+                            />
+                            {feed.category && (
+                              <Chip
+                                label={feed.category}
+                                size='small'
+                                color='primary'
+                              />
+                            )}
+                          </Box>
+                        </Box>
+                        <Box
+                          display='flex'
+                          flexDirection='column'
+                          alignItems='flex-end'
+                          gap={1}
                         >
-                          <IconButton
+                          {/* Status */}
+                          <Chip
+                            icon={getStatusIcon(feed)}
+                            label={getStatusLabel(feed)}
+                            color={getStatusColor(feed)}
                             size='small'
-                            onClick={() =>
-                              handleToggleFeed(feed.id, feed.is_active)
-                            }
-                          >
-                            {feed.is_active ? <PauseIcon /> : <PlayIcon />}
-                          </IconButton>
-                        </Tooltip>
-                        <Tooltip title='Edit Feed'>
-                          <IconButton
-                            size='small'
-                            onClick={() => {
-                              setSelectedFeed(feed);
-                              setFeedDialogOpen(true);
+                          />
+
+                          {/* Last Update */}
+                          <Typography variant='caption' color='text.secondary'>
+                            Last: {formatDate(feed.last_fetched_at)}
+                          </Typography>
+
+                          {/* Action Buttons */}
+                          <Box display='flex' gap={1}>
+                            <Tooltip title='Refresh Feed'>
+                              <IconButton
+                                size='small'
+                                onClick={() => handleRefreshFeed(feed.id)}
+                              >
+                                <Refresh />
+                              </IconButton>
+                            </Tooltip>
+                            <Tooltip
+                              title={
+                                feed.is_active ? 'Pause Feed' : 'Activate Feed'
+                              }
+                            >
+                              <IconButton
+                                size='small'
+                                onClick={() =>
+                                  handleToggleFeed(feed.id, feed.is_active)
+                                }
+                              >
+                                {feed.is_active ? <PauseIcon /> : <PlayIcon />}
+                              </IconButton>
+                            </Tooltip>
+                            <Tooltip title='Edit Feed'>
+                              <IconButton
+                                size='small'
+                                onClick={() => {
+                                  setSelectedFeed(feed);
+                                  setFeedDialogOpen(true);
+                                }}
+                              >
+                                <Edit />
+                              </IconButton>
+                            </Tooltip>
+                            <Tooltip title='Delete Feed'>
+                              <IconButton
+                                size='small'
+                                onClick={() => handleDeleteFeed(feed.id)}
+                                color='error'
+                              >
+                                <Delete />
+                              </IconButton>
+                            </Tooltip>
+                          </Box>
+                        </Box>
+                      </Box>
+
+                      {/* Error Display */}
+                      {feed.last_error && (
+                        <Box mt={2}>
+                          <Paper
+                            sx={{
+                              p: 1,
+                              bgcolor: 'error.light',
+                              color: 'error.contrastText',
                             }}
                           >
-                            <Edit />
-                          </IconButton>
-                        </Tooltip>
-                        <Tooltip title='Delete Feed'>
-                          <IconButton
-                            size='small'
-                            onClick={() => handleDeleteFeed(feed.id)}
-                            color='error'
-                          >
-                            <Delete />
-                          </IconButton>
-                        </Tooltip>
-                      </Box>
-                    </Box>
-                  </Box>
-
-                  {/* Error Display */}
-                  {feed.last_error && (
-                    <Box mt={2}>
-                      <Paper
-                        sx={{
-                          p: 1,
-                          bgcolor: 'error.light',
-                          color: 'error.contrastText',
-                        }}
-                      >
-                        <Typography variant='caption'>
-                          <strong>Error:</strong> {feed.last_error}
-                        </Typography>
-                      </Paper>
-                    </Box>
-                  )}
-                </CardContent>
-              </Card>
-            </Grid>
-          ))}
-        </Grid>
+                            <Typography variant='caption'>
+                              <strong>Error:</strong> {feed.last_error}
+                            </Typography>
+                          </Paper>
+                        </Box>
+                      )}
+                    </CardContent>
+                  </Card>
+                </Grid>
+              );
+            })}
+          </Grid>
+        </Box>
       )}
 
       {/* Add/Edit Feed Dialog */}

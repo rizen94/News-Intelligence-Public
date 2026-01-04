@@ -70,13 +70,57 @@ class APIService {
     }
   }
 
+  async deleteArticle(id: string | number, domain?: string): Promise<any> {
+    try {
+      const domainKey = domain || getCurrentDomain();
+      const response = await getApi().delete(`/api/v4/${domainKey}/articles/${id}`);
+      return response.data;
+    } catch (error) {
+      console.error('Failed to delete article:', error);
+      return { success: false, error: (error as any).message };
+    }
+  }
+
+  async deleteArticlesBulk(articleIds: (string | number)[], domain?: string): Promise<any> {
+    try {
+      const domainKey = domain || getCurrentDomain();
+      const response = await getApi().delete(`/api/v4/${domainKey}/articles`, {
+        data: articleIds,
+      });
+      return response.data;
+    } catch (error) {
+      console.error('Failed to bulk delete articles:', error);
+      return { success: false, error: (error as any).message };
+    }
+  }
+
+  async analyzeArticles(params: {
+    source?: string;
+    limit?: number;
+    domains?: string;
+    sample_size?: number;
+  }): Promise<any> {
+    try {
+      const response = await getApi().get('/api/v4/system_monitoring/articles/analyze', {
+        params,
+      });
+      return response.data;
+    } catch (error) {
+      console.error('Failed to analyze articles:', error);
+      return { success: false, error: (error as any).message };
+    }
+  }
+
   // RSS Feeds
   async getRSSFeeds(params: any = {}, domain?: string) {
     try {
       const domainKey = domain || getCurrentDomain();
-      const response = await getApi().get(`/api/v4/${domainKey}/rss_feeds`, {
+      const url = `/api/v4/${domainKey}/rss_feeds`;
+      console.log('🔍 RSS Feeds API call:', url, params);
+      const response = await getApi().get(url, {
         params,
       });
+      console.log('🔍 RSS Feeds API response:', response.data);
       return response.data;
     } catch (error) {
       console.error('Failed to fetch RSS feeds:', error);
@@ -706,7 +750,7 @@ class APIService {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(
         `/api/v4/${domainKey}/content_analysis/topics/word_cloud`,
-        { params: { hours, limit } },
+        { params: { time_period_hours: hours, limit, min_frequency: 1 } },
       );
       return response.data;
     } catch (error) {
@@ -802,7 +846,7 @@ class APIService {
 
   // Cluster articles (alias for clusterTopics)
   async clusterArticles(params: any = {}, domain?: string) {
-    return this.clusterTopics(domain);
+    return this.clusterTopics(params, domain);
   }
 
   // Convert topic to storyline
@@ -820,11 +864,19 @@ class APIService {
     }
   }
 
-  async clusterTopics(domain?: string) {
+  async clusterTopics(params: any = {}, domain?: string) {
     try {
       const domainKey = domain || getCurrentDomain();
+      const requestBody: any = { limit: params.limit || 100 };
+
+      // Add time_period_hours if provided
+      if (params.time_period_hours !== undefined) {
+        requestBody.time_period_hours = params.time_period_hours;
+      }
+
       const response = await getApi().post(
         `/api/v4/${domainKey}/content_analysis/topics/cluster`,
+        requestBody,
       );
       return response.data;
     } catch (error) {
@@ -1387,6 +1439,89 @@ class APIService {
 
   // Alias for backward compatibility
   getCategoryStats = this.getTopicCategoriesStats;
+
+  // Finance Domain - Market Trends
+  async getMarketTrends(params: any = {}, domain?: string): Promise<any> {
+    try {
+      const domainKey = domain || getCurrentDomain();
+      const response = await getApi().get(`/api/v4/${domainKey}/finance/market-trends`, {
+        params,
+      });
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch market trends:', error);
+      // Return a graceful fallback instead of throwing
+      return {
+        success: false,
+        error: (error as any).message || 'Market trends API not yet implemented',
+        data: null,
+      };
+    }
+  }
+
+  // Finance Domain - Market Patterns
+  async getMarketPatterns(params: any = {}, domain?: string): Promise<any> {
+    try {
+      const domainKey = domain || getCurrentDomain();
+      const response = await getApi().get(`/api/v4/${domainKey}/finance/market-patterns`, {
+        params,
+      });
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch market patterns:', error);
+      return {
+        success: false,
+        error: (error as any).message || 'Market patterns API not yet implemented',
+        data: null,
+      };
+    }
+  }
+
+  // Finance Domain - Corporate Announcements
+  async getCorporateAnnouncements(params: any = {}, domain?: string): Promise<any> {
+    try {
+      const domainKey = domain || getCurrentDomain();
+      const response = await getApi().get(`/api/v4/${domainKey}/finance/corporate-announcements`, {
+        params,
+      });
+      return response.data;
+    } catch (error) {
+      console.error('Failed to fetch corporate announcements:', error);
+      return {
+        success: false,
+        error: (error as any).message || 'Corporate announcements API not yet implemented',
+        data: null,
+      };
+    }
+  }
+
+  // Pipeline Management
+  async triggerPipeline(): Promise<any> {
+    try {
+      const response = await getApi().post('/api/v4/system_monitoring/pipeline/trigger');
+      return response.data;
+    } catch (error) {
+      console.error('Failed to trigger pipeline:', error);
+      return {
+        success: false,
+        error: (error as any).message || 'Pipeline trigger API not yet implemented',
+      };
+    }
+  }
+
+  // AI Analysis
+  async runAIAnalysis(): Promise<any> {
+    try {
+      const response = await getApi().post('/api/v4/system_monitoring/ai-analysis/run');
+      return response.data;
+    } catch (error) {
+      console.error('Failed to run AI analysis:', error);
+      return {
+        success: false,
+        error: (error as any).message || 'AI analysis API not yet implemented',
+      };
+    }
+  }
 }
 
 // Export singleton instance with error handling

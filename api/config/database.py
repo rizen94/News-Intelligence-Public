@@ -42,43 +42,48 @@ class DatabaseManager:
         self._initialize_connections()
     
     def _get_database_config(self) -> Dict[str, Any]:
-        """Get unified database configuration - REQUIRES NAS DATABASE"""
-        # CRITICAL: System requires NAS database - no localhost fallback allowed
-        # This prevents accidental use of local storage which has insufficient space
+        """Get unified database configuration - HARD REQUIREMENT: SSH TUNNEL ONLY"""
+        # HARD REQUIREMENT: System MUST use SSH tunnel (localhost:5433)
+        # Direct connections to 192.168.93.100:5432 are BLOCKED by firewall
+        # This requirement cannot be bypassed
         
-        db_host = os.getenv('DB_HOST')
+        db_host = os.getenv('DB_HOST', 'localhost')
+        db_port = int(os.getenv('DB_PORT', '5433'))
         
-        # Enforce NAS database requirement
-        if not db_host:
+        # HARD REQUIREMENT: Must use localhost (SSH tunnel)
+        if db_host not in ['localhost', '127.0.0.1', '::1']:
             raise ValueError(
-                "DB_HOST environment variable is REQUIRED. "
-                "System must use NAS database (192.168.93.100). "
-                "Local storage is not permitted due to insufficient space."
+                f"❌ DIRECT CONNECTION BLOCKED: DB_HOST='{db_host}' is not allowed.\n"
+                "   HARD REQUIREMENT: System MUST use SSH tunnel to NAS database.\n"
+                "   Set DB_HOST=localhost DB_PORT=5433\n"
+                "   Direct connections to 192.168.93.100:5432 are blocked by firewall."
             )
         
-        # Prevent localhost usage unless explicitly permitted via ALLOW_LOCAL_DB flag
-        # EXCEPTION: localhost:5433 is allowed (SSH tunnel to NAS)
-        db_port = int(os.getenv('DB_PORT', '5432'))
-        if db_host in ['localhost', '127.0.0.1', '::1']:
-            # Allow localhost:5433 (SSH tunnel to NAS)
-            if db_port == 5433:
-                logger.info(
-                    f"✅ Using SSH tunnel to NAS database (localhost:5433 -> 192.168.93.100:5432)"
-                )
-            else:
-                allow_local = os.getenv('ALLOW_LOCAL_DB', 'false').lower() == 'true'
-                if not allow_local:
-                    raise ValueError(
-                        f"Local database connection to '{db_host}:{db_port}' is BLOCKED. "
-                        "System requires NAS database (192.168.93.100) for storage. "
-                        "To use NAS via SSH tunnel, set: DB_HOST=localhost DB_PORT=5433. "
-                        "To override (NOT RECOMMENDED), set ALLOW_LOCAL_DB=true. "
-                        "This should only be used for emergency maintenance."
-                    )
-                logger.warning(
-                    f"⚠️  WARNING: Using local database ({db_host}:{db_port}) is NOT RECOMMENDED. "
-                    "Local storage has insufficient space. Use NAS database (192.168.93.100) instead."
-                )
+        # HARD REQUIREMENT: Must use SSH tunnel port (5433)
+        if db_port != 5433:
+            raise ValueError(
+                f"❌ INVALID PORT: DB_PORT={db_port} is not allowed.\n"
+                "   HARD REQUIREMENT: System MUST use SSH tunnel port 5433.\n"
+                "   Set DB_PORT=5433\n"
+                "   This connects via SSH tunnel: localhost:5433 -> 192.168.93.100:5432"
+            )
+        
+        # Verify SSH tunnel is running
+        import subprocess
+        tunnel_check = subprocess.run(
+            ["pgrep", "-f", "ssh -L 5433:localhost:5432.*192.168.93.100"],
+            capture_output=True
+        )
+        
+        if tunnel_check.returncode != 0:
+            raise ValueError(
+                "❌ SSH TUNNEL NOT RUNNING: Required SSH tunnel is not active.\n"
+                "   Run: ./scripts/setup_nas_ssh_tunnel.sh\n"
+                "   The tunnel must be running before starting the API server.\n"
+                "   Tunnel: localhost:5433 -> 192.168.93.100:5432"
+            )
+        
+        logger.info("✅ Using SSH tunnel to NAS database (localhost:5433 -> 192.168.93.100:5432)")
         
         # Standardized configuration - single source of truth
         config = {

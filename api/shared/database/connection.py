@@ -88,43 +88,55 @@ class PooledConnection:
 def get_db_config() -> Dict[str, Any]:
     """
     Get database configuration from environment variables
-    CRITICAL: DB_HOST is REQUIRED - system must use NAS database
+    CRITICAL: System MUST use SSH tunnel to NAS database (localhost:5433)
+    Direct connections to 192.168.93.100:5432 are BLOCKED by firewall requirement.
     """
     db_host = os.getenv("DB_HOST")
-    
-    # Enforce NAS database requirement
-    if not db_host:
-        raise ValueError(
-            "DB_HOST environment variable is REQUIRED. "
-            "System must use NAS database (192.168.93.100). "
-            "Local storage is not permitted due to insufficient space."
-        )
-    
-    db_port_str = os.getenv('DB_PORT', '5432')
+    db_port_str = os.getenv('DB_PORT', '5433')  # Default to SSH tunnel port
     db_port = int(db_port_str)
     
-    # Prevent localhost usage unless explicitly permitted or using SSH tunnel
-    if db_host in ['localhost', '127.0.0.1', '::1']:
-        # Allow localhost:5433 for SSH tunnel to NAS
-        if db_port == 5433:
-            # SSH tunnel to NAS - this is allowed
-            logger.debug(f"Using SSH tunnel: localhost:5433 -> NAS:5432")
-        else:
-            allow_local = os.getenv('ALLOW_LOCAL_DB', 'false').lower() == 'true'
-            if not allow_local:
-                raise ValueError(
-                    f"Local database connection to '{db_host}' is BLOCKED. "
-                    "System requires NAS database (192.168.93.100) for storage. "
-                    "To override (NOT RECOMMENDED), set ALLOW_LOCAL_DB=true."
-                )
-            logger.warning(f"Using local database ({db_host}) - NOT RECOMMENDED due to insufficient space")
+    # HARD REQUIREMENT: Must use SSH tunnel (localhost:5433)
+    if db_host not in ['localhost', '127.0.0.1', '::1']:
+        raise ValueError(
+            f"❌ DIRECT CONNECTION BLOCKED: DB_HOST='{db_host}' is not allowed.\n"
+            "   HARD REQUIREMENT: System MUST use SSH tunnel to NAS database.\n"
+            "   Set DB_HOST=localhost DB_PORT=5433\n"
+            "   Direct connections to 192.168.93.100:5432 are blocked by firewall."
+        )
+    
+    # HARD REQUIREMENT: Must use SSH tunnel port (5433)
+    if db_port != 5433:
+        raise ValueError(
+            f"❌ INVALID PORT: DB_PORT={db_port} is not allowed.\n"
+            "   HARD REQUIREMENT: System MUST use SSH tunnel port 5433.\n"
+            "   Set DB_PORT=5433\n"
+            "   This connects via SSH tunnel: localhost:5433 -> 192.168.93.100:5432"
+        )
+    
+    # Verify SSH tunnel is running
+    import subprocess
+    tunnel_check = subprocess.run(
+        ["pgrep", "-f", "ssh -L 5433:localhost:5432.*192.168.93.100"],
+        capture_output=True
+    )
+    
+    if tunnel_check.returncode != 0:
+        raise ValueError(
+            "❌ SSH TUNNEL NOT RUNNING: Required SSH tunnel is not active.\n"
+            "   Run: ./scripts/setup_nas_ssh_tunnel.sh\n"
+            "   The tunnel must be running before starting the API server.\n"
+            "   Tunnel: localhost:5433 -> 192.168.93.100:5432"
+        )
+    
+    logger.info("✅ Using SSH tunnel to NAS database (localhost:5433 -> 192.168.93.100:5432)")
     
     return {
         "host": db_host,
         "port": str(db_port),
         "database": os.getenv("DB_NAME", "news_intelligence"),
         "user": os.getenv("DB_USER", "newsapp"),
-        "password": os.getenv("DB_PASSWORD", "newsapp_password")
+        "password": os.getenv("DB_PASSWORD", "newsapp_password"),
+        "connect_timeout": 2  # 2 second timeout to prevent hanging
     }
 
 
@@ -151,7 +163,8 @@ def _init_pool() -> pool.ThreadedConnectionPool:
             port=config["port"],
             database=config["database"],
             user=config["user"],
-            password=config["password"]
+            password=config["password"],
+            connect_timeout=config.get("connect_timeout", 2)  # 2 second timeout
         )
         
         _pool_initialized = True

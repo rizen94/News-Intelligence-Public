@@ -8,6 +8,7 @@ import sys
 import logging
 import threading
 import time
+import asyncio
 from contextlib import asynccontextmanager
 from typing import Dict, Any
 from datetime import datetime
@@ -37,6 +38,8 @@ from domains.news_aggregation.routes.rss_duplicate_management import router as r
 from domains.content_analysis.routes.content_analysis import router as content_analysis_router
 from domains.content_analysis.routes.article_deduplication import router as article_deduplication_router
 from domains.content_analysis.routes.topic_management import router as topic_management_router
+from domains.content_analysis.routes.topic_queue_management import router as topic_queue_management_router
+from domains.content_analysis.routes.llm_activity_monitoring import router as llm_activity_monitoring_router
 # Import consolidated storyline router (includes all feature modules)
 from domains.storyline_management.routes import router as storyline_management_router
 from domains.storyline_management.routes.storyline_automation import router as storyline_automation_router
@@ -46,6 +49,7 @@ from domains.intelligence_hub.routes.intelligence_hub import router as intellige
 from domains.intelligence_hub.routes.intelligence_analysis import router as intelligence_analysis_router
 from domains.intelligence_hub.routes.rag_queries import router as rag_queries_router
 from domains.intelligence_hub.routes.content_synthesis import router as content_synthesis_router
+from domains.finance.routes.finance import router as finance_router
 from domains.user_management.routes.user_management import router as user_management_router
 from domains.system_monitoring.routes.system_monitoring import router as system_monitoring_router
 from domains.system_monitoring.routes.route_supervisor import router as route_supervisor_router
@@ -72,23 +76,36 @@ async def lifespan(app: FastAPI):
     try:
         from shared.database.connection import _init_pool, get_db_config
         
-        # Set default DB_HOST if not set (for SSH tunnel)
+        # HARD REQUIREMENT: Enforce SSH tunnel usage
         if not os.getenv("DB_HOST"):
-            # Check if SSH tunnel is running
-            import subprocess
-            tunnel_running = subprocess.run(
-                ["pgrep", "-f", "ssh.*5433.*5432"],
-                capture_output=True
-            ).returncode == 0
-            
-            if tunnel_running:
-                os.environ["DB_HOST"] = "localhost"
-                os.environ["DB_PORT"] = "5433"
-                logger.info("✅ Detected SSH tunnel, using localhost:5433")
-            else:
-                logger.warning("⚠️ DB_HOST not set and no SSH tunnel detected")
-                logger.warning("   Set DB_HOST=localhost DB_PORT=5433 for SSH tunnel")
-                logger.warning("   Or set DB_HOST=192.168.93.100 DB_PORT=5432 for direct connection")
+            os.environ["DB_HOST"] = "localhost"
+            os.environ["DB_PORT"] = "5433"
+            logger.info("✅ Defaulting to SSH tunnel: DB_HOST=localhost DB_PORT=5433")
+        
+        # Verify SSH tunnel is required and running
+        db_host = os.getenv("DB_HOST", "localhost")
+        db_port = int(os.getenv("DB_PORT", "5433"))
+        
+        if db_host not in ['localhost', '127.0.0.1', '::1'] or db_port != 5433:
+            logger.error("❌ INVALID CONFIGURATION: System MUST use SSH tunnel")
+            logger.error(f"   Current: DB_HOST={db_host} DB_PORT={db_port}")
+            logger.error("   Required: DB_HOST=localhost DB_PORT=5433")
+            raise ValueError("System MUST use SSH tunnel (localhost:5433). Direct connections are blocked.")
+        
+        # Check if SSH tunnel is running
+        import subprocess
+        tunnel_running = subprocess.run(
+            ["pgrep", "-f", "ssh -L 5433:localhost:5432.*192.168.93.100"],
+            capture_output=True
+        ).returncode == 0
+        
+        if not tunnel_running:
+            logger.error("❌ SSH TUNNEL NOT RUNNING: Required tunnel is not active")
+            logger.error("   Run: ./scripts/setup_nas_ssh_tunnel.sh")
+            logger.error("   The tunnel must be running before starting the API server")
+            raise ValueError("SSH tunnel (localhost:5433) must be running. Run setup_nas_ssh_tunnel.sh")
+        
+        logger.info("✅ SSH tunnel verified: localhost:5433 -> 192.168.93.100:5432")
         
         # Initialize connection pool (persistent connections)
         try:
@@ -163,6 +180,46 @@ async def lifespan(app: FastAPI):
             app.state.ml_processing = ml_processing_service
         except Exception as e:
             logger.error(f"❌ Failed to start ML Processing Service: {e}")
+        
+        # Start topic extraction queue workers for all domains
+        try:
+            from domains.content_analysis.services.topic_extraction_queue_worker import TopicExtractionQueueWorker
+            from shared.database.connection import get_db_connection
+            
+            def start_queue_workers_background():
+                """Start queue workers in background thread"""
+                import asyncio
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                
+                async def start_workers():
+                    """Start queue workers for all active domains"""
+                    domains = ['politics', 'finance', 'science-tech']
+                    workers = []
+                    for domain in domains:
+                        try:
+                            schema = domain.replace('-', '_')
+                            worker = TopicExtractionQueueWorker(get_db_connection, schema=schema)
+                            workers.append(worker)
+                            # Start worker in background task
+                            asyncio.create_task(worker.start())
+                            logger.info(f"✅ Started topic extraction queue worker for {domain}")
+                        except Exception as e:
+                            logger.error(f"❌ Failed to start queue worker for {domain}: {e}")
+                    
+                    # Keep workers running
+                    while True:
+                        await asyncio.sleep(60)  # Check every minute
+                
+                loop.run_until_complete(start_workers())
+            
+            # Start queue workers in background thread
+            queue_worker_thread = threading.Thread(target=start_queue_workers_background, daemon=True)
+            queue_worker_thread.start()
+            app.state.queue_worker_thread = queue_worker_thread
+            logger.info("✅ Topic extraction queue workers started automatically in background")
+        except Exception as e:
+            logger.error(f"❌ Failed to start topic extraction queue workers: {e}")
     except Exception as e:
         logger.error(f"Failed to start automation manager: {e}")
         # Continue without automation if it fails
@@ -399,6 +456,8 @@ app.include_router(rss_duplicate_router)
 app.include_router(content_analysis_router)
 app.include_router(topic_management_router)
 app.include_router(article_deduplication_router)
+app.include_router(topic_queue_management_router)
+app.include_router(llm_activity_monitoring_router)
 # Discovery router FIRST (has specific routes like /compare, /evolution)
 app.include_router(storyline_discovery_router)
 app.include_router(storyline_consolidation_router)
@@ -409,6 +468,7 @@ app.include_router(intelligence_hub_router)
 app.include_router(intelligence_analysis_router)
 app.include_router(rag_queries_router)
 app.include_router(content_synthesis_router)
+app.include_router(finance_router)
 app.include_router(user_management_router)
 app.include_router(system_monitoring_router)
 app.include_router(route_supervisor_router)

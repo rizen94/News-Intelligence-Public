@@ -6,6 +6,7 @@ Excludes sports, entertainment, and pop culture content.
 """
 
 import os
+import sys
 import logging
 import threading
 import feedparser
@@ -14,6 +15,10 @@ import re
 from datetime import datetime
 from typing import Dict, List, Optional
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+
+# Add parent directory to path for service imports
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from services.bias_detection_service import calculate_domain_bias_score
 
 # Import deduplication system
 try:
@@ -344,6 +349,116 @@ def calculate_article_quality_score(title: str, content: str, source: str = "") 
     return max(0.0, min(1.0, score))
 
 
+def is_clickbait_title(title: str) -> bool:
+    """
+    Check if article title is clickbait.
+    Excludes news briefs, press releases, and official filings.
+    
+    Args:
+        title: Article title
+        
+    Returns:
+        True if title is clickbait, False otherwise
+    """
+    if not title:
+        return False
+    
+    title_lower = title.lower()
+    
+    # Allow official/press release indicators (these are NOT clickbait)
+    official_indicators = [
+        'press release', 'press release:', 'for immediate release',
+        'official statement', 'official announcement', 'filing', 'filed',
+        'sec filing', 'sec form', 'regulatory filing', 'news brief',
+        'brief:', 'announcement:', 'statement:', 'report:'
+    ]
+    
+    # If it's an official document, it's not clickbait
+    if any(indicator in title_lower for indicator in official_indicators):
+        return False
+    
+    # Clickbait patterns
+    clickbait_patterns = [
+        r'you won\'t believe',
+        r'shocking.*will.*blow.*mind',
+        r'amazing trick',
+        r'one weird trick',
+        r'doctors hate',
+        r'this one thing',
+        r'number one reason',
+        r'secret.*will.*blow.*mind',
+        r'\d+.*things.*need.*know',
+        r'before.*die',
+        r'changed.*life.*forever',
+        r'everyone.*talking.*about',
+        r'going.*viral',
+        r'trending.*now',
+        r'you.*never.*guess',
+        r'what.*happens.*next.*shock'
+    ]
+    
+    for pattern in clickbait_patterns:
+        if re.search(pattern, title_lower):
+            return True
+    
+    return False
+
+
+def is_advertisement(title: str, content: str, url: str = "") -> bool:
+    """
+    Check if article is an advertisement or sponsored content.
+    Excludes press releases and official announcements.
+    
+    Args:
+        title: Article title
+        content: Article content
+        url: Article URL
+        
+    Returns:
+        True if article is an ad, False otherwise
+    """
+    text_to_check = f"{title} {content} {url}".lower()
+    
+    # Allow official/press release indicators (these are NOT ads)
+    official_indicators = [
+        'press release', 'for immediate release', 'official statement',
+        'official announcement', 'filing', 'sec filing', 'regulatory filing',
+        'news brief', 'announcement:', 'statement:', 'report:'
+    ]
+    
+    # If it's an official document, it's not an ad
+    if any(indicator in text_to_check for indicator in official_indicators):
+        return False
+    
+    # Advertisement indicators
+    ad_indicators = [
+        'sponsored', 'sponsored content', 'advertisement', 'advertisements',
+        'paid partnership', 'affiliate', 'buy now', 'shop now',
+        'limited time offer', 'special offer', 'discount', 'sale',
+        'promo code', 'coupon', 'deal', 'deals', 'save \d+%',
+        'click here to', 'order now', 'get yours', 'shop here',
+        'promotional', 'promotion', 'marketing', 'advertorial'
+    ]
+    
+    # Check for ad indicators
+    for indicator in ad_indicators:
+        if indicator in text_to_check:
+            return True
+    
+    # URL patterns that indicate ads
+    ad_url_patterns = [
+        '/ad/', '/ads/', '/advertisement/', '/sponsored/',
+        '/promo/', '/promotion/', '/shop/', '/store/',
+        '/buy/', '/deal/', '/offer/'
+    ]
+    
+    url_lower = url.lower()
+    if any(pattern in url_lower for pattern in ad_url_patterns):
+        return True
+    
+    return False
+
+
 def is_excluded_content(title: str, content: str, feed_name: str = "", feed_url: str = "") -> bool:
     """
     Check if article should be excluded (sports, entertainment, pop culture)
@@ -605,120 +720,239 @@ def collect_rss_feeds() -> int:
         total_articles_added = 0
         total_duplicates_rejected = 0
         total_excluded = 0
+        total_filtered_clickbait = 0
+        total_filtered_ads = 0
+        total_filtered_quality = 0
+        total_filtered_impact = 0
         
-        for feed_id, feed_name, feed_url, domain_key in feeds:
-            # Determine schema name from domain_key
+        # OPTIMIZATION: Process feeds in parallel (max 5 concurrent)
+        def process_single_feed(feed_data):
+            """Process a single RSS feed - designed for parallel execution"""
+            feed_id, feed_name, feed_url, domain_key = feed_data
             schema_name = domain_key.replace('-', '_') if domain_key else 'politics'
-            logger.info(f"Processing feed: {feed_name} ({feed_url})")
+            
+            # Each thread gets its own database connection
+            feed_conn = get_db_connection()
+            if not feed_conn:
+                logger.error(f"Failed to get DB connection for feed: {feed_name}")
+                return {'articles_added': 0, 'duplicates': 0, 'excluded': 0, 'error': 'No DB connection'}
             
             try:
-                # Parse RSS feed with thread-based timeout (works in background threads)
-                def parse_feed():
-                    return feedparser.parse(feed_url)
-                
-                # Use ThreadPoolExecutor for timeout (works in any thread)
-                with ThreadPoolExecutor(max_workers=1) as executor:
-                    future = executor.submit(parse_feed)
-                    try:
-                        feed = future.result(timeout=30)  # 30 second timeout
-                    except FutureTimeoutError:
-                        raise TimeoutError("RSS parsing timeout")
-                
+                feed_cur = feed_conn.cursor()
                 articles_added = 0
+                duplicates_rejected = 0
+                excluded_count = 0
+                filtered_clickbait = 0
+                filtered_ads = 0
+                filtered_quality = 0
+                filtered_impact = 0
                 
-                for entry in feed.entries[:50]:
-                    try:
-                        # Extract article data
-                        title = entry.get('title', '')[:500]  # Limit title length
-                        url = entry.get('link', '')[:500]    # Limit URL length
-                        content = entry.get('summary', '') or entry.get('description', '')
-                        
-                        # Filter out sports, entertainment, and pop culture content
-                        if is_excluded_content(title, content, feed_name, feed_url):
-                            total_excluded += 1
-                            logger.debug(f"Skipping excluded article: {title[:60]}...")
-                            continue
-                        
-                        # Parse published date
-                        published_date = None
-                        if hasattr(entry, 'published_parsed') and entry.published_parsed:
-                            published_date = datetime(*entry.published_parsed[:6])
-                        elif hasattr(entry, 'updated_parsed') and entry.updated_parsed:
-                            published_date = datetime(*entry.updated_parsed[:6])
-                        else:
-                            published_date = datetime.now()
-                        
-                        # Check for duplicates before inserting (in domain schema)
-                        cur.execute(f"""
-                            SELECT id FROM {schema_name}.articles 
-                            WHERE url = %s OR (title = %s AND source_domain = %s)
-                        """, (url, title, feed_name))
-                        
-                        if cur.fetchone():
-                            # Article already exists, skip it
-                            total_duplicates_rejected += 1
-                            logger.debug(f"Skipping duplicate article: {title[:60]}...")
-                            continue
-                        
-                        # Calculate impact and quality scores
-                        impact_score = calculate_article_impact_score(title, content)
-                        quality_score = calculate_article_quality_score(title, content, feed_name)
-                        
-                        # Per-article savepoint to avoid aborting whole transaction
-                        cur.execute("SAVEPOINT sp_article")
-                        # Insert article into domain schema (v4.0) with quality score
-                        cur.execute(f"""
-                            INSERT INTO {schema_name}.articles
-                            (title, url, content, summary, published_at, created_at, source_domain, quality_score)
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                        """, (
-                            title,
-                            url,
-                            content,
-                            None,
-                            published_date,
-                            datetime.now(),
-                            feed_name,
-                            quality_score
-                        ))
-                        
-                        if cur.rowcount > 0:
-                            articles_added += 1
-                        
-                    except Exception as e:
-                        logger.warning(f"Error processing article from {feed_name}: {e}")
+                try:
+                    # Parse RSS feed with timeout
+                    def parse_feed():
+                        return feedparser.parse(feed_url)
+                    
+                    with ThreadPoolExecutor(max_workers=1) as executor:
+                        future = executor.submit(parse_feed)
                         try:
-                            cur.execute("ROLLBACK TO SAVEPOINT sp_article")
-                        except Exception as e2:
-                            logger.warning(f"Failed to rollback to savepoint: {e2}")
-                        continue
-                
-                # Update last fetched timestamp in domain schema
-                cur.execute(f"""
-                    UPDATE {schema_name}.rss_feeds 
-                    SET last_fetched_at = NOW() 
-                    WHERE id = %s
-                """, (feed_id,))
-                
-                total_articles_added += articles_added
-                logger.info(f"Added {articles_added} articles from {feed_name}")
-                
-            except TimeoutError:
-                logger.error(f"Timeout processing feed: {feed_name}")
-                continue
-            except Exception as e:
-                logger.error(f"Error processing feed {feed_name}: {e}")
-                continue
+                            feed = future.result(timeout=30)
+                        except FutureTimeoutError:
+                            raise TimeoutError("RSS parsing timeout")
+                    
+                    for entry in feed.entries[:50]:
+                        try:
+                            title = entry.get('title', '')[:500]
+                            url = entry.get('link', '')[:500]
+                            content = entry.get('summary', '') or entry.get('description', '')
+                            
+                            # Filter excluded content (sports/entertainment/pop culture)
+                            if is_excluded_content(title, content, feed_name, feed_url):
+                                excluded_count += 1
+                                continue
+                            
+                            # Filter clickbait titles (but allow press releases/official filings)
+                            if is_clickbait_title(title):
+                                filtered_clickbait += 1
+                                excluded_count += 1
+                                logger.debug(f"Article excluded (clickbait): {title[:60]}...")
+                                continue
+                            
+                            # Filter advertisements (but allow press releases/official filings)
+                            if is_advertisement(title, content, url):
+                                filtered_ads += 1
+                                excluded_count += 1
+                                logger.debug(f"Article excluded (advertisement): {title[:60]}...")
+                                continue
+                            
+                            # Calculate scores BEFORE filtering (need scores for threshold check)
+                            impact_score = calculate_article_impact_score(title, content)
+                            quality_score = calculate_article_quality_score(title, content, feed_name)
+                            
+                            # Filter by minimum quality score (>= 0.4)
+                            if quality_score < 0.4:
+                                filtered_quality += 1
+                                excluded_count += 1
+                                logger.debug(f"Article excluded (quality score {quality_score:.2f} < 0.4): {title[:60]}...")
+                                continue
+                            
+                            # Filter by minimum impact score (>= 0.4)
+                            if impact_score < 0.4:
+                                filtered_impact += 1
+                                excluded_count += 1
+                                logger.debug(f"Article excluded (impact score {impact_score:.2f} < 0.4): {title[:60]}...")
+                                continue
+                            
+                            # Parse published date
+                            published_date = None
+                            if hasattr(entry, 'published_parsed') and entry.published_parsed:
+                                published_date = datetime(*entry.published_parsed[:6])
+                            elif hasattr(entry, 'updated_parsed') and entry.updated_parsed:
+                                published_date = datetime(*entry.updated_parsed[:6])
+                            else:
+                                published_date = datetime.now()
+                            
+                            # Check for duplicates
+                            feed_cur.execute(f"""
+                                SELECT id FROM {schema_name}.articles 
+                                WHERE url = %s OR (title = %s AND source_domain = %s)
+                            """, (url, title, feed_name))
+                            
+                            if feed_cur.fetchone():
+                                duplicates_rejected += 1
+                                continue
+                            
+                            # Calculate domain-specific bias score
+                            bias_score = calculate_domain_bias_score(domain_key, title, content, feed_name)
+                            
+                            # Insert article (scores already calculated above)
+                            feed_cur.execute("SAVEPOINT sp_article")
+                            feed_cur.execute(f"""
+                                INSERT INTO {schema_name}.articles
+                                (title, url, content, summary, published_at, created_at, source_domain, quality_score, bias_score)
+                                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                RETURNING id
+                            """, (title, url, content, None, published_date, datetime.now(), feed_name, quality_score, bias_score))
+                            
+                            result = feed_cur.fetchone()
+                            if result and feed_cur.rowcount > 0:
+                                article_id = result[0]
+                                articles_added += 1
+                                
+                                # Auto-queue article for LLM topic extraction
+                                try:
+                                    feed_cur.execute(f"""
+                                        INSERT INTO {schema_name}.topic_extraction_queue
+                                        (article_id, status, priority, created_at)
+                                        VALUES (%s, 'pending', 2, NOW())
+                                        ON CONFLICT (article_id) DO NOTHING
+                                    """, (article_id,))
+                                    feed_conn.commit()
+                                except Exception as queue_error:
+                                    logger.debug(f"Could not queue article {article_id} for topic extraction: {queue_error}")
+                                    # Non-critical, continue processing
+                                
+                        except Exception as e:
+                            logger.warning(f"Error processing article from {feed_name}: {e}")
+                            try:
+                                feed_cur.execute("ROLLBACK TO SAVEPOINT sp_article")
+                            except:
+                                pass
+                            continue
+                    
+                    # Update feed timestamp
+                    feed_cur.execute(f"""
+                        UPDATE {schema_name}.rss_feeds 
+                        SET last_fetched_at = NOW() 
+                        WHERE id = %s
+                    """, (feed_id,))
+                    
+                    feed_conn.commit()
+                    
+                    # Log detailed stats for this feed
+                    filter_summary = []
+                    if excluded_count > 0:
+                        filter_summary.append(f"excluded: {excluded_count}")
+                    if filtered_clickbait > 0:
+                        filter_summary.append(f"clickbait: {filtered_clickbait}")
+                    if filtered_ads > 0:
+                        filter_summary.append(f"ads: {filtered_ads}")
+                    if filtered_quality > 0:
+                        filter_summary.append(f"low-quality: {filtered_quality}")
+                    if filtered_impact > 0:
+                        filter_summary.append(f"low-impact: {filtered_impact}")
+                    if duplicates_rejected > 0:
+                        filter_summary.append(f"duplicates: {duplicates_rejected}")
+                    
+                    filter_str = f" ({', '.join(filter_summary)})" if filter_summary else ""
+                    logger.info(f"✅ {feed_name}: Added {articles_added} articles{filter_str}")
+                    
+                    # Note: Topic clustering will be handled by periodic background tasks
+                    # Articles are now in database and will be picked up by scheduled clustering
+                    if articles_added > 0:
+                        logger.debug(f"📊 {articles_added} new articles added - will be processed by topic clustering scheduler")
+                    
+                    return {
+                        'articles_added': articles_added,
+                        'duplicates': duplicates_rejected,
+                        'excluded': excluded_count,
+                        'filtered_clickbait': filtered_clickbait,
+                        'filtered_ads': filtered_ads,
+                        'filtered_quality': filtered_quality,
+                        'filtered_impact': filtered_impact,
+                        'error': None
+                    }
+                    
+                except TimeoutError:
+                    logger.error(f"⏱️ Timeout processing feed: {feed_name}")
+                    feed_conn.rollback()
+                    return {'articles_added': 0, 'duplicates': 0, 'excluded': 0, 'error': 'Timeout'}
+                except Exception as e:
+                    logger.error(f"❌ Error processing feed {feed_name}: {e}")
+                    feed_conn.rollback()
+                    return {'articles_added': 0, 'duplicates': 0, 'excluded': 0, 'error': str(e)}
+                finally:
+                    feed_cur.close()
+                    
+            finally:
+                if feed_conn:
+                    feed_conn.close()
         
-        conn.commit()
+        # Process feeds in parallel (max 5 concurrent to avoid overwhelming DB)
+        logger.info(f"🚀 Processing {len(feeds)} feeds in parallel (max 5 concurrent)...")
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            results = list(executor.map(process_single_feed, feeds))
         
-        # Log final results
-        logger.info(f"RSS collection completed:")
-        logger.info(f"  Articles added: {total_articles_added}")
+        # Aggregate results from parallel processing
+        for result in results:
+            total_articles_added += result.get('articles_added', 0)
+            total_duplicates_rejected += result.get('duplicates', 0)
+            total_excluded += result.get('excluded', 0)
+            total_filtered_clickbait += result.get('filtered_clickbait', 0)
+            total_filtered_ads += result.get('filtered_ads', 0)
+            total_filtered_quality += result.get('filtered_quality', 0)
+            total_filtered_impact += result.get('filtered_impact', 0)
+        
+        # Note: No need to commit here - each feed connection commits its own transaction
+        
+        # Log final results with detailed breakdown
+        logger.info(f"📊 RSS collection completed:")
+        logger.info(f"  ✅ Articles added: {total_articles_added}")
+        if total_duplicates_rejected > 0:
+            logger.info(f"  🔄 Duplicates rejected: {total_duplicates_rejected}")
         if total_excluded > 0:
-            logger.info(f"  Articles excluded (sports/entertainment/pop culture): {total_excluded}")
-        if dedup_manager and total_duplicates_rejected > 0:
-            logger.info(f"  Duplicates rejected: {total_duplicates_rejected}")
+            logger.info(f"  🚫 Total articles filtered: {total_excluded}")
+            if total_filtered_clickbait > 0:
+                logger.info(f"     - Clickbait: {total_filtered_clickbait}")
+            if total_filtered_ads > 0:
+                logger.info(f"     - Advertisements: {total_filtered_ads}")
+            if total_filtered_quality > 0:
+                logger.info(f"     - Low quality score (<0.4): {total_filtered_quality}")
+            if total_filtered_impact > 0:
+                logger.info(f"     - Low impact score (<0.4): {total_filtered_impact}")
+            # Content exclusion (sports/entertainment) is the remainder
+            content_excluded = total_excluded - total_filtered_clickbait - total_filtered_ads - total_filtered_quality - total_filtered_impact
+            if content_excluded > 0:
+                logger.info(f"     - Content exclusion (sports/entertainment): {content_excluded}")
         
         return total_articles_added
         
@@ -773,6 +1007,30 @@ def collect_rss_feed(feed_url: str, feed_name: str = "Unknown") -> int:
                     logger.debug(f"Skipping excluded article: {title[:60]}...")
                     continue
                 
+                # Filter clickbait titles (but allow press releases/official filings)
+                if is_clickbait_title(title):
+                    logger.debug(f"Skipping clickbait article: {title[:60]}...")
+                    continue
+                
+                # Filter advertisements (but allow press releases/official filings)
+                if is_advertisement(title, content, url):
+                    logger.debug(f"Skipping advertisement: {title[:60]}...")
+                    continue
+                
+                # Calculate scores for threshold filtering
+                impact_score = calculate_article_impact_score(title, content)
+                quality_score = calculate_article_quality_score(title, content, feed_name)
+                
+                # Filter by minimum quality score (>= 0.4)
+                if quality_score < 0.4:
+                    logger.debug(f"Skipping article (quality score {quality_score:.2f} < 0.4): {title[:60]}...")
+                    continue
+                
+                # Filter by minimum impact score (>= 0.4)
+                if impact_score < 0.4:
+                    logger.debug(f"Skipping article (impact score {impact_score:.2f} < 0.4): {title[:60]}...")
+                    continue
+                
                 published_date = None
                 if hasattr(entry, 'published_parsed') and entry.published_parsed:
                     published_date = datetime(*entry.published_parsed[:6])
@@ -810,21 +1068,39 @@ def collect_rss_feed(feed_url: str, feed_name: str = "Unknown") -> int:
                     logger.debug(f"Skipping duplicate article: {title[:60]}...")
                     continue
                 
-                # Calculate impact and quality scores
-                impact_score = calculate_article_impact_score(title, content)
-                quality_score = calculate_article_quality_score(title, content, feed_name)
+                # Calculate domain-specific bias score
+                # Determine domain from schema_name
+                domain_key = schema_name.replace('_', '-') if schema_name in ['science_tech'] else schema_name
+                bias_score = calculate_domain_bias_score(domain_key, title, content, feed_name)
                 
-                # Insert article into domain schema (v4.0) with quality score
+                # Insert article into domain schema (v4.0) with quality score and bias score
+                # (scores already calculated above)
                 cur.execute(f"""
                     INSERT INTO {schema_name}.articles
-                    (title, url, content, summary, published_at, created_at, source_domain, quality_score)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    (title, url, content, summary, published_at, created_at, source_domain, quality_score, bias_score)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING id
                 """, (
-                    title, url, content, None, published_date, datetime.now(), feed_name, quality_score
+                    title, url, content, None, published_date, datetime.now(), feed_name, quality_score, bias_score
                 ))
                 
-                if cur.rowcount > 0:
+                result = cur.fetchone()
+                if result and cur.rowcount > 0:
+                    article_id = result[0]
                     articles_added += 1
+                    
+                    # Auto-queue article for LLM topic extraction
+                    try:
+                        cur.execute(f"""
+                            INSERT INTO {schema_name}.topic_extraction_queue
+                            (article_id, status, priority, created_at)
+                            VALUES (%s, 'pending', 2, NOW())
+                            ON CONFLICT (article_id) DO NOTHING
+                        """, (article_id,))
+                        conn.commit()
+                    except Exception as queue_error:
+                        logger.debug(f"Could not queue article {article_id} for topic extraction: {queue_error}")
+                        # Non-critical, continue processing
                     
             except Exception as e:
                 logger.warning(f"Error processing article: {e}")

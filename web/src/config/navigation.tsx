@@ -21,6 +21,7 @@ import {
   AccountTree as HierarchyIcon,
   TrendingUp as ImpactIcon,
   MenuBook as KnowledgeIcon,
+  FilterList as FilterListIcon,
 } from '@mui/icons-material';
 
 export interface NavigationItem {
@@ -96,6 +97,13 @@ export const mainNavigationItems: NavigationItem[] = [
     icon: <RssFeedIcon />,
     path: '/rss-feeds',
     description: 'Manage news sources and feeds',
+    category: 'main',
+  },
+  {
+    text: 'Filtered Articles',
+    icon: <FilterListIcon />,
+    path: '/articles/filtered',
+    description: 'Review and manage filtered articles',
     category: 'main',
   },
   {

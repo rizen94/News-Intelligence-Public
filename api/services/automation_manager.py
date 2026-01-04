@@ -72,9 +72,9 @@ class AutomationManager:
         
         # Task schedules (cron-like) - Sequential processing with proper dependencies
         self.schedules = {
-            # PHASE 1: Data Collection (Every 10 minutes)
+            # PHASE 1: Data Collection (Every hour - reduced from 10 minutes)
             'rss_processing': {
-                'interval': 600,  # 10 minutes - Base collection cycle
+                'interval': 3600,  # 1 hour - Reduced frequency, cron handles twice-daily
                 'last_run': None,
                 'enabled': True,
                 'priority': TaskPriority.CRITICAL,
@@ -83,20 +83,20 @@ class AutomationManager:
                 'estimated_duration': 120  # 2 minutes
             },
             
-            # PHASE 2: Article Processing (Starts 3 minutes after RSS)
+            # PHASE 2: Article Processing (Runs frequently, processes existing articles)
             'article_processing': {
-                'interval': 600,  # 10 minutes - Same cycle as RSS
+                'interval': 600,  # 10 minutes - Frequent processing of existing articles
                 'last_run': None,
                 'enabled': True,
                 'priority': TaskPriority.HIGH,
                 'phase': 2,
-                'depends_on': ['rss_processing'],
+                'depends_on': [],  # Can process articles already in database, no RSS dependency
                 'estimated_duration': 180  # 3 minutes
             },
             
-            # PHASE 3: ML Processing (Starts 6 minutes after RSS)
+            # PHASE 3: ML Processing (Runs frequently on processed articles)
             'ml_processing': {
-                'interval': 600,  # 10 minutes - Same cycle as RSS
+                'interval': 600,  # 10 minutes - Frequent ML processing
                 'last_run': None,
                 'enabled': True,
                 'priority': TaskPriority.HIGH,
@@ -116,9 +116,9 @@ class AutomationManager:
                 'estimated_duration': 180  # 3 minutes - processes articles incrementally
             },
             
-            # PHASE 4: Parallel ML & Entity Processing (Starts 6 minutes after RSS)
+            # PHASE 4: Parallel ML & Entity Processing (Runs frequently)
             'entity_extraction': {
-                'interval': 600,  # 10 minutes - Same cycle as RSS
+                'interval': 600,  # 10 minutes - Frequent entity extraction
                 'last_run': None,
                 'enabled': True,
                 'priority': TaskPriority.NORMAL,
@@ -128,9 +128,9 @@ class AutomationManager:
                 'parallel_group': 'ml_entity_processing'  # Can run in parallel with ML
             },
             
-            # PHASE 4: Parallel ML & Entity Processing (Starts 6 minutes after RSS)
+            # PHASE 4: Parallel ML & Entity Processing (Runs frequently)
             'quality_scoring': {
-                'interval': 600,  # 10 minutes - Same cycle as RSS
+                'interval': 600,  # 10 minutes - Frequent quality scoring
                 'last_run': None,
                 'enabled': True,
                 'priority': TaskPriority.NORMAL,
@@ -140,9 +140,9 @@ class AutomationManager:
                 'parallel_group': 'ml_entity_processing'  # Can run in parallel with ML
             },
             
-            # PHASE 4: Parallel ML & Entity Processing (Starts 6 minutes after RSS)
+            # PHASE 4: Parallel ML & Entity Processing (Runs frequently)
             'sentiment_analysis': {
-                'interval': 600,  # 10 minutes - Same cycle as RSS
+                'interval': 600,  # 10 minutes - Frequent sentiment analysis
                 'last_run': None,
                 'enabled': True,
                 'priority': TaskPriority.NORMAL,

@@ -13,6 +13,7 @@ import DomainRouteGuard from '../DomainRouteGuard/DomainRouteGuard';
 import Dashboard from '../../../pages/Dashboard/Dashboard';
 import Articles from '../../../pages/Articles/Articles';
 import ArticleDeduplicationManager from '../../../pages/Articles/ArticleDeduplicationManager';
+import FilteredArticles from '../../../pages/FilteredArticles/FilteredArticles';
 import Storylines from '../../../pages/Storylines/Storylines';
 import StorylineDetail from '../../../pages/Storylines/StorylineDetail';
 import StorylineDiscovery from '../../../pages/Storylines/StorylineDiscovery';
@@ -72,6 +73,7 @@ const DomainLayout: React.FC = () => {
         <Route path="articles" element={<Articles />} />
         <Route path="articles/:id" element={<ArticleDetail />} />
         <Route path="articles/duplicates" element={<ArticleDeduplicationManager />} />
+        <Route path="articles/filtered" element={<FilteredArticles />} />
 
         {/* Storylines - Core feature with RAG-enhanced discovery and AI analysis */}
         <Route path="storylines" element={<Storylines />} />

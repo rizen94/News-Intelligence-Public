@@ -3,7 +3,7 @@ Domain 1: News Aggregation Routes
 Handles RSS feed processing, article ingestion, and content quality assessment
 """
 
-from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks, Path, Query
+from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks, Path, Query, Body
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
 import logging
@@ -77,25 +77,55 @@ async def get_domain_rss_feeds(
                     raise HTTPException(status_code=400, detail=f"Domain {domain} not found")
                 schema_name = result[0]
             
-            # Get feeds from domain schema
+            # Get feeds from domain schema with article counts and all metadata
             with conn.cursor() as cur:
                 cur.execute(f"""
-                    SELECT id, feed_name, feed_url, is_active, last_fetched_at, 
-                           fetch_interval_seconds, created_at
-                    FROM {schema_name}.rss_feeds 
-                    ORDER BY feed_name
+                    SELECT 
+                        rf.id, 
+                        rf.feed_name, 
+                        rf.feed_url, 
+                        rf.description,
+                        rf.category,
+                        rf.is_active, 
+                        rf.last_fetched_at, 
+                        rf.fetch_interval_seconds, 
+                        rf.created_at,
+                        rf.updated_at,
+                        rf.last_error_message,
+                        COALESCE(article_counts.article_count, 0) as article_count
+                    FROM {schema_name}.rss_feeds rf
+                    LEFT JOIN (
+                        SELECT 
+                            source_domain,
+                            COUNT(*) as article_count
+                        FROM {schema_name}.articles
+                        GROUP BY source_domain
+                    ) article_counts ON rf.feed_name = article_counts.source_domain
+                    ORDER BY rf.feed_name
                 """)
                 
                 feeds = []
                 for row in cur.fetchall():
+                    # Convert fetch_interval_seconds to minutes for frontend (update_interval)
+                    fetch_interval_seconds = row[7] if row[7] else 1800  # Default 30 minutes
+                    update_interval_minutes = fetch_interval_seconds // 60
+                    
                     feeds.append({
                         "id": row[0],
-                        "feed_name": row[1],
-                        "feed_url": row[2],
-                        "is_active": row[3],
-                        "last_fetched_at": row[4].isoformat() if row[4] else None,
-                        "fetch_interval_seconds": row[5],
-                        "created_at": row[6].isoformat() if row[6] else None
+                        "name": row[1],  # Frontend expects "name" not "feed_name"
+                        "feed_name": row[1],  # Keep both for compatibility
+                        "url": row[2],  # Frontend expects "url" not "feed_url"
+                        "feed_url": row[2],  # Keep both for compatibility
+                        "description": row[3] if row[3] else None,
+                        "category": row[4] if row[4] else None,
+                        "is_active": row[5],
+                        "last_fetched_at": row[6].isoformat() if row[6] else None,
+                        "update_interval": update_interval_minutes,  # Frontend expects minutes
+                        "fetch_interval_seconds": fetch_interval_seconds,  # Keep for API compatibility
+                        "created_at": row[8].isoformat() if row[8] else None,
+                        "updated_at": row[9].isoformat() if row[9] else None,
+                        "last_error": row[10] if row[10] else None,
+                        "article_count": row[11] if len(row) > 11 else 0
                     })
                 
                 return {
@@ -285,7 +315,7 @@ async def fetch_articles_from_feeds(background_tasks: BackgroundTasks):
 @router.get("/{domain}/articles")
 async def get_domain_articles(
     domain: str = Path(..., regex="^(politics|finance|science-tech)$", description="Domain key"),
-    limit: int = Query(50, ge=1, le=500, description="Maximum number of articles"),
+    limit: int = Query(50, ge=1, le=100, description="Maximum number of articles (max 100 for performance)"),
     offset: int = Query(0, ge=0, description="Number of articles to skip"),
     hours: Optional[int] = Query(None, ge=1, description="Filter articles from last N hours"),
     search: Optional[str] = Query(None, description="Search in title and content"),
@@ -372,6 +402,91 @@ async def get_domain_article(
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Error fetching article {article_id} from domain {domain}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.delete("/{domain}/articles/{article_id}")
+async def delete_domain_article(
+    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    article_id: int = Path(..., description="Article ID")
+):
+    """Delete an article from a specific domain"""
+    try:
+        # Validate domain
+        if not validate_domain(domain):
+            raise HTTPException(status_code=400, detail=f"Invalid or inactive domain: {domain}")
+        
+        schema = domain.replace('-', '_')
+        
+        conn = get_db_connection()
+        if not conn:
+            raise HTTPException(status_code=500, detail="Database connection failed")
+        
+        try:
+            with conn.cursor() as cur:
+                # Check if article exists
+                cur.execute(f"SELECT id FROM {schema}.articles WHERE id = %s", (article_id,))
+                if not cur.fetchone():
+                    raise HTTPException(status_code=404, detail=f"Article {article_id} not found in domain {domain}")
+                
+                # Delete article (cascade will handle related records)
+                cur.execute(f"DELETE FROM {schema}.articles WHERE id = %s", (article_id,))
+                conn.commit()
+                
+                return {
+                    'success': True,
+                    'message': f'Article {article_id} deleted successfully',
+                    'domain': domain
+                }
+        finally:
+            conn.close()
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting article {article_id} from domain {domain}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.delete("/{domain}/articles")
+async def delete_domain_articles_bulk(
+    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    article_ids: List[int] = Body(..., description="List of article IDs to delete")
+):
+    """Bulk delete articles from a specific domain"""
+    try:
+        # Validate domain
+        if not validate_domain(domain):
+            raise HTTPException(status_code=400, detail=f"Invalid or inactive domain: {domain}")
+        
+        if not article_ids:
+            raise HTTPException(status_code=400, detail="No article IDs provided")
+        
+        schema = domain.replace('-', '_')
+        
+        conn = get_db_connection()
+        if not conn:
+            raise HTTPException(status_code=500, detail="Database connection failed")
+        
+        try:
+            with conn.cursor() as cur:
+                # Delete articles
+                placeholders = ','.join(['%s'] * len(article_ids))
+                cur.execute(f"DELETE FROM {schema}.articles WHERE id IN ({placeholders})", article_ids)
+                deleted_count = cur.rowcount
+                conn.commit()
+                
+                return {
+                    'success': True,
+                    'message': f'Deleted {deleted_count} article(s) successfully',
+                    'deleted_count': deleted_count,
+                    'domain': domain
+                }
+        finally:
+            conn.close()
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error bulk deleting articles from domain {domain}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 # Legacy endpoint for backward compatibility (redirects to politics domain)

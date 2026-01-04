@@ -85,7 +85,7 @@ async def get_domain_emerging_storylines(
 @router.get("/{domain}/storylines")
 async def get_domain_storylines(
     domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
-    limit: int = Query(100, ge=1, le=500, description="Maximum number of storylines"),
+    limit: int = Query(100, ge=1, le=200, description="Maximum number of storylines (max 200 for performance)"),
     offset: int = Query(0, ge=0, description="Number of storylines to skip"),
     status: Optional[str] = Query(None, description="Filter by status")
 ):
@@ -476,7 +476,7 @@ async def add_article_to_domain_storyline(
 async def get_domain_available_articles_for_storyline(
     domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
     storyline_id: int = Path(..., description="Storyline ID"),
-    limit: int = Query(50, ge=1, le=500),
+    limit: int = Query(50, ge=1, le=100),  # Max 100 for performance
     search: Optional[str] = Query(None)
 ):
     """Get articles that can be added to a storyline (not already in it) from a specific domain"""

@@ -13,7 +13,7 @@
  * - Preprocessing statistics
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, memo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Box,
@@ -1767,4 +1767,5 @@ const Dashboard: React.FC = () => {
   );
 };
 
-export default Dashboard;
+// Memoize Dashboard component to prevent unnecessary re-renders
+export default memo(Dashboard);

@@ -30,8 +30,9 @@ class TopicInsight:
 class AdvancedTopicExtractor:
     """Advanced topic extraction using multiple techniques"""
     
-    def __init__(self, db_connection_func):
+    def __init__(self, db_connection_func, schema: str = "politics"):
         self.get_db_connection = db_connection_func
+        self.schema = schema
         
         # Topic categories for better organization
         self.topic_categories = {
@@ -217,9 +218,9 @@ class AdvancedTopicExtractor:
                     # Get recent articles
                     cutoff_time = datetime.now() - timedelta(hours=time_period_hours)
                     
-                    cur.execute("""
+                    cur.execute(f"""
                         SELECT id, title, content, summary, published_at, sentiment_score, source_domain
-                        FROM articles 
+                        FROM {self.schema}.articles 
                         WHERE created_at >= %s 
                         AND content IS NOT NULL 
                         AND LENGTH(content) > 100
@@ -263,10 +264,10 @@ class AdvancedTopicExtractor:
         topics.extend(entity_topics)
         
         # Technique 3: Keyword frequency analysis (LOWEST PRIORITY - single words)
-        # Only extract if we don't have many phrase/entity topics
-        if len(phrase_topics) + len(entity_topics) < 20:
-            keyword_topics = self._extract_keyword_topics(articles)
-            topics.extend(keyword_topics)
+        # Always extract keywords to ensure we get a large pool of topics
+        # Removed the condition that limited extraction - we want more topics
+        keyword_topics = self._extract_keyword_topics(articles)
+        topics.extend(keyword_topics)
         
         # Merge similar topics (phrases take precedence)
         topics = self._merge_similar_topics(topics)
@@ -274,8 +275,9 @@ class AdvancedTopicExtractor:
         # Sort by relevance score and frequency (phrases should rank higher)
         topics.sort(key=lambda t: (t.relevance_score, t.frequency), reverse=True)
         
-        # Limit to top 50 topics total for quality
-        return topics[:50]
+        # Increased limit to 200 topics for larger pool (was 50)
+        # This allows more granular topics like "Donald Trump", "2026 elections", etc.
+        return topics[:200]
     
     def _extract_keyword_topics(self, articles: List[Tuple]) -> List[TopicInsight]:
         """Extract topics based on keyword frequency - prioritize meaningful words"""
@@ -304,11 +306,12 @@ class AdvancedTopicExtractor:
                 word_freq[word] += 1
                 article_keywords[word].append(article_id)
         
-        # Create topics from frequent keywords with higher threshold
+        # Create topics from frequent keywords with LOWER threshold for more granular topics
         topics = []
-        for word, freq in word_freq.most_common(30):  # Top 30 keywords (fewer, better quality)
-            # Higher frequency threshold - must appear in at least 3 articles
-            if freq >= 3 and len(word) >= 4:
+        for word, freq in word_freq.most_common(100):  # Top 100 keywords (increased from 30)
+            # LOWER frequency threshold - allow topics appearing in just 1 article
+            # This captures more specific, granular topics like "Trump", "elections", etc.
+            if freq >= 1 and len(word) >= 4:
                 # Filter out words that are too generic or common
                 if not self._is_too_generic(word):
                     topics.append(TopicInsight(
@@ -361,8 +364,9 @@ class AdvancedTopicExtractor:
         
         for article_id, title, content, summary, published_at, sentiment_score, source_domain in articles:
             # Use title and summary primarily (they contain the most relevant phrases)
-            # Also include first paragraph of content for additional context
-            content_preview = (content or '')[:500] if content else ''  # First 500 chars
+            # Include MORE content from body for better topic extraction (increased from 500 to 2000 chars)
+            # This helps capture topics mentioned deeper in articles
+            content_preview = (content or '')[:2000] if content else ''  # First 2000 chars (was 500)
             raw_text = f"{title} {summary or ''} {content_preview}"
             
             # Clean text to remove HTML, URLs, and web artifacts
@@ -424,11 +428,12 @@ class AdvancedTopicExtractor:
                         phrase_freq[phrase] += 1
                         article_phrases[phrase].append(article_id)
         
-        # Create topics from frequent phrases with higher threshold
+        # Create topics from frequent phrases with LOWER threshold for more granular topics
         topics = []
-        for phrase, freq in phrase_freq.most_common(50):  # Top 50 phrases
-            # Higher threshold - must appear in at least 2 articles
-            if freq >= 2:
+        for phrase, freq in phrase_freq.most_common(150):  # Top 150 phrases (increased from 50)
+            # LOWER threshold - allow topics appearing in just 1 article
+            # This captures specific topics like "Donald Trump", "2026 elections", etc.
+            if freq >= 1:
                 # Filter out generic phrases
                 if not self._is_too_generic_phrase(phrase):
                     topics.append(TopicInsight(
@@ -523,19 +528,29 @@ class AdvancedTopicExtractor:
             'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'
         }
         
-        # Extract entities from titles and summaries (where they're most prominent)
+        # Extract entities from titles, summaries, AND content (expanded for better coverage)
         for article_id, title, content, summary, published_at, sentiment_score, source_domain in articles:
-            raw_text = f"{title} {summary or ''}"
+            # Include more content to capture entities mentioned in body text
+            content_preview = (content or '')[:1500] if content else ''  # First 1500 chars
+            raw_text = f"{title} {summary or ''} {content_preview}"
             
             # Clean text to remove HTML, URLs, and web artifacts
             text = self._clean_text_for_topic_extraction(raw_text)
             
-            # Find capitalized words (potential entities)
+            # Find capitalized words (potential entities) - MORE AGGRESSIVE
             # Pattern: word starting with capital letter, followed by lowercase
-            entities = re.findall(r'\b[A-Z][a-z]{3,}\b', text)  # Minimum 4 chars
+            # Reduced minimum length from 4 to 3 to capture names like "Biden", "Trump", etc.
+            entities = re.findall(r'\b[A-Z][a-z]{2,}\b', text)  # Minimum 3 chars (was 4)
             
-            # Also find multi-word capitalized entities (e.g., "United States", "New York")
+            # Also find multi-word capitalized entities (e.g., "United States", "New York", "Donald Trump")
+            # More aggressive pattern to capture person names and specific events
             multi_word_entities = re.findall(r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+\b', text)
+            
+            # Also capture year-based topics (e.g., "2026 elections", "2024 campaign")
+            year_entities = re.findall(r'\b(20\d{2})\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\b', text)
+            for year, topic in year_entities:
+                if len(topic) >= 3:  # Minimum topic length
+                    multi_word_entities.append(f"{year} {topic}")
             
             for entity in entities + multi_word_entities:
                 entity_lower = entity.lower()
@@ -554,11 +569,12 @@ class AdvancedTopicExtractor:
                             entity_freq[entity] += 1
                             article_entities[entity].append(article_id)
         
-        # Create topics from frequent entities with higher threshold
+        # Create topics from frequent entities with LOWER threshold for more granular topics
         topics = []
-        for entity, freq in entity_freq.most_common(25):  # Top 25 entities
-            # Must appear in at least 2 articles
-            if freq >= 2 and len(entity) >= 4:
+        for entity, freq in entity_freq.most_common(100):  # Top 100 entities (increased from 25)
+            # LOWER threshold - allow entities appearing in just 1 article
+            # This captures specific people, places, events like "Donald Trump", "White House", etc.
+            if freq >= 1 and len(entity) >= 3:  # Reduced min length from 4 to 3 for names like "Biden"
                 # Filter out entities that are too generic
                 if not self._is_too_generic(entity):
                     topics.append(TopicInsight(
@@ -749,50 +765,142 @@ class AdvancedTopicExtractor:
         return word_cloud_data
     
     def save_topics_to_database(self, topics: List[TopicInsight]) -> bool:
-        """Save extracted topics to database"""
+        """Save extracted topics to database with transaction rollback on error"""
+        conn = None
         try:
             conn = self.get_db_connection()
             if not conn:
+                logger.error("Failed to get database connection")
                 return False
             
             try:
+                # Use transaction context (psycopg2 uses autocommit=False by default)
                 with conn.cursor() as cur:
+                    # Set search path to domain schema
+                    cur.execute(f"SET search_path TO {self.schema}, public")
+                    
+                    topics_saved = 0
+                    relationships_saved = 0
+                    
+                    for topic_idx, topic in enumerate(topics, 1):
+                        try:
+                            # Check if topic cluster already exists (no UNIQUE constraint, so we check manually)
+                            cur.execute(f"SELECT id FROM {self.schema}.topic_clusters WHERE cluster_name = %s", (topic.name,))
+                            existing = cur.fetchone()
+                            
+                            if existing:
+                                # Update existing topic cluster incrementally
+                                topic_id = existing[0]
+                                cur.execute(f"""
+                                    UPDATE {self.schema}.topic_clusters
+                                    SET 
+                                        updated_at = NOW(),
+                                        relevance_score = GREATEST(relevance_score, %s)
+                                    WHERE id = %s
+                                """, (topic.relevance_score, topic_id))
+                            else:
+                                # Insert new topic cluster
+                                cur.execute(f"""
+                                    INSERT INTO {self.schema}.topic_clusters (cluster_name, created_at, updated_at)
+                                    VALUES (%s, NOW(), NOW())
+                                    RETURNING id
+                                """, (topic.name,))
+                                row = cur.fetchone()
+                                if row and len(row) > 0:
+                                    topic_id = row[0]
+                                else:
+                                    raise Exception(f"Failed to create topic cluster '{topic.name}'")
+                            
+                            # Insert article-topic relationships
+                            for article_id in topic.articles:
+                                try:
+                                    # confidence_score has default value, but we'll set it explicitly
+                                    cur.execute(f"""
+                                        INSERT INTO {self.schema}.article_topic_clusters 
+                                            (article_id, topic_cluster_id, relevance_score, confidence_score)
+                                        VALUES (%s, %s, %s, %s)
+                                        ON CONFLICT (article_id, topic_cluster_id) DO UPDATE SET
+                                            relevance_score = EXCLUDED.relevance_score,
+                                            confidence_score = EXCLUDED.confidence_score
+                                    """, (article_id, topic_id, topic.relevance_score, topic.relevance_score))
+                                    relationships_saved += 1
+                                except Exception as rel_error:
+                                    logger.warning(f"Failed to save relationship for article {article_id} to topic {topic_id}: {rel_error}")
+                                    # Continue with other relationships
+                                    continue
+                            
+                            # Save keywords to topic_keywords table for word cloud
+                            for keyword in topic.keywords:
+                                try:
+                                    # Use EXCLUDED for ON CONFLICT updates (PostgreSQL syntax)
+                                    cur.execute(f"""
+                                        INSERT INTO {self.schema}.topic_keywords 
+                                            (topic_cluster_id, keyword, keyword_type, frequency_count, importance_score, last_seen_at)
+                                        VALUES (%s, %s, %s, %s, %s, NOW())
+                                        ON CONFLICT (topic_cluster_id, keyword) DO UPDATE SET
+                                            frequency_count = {self.schema}.topic_keywords.frequency_count + 1,
+                                            importance_score = GREATEST({self.schema}.topic_keywords.importance_score, EXCLUDED.importance_score),
+                                            last_seen_at = NOW()
+                                    """, (
+                                        topic_id,
+                                        keyword,
+                                        'general',  # Can be enhanced to detect entity types
+                                        topic.frequency,
+                                        topic.relevance_score
+                                    ))
+                                except Exception as keyword_error:
+                                    logger.warning(f"Failed to save keyword '{keyword}' for topic '{topic.name}': {keyword_error}")
+                                    continue
+                            
+                            topics_saved += 1
+                            logger.debug(f"Saved topic {topic_idx}/{len(topics)}: '{topic.name}' ({len(topic.articles)} articles, {len(topic.keywords)} keywords)")
+                            
+                        except Exception as topic_error:
+                            logger.error(f"Failed to save topic '{topic.name}': {topic_error}")
+                            logger.exception("Topic save error traceback:")
+                            # Continue with other topics instead of failing entire batch
+                            continue
+                    
+                    # Update topic cluster article_count
                     for topic in topics:
-                        # Insert or update topic cluster
-                        cur.execute("""
-                            INSERT INTO topic_clusters (topic_name, created_at)
-                            VALUES (%s, NOW())
-                            ON CONFLICT (topic_name) DO UPDATE SET
-                                created_at = topic_clusters.created_at
-                            RETURNING id
-                        """, (topic.name,))
-                        row = cur.fetchone()
-                        if row and len(row) > 0:
-                            topic_id = row[0]
-                        else:
-                            # Fallback: fetch id for existing topic
-                            cur.execute("SELECT id FROM topic_clusters WHERE topic_name = %s", (topic.name,))
-                            fetched = cur.fetchone()
-                            if not fetched:
-                                raise Exception(f"Failed to retrieve topic_id for '{topic.name}'")
-                            topic_id = fetched[0]
-                        
-                        # Insert article-topic relationships
-                        for article_id in topic.articles:
-                            cur.execute("""
-                                INSERT INTO article_topics (article_id, topic_id, relevance_score)
-                                VALUES (%s, %s, %s)
-                                ON CONFLICT (article_id, topic_id) DO UPDATE SET
-                                    relevance_score = EXCLUDED.relevance_score
-                            """, (article_id, topic_id, topic.relevance_score))
+                        try:
+                            cur.execute(f"""
+                                UPDATE {self.schema}.topic_clusters
+                                SET article_count = (
+                                    SELECT COUNT(*) 
+                                    FROM {self.schema}.article_topic_clusters 
+                                    WHERE topic_cluster_id = {self.schema}.topic_clusters.id
+                                ),
+                                updated_at = NOW()
+                                WHERE cluster_name = %s
+                            """, (topic.name,))
+                        except Exception as update_error:
+                            logger.warning(f"Failed to update article_count for topic '{topic.name}': {update_error}")
                     
+                    # Commit transaction if we got here
                     conn.commit()
-                    logger.info(f"Saved {len(topics)} topics to database")
-                    return True
+                    logger.info(f"✅ Successfully saved {topics_saved}/{len(topics)} topics, {relationships_saved} relationships, and keywords to database")
+                    return topics_saved > 0  # Return True if at least one topic was saved
                     
+            except Exception as db_error:
+                # Rollback transaction on any error
+                if conn:
+                    try:
+                        conn.rollback()
+                        logger.error(f"❌ Database error, transaction rolled back: {db_error}")
+                    except Exception as rollback_error:
+                        logger.error(f"❌ Failed to rollback transaction: {rollback_error}")
+                logger.exception("Database error traceback:")
+                return False
             finally:
-                conn.close()
+                # Close connection
+                if conn:
+                    try:
+                        conn.close()
+                    except Exception as close_error:
+                        logger.warning(f"Error closing connection: {close_error}")
                 
         except Exception as e:
-            logger.error(f"Error saving topics to database: {e}")
+            logger.error(f"❌ Error saving topics to database: {e}")
+            logger.exception("Full error traceback:")
             return False

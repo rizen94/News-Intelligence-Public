@@ -1,6 +1,7 @@
 """
 Bias Detection Service
 Analyzes political bias in articles and sources, similar to Ground News
+Domain-aware: Only applies political bias detection to politics domain
 """
 
 import logging
@@ -12,6 +13,75 @@ from sqlalchemy import text
 import json
 
 logger = logging.getLogger(__name__)
+
+def calculate_domain_bias_score(domain: str, title: str, content: str, source: str = "") -> Optional[float]:
+    """
+    Calculate bias score for an article based on domain.
+    
+    Args:
+        domain: Domain name ('politics', 'finance', 'science-tech')
+        title: Article title
+        content: Article content
+        source: Source name/domain
+        
+    Returns:
+        bias_score: Float between -1.0 and 1.0, or None if bias detection not applicable
+    """
+    # Only apply bias detection to politics domain
+    if domain not in ['politics']:
+        # Finance and science-tech don't need political bias detection
+        return None
+    
+    # For politics domain, use simplified political bias detection
+    try:
+        text_lower = f"{title} {content}".lower()
+        
+        # Political bias keywords
+        left_keywords = [
+            'progressive', 'liberal', 'democratic', 'socialist', 'equality', 'diversity',
+            'climate change', 'environmental', 'healthcare', 'union', 'minimum wage',
+            'social justice', 'civil rights', 'immigration reform', 'gun control',
+            'abortion rights', 'lgbtq', 'feminist', 'woke', 'systemic racism'
+        ]
+        
+        right_keywords = [
+            'conservative', 'republican', 'libertarian', 'traditional', 'patriot',
+            'free market', 'capitalism', 'tax cuts', 'small government', 'states rights',
+            'constitutional', 'law and order', 'border security', 'immigration control',
+            'gun rights', 'pro-life', 'family values', 'religious', 'america first'
+        ]
+        
+        # Count keyword matches
+        left_count = sum(1 for kw in left_keywords if kw in text_lower)
+        right_count = sum(1 for kw in right_keywords if kw in text_lower)
+        
+        # Calculate bias score (-1.0 to 1.0)
+        total_keywords = left_count + right_count
+        if total_keywords == 0:
+            return 0.0  # No political keywords found, neutral
+        
+        # Normalize to -1.0 to 1.0 range
+        bias_score = (right_count - left_count) / max(total_keywords, 1)
+        
+        # Apply source bias if known
+        known_left_sources = ['cnn', 'msnbc', 'new york times', 'washington post', 'guardian']
+        known_right_sources = ['fox news', 'breitbart', 'daily wire', 'newsmax']
+        
+        source_lower = source.lower()
+        source_bias = 0.0
+        if any(s in source_lower for s in known_left_sources):
+            source_bias = -0.3
+        elif any(s in source_lower for s in known_right_sources):
+            source_bias = 0.3
+        
+        # Combine content bias (70%) and source bias (30%)
+        final_score = (bias_score * 0.7) + (source_bias * 0.3)
+        
+        return max(-1.0, min(1.0, final_score))
+        
+    except Exception as e:
+        logger.warning(f"Error calculating bias score: {e}")
+        return 0.0  # Default to neutral on error
 
 class BiasDetectionService:
     def __init__(self, db: Session):

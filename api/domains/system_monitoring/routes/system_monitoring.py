@@ -3,16 +3,34 @@ Domain 6: System Monitoring Routes
 Handles system metrics, health monitoring, and alerts
 """
 
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Query
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
 import logging
 import psutil
 import os
+import sys
+from collections import defaultdict
 
 from shared.database.connection import get_db_connection
+from shared.services.response_cache import cached_response
 
 logger = logging.getLogger(__name__)
+
+# Import filtering functions from RSS collector
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))), 'collectors'))
+try:
+    from rss_collector import (
+        is_excluded_content,
+        is_clickbait_title,
+        is_advertisement,
+        calculate_article_quality_score,
+        calculate_article_impact_score
+    )
+    FILTERING_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"Filtering functions not available: {e}")
+    FILTERING_AVAILABLE = False
 
 router = APIRouter(
     prefix="/api/v4/system_monitoring",
@@ -21,6 +39,7 @@ router = APIRouter(
 )
 
 @router.get("/health")
+@cached_response(ttl=30)  # Cache health checks for 30 seconds
 async def health_check():
     """Health check for System Monitoring domain"""
     try:
@@ -44,19 +63,48 @@ async def health_check():
         except Exception:
             pass
         
-        # Check database connection
+        # Check database connection (with quick timeout to prevent stalling)
         db_status = "healthy"
         try:
-            conn = get_db_connection()
-            if conn:
-                with conn.cursor() as cur:
-                    cur.execute("SELECT 1")
-                conn.close()
+            import threading
+            import queue
+            
+            result_queue = queue.Queue()
+            exception_queue = queue.Queue()
+            
+            def db_check():
+                try:
+                    conn = get_db_connection()
+                    if conn:
+                        with conn.cursor() as cur:
+                            cur.execute("SELECT 1")
+                        conn.close()
+                        result_queue.put(True)
+                    else:
+                        result_queue.put(False)
+                except Exception as e:
+                    exception_queue.put(e)
+            
+            # Run database check in thread with timeout
+            thread = threading.Thread(target=db_check, daemon=True)
+            thread.start()
+            thread.join(timeout=2)  # 2 second timeout
+            
+            if thread.is_alive():
+                db_status = "unhealthy: connection timeout"
+                logger.warning("Database health check timed out after 2 seconds")
+            elif not exception_queue.empty():
+                e = exception_queue.get()
+                db_status = f"unhealthy: {str(e)[:50]}"
+                logger.warning(f"Database health check failed: {e}")
+            elif not result_queue.empty():
+                if not result_queue.get():
+                    db_status = "unhealthy"
             else:
-                db_status = "unhealthy"
+                db_status = "unhealthy: no response"
         except Exception as e:
             db_status = f"unhealthy: {str(e)[:50]}"
-            logger.warning(f"Database health check failed: {e}")
+            logger.warning(f"Database health check error: {e}")
         
         # Check Redis connection
         redis_status = "healthy"
@@ -113,6 +161,7 @@ async def health_check():
 
 
 @router.get("/fast_stats")
+@cached_response(ttl=60)  # Cache stats for 1 minute (dashboard refreshes frequently)
 async def get_fast_stats():
     """
     Fast dashboard stats using indexed queries.
@@ -167,10 +216,11 @@ async def get_fast_stats():
 
 
 @router.get("/metrics")
+@cached_response(ttl=30)  # Cache metrics for 30 seconds
 async def get_system_metrics(
     metric_name: Optional[str] = None,
     hours: int = 24,
-    limit: int = 100
+    limit: int = Query(100, ge=1, le=200)  # Max 200 for performance
 ):
     """Get system metrics"""
     try:
@@ -253,7 +303,7 @@ async def collect_system_metrics(background_tasks: BackgroundTasks):
 async def get_system_alerts(
     severity: Optional[str] = None,
     active_only: bool = True,
-    limit: int = 50
+    limit: int = Query(50, ge=1, le=100)  # Max 100 for performance
 ):
     """Get system alerts"""
     try:
@@ -406,6 +456,7 @@ async def resolve_alert(alert_id: int):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/status")
+@cached_response(ttl=30)  # Cache system status for 30 seconds
 async def get_system_status():
     """Get comprehensive system status"""
     try:
@@ -446,9 +497,11 @@ async def get_system_status():
                 
                 logger.info(f"🔍 Final GPU values: VRAM={gpu_vram_percent}, Utilization={gpu_utilization_percent}")
                 
-                # Get database metrics from all domain schemas
+                # OPTIMIZED: Get all database metrics in a single query (reduces round-trips)
+                week_ago = datetime.now() - timedelta(days=7)
                 cur.execute("""
                     SELECT 
+                        -- Total counts
                         (SELECT COUNT(*) FROM politics.articles) +
                         (SELECT COUNT(*) FROM finance.articles) +
                         (SELECT COUNT(*) FROM science_tech.articles) as total_articles,
@@ -457,33 +510,21 @@ async def get_system_status():
                         (SELECT COUNT(*) FROM science_tech.storylines) as total_storylines,
                         (SELECT COUNT(*) FROM politics.rss_feeds WHERE is_active = true) +
                         (SELECT COUNT(*) FROM finance.rss_feeds WHERE is_active = true) +
-                        (SELECT COUNT(*) FROM science_tech.rss_feeds WHERE is_active = true) as active_feeds
-                """)
+                        (SELECT COUNT(*) FROM science_tech.rss_feeds WHERE is_active = true) as active_feeds,
+                        -- Time-based counts
+                        (SELECT COUNT(*) FROM politics.articles WHERE created_at >= %s) +
+                        (SELECT COUNT(*) FROM finance.articles WHERE created_at >= %s) +
+                        (SELECT COUNT(*) FROM science_tech.articles WHERE created_at >= %s) as articles_this_week,
+                        (SELECT COUNT(*) FROM politics.articles WHERE DATE(created_at) = CURRENT_DATE) +
+                        (SELECT COUNT(*) FROM finance.articles WHERE DATE(created_at) = CURRENT_DATE) +
+                        (SELECT COUNT(*) FROM science_tech.articles WHERE DATE(created_at) = CURRENT_DATE) as articles_today
+                """, (week_ago, week_ago, week_ago))
                 stats = cur.fetchone()
                 total_articles = stats[0] if stats and stats[0] else 0
                 total_storylines = stats[1] if stats and stats[1] else 0
                 active_feeds = stats[2] if stats and stats[2] else 0
-                
-                # Get articles per week from all domains
-                week_ago = datetime.now() - timedelta(days=7)
-                cur.execute("""
-                    SELECT 
-                        (SELECT COUNT(*) FROM politics.articles WHERE created_at >= %s) +
-                        (SELECT COUNT(*) FROM finance.articles WHERE created_at >= %s) +
-                        (SELECT COUNT(*) FROM science_tech.articles WHERE created_at >= %s) as articles_this_week
-                """, (week_ago, week_ago, week_ago))
-                week_result = cur.fetchone()
-                articles_this_week = week_result[0] if week_result and week_result[0] else 0
-                
-                # Get articles today from all domains
-                cur.execute("""
-                    SELECT 
-                        (SELECT COUNT(*) FROM politics.articles WHERE DATE(created_at) = CURRENT_DATE) +
-                        (SELECT COUNT(*) FROM finance.articles WHERE DATE(created_at) = CURRENT_DATE) +
-                        (SELECT COUNT(*) FROM science_tech.articles WHERE DATE(created_at) = CURRENT_DATE) as articles_today
-                """)
-                today_result = cur.fetchone()
-                articles_today = today_result[0] if today_result and today_result[0] else 0
+                articles_this_week = stats[3] if stats and stats[3] else 0
+                articles_today = stats[4] if stats and stats[4] else 0
                 
                 # Get active alerts
                 cur.execute("SELECT COUNT(*) FROM system_alerts WHERE is_active = true")
@@ -599,6 +640,7 @@ async def get_system_status():
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/dashboard")
+@cached_response(ttl=60)  # Cache dashboard metrics for 1 minute
 async def get_dashboard_metrics():
     """Get dashboard-specific database metrics"""
     try:
@@ -652,6 +694,87 @@ async def get_dashboard_metrics():
             
     except Exception as e:
         logger.error(f"Error getting dashboard metrics: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/apply_migration_128")
+async def apply_migration_128():
+    """
+    Apply migration 128: Add Official Government and SEC RSS Feeds
+    This adds official government feeds to finance, politics, and science_tech domains
+    """
+    try:
+        conn = get_db_connection()
+        if not conn:
+            raise HTTPException(status_code=500, detail="Database connection failed")
+        
+        # Migration SQL
+        migration_sql = """
+-- Migration 128: Add Official Government and SEC RSS Feeds
+INSERT INTO finance.rss_feeds (feed_name, feed_url, is_active, fetch_interval_seconds, created_at)
+VALUES 
+    ('SEC Press Releases', 'https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=&company=&dateb=&owner=include&start=0&count=100&output=atom', true, 3600, NOW()),
+    ('Federal Reserve Press Releases', 'https://www.federalreserve.gov/feeds/press_all.xml', true, 3600, NOW()),
+    ('Treasury Direct Announcements', 'https://www.treasurydirect.gov/rss/announcements.xml', true, 3600, NOW()),
+    ('FDIC News Releases', 'https://www.fdic.gov/news/news/press/feed.xml', true, 3600, NOW())
+ON CONFLICT (feed_url) DO NOTHING;
+
+INSERT INTO politics.rss_feeds (feed_name, feed_url, is_active, fetch_interval_seconds, created_at)
+VALUES 
+    ('White House Briefings', 'https://www.whitehouse.gov/briefing-room/feed/', true, 3600, NOW()),
+    ('Department of State Press Releases', 'https://www.state.gov/rss-feed/press-releases/feed/', true, 3600, NOW()),
+    ('Department of Justice Press Releases', 'https://www.justice.gov/opa/rss/doj-press-releases.xml', true, 3600, NOW()),
+    ('Department of Defense News', 'https://www.defense.gov/DesktopModules/ArticleCS/RSS.ashx?ContentType=1&Site=944&max=20', true, 3600, NOW()),
+    ('Congressional Research Service', 'https://crsreports.congress.gov/rss', true, 3600, NOW()),
+    ('GAO Reports', 'https://www.gao.gov/rss/reports.xml', true, 3600, NOW()),
+    ('CBO Publications', 'https://www.cbo.gov/rss/publications.xml', true, 3600, NOW())
+ON CONFLICT (feed_url) DO NOTHING;
+
+INSERT INTO science_tech.rss_feeds (feed_name, feed_url, is_active, fetch_interval_seconds, created_at)
+VALUES 
+    ('NASA News', 'https://www.nasa.gov/rss/dyn/breaking_news.rss', true, 3600, NOW()),
+    ('NIST News', 'https://www.nist.gov/news-events/news/feed', true, 3600, NOW()),
+    ('Department of Energy News', 'https://www.energy.gov/feeds/all', true, 3600, NOW()),
+    ('NIH News Releases', 'https://www.nih.gov/news-events/news-releases/rss', true, 3600, NOW())
+ON CONFLICT (feed_url) DO NOTHING;
+"""
+        
+        try:
+            cur = conn.cursor()
+            cur.execute(migration_sql)
+            conn.commit()
+            
+            # Verify feeds were added
+            cur.execute("SELECT COUNT(*) FROM finance.rss_feeds WHERE feed_name LIKE 'SEC%' OR feed_name LIKE 'Federal Reserve%' OR feed_name LIKE 'Treasury%' OR feed_name LIKE 'FDIC%'")
+            finance_count = cur.fetchone()[0]
+            
+            cur.execute("SELECT COUNT(*) FROM politics.rss_feeds WHERE feed_name LIKE 'White House%' OR feed_name LIKE 'Department%' OR feed_name LIKE 'Congressional%' OR feed_name LIKE 'GAO%' OR feed_name LIKE 'CBO%'")
+            politics_count = cur.fetchone()[0]
+            
+            cur.execute("SELECT COUNT(*) FROM science_tech.rss_feeds WHERE feed_name LIKE 'NASA%' OR feed_name LIKE 'NIST%' OR feed_name LIKE 'Department of Energy%' OR feed_name LIKE 'NIH%'")
+            science_count = cur.fetchone()[0]
+            
+            return {
+                "success": True,
+                "message": "Migration 128 applied successfully",
+                "feeds_added": {
+                    "finance": finance_count,
+                    "politics": politics_count,
+                    "science_tech": science_count
+                },
+                "total": finance_count + politics_count + science_count
+            }
+            
+        except Exception as e:
+            conn.rollback()
+            logger.error(f"Error applying migration: {e}")
+            raise HTTPException(status_code=500, detail=f"Migration failed: {str(e)}")
+        finally:
+            conn.close()
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in apply_migration_128: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/performance")
@@ -1163,7 +1286,7 @@ async def get_log_statistics(days: int = 7):
 
 
 @router.get("/logs/realtime")
-async def get_realtime_logs(limit: int = 50):
+async def get_realtime_logs(limit: int = Query(50, ge=1, le=100)):  # Max 100 for performance
     """
     Get real-time logs from system alerts and processing logs
     Returns recent log entries in chronological order
@@ -1252,3 +1375,188 @@ async def get_realtime_logs(limit: int = 50):
     except Exception as e:
         logger.error(f"Error getting realtime logs: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/articles/analyze")
+async def analyze_existing_articles(
+    source: Optional[str] = Query(None, description="Filter by source name (e.g., 'telegraph')"),
+    limit: Optional[int] = Query(None, ge=1, le=10000, description="Limit articles analyzed per domain"),
+    domains: Optional[str] = Query(None, description="Comma-separated list of domains to analyze (default: all active)"),
+    sample_size: int = Query(20, ge=1, le=100, description="Number of sample articles to return")
+):
+    """
+    Analyze existing articles against current filtering criteria.
+    Identifies articles that would be filtered by current RSS collector logic.
+    """
+    if not FILTERING_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Filtering functions not available")
+    
+    try:
+        conn = get_db_connection()
+        if not conn:
+            raise HTTPException(status_code=500, detail="Database connection failed")
+        
+        try:
+            # Get active domain schemas
+            with conn.cursor() as cur:
+                if domains:
+                    domain_list = [d.strip() for d in domains.split(',')]
+                    placeholders = ','.join(['%s'] * len(domain_list))
+                    cur.execute(f"""
+                        SELECT schema_name FROM domains 
+                        WHERE schema_name IN ({placeholders}) AND is_active = true
+                    """, domain_list)
+                else:
+                    cur.execute("SELECT schema_name FROM domains WHERE is_active = true")
+                schemas = [row[0] for row in cur.fetchall()]
+            
+            if not schemas:
+                raise HTTPException(status_code=404, detail="No active domains found")
+            
+            all_filtered = []
+            all_stats = {}
+            
+            for schema in schemas:
+                # Build query
+                query = f"""
+                    SELECT 
+                        id, title, url, content, summary, source_domain, source, 
+                        feed_name, created_at, published_at, processing_status
+                    FROM {schema}.articles
+                    WHERE 1=1
+                """
+                
+                params = []
+                if source:
+                    query += " AND (source_domain ILIKE %s OR source ILIKE %s OR feed_name ILIKE %s)"
+                    pattern = f"%{source}%"
+                    params = [pattern, pattern, pattern]
+                
+                query += " ORDER BY created_at DESC"
+                
+                if limit:
+                    query += " LIMIT %s"
+                    params.append(limit)
+                
+                with conn.cursor() as cur:
+                    cur.execute(query, params)
+                    articles = cur.fetchall()
+                
+                # Analyze articles
+                filtered_articles = []
+                stats = defaultdict(int)
+                stats['total'] = len(articles)
+                
+                for row in articles:
+                    article = {
+                        'id': row[0],
+                        'title': row[1] or '',
+                        'url': row[2] or '',
+                        'content': row[3] or '',
+                        'summary': row[4] or '',
+                        'source_domain': row[5] or '',
+                        'source': row[6] or '',
+                        'feed_name': row[7] or '',
+                        'created_at': row[8],
+                        'published_at': row[9],
+                        'processing_status': row[10] or ''
+                    }
+                    
+                    # Apply filters
+                    title = article['title']
+                    content = article['content'] or article['summary']
+                    url = article['url']
+                    feed_name = article['feed_name']
+                    source_name = article['source_domain'] or article['source']
+                    
+                    excluded_content = is_excluded_content(title, content, feed_name, url)
+                    clickbait = is_clickbait_title(title)
+                    advertisement = is_advertisement(title, content, url)
+                    
+                    quality_score = calculate_article_quality_score(title, content, source_name)
+                    impact_score = calculate_article_impact_score(title, content)
+                    
+                    low_quality = quality_score < 0.4
+                    low_impact = impact_score < 0.4
+                    
+                    would_filter = excluded_content or clickbait or advertisement or low_quality or low_impact
+                    
+                    if would_filter:
+                        reasons = []
+                        if excluded_content:
+                            reasons.append('excluded_content')
+                        if clickbait:
+                            reasons.append('clickbait')
+                        if advertisement:
+                            reasons.append('advertisement')
+                        if low_quality:
+                            reasons.append(f'low_quality_{quality_score:.2f}')
+                        if low_impact:
+                            reasons.append(f'low_impact_{impact_score:.2f}')
+                        
+                        filtered_articles.append({
+                            'article_id': article['id'],
+                            'title': title[:100],
+                            'source': source_name or feed_name or 'Unknown',
+                            'url': url,
+                            'reasons': reasons,
+                            'quality_score': round(quality_score, 2),
+                            'impact_score': round(impact_score, 2),
+                            'schema': schema,
+                            'created_at': article['created_at'].isoformat() if article['created_at'] else None
+                        })
+                        
+                        stats['filtered'] += 1
+                        if excluded_content:
+                            stats['excluded_content'] += 1
+                        if clickbait:
+                            stats['clickbait'] += 1
+                        if advertisement:
+                            stats['advertisement'] += 1
+                        if low_quality:
+                            stats['low_quality'] += 1
+                        if low_impact:
+                            stats['low_impact'] += 1
+                
+                all_filtered.extend(filtered_articles)
+                all_stats[schema] = dict(stats)
+            
+            # Calculate overall statistics
+            total_articles = sum(s['total'] for s in all_stats.values())
+            total_filtered = sum(s['filtered'] for s in all_stats.values())
+            
+            # Get top sources with filtered articles
+            source_counts = defaultdict(int)
+            for article in all_filtered:
+                source_counts[article['source']] += 1
+            
+            top_sources = [
+                {'source': source, 'count': count}
+                for source, count in sorted(source_counts.items(), key=lambda x: x[1], reverse=True)[:20]
+            ]
+            
+            return {
+                'success': True,
+                'data': {
+                    'summary': {
+                        'total_articles': total_articles,
+                        'total_filtered': total_filtered,
+                        'filtered_percentage': round(total_filtered / total_articles * 100, 1) if total_articles > 0 else 0,
+                        'total_passing': total_articles - total_filtered,
+                        'passing_percentage': round((total_articles - total_filtered) / total_articles * 100, 1) if total_articles > 0 else 0
+                    },
+                    'by_domain': all_stats,
+                    'top_sources': top_sources,
+                    'sample_articles': all_filtered[:sample_size],
+                    'total_filtered_articles': len(all_filtered)
+                },
+                'timestamp': datetime.now().isoformat()
+            }
+            
+        finally:
+            conn.close()
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error analyzing articles: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to analyze articles: {str(e)}")

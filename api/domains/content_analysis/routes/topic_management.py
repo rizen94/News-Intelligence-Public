@@ -98,7 +98,7 @@ async def health_check():
 @router.get("/{domain}/topics")
 async def get_domain_topics(
     domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
-    limit: int = Query(50, ge=1, le=500),
+    limit: int = Query(50, ge=1, le=100),  # Max 100 for performance
     offset: int = Query(0, ge=0),
     category: Optional[str] = None,
     status: Optional[str] = None,

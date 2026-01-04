@@ -224,19 +224,114 @@ const Articles: React.FC = () => {
     }
   }, [page, searchQuery, filterSource, sortBy, domain]);
 
+  // Load existing topics from database
+  const loadTopics = useCallback(async() => {
+    try {
+      const response = await apiService.getTopics({ limit: 50 }, domain);
+      if (response.success && response.data?.topics) {
+        const apiTopics = response.data.topics;
+
+        // Map API topics to frontend format
+        const mappedTopics = apiTopics.map((topic: any) => {
+          const topicName = topic.name || topic.cluster_name || 'Unknown Topic';
+
+          // Get articles for this topic from our current articles list
+          // Use article_ids from API if available (most reliable)
+          let topicArticles: ArticleItem[] = [];
+
+          if (topic.article_ids && Array.isArray(topic.article_ids) && topic.article_ids.length > 0) {
+            // Match by article IDs from database
+            topicArticles = articles.filter((a: ArticleItem) =>
+              topic.article_ids.includes(a.id),
+            );
+          }
+
+          // If no matches found, try keyword matching as fallback
+          if (topicArticles.length === 0 && topic.keywords && Array.isArray(topic.keywords)) {
+            topicArticles = articles.filter((a: ArticleItem) =>
+              topic.keywords.some((kw: string) =>
+                (a.title || '').toLowerCase().includes(kw.toLowerCase()),
+              ),
+            );
+          }
+
+          return {
+            name: topicName,
+            articles: topicArticles,
+            count: topic.article_count || topic.count || topicArticles.length || 0,
+          };
+        });
+
+        if (mappedTopics.length > 0) {
+          setTopics(mappedTopics);
+        }
+      }
+    } catch (error) {
+      console.warn('Failed to load topics from database:', error);
+      // Don't show error - topics are optional
+    }
+  }, [articles, domain]);
+
   useEffect(() => {
     loadArticles();
     loadStorylines();
-  }, [loadArticles, loadStorylines]);
+    loadTopics();
+  }, [loadArticles, loadStorylines, loadTopics]);
 
-  // Topic clustering function
+  // Trigger NEW topic clustering (creates new topics in database)
   const clusterArticles = useCallback(async() => {
     try {
       setClustering(true);
+      setError(null);
 
-      // Simulate AI-powered topic clustering
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      const timePeriodHours = 24; // Can be made configurable
+      const response = await apiService.clusterArticles({
+        limit: articles.length,
+        time_period_hours: timePeriodHours,
+      }, domain);
 
+      if (response.success) {
+        showSuccess('Topic clustering started in background. Results will appear shortly...');
+
+        // Poll for new results with exponential backoff
+        let attempts = 0;
+        const maxAttempts = 10;
+        const initialDelay = 3000; // Start with 3 seconds (clustering takes time)
+
+        const pollForResults = async(): Promise<boolean> => {
+          while (attempts < maxAttempts) {
+            attempts++;
+            const delay = initialDelay * Math.pow(1.5, attempts - 1); // Exponential backoff
+
+            await new Promise(resolve => setTimeout(resolve, delay));
+
+            try {
+              // Reload topics from database
+              await loadTopics();
+
+              // Check if we have topics now
+              if (topics.length > 0) {
+                showSuccess(`Clustering complete! Found ${topics.length} topics.`);
+                return true;
+              }
+            } catch (pollError) {
+              console.warn(`Poll attempt ${attempts} failed:`, pollError);
+              // Continue polling
+            }
+          }
+          return false;
+        };
+
+        const foundResults = await pollForResults();
+
+        if (!foundResults) {
+          showWarning('Clustering may still be processing. Topics will appear when ready.');
+        }
+      } else {
+        showError('Failed to start topic clustering');
+      }
+
+      // Fallback to local keyword-based clustering
       const topicMap: Record<string, Topic> = {};
 
       articles.forEach(article => {
@@ -269,14 +364,16 @@ const Articles: React.FC = () => {
       });
 
       setTopics(Object.values(topicMap));
-      setError(null);
+      showSuccess('Articles clustered by topic');
     } catch (err) {
       console.error('Error clustering articles:', err);
-      setError('Error clustering articles: ' + (err instanceof Error ? err.message : 'Unknown error'));
+      const errorMsg = err instanceof Error ? err.message : 'Unknown error';
+      setError('Error clustering articles: ' + errorMsg);
+      showError('Failed to cluster articles: ' + errorMsg);
     } finally {
       setClustering(false);
     }
-  }, [articles]);
+  }, [articles, domain, showSuccess, showError]);
 
   const handleSearch = (event: React.ChangeEvent<HTMLInputElement>) => {
     const value = event.target.value;
@@ -823,10 +920,12 @@ const Articles: React.FC = () => {
           <CardContent>
             <Typography variant='h6' gutterBottom>
               <ClusterIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
-              Topic Clustering & Analysis
+              Topics & Clustering
             </Typography>
             <Typography variant='body2' color='text.secondary' sx={{ mb: 2 }}>
-              Automatically group articles by topics using AI-powered analysis
+              {topics.length > 0
+                ? `Showing ${topics.length} topics from database. Click below to create new topics from recent articles.`
+                : 'No topics found. Create new topics by analyzing recent articles.'}
             </Typography>
 
             <Box sx={{ display: 'flex', gap: 2, mb: 2 }}>
@@ -842,7 +941,16 @@ const Articles: React.FC = () => {
                 onClick={clusterArticles}
                 disabled={clustering || articles.length === 0}
               >
-                {clustering ? 'Clustering...' : 'Cluster Articles by Topic'}
+                {clustering ? 'Creating Topics...' : 'Create New Topics from Articles'}
+              </Button>
+
+              <Button
+                variant='outlined'
+                startIcon={<Refresh />}
+                onClick={loadTopics}
+                disabled={clustering}
+              >
+                Refresh Topics
               </Button>
 
               {topics.length > 0 && (
