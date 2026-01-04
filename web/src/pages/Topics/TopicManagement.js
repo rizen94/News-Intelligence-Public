@@ -1034,9 +1034,11 @@ const TopicManagement = () => {
                             </Button>
                           ) : (
                             <Tooltip title='Already reviewed'>
-                              <IconButton size='small' disabled>
-                                <CheckCircle color='success' />
-                              </IconButton>
+                              <span>
+                                <IconButton size='small' disabled>
+                                  <CheckCircle color='success' />
+                                </IconButton>
+                              </span>
                             </Tooltip>
                           )}
                         </ListItemSecondaryAction>

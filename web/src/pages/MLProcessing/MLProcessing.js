@@ -191,9 +191,11 @@ const MLProcessing = () => {
         </Typography>
         <Box>
           <Tooltip title='Refresh Data'>
-            <IconButton onClick={loadData} disabled={loading}>
-              <Refresh />
-            </IconButton>
+            <span>
+              <IconButton onClick={loadData} disabled={loading}>
+                <Refresh />
+              </IconButton>
+            </span>
           </Tooltip>
           <Button
             variant='contained'

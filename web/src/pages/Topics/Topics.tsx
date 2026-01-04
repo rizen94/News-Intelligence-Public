@@ -515,20 +515,29 @@ const Topics: React.FC = () => {
     }
   };
 
+  // Initial load - only run once on mount or when domain changes
   useEffect(() => {
     loadTopics();
     loadCategories();
     loadWordCloudData();
     loadBigPictureData();
     loadTrendingTopics();
-  }, [
-    loadTopics,
-    loadCategories,
-    loadWordCloudData,
-    loadBigPictureData,
-    loadTrendingTopics,
-    domain,
-  ]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [domain]);
+
+  // Reload when search or category changes
+  useEffect(() => {
+    loadTopics();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchQuery, selectedCategory]);
+
+  // Reload word cloud and trending when time period changes
+  useEffect(() => {
+    loadWordCloudData();
+    loadBigPictureData();
+    loadTrendingTopics();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [timePeriod]);
 
   const getUrgencyColor = (urgency?: string): 'error' | 'warning' | 'default' | 'info' => {
     switch (urgency) {

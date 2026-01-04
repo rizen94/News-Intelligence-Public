@@ -986,9 +986,11 @@ Do you want to proceed with running AI sentiment analysis?`,
             {lastUpdate ? lastUpdate.toLocaleTimeString() : 'Never'}
           </Typography>
           <Tooltip title='Refresh Data'>
-            <IconButton onClick={handleRefresh} disabled={loading}>
-              <Refresh />
-            </IconButton>
+            <span>
+              <IconButton onClick={handleRefresh} disabled={loading}>
+                <Refresh />
+              </IconButton>
+            </span>
           </Tooltip>
         </Box>
       </Box>

@@ -751,9 +751,11 @@ const IntelligenceHub = () => {
             Trends Analysis
           </Typography>
           <Tooltip title='Refresh Trends'>
-            <IconButton onClick={loadTrendingTopics} disabled={loading}>
-              <Refresh />
-            </IconButton>
+            <span>
+              <IconButton onClick={loadTrendingTopics} disabled={loading}>
+                <Refresh />
+              </IconButton>
+            </span>
           </Tooltip>
         </Box>
 
@@ -953,9 +955,11 @@ const IntelligenceHub = () => {
             Topic Clusters
           </Typography>
           <Tooltip title='Refresh Clusters'>
-            <IconButton onClick={loadTopicClusters} disabled={loading}>
-              <Refresh />
-            </IconButton>
+            <span>
+              <IconButton onClick={loadTopicClusters} disabled={loading}>
+                <Refresh />
+              </IconButton>
+            </span>
           </Tooltip>
         </Box>
 
@@ -1109,9 +1113,11 @@ const IntelligenceHub = () => {
           AI Analysis
         </Typography>
         <Tooltip title='Refresh Content'>
-          <IconButton onClick={loadContent} disabled={loading}>
-            <Refresh />
-          </IconButton>
+          <span>
+            <IconButton onClick={loadContent} disabled={loading}>
+              <Refresh />
+            </IconButton>
+          </span>
         </Tooltip>
       </Box>
 

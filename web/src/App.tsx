@@ -39,7 +39,7 @@ function App() {
     // Log app initialization
     loggingService.info('News Intelligence System initialized', {
       version: '4.0',
-      environment: process.env.NODE_ENV,
+      environment: import.meta.env.MODE || import.meta.env.DEV ? 'development' : 'production',
       userAgent: navigator.userAgent,
       url: window.location.href,
     });

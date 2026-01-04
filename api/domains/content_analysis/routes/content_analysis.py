@@ -848,7 +848,8 @@ async def get_topic_summary(
 async def convert_topic_to_storyline(
     domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
     cluster_name: str = Path(...),
-    request: Dict[str, Any] = Body(...)
+    request: Dict[str, Any] = Body(...),
+    background_tasks: BackgroundTasks = None
 ):
     """Convert a topic to a storyline, adding all topic articles for a specific domain"""
     try:
@@ -880,17 +881,19 @@ async def convert_topic_to_storyline(
                 
                 topic_id = topic_result[0]
                 
-                # Create new storyline
+                # Create new storyline with HIGH priority for LLM processing
                 cur.execute(f"""
-                    INSERT INTO {schema}.storylines (title, description, created_at, updated_at, status)
-                    VALUES (%s, %s, %s, %s, %s)
+                    INSERT INTO {schema}.storylines (title, description, created_at, updated_at, status, priority, ml_processing_status)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
                     RETURNING id
                 """, (
                     storyline_title,
                     f"Auto-generated storyline from topic: {cluster_name}",
                     datetime.now(),
                     datetime.now(),
-                    "active"
+                    "active",
+                    10,  # HIGH priority (1-10 scale, 10 = highest)
+                    "pending"  # Queue for LLM processing
                 ))
                 
                 storyline_id = cur.fetchone()[0]
@@ -924,18 +927,33 @@ async def convert_topic_to_storyline(
                         logger.warning(f"Error adding article {article_id} to storyline: {e}")
                         continue
                 
-                # Update article count
+                # Update article count and ensure priority/processing status are set
                 cur.execute(f"""
                     UPDATE {schema}.storylines 
                     SET article_count = (
                         SELECT COUNT(*) FROM {schema}.storyline_articles 
                         WHERE storyline_id = %s
                     ),
+                    priority = 10,
+                    ml_processing_status = 'pending',
                     updated_at = %s
                     WHERE id = %s
                 """, (storyline_id, datetime.now(), storyline_id))
                 
                 conn.commit()
+                
+                # Trigger comprehensive LLM processing in background
+                # This will generate summary, timeline, and full breakdown
+                if background_tasks:
+                    background_tasks.add_task(
+                        process_new_storyline_comprehensive,
+                        domain,
+                        storyline_id,
+                        schema
+                    )
+                    logger.info(f"Queued storyline {storyline_id} for comprehensive LLM processing (priority: HIGH)")
+                else:
+                    logger.warning(f"BackgroundTasks not available - storyline {storyline_id} will be processed by ML service")
                 
                 return {
                     "success": True,
@@ -1619,3 +1637,100 @@ async def get_individual_article(article_id: int):
     except Exception as e:
         logger.error(f"Error fetching article {article_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+# Background task for comprehensive storyline processing
+async def process_new_storyline_comprehensive(domain: str, storyline_id: int, schema: str):
+    """
+    Process a newly created storyline with comprehensive LLM analysis.
+    Generates summary, timeline, and full breakdown.
+    """
+    try:
+        from domains.storyline_management.services.storyline_service import StorylineService
+        from domains.storyline_management.routes.storyline_management import process_storyline_rag_analysis
+        from shared.database.connection import get_db_connection
+        
+        logger.info(f"Starting comprehensive processing for storyline {storyline_id} (domain: {domain})")
+        
+        storyline_service = StorylineService(domain=domain)
+        
+        # Step 1: Generate comprehensive summary with breakdown
+        logger.info(f"Generating comprehensive summary for storyline {storyline_id}")
+        summary_result = await storyline_service.generate_storyline_summary(storyline_id)
+        
+        if summary_result.get("success"):
+            logger.info(f"✅ Generated comprehensive summary for storyline {storyline_id}")
+        else:
+            logger.warning(f"Summary generation returned: {summary_result.get('error', 'Unknown error')}")
+        
+        # Step 2: Extract timeline events from articles
+        conn = get_db_connection()
+        if conn:
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(f"SET search_path TO {schema}, public")
+                    
+                    # Get storyline and articles
+                    cur.execute(f"""
+                        SELECT s.title, s.description, s.analysis_summary
+                        FROM {schema}.storylines s
+                        WHERE s.id = %s
+                    """, (storyline_id,))
+                    
+                    storyline = cur.fetchone()
+                    if storyline:
+                        cur.execute(f"""
+                            SELECT a.id, a.title, a.content, a.summary, a.published_at, a.source_domain, a.url
+                            FROM {schema}.articles a
+                            JOIN {schema}.storyline_articles sa ON a.id = sa.article_id
+                            WHERE sa.storyline_id = %s
+                            ORDER BY a.published_at ASC
+                        """, (storyline_id,))
+                        
+                        articles = cur.fetchall()
+                        
+                        if articles:
+                            # Trigger RAG analysis which includes timeline extraction
+                            await process_storyline_rag_analysis(storyline_id, storyline, articles)
+                            logger.info(f"✅ Triggered RAG analysis and timeline extraction for storyline {storyline_id}")
+            finally:
+                conn.close()
+        
+        # Step 3: Update processing status
+        conn = get_db_connection()
+        if conn:
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(f"SET search_path TO {schema}, public")
+                    cur.execute(f"""
+                        UPDATE {schema}.storylines
+                        SET ml_processing_status = 'completed',
+                            updated_at = %s
+                        WHERE id = %s
+                    """, (datetime.now(), storyline_id))
+                    conn.commit()
+                    logger.info(f"✅ Completed comprehensive processing for storyline {storyline_id}")
+            finally:
+                conn.close()
+                
+    except Exception as e:
+        logger.error(f"Error in comprehensive storyline processing for {storyline_id}: {e}")
+        logger.exception("Full traceback:")
+        
+        # Update status to indicate error (but don't mark as failed - let it retry)
+        try:
+            conn = get_db_connection()
+            if conn:
+                try:
+                    with conn.cursor() as cur:
+                        cur.execute(f"SET search_path TO {schema}, public")
+                        cur.execute(f"""
+                            UPDATE {schema}.storylines
+                            SET ml_processing_status = 'pending',
+                                updated_at = %s
+                            WHERE id = %s
+                        """, (datetime.now(), storyline_id))
+                        conn.commit()
+                finally:
+                    conn.close()
+        except Exception as update_error:
+            logger.error(f"Error updating storyline status after processing error: {update_error}")

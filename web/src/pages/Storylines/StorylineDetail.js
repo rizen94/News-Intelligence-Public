@@ -89,10 +89,17 @@ const StorylineDetail = () => {
   const [synthesis, setSynthesis] = useState(null);
   const [synthesisLoading, setSynthesisLoading] = useState(false);
   const [showFullSynthesis, setShowFullSynthesis] = useState(false);
+  const [processingStatus, setProcessingStatus] = useState(null);
+  const [isProcessing, setIsProcessing] = useState(false);
 
   useEffect(() => {
     if (id) {
       loadStoryline();
+      // Start polling if storyline is being processed
+      const pollInterval = startProcessingPoll();
+      return () => {
+        if (pollInterval) clearInterval(pollInterval);
+      };
     }
   }, [id]);
 
@@ -169,6 +176,15 @@ const StorylineDetail = () => {
 
       setStoryline(storylineData);
       setArticles(articlesData);
+      
+      // Check if storyline is being processed
+      if (storylineData.ml_processing_status === 'pending' || storylineData.ml_processing_status === 'processing') {
+        setIsProcessing(true);
+        setProcessingStatus('LLM processing in progress...');
+      } else if (storylineData.ml_processing_status === 'completed') {
+        setIsProcessing(false);
+        setProcessingStatus(null);
+      }
     } catch (err) {
       console.error('Error loading storyline:', err);
 
@@ -331,13 +347,15 @@ const StorylineDetail = () => {
     try {
       setAnalyzing(true);
       setError(null);
+      console.log(`Starting analysis for storyline ${id} in domain ${domain}`);
       const response = await apiService.analyzeStoryline(id, domain);
-      if (response.success) {
+      console.log('Analyze response:', response);
+      if (response && response.success) {
         // Show success message
         setError(null);
-        alert(
-          'Storyline analysis started! This may take a few minutes. The summary will appear when complete.',
-        );
+        setIsProcessing(true);
+        setProcessingStatus('Analysis started! Generating comprehensive summary, timeline, and breakdown...');
+        // Don't show alert - let the processing status indicator handle it
 
         // Poll for updated analysis summary (check every 5 seconds for up to 2 minutes)
         let attempts = 0;
@@ -371,11 +389,14 @@ const StorylineDetail = () => {
           }
         }, 5000);
       } else {
-        setError(response.message || 'Failed to start analysis');
+        const errorMsg = response?.error || response?.message || 'Failed to start analysis';
+        console.error('Analysis failed:', errorMsg, response);
+        setError(errorMsg);
       }
     } catch (err) {
       console.error('Error analyzing storyline:', err);
-      setError('Failed to analyze storyline');
+      const errorMsg = err?.response?.data?.detail || err?.message || 'Failed to analyze storyline';
+      setError(errorMsg);
     } finally {
       setAnalyzing(false);
     }
@@ -560,9 +581,11 @@ const StorylineDetail = () => {
         </Button>
         {synthesis?.has_synthesis && (
           <Tooltip title="Regenerate synthesis">
-            <IconButton onClick={() => handleGenerateSynthesis(true)} disabled={synthesisLoading}>
-              <RefreshIcon />
-            </IconButton>
+            <span>
+              <IconButton onClick={() => handleGenerateSynthesis(true)} disabled={synthesisLoading}>
+                <RefreshIcon />
+              </IconButton>
+            </span>
           </Tooltip>
         )}
       </Box>
@@ -600,20 +623,79 @@ const StorylineDetail = () => {
                 </Typography>
               )}
 
+              {/* Processing Status */}
+              {isProcessing && (
+                <Alert severity='info' sx={{ mb: 2 }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                    <CircularProgress size={20} />
+                    <Typography variant='body2'>
+                      {processingStatus || 'Generating comprehensive analysis, timeline, and breakdown...'}
+                    </Typography>
+                  </Box>
+                </Alert>
+              )}
+
               {/* Analysis Summary Section */}
               {storyline.analysis_summary ? (
                 <Box
                   sx={{
                     mb: 2,
-                    p: 2,
+                    p: 3,
                     bgcolor: 'background.default',
                     borderRadius: 1,
+                    border: '1px solid',
+                    borderColor: 'divider',
                   }}
                 >
-                  <Typography variant='h6' sx={{ mb: 1 }}>
-                    Analysis Summary
-                  </Typography>
-                  <Typography variant='body1' sx={{ whiteSpace: 'pre-wrap' }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+                    <AutoAwesomeIcon color='primary' />
+                    <Typography variant='h6'>
+                      Comprehensive Analysis
+                    </Typography>
+                    {storyline.ml_processing_status === 'completed' && (
+                      <Chip label='LLM Generated' size='small' color='success' />
+                    )}
+                  </Box>
+                  <Typography 
+                    variant='body1' 
+                    component='div'
+                    sx={{ 
+                      whiteSpace: 'pre-wrap',
+                      lineHeight: 1.8,
+                      '& h2': { 
+                        mt: 3, 
+                        mb: 2, 
+                        fontSize: '1.5rem',
+                        fontWeight: 600,
+                        borderBottom: '2px solid',
+                        borderColor: 'primary.main',
+                        pb: 1 
+                      },
+                      '& h3': { 
+                        mt: 2, 
+                        mb: 1, 
+                        fontSize: '1.25rem',
+                        color: 'primary.main' 
+                      },
+                      '& p': { 
+                        lineHeight: 1.8, 
+                        textAlign: 'justify', 
+                        mb: 2 
+                      },
+                      '& ul, & ol': {
+                        pl: 3,
+                        mb: 2,
+                      },
+                      '& li': {
+                        mb: 1,
+                        lineHeight: 1.7,
+                      },
+                      '& strong': {
+                        fontWeight: 600,
+                        color: 'text.primary',
+                      },
+                    }}
+                  >
                     {storyline.analysis_summary}
                   </Typography>
                   {storyline.quality_score && (
@@ -1138,6 +1220,48 @@ const StorylineDetail = () => {
       </Dialog>
     </Box>
   );
+
+  // Poll for processing status when storyline is being processed
+  const startProcessingPoll = () => {
+    if (!id) return null;
+    
+    const pollInterval = setInterval(async() => {
+      try {
+        const response = await apiService.getStoryline(id, domain);
+        const storylineData = response.data?.storyline || response.storyline || response;
+        
+        if (storylineData.ml_processing_status === 'pending' || storylineData.ml_processing_status === 'processing') {
+          setIsProcessing(true);
+          setProcessingStatus('LLM processing in progress...');
+          // Reload storyline data periodically (30% chance per poll)
+          if (Math.random() < 0.3) {
+            await loadStoryline();
+          }
+        } else if (storylineData.ml_processing_status === 'completed' && storylineData.analysis_summary) {
+          setIsProcessing(false);
+          setProcessingStatus(null);
+          await loadStoryline();
+          await loadTimeline();
+          clearInterval(pollInterval);
+        } else if (storylineData.ml_processing_status === 'failed') {
+          setIsProcessing(false);
+          setProcessingStatus(null);
+          setError('LLM processing failed. Please try analyzing again.');
+          clearInterval(pollInterval);
+        }
+      } catch (err) {
+        console.error('Error polling processing status:', err);
+      }
+    }, 10000); // Poll every 10 seconds
+    
+    // Stop polling after 10 minutes
+    setTimeout(() => {
+      clearInterval(pollInterval);
+      setIsProcessing(false);
+    }, 600000);
+    
+    return pollInterval;
+  };
 };
 
 export default StorylineDetail;

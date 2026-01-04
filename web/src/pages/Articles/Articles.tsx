@@ -272,11 +272,13 @@ const Articles: React.FC = () => {
     }
   }, [articles, domain]);
 
+  // Initial load - only run when actual dependencies change
   useEffect(() => {
     loadArticles();
     loadStorylines();
     loadTopics();
-  }, [loadArticles, loadStorylines, loadTopics]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, searchQuery, filterSource, sortBy, domain]);
 
   // Trigger NEW topic clustering (creates new topics in database)
   const clusterArticles = useCallback(async() => {
@@ -891,9 +893,11 @@ const Articles: React.FC = () => {
         </Box>
         <Box display='flex' gap={2} alignItems='center'>
           <Tooltip title='Refresh Articles'>
-            <IconButton onClick={handleRefresh} disabled={loading}>
-              <Refresh />
-            </IconButton>
+            <span>
+              <IconButton onClick={handleRefresh} disabled={loading}>
+                <Refresh />
+              </IconButton>
+            </span>
           </Tooltip>
           <Button
             variant={viewMode === 'grid' ? 'contained' : 'outlined'}

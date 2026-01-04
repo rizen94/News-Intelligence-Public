@@ -885,9 +885,11 @@ const Dashboard: React.FC = () => {
             )}
           </Typography>
           <Tooltip title='Refresh Data'>
-            <IconButton onClick={handleRefresh} disabled={refreshing}>
-              <Refresh />
-            </IconButton>
+            <span>
+              <IconButton onClick={handleRefresh} disabled={refreshing}>
+                <Refresh />
+              </IconButton>
+            </span>
           </Tooltip>
         </Box>
       </Box>
@@ -1314,21 +1316,20 @@ const Dashboard: React.FC = () => {
                         <ListItemText
                           primary={article.title}
                           secondary={
-                            <Box>
-                              <Typography variant='body2' color='text.secondary'>
-                                {article.source} •{' '}
-                                {new Date(
-                                  article.published_at,
-                                ).toLocaleDateString()}
-                              </Typography>
-                              <Box mt={0.5}>
-                                <Chip
-                                  label={getBiasLabel(article.bias_score || 0)}
-                                  size='small'
-                                  color={getBiasColor(article.bias_score || 0)}
-                                />
-                              </Box>
-                            </Box>
+                            <span>
+                              {article.source} •{' '}
+                              {new Date(
+                                article.published_at,
+                              ).toLocaleDateString()}
+                              {' '}
+                              <Chip
+                                label={getBiasLabel(article.bias_score || 0)}
+                                size='small'
+                                color={getBiasColor(article.bias_score || 0)}
+                                component='span'
+                                sx={{ ml: 0.5, display: 'inline-flex', verticalAlign: 'middle' }}
+                              />
+                            </span>
                           }
                         />
                       </ListItem>

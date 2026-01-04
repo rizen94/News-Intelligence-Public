@@ -200,9 +200,11 @@ const Storylines: React.FC = () => {
     }
   }, [page, searchQuery, filterStatus, filterCategory, filterPriority, sortBy, viewMode, domain]);
 
+  // Initial load - only run when dependencies actually change
   useEffect(() => {
     loadStorylines();
-  }, [loadStorylines]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, searchQuery, filterStatus, filterCategory, filterPriority, sortBy, viewMode, domain]);
 
   const fetchTimelineData = useCallback(async(storylineId: number) => {
     try {
@@ -643,9 +645,11 @@ const Storylines: React.FC = () => {
             Create Storyline
           </Button>
           <Tooltip title='Refresh Storylines'>
-            <IconButton onClick={handleRefresh} disabled={loading}>
-              <Refresh />
-            </IconButton>
+            <span>
+              <IconButton onClick={handleRefresh} disabled={loading}>
+                <Refresh />
+              </IconButton>
+            </span>
           </Tooltip>
           <Button
             variant={viewMode === 'grid' ? 'contained' : 'outlined'}

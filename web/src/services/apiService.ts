@@ -1010,15 +1010,44 @@ class APIService {
 
   // Storyline Analysis
   async analyzeStoryline(id: string | number, domain?: string) {
+    const domainKey = domain || getCurrentDomain();
+    console.log(`[analyzeStoryline] Starting analysis for storyline ${id} in domain ${domainKey}`);
+    
+    // Try the double-prefix route directly (we know this one works)
     try {
-      const domainKey = domain || getCurrentDomain();
+      console.log(`[analyzeStoryline] Trying route: /api/v4/api/v4/${domainKey}/storylines/${id}/analyze`);
       const response = await getApi().post(
-        `/api/v4/${domainKey}/storylines/${id}/analyze`,
+        `/api/v4/api/v4/${domainKey}/storylines/${id}/analyze`,
       );
-      return response.data;
-    } catch (error) {
-      console.error('Failed to analyze storyline:', error);
-      return { success: false, error: (error as any).message };
+      console.log('[analyzeStoryline] Success:', response?.data);
+      return response?.data || { success: true, message: 'Analysis started' };
+    } catch (error: any) {
+      console.error('[analyzeStoryline] Double-prefix route failed:', error);
+      console.error('[analyzeStoryline] Error details:', {
+        status: error?.response?.status,
+        statusText: error?.response?.statusText,
+        data: error?.response?.data,
+        message: error?.message,
+        code: error?.code
+      });
+      
+      // If double-prefix fails, try single-prefix as fallback
+      if (error?.response?.status === 404 || error?.code === 'ERR_BAD_REQUEST') {
+        try {
+          console.log(`[analyzeStoryline] Trying fallback route: /api/v4/${domainKey}/storylines/${id}/analyze`);
+          const fallbackResponse = await getApi().post(
+            `/api/v4/${domainKey}/storylines/${id}/analyze`,
+          );
+          console.log('[analyzeStoryline] Fallback success:', fallbackResponse?.data);
+          return fallbackResponse?.data || { success: true, message: 'Analysis started' };
+        } catch (fallbackError: any) {
+          console.error('[analyzeStoryline] Fallback also failed:', fallbackError);
+          const errorMessage = fallbackError?.response?.data?.detail || fallbackError?.message || 'Failed to start analysis';
+          return { success: false, error: errorMessage };
+        }
+      }
+      const errorMessage = error?.response?.data?.detail || error?.message || 'Failed to start analysis';
+      return { success: false, error: errorMessage };
     }
   }
 

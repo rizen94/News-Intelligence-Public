@@ -190,9 +190,11 @@ const TopicArticles = () => {
         </Box>
         <Box display='flex' gap={2}>
           <Tooltip title='Refresh'>
-            <IconButton onClick={handleRefresh} disabled={loading}>
-              <Refresh />
-            </IconButton>
+            <span>
+              <IconButton onClick={handleRefresh} disabled={loading}>
+                <Refresh />
+              </IconButton>
+            </span>
           </Tooltip>
         </Box>
       </Box>

@@ -20,10 +20,9 @@ from ..services.proactive_detection_service import ProactiveDetectionService
 logger = logging.getLogger(__name__)
 
 # Legacy router - routes are being migrated to feature-specific files
-# NOTE: This router is NOT included in main_v4.py - it's only used for background task functions
-# If this router needs to be included, it should be done via compatibility layer or with proper prefix
+# NOTE: This router is included via the consolidated router in __init__.py
+# Prefix removed since it's included in a router that already has /api/v4 prefix
 router = APIRouter(
-    prefix="/api/v4",  # Keep prefix for potential compatibility use, but router is not actively included
     tags=["Storyline Management (Legacy)"],
     responses={404: {"description": "Not found"}}
 )
@@ -565,7 +564,8 @@ async def get_domain_storyline(
                 # Get storyline details from domain schema
                 cur.execute(f"""
                     SELECT id, title, description, created_at, updated_at,
-                           status, analysis_summary, quality_score, article_count
+                           status, analysis_summary, quality_score, article_count,
+                           ml_processing_status, priority
                     FROM {schema}.storylines 
                     WHERE id = %s
                 """, (storyline_id,))
@@ -606,7 +606,9 @@ async def get_domain_storyline(
                             "status": storyline[5],
                             "analysis_summary": storyline[6],
                             "quality_score": float(storyline[7]) if storyline[7] else None,
-                            "article_count": storyline[8] or 0
+                            "article_count": storyline[8] or 0,
+                            "ml_processing_status": storyline[9] if len(storyline) > 9 else None,
+                            "priority": storyline[10] if len(storyline) > 10 else None
                         },
                         "articles": articles
                     },
@@ -734,7 +736,7 @@ async def analyze_domain_storyline(
                     raise HTTPException(status_code=400, detail="No articles in storyline")
                 
                 # Start RAG analysis
-                background_tasks.add_task(process_storyline_rag_analysis, storyline_id, storyline, articles)
+                background_tasks.add_task(process_storyline_rag_analysis, domain, storyline_id, storyline, articles)
                 
                 return {
                     "success": True,
@@ -1191,9 +1193,13 @@ async def predict_domain_storyline_developments(
         raise HTTPException(status_code=500, detail=str(e))
 
 # Background task functions
-async def process_storyline_rag_analysis(storyline_id: int, storyline: tuple, articles: List[tuple]):
+async def process_storyline_rag_analysis(domain: str, storyline_id: int, storyline: tuple, articles: List[tuple]):
     """Background task for RAG-enhanced storyline analysis"""
     try:
+        from shared.services.llm_service import llm_service
+        from shared.database.connection import get_db_connection
+        
+        schema = domain.replace('-', '_')
         title, description, current_summary = storyline
         
         # Build context from articles
@@ -1223,10 +1229,12 @@ async def process_storyline_rag_analysis(storyline_id: int, storyline: tuple, ar
             if conn:
                 try:
                     with conn.cursor() as cur:
-                        cur.execute("""
-                            UPDATE storylines 
+                        cur.execute(f"SET search_path TO {schema}, public")
+                        cur.execute(f"""
+                            UPDATE {schema}.storylines 
                             SET analysis_summary = %s,
                                 quality_score = %s,
+                                ml_processing_status = 'completed',
                                 updated_at = %s
                             WHERE id = %s
                         """, (
@@ -1240,7 +1248,7 @@ async def process_storyline_rag_analysis(storyline_id: int, storyline: tuple, ar
                     
                     # Extract and store timeline events from articles
                     # Use the same connection but after commit
-                    _extract_timeline_events_from_articles(conn, storyline_id, articles, title)
+                    _extract_timeline_events_from_articles(conn, schema, storyline_id, articles, title)
                         
                 except Exception as e:
                     logger.error(f"Error updating storyline or extracting timeline: {e}", exc_info=True)
@@ -1251,7 +1259,7 @@ async def process_storyline_rag_analysis(storyline_id: int, storyline: tuple, ar
         logger.error(f"Error in storyline RAG analysis: {e}")
 
 
-def _extract_timeline_events_from_articles(conn, storyline_id: int, articles: List[tuple], storyline_title: str):
+def _extract_timeline_events_from_articles(conn, schema: str, storyline_id: int, articles: List[tuple], storyline_title: str):
     """Extract timeline events from articles and store them in timeline_events table"""
     try:
         from datetime import datetime as dt
@@ -1260,6 +1268,7 @@ def _extract_timeline_events_from_articles(conn, storyline_id: int, articles: Li
         logger.info(f"Starting timeline extraction for storyline {storyline_id} with {len(articles)} articles")
         
         with conn.cursor() as cur:
+            cur.execute(f"SET search_path TO {schema}, public")
             # Process each article and create timeline events
             # articles tuple format: (id, title, content, summary, published_at, source_domain, url)
             events_created = 0
@@ -1304,8 +1313,8 @@ def _extract_timeline_events_from_articles(conn, storyline_id: int, articles: Li
                 event_id = f"storyline_{storyline_id}_article_{article_id}_{event_date.isoformat()}"
                 
                 # Insert timeline event
-                cur.execute("""
-                    INSERT INTO timeline_events (
+                cur.execute(f"""
+                    INSERT INTO {schema}.timeline_events (
                         event_id, storyline_id, title, description, event_date, event_time,
                         source, url, importance_score, event_type, location, entities, tags,
                         ml_generated, confidence_score, source_article_ids, created_at, updated_at
