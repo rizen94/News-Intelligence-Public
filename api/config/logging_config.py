@@ -1,6 +1,7 @@
 """
-News Intelligence System v3.3.0 - Comprehensive Logging Configuration
-Centralized logging system with multiple handlers, storage, and monitoring
+News Intelligence System — comprehensive logging configuration.
+Centralized logging with multiple handlers; wired to settings for LOG_LEVEL and LOG_DIR.
+Finance domain uses component 'finance'.
 """
 
 import os
@@ -121,6 +122,13 @@ class NewsIntelligenceLogger:
             json_file="rss_structured.json"
         )
         
+        # Finance domain logger (market data, FRED, evidence)
+        self.finance_logger = self._create_logger(
+            name="news_intelligence.finance",
+            log_file="finance.log",
+            json_file="finance_structured.json"
+        )
+        
         # Security logger
         self.security_logger = self._create_logger(
             name="news_intelligence.security",
@@ -189,6 +197,7 @@ class NewsIntelligenceLogger:
             'ml': getattr(self, 'ml_logger', None),
             'deduplication': getattr(self, 'dedup_logger', None),
             'rss': self.rss_logger,
+            'finance': self.finance_logger,
             'security': self.security_logger
         }
         
@@ -335,25 +344,44 @@ class JSONFormatter(logging.Formatter):
 # Global logger instance
 _logger_instance = None
 
+
+def _get_defaults():
+    """Use settings when available; avoid circular import."""
+    try:
+        from config.settings import LOG_LEVEL, LOG_DIR
+        return str(LOG_LEVEL), str(LOG_DIR)
+    except Exception:
+        return "INFO", str(Path(__file__).resolve().parent.parent.parent / "logs")
+
+
 def get_logger_instance() -> NewsIntelligenceLogger:
-    """Get global logger instance"""
+    """Get global logger instance. Initializes from settings if not yet setup."""
     global _logger_instance
     if _logger_instance is None:
-        _logger_instance = NewsIntelligenceLogger()
+        log_level, log_dir = _get_defaults()
+        _logger_instance = NewsIntelligenceLogger(
+            log_level=log_level,
+            log_dir=log_dir,
+        )
     return _logger_instance
 
+
 def get_component_logger(component: str) -> logging.Logger:
-    """Get logger for specific component"""
+    """Get logger for specific component (app, api, database, error, finance, etc.)."""
     return get_logger_instance().get_logger(component)
 
-def setup_logging(log_level: str = "INFO", 
-                 log_dir: str = "/app/logs",
-                 **kwargs) -> NewsIntelligenceLogger:
-    """Setup logging system with custom configuration"""
+
+def setup_logging(
+    log_level: str | None = None,
+    log_dir: str | None = None,
+    **kwargs,
+) -> NewsIntelligenceLogger:
+    """Setup logging system. Uses settings defaults if args not provided."""
     global _logger_instance
+    default_level, default_dir = _get_defaults()
     _logger_instance = NewsIntelligenceLogger(
-        log_level=log_level,
-        log_dir=log_dir,
+        log_level=log_level or default_level,
+        log_dir=log_dir or default_dir,
         **kwargs
     )
     return _logger_instance

@@ -52,6 +52,8 @@ import {
   Settings,
   Warning,
   Close,
+  Block,
+  MergeType,
 } from '@mui/icons-material';
 // Import with multiple patterns to handle webpack module resolution issues
 import apiServiceDefault from '../../services/apiService';
@@ -229,6 +231,16 @@ const Topics: React.FC = () => {
   const [timePeriod, setTimePeriod] = useState<number>(24);
   const [articleDialogOpen, setArticleDialogOpen] = useState(false);
   const [selectedArticle, setSelectedArticle] = useState<TopicArticle | null>(null);
+  const [bannedTopicsDialogOpen, setBannedTopicsDialogOpen] = useState(false);
+  const [bannedTopicsList, setBannedTopicsList] = useState<{ id: number; topic_name: string; created_at?: string; reason?: string }[]>([]);
+  const [mergeSuggestions, setMergeSuggestions] = useState<{
+    primary: { id: number; cluster_name: string; article_count: number };
+    secondary: { id: number; cluster_name: string; article_count: number };
+    score: number;
+    reason: string;
+    suggested_name: string;
+  }[]>([]);
+  const [mergeSuggestionsLoading, setMergeSuggestionsLoading] = useState(false);
 
   const loadTopics = useCallback(async() => {
     try {
@@ -425,6 +437,35 @@ const Topics: React.FC = () => {
       setBigPictureData(null);
     }
   }, [timePeriod, domain]);
+
+  const loadMergeSuggestions = useCallback(async() => {
+    try {
+      setMergeSuggestionsLoading(true);
+      const service = getApiServiceSafe();
+      const res = await service.getMergeSuggestions?.(0.35, 50, domain);
+      if (res?.success && res?.data?.suggestions) {
+        setMergeSuggestions(res.data.suggestions);
+      } else {
+        setMergeSuggestions([]);
+      }
+    } catch {
+      setMergeSuggestions([]);
+    } finally {
+      setMergeSuggestionsLoading(false);
+    }
+  }, [domain]);
+
+  const loadBannedTopics = useCallback(async() => {
+    try {
+      const service = getApiServiceSafe();
+      const res = await service.getBannedTopics?.(domain);
+      if (res?.success && Array.isArray(res.data)) {
+        setBannedTopicsList(res.data);
+      }
+    } catch {
+      setBannedTopicsList([]);
+    }
+  }, [domain]);
 
   const loadTrendingTopics = useCallback(async() => {
     try {
@@ -646,7 +687,11 @@ const Topics: React.FC = () => {
     );
   };
 
-  const BigPictureInsights: React.FC<{ data: BigPictureData | null }> = ({ data }) => {
+  const BigPictureInsights: React.FC<{
+    data: BigPictureData | null;
+    domain?: string;
+    onBanTopic?: (topicName: string) => Promise<void>;
+  }> = ({ data, domain, onBanTopic }) => {
     if (!data || !data.insights) {
       return (
         <Box sx={{ p: 3, textAlign: 'center' }}>
@@ -739,6 +784,7 @@ const Topics: React.FC = () => {
                       sx={{
                         display: 'flex',
                         justifyContent: 'space-between',
+                        alignItems: 'center',
                         mb: 1,
                       }}
                     >
@@ -753,6 +799,21 @@ const Topics: React.FC = () => {
                         <Typography variant='body2' color='text.secondary'>
                           {topic.article_count} articles
                         </Typography>
+                        {onBanTopic && (
+                          <Tooltip title="Ban this topic (exclude from views – for vague or unhelpful topics like &quot;truth social post&quot;, &quot;on friday&quot;)">
+                            <IconButton
+                              size="small"
+                              color="default"
+                              onClick={async () => {
+                                if (onBanTopic) await onBanTopic(topic.category);
+                              }}
+                              sx={{ ml: 0.5 }}
+                              aria-label={`Ban topic: ${topic.category}`}
+                            >
+                              <Block fontSize="small" />
+                            </IconButton>
+                          </Tooltip>
+                        )}
                       </Box>
                       <Typography variant='body2' color='text.secondary'>
                         {topic.percentage}%
@@ -909,7 +970,10 @@ const Topics: React.FC = () => {
       <Paper sx={{ mb: 3 }}>
         <Tabs
           value={activeTab}
-          onChange={(e: React.SyntheticEvent, newValue: number) => setActiveTab(newValue)}
+          onChange={(e: React.SyntheticEvent, newValue: number) => {
+            setActiveTab(newValue);
+            if (newValue === 3) loadMergeSuggestions();
+          }}
           variant='fullWidth'
         >
           <Tab icon={<Cloud />} label='Word Cloud' iconPosition='start' />
@@ -917,6 +981,11 @@ const Topics: React.FC = () => {
           <Tab
             icon={<TrendingUp />}
             label='Trending Topics'
+            iconPosition='start'
+          />
+          <Tab
+            icon={<MergeType />}
+            label='Merge Suggestions'
             iconPosition='start'
           />
           <Tab icon={<Article />} label='All Topics' iconPosition='start' />
@@ -980,7 +1049,83 @@ const Topics: React.FC = () => {
               High-level overview of the current news landscape and topic
               distribution.
             </Typography>
-            <BigPictureInsights data={bigPictureData} />
+            <Button
+              size="small"
+              variant="outlined"
+              startIcon={<Block />}
+              onClick={() => {
+                loadBannedTopics();
+                setBannedTopicsDialogOpen(true);
+              }}
+              sx={{ mb: 2 }}
+            >
+              Manage banned topics
+            </Button>
+            <BigPictureInsights
+              data={bigPictureData}
+              domain={domain}
+              onBanTopic={async (topicName) => {
+                const service = getApiServiceSafe();
+                const res = await service.banTopic(topicName, undefined, domain);
+                if (res?.success) {
+                  showSuccess(`Topic "${topicName}" banned and will be excluded from views`);
+                  loadBigPictureData();
+                  loadWordCloudData();
+                  loadTrendingTopics();
+                } else {
+                  showError(res?.error || 'Failed to ban topic');
+                }
+              }}
+            />
+            <Dialog
+              open={bannedTopicsDialogOpen}
+              onClose={() => setBannedTopicsDialogOpen(false)}
+              maxWidth="sm"
+              fullWidth
+            >
+              <DialogTitle>Banned topics</DialogTitle>
+              <DialogContent>
+                <Typography variant='body2' color='text.secondary' sx={{ mb: 2 }}>
+                  Topics you&apos;ve banned are excluded from Big Picture, Word Cloud, and Trending views.
+                </Typography>
+                {bannedTopicsList.length === 0 ? (
+                  <Typography color="text.secondary">No banned topics.</Typography>
+                ) : (
+                  <List dense>
+                    {bannedTopicsList.map((b) => (
+                      <ListItem
+                        key={b.id}
+                        secondaryAction={
+                          <Button
+                            size="small"
+                            onClick={async () => {
+                              const service = getApiServiceSafe();
+                              const res = await service.unbanTopic?.(b.topic_name, domain);
+                              if (res?.success) {
+                                showSuccess(`Topic "${b.topic_name}" unbanned`);
+                                loadBannedTopics();
+                                loadBigPictureData();
+                                loadWordCloudData();
+                                loadTrendingTopics();
+                              } else {
+                                showError(res?.error || 'Failed to unban topic');
+                              }
+                            }}
+                          >
+                            Unban
+                          </Button>
+                        }
+                      >
+                        <ListItemText primary={b.topic_name} secondary={b.reason} />
+                      </ListItem>
+                    ))}
+                  </List>
+                )}
+              </DialogContent>
+              <DialogActions>
+                <Button onClick={() => setBannedTopicsDialogOpen(false)}>Close</Button>
+              </DialogActions>
+            </Dialog>
           </CardContent>
         </Card>
       )}
@@ -1097,6 +1242,84 @@ const Topics: React.FC = () => {
       )}
 
       {activeTab === 3 && (
+        <Card>
+          <CardContent>
+            <Typography variant='h6' gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <MergeType />
+              Merge Suggestions
+            </Typography>
+            <Typography variant='body2' color='text.secondary' sx={{ mb: 2 }}>
+              Second-layer clustering: topics that look similar and could be merged (e.g. &quot;Remove Former Prince Andrew&quot; and &quot;Removing Prince Andrew Succession&quot;).
+            </Typography>
+            <Button
+              size='small'
+              variant='outlined'
+              startIcon={<Refresh />}
+              onClick={loadMergeSuggestions}
+              disabled={mergeSuggestionsLoading}
+              sx={{ mb: 2 }}
+            >
+              {mergeSuggestionsLoading ? 'Analyzing...' : 'Refresh suggestions'}
+            </Button>
+            {mergeSuggestionsLoading ? (
+              <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
+                <CircularProgress />
+              </Box>
+            ) : mergeSuggestions.length === 0 ? (
+              <Typography color='text.secondary'>No merge suggestions. Try refreshing after adding more topics.</Typography>
+            ) : (
+              <List>
+                {mergeSuggestions.map((s, i) => (
+                  <ListItem
+                    key={i}
+                    sx={{ flexDirection: 'column', alignItems: 'stretch', border: 1, borderColor: 'divider', borderRadius: 1, mb: 1, p: 2 }}
+                    secondaryAction={
+                      <Button
+                        variant='contained'
+                        size='small'
+                        startIcon={<MergeType />}
+                        onClick={async () => {
+                          const service = getApiServiceSafe();
+                          const res = await service.mergeClusters?.(
+                            s.primary.cluster_name,
+                            s.secondary.cluster_name,
+                            domain,
+                          );
+                          if (res?.success) {
+                            showSuccess(`Merged "${s.secondary.cluster_name}" into "${s.primary.cluster_name}"`);
+                            setMergeSuggestions(prev => prev.filter((_, idx) => idx !== i));
+                            loadTopics();
+                            loadBigPictureData();
+                            loadWordCloudData();
+                            loadTrendingTopics();
+                          } else {
+                            showError(res?.error || 'Failed to merge');
+                          }
+                        }}
+                      >
+                        Merge
+                      </Button>
+                    }
+                  >
+                    <ListItemText
+                      primary={
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+                          <Chip label={s.primary.cluster_name} size='small' color='primary' />
+                          <Typography component='span' color='text.secondary'>+</Typography>
+                          <Chip label={s.secondary.cluster_name} size='small' variant='outlined' />
+                        </Box>
+                      }
+                      secondary={`Score: ${(s.score * 100).toFixed(0)}% • ${s.reason} • ${s.primary.article_count + s.secondary.article_count} articles combined`}
+                    />
+                  </ListItem>
+                ))}
+              </List>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {activeTab === 4 && (
         <>
           {/* Loading */}
           {loading && (
@@ -1453,7 +1676,7 @@ const Topics: React.FC = () => {
       )}
 
       {/* Tab Content: Management */}
-      {activeTab === 4 && (
+      {activeTab === 5 && (
         <Box>
           <TopicManagement />
         </Box>

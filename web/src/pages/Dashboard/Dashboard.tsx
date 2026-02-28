@@ -130,7 +130,6 @@ if (!apiService || typeof apiService.getMonitoringDashboard !== 'function') {
     triggerPipeline: () => Promise.resolve({ success: false, error: 'apiService not initialized' }),
     updateRSSFeeds: () => Promise.resolve({ success: false, error: 'apiService not initialized' }),
     runAIAnalysis: () => Promise.resolve({ success: false, error: 'apiService not initialized' }),
-    runAllPipelineProcesses: () => Promise.resolve({ success: false, error: 'apiService not initialized' }),
   } as any;
 }
 
@@ -191,6 +190,122 @@ interface SystemStatus {
   analytics?: any;
   systemMetrics?: any;
 }
+
+const StoryActivityWidgets: React.FC<{ domain: string; navigate: any }> = ({ domain, navigate }) => {
+  const [activityFeed, setActivityFeed] = useState<any[]>([]);
+  const [dormant, setDormant] = useState<any[]>([]);
+  const [gaps, setGaps] = useState<any[]>([]);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const [af, ds, cg] = await Promise.allSettled([
+          apiService.getActivityFeed?.(10) || Promise.resolve({ data: [] }),
+          apiService.getDormantAlerts?.(30) || Promise.resolve({ data: [] }),
+          apiService.getCoverageGaps?.(7) || Promise.resolve({ data: [] }),
+        ]);
+        setActivityFeed((af.status === 'fulfilled' ? af.value?.data : null) || []);
+        setDormant((ds.status === 'fulfilled' ? ds.value?.data : null) || []);
+        setGaps((cg.status === 'fulfilled' ? cg.value?.data : null) || []);
+      } catch { /* non-critical */ }
+      setLoaded(true);
+    };
+    load();
+  }, []);
+
+  if (!loaded) return null;
+  const hasData = activityFeed.length > 0 || dormant.length > 0 || gaps.length > 0;
+  if (!hasData) return null;
+
+  return (
+    <>
+      {activityFeed.length > 0 && (
+        <Grid item xs={12} md={6}>
+          <Card>
+            <CardContent>
+              <Box display='flex' alignItems='center' mb={2}>
+                <TimelineIcon color='primary' sx={{ mr: 1 }} />
+                <Typography variant='h6'>Recent Event Activity</Typography>
+              </Box>
+              <List dense>
+                {activityFeed.slice(0, 6).map((item: any, i: number) => (
+                  <ListItem key={i} divider sx={{ cursor: 'pointer' }}
+                    onClick={() => item.storyline_id && navigate(`/${domain}/storylines/${item.storyline_id}/timeline`)}>
+                    <ListItemText
+                      primary={item.event_title}
+                      secondary={`${(item.event_type || '').replace(/_/g, ' ')} · ${item.storyline_title || 'unlinked'} · ${item.event_date || ''}`}
+                    />
+                    {item.source_count > 1 && (
+                      <Chip label={`${item.source_count} sources`} size='small' color='info' variant='outlined' />
+                    )}
+                  </ListItem>
+                ))}
+              </List>
+              <Button size='small' onClick={() => navigate(`/${domain}/intelligence/events`)}>
+                View all events
+              </Button>
+            </CardContent>
+          </Card>
+        </Grid>
+      )}
+
+      {dormant.length > 0 && (
+        <Grid item xs={12} md={3}>
+          <Card>
+            <CardContent>
+              <Box display='flex' alignItems='center' mb={2}>
+                <WarningIcon color='warning' sx={{ mr: 1 }} />
+                <Typography variant='h6'>Dormant Stories</Typography>
+              </Box>
+              <Typography variant='body2' color='text.secondary' sx={{ mb: 1 }}>
+                Watched stories silent for 30+ days
+              </Typography>
+              <List dense>
+                {dormant.slice(0, 4).map((d: any, i: number) => (
+                  <ListItem key={i} sx={{ cursor: 'pointer' }}
+                    onClick={() => navigate(`/${domain}/storylines/${d.storyline_id}`)}>
+                    <ListItemText
+                      primary={d.title}
+                      secondary={`Since ${d.dormant_since ? new Date(d.dormant_since).toLocaleDateString() : '?'}`}
+                    />
+                  </ListItem>
+                ))}
+              </List>
+            </CardContent>
+          </Card>
+        </Grid>
+      )}
+
+      {gaps.length > 0 && (
+        <Grid item xs={12} md={3}>
+          <Card>
+            <CardContent>
+              <Box display='flex' alignItems='center' mb={2}>
+                <ErrorIcon color='error' sx={{ mr: 1 }} />
+                <Typography variant='h6'>Coverage Gaps</Typography>
+              </Box>
+              <Typography variant='body2' color='text.secondary' sx={{ mb: 1 }}>
+                Active stories with no new sources in 7+ days
+              </Typography>
+              <List dense>
+                {gaps.slice(0, 4).map((g: any, i: number) => (
+                  <ListItem key={i} sx={{ cursor: 'pointer' }}
+                    onClick={() => navigate(`/${domain}/storylines/${g.storyline_id}`)}>
+                    <ListItemText
+                      primary={g.title}
+                      secondary={`Last: ${g.last_event_at ? new Date(g.last_event_at).toLocaleDateString() : 'never'}`}
+                    />
+                  </ListItem>
+                ))}
+              </List>
+            </CardContent>
+          </Card>
+        </Grid>
+      )}
+    </>
+  );
+};
 
 const Dashboard: React.FC = () => {
   const { domain } = useDomainRoute();
@@ -689,7 +804,7 @@ const Dashboard: React.FC = () => {
       setAnalysisRunning(true);
       saveProcessStatus('master', true);
 
-      const response = await apiService.runAllPipelineProcesses();
+      const response = await apiService.triggerPipeline();
 
       if (response.success) {
         setDisplayRssETA('Completed');
@@ -1431,6 +1546,9 @@ const Dashboard: React.FC = () => {
               </Card>
             </Grid>
           )}
+
+          {/* v5.0 Story Intelligence Widgets */}
+          <StoryActivityWidgets domain={domain} navigate={navigate} />
         </Grid>
       </TabPanel>
 

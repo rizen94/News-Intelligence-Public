@@ -23,7 +23,7 @@ body {
 .app-container {
   display: flex;
   flex: 1;
-  margin-top: 80px; /* Account for fixed header */
+  margin-top: 105px; /* Account for fixed header (padding + h1 + tagline) */
 }
 
 .main-content {
@@ -31,7 +31,7 @@ body {
   margin-left: 250px;
   padding: 20px;
   background: #f8f9fa;
-  min-height: calc(100vh - 160px);
+  min-height: calc(100vh - 185px); /* 105px header + 80px footer-ish */
 }
 
 /* Utility classes */

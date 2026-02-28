@@ -3,6 +3,10 @@ News Intelligence System v4.0 - Domain-Driven FastAPI Application
 Uses Llama 3.1 8B (primary) and Mistral 7B (secondary) models
 """
 
+# Load .env before any config — override=False so shell/env take precedence
+from dotenv import load_dotenv
+load_dotenv(override=False)
+
 import os
 import sys
 import logging
@@ -25,34 +29,24 @@ sys.path.append(os.path.join(os.path.dirname(__file__), 'modules'))
 sys.path.append(os.path.join(os.path.dirname(__file__), 'shared'))
 sys.path.append(os.path.join(os.path.dirname(__file__), 'domains'))
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
+# Configure logging from centralized config (uses settings.LOG_LEVEL, LOG_DIR)
+try:
+    from config.logging_config import setup_logging
+    setup_logging()
+    logger = logging.getLogger(__name__)
+except Exception as e:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    logger = logging.getLogger(__name__)
+    logger.warning("Centralized logging unavailable, using basicConfig: %s", e)
 
-# Import domain routers
-from domains.news_aggregation.routes.news_aggregation import router as news_aggregation_router
-from domains.news_aggregation.routes.rss_duplicate_management import router as rss_duplicate_router
-from domains.content_analysis.routes.content_analysis import router as content_analysis_router
-from domains.content_analysis.routes.article_deduplication import router as article_deduplication_router
-from domains.content_analysis.routes.topic_management import router as topic_management_router
-from domains.content_analysis.routes.topic_queue_management import router as topic_queue_management_router
-from domains.content_analysis.routes.llm_activity_monitoring import router as llm_activity_monitoring_router
-# Import consolidated storyline router (includes all feature modules)
+# Import domain routers (consolidated — one per domain)
+from domains.news_aggregation.routes import router as news_aggregation_router
+from domains.content_analysis.routes import router as content_analysis_router
 from domains.storyline_management.routes import router as storyline_management_router
-from domains.storyline_management.routes.storyline_automation import router as storyline_automation_router
-from domains.storyline_management.routes.storyline_discovery import router as storyline_discovery_router
-from domains.storyline_management.routes.storyline_consolidation import router as storyline_consolidation_router
-from domains.intelligence_hub.routes.intelligence_hub import router as intelligence_hub_router
-from domains.intelligence_hub.routes.intelligence_analysis import router as intelligence_analysis_router
-from domains.intelligence_hub.routes.rag_queries import router as rag_queries_router
-from domains.intelligence_hub.routes.content_synthesis import router as content_synthesis_router
+from domains.intelligence_hub.routes import router as intelligence_hub_router
 from domains.finance.routes.finance import router as finance_router
 from domains.user_management.routes.user_management import router as user_management_router
-from domains.system_monitoring.routes.system_monitoring import router as system_monitoring_router
-from domains.system_monitoring.routes.route_supervisor import router as route_supervisor_router
+from domains.system_monitoring.routes import router as system_monitoring_router
 
 # Import pipeline monitoring
 # from routes.pipeline_monitoring import router as pipeline_monitoring_router
@@ -74,7 +68,7 @@ async def lifespan(app: FastAPI):
     
     # Initialize database connection pool early (persistent connection)
     try:
-        from shared.database.connection import _init_pool, get_db_config
+        from shared.database.connection import _init_pool, get_db_config, get_db_connection
         
         # HARD REQUIREMENT: Enforce SSH tunnel usage
         if not os.getenv("DB_HOST"):
@@ -139,7 +133,41 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"❌ Failed to initialize LLM service: {e}")
         app.state.llm_service = None
-    
+
+    # Log finance embedding config (no heavy imports)
+    try:
+        from domains.finance.data.vector_store import get_embedding_collection_info
+        model, coll = get_embedding_collection_info()
+        logger.info(f"✅ Finance evidence: embedding={model}, collection={coll}")
+    except Exception as e:
+        logger.debug("Finance embedding config not logged: %s", e)
+
+    # Initialize Finance Orchestrator
+    try:
+        from domains.finance.orchestrator import FinanceOrchestrator
+        from domains.finance import data_sources
+        from domains.finance.data import market_data_store, vector_store, evidence_ledger
+        from domains.finance import embedding, stats
+        from domains.finance import llm as finance_llm
+
+        app.state.finance_orchestrator = FinanceOrchestrator(
+            source_loader=data_sources,
+            market_data_store=market_data_store,
+            vector_store=vector_store,
+            evidence_ledger=evidence_ledger,
+            embedding_module=embedding,
+            stats_module=stats,
+            llm_wrapper=finance_llm,
+            cpu_concurrency=4,
+        )
+        logger.info("✅ Finance Orchestrator initialized")
+        if app.state.finance_orchestrator:
+            app.state.finance_orchestrator.start_scheduler()
+            logger.info("✅ Finance scheduler started")
+    except Exception as e:
+        logger.error("❌ Failed to initialize Finance Orchestrator: %s", e)
+        app.state.finance_orchestrator = None
+
     # Start automation manager in background thread
     try:
         from services.automation_manager import AutomationManager
@@ -321,6 +349,14 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Error stopping automation manager: {e}")
     
+    # Stop Finance Scheduler
+    try:
+        if hasattr(app.state, 'finance_orchestrator') and app.state.finance_orchestrator:
+            app.state.finance_orchestrator.stop_scheduler()
+            logger.info("Finance scheduler stopped")
+    except Exception as e:
+        logger.error(f"Error stopping Finance scheduler: {e}")
+    
     # Stop Route Supervisor
     try:
         if hasattr(app.state, 'route_supervisor') and app.state.route_supervisor:
@@ -417,6 +453,39 @@ app = FastAPI(
     }
 )
 
+# Add request tracking and standardized API logging
+@app.middleware("http")
+async def request_tracker_middleware(request: Request, call_next):
+    """Record API activity (for ML yield) and log every request with timestamp + status."""
+    import uuid
+    from shared.services.api_request_tracker import record_request
+    from shared.logging.activity_logger import log_api_request
+    # Generate/propagate request ID for correlation
+    request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
+    request.state.request_id = request_id
+    record_request()
+    start = time.perf_counter()
+    response = await call_next(request)
+    duration_ms = (time.perf_counter() - start) * 1000
+    status_code = response.status_code if hasattr(response, "status_code") else 200
+    path = request.url.path or "/"
+    if request.query_params:
+        path = f"{path}?{request.query_params}"
+    # Exclude health checks from activity logging (noise)
+    if path.rstrip("/").endswith("/health") or "/health" in path.split("?")[0]:
+        pass  # skip log
+    else:
+        log_api_request(
+            method=request.method,
+            path=path,
+            status_code=status_code,
+            duration_ms=duration_ms,
+            request_id=request_id,
+        )
+    # Add request ID to response header for client correlation
+    response.headers["X-Request-ID"] = request_id
+    return response
+
 # Add middleware
 app.add_middleware(
     CORSMiddleware,
@@ -452,26 +521,12 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 # Include domain routers
 app.include_router(news_aggregation_router)
-app.include_router(rss_duplicate_router)
 app.include_router(content_analysis_router)
-app.include_router(topic_management_router)
-app.include_router(article_deduplication_router)
-app.include_router(topic_queue_management_router)
-app.include_router(llm_activity_monitoring_router)
-# Discovery router FIRST (has specific routes like /compare, /evolution)
-app.include_router(storyline_discovery_router)
-app.include_router(storyline_consolidation_router)
-app.include_router(storyline_automation_router)
-# Management router LAST (has catch-all /{storyline_id} route)
 app.include_router(storyline_management_router)
 app.include_router(intelligence_hub_router)
-app.include_router(intelligence_analysis_router)
-app.include_router(rag_queries_router)
-app.include_router(content_synthesis_router)
 app.include_router(finance_router)
 app.include_router(user_management_router)
 app.include_router(system_monitoring_router)
-app.include_router(route_supervisor_router)
 # app.include_router(pipeline_monitoring_router)
 
 # Include v3.0 compatibility layer

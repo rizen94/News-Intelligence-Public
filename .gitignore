@@ -29,6 +29,8 @@ __pycache__/
 .env
 .env.local
 .env.production
+config/.secrets
+api/config/.secrets
 
 # Logs
 *.log
@@ -84,10 +86,7 @@ npm-debug.log*
 
 # Large data files
 *.csv
-*.json
-*.xml
 models/
-data/
 
 # Large backup and export files
 news-system-backup-*/
@@ -97,33 +96,12 @@ news-system-export*.zip
 *.tar.gz
 *.7z
 
-# User home directory files (should not be in project)
-../.ICEauthority
-../.Xauthority
-../.bash_history
-../.bash_logout
-../.bashrc
-../.cache/
-../.config/
-../.cursor/
-../.dmrc
-../.docker/
-../.face
-../.face.icon
-../.gitignore
-../.local/
-../.mozilla/
-../.pki/
-../.profile
-../.ssh/
-../.sudo_as_admin_successful
-../.wget-hsts
-../.xsession-errors*
-../Documents/
-../Downloads/
-../venv/
+# PID files
+*.pid
 
-# Container-specific
-.dockerignore
-Dockerfile*
-docker-compose*.yml
+# Relocated archive (27GB, 508k files - kept external)
+archive/
+
+# Migration state overrides (may contain IPs, do not commit secrets)
+infrastructure/*.local.json
+infrastructure/migration-state.local.json

@@ -8,7 +8,7 @@ Wants=docker.service
 [Service]
 Type=oneshot
 WorkingDirectory=/home/pete/Documents/projects/Projects/News Intelligence
-ExecStart=/bin/bash /home/pete/Documents/projects/Projects/News Intelligence/start.sh
+ExecStart=/bin/bash /home/pete/Documents/projects/Projects/News Intelligence/start_system.sh
 RemainAfterExit=yes
 StandardOutput=journal
 StandardError=journal

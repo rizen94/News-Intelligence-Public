@@ -17,7 +17,6 @@ from services.storyline_automation_service import StorylineAutomationService
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
-    prefix="/api/v4",
     tags=["Storyline Automation"],
     responses={404: {"description": "Not found"}}
 )
@@ -327,6 +326,13 @@ async def approve_domain_suggestion(
                 
                 if cur.rowcount == 0:
                     raise HTTPException(status_code=400, detail="Article already in storyline")
+
+                # Merge article entities into story_entity_index (for storyline search)
+                try:
+                    svc = StorylineAutomationService(domain=domain)
+                    svc._merge_article_entities_to_storyline(cur, storyline_id, article_id)
+                except Exception as merge_err:
+                    logger.debug(f"Entity merge on approve: {merge_err}")
                 
                 # Update suggestion status
                 cur.execute("""

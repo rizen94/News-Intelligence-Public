@@ -8,6 +8,7 @@ import { Routes, Route, useParams, Navigate, useNavigate } from 'react-router-do
 import { useDomain } from '../../../contexts/DomainContext';
 import { isValidDomain } from '../../../utils/domainHelper';
 import DomainRouteGuard from '../DomainRouteGuard/DomainRouteGuard';
+import ErrorBoundary from '../../ErrorBoundary/ErrorBoundary';
 
 // Import pages
 import Dashboard from '../../../pages/Dashboard/Dashboard';
@@ -28,10 +29,27 @@ import Topics from '../../../pages/Topics/Topics';
 import TopicArticles from '../../../pages/Topics/TopicArticles';
 import ConsolidationPanel from '../../../components/Storylines/ConsolidationPanel';
 
+// Restored pages
+import MLProcessing from '../../../pages/MLProcessing/MLProcessing';
+import StoryControlDashboard from '../../../pages/StoryManagement/StoryControlDashboard';
+import StorylineTracking from '../../../pages/StorylineTracking/StorylineTracking';
+import Briefings from '../../../pages/Briefings/Briefings';
+import StoryTimeline from '../../../pages/StoryTimeline/StoryTimeline';
+import Events from '../../../pages/Events/Events';
+import WatchlistPage from '../../../pages/Watchlist/Watchlist';
+
 // Finance-specific pages
 import MarketResearch from '../../../domains/Finance/MarketResearch/MarketResearch';
 import CorporateAnnouncements from '../../../domains/Finance/CorporateAnnouncements/CorporateAnnouncements';
 import MarketPatterns from '../../../domains/Finance/MarketPatterns/MarketPatterns';
+// Finance Analysis (orchestrator)
+import FinancialAnalysis from '../../../pages/Finance/FinancialAnalysis';
+import FinancialAnalysisResult from '../../../pages/Finance/FinancialAnalysisResult';
+import TaskTraceViewer from '../../../pages/Finance/TaskTraceViewer';
+import EvidenceExplorer from '../../../pages/Finance/EvidenceExplorer';
+import SourceHealth from '../../../pages/Finance/SourceHealth';
+import RefreshSchedule from '../../../pages/Finance/RefreshSchedule';
+import FactCheckViewer from '../../../pages/Finance/FactCheckViewer';
 
 const DomainLayout: React.FC = () => {
   const { domain: urlDomain } = useParams<{ domain: string }>();
@@ -63,7 +81,7 @@ const DomainLayout: React.FC = () => {
       <Routes>
         {/* ============================================
             CORE FEATURES - AVAILABLE IN ALL DOMAINS
-            These routes are the same for Politics, Finance, and Science & Tech
+            Paths are relative to parent /:domain/* (splat = segment after domain)
             ============================================ */}
 
         {/* Dashboard - Domain-specific overview */}
@@ -79,8 +97,18 @@ const DomainLayout: React.FC = () => {
         <Route path="storylines" element={<Storylines />} />
         <Route path="storylines/discover" element={<StorylineDiscovery />} />
         <Route path="storylines/consolidation" element={<ConsolidationPanel />} />
-        <Route path="storylines/:id" element={<StorylineDetail />} />
+        <Route path="storylines/:id" element={
+          <ErrorBoundary fallback={
+            <div style={{ padding: 24, background: '#fff3e0', border: '2px solid #ff9800', borderRadius: 8 }}>
+              <h2 style={{ color: '#e65100', marginTop: 0 }}>Storyline failed to load</h2>
+              <p style={{ color: '#333' }}>Check the browser console (F12) for the error details.</p>
+            </div>
+          }>
+            <StorylineDetail />
+          </ErrorBoundary>
+        } />
         <Route path="storylines/:id/synthesis" element={<SynthesizedView />} />
+        <Route path="storylines/:id/timeline" element={<StoryTimeline />} />
 
         {/* Topics - Core feature with topic clustering and management */}
         <Route path="topics" element={<Topics />} />
@@ -94,10 +122,17 @@ const DomainLayout: React.FC = () => {
         <Route path="intelligence" element={<Intelligence />} />
         <Route path="intelligence/analysis" element={<IntelligenceAnalysis />} />
         <Route path="intelligence/rag" element={<DomainRAG />} />
+        <Route path="intelligence/tracking" element={<StorylineTracking />} />
+        <Route path="intelligence/briefings" element={<Briefings />} />
+        <Route path="intelligence/events" element={<Events />} />
+        <Route path="intelligence/watchlist" element={<WatchlistPage />} />
+
+        {/* System Operations */}
+        <Route path="ml-processing" element={<MLProcessing />} />
+        <Route path="story-management" element={<StoryControlDashboard />} />
 
         {/* ============================================
             DOMAIN-SPECIFIC FEATURES (ADDITIONS ONLY)
-            These are additions to core features, not replacements
             ============================================ */}
 
         {/* Finance-specific routes - Additional features for Finance domain */}
@@ -106,17 +141,16 @@ const DomainLayout: React.FC = () => {
             <Route path="market-research" element={<MarketResearch />} />
             <Route path="corporate-announcements" element={<CorporateAnnouncements />} />
             <Route path="market-patterns" element={<MarketPatterns />} />
+            {/* Financial Analysis (orchestrator) */}
+            <Route path="analysis" element={<FinancialAnalysis />} />
+            <Route path="analysis/:taskId" element={<FinancialAnalysisResult />} />
+            <Route path="trace/:taskId" element={<TaskTraceViewer />} />
+            <Route path="evidence" element={<EvidenceExplorer />} />
+            <Route path="sources" element={<SourceHealth />} />
+            <Route path="schedule" element={<RefreshSchedule />} />
+            <Route path="fact-check" element={<FactCheckViewer />} />
           </>
         )}
-
-        {/* Future: Add other domain-specific routes here */}
-        {/* Example: Science & Tech specific features */}
-        {/* {urlDomain === 'science-tech' && (
-          <>
-            <Route path="research-papers" element={<ResearchPapers />} />
-            <Route path="tech-trends" element={<TechTrends />} />
-          </>
-        )} */}
 
         {/* Default redirect to dashboard */}
         <Route path="" element={<Navigate to={`/${urlDomain}/dashboard`} replace />} />

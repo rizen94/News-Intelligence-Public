@@ -1,0 +1,29 @@
+{
+  "cursor.ai.enableAutoEnforcement": true,
+  "cursor.ai.enforcementMode": "strict",
+  "cursor.ai.requireSessionStart": true,
+  "cursor.ai.autoValidateChanges": true,
+  "cursor.ai.enableHumanApproval": true,
+  "cursor.ai.sessionLogging": true,
+  "cursor.ai.enforcementScripts": {
+    "statusCheck": "./scripts/enforce_methodology.sh status",
+    "sessionStart": "./scripts/ai_session_start.sh",
+    "sessionEnd": "./scripts/ai_session_end.sh",
+    "sessionPromote": "./scripts/ai_session_promote.sh",
+    "sessionRollback": "./scripts/ai_session_rollback.sh",
+    "validationCheck": "./scripts/enforce_methodology.sh check"
+  },
+  "cursor.ai.notifications": {
+    "showStatusOnStart": true,
+    "showValidationResults": true,
+    "showPromotionReminders": true,
+    "showRollbackWarnings": true
+  },
+  "cursor.ai.workflow": {
+    "autoStartSession": false,
+    "requireHumanApproval": true,
+    "autoRunValidation": true,
+    "blockProductionChanges": true,
+    "enforceBranchRules": true
+  }
+}

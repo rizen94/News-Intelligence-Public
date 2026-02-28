@@ -3,7 +3,7 @@ Domain 6: System Monitoring Routes
 Handles system metrics, health monitoring, and alerts
 """
 
-from fastapi import APIRouter, HTTPException, BackgroundTasks, Query
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Query, Body
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
 import logging
@@ -43,8 +43,8 @@ router = APIRouter(
 async def health_check():
     """Health check for System Monitoring domain"""
     try:
-        # Check system resources
-        cpu_percent = psutil.cpu_percent(interval=1)
+        # Check system resources (interval=0.1 for fast response — web load takes priority)
+        cpu_percent = psutil.cpu_percent(interval=0.1)
         memory = psutil.virtual_memory()
         disk = psutil.disk_usage('/')
 
@@ -1026,6 +1026,7 @@ async def get_pipeline_status():
         logger.error(f"Error fetching pipeline status: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.post("/pipeline/trigger")
 @router.post("/pipeline/run_all")
 async def run_all_pipeline_processes(background_tasks: BackgroundTasks):
     """
@@ -1087,10 +1088,14 @@ def execute_pipeline_orchestration():
         
         try:
             from domains.content_analysis.services.advanced_topic_extractor import AdvancedTopicExtractor
+            from domains.content_analysis.services.topic_filter_rules import filter_topic_list
             from shared.database.connection import get_db_connection
             
             extractor = AdvancedTopicExtractor(get_db_connection)
             topics = extractor.extract_topics_from_articles(time_period_hours=24)
+            # Apply date/country filter - exclude dates, months, country names from topics
+            if topics:
+                topics = filter_topic_list(topics, name_key="name")
             
             if topics:
                 success = extractor.save_topics_to_database(topics)
@@ -1184,32 +1189,105 @@ def execute_pipeline_orchestration():
         _log_pipeline_trace(trace_id, "orchestration", "error", {"error": str(e)})
 
 def _log_pipeline_trace(trace_id: str, stage: str, status: str, metadata: Dict[str, Any] = None):
-    """Log pipeline trace to database"""
+    """Log pipeline trace to database. Uses pipeline_traces + pipeline_checkpoints schema."""
+    import json
+    import uuid
     try:
         conn = get_db_connection()
         if not conn:
             return
-        
+
+        metadata = metadata or {}
+        checkpoint_status = "failed" if status == "error" else status  # pipeline_checkpoints uses 'failed' not 'error'
+        error_msg = str(metadata.get("error", "")) if status == "error" else None
+        perf_json = json.dumps(metadata)
+
         try:
             with conn.cursor() as cur:
+                # Ensure pipeline_traces row exists
                 cur.execute("""
-                    INSERT INTO pipeline_traces (trace_id, stage, status, start_time, end_time, error_message)
-                    VALUES (%s, %s, %s, NOW(), 
-                        CASE WHEN %s IN ('completed', 'error') THEN NOW() ELSE NULL END,
-                        CASE WHEN %s = 'error' THEN %s ELSE NULL END)
-                """, (
-                    trace_id,
-                    stage,
-                    status,
-                    status,
-                    status,
-                    str(metadata.get('error', '')) if metadata else None
-                ))
+                    INSERT INTO pipeline_traces (trace_id, start_time)
+                    VALUES (%s, NOW())
+                    ON CONFLICT (trace_id) DO NOTHING
+                """, (trace_id,))
+
+                # Log stage to pipeline_checkpoints (has stage, status, error_message)
+                checkpoint_id = f"{trace_id}_{stage}_{uuid.uuid4().hex[:12]}"
+                cur.execute("""
+                    INSERT INTO pipeline_checkpoints (checkpoint_id, trace_id, stage, status, timestamp, error_message, metadata)
+                    VALUES (%s, %s, %s, %s, NOW(), %s, %s::jsonb)
+                """, (checkpoint_id, trace_id, stage, checkpoint_status, error_msg, perf_json))
+
+                # On completion or error, update pipeline_traces
+                if status in ("completed", "error"):
+                    cur.execute("""
+                        UPDATE pipeline_traces
+                        SET end_time = NOW(),
+                            success = (%s = 'completed'),
+                            error_stage = CASE WHEN %s = 'error' THEN %s ELSE NULL END,
+                            performance_metrics = COALESCE(performance_metrics, '{}'::jsonb) || %s::jsonb
+                        WHERE trace_id = %s
+                    """, (status, status, stage, perf_json, trace_id))
                 conn.commit()
         finally:
             conn.close()
     except Exception as e:
         logger.error(f"Error logging pipeline trace: {e}")
+
+
+@router.post("/logs")
+async def ingest_client_log(log_entry: Dict[str, Any] = Body(...)):
+    """
+    Receive a single client log entry from the frontend (errors, warnings).
+    Persists to activity.jsonl with component=client.
+    """
+    try:
+        from shared.logging.activity_logger import log_activity
+        level = log_entry.get("level", "info")
+        message = log_entry.get("message", "Client log")
+        context = {k: v for k, v in log_entry.items() if k not in ("level", "message")}
+        log_activity(
+            component="client",
+            event_type="log",
+            status=level,
+            message=message,
+            **context,
+        )
+        return {"success": True}
+    except Exception as e:
+        logger.warning("Client log ingestion failed: %s", e)
+        return {"success": False, "error": str(e)}
+
+
+@router.post("/logs/batch")
+async def ingest_client_logs_batch(batch: Dict[str, Any] = Body(...)):
+    """
+    Receive batch of client log entries from the frontend.
+    Persists each to activity.jsonl with component=client.
+    """
+    logs = batch.get("logs", [])
+    if not isinstance(logs, list):
+        return {"success": False, "error": "logs must be an array"}
+    try:
+        from shared.logging.activity_logger import log_activity
+        for entry in logs[:100]:  # Cap at 100 per batch
+            level = entry.get("level", "info")
+            message = entry.get("message", "Client log")
+            context = {k: v for k, v in entry.items() if k not in ("level", "message")}
+            try:
+                log_activity(
+                    component="client",
+                    event_type="log",
+                    status=level,
+                    message=message,
+                    **context,
+                )
+            except Exception:
+                pass
+        return {"success": True, "count": min(len(logs), 100)}
+    except Exception as e:
+        logger.warning("Client log batch ingestion failed: %s", e)
+        return {"success": False, "error": str(e)}
 
 
 @router.get("/logs/stats")

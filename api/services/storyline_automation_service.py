@@ -84,6 +84,18 @@ class StorylineAutomationService(DomainAwareService):
                      search_exclude_keywords, article_count, last_automation_run, 
                      automation_frequency_hours) = storyline
                     
+                    # Fetch key_entities if column exists (for entity-first discovery)
+                    key_entities = None
+                    try:
+                        cur.execute(f"""
+                            SELECT key_entities FROM {self.schema}.storylines WHERE id = %s
+                        """, (storyline_id,))
+                        row = cur.fetchone()
+                        if row and row[0]:
+                            key_entities = row[0]
+                    except Exception:
+                        pass
+                    
                     # Parse automation settings
                     # Handle both dict (from psycopg2 JSONB) and string (legacy)
                     if isinstance(automation_settings_json, dict):
@@ -111,21 +123,50 @@ class StorylineAutomationService(DomainAwareService):
                     """, (storyline_id,))
                     existing_article_ids = {row[0] for row in cur.fetchall()}
                     
-                    # Build search query from storyline context
-                    search_query = self._build_search_query(
-                        title, description, analysis_summary,
-                        search_keywords, search_entities
+                    # Collect storyline objects (entities, keywords) for high-probability matching
+                    storyline_entities = self._collect_storyline_entities(
+                        conn, cur, storyline_id, title,
+                        key_entities, search_entities, search_keywords
                     )
                     
-                    # Use RAG-enhanced retrieval (if available)
-                    # For now, use enhanced keyword/semantic search
-                    discovered_articles = await self._rag_discover_articles(
-                        search_query,
-                        search_exclude_keywords or [],
-                        settings,
-                        list(existing_article_ids),
-                        max_results or settings.get("max_articles_per_run", 20)
-                    )
+                    max_results = max_results or settings.get("max_articles_per_run", 20)
+                    
+                    # Entity-first: articles that mention storyline entities = high probability
+                    discovered_articles = []
+                    if storyline_entities:
+                        entity_articles = await self._entity_based_article_search(
+                            conn, storyline_entities, search_exclude_keywords or [],
+                            settings, list(existing_article_ids), max_results
+                        )
+                        if entity_articles:
+                            discovered_articles = entity_articles
+                            logger.info(f"Entity-first search found {len(entity_articles)} articles matching storyline objects")
+                    
+                    # Fallback/supplement: RAG or keyword search if entity search yielded little
+                    if len(discovered_articles) < max_results // 2:
+                        search_query = self._build_search_query(
+                            title, description, analysis_summary,
+                            search_keywords, search_entities
+                        )
+                        rag_articles = await self._rag_discover_articles(
+                            search_query,
+                            search_exclude_keywords or [],
+                            settings,
+                            list(existing_article_ids),
+                            max_results
+                        )
+                        # Merge: prefer entity matches, add RAG results not already found
+                        existing_ids = {a["id"] for a in discovered_articles}
+                        for a in rag_articles:
+                            if a["id"] not in existing_ids:
+                                discovered_articles.append(a)
+                                existing_ids.add(a["id"])
+                        # Re-sort by relevance, recency
+                        discovered_articles.sort(
+                            key=lambda x: (x.get("relevance_score", 0), x.get("published_at") or ""),
+                            reverse=True
+                        )
+                        discovered_articles = discovered_articles[:max_results]
                     
                     # Store suggestions or auto-add based on mode
                     if automation_mode == 'auto_approve':
@@ -203,6 +244,162 @@ class StorylineAutomationService(DomainAwareService):
         query = " ".join(query_parts[:10])  # Limit to 10 terms
         
         return query
+    
+    def _collect_storyline_entities(
+        self,
+        conn,
+        cur,
+        storyline_id: int,
+        title: str,
+        key_entities: Any,
+        search_entities: Optional[List[str]],
+        search_keywords: Optional[List[str]]
+    ) -> List[str]:
+        """
+        Collect all entity/keyword strings to search for.
+        Sources: story_entity_index, key_entities JSONB, search_entities, search_keywords, title words.
+        """
+        entities = set()
+        
+        # 1. story_entity_index (entities extracted from chronology events)
+        for sei_schema in [self.schema, "public"]:
+            try:
+                cur.execute(f"""
+                    SELECT entity_name FROM {sei_schema}.story_entity_index
+                    WHERE storyline_id = %s AND LENGTH(TRIM(entity_name)) >= 2
+                    ORDER BY is_core_entity DESC, mention_count DESC
+                    LIMIT 25
+                """, (storyline_id,))
+                for (name,) in cur.fetchall():
+                    if name and len(name) >= 2:
+                        entities.add(name.strip())
+                break
+            except Exception as e:
+                logger.debug(f"story_entity_index not available in {sei_schema}: {e}")
+        
+        # 2. key_entities (JSONB: dict like {"Entity": count} or list)
+        if key_entities:
+            if isinstance(key_entities, dict):
+                for k in list(key_entities.keys())[:20]:
+                    if k and isinstance(k, str) and len(k) >= 2:
+                        entities.add(k.strip())
+            elif isinstance(key_entities, list):
+                for item in key_entities[:20]:
+                    name = item if isinstance(item, str) else (item.get("name") or item.get("text") if isinstance(item, dict) else None)
+                    if name and len(str(name)) >= 2:
+                        entities.add(str(name).strip())
+        
+        # 3. search_entities (explicit)
+        if search_entities:
+            for e in search_entities[:15]:
+                if e and len(str(e)) >= 2:
+                    entities.add(str(e).strip())
+        
+        # 4. search_keywords
+        if search_keywords:
+            for kw in search_keywords[:15]:
+                if kw and len(str(kw)) >= 2:
+                    entities.add(str(kw).strip())
+        
+        # 5. Significant words from title (3+ chars, capitalized or all-caps)
+        if title:
+            import re
+            words = re.findall(r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b|\b[A-Z]{2,}\b', title)
+            for w in words[:5]:
+                if len(w) >= 3:
+                    entities.add(w.strip())
+        
+        # Filter very short and common terms
+        skip = {"the", "and", "for", "with", "from", "this", "that", "have", "has", "been", "said"}
+        return [e for e in sorted(entities) if e.lower() not in skip and len(e) >= 2][:30]
+    
+    async def _entity_based_article_search(
+        self,
+        conn,
+        entities: List[str],
+        exclude_keywords: List[str],
+        settings: Dict[str, Any],
+        existing_article_ids: List[int],
+        max_results: int
+    ) -> List[Dict[str, Any]]:
+        """
+        Fast search: articles whose title or content mentions any storyline entity.
+        Rank by: entity matches in title (highest), then total matches, then recency.
+        """
+        if not entities:
+            return []
+        
+        try:
+            with conn.cursor() as cur:
+                cur.execute(f"SET search_path TO {self.schema}, public")
+                date_threshold = datetime.now() - timedelta(days=settings.get("date_range_days", 30))
+                exclude_ids = list(existing_article_ids) if existing_article_ids else [-1]
+                
+                entity_conditions = []
+                params = [date_threshold]
+                
+                for entity in entities[:20]:
+                    pattern = f"%{entity}%"
+                    entity_conditions.append(
+                        "(a.title ILIKE %s OR COALESCE(a.content, '') ILIKE %s OR COALESCE(a.summary, '') ILIKE %s)"
+                    )
+                    params.extend([pattern, pattern, pattern])
+                
+                entity_clause = " OR ".join(entity_conditions)
+                exclude_clause = ""
+                if exclude_keywords:
+                    for kw in exclude_keywords[:5]:
+                        kw_pattern = f"%{kw}%"
+                        exclude_clause += " AND (a.title NOT ILIKE %s AND COALESCE(a.content, '') NOT ILIKE %s)"
+                        params.extend([kw_pattern, kw_pattern])
+                
+                exclude_sql = f"AND a.id NOT IN ({','.join(['%s'] * len(exclude_ids))})" if exclude_ids else ""
+                params_with_exclude = params + exclude_ids
+                
+                query_sql = f"""
+                    SELECT a.id, a.title, a.summary, a.content, a.url, a.source_domain, a.published_at, a.quality_score
+                    FROM {self.schema}.articles a
+                    WHERE a.published_at >= %s
+                      {exclude_sql}
+                      AND ({entity_clause})
+                      {exclude_clause}
+                    ORDER BY a.published_at DESC, a.quality_score DESC
+                    LIMIT %s
+                """
+                params_with_exclude.append(max_results)
+                
+                cur.execute(query_sql, params_with_exclude)
+                rows = cur.fetchall()
+                
+                articles = []
+                for row in rows:
+                    art_id, art_title, summary, content, url, domain, pub_at, quality = row
+                    # Compute relevance and list matched entity names
+                    title_lower = (art_title or "").lower()
+                    content_lower = (content or "")[:2000].lower() if content else ""
+                    matched_names = [e for e in entities[:15] if e.lower() in title_lower or e.lower() in content_lower]
+                    match_count = len(matched_names)
+                    relevance = min(0.95, 0.7 + match_count * 0.05)
+                    
+                    articles.append({
+                        "id": art_id,
+                        "title": art_title,
+                        "summary": summary,
+                        "content": (content or "")[:500] if content else None,
+                        "url": url,
+                        "source_domain": domain,
+                        "published_at": pub_at.isoformat() if pub_at else None,
+                        "quality_score": float(quality) if quality else 0.5,
+                        "relevance_score": relevance,
+                        "matched_entities": matched_names,
+                        "matched_keywords": matched_names,  # UI compatibility
+                    })
+                
+                return articles
+                
+        except Exception as e:
+            logger.error(f"Entity-based search failed: {e}")
+            return []
     
     async def _rag_discover_articles(
         self,
@@ -376,20 +573,27 @@ class StorylineAutomationService(DomainAwareService):
                     if (combined >= min_score and 
                         quality >= min_quality and 
                         semantic >= min_semantic):
+                        matched = article.get("matched_entities") or article.get("matched_keywords") or []
+                        if isinstance(matched, int):
+                            matched = []
                         reasoning = f"Matched search query: {search_query[:200]}"
+                        if matched:
+                            reasoning = f"Matched storyline entities: {', '.join(str(m) for m in matched[:8])}"
                         
                         # Note: storyline_article_suggestions is in public schema (shared across domains)
                         cur.execute("""
                             INSERT INTO public.storyline_article_suggestions (
                                 storyline_id, article_id, relevance_score, semantic_score,
                                 keyword_score, quality_score, combined_score, reasoning,
-                                status, suggested_at, expires_at
+                                matched_keywords, matched_entities, status, suggested_at, expires_at
                             ) VALUES (
-                                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
                             ) ON CONFLICT (storyline_id, article_id) DO UPDATE SET
                                 relevance_score = EXCLUDED.relevance_score,
                                 combined_score = EXCLUDED.combined_score,
                                 reasoning = EXCLUDED.reasoning,
+                                matched_keywords = EXCLUDED.matched_keywords,
+                                matched_entities = EXCLUDED.matched_entities,
                                 suggested_at = EXCLUDED.suggested_at,
                                 status = 'pending'
                             WHERE public.storyline_article_suggestions.status != 'added'
@@ -402,6 +606,8 @@ class StorylineAutomationService(DomainAwareService):
                             quality,
                             combined,
                             reasoning,
+                            matched,
+                            matched,
                             "pending",
                             datetime.now(),
                             datetime.now() + timedelta(days=7)  # Expire in 7 days
@@ -418,6 +624,36 @@ class StorylineAutomationService(DomainAwareService):
             conn.rollback()
             return 0
     
+    def _merge_article_entities_to_storyline(self, cur, storyline_id: int, article_id: int) -> None:
+        """Merge article_entities into story_entity_index when article added to storyline."""
+        type_map = {"person": "person", "organization": "organization", "subject": "other", "recurring_event": "event"}
+        for sei_schema in [self.schema, "public"]:
+            try:
+                cur.execute(f"""
+                    SELECT entity_name, entity_type FROM {self.schema}.article_entities
+                    WHERE article_id = %s AND entity_name IS NOT NULL
+                """, (article_id,))
+                rows = cur.fetchall()
+                for name, ae_type in rows:
+                    if not name or len(name.strip()) < 2:
+                        continue
+                    sei_type = type_map.get(ae_type, "other")
+                    try:
+                        cur.execute(f"""
+                            INSERT INTO {sei_schema}.story_entity_index
+                            (storyline_id, entity_name, entity_type, mention_count, last_seen_at)
+                            VALUES (%s, %s, %s, 1, NOW())
+                            ON CONFLICT (storyline_id, entity_name, entity_type) DO UPDATE SET
+                                mention_count = story_entity_index.mention_count + 1,
+                                last_seen_at = NOW()
+                        """, (storyline_id, name.strip()[:255], sei_type))
+                    except Exception as e:
+                        logger.debug(f"story_entity_index merge skip: {e}")
+                break  # success
+            except Exception as e:
+                logger.debug(f"article_entities/story_entity_index merge: {e}")
+                continue
+
     async def _auto_add_articles(
         self,
         conn,
@@ -448,6 +684,7 @@ class StorylineAutomationService(DomainAwareService):
                             
                             if cur.rowcount > 0:
                                 added_count += 1
+                                self._merge_article_entities_to_storyline(cur, storyline_id, article.get("id"))
                         except Exception as e:
                             logger.warning(f"Error adding article {article.get('id')}: {e}")
                             continue

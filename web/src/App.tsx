@@ -5,7 +5,21 @@ import {
   Route,
   Navigate,
 } from 'react-router-dom';
+import { ThemeProvider, createTheme, CssBaseline } from '@mui/material';
 import './App.css';
+
+// MUI theme and baseline - required for proper rendering of MUI components
+const theme = createTheme({
+  palette: {
+    mode: 'light',
+    primary: { main: '#1976d2' },
+    secondary: { main: '#9c27b0' },
+    error: { main: '#d32f2f' },
+    warning: { main: '#ed6c02' },
+    info: { main: '#0288d1' },
+    success: { main: '#2e7d32' },
+  },
+});
 
 // Import domain-agnostic pages
 import Monitoring from './pages/Monitoring/Monitoring';
@@ -75,8 +89,10 @@ function App() {
 
   return (
     <ErrorBoundary>
-      <DomainProvider>
-        <Router>
+      <ThemeProvider theme={theme}>
+        <CssBaseline />
+        <DomainProvider>
+          <Router>
           <div className='App'>
             <Header />
             <div className='app-container'>
@@ -147,6 +163,7 @@ function App() {
           </div>
         </Router>
       </DomainProvider>
+      </ThemeProvider>
     </ErrorBoundary>
   );
 }

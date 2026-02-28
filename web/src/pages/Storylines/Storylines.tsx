@@ -83,10 +83,13 @@ interface Storyline {
   category?: string;
   priority?: string;
   article_count?: number;
+  total_events?: number;
   created_at: string;
   updated_at?: string;
   impact_score?: number;
   key_entities?: string[];
+  last_event_at?: string;
+  reactivation_count?: number;
 }
 
 interface TimelineEvent {
@@ -300,8 +303,13 @@ const Storylines: React.FC = () => {
       return 'success';
     case 'developing':
       return 'warning';
+    case 'dormant':
+      return 'warning';
+    case 'watching':
+      return 'info';
     case 'completed':
     case 'resolved':
+    case 'concluded':
       return 'info';
     case 'paused':
       return 'warning';
@@ -455,6 +463,7 @@ const Storylines: React.FC = () => {
             <Article fontSize='small' color='action' />
             <Typography variant='caption' color='text.secondary'>
               {storyline.article_count || 0} articles
+              {(storyline.total_events ?? 0) > 0 && ` · ${storyline.total_events} events`}
             </Typography>
           </Box>
           <Typography variant='caption' color='text.secondary'>
@@ -778,6 +787,9 @@ const Storylines: React.FC = () => {
                 <MenuItem value=''>All Statuses</MenuItem>
                 <MenuItem value='active'>Active</MenuItem>
                 <MenuItem value='developing'>Developing</MenuItem>
+                <MenuItem value='dormant'>Dormant</MenuItem>
+                <MenuItem value='watching'>Watching</MenuItem>
+                <MenuItem value='concluded'>Concluded</MenuItem>
                 <MenuItem value='completed'>Completed</MenuItem>
                 <MenuItem value='resolved'>Resolved</MenuItem>
                 <MenuItem value='paused'>Paused</MenuItem>
@@ -1029,6 +1041,7 @@ const Storylines: React.FC = () => {
         open={managementDialogOpen}
         onClose={handleCloseManagementDialog}
         storyline={selectedStorylineForEdit}
+        domain={domain}
         onStorylineUpdated={handleStorylineUpdated}
       />
     </Box>

@@ -1,0 +1,421 @@
+{
+  "version": "3.3.0",
+  "name": "News Intelligence System",
+  "description": "Unified schema definition for all system layers",
+  "tables": {
+    "articles": {
+      "description": "News articles from various sources",
+      "columns": {
+        "id": {
+          "type": "integer",
+          "primary_key": true,
+          "auto_increment": true,
+          "description": "Unique article identifier"
+        },
+        "title": {
+          "type": "varchar(500)",
+          "nullable": false,
+          "description": "Article title"
+        },
+        "content": {
+          "type": "text",
+          "nullable": true,
+          "description": "Article content/body"
+        },
+        "url": {
+          "type": "varchar(1000)",
+          "nullable": true,
+          "description": "Original article URL"
+        },
+        "published_at": {
+          "type": "timestamp",
+          "nullable": true,
+          "description": "Publication timestamp"
+        },
+        "source": {
+          "type": "varchar(200)",
+          "nullable": true,
+          "description": "News source name"
+        },
+        "category": {
+          "type": "varchar(100)",
+          "nullable": true,
+          "description": "Article category"
+        },
+        "status": {
+          "type": "varchar(50)",
+          "nullable": false,
+          "default": "pending",
+          "description": "Processing status"
+        },
+        "tags": {
+          "type": "json",
+          "nullable": true,
+          "description": "Article tags as JSON array"
+        },
+        "created_at": {
+          "type": "timestamp",
+          "nullable": false,
+          "default": "CURRENT_TIMESTAMP",
+          "description": "Record creation timestamp"
+        },
+        "updated_at": {
+          "type": "timestamp",
+          "nullable": false,
+          "default": "CURRENT_TIMESTAMP",
+          "description": "Record update timestamp"
+        },
+        "sentiment_score": {
+          "type": "decimal(3,2)",
+          "nullable": true,
+          "description": "AI sentiment analysis score (-1 to 1)"
+        },
+        "entities": {
+          "type": "json",
+          "nullable": true,
+          "description": "Extracted entities as JSON"
+        },
+        "readability_score": {
+          "type": "decimal(3,2)",
+          "nullable": true,
+          "description": "Readability score (0-100)"
+        },
+        "quality_score": {
+          "type": "decimal(3,2)",
+          "nullable": true,
+          "default": 0.0,
+          "description": "Content quality score (0-1)"
+        },
+        "summary": {
+          "type": "text",
+          "nullable": true,
+          "description": "AI-generated summary"
+        },
+        "ml_data": {
+          "type": "json",
+          "nullable": true,
+          "description": "Machine learning metadata"
+        },
+        "language": {
+          "type": "varchar(10)",
+          "nullable": true,
+          "default": "en",
+          "description": "Article language code"
+        },
+        "word_count": {
+          "type": "integer",
+          "nullable": true,
+          "default": 0,
+          "description": "Article word count"
+        },
+        "reading_time": {
+          "type": "integer",
+          "nullable": true,
+          "default": 0,
+          "description": "Estimated reading time in minutes"
+        },
+        "feed_id": {
+          "type": "integer",
+          "nullable": true,
+          "foreign_key": "rss_feeds.id",
+          "description": "Source RSS feed ID"
+        }
+      },
+      "indexes": [
+        {
+          "name": "idx_articles_published_at",
+          "columns": ["published_at"],
+          "type": "btree"
+        },
+        {
+          "name": "idx_articles_source",
+          "columns": ["source"],
+          "type": "btree"
+        },
+        {
+          "name": "idx_articles_status",
+          "columns": ["status"],
+          "type": "btree"
+        },
+        {
+          "name": "idx_articles_category",
+          "columns": ["category"],
+          "type": "btree"
+        },
+        {
+          "name": "idx_articles_created_at",
+          "columns": ["created_at"],
+          "type": "btree"
+        }
+      ]
+    },
+    "rss_feeds": {
+      "description": "RSS feed configurations",
+      "columns": {
+        "id": {
+          "type": "integer",
+          "primary_key": true,
+          "auto_increment": true,
+          "description": "Unique feed identifier"
+        },
+        "name": {
+          "type": "varchar(200)",
+          "nullable": false,
+          "description": "Feed display name"
+        },
+        "url": {
+          "type": "varchar(1000)",
+          "nullable": false,
+          "description": "RSS feed URL"
+        },
+        "is_active": {
+          "type": "boolean",
+          "nullable": false,
+          "default": true,
+          "description": "Whether feed is active"
+        },
+        "last_fetched": {
+          "type": "timestamp",
+          "nullable": true,
+          "description": "Last successful fetch timestamp"
+        },
+        "fetch_interval": {
+          "type": "integer",
+          "nullable": false,
+          "default": 300,
+          "description": "Fetch interval in seconds"
+        },
+        "created_at": {
+          "type": "timestamp",
+          "nullable": false,
+          "default": "CURRENT_TIMESTAMP",
+          "description": "Record creation timestamp"
+        },
+        "updated_at": {
+          "type": "timestamp",
+          "nullable": false,
+          "default": "CURRENT_TIMESTAMP",
+          "description": "Record update timestamp"
+        },
+        "error_count": {
+          "type": "integer",
+          "nullable": false,
+          "default": 0,
+          "description": "Consecutive error count"
+        },
+        "last_error": {
+          "type": "text",
+          "nullable": true,
+          "description": "Last error message"
+        }
+      },
+      "indexes": [
+        {
+          "name": "idx_rss_feeds_active",
+          "columns": ["is_active"],
+          "type": "btree"
+        },
+        {
+          "name": "idx_rss_feeds_url",
+          "columns": ["url"],
+          "type": "btree"
+        }
+      ]
+    },
+    "storylines": {
+      "description": "News storylines and narratives",
+      "columns": {
+        "id": {
+          "type": "integer",
+          "primary_key": true,
+          "auto_increment": true,
+          "description": "Unique storyline identifier"
+        },
+        "title": {
+          "type": "varchar(300)",
+          "nullable": false,
+          "description": "Storyline title"
+        },
+        "description": {
+          "type": "text",
+          "nullable": true,
+          "description": "Storyline description"
+        },
+        "status": {
+          "type": "varchar(50)",
+          "nullable": false,
+          "default": "active",
+          "description": "Storyline status"
+        },
+        "created_at": {
+          "type": "timestamp",
+          "nullable": false,
+          "default": "CURRENT_TIMESTAMP",
+          "description": "Record creation timestamp"
+        },
+        "updated_at": {
+          "type": "timestamp",
+          "nullable": false,
+          "default": "CURRENT_TIMESTAMP",
+          "description": "Record update timestamp"
+        },
+        "created_by": {
+          "type": "varchar(100)",
+          "nullable": true,
+          "description": "Creator identifier"
+        }
+      },
+      "indexes": [
+        {
+          "name": "idx_storylines_status",
+          "columns": ["status"],
+          "type": "btree"
+        },
+        {
+          "name": "idx_storylines_created_at",
+          "columns": ["created_at"],
+          "type": "btree"
+        }
+      ]
+    }
+  },
+  "api_endpoints": {
+    "articles": {
+      "base_path": "/api/articles",
+      "operations": {
+        "list": {
+          "method": "GET",
+          "path": "/",
+          "description": "Get paginated list of articles",
+          "parameters": {
+            "page": {"type": "integer", "default": 1, "min": 1},
+            "limit": {"type": "integer", "default": 20, "min": 1, "max": 100},
+            "source": {"type": "string", "optional": true},
+            "category": {"type": "string", "optional": true},
+            "status": {"type": "string", "optional": true}
+          },
+          "response": {
+            "type": "object",
+            "properties": {
+              "articles": {"type": "array", "items": {"$ref": "#/definitions/Article"}},
+              "total_count": {"type": "integer"},
+              "page": {"type": "integer"},
+              "limit": {"type": "integer"},
+              "total_pages": {"type": "integer"}
+            }
+          }
+        },
+        "get": {
+          "method": "GET",
+          "path": "/{article_id}",
+          "description": "Get article by ID",
+          "parameters": {
+            "article_id": {"type": "integer", "required": true}
+          },
+          "response": {"$ref": "#/definitions/Article"}
+        },
+        "stats": {
+          "method": "GET",
+          "path": "/stats/overview",
+          "description": "Get article statistics",
+          "response": {"$ref": "#/definitions/ArticleStats"}
+        }
+      }
+    },
+    "rss_feeds": {
+      "base_path": "/api/rss/feeds",
+      "operations": {
+        "list": {
+          "method": "GET",
+          "path": "/",
+          "description": "Get list of RSS feeds",
+          "response": {
+            "type": "array",
+            "items": {"$ref": "#/definitions/RSSFeed"}
+          }
+        },
+        "get": {
+          "method": "GET",
+          "path": "/{feed_id}",
+          "description": "Get RSS feed by ID",
+          "parameters": {
+            "feed_id": {"type": "integer", "required": true}
+          },
+          "response": {"$ref": "#/definitions/RSSFeed"}
+        },
+        "stats": {
+          "method": "GET",
+          "path": "/stats/overview",
+          "description": "Get RSS feed statistics",
+          "response": {"$ref": "#/definitions/RSSStats"}
+        }
+      }
+    }
+  },
+  "definitions": {
+    "Article": {
+      "type": "object",
+      "properties": {
+        "id": {"type": "integer"},
+        "title": {"type": "string", "maxLength": 500},
+        "content": {"type": "string"},
+        "url": {"type": "string", "maxLength": 1000},
+        "published_at": {"type": "string", "format": "date-time"},
+        "source": {"type": "string", "maxLength": 200},
+        "category": {"type": "string", "maxLength": 100},
+        "status": {"type": "string", "maxLength": 50},
+        "tags": {"type": "array", "items": {"type": "string"}},
+        "created_at": {"type": "string", "format": "date-time"},
+        "updated_at": {"type": "string", "format": "date-time"},
+        "sentiment_score": {"type": "number", "minimum": -1, "maximum": 1},
+        "entities": {"type": "object"},
+        "readability_score": {"type": "number", "minimum": 0, "maximum": 100},
+        "quality_score": {"type": "number", "minimum": 0, "maximum": 1},
+        "summary": {"type": "string"},
+        "ml_data": {"type": "object"},
+        "language": {"type": "string", "maxLength": 10},
+        "word_count": {"type": "integer", "minimum": 0},
+        "reading_time": {"type": "integer", "minimum": 0},
+        "feed_id": {"type": "integer"}
+      },
+      "required": ["id", "title", "status", "created_at", "updated_at"]
+    },
+    "RSSFeed": {
+      "type": "object",
+      "properties": {
+        "id": {"type": "integer"},
+        "name": {"type": "string", "maxLength": 200},
+        "url": {"type": "string", "maxLength": 1000},
+        "is_active": {"type": "boolean"},
+        "last_fetched": {"type": "string", "format": "date-time"},
+        "fetch_interval": {"type": "integer"},
+        "created_at": {"type": "string", "format": "date-time"},
+        "updated_at": {"type": "string", "format": "date-time"},
+        "error_count": {"type": "integer"},
+        "last_error": {"type": "string"}
+      },
+      "required": ["id", "name", "url", "is_active", "created_at", "updated_at"]
+    },
+    "ArticleStats": {
+      "type": "object",
+      "properties": {
+        "total_articles": {"type": "integer"},
+        "articles_by_source": {"type": "object"},
+        "articles_by_category": {"type": "object"},
+        "articles_by_status": {"type": "object"},
+        "recent_articles": {"type": "integer"},
+        "avg_quality_score": {"type": "number"}
+      }
+    },
+    "RSSStats": {
+      "type": "object",
+      "properties": {
+        "total_feeds": {"type": "integer"},
+        "active_feeds": {"type": "integer"},
+        "inactive_feeds": {"type": "integer"},
+        "feeds_with_errors": {"type": "integer"},
+        "last_fetch_times": {"type": "object"}
+      }
+    }
+  }
+}

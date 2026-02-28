@@ -1,0 +1,57 @@
+# Finance domain data source definitions
+# Loaded by data source orchestrator. Add series without touching Python.
+# scope: finance = finance-only; scope: shared = would be used by politics macro (when built)
+
+fred:
+  name: "Federal Reserve Economic Data"
+  type: api
+  module_path: "domains.finance.data_sources.fred"
+  credentials:
+    - FRED_API_KEY
+  rate_limit:
+    per_minute: 120
+  datasets:
+    # Gold: GOLDAMGBD228NLBM was removed from FRED Jan 2022 (IBA). Use index or external source.
+    IQ12260:
+      description: "Export Price Index (End Use): Nonmonetary Gold (index, Dec 2024=100)"
+      scope: finance
+    DCOILWTICO:
+      description: "Crude Oil WTI - Cushing OK (USD per barrel, daily)"
+      scope: shared
+    FEDFUNDS:
+      description: "Federal Funds Effective Rate"
+      scope: shared
+    DGS10:
+      description: "10-Year Treasury Constant Maturity Rate"
+      scope: shared
+    CPIAUCSL:
+      description: "Consumer Price Index for All Urban Consumers"
+      scope: shared
+    DTWEXBGS:
+      description: "Trade Weighted U.S. Dollar Index"
+      scope: shared
+    T10YIE:
+      description: "10-Year Breakeven Inflation Rate"
+      scope: shared
+    M2SL:
+      description: "M2 Money Supply"
+      scope: shared
+
+# Placeholder for future sources (uncomment when implemented)
+# gdelt:
+#   name: "GDELT"
+#   type: bigquery
+#   module_path: "domains.finance.data_sources.gdelt"
+#   credentials:
+#     - BIGQUERY_PROJECT_ID
+#   rate_limit:
+#     per_minute: 60
+
+edgar:
+  name: "SEC EDGAR"
+  type: api
+  module_path: "domains.finance.data_sources.edgar"
+  credentials:
+    - EDGAR_USER_AGENT
+  rate_limit:
+    per_second: 10

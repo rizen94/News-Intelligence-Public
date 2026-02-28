@@ -218,7 +218,7 @@ const RSSFeeds: React.FC = () => {
     try {
       const response = await apiService.rssFeeds.getCategories();
       if (response.success) {
-        setCategories(response.data.categories || []);
+        setCategories((response.data.categories || []) as string[]);
       }
     } catch (error: any) {
       console.error('Error fetching categories:', error);

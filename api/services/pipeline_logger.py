@@ -242,11 +242,11 @@ class PipelineLogger:
         log_level = self._get_log_level(status)
         self.pipeline_logger.log(
             log_level,
-            f"📍 Checkpoint {checkpoint_id} - Stage: {stage.value} - Status: {status} - Duration: {duration_ms:.2f}ms"
+            f"📍 Checkpoint {checkpoint_id} - Stage: {stage.value if hasattr(stage, 'value') else stage} - Status: {status} - Duration: {duration_ms:.2f}ms"
         )
         
         if error_message:
-            self.pipeline_logger.error(f"❌ Error in {stage.value}: {error_message}")
+            self.pipeline_logger.error(f"❌ Error in {stage.value if hasattr(stage, 'value') else stage}: {error_message}")
         
         return checkpoint_id
     
@@ -321,7 +321,7 @@ class PipelineLogger:
         
         # Calculate stage durations
         for checkpoint in trace.checkpoints:
-            stage = checkpoint.stage.value
+            stage = checkpoint.stage.value if hasattr(checkpoint.stage, 'value') else checkpoint.stage
             if stage not in metrics["stage_durations"]:
                 metrics["stage_durations"][stage] = 0.0
             metrics["stage_durations"][stage] += checkpoint.duration_ms
@@ -374,7 +374,7 @@ class PipelineLogger:
                     'end_time': trace.end_time,
                     'total_duration_ms': trace.total_duration_ms,
                     'success': trace.success,
-                    'error_stage': trace.error_stage.value if trace.error_stage else None,
+                    'error_stage': (trace.error_stage.value if hasattr(trace.error_stage, 'value') else trace.error_stage) if trace.error_stage else None,
                     'performance_metrics': json.dumps(trace.performance_metrics)
                 })
                 
@@ -395,7 +395,7 @@ class PipelineLogger:
                     db.execute(checkpoint_query, {
                         'checkpoint_id': checkpoint.checkpoint_id,
                         'trace_id': checkpoint.trace_id,
-                        'stage': checkpoint.stage.value,
+                        'stage': checkpoint.stage.value if hasattr(checkpoint.stage, 'value') else checkpoint.stage,
                         'article_id': checkpoint.article_id,
                         'storyline_id': checkpoint.storyline_id,
                         'rss_feed_id': checkpoint.rss_feed_id,

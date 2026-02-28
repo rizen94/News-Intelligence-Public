@@ -1,0 +1,37 @@
+{
+  "_description": "Populated during migration phases. Do not commit secrets.",
+  "phase": 0,
+  "secondary": {
+    "ip": "REPLACE_IN_PHASE_1",
+    "hostname": "",
+    "ssh_user": "",
+    "ssh_port": 22,
+    "os_release": "",
+    "kernel": "",
+    "cpu_cores": 0,
+    "ram_gb": 0,
+    "disk_type": "SSD|HDD",
+    "disk_space_gb": 0
+  },
+  "primary": {
+    "ip": "REPLACE_AFTER_DISCOVERY"
+  },
+  "database": {
+    "current_nas_user": "newsapp",
+    "current_nas_name": "news_intelligence",
+    "new_name": "news_intel",
+    "new_user": "newsapp",
+    "password_env": "NEWS_PLATFORM_DB_PASSWORD"
+  },
+  "nas": {
+    "host": "192.168.93.100",
+    "role_after_migration": "storage_only",
+    "nfs_shares": [
+      "/share/news-platform/backups",
+      "/share/news-platform/archives",
+      "/share/news-platform/logs"
+    ]
+  },
+  "last_updated": null,
+  "notes": []
+}

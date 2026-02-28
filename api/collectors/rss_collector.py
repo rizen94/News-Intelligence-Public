@@ -728,13 +728,25 @@ def collect_rss_feeds() -> int:
         # OPTIMIZATION: Process feeds in parallel (max 5 concurrent)
         def process_single_feed(feed_data):
             """Process a single RSS feed - designed for parallel execution"""
+            import time as _time
+            feed_start = _time.time()
             feed_id, feed_name, feed_url, domain_key = feed_data
             schema_name = domain_key.replace('-', '_') if domain_key else 'politics'
+            
+            def _rss_log(status, fetched=0, saved=0, err=None):
+                try:
+                    from shared.logging.activity_logger import log_rss_pull
+                    log_rss_pull(feed_id=feed_id, feed_name=feed_name, status=status,
+                                 articles_fetched=fetched, articles_saved=saved,
+                                 duration_ms=(_time.time() - feed_start) * 1000, error=err)
+                except Exception:
+                    pass
             
             # Each thread gets its own database connection
             feed_conn = get_db_connection()
             if not feed_conn:
                 logger.error(f"Failed to get DB connection for feed: {feed_name}")
+                _rss_log("error", err="No DB connection")
                 return {'articles_added': 0, 'duplicates': 0, 'excluded': 0, 'error': 'No DB connection'}
             
             try:
@@ -822,8 +834,12 @@ def collect_rss_feeds() -> int:
                                 continue
                             
                             # Calculate domain-specific bias score
-                            bias_score = calculate_domain_bias_score(domain_key, title, content, feed_name)
-                            
+                            raw_bias = calculate_domain_bias_score(domain_key, title, content, feed_name)
+                            # chk_quality_scores requires bias_score in [0, 1]; raw bias is [-1, 1]
+                            bias_score = (raw_bias + 1) / 2 if raw_bias is not None else 0.5
+                            bias_score = max(0.0, min(1.0, bias_score))
+                            quality_score = max(0.0, min(1.0, quality_score))
+
                             # Insert article (scores already calculated above)
                             feed_cur.execute("SAVEPOINT sp_article")
                             feed_cur.execute(f"""
@@ -885,6 +901,8 @@ def collect_rss_feeds() -> int:
                     
                     filter_str = f" ({', '.join(filter_summary)})" if filter_summary else ""
                     logger.info(f"✅ {feed_name}: Added {articles_added} articles{filter_str}")
+                    entries_count = min(50, len(feed.entries)) if feed.entries else 0
+                    _rss_log("success", fetched=entries_count, saved=articles_added)
                     
                     # Note: Topic clustering will be handled by periodic background tasks
                     # Articles are now in database and will be picked up by scheduled clustering
@@ -905,10 +923,12 @@ def collect_rss_feeds() -> int:
                 except TimeoutError:
                     logger.error(f"⏱️ Timeout processing feed: {feed_name}")
                     feed_conn.rollback()
+                    _rss_log("error", err="Timeout")
                     return {'articles_added': 0, 'duplicates': 0, 'excluded': 0, 'error': 'Timeout'}
                 except Exception as e:
                     logger.error(f"❌ Error processing feed {feed_name}: {e}")
                     feed_conn.rollback()
+                    _rss_log("error", err=str(e))
                     return {'articles_added': 0, 'duplicates': 0, 'excluded': 0, 'error': str(e)}
                 finally:
                     feed_cur.close()
@@ -1071,10 +1091,14 @@ def collect_rss_feed(feed_url: str, feed_name: str = "Unknown") -> int:
                 # Calculate domain-specific bias score
                 # Determine domain from schema_name
                 domain_key = schema_name.replace('_', '-') if schema_name in ['science_tech'] else schema_name
-                bias_score = calculate_domain_bias_score(domain_key, title, content, feed_name)
-                
+                raw_bias = calculate_domain_bias_score(domain_key, title, content, feed_name)
+                # chk_quality_scores requires bias_score in [0, 1]; raw bias is [-1, 1] -> normalize
+                bias_score = (raw_bias + 1) / 2 if raw_bias is not None else 0.5
+                bias_score = max(0.0, min(1.0, bias_score))
+                # Ensure quality_score stays in [0, 1] (impact_score already clamped)
+                quality_score = max(0.0, min(1.0, quality_score))
+
                 # Insert article into domain schema (v4.0) with quality score and bias score
-                # (scores already calculated above)
                 cur.execute(f"""
                     INSERT INTO {schema_name}.articles
                     (title, url, content, summary, published_at, created_at, source_domain, quality_score, bias_score)

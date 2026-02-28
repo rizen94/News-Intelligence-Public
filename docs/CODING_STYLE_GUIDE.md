@@ -4,10 +4,10 @@
 
 This document establishes coding standards, naming conventions, and architectural patterns for the News Intelligence System to ensure consistency, maintainability, and prevent configuration fragmentation.
 
-**Last Updated**: 2025-01-27  
-**Version**: 4.1  
+**Last Updated**: 2026-02-21  
+**Version**: 4.2  
 **Status**: Active  
-**Update**: Added "Improve Existing, Don't Duplicate" design philosophy
+**Update**: Elevated "Reuse Before Create" as core tenet — search existing and archived code before building anything new
 
 ---
 
@@ -28,11 +28,27 @@ This document establishes coding standards, naming conventions, and architectura
 - Explicit imports and dependencies
 - Obvious code structure
 
-### **4. Improve Existing, Don't Duplicate** ⭐ **NEW DESIGN PHILOSOPHY**
-- **Always improve existing code before creating new files**
+### **4. Reuse Before Create** ⭐ **CORE DESIGN PHILOSOPHY**
+- **Search existing AND archived code before writing anything new**
+- **Restore and modernize archived code** rather than rebuilding from scratch
+- **Improve existing code** before creating new files
 - **Use composition over duplication** - Add features to existing services, don't create "Enhanced" versions
 - **Consolidate, don't proliferate** - Merge duplicate functionality into single source
 - **Delete legacy files** - Remove old versions after migration, don't keep them as "legacy"
+
+#### **The Archive-First Workflow**
+Before creating any new file, service, or component:
+1. Search the active codebase for similar functionality
+2. Search `archive/` directories for previously-built code that could be restored
+3. If found: restore, modernize (e.g. JS→TSX), and integrate
+4. If nothing exists: only then create from scratch
+
+Archive locations to check:
+- `archive/` — full project backups and old versions
+- `web/_archived_duplicates/` — archived frontend components
+- `api/_archived/` — archived API files
+- `scripts/archive/` — archived scripts
+- `docs/archive/` — archived documentation
 
 #### **The "Improve Existing" Pattern**
 ```python
@@ -613,6 +629,9 @@ docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}"
 ## 📋 **IMPLEMENTATION CHECKLIST**
 
 ### **Before Writing New Code**
+- [ ] Searched active codebase for existing similar functionality
+- [ ] Searched archive directories for previously-built code
+- [ ] Confirmed no existing code can be extended or restored
 - [ ] Follow established naming conventions
 - [ ] Use single source of truth for configuration
 - [ ] Follow error handling patterns
@@ -620,6 +639,7 @@ docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}"
 - [ ] Write clear documentation
 
 ### **Before Adding New Features**
+- [ ] Searched archive for prior implementations of this feature
 - [ ] Check if existing functionality can be extended
 - [ ] Follow architectural standards
 - [ ] Update documentation

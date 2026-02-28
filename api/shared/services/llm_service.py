@@ -301,12 +301,19 @@ class LLMService:
         except Exception as e:
             raise Exception(f"Ollama API error: {str(e)}")
     
-    async def get_model_status(self) -> Dict[str, Any]:
+    async def get_model_status(self, timeout_seconds: Optional[float] = None) -> Dict[str, Any]:
         """
-        Get status of available models
+        Get status of available models.
+        Use timeout_seconds (e.g. 1.0) for health checks to avoid blocking when Ollama is busy.
         """
         try:
-            response = await self.client.get(f"{self.ollama_base_url}/api/tags")
+            if timeout_seconds is not None:
+                response = await asyncio.wait_for(
+                    self.client.get(f"{self.ollama_base_url}/api/tags"),
+                    timeout=timeout_seconds
+                )
+            else:
+                response = await self.client.get(f"{self.ollama_base_url}/api/tags")
             
             if response.status_code == 200:
                 models = response.json().get("models", [])
@@ -327,6 +334,14 @@ class LLMService:
                     "error": f"Ollama API error: {response.status_code}"
                 }
                 
+        except asyncio.TimeoutError:
+            return {
+                "success": False,
+                "error": "Ollama busy (timeout) — web requests take priority",
+                "primary_available": None,
+                "secondary_available": None,
+                "timestamp": datetime.now().isoformat()
+            }
         except Exception as e:
             return {
                 "success": False,

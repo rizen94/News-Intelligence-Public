@@ -48,6 +48,7 @@ import {
   RadioGroup,
   FormControlLabel,
   FormLabel,
+  Switch,
   Snackbar,
   CircularProgress,
   Tabs,
@@ -145,6 +146,8 @@ const Articles: React.FC = () => {
     quality: null as 'high' | 'medium' | 'low' | null,
     sentiment: null as 'positive' | 'negative' | 'neutral' | null,
   });
+  const [showUnlinkedOnly, setShowUnlinkedOnly] = useState(true);
+  const [filterTopic, setFilterTopic] = useState('');
 
   // Topic clustering state
   const [topics, setTopics] = useState<Topic[]>([]);
@@ -190,13 +193,15 @@ const Articles: React.FC = () => {
     try {
       setLoading(true);
       setError(null);
-      const response = await apiService.getArticles({
+      const params: any = {
         page,
         limit: 12,
         search: searchQuery,
         source_domain: filterSource,
         sort: sortBy,
-      }, domain);
+      };
+      if (showUnlinkedOnly) params.unlinked = true;
+      const response = await apiService.getArticles(params, domain);
 
       if (response.success) {
         const articlesData = response.data?.articles ||
@@ -222,7 +227,7 @@ const Articles: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [page, searchQuery, filterSource, sortBy, domain]);
+  }, [page, searchQuery, filterSource, sortBy, showUnlinkedOnly, domain]);
 
   // Load existing topics from database
   const loadTopics = useCallback(async() => {
@@ -278,7 +283,7 @@ const Articles: React.FC = () => {
     loadStorylines();
     loadTopics();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, searchQuery, filterSource, sortBy, domain]);
+  }, [page, searchQuery, filterSource, sortBy, showUnlinkedOnly, domain]);
 
   // Trigger NEW topic clustering (creates new topics in database)
   const clusterArticles = useCallback(async() => {
@@ -1087,6 +1092,8 @@ const Articles: React.FC = () => {
                 setSearchQuery('');
                 setFilterSource('');
                 setSortBy('date');
+                setShowUnlinkedOnly(true);
+                setFilterTopic('');
                 setQuickFilters({ readingTime: null, quality: null, sentiment: null });
                 setSelectedTopic(null);
                 setPage(1);
@@ -1094,6 +1101,42 @@ const Articles: React.FC = () => {
             >
               Clear Filters
             </Button>
+          </Grid>
+          <Grid item xs={12}>
+            <Box display='flex' alignItems='center' gap={2} flexWrap='wrap'>
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={showUnlinkedOnly}
+                    onChange={e => { setShowUnlinkedOnly(e.target.checked); setPage(1); }}
+                  />
+                }
+                label='Unlinked articles only'
+              />
+              {topics.length > 0 && (
+                <FormControl size='small' sx={{ minWidth: 180 }}>
+                  <InputLabel>Filter by Topic</InputLabel>
+                  <Select
+                    value={filterTopic}
+                    label='Filter by Topic'
+                    onChange={e => {
+                      setFilterTopic(e.target.value);
+                      if (e.target.value) {
+                        const topic = topics.find(t => t.name === e.target.value);
+                        setSelectedTopic(topic || null);
+                      } else {
+                        setSelectedTopic(null);
+                      }
+                    }}
+                  >
+                    <MenuItem value=''>All Topics</MenuItem>
+                    {topics.map(t => (
+                      <MenuItem key={t.name} value={t.name}>{t.name} ({t.count})</MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              )}
+            </Box>
           </Grid>
           <Grid item xs={12} md={2}>
             <Button

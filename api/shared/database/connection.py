@@ -1,18 +1,25 @@
 """
 Shared Database Connection Module for News Intelligence System v4.0
 With connection pooling for improved performance over SSH tunnel.
+Single source of truth for all DB connections (psycopg2 + SQLAlchemy).
 """
 
 import os
 import logging
+import time
 import psycopg2
 from psycopg2 import pool
 from psycopg2.extras import RealDictCursor
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Generator
 import threading
 from contextlib import contextmanager
 
 logger = logging.getLogger(__name__)
+
+# SQLAlchemy engine (lazy init, shares config with psycopg2 pool)
+_sqlalchemy_engine = None
+_sqlalchemy_session_factory = None
+_sqlalchemy_lock = threading.Lock()
 
 # Global connection pool (thread-safe)
 _connection_pool: Optional[pool.ThreadedConnectionPool] = None
@@ -158,7 +165,7 @@ def _init_pool() -> pool.ThreadedConnectionPool:
         
         _connection_pool = pool.ThreadedConnectionPool(
             minconn=2,      # Minimum connections to keep open
-            maxconn=15,     # Maximum connections (increased for parallel requests)
+            maxconn=25,     # Maximum connections (for background workers + API requests)
             host=config["host"],
             port=config["port"],
             database=config["database"],
@@ -168,7 +175,7 @@ def _init_pool() -> pool.ThreadedConnectionPool:
         )
         
         _pool_initialized = True
-        logger.info("✅ Connection pool initialized with 2-15 connections")
+        logger.info("✅ Connection pool initialized with 2-25 connections")
         
         return _connection_pool
 
@@ -265,3 +272,76 @@ def check_database_health() -> Dict[str, Any]:
     finally:
         if conn is not None:
             conn.close()
+
+
+def _init_sqlalchemy():
+    """Lazy-init SQLAlchemy engine (single source, uses get_db_config)"""
+    global _sqlalchemy_engine, _sqlalchemy_session_factory
+    with _sqlalchemy_lock:
+        if _sqlalchemy_engine is not None:
+            return
+        config = get_db_config()
+        url = f"postgresql://{config['user']}:{config['password']}@{config['host']}:{config['port']}/{config['database']}"
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        _sqlalchemy_engine = create_engine(
+            url,
+            pool_pre_ping=True,
+            pool_recycle=300,
+            pool_size=5,
+            max_overflow=5,
+            echo=False,
+        )
+        _sqlalchemy_session_factory = sessionmaker(autocommit=False, autoflush=False, bind=_sqlalchemy_engine)
+        logger.info("SQLAlchemy engine initialized (pool 5+5)")
+
+
+def get_db() -> Generator:
+    """SQLAlchemy session generator (use: session = next(get_db()))"""
+    _init_sqlalchemy()
+    session = _sqlalchemy_session_factory()
+    try:
+        yield session
+    finally:
+        session.close()
+
+
+def get_db_session():
+    """Return a SQLAlchemy session directly (caller must close)"""
+    _init_sqlalchemy()
+    return _sqlalchemy_session_factory()
+
+
+@contextmanager
+def get_db_cursor():
+    """Context manager for psycopg2 cursor with RealDictCursor"""
+    conn = get_db_connection()
+    if not conn:
+        raise Exception("Failed to obtain database connection")
+    cursor = None
+    try:
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        yield cursor
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        if cursor:
+            cursor.close()
+        conn.close()
+
+
+def test_database_connection() -> bool:
+    """Test DB connection; returns True if healthy"""
+    result = check_database_health()
+    return result.get("success", False)
+
+
+def get_database_url() -> str:
+    """PostgreSQL URL for SQLAlchemy (legacy compat)"""
+    config = get_db_config()
+    return f"postgresql://{config['user']}:{config['password']}@{config['host']}:{config['port']}/{config['database']}"
+
+
+# Alias for legacy imports
+get_database_config = get_db_config

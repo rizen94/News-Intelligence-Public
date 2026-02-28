@@ -12,6 +12,11 @@ import logging
 from shared.services.llm_service import llm_service, TaskType
 from shared.database.connection import get_db_connection
 from shared.services.domain_aware_service import validate_domain
+from domains.content_analysis.services.topic_filter_rules import (
+    filter_word_cloud_entries,
+    filter_topic_list,
+)
+from domains.content_analysis.services.topic_merge_suggestions import get_merge_suggestions
 
 logger = logging.getLogger(__name__)
 
@@ -25,8 +30,8 @@ router = APIRouter(
 async def health_check():
     """Health check for Content Analysis domain"""
     try:
-        # Check LLM service
-        llm_status = await llm_service.get_model_status()
+        # Check LLM service (1s timeout — don't block health when Ollama is busy)
+        llm_status = await llm_service.get_model_status(timeout_seconds=1.0)
         
         return {
             "success": True,
@@ -472,26 +477,21 @@ async def get_topics(
  
                 where_clause = "WHERE " + " AND ".join(where_conditions)
  
-                # Get topics with article counts and article IDs
-                # FIXED: Use article_topic_clusters (not article_topic_assignments)
-                # article_topic_assignments links to 'topics' table, not 'topic_clusters'
-                # article_topic_clusters links to 'topic_clusters' table via topic_cluster_id
-                query = f"""
-                    SELECT tc.id, tc.cluster_name, tc.cluster_description, tc.cluster_type,
-                           tc.created_at, tc.updated_at, tc.metadata,
+                # Get topics with article counts and article IDs (minimal columns for schema compatibility)
+                cur.execute(f"""
+                    SELECT tc.id, tc.cluster_name,
+                           NULL::text as cluster_description, NULL::text as cluster_type,
+                           tc.created_at, tc.updated_at, '{{}}'::jsonb as metadata,
                            COUNT(atc.article_id) as article_count,
                            AVG(atc.relevance_score) as avg_relevance,
                            ARRAY_AGG(atc.article_id) FILTER (WHERE atc.article_id IS NOT NULL) as article_ids
                     FROM {schema}.topic_clusters tc
                     LEFT JOIN {schema}.article_topic_clusters atc ON tc.id = atc.topic_cluster_id
                     {where_clause}
-                    GROUP BY tc.id, tc.cluster_name, tc.cluster_description, tc.cluster_type,
-                             tc.created_at, tc.updated_at, tc.metadata
+                    GROUP BY tc.id, tc.cluster_name, tc.created_at, tc.updated_at
                     ORDER BY article_count DESC, tc.created_at DESC
                     LIMIT %s OFFSET %s
-                """
-                
-                cur.execute(query, params + [limit, offset])
+                """, params + [limit, offset])
                 
                 topics = []
                 for row in cur.fetchall():
@@ -515,6 +515,10 @@ async def get_topics(
                         "avg_relevance": float(row[8]) if row[8] else 0.0,
                         "article_ids": article_ids  # Include article IDs for frontend matching
                     })
+                
+                # Apply date/country filter rules and banned topics - exclude from display
+                banned = _get_banned_topics(cur, schema)
+                topics = filter_topic_list(topics, name_key="name", banned_topics=banned)
                 
                 # Get total count
                 count_query = f"""
@@ -543,6 +547,143 @@ async def get_topics(
     except Exception as e:
         logger.error(f"Error fetching topics: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/{domain}/content_analysis/topics/merge_suggestions")
+async def get_topic_merge_suggestions(
+    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    min_score: float = Query(0.35, ge=0.1, le=1.0),
+    limit: int = Query(50, ge=1, le=100)
+):
+    """Second-layer clustering: analyze all topics and suggest which could be merged."""
+    try:
+        if not validate_domain(domain):
+            raise HTTPException(status_code=400, detail=f"Invalid domain: {domain}")
+        schema = domain.replace('-', '_')
+        conn = get_db_connection()
+        if not conn:
+            raise HTTPException(status_code=500, detail="Database connection failed")
+        try:
+            with conn.cursor() as cur:
+                cur.execute(f"SET search_path TO {schema}, public")
+                # Fetch ALL topic clusters (up to 500) for comparison — no filter
+                cur.execute(f"""
+                    SELECT tc.id, tc.cluster_name, COUNT(atc.article_id) as article_count
+                    FROM {schema}.topic_clusters tc
+                    LEFT JOIN {schema}.article_topic_clusters atc ON tc.id = atc.topic_cluster_id
+                    GROUP BY tc.id, tc.cluster_name
+                    HAVING COUNT(atc.article_id) >= 1
+                    ORDER BY article_count DESC
+                    LIMIT 500
+                """)
+                rows = cur.fetchall()
+                topics = []
+                for row in rows:
+                    topics.append({
+                        "id": row[0],
+                        "name": row[1],
+                        "cluster_name": row[1],
+                        "article_count": row[2] if len(row) > 2 else 0,
+                        "keywords": [],
+                    })
+                suggestions = get_merge_suggestions(
+                    topics, min_score=min_score, max_suggestions=limit, name_key="name"
+                )
+                return {
+                    "success": True,
+                    "data": {"suggestions": suggestions, "topics_analyzed": len(topics)},
+                    "timestamp": datetime.now().isoformat()
+                }
+        finally:
+            conn.close()
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error generating merge suggestions: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/{domain}/content_analysis/topics/merge_clusters")
+async def merge_topic_clusters(
+    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    body: Dict[str, Any] = Body(...)
+):
+    """Merge a topic cluster into another (secondary -> primary). Keeps primary, moves all articles."""
+    primary_name = body.get("primary_cluster") or body.get("primary")
+    secondary_name = body.get("secondary_cluster") or body.get("secondary")
+    if not primary_name or not secondary_name:
+        raise HTTPException(status_code=400, detail="primary_cluster and secondary_cluster required")
+    if str(primary_name).strip().lower() == str(secondary_name).strip().lower():
+        raise HTTPException(status_code=400, detail="Primary and secondary must be different")
+    try:
+        if not validate_domain(domain):
+            raise HTTPException(status_code=400, detail=f"Invalid domain: {domain}")
+        schema = domain.replace('-', '_')
+        conn = get_db_connection()
+        if not conn:
+            raise HTTPException(status_code=500, detail="Database connection failed")
+        try:
+            with conn.cursor() as cur:
+                cur.execute(f"SET search_path TO {schema}, public")
+                cur.execute(
+                    f"SELECT id FROM {schema}.topic_clusters WHERE cluster_name = %s",
+                    (primary_name.strip(),)
+                )
+                primary_row = cur.fetchone()
+                cur.execute(
+                    f"SELECT id FROM {schema}.topic_clusters WHERE cluster_name = %s",
+                    (secondary_name.strip(),)
+                )
+                secondary_row = cur.fetchone()
+                if not primary_row:
+                    raise HTTPException(status_code=404, detail=f"Primary cluster '{primary_name}' not found")
+                if not secondary_row:
+                    raise HTTPException(status_code=404, detail=f"Secondary cluster '{secondary_name}' not found")
+                primary_id, secondary_id = primary_row[0], secondary_row[0]
+                if primary_id == secondary_id:
+                    raise HTTPException(status_code=400, detail="Primary and secondary are the same cluster")
+                # Move article assignments: insert into primary, keep max relevance on conflict
+                cur.execute(f"""
+                    INSERT INTO {schema}.article_topic_clusters (article_id, topic_cluster_id, relevance_score, confidence_score)
+                    SELECT article_id, %s, relevance_score, confidence_score
+                    FROM {schema}.article_topic_clusters
+                    WHERE topic_cluster_id = %s
+                    ON CONFLICT (article_id, topic_cluster_id) DO UPDATE SET
+                        relevance_score = GREATEST(article_topic_clusters.relevance_score, EXCLUDED.relevance_score),
+                        confidence_score = GREATEST(article_topic_clusters.confidence_score, EXCLUDED.confidence_score)
+                """, (primary_id, secondary_id))
+                # Delete secondary's assignments
+                cur.execute(
+                    f"DELETE FROM {schema}.article_topic_clusters WHERE topic_cluster_id = %s",
+                    (secondary_id,)
+                )
+                # Delete secondary cluster
+                cur.execute(f"DELETE FROM {schema}.topic_clusters WHERE id = %s", (secondary_id,))
+                # Update primary's article_count if column exists
+                try:
+                    cur.execute(f"""
+                        UPDATE {schema}.topic_clusters
+                        SET article_count = (SELECT COUNT(*) FROM {schema}.article_topic_clusters WHERE topic_cluster_id = %s),
+                            updated_at = NOW()
+                        WHERE id = %s
+                    """, (primary_id, primary_id))
+                except Exception:
+                    pass
+                conn.commit()
+                return {
+                    "success": True,
+                    "message": f"Merged '{secondary_name}' into '{primary_name}'",
+                    "primary_cluster": primary_name,
+                    "secondary_cluster": secondary_name,
+                    "timestamp": datetime.now().isoformat()
+                }
+        finally:
+            conn.close()
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error merging topic clusters: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @router.post("/{domain}/content_analysis/topics/cluster")
 async def cluster_articles(
@@ -1251,7 +1392,19 @@ async def get_word_cloud_data(
                             },
                             'timestamp': datetime.now().isoformat()
                         }
-                
+
+                # Exclude dates, days, months, country identifiers, and banned topics from topic cloud
+                banned = _get_banned_topics(cur, schema)
+                word_cloud_data = filter_word_cloud_entries(word_cloud_data, text_key='text', banned_topics=banned)
+                # Rebuild category stats after filtering
+                categories = {}
+                for word in word_cloud_data:
+                    cat = word.get('category', 'general')
+                    if cat not in categories:
+                        categories[cat] = {'count': 0, 'total_frequency': 0}
+                    categories[cat]['count'] += 1
+                    categories[cat]['total_frequency'] += word.get('frequency', 0)
+
                 return {
                     'success': True,
                     'data': {
@@ -1270,6 +1423,116 @@ async def get_word_cloud_data(
     except Exception as e:
         logger.error(f"Error fetching word cloud data: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+def _get_banned_topics(cur, schema: str) -> set:
+    """Fetch banned topic names for a domain (lowercased for case-insensitive matching)."""
+    try:
+        cur.execute(f"SELECT topic_name FROM {schema}.banned_topics")
+        return {row[0].lower().strip() for row in cur.fetchall() if row[0]}
+    except Exception:
+        try:
+            cur.connection.rollback()
+        except Exception:
+            pass
+        return set()
+
+
+@router.get("/{domain}/content_analysis/topics/banned")
+async def get_banned_topics(
+    domain: str = Path(..., regex="^(politics|finance|science-tech)$")
+):
+    """List all banned topics for a domain."""
+    try:
+        if not validate_domain(domain):
+            raise HTTPException(status_code=400, detail=f"Invalid domain: {domain}")
+        schema = domain.replace('-', '_')
+        conn = get_db_connection()
+        if not conn:
+            raise HTTPException(status_code=500, detail="Database connection failed")
+        try:
+            with conn.cursor() as cur:
+                cur.execute(f"SET search_path TO {schema}, public")
+                cur.execute(f"SELECT id, topic_name, created_at, reason FROM {schema}.banned_topics ORDER BY topic_name")
+                rows = cur.fetchall()
+                banned = [{"id": r[0], "topic_name": r[1], "created_at": r[2].isoformat() if r[2] else None, "reason": r[3]} for r in rows]
+                return {"success": True, "data": banned}
+        finally:
+            conn.close()
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching banned topics: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/{domain}/content_analysis/topics/banned")
+async def ban_topic(
+    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    body: Dict[str, Any] = Body(...)
+):
+    """Add a topic to the banned list."""
+    topic_name = body.get("topic_name") or body.get("topic")
+    if not topic_name or not isinstance(topic_name, str):
+        raise HTTPException(status_code=400, detail="topic_name is required")
+    topic_name = topic_name.strip()
+    if not topic_name:
+        raise HTTPException(status_code=400, detail="topic_name cannot be empty")
+    try:
+        if not validate_domain(domain):
+            raise HTTPException(status_code=400, detail=f"Invalid domain: {domain}")
+        schema = domain.replace('-', '_')
+        conn = get_db_connection()
+        if not conn:
+            raise HTTPException(status_code=500, detail="Database connection failed")
+        try:
+            with conn.cursor() as cur:
+                cur.execute(f"SET search_path TO {schema}, public")
+                cur.execute(f"INSERT INTO {schema}.banned_topics (topic_name, reason) VALUES (%s, %s) ON CONFLICT (topic_name) DO NOTHING RETURNING id", (topic_name, body.get("reason")))
+                row = cur.fetchone()
+                conn.commit()
+                if row:
+                    return {"success": True, "message": f"Topic '{topic_name}' banned", "id": row[0]}
+                return {"success": True, "message": f"Topic '{topic_name}' was already banned"}
+        finally:
+            conn.close()
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error banning topic: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/{domain}/content_analysis/topics/banned/{topic_name:path}")
+async def unban_topic(
+    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    topic_name: str = Path(...)
+):
+    """Remove a topic from the banned list."""
+    if not topic_name:
+        raise HTTPException(status_code=400, detail="topic_name is required")
+    topic_name = topic_name.strip()
+    try:
+        if not validate_domain(domain):
+            raise HTTPException(status_code=400, detail=f"Invalid domain: {domain}")
+        schema = domain.replace('-', '_')
+        conn = get_db_connection()
+        if not conn:
+            raise HTTPException(status_code=500, detail="Database connection failed")
+        try:
+            with conn.cursor() as cur:
+                cur.execute(f"SET search_path TO {schema}, public")
+                cur.execute(f"DELETE FROM {schema}.banned_topics WHERE LOWER(topic_name) = LOWER(%s)", (topic_name,))
+                deleted = cur.rowcount
+                conn.commit()
+                return {"success": True, "message": "Topic unbanned" if deleted else "Topic was not banned", "deleted": deleted > 0}
+        finally:
+            conn.close()
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error unbanning topic: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/{domain}/content_analysis/topics/big_picture")
 async def get_big_picture_analysis(
     domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
@@ -1317,7 +1580,9 @@ async def get_big_picture_analysis(
                         "article_count": row[1] or 0,
                         "percentage": round((row[1] or 0) / max(recent_articles_count, 1) * 100, 1)
                     })
- 
+                banned = _get_banned_topics(cur, schema)
+                topic_distribution = filter_topic_list(topic_distribution, name_key="category", banned_topics=banned)
+
                 # Get trending topics (most active in recent period)
                 cur.execute(f"""
                     SELECT tc.cluster_name, COUNT(atc.article_id) as recent_articles,
@@ -1339,7 +1604,8 @@ async def get_big_picture_analysis(
                         "avg_relevance": float(row[2]) if row[2] else 0.0,
                         "trend_score": row[1] * (float(row[2]) if row[2] else 0.0)
                     })
-                
+                trending_topics = filter_topic_list(trending_topics, name_key="name", banned_topics=banned)
+
                 # Get source diversity
                 cur.execute(f"""
                     SELECT source_domain, COUNT(*) as article_count
@@ -1451,7 +1717,9 @@ async def get_trending_topics(
                         "trend_score": round(trend_score, 2),
                         "trend_direction": "rising" if row[1] > 5 else "stable"
                     })
-                
+                banned = _get_banned_topics(cur, schema)
+                trending_topics = filter_topic_list(trending_topics, name_key="name", banned_topics=banned)
+
                 return {
                     "success": True,
                     "data": {
@@ -1529,6 +1797,11 @@ async def process_article_clustering(limit: int, domain: str = "politics", time_
         
         logger.info(f"Topic extraction completed: {len(topics)} topics found")
         
+        if topics:
+            # Apply date/country filter - exclude before saving to DB
+            topics = filter_topic_list(topics, name_key="name")
+            if not topics:
+                logger.info("All extracted topics filtered out (dates/countries) - nothing to save")
         if topics:
             # Generate word cloud data
             logger.debug("Generating word cloud data...")
@@ -1690,7 +1963,7 @@ async def process_new_storyline_comprehensive(domain: str, storyline_id: int, sc
                         
                         if articles:
                             # Trigger RAG analysis which includes timeline extraction
-                            await process_storyline_rag_analysis(storyline_id, storyline, articles)
+                            await process_storyline_rag_analysis(domain, storyline_id, storyline, articles)
                             logger.info(f"✅ Triggered RAG analysis and timeline extraction for storyline {storyline_id}")
             finally:
                 conn.close()

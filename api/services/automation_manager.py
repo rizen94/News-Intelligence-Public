@@ -85,7 +85,7 @@ class AutomationManager:
             
             # PHASE 2: Article Processing (Runs frequently, processes existing articles)
             'article_processing': {
-                'interval': 600,  # 10 minutes - Frequent processing of existing articles
+                'interval': 1200,  # 20 minutes - Relaxed to reduce load
                 'last_run': None,
                 'enabled': True,
                 'priority': TaskPriority.HIGH,
@@ -96,7 +96,7 @@ class AutomationManager:
             
             # PHASE 3: ML Processing (Runs frequently on processed articles)
             'ml_processing': {
-                'interval': 600,  # 10 minutes - Frequent ML processing
+                'interval': 1200,  # 20 minutes - Relaxed to reduce load
                 'last_run': None,
                 'enabled': True,
                 'priority': TaskPriority.HIGH,
@@ -107,7 +107,7 @@ class AutomationManager:
             
             # PHASE 5: Topic Clustering (Continuous iterative refinement)
             'topic_clustering': {
-                'interval': 300,  # 5 minutes - Continuous refinement
+                'interval': 1200,  # 20 minutes - Relaxed from 5 min to reduce load
                 'last_run': None,
                 'enabled': True,
                 'priority': TaskPriority.HIGH,
@@ -118,7 +118,7 @@ class AutomationManager:
             
             # PHASE 4: Parallel ML & Entity Processing (Runs frequently)
             'entity_extraction': {
-                'interval': 600,  # 10 minutes - Frequent entity extraction
+                'interval': 1200,  # 20 minutes - Relaxed to reduce load
                 'last_run': None,
                 'enabled': True,
                 'priority': TaskPriority.NORMAL,
@@ -130,7 +130,7 @@ class AutomationManager:
             
             # PHASE 4: Parallel ML & Entity Processing (Runs frequently)
             'quality_scoring': {
-                'interval': 600,  # 10 minutes - Frequent quality scoring
+                'interval': 1200,  # 20 minutes - Relaxed to reduce load
                 'last_run': None,
                 'enabled': True,
                 'priority': TaskPriority.NORMAL,
@@ -142,7 +142,7 @@ class AutomationManager:
             
             # PHASE 4: Parallel ML & Entity Processing (Runs frequently)
             'sentiment_analysis': {
-                'interval': 600,  # 10 minutes - Frequent sentiment analysis
+                'interval': 1200,  # 20 minutes - Relaxed to reduce load
                 'last_run': None,
                 'enabled': True,
                 'priority': TaskPriority.NORMAL,
@@ -152,9 +152,9 @@ class AutomationManager:
                 'parallel_group': 'ml_entity_processing'  # Can run in parallel with ML
             },
             
-            # PHASE 7: Storyline Processing (Every 20 minutes)
+            # PHASE 7: Storyline Processing
             'storyline_processing': {
-                'interval': 1200,  # 20 minutes - Half cycle of RSS
+                'interval': 1800,  # 30 minutes - Relaxed to reduce load
                 'last_run': None,
                 'enabled': True,
                 'priority': TaskPriority.HIGH,
@@ -166,7 +166,7 @@ class AutomationManager:
             # PHASE 8: RAG Enhancement (Every 30 minutes)
             # PHASE 6: Basic Summary Generation (Starts 15 minutes after RSS)
             'basic_summary_generation': {
-                'interval': 300,  # 5 minutes - Fast, frequent
+                'interval': 600,  # 10 minutes - Relaxed from 5 min
                 'last_run': None,
                 'enabled': True,
                 'priority': TaskPriority.HIGH,
@@ -185,7 +185,42 @@ class AutomationManager:
                 'estimated_duration': 600  # 10 minutes
             },
             
-            # PHASE 9: Timeline Generation (Every 30 minutes)
+            # PHASE 9a: Event Extraction (v5.0 - runs after entity extraction)
+            'event_extraction': {
+                'interval': 1200,  # 20 minutes - Relaxed from 15 min
+                'last_run': None,
+                'enabled': True,
+                'priority': TaskPriority.NORMAL,
+                'phase': 9,
+                'depends_on': ['entity_extraction'],
+                'estimated_duration': 300,  # 5 minutes
+                'parallel_group': 'event_processing'
+            },
+            
+            # PHASE 9b: Event Deduplication (v5.0 - runs after event extraction)
+            'event_deduplication': {
+                'interval': 1200,  # 20 minutes - Relaxed from 15 min
+                'last_run': None,
+                'enabled': True,
+                'priority': TaskPriority.NORMAL,
+                'phase': 9,
+                'depends_on': ['event_extraction'],
+                'estimated_duration': 120,
+                'parallel_group': 'event_processing'
+            },
+            
+            # PHASE 9c: Story Continuation Matching (v5.0)
+            'story_continuation': {
+                'interval': 1200,  # 20 minutes - Relaxed from 15 min
+                'last_run': None,
+                'enabled': True,
+                'priority': TaskPriority.NORMAL,
+                'phase': 9,
+                'depends_on': ['event_deduplication'],
+                'estimated_duration': 300,
+            },
+
+            # PHASE 9d: Timeline Generation (Every 30 minutes)
             'timeline_generation': {
                 'interval': 1800,  # 30 minutes - Same as RAG
                 'last_run': None,
@@ -218,6 +253,17 @@ class AutomationManager:
                 'estimated_duration': 180  # 3 minutes
             },
             
+            # PHASE 12: Watchlist Alert Generation (v5.0)
+            'watchlist_alerts': {
+                'interval': 1200,  # 20 minutes - Relaxed from 15 min
+                'last_run': None,
+                'enabled': True,
+                'priority': TaskPriority.LOW,
+                'phase': 12,
+                'depends_on': ['story_continuation'],
+                'estimated_duration': 60,
+            },
+
             # MAINTENANCE: Data Cleanup (Daily)
             'data_cleanup': {
                 'interval': 86400,  # 24 hours
@@ -229,9 +275,9 @@ class AutomationManager:
                 'estimated_duration': 300  # 5 minutes
             },
             
-            # MONITORING: Health Check (Every minute)
+            # MONITORING: Health Check
             'health_check': {
-                'interval': 60,  # 1 minute
+                'interval': 120,  # 2 minutes - Relaxed from 1 min
                 'last_run': None,
                 'enabled': True,
                 'priority': TaskPriority.CRITICAL,
@@ -655,6 +701,25 @@ class AutomationManager:
         task.status = TaskStatus.RUNNING
         task.started_at = datetime.now(timezone.utc)
         
+        # Priority hierarchy: yield to web page loads — skip Ollama tasks when API is active
+        _OLLAMA_TASKS = {
+            'topic_clustering', 'ml_processing', 'entity_extraction', 'sentiment_analysis',
+            'article_processing', 'storyline_processing', 'rag_enhancement', 'basic_summary_generation',
+            'event_extraction', 'event_deduplication', 'story_continuation', 'watchlist_alerts',
+            'quality_scoring', 'timeline_generation',
+        }
+        if task.name in _OLLAMA_TASKS:
+            try:
+                from shared.services.api_request_tracker import should_yield_to_api
+                if should_yield_to_api():
+                    logger.debug(f"Yielding to API — deferring {task.name} (web page load takes priority)")
+                    task.status = TaskStatus.PENDING
+                    await self.task_queue.put(task)  # Re-queue for next cycle when API is idle
+                    await asyncio.sleep(5)  # Avoid tight loop — wait before worker picks next task
+                    return
+            except ImportError:
+                pass
+        
         logger.info(f"Worker {worker_id} executing task: {task.name}")
         
         try:
@@ -689,6 +754,14 @@ class AutomationManager:
                 await self._execute_timeline_generation(task)
             elif task.name == 'topic_clustering':
                 await self._execute_topic_clustering(task)
+            elif task.name == 'event_extraction':
+                await self._execute_event_extraction_v5(task)
+            elif task.name == 'event_deduplication':
+                await self._execute_event_deduplication_v5(task)
+            elif task.name == 'story_continuation':
+                await self._execute_story_continuation_v5(task)
+            elif task.name == 'watchlist_alerts':
+                await self._execute_watchlist_alerts_v5(task)
             else:
                 raise ValueError(f"Unknown task type: {task.name}")
             
@@ -995,8 +1068,7 @@ class AutomationManager:
         
         for article_id, url in articles:
             try:
-                # Process article
-                await article_processor.process_single_article(url)
+                article_processor.process_single_article(article_id)
                 processed_count += 1
             except Exception as e:
                 logger.error(f"Error processing article {article_id}: {e}")
@@ -1049,7 +1121,105 @@ class AutomationManager:
         conn.close()
         
         logger.info(f"Entity extraction completed: {extracted_count} articles processed")
-        
+
+    async def _execute_event_extraction_v5(self, task: Task):
+        """v5.0 -- Extract structured events with temporal grounding from articles."""
+        from services.event_extraction_service import EventExtractionService
+
+        svc = EventExtractionService()
+        conn = await self._get_db_connection()
+        cursor = conn.cursor()
+
+        try:
+            cursor.execute("""
+                SELECT id, content, published_at
+                FROM articles
+                WHERE processing_status = 'completed'
+                  AND timeline_processed = false
+                  AND content IS NOT NULL
+                  AND LENGTH(content) > 100
+                ORDER BY published_at DESC
+                LIMIT 30
+            """)
+            articles = cursor.fetchall()
+
+            total_events = 0
+            for article_id, content, pub_date in articles:
+                try:
+                    if pub_date is None:
+                        pub_date = datetime.now(timezone.utc)
+                    events = await svc.extract_events_from_article(
+                        article_id=article_id,
+                        content=content,
+                        pub_date=pub_date,
+                    )
+                    saved = await svc.save_events(events, conn)
+                    total_events += saved
+
+                    cursor.execute("""
+                        UPDATE articles
+                        SET timeline_processed = true,
+                            timeline_events_generated = %s,
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE id = %s
+                    """, (len(events), article_id))
+                    conn.commit()
+                except Exception as e:
+                    logger.error(f"Event extraction failed for article {article_id}: {e}")
+                    conn.rollback()
+
+            logger.info(f"v5 event extraction completed: {total_events} events from {len(articles)} articles")
+        finally:
+            cursor.close()
+            conn.close()
+            await svc.close()
+
+    async def _execute_event_deduplication_v5(self, task: Task):
+        """v5.0 -- Deduplicate events across sources using fingerprint, semantic, and entity matching."""
+        from services.event_deduplication_service import EventDeduplicationService
+
+        conn = await self._get_db_connection()
+        try:
+            svc = EventDeduplicationService(conn)
+            stats = await svc.deduplicate_recent(limit=100)
+            logger.info(
+                f"v5 event deduplication completed: "
+                f"checked={stats['checked']}, merged={stats['merged']}"
+            )
+        finally:
+            conn.close()
+
+    async def _execute_story_continuation_v5(self, task: Task):
+        """v5.0 -- Match events to existing storylines and manage lifecycle states."""
+        from services.story_continuation_service import StoryContinuationService
+
+        conn = await self._get_db_connection()
+        try:
+            svc = StoryContinuationService(conn)
+            stats = await svc.process_recent_events(limit=30)
+            svc.update_lifecycle_states()
+            logger.info(
+                f"v5 story continuation completed: "
+                f"checked={stats['checked']}, linked={stats['linked']}, flagged={stats['flagged']}"
+            )
+        finally:
+            conn.close()
+
+    async def _execute_watchlist_alerts_v5(self, task: Task):
+        """v5.0 -- Generate alerts for watched storylines."""
+        from services.watchlist_service import WatchlistService
+
+        conn = await self._get_db_connection()
+        try:
+            svc = WatchlistService(conn)
+            reactivation = svc.generate_reactivation_alerts()
+            new_events = svc.generate_new_event_alerts()
+            logger.info(
+                f"v5 watchlist alerts: {reactivation} reactivation, {new_events} new-event"
+            )
+        finally:
+            conn.close()
+
     async def _execute_quality_scoring(self, task: Task):
         """Execute quality scoring task"""
         from services.ai_processing_service import get_ai_service

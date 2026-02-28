@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks, Path, Qu
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
 import logging
+import time
 
 from shared.services.llm_service import llm_service, TaskType
 from shared.database.connection import get_db_connection
@@ -35,8 +36,8 @@ async def health_check():
                 "error": "Database connection failed"
             }
         
-        # Check LLM service
-        llm_status = await llm_service.get_model_status()
+        # Check LLM service (1s timeout — don't block health when Ollama is busy)
+        llm_status = await llm_service.get_model_status(timeout_seconds=1.0)
         
         conn.close()
         
@@ -320,7 +321,8 @@ async def get_domain_articles(
     hours: Optional[int] = Query(None, ge=1, description="Filter articles from last N hours"),
     search: Optional[str] = Query(None, description="Search in title and content"),
     source_domain: Optional[str] = Query(None, description="Filter by source domain"),
-    processing_status: Optional[str] = Query(None, description="Filter by processing status")
+    processing_status: Optional[str] = Query(None, description="Filter by processing status"),
+    unlinked: Optional[bool] = Query(None, description="Only show articles not linked to any storyline")
 ):
     """
     Get articles for a specific domain with optional filtering and pagination.
@@ -344,6 +346,8 @@ async def get_domain_articles(
         if hours:
             from datetime import datetime, timedelta
             filters['published_after'] = datetime.now() - timedelta(hours=hours)
+        if unlinked:
+            filters['unlinked'] = True
         
         # Get articles
         result = article_service.get_articles(limit=limit, offset=offset, filters=filters)
@@ -597,6 +601,24 @@ async def get_aggregation_statistics():
         logger.error(f"Error fetching statistics: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+def _log_rss_pull(feed_id, feed_name, status, fetched, saved, start_time, error=None):
+    """Standardized RSS pull logging."""
+    try:
+        from shared.logging.activity_logger import log_rss_pull
+        duration_ms = (time.time() - start_time) * 1000
+        log_rss_pull(
+            feed_id=feed_id,
+            feed_name=feed_name,
+            status=status,
+            articles_fetched=fetched,
+            articles_saved=saved,
+            duration_ms=duration_ms,
+            error=error,
+        )
+    except Exception:
+        pass
+
+
 # Background task functions
 async def process_rss_feeds(feeds: List[tuple]):
     """Background task to process RSS feeds"""
@@ -612,16 +634,20 @@ async def process_rss_feeds(feeds: List[tuple]):
         
         for feed_data in feeds:
             feed_id, feed_name, feed_url, fetch_interval, last_fetched_at = feed_data
+            feed_start = time.time()
             
             # Get a fresh database connection for each feed
             conn = get_db_connection()
             if not conn:
                 logger.error(f"Database connection failed for feed: {feed_name}")
+                _log_rss_pull(feed_id, feed_name, "error", 0, 0, feed_start, error="No DB connection")
                 error_count += 1
                 continue
                 
             try:
                 logger.info(f"Processing feed: {feed_name} ({feed_url})")
+                articles_saved_this_feed = 0
+                entries_count = 0
                 
                 # Fetch RSS feed with better error handling
                 try:
@@ -631,14 +657,17 @@ async def process_rss_feeds(feeds: List[tuple]):
                     response.raise_for_status()
                 except Exception as e:
                     logger.error(f"Error fetching feed {feed_name}: {e}")
+                    _log_rss_pull(feed_id, feed_name, "error", 0, 0, feed_start, error=str(e))
                     error_count += 1
                     continue
                 
                 # Parse RSS feed
                 feed = feedparser.parse(response.content)
+                entries_count = len(feed.entries) if feed.entries else 0
                 
                 if not feed.entries:
                     logger.warning(f"No entries found in feed: {feed_name}")
+                    _log_rss_pull(feed_id, feed_name, "no_entries", 0, 0, feed_start)
                     continue
                 
                 # Process each entry
@@ -694,6 +723,7 @@ async def process_rss_feeds(feeds: List[tuple]):
                                 ))
                                 
                                 processed_count += 1
+                                articles_saved_this_feed += 1
                                 logger.info(f"Added article: {title[:50]}...")
                                 
                             except Exception as db_error:
@@ -718,9 +748,10 @@ async def process_rss_feeds(feeds: List[tuple]):
                 except Exception as e:
                     logger.error(f"Error updating feed timestamp for {feed_name}: {e}")
                     conn.rollback()
-                
+                _log_rss_pull(feed_id, feed_name, "success", entries_count, articles_saved_this_feed, feed_start)
             except Exception as e:
                 logger.error(f"Error processing feed {feed_name}: {e}")
+                _log_rss_pull(feed_id, feed_name, "error", entries_count, articles_saved_this_feed, feed_start, error=str(e))
                 error_count += 1
             finally:
                 conn.close()

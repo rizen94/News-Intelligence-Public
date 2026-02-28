@@ -38,7 +38,7 @@ class APIConnectionManager {
               const pathAfterV4 = match[1];
               const firstSegment = pathAfterV4.split('/')[0];
               // Don't inject domain for system_monitoring, route_supervisor, or other global routes
-              const globalRoutes = ['politics', 'finance', 'science-tech', 'system_monitoring', 'route_supervisor'];
+              const globalRoutes = ['politics', 'finance', 'science-tech', 'system_monitoring', 'route_supervisor', 'watchlist', 'monitoring'];
               if (!globalRoutes.includes(firstSegment)) {
                 config.url = `/api/v4/${domain}/${pathAfterV4}`;
               }

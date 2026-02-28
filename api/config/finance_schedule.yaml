@@ -1,0 +1,14 @@
+# Finance orchestrator scheduled tasks
+# Simple asyncio timer; low priority. User requests preempt.
+
+schedule:
+  gold_refresh:
+    task_type: refresh
+    parameters: { topic: gold }
+    interval_hours: 24
+    description: "Daily gold price refresh"
+  edgar_ingest:
+    task_type: ingest
+    parameters: { source: edgar, filings_per_company: 1 }
+    interval_hours: 168  # Weekly
+    description: "Weekly EDGAR 10-K ingest"

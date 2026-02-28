@@ -1,0 +1,50 @@
+[
+  {
+    "key": "ctrl+shift+a",
+    "command": "workbench.action.terminal.sendSequence",
+    "args": {
+      "text": "./scripts/enforce_methodology.sh status\n"
+    },
+    "when": "editorTextFocus"
+  },
+  {
+    "key": "ctrl+shift+s",
+    "command": "workbench.action.terminal.sendSequence",
+    "args": {
+      "text": "./scripts/ai_session_start.sh \"AI Session: $(date)\"\n"
+    },
+    "when": "editorTextFocus"
+  },
+  {
+    "key": "ctrl+shift+e",
+    "command": "workbench.action.terminal.sendSequence",
+    "args": {
+      "text": "./scripts/ai_session_end.sh\n"
+    },
+    "when": "editorTextFocus"
+  },
+  {
+    "key": "ctrl+shift+p",
+    "command": "workbench.action.terminal.sendSequence",
+    "args": {
+      "text": "./scripts/ai_session_promote.sh\n"
+    },
+    "when": "editorTextFocus"
+  },
+  {
+    "key": "ctrl+shift+r",
+    "command": "workbench.action.terminal.sendSequence",
+    "args": {
+      "text": "./scripts/ai_session_rollback.sh\n"
+    },
+    "when": "editorTextFocus"
+  },
+  {
+    "key": "ctrl+shift+v",
+    "command": "workbench.action.terminal.sendSequence",
+    "args": {
+      "text": "./scripts/enforce_methodology.sh check\n"
+    },
+    "when": "editorTextFocus"
+  }
+]

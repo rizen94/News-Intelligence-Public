@@ -96,6 +96,14 @@ class ArticleService(DomainAwareService):
                     if filters.get('published_before'):
                         query += " AND published_at <= %s"
                         params.append(filters['published_before'])
+
+                    if filters.get('unlinked'):
+                        query += f"""
+                            AND id NOT IN (
+                                SELECT article_id FROM {self.schema}.storyline_articles
+                                WHERE article_id IS NOT NULL
+                            )
+                        """
                 
                 # Get total count (before adding LIMIT/OFFSET)
                 count_query = f"""
@@ -126,7 +134,15 @@ class ArticleService(DomainAwareService):
                     if filters.get('published_before'):
                         count_query += " AND published_at <= %s"
                         count_params.append(filters['published_before'])
-                
+
+                    if filters.get('unlinked'):
+                        count_query += f"""
+                            AND id NOT IN (
+                                SELECT article_id FROM {self.schema}.storyline_articles
+                                WHERE article_id IS NOT NULL
+                            )
+                        """
+
                 cur.execute(count_query, count_params)
                 total_result = cur.fetchone()
                 total = total_result['count'] if isinstance(total_result, dict) else total_result[0]

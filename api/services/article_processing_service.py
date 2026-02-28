@@ -470,7 +470,7 @@ class ArticleProcessingService:
                     # Get feed_id for this article
                     feed_id = None
                     if processed_article.get('source'):
-                        cursor.execute("SELECT id FROM rss_feeds WHERE name = %s", (processed_article.get('source'),))
+                        cursor.execute("SELECT id FROM rss_feeds WHERE feed_name = %s", (processed_article.get('source'),))
                         feed_result = cursor.fetchone()
                         if feed_result:
                             feed_id = feed_result[0]
@@ -478,15 +478,14 @@ class ArticleProcessingService:
                         else:
                             logger.warning(f"No feed found for source: {processed_article.get('source')}")
                     
-                    # Insert article with deduplication data
                     cursor.execute("""
                         INSERT INTO articles (
-                            title, content, url, published_at, source, tags, 
+                            title, content, url, published_at, source_domain, tags, 
                             entities, sentiment_score, readability_score, quality_score,
-                            summary, ml_data, language, word_count, reading_time, feed_id,
-                            content_hash, deduplication_status, similarity_score
+                            summary, analysis_results, language_code, word_count, reading_time_minutes,
+                            feed_id, content_hash, processing_status
                         ) VALUES (
-                            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
                         )
                     """, (
                         processed_article.get('title', ''),
@@ -506,8 +505,7 @@ class ArticleProcessingService:
                         processed_article.get('reading_time', 1),
                         feed_id,
                         processed_article.get('content_hash'),
-                        processed_article.get('deduplication_status', 'processed'),
-                        processed_article.get('similarity_score')
+                        'pending'
                     ))
                     
                     conn.commit()
@@ -646,9 +644,9 @@ class ArticleProcessingService:
             
             # Get article details
             cursor.execute("""
-                SELECT id, title, content, url, source, published_at, created_at
+                SELECT id, title, content, url, source_domain, published_at, created_at
                 FROM articles 
-                WHERE id = %s AND processing_status = 'raw'
+                WHERE id = %s AND processing_status = 'pending'
             """, (article_id,))
             
             article = cursor.fetchone()

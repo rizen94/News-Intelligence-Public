@@ -1,14 +1,28 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import DomainSelector from '../DomainSelector/DomainSelector';
 import { useDomain } from '../../contexts/DomainContext';
 import { useDomainRoute } from '../../hooks/useDomainRoute';
+import apiService from '../../services/apiService';
 import './Navigation.css';
 
 const Navigation: React.FC = () => {
   const location = useLocation();
   const { domainName, domain } = useDomain();
   const { getDomainPath, isInDomain } = useDomainRoute();
+  const [unreadAlerts, setUnreadAlerts] = useState(0);
+
+  useEffect(() => {
+    const fetchAlerts = async () => {
+      try {
+        const res = await apiService.getWatchlistAlerts(true, 100);
+        if (res?.data) setUnreadAlerts(Array.isArray(res.data) ? res.data.length : 0);
+      } catch { /* non-critical */ }
+    };
+    fetchAlerts();
+    const interval = setInterval(fetchAlerts, 60000);
+    return () => clearInterval(interval);
+  }, []);
 
   // Core navigation items - SAME FOR ALL DOMAINS
   // These features are available in Politics, Finance, and Science & Tech
@@ -27,28 +41,39 @@ const Navigation: React.FC = () => {
     { path: '/market-research', label: 'Market Research', icon: '📈' },
     { path: '/corporate-announcements', label: 'Corporate News', icon: '🏢' },
     { path: '/market-patterns', label: 'Market Patterns', icon: '📊' },
+    { path: '/analysis', label: 'Financial Analysis', icon: '🔍' },
+    { path: '/evidence', label: 'Evidence', icon: '📋' },
+    { path: '/sources', label: 'Source Health', icon: '✅' },
+    { path: '/schedule', label: 'Refresh Schedule', icon: '⏰' },
+    { path: '/fact-check', label: 'Fact Check', icon: '✓' },
+  ];
+
+  // Intelligence sub-pages (only built-out features per docs)
+  const intelligenceNavItems = [
+    { path: '/intelligence/watchlist', label: 'Watchlist', icon: '👁️' },
+  ];
+
+  // Admin/system navigation items
+  const adminNavItems = [
+    { path: '/ml-processing', label: 'ML Processing', icon: '⚙️' },
   ];
 
   // Domain-agnostic navigation items (shared across all domains)
   const sharedNavItems = [
-    { path: '/monitoring', label: 'Monitoring', icon: '🔍' },
     { path: '/settings', label: 'Settings', icon: '⚙️' },
   ];
 
-  // Combine navigation items: Core features + Domain-specific additions + Shared items
-  // All domains get the same core features, with domain-specific additions
-  let navItems = [...coreNavItems];
+  let navItems = [...coreNavItems, ...intelligenceNavItems];
   if (isInDomain('finance')) {
-    navItems = [...coreNavItems, ...financeNavItems];
+    navItems = [...coreNavItems, ...intelligenceNavItems, ...financeNavItems];
   }
-  // Future: Add other domain-specific items here (e.g., science-tech specific features)
-  navItems = [...navItems, ...sharedNavItems];
+  navItems = [...navItems, ...adminNavItems, ...sharedNavItems];
 
   // Check if a path is active (handles both domain-specific and shared routes)
   const isActive = (path: string): boolean => {
-    // For shared routes (monitoring, settings), check exact match
-    if (path === '/monitoring' || path === '/settings') {
-      return location.pathname === path;
+    const sharedPaths = ['/settings', '/ml-processing'];
+    if (sharedPaths.includes(path)) {
+      return location.pathname === path || location.pathname.startsWith(path + '/');
     }
     // For domain-specific routes, check if path matches with domain prefix
     const domainPath = getDomainPath(path);
@@ -71,7 +96,8 @@ const Navigation: React.FC = () => {
       <ul className='nav-list'>
         {navItems.map(item => {
           // Use domain path for domain-specific items, direct path for shared items
-          const linkPath = (item.path === '/monitoring' || item.path === '/settings')
+          const sharedPaths = ['/settings', '/ml-processing'];
+          const linkPath = sharedPaths.includes(item.path)
             ? item.path
             : getDomainPath(item.path);
           return (
@@ -82,6 +108,9 @@ const Navigation: React.FC = () => {
               >
                 <span className='nav-icon'>{item.icon}</span>
                 <span className='nav-label'>{item.label}</span>
+                {item.path === '/intelligence/watchlist' && unreadAlerts > 0 && (
+                  <span className='nav-badge'>{unreadAlerts > 9 ? '9+' : unreadAlerts}</span>
+                )}
               </Link>
             </li>
           );

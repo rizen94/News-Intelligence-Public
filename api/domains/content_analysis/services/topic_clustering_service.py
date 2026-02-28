@@ -74,7 +74,7 @@ class TopicClusteringService:
                 "options": {
                     "temperature": 0.3,  # Lower temperature for more consistent results
                     "top_p": 0.9,
-                    "num_predict": 1500,
+                    "num_predict": 500,   # 2-5 topics + keywords; 500 sufficient, faster than 1500
                 }
             }
             
@@ -122,7 +122,8 @@ class TopicClusteringService:
             
             system_prompt = """You are an expert news analyst specializing in topic extraction and categorization.
 Your task is to identify the main topics and themes in news articles.
-Return your response as a JSON array of topics, each with: name, confidence (0-1), keywords (array), and category."""
+Return your response as a JSON array of topics, each with: name, confidence (0-1), keywords (array), and category.
+CRITICAL: Only extract topics that are EXPLICITLY discussed in this specific article. Do not include topics from other news. Each topic must be clearly mentioned in the article text. Never infer or hallucinate topics."""
             
             prompt = f"""Analyze the following news article and extract the main topics.
 
@@ -134,15 +135,17 @@ Article Content:
 Existing Topics (if any): {json.dumps(existing_topics)}
 
 Instructions:
-1. Identify 2-5 main topics that best describe this article
-2. For each topic, provide:
+1. Identify 2-5 main topics that are EXPLICITLY discussed in this article (each must be clearly mentioned in the text)
+2. Do NOT include topics from other news stories, sidebars, or tangentially related events not in this article
+3. For each topic, provide:
    - name: A clear, concise topic name (2-4 words)
    - confidence: Your confidence in this topic (0.0 to 1.0)
    - keywords: 3-5 related keywords
    - category: One of: politics, business, technology, health, environment, international, sports, entertainment, other
 
-3. Focus on specific, meaningful topics (not generic terms like "news" or "article")
-4. Consider the article's main subject, key entities, and themes
+4. Focus on specific, meaningful topics (not generic terms like "news" or "article")
+5. Consider the article's main subject, key entities, and themes
+6. Do NOT include dates (e.g. "March 15", "2024"), times (e.g. "3pm"), or country names as topic names or keywords
 
 Return ONLY a JSON array in this exact format:
 [

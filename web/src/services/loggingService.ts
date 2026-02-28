@@ -241,21 +241,31 @@ class LoggingService {
   }
 
   /**
-   * Sanitize data for logging (remove sensitive info)
+   * Sanitize data for logging (remove sensitive info, avoid circular refs)
    */
-  private sanitizeForLogging(data: any): any {
+  private sanitizeForLogging(data: any, seen: WeakSet<object> = new WeakSet()): any {
     if (!data || typeof data !== 'object') {
       return data;
     }
+    if (seen.has(data)) {
+      return '[Circular]';
+    }
+    // Error objects often have circular refs - represent simply
+    if (data instanceof Error) {
+      return { name: data.name, message: data.message };
+    }
+    seen.add(data);
 
     const sensitiveKeys = ['password', 'token', 'apiKey', 'secret', 'authorization'];
-    const sanitized = { ...data };
+    const sanitized = Array.isArray(data) ? [...data] : { ...data };
 
     for (const key in sanitized) {
-      if (sensitiveKeys.some(sk => key.toLowerCase().includes(sk))) {
-        sanitized[key] = '[REDACTED]';
-      } else if (typeof sanitized[key] === 'object') {
-        sanitized[key] = this.sanitizeForLogging(sanitized[key]);
+      if (Object.prototype.hasOwnProperty.call(sanitized, key)) {
+        if (sensitiveKeys.some(sk => key.toLowerCase().includes(sk))) {
+          sanitized[key] = '[REDACTED]';
+        } else if (typeof sanitized[key] === 'object' && sanitized[key] !== null) {
+          sanitized[key] = this.sanitizeForLogging(sanitized[key], seen);
+        }
       }
     }
 
