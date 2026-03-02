@@ -1,0 +1,25 @@
+[Unit]
+Description=News Intelligence — Secondary Worker (RSS on Widow)
+After=network.target postgresql.service
+Requires=postgresql.service
+
+[Service]
+Type=simple
+User=WIDOW_USER
+Group=WIDOW_USER
+WorkingDirectory=/opt/news-intelligence
+Environment=PATH=/opt/news-intelligence/.venv/bin:/usr/local/bin:/usr/bin:/bin
+EnvironmentFile=/opt/news-intelligence/.env
+ExecStart=/opt/news-intelligence/.venv/bin/python /opt/news-intelligence/scripts/run_secondary_worker.py
+Restart=on-failure
+RestartSec=30
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=newsplatform-secondary
+
+LimitNOFILE=65536
+MemoryMax=4G
+CPUQuota=80%
+
+[Install]
+WantedBy=multi-user.target

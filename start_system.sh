@@ -16,48 +16,49 @@ NC='\033[0m' # No Color
 # Configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Load .env if present (Widow mode or NAS rollback)
+if [[ -f "$SCRIPT_DIR/.env" ]]; then
+    while IFS= read -r line; do
+        [[ "$line" =~ ^#.*$ ]] && continue
+        [[ "$line" =~ ^DB_|^DATABASE ]] || continue
+        key="${line%%=*}"; val="${line#*=}"; val="${val%\"}"; val="${val#\"}"
+        export "$key"="$val"
+    done < <(grep -E '^DB_|^DATABASE' "$SCRIPT_DIR/.env" 2>/dev/null || true)
+fi
+
 # ============================================================================
-# NAS DATABASE via SSH TUNNEL (HARD REQUIREMENT)
-# Connection: localhost:5433 -> SSH -> 192.168.93.100:5432
+# DATABASE: Widow (direct) or NAS (SSH tunnel rollback)
+# Widow: DB_HOST=192.168.93.101, DB_PORT=5432, DB_NAME=news_intel
+# NAS rollback: DB_HOST=localhost, DB_PORT=5433 + setup_nas_ssh_tunnel.sh
 # ============================================================================
-export DB_HOST="${DB_HOST:-localhost}"
-export DB_PORT="${DB_PORT:-5433}"
-export DB_NAME="${DB_NAME:-news_intelligence}"
+export DB_HOST="${DB_HOST:-192.168.93.101}"
+export DB_PORT="${DB_PORT:-5432}"
+export DB_NAME="${DB_NAME:-news_intel}"
 export DB_USER="${DB_USER:-newsapp}"
-export DB_PASSWORD="${DB_PASSWORD:-newsapp_password}"
+export DB_PASSWORD="${DB_PASSWORD:-}"
 
-if [[ "${DB_HOST}" != "localhost" ]] && [[ "${DB_HOST}" != "127.0.0.1" ]]; then
-    echo -e "${RED}[ERROR]${NC} DIRECT CONNECTION BLOCKED: DB_HOST='${DB_HOST}' is not allowed" >&2
-    echo -e "${RED}[ERROR]${NC} System MUST use SSH tunnel (localhost:5433)" >&2
-    exit 1
-fi
-
-if [[ "${DB_PORT}" != "5433" ]]; then
-    echo -e "${RED}[ERROR]${NC} INVALID PORT: DB_PORT='${DB_PORT}' - must be 5433 (SSH tunnel)" >&2
-    exit 1
-fi
-
-echo -e "${CYAN}[INFO]${NC} Using SSH tunnel to NAS database (localhost:5433 -> 192.168.93.100:5432)"
-
-if ! ps aux | grep -q "[s]sh -L 5433:localhost:5432.*192.168.93.100"; then
-    echo -e "${YELLOW}[WARNING]${NC} SSH tunnel not detected. Attempting to create tunnel..."
-    if [ -f "$SCRIPT_DIR/scripts/setup_nas_ssh_tunnel.sh" ]; then
-        bash "$SCRIPT_DIR/scripts/setup_nas_ssh_tunnel.sh" || {
-            echo -e "${RED}[ERROR]${NC} Failed to establish SSH tunnel. Start manually:" >&2
-            echo -e "${RED}[ERROR]${NC}   ssh -L 5433:localhost:5432 -N -f -p 9222 Admin@192.168.93.100" >&2
-            exit 1
-        }
-    else
-        echo -e "${YELLOW}[WARNING]${NC} Tunnel script not found. Creating tunnel directly..."
-        ssh -L 5433:localhost:5432 -N -f -p 9222 Admin@192.168.93.100 || {
-            echo -e "${RED}[ERROR]${NC} Failed to create SSH tunnel. Please run manually:" >&2
-            echo -e "${RED}[ERROR]${NC}   ssh -L 5433:localhost:5432 -N -f -p 9222 Admin@192.168.93.100" >&2
-            exit 1
-        }
+if [[ "${DB_HOST}" == "192.168.93.101" ]]; then
+    echo -e "${CYAN}[INFO]${NC} Using Widow database (direct) at ${DB_HOST}:${DB_PORT}"
+elif [[ "${DB_HOST}" == "localhost" ]] || [[ "${DB_HOST}" == "127.0.0.1" ]]; then
+    if [[ "${DB_PORT}" != "5433" ]]; then
+        echo -e "${RED}[ERROR]${NC} NAS rollback requires DB_PORT=5433 (SSH tunnel)" >&2
+        exit 1
     fi
+    echo -e "${CYAN}[INFO]${NC} Using NAS database via SSH tunnel (localhost:5433 -> 192.168.93.100:5432)"
+    if ! pgrep -f "ssh -L 5433:localhost:5432.*192.168.93.100" > /dev/null 2>&1; then
+        echo -e "${YELLOW}[WARNING]${NC} SSH tunnel not detected. Starting tunnel..."
+        if [ -f "$SCRIPT_DIR/scripts/setup_nas_ssh_tunnel.sh" ]; then
+            bash "$SCRIPT_DIR/scripts/setup_nas_ssh_tunnel.sh" || {
+                echo -e "${RED}[ERROR]${NC} Failed to establish SSH tunnel." >&2
+                exit 1
+            }
+        fi
+    fi
+    echo -e "${GREEN}[SUCCESS]${NC} SSH tunnel verified"
+else
+    echo -e "${RED}[ERROR]${NC} Unknown DB_HOST='${DB_HOST}'. Use 192.168.93.101 (Widow) or localhost (NAS rollback)" >&2
+    exit 1
 fi
-
-echo -e "${GREEN}[SUCCESS]${NC} SSH tunnel verified and running"
 LOG_DIR="$SCRIPT_DIR/logs"
 API_DIR="$SCRIPT_DIR/api"
 WEB_DIR="$SCRIPT_DIR/web"
@@ -124,7 +125,29 @@ stop_existing() {
 check_postgresql() {
     log "Checking PostgreSQL database..."
     
-    # For NAS database (REQUIRED) - verify connectivity only, do NOT try to start
+    # For Widow (secondary) - direct connection
+    if [[ "${DB_HOST}" == "192.168.93.101" ]]; then
+        info "Verifying Widow database connection at ${DB_HOST}:${DB_PORT}..."
+        if python3 -c "
+import psycopg2, os
+pw = os.environ.get('DB_PASSWORD') or (open('${SCRIPT_DIR}/.db_password_widow').read().strip() if os.path.exists('${SCRIPT_DIR}/.db_password_widow') else '')
+conn = psycopg2.connect(host='${DB_HOST}', port=${DB_PORT}, database='${DB_NAME}', user='${DB_USER}', password=pw, connect_timeout=5)
+conn.close()
+" 2>/dev/null; then
+            success "PostgreSQL (Widow): Running at ${DB_HOST}:${DB_PORT}"
+            return 0
+        fi
+        if command -v pg_isready &> /dev/null; then
+            if pg_isready -h "${DB_HOST}" -p "${DB_PORT}" -U "${DB_USER}" > /dev/null 2>&1; then
+                success "PostgreSQL (Widow): Running"
+                return 0
+            fi
+        fi
+        error "Cannot connect to Widow database at ${DB_HOST}:${DB_PORT}"
+        return 1
+    fi
+    
+    # For NAS database (direct, legacy) - verify connectivity only
     if [[ "${DB_HOST}" == "192.168.93.100" ]]; then
         log "Verifying NAS database connection..."
         

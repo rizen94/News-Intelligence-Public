@@ -94,56 +94,39 @@ class PooledConnection:
 
 def get_db_config() -> Dict[str, Any]:
     """
-    Get database configuration from environment variables
-    CRITICAL: System MUST use SSH tunnel to NAS database (localhost:5433)
-    Direct connections to 192.168.93.100:5432 are BLOCKED by firewall requirement.
+    Get database configuration from environment variables.
+    Supports two modes:
+    - Widow (secondary): DB_HOST=192.168.93.101, DB_PORT=5432, DB_NAME=news_intel
+    - NAS via tunnel (rollback): DB_HOST=localhost, DB_PORT=5433, DB_NAME=news_intelligence
     """
-    db_host = os.getenv("DB_HOST")
-    db_port_str = os.getenv('DB_PORT', '5433')  # Default to SSH tunnel port
+    db_host = os.getenv("DB_HOST", "192.168.93.101")
+    db_port_str = os.getenv("DB_PORT", "5432")
     db_port = int(db_port_str)
+    db_name = os.getenv("DB_NAME", "news_intel")
     
-    # HARD REQUIREMENT: Must use SSH tunnel (localhost:5433)
-    if db_host not in ['localhost', '127.0.0.1', '::1']:
-        raise ValueError(
-            f"❌ DIRECT CONNECTION BLOCKED: DB_HOST='{db_host}' is not allowed.\n"
-            "   HARD REQUIREMENT: System MUST use SSH tunnel to NAS database.\n"
-            "   Set DB_HOST=localhost DB_PORT=5433\n"
-            "   Direct connections to 192.168.93.100:5432 are blocked by firewall."
+    # NAS tunnel mode: localhost:5433 requires tunnel to be running
+    if db_host in ["localhost", "127.0.0.1", "::1"] and db_port == 5433:
+        import subprocess
+        tunnel_check = subprocess.run(
+            ["pgrep", "-f", "ssh -L 5433:localhost:5432.*192.168.93.100"],
+            capture_output=True
         )
-    
-    # HARD REQUIREMENT: Must use SSH tunnel port (5433)
-    if db_port != 5433:
-        raise ValueError(
-            f"❌ INVALID PORT: DB_PORT={db_port} is not allowed.\n"
-            "   HARD REQUIREMENT: System MUST use SSH tunnel port 5433.\n"
-            "   Set DB_PORT=5433\n"
-            "   This connects via SSH tunnel: localhost:5433 -> 192.168.93.100:5432"
-        )
-    
-    # Verify SSH tunnel is running
-    import subprocess
-    tunnel_check = subprocess.run(
-        ["pgrep", "-f", "ssh -L 5433:localhost:5432.*192.168.93.100"],
-        capture_output=True
-    )
-    
-    if tunnel_check.returncode != 0:
-        raise ValueError(
-            "❌ SSH TUNNEL NOT RUNNING: Required SSH tunnel is not active.\n"
-            "   Run: ./scripts/setup_nas_ssh_tunnel.sh\n"
-            "   The tunnel must be running before starting the API server.\n"
-            "   Tunnel: localhost:5433 -> 192.168.93.100:5432"
-        )
-    
-    logger.info("✅ Using SSH tunnel to NAS database (localhost:5433 -> 192.168.93.100:5432)")
+        if tunnel_check.returncode != 0:
+            raise ValueError(
+                "SSH TUNNEL NOT RUNNING: DB_HOST=localhost:5433 requires tunnel. "
+                "Run: ./scripts/setup_nas_ssh_tunnel.sh"
+            )
+        logger.info("Using SSH tunnel to NAS (localhost:5433 -> 192.168.93.100:5432)")
+    else:
+        logger.info("Using direct connection to database: %s:%s", db_host, db_port)
     
     return {
         "host": db_host,
         "port": str(db_port),
-        "database": os.getenv("DB_NAME", "news_intelligence"),
+        "database": db_name,
         "user": os.getenv("DB_USER", "newsapp"),
-        "password": os.getenv("DB_PASSWORD", "newsapp_password"),
-        "connect_timeout": 2  # 2 second timeout to prevent hanging
+        "password": os.getenv("DB_PASSWORD", ""),
+        "connect_timeout": 5
     }
 
 
@@ -157,11 +140,7 @@ def _init_pool() -> pool.ThreadedConnectionPool:
         
         config = get_db_config()
         
-        # Log connection info once
-        if config["host"] in ['localhost', '127.0.0.1'] and config["port"] == '5433':
-            logger.info("✅ Using SSH tunnel to NAS database (localhost:5433 -> 192.168.93.100:5432)")
-        
-        logger.info(f"🔗 Initializing connection pool: {config['host']}:{config['port']}")
+        logger.info("Initializing connection pool: %s:%s/%s", config["host"], config["port"], config["database"])
         
         _connection_pool = pool.ThreadedConnectionPool(
             minconn=2,      # Minimum connections to keep open

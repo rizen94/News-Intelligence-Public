@@ -32,12 +32,19 @@ echo -e "News Intelligence System v4.0 - Status"
 echo -e "==========================================${NC}"
 echo ""
 
-# Check PostgreSQL (via SSH tunnel - documented localhost:5433)
+# Check PostgreSQL (Widow default, or NAS tunnel)
 echo -e "${CYAN}Database:${NC}"
-if pg_isready -h localhost -p 5433 -U newsapp > /dev/null 2>&1; then
-    echo -e "  ${GREEN}✅ PostgreSQL: Running${NC} (localhost:5433 via SSH tunnel)"
-elif "$PYTHON_BIN" -c "import psycopg2; psycopg2.connect(host='localhost', port=5433, database='news_intelligence', user='newsapp', password='newsapp_password', connect_timeout=3)" > /dev/null 2>&1; then
-    echo -e "  ${GREEN}✅ PostgreSQL: Running${NC} (localhost:5433 via SSH tunnel)"
+# Try Widow first (primary config)
+if pg_isready -h 192.168.93.101 -p 5432 -U newsapp > /dev/null 2>&1; then
+    echo -e "  ${GREEN}✅ PostgreSQL: Running${NC} (Widow 192.168.93.101:5432)"
+elif pg_isready -h localhost -p 5433 -U newsapp > /dev/null 2>&1; then
+    echo -e "  ${GREEN}✅ PostgreSQL: Running${NC} (localhost:5433 NAS tunnel)"
+elif "$PYTHON_BIN" -c "
+import psycopg2, os
+pw = open('$SCRIPT_DIR/.db_password_widow').read().strip() if os.path.exists('$SCRIPT_DIR/.db_password_widow') else os.getenv('DB_PASSWORD','')
+psycopg2.connect(host='192.168.93.101', port=5432, database='news_intel', user='newsapp', password=pw, connect_timeout=3)
+" 2>/dev/null; then
+    echo -e "  ${GREEN}✅ PostgreSQL: Running${NC} (Widow 192.168.93.101:5432)"
 else
     echo -e "  ${RED}❌ PostgreSQL: Not responding${NC}"
 fi

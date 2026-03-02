@@ -70,36 +70,21 @@ async def lifespan(app: FastAPI):
     try:
         from shared.database.connection import _init_pool, get_db_config, get_db_connection
         
-        # HARD REQUIREMENT: Enforce SSH tunnel usage
-        if not os.getenv("DB_HOST"):
-            os.environ["DB_HOST"] = "localhost"
-            os.environ["DB_PORT"] = "5433"
-            logger.info("✅ Defaulting to SSH tunnel: DB_HOST=localhost DB_PORT=5433")
+        db_host = os.getenv("DB_HOST", "192.168.93.101")
+        db_port = int(os.getenv("DB_PORT", "5432"))
         
-        # Verify SSH tunnel is required and running
-        db_host = os.getenv("DB_HOST", "localhost")
-        db_port = int(os.getenv("DB_PORT", "5433"))
-        
-        if db_host not in ['localhost', '127.0.0.1', '::1'] or db_port != 5433:
-            logger.error("❌ INVALID CONFIGURATION: System MUST use SSH tunnel")
-            logger.error(f"   Current: DB_HOST={db_host} DB_PORT={db_port}")
-            logger.error("   Required: DB_HOST=localhost DB_PORT=5433")
-            raise ValueError("System MUST use SSH tunnel (localhost:5433). Direct connections are blocked.")
-        
-        # Check if SSH tunnel is running
-        import subprocess
-        tunnel_running = subprocess.run(
-            ["pgrep", "-f", "ssh -L 5433:localhost:5432.*192.168.93.100"],
-            capture_output=True
-        ).returncode == 0
-        
-        if not tunnel_running:
-            logger.error("❌ SSH TUNNEL NOT RUNNING: Required tunnel is not active")
-            logger.error("   Run: ./scripts/setup_nas_ssh_tunnel.sh")
-            logger.error("   The tunnel must be running before starting the API server")
-            raise ValueError("SSH tunnel (localhost:5433) must be running. Run setup_nas_ssh_tunnel.sh")
-        
-        logger.info("✅ SSH tunnel verified: localhost:5433 -> 192.168.93.100:5432")
+        # NAS tunnel mode: require tunnel when using localhost:5433
+        if db_host in ["localhost", "127.0.0.1", "::1"] and db_port == 5433:
+            import subprocess
+            tunnel_running = subprocess.run(
+                ["pgrep", "-f", "ssh -L 5433:localhost:5432.*192.168.93.100"],
+                capture_output=True
+            ).returncode == 0
+            if not tunnel_running:
+                raise ValueError("SSH tunnel required for localhost:5433. Run: ./scripts/setup_nas_ssh_tunnel.sh")
+            logger.info("SSH tunnel verified: localhost:5433 -> NAS")
+        else:
+            logger.info("Using Widow database: %s:%s", db_host, db_port)
         
         # Initialize connection pool (persistent connections)
         try:
@@ -174,13 +159,13 @@ async def lifespan(app: FastAPI):
         from services.ml_processing_service import MLProcessingService
         import threading
         
-        # Use NAS database via SSH tunnel
+        # DB config (Widow direct; rollback: localhost:5433 + NAS tunnel)
         db_config = {
-            "host": os.getenv("DB_HOST", "localhost"),
-            "database": os.getenv("DB_NAME", "news_intelligence"), 
+            "host": os.getenv("DB_HOST", "192.168.93.101"),
+            "database": os.getenv("DB_NAME", "news_intel"),
             "user": os.getenv("DB_USER", "newsapp"),
-            "password": os.getenv("DB_PASSWORD", "newsapp_password"),
-            "port": os.getenv("DB_PORT", "5433")  # SSH tunnel port
+            "password": os.getenv("DB_PASSWORD", ""),
+            "port": os.getenv("DB_PORT", "5432")
         }
         automation = AutomationManager(db_config)
         

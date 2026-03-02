@@ -1,27 +1,29 @@
 {
   "_description": "Populated during migration phases. Do not commit secrets.",
-  "phase": 0,
+  "phase": 7,
   "secondary": {
-    "ip": "REPLACE_IN_PHASE_1",
-    "hostname": "",
-    "ssh_user": "",
+    "ip": "192.168.93.101",
+    "hostname": "Widow",
+    "ssh_user": "pete",
     "ssh_port": 22,
-    "os_release": "",
-    "kernel": "",
-    "cpu_cores": 0,
-    "ram_gb": 0,
-    "disk_type": "SSD|HDD",
-    "disk_space_gb": 0
+    "os_release": "Debian 12 (bookworm)",
+    "kernel": "6.1.0-43-amd64",
+    "cpu_cores": 12,
+    "ram_gb": 15,
+    "disk_type": "HDD",
+    "disk_space_gb": 864
   },
   "primary": {
-    "ip": "REPLACE_AFTER_DISCOVERY"
+    "ip": "192.168.93.99"
   },
   "database": {
     "current_nas_user": "newsapp",
     "current_nas_name": "news_intelligence",
     "new_name": "news_intel",
     "new_user": "newsapp",
-    "password_env": "NEWS_PLATFORM_DB_PASSWORD"
+    "password_env": "NEWS_PLATFORM_DB_PASSWORD",
+    "secondary_ready": true,
+    "migrated_at": "2025-02-28"
   },
   "nas": {
     "host": "192.168.93.100",
@@ -32,6 +34,6 @@
       "/share/news-platform/logs"
     ]
   },
-  "last_updated": null,
-  "notes": []
+  "last_updated": "2026-03-01",
+  "notes": ["Phase 7 complete. NAS PostgreSQL decommissioned. Stable v4.1."]
 }

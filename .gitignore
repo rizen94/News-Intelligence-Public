@@ -105,3 +105,4 @@ archive/
 # Migration state overrides (may contain IPs, do not commit secrets)
 infrastructure/*.local.json
 infrastructure/migration-state.local.json
+.db_password_widow

@@ -44,16 +44,12 @@ try:
     })
 except Exception as e:
     logger.error(f"Failed to load database config: {e}")
-    # Fallback config - default to NAS, never localhost
-    db_host = os.getenv('DB_HOST', '192.168.93.100')  # Default to NAS
-    if db_host in ['localhost', '127.0.0.1'] and os.getenv('ALLOW_LOCAL_DB', 'false').lower() != 'true':
-        logger.error("Local database is BLOCKED. System requires NAS database (192.168.93.100)")
-        raise ValueError("Local database connection blocked - use NAS database")
+    # Fallback config from env (Widow secondary or NAS)
     DB_CONFIG = {
-        'host': db_host,
-        'database': os.getenv('DB_NAME', 'news_intelligence'),
+        'host': os.getenv('DB_HOST', '192.168.93.101'),
+        'database': os.getenv('DB_NAME', 'news_intel'),
         'user': os.getenv('DB_USER', 'newsapp'),
-        'password': os.getenv('DB_PASSWORD', 'newsapp_password'),
+        'password': os.getenv('DB_PASSWORD', ''),
         'port': int(os.getenv('DB_PORT', '5432')),
         'connect_timeout': 10,
         'options': '-c statement_timeout=30000'

@@ -4,7 +4,7 @@
 
 The News Intelligence System consists of multiple services that need to run concurrently:
 
-1. **PostgreSQL** - Database (port 5432)
+1. **PostgreSQL** - Database on Widow (192.168.93.101:5432)
 2. **Redis** - Cache (Docker container)
 3. **API Server** - FastAPI backend (port 8000)
    - Auto-starts AutomationManager (RSS processing, Article processing, ML processing, Topic clustering)
@@ -126,17 +126,19 @@ kill -9 <PID>
 
 ### Database Connection Issues
 
-```bash
-# Check PostgreSQL status
-sudo systemctl status postgresql
+Database runs on Widow (192.168.93.101). Ensure Widow is reachable.
 
-# Check if database exists
-psql -h localhost -U newsapp -d news_intelligence -c "SELECT 1;"
+```bash
+# Check Widow reachability
+ping 192.168.93.101
+
+# Check PostgreSQL on Widow
+pg_isready -h 192.168.93.101 -p 5432 -U newsapp
 ```
 
 ## System Requirements
 
-- **PostgreSQL** 12+ (running on localhost:5432)
+- **PostgreSQL** 16 (on Widow 192.168.93.101:5432)
 - **Docker** (for Redis)
 - **Python** 3.9+ (with virtual environment)
 - **Node.js** 16+ (with npm)

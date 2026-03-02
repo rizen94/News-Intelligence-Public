@@ -1,0 +1,32 @@
+# Secondary Machine Discovery — Phase 1.1
+# Run on: Widow (192.168.93.101)
+# Date: 2025-02-21
+
+hostname: Widow
+ip: 192.168.93.101
+ipv6: 2601:197:1600:1920::23
+
+os:
+  PRETTY_NAME: "Debian GNU/Linux 12 (bookworm)"
+  NAME: Debian GNU/Linux
+  VERSION_ID: "12"
+  VERSION_CODENAME: bookworm
+
+kernel: 6.1.0-43-amd64
+cpu_cores: 12
+ram_total_gb: 15
+ram_available_gb: 13
+swap_total_gb: ~1
+swap_used: 0
+
+disks:
+  sda1: ext4, 915G total, 864G avail, 1% used, mount: /
+  sdb: ntfs (Windows/external)
+  sdc: Debian installer ISO (remove after install)
+
+# Run to confirm SSD vs HDD:  cat /sys/block/sda/queue/rotational
+# 0 = SSD, 1 = HDD
+rotational: (not yet checked)
+
+ssh_user: pete
+ssh_port: 22

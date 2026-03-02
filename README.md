@@ -1,15 +1,17 @@
 # News Intelligence System
 
-**Status**: 🟢 **FULLY OPERATIONAL** | **Last Updated**: December 2024
+**Status**: 🟢 **FULLY OPERATIONAL** | **Last Updated**: March 2026
 
 ## 🎯 System Overview
 
 The News Intelligence System is an AI-powered news aggregation and analysis platform that processes RSS feeds, analyzes articles, and creates intelligent storylines for investigative journalism.
 
+**Architecture:** Primary (API, ML, frontend) + Widow (PostgreSQL, RSS) + NAS (storage). See [docs/ARCHITECTURE_AND_OPERATIONS.md](docs/ARCHITECTURE_AND_OPERATIONS.md).
+
 ### **Quick Access**
-- **Web Interface**: http://localhost:80
+- **Web Interface**: http://localhost:3000
 - **API Documentation**: http://localhost:8000/docs
-- **System Health**: http://localhost:8000/api/health/
+- **System Health**: http://localhost:8000/api/v4/system_monitoring/health
 
 ---
 
@@ -21,10 +23,10 @@ The News Intelligence System is an AI-powered news aggregation and analysis plat
 ./start_system.sh
 
 # Check system status
-curl http://localhost:8000/api/health/
+./status_system.sh
 
 # Access web interface
-open http://localhost:80
+open http://localhost:3000
 ```
 
 ### **System Management**
@@ -39,7 +41,7 @@ open http://localhost:80
 ./stop_system.sh
 
 # Check system health
-curl http://localhost:8000/api/health/
+curl http://localhost:8000/api/v4/system_monitoring/health
 ```
 
 See [Setup and Deployment Guide](./docs/SETUP_AND_DEPLOYMENT.md) for detailed instructions.
@@ -169,7 +171,7 @@ See [Setup and Deployment Guide](./docs/SETUP_AND_DEPLOYMENT.md) for detailed in
 docker-compose down && docker-compose up -d
 
 # Check system health
-curl http://localhost:8000/api/health/
+curl http://localhost:8000/api/v4/system_monitoring/health
 
 # View error logs
 docker logs news-intelligence-api --tail 50
@@ -209,7 +211,7 @@ docker logs news-intelligence-api --tail 50
 ### **Quick Diagnostics**
 ```bash
 # Check system health
-curl http://localhost:8000/api/health/
+curl http://localhost:8000/api/v4/system_monitoring/health
 
 # Check articles
 curl http://localhost:8000/api/articles/

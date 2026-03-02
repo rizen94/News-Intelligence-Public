@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Move local log files to NAS PostgreSQL database.
-Runs 2x/day via cron (6 AM, 6 PM). Uses SSH tunnel (DB_HOST=localhost, DB_PORT=5433).
-Load .env for DB_* and ensure setup_nas_ssh_tunnel.sh has been run.
+Move local log files to PostgreSQL database (Widow or NAS).
+Runs 2x/day via cron (6 AM, 6 PM). Load .env for DB_* (default: Widow).
+NAS rollback: DB_HOST=localhost, DB_PORT=5433 + setup_nas_ssh_tunnel.sh.
 
 Usage:
   ./scripts/log_archive_to_nas.py [--dry-run] [--keep-local]
@@ -43,8 +43,8 @@ def load_env():
                     v = v.strip().strip('"').strip("'")
                     if k.startswith("DB_") or k in ("NAS_HOST", "NAS_USER"):
                         os.environ.setdefault(k, v)
-    os.environ.setdefault("DB_HOST", "localhost")
-    os.environ.setdefault("DB_PORT", "5433")
+    os.environ.setdefault("DB_HOST", "192.168.93.101")
+    os.environ.setdefault("DB_PORT", "5432")
 
 
 def get_connection():
@@ -53,7 +53,7 @@ def get_connection():
     return psycopg2.connect(
         host=os.environ.get("DB_HOST", "localhost"),
         port=int(os.environ.get("DB_PORT", "5433")),
-        database=os.environ.get("DB_NAME", "news_intelligence"),
+        database=os.environ.get("DB_NAME", "news_intel"),
         user=os.environ.get("DB_USER", "newsapp"),
         password=os.environ.get("DB_PASSWORD", "newsapp_password"),
         connect_timeout=10,

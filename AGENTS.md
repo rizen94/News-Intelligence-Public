@@ -89,7 +89,7 @@ Context for AI assistants. Use project terminology consistently.
 
 - **Single module:** `shared.database.connection` — pooled psycopg2 + SQLAlchemy.
 - **Shim:** `config.database` re-exports for backward compatibility.
-- **SSH tunnel required:** `DB_HOST=localhost`, `DB_PORT=5433`.
+- **Primary config:** Widow at `192.168.93.101:5432`, DB `news_intel`. Rollback: NAS via `DB_HOST=localhost`, `DB_PORT=5433` + `setup_nas_ssh_tunnel.sh`.
 
 ---
 

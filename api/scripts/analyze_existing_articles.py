@@ -42,12 +42,11 @@ try:
     DB_CONFIG = get_db_config()
 except Exception as e:
     logger.warning(f"Failed to load database config: {e}")
-    db_host = os.getenv('DB_HOST', '192.168.93.100')
     DB_CONFIG = {
-        'host': db_host,
-        'database': os.getenv('DB_NAME', 'news_intelligence'),
+        'host': os.getenv('DB_HOST', '192.168.93.101'),
+        'database': os.getenv('DB_NAME', 'news_intel'),
         'user': os.getenv('DB_USER', 'newsapp'),
-        'password': os.getenv('DB_PASSWORD', 'newsapp_password'),
+        'password': os.getenv('DB_PASSWORD', ''),
         'port': int(os.getenv('DB_PORT', '5432')),
     }
 

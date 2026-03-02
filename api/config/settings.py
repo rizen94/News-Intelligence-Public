@@ -53,12 +53,12 @@ MODELS = {
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 OLLAMA_TIMEOUT = 300
 
-# Database (via SSH tunnel)
-DB_HOST = os.environ.get("DB_HOST", "localhost")
-DB_PORT = int(os.environ.get("DB_PORT", "5433"))
-DB_NAME = os.environ.get("DB_NAME", "news_intelligence")
+# Database (Widow secondary; rollback: localhost:5433 + NAS tunnel)
+DB_HOST = os.environ.get("DB_HOST", "192.168.93.101")
+DB_PORT = int(os.environ.get("DB_PORT", "5432"))
+DB_NAME = os.environ.get("DB_NAME", "news_intel")
 DB_USER = os.environ.get("DB_USER", "newsapp")
-DB_PASSWORD = os.environ.get("DB_PASSWORD", "newsapp_password")
+DB_PASSWORD = os.environ.get("DB_PASSWORD", "")
 
 # Logging
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")

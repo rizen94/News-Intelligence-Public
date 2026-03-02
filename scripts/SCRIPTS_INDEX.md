@@ -17,6 +17,13 @@
 | `restart_api_with_db.sh` | Restart API server |
 | `backup_database.sh` | Backup database |
 
+## Widow (secondary machine / migration)
+
+| Script | Purpose |
+|--------|---------|
+| `setup_widow_ssh.sh` | Add SSH config for Widow (192.168.93.101); enables `ssh widow` |
+| `run_widow_updates.sh` | Run apt update & upgrade on Widow via SSH (from primary) |
+
 ## Maintenance
 
 | Script | Purpose |

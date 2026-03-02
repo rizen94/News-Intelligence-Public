@@ -139,9 +139,9 @@ async def get_article_similarity(
         import os
         
         db_config = {
-            "host": os.getenv("DB_HOST", "localhost"),
+            "host": os.getenv("DB_HOST", "192.168.93.101"),
             "port": int(os.getenv("DB_PORT", "5433")),
-            "database": os.getenv("DB_NAME", "news_intelligence"),
+            "database": os.getenv("DB_NAME", "news_intel"),
             "user": os.getenv("DB_USER", "newsapp"),
             "password": os.getenv("DB_PASSWORD", "newsapp_password")
         }
@@ -231,9 +231,9 @@ async def analyze_cluster(
         import requests
         
         db_config = {
-            "host": os.getenv("DB_HOST", "localhost"),
+            "host": os.getenv("DB_HOST", "192.168.93.101"),
             "port": int(os.getenv("DB_PORT", "5433")),
-            "database": os.getenv("DB_NAME", "news_intelligence"),
+            "database": os.getenv("DB_NAME", "news_intel"),
             "user": os.getenv("DB_USER", "newsapp"),
             "password": os.getenv("DB_PASSWORD", "newsapp_password")
         }

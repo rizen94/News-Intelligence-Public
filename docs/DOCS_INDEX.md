@@ -1,32 +1,29 @@
 # Documentation Index
 
-## Essential
+## Essential (start here)
 
 | Doc | Purpose |
 |-----|---------|
-| [PROJECT_CAPABILITIES_BRIEF.md](PROJECT_CAPABILITIES_BRIEF.md) | **Current capabilities overview** — for AI advisors / new version planning |
-| [VENV_AND_GPU_SETUP.md](VENV_AND_GPU_SETUP.md) | Virtual env, uv, GPU/resource manager setup |
-| [CODING_STYLE_GUIDE.md](CODING_STYLE_GUIDE.md) | Coding standards |
-| [QUICK_START.md](../QUICK_START.md) | Start/stop services |
-| [ARCHITECTURE_SHRINK_PLAN.md](ARCHITECTURE_SHRINK_PLAN.md) | Architecture consolidation plan |
-| [SHRINK_ESTIMATES_VERIFIED.md](SHRINK_ESTIMATES_VERIFIED.md) | Shrink metrics |
-
-## Domains
-
-| Doc | Purpose |
-|-----|---------|
-| [DOMAIN_1_NEWS_AGGREGATION.md](DOMAIN_1_NEWS_AGGREGATION.md) | News/RSS domain |
-| [DOMAIN_2_CONTENT_ANALYSIS.md](DOMAIN_2_CONTENT_ANALYSIS.md) | Content analysis |
-| [DOMAIN_3_STORYLINE_MANAGEMENT.md](DOMAIN_3_STORYLINE_MANAGEMENT.md) | Storylines |
-| [DOMAIN_4_INTELLIGENCE_HUB.md](DOMAIN_4_INTELLIGENCE_HUB.md) | Intelligence/RAG |
-| [DOMAIN_6_SYSTEM_MONITORING.md](DOMAIN_6_SYSTEM_MONITORING.md) | Monitoring |
+| [ARCHITECTURE_AND_OPERATIONS.md](ARCHITECTURE_AND_OPERATIONS.md) | **Architecture, quick start, operations, troubleshooting** |
+| [RELEASE_v4.1_WIDOW_MIGRATION.md](RELEASE_v4.1_WIDOW_MIGRATION.md) | What changed in v4.1 (Widow migration) |
+| [../QUICK_START.md](../QUICK_START.md) | Start/stop/status commands |
 
 ## Reference
 
-- [API_DOCUMENTATION.md](API_DOCUMENTATION.md) — API overview
-- [DATABASE_SCHEMA_DOCUMENTATION.md](DATABASE_SCHEMA_DOCUMENTATION.md) — Schema
-- [deployment/](deployment/) — Deployment guides
+| Doc | Purpose |
+|-----|---------|
+| [CODING_STYLE_GUIDE.md](CODING_STYLE_GUIDE.md) | Coding standards |
+| [PROJECT_CAPABILITIES_BRIEF.md](PROJECT_CAPABILITIES_BRIEF.md) | Capabilities overview |
+| [API_DOCUMENTATION.md](API_DOCUMENTATION.md) | API reference |
 
-## Archived
+## Migration & Deployment
 
-Historical docs were moved to `News-Intelligence-Archive/docs_archive_*`.
+| Doc | Purpose |
+|-----|---------|
+| [MIGRATION_TODO.md](MIGRATION_TODO.md) | Migration phase checklist |
+| [MIGRATION_THREE_MACHINE.md](MIGRATION_THREE_MACHINE.md) | Full migration plan |
+| [CONTROLLER_ARCHITECTURE.md](CONTROLLER_ARCHITECTURE.md) | Controller design |
+
+## Other
+
+Domain docs, setup guides, and historical docs remain in `docs/` and `docs/consolidated/`. Use `ARCHITECTURE_AND_OPERATIONS.md` as the primary operations reference.
