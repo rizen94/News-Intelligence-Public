@@ -24,14 +24,14 @@
    ```
 
 4. Test web interface:
-   - Open: http://localhost
+   - Open: http://localhost:3000
    - Check all pages load correctly
    - Verify data is displaying
 
 5. Test API endpoints:
-   - Articles: http://localhost:8000/api/articles/
-   - Storylines: http://localhost:8000/api/storylines/
-   - RSS Feeds: http://localhost:8000/api/rss/feeds/
+   - Health: http://localhost:8000/api/v4/system_monitoring/health
+   - Articles: http://localhost:8000/api/v4/politics/articles
+   - Docs: http://localhost:8000/docs
 
 ## 📁 Backup Location
 - Full backup: `backups/20250928_201450/`

@@ -1,38 +1,36 @@
 # Scripts Index
 
-## Essential (daily use)
+## Essential
 
 | Script | Purpose |
 |--------|---------|
 | `../start_system.sh` | Start all services |
 | `../stop_system.sh` | Stop API and frontend |
-| `setup_nas_ssh_tunnel.sh` | Establish SSH tunnel to NAS DB (localhost:5433); auto-run by start_system.sh |
-| `verify_gpu.py` | GPU and environment verification (nvidia-smi, PyTorch, Ollama, sentence-transformers) |
-| `resource_monitor.py` | Real-time GPU/RAM monitoring (run during pipeline) |
-| `benchmark_inference.py` | LLM inference speed benchmark (requires Ollama) |
-| `verify_connections.py` | Verify NAS DB, internet, Ollama, Redis from venv |
 | `../status_system.sh` | Check service status |
-| `rss_collection_with_health_check.sh` | Run RSS collection with API health check |
-| `setup_rss_cron_with_health_check.sh` | Configure cron for RSS collection |
-| `restart_api_with_db.sh` | Restart API server |
-| `backup_database.sh` | Backup database |
+| `setup_nas_ssh_tunnel.sh` | SSH tunnel to NAS (rollback only) |
+| `restart_api_with_db.sh` | Restart API |
+| `db_backup.sh` | DB backup (run on Widow) |
 
-## Widow (secondary machine / migration)
-
-| Script | Purpose |
-|--------|---------|
-| `setup_widow_ssh.sh` | Add SSH config for Widow (192.168.93.101); enables `ssh widow` |
-| `run_widow_updates.sh` | Run apt update & upgrade on Widow via SSH (from primary) |
-
-## Maintenance
+## Widow / secondary
 
 | Script | Purpose |
 |--------|---------|
-| `maintenance/daily_audit.sh` | Daily system audit |
-| `maintenance/docker-manage.sh` | Docker management |
-| `check_nas_health.sh` | NAS connection check |
-| `monitor_nas_mount.sh` | Monitor NAS mount |
+| `setup_widow_ssh.sh` | SSH config for Widow |
+| `deploy_to_widow.sh` | Deploy code to Widow |
+| `setup_widow_app.sh` | Setup on Widow (venv, systemd) |
+| `run_secondary_worker.py` | RSS daemon (Widow) |
+| `configure_widow_no_sleep.sh` | Disable Widow suspend |
+| `run_widow_updates.sh` | apt update on Widow |
+
+## Utilities
+
+| Script | Purpose |
+|--------|---------|
+| `verify_gpu.py` | GPU/ML verification |
+| `verify_connections.py` | DB, Ollama, Redis check |
+| `rss_collection_with_health_check.sh` | RSS + health check |
+| `backup_database.sh` | DB backup |
 
 ## Archived
 
-Scripts in `archive/` are one-time setup, migrations, or deprecated. See subdirs: `v4_migrations`, `duplicate_production`, `one_time_setup`, `one_time_ops`, `deployment`.
+`scripts/archive/` — legacy NAS scripts, one-time migrations, deprecated.
