@@ -26,7 +26,7 @@ from services.intelligence_analysis_service import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
-    prefix="/api/v4",
+    prefix="/api",
     tags=["Intelligence Analysis"],
 )
 
@@ -501,10 +501,10 @@ async def get_intelligence_dashboard(
                 "impact_assessment": True,
             },
             "endpoints": {
-                "rag_context": f"/api/v4/{domain}/intelligence/rag/{{storyline_id}}",
-                "quality": f"/api/v4/{domain}/intelligence/quality/{{storyline_id}}",
-                "anomalies": f"/api/v4/{domain}/intelligence/anomalies",
-                "impact": f"/api/v4/{domain}/intelligence/impact/{{storyline_id}}",
+                "rag_context": f"/api/{domain}/intelligence/rag/{{storyline_id}}",
+                "quality": f"/api/{domain}/intelligence/quality/{{storyline_id}}",
+                "anomalies": f"/api/{domain}/intelligence/anomalies",
+                "impact": f"/api/{domain}/intelligence/impact/{{storyline_id}}",
             },
         }
     except Exception as e:

@@ -227,8 +227,7 @@ async def get_domain_article_suggestions(
                 else:
                     where_clause += " AND s.status = 'pending'"
                 
-                # Note: storyline_article_suggestions may be in public schema for now
-                # TODO: Move to domain schemas if needed
+                # storyline_article_suggestions lives in public schema; move to domain schema if multi-tenant isolation is required
                 cur.execute(f"""
                     SELECT s.id, s.article_id, s.relevance_score, s.semantic_score,
                            s.keyword_score, s.quality_score, s.combined_score,

@@ -2,6 +2,7 @@
 LLM Interaction Ledger — structured logging for every LLM call.
 Captures model, tokens, context documents, eval scores, latency, cost.
 Writes to logs/llm_interactions.jsonl and activity.jsonl (event_type=llm_interaction).
+When file write or activity_logger forward fails, the write is no-op (failure swallowed).
 """
 
 import hashlib

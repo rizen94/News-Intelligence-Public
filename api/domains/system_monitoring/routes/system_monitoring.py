@@ -3,7 +3,7 @@ Domain 6: System Monitoring Routes
 Handles system metrics, health monitoring, and alerts
 """
 
-from fastapi import APIRouter, HTTPException, BackgroundTasks, Query, Body
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Query, Body, Request
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
 import logging
@@ -33,10 +33,19 @@ except ImportError as e:
     FILTERING_AVAILABLE = False
 
 router = APIRouter(
-    prefix="/api/v4/system_monitoring",
+    prefix="/api/system_monitoring",
     tags=["System Monitoring"],
     responses={404: {"description": "Not found"}}
 )
+
+@router.get("/orchestrator")
+async def orchestrator_status(request: Request):
+    """Newsroom Orchestrator v6 status: enabled, running, last_event_at, queue_depth."""
+    orchestrator = getattr(request.app.state, "newsroom_orchestrator", None)
+    if orchestrator is None:
+        return {"enabled": False, "running": False, "last_event_at": None, "queue_depth": 0}
+    return orchestrator.get_status()
+
 
 @router.get("/health")
 @cached_response(ttl=30)  # Cache health checks for 30 seconds
@@ -118,12 +127,30 @@ async def health_check():
             redis_status = f"unhealthy: {str(e)[:50]}"
             logger.warning(f"Redis health check failed: {e}")
         
+        # Circuit breaker status
+        cb_summary = {}
+        try:
+            from services.circuit_breaker_service import get_circuit_breaker_service
+            cb_service = get_circuit_breaker_service()
+            cb_health = cb_service.get_health_status()
+            cb_summary = {
+                "open_circuits": cb_health.get("open_circuits", 0),
+                "breakers": {
+                    name: info["state"]
+                    for name, info in cb_health.get("circuit_breakers", {}).items()
+                },
+            }
+        except Exception:
+            cb_summary = {"open_circuits": 0, "breakers": {}}
+
         # Determine overall status
         overall_status = "healthy"
         if db_status != "healthy" or redis_status not in ["healthy", "not_configured"]:
             overall_status = "degraded"
         if cpu_percent > 90 or memory.percent > 90 or disk.percent > 95:
             overall_status = "warning"
+        if cb_summary.get("open_circuits", 0) > 0:
+            overall_status = "degraded"
         
         return {
             "success": True,
@@ -132,8 +159,10 @@ async def health_check():
             "services": {
                 "database": db_status,
                 "redis": redis_status,
-                "system": "healthy" if cpu_percent < 80 and memory.percent < 80 else "warning"
+                "ollama": "circuit_open" if cb_summary.get("breakers", {}).get("ollama") == "open" else "available",
+                "system": "healthy" if cpu_percent < 80 and memory.percent < 80 else "warning",
             },
+            "circuit_breakers": cb_summary,
             "system_metrics": {
                 "cpu_percent": cpu_percent,
                 "memory_percent": memory.percent,

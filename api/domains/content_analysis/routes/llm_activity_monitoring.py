@@ -13,7 +13,7 @@ from domains.content_analysis.services.llm_activity_tracker import get_llm_activ
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
-    prefix="/api/v4",
+    prefix="/api",
     tags=["LLM Activity Monitoring"],
     responses={404: {"description": "Not found"}}
 )

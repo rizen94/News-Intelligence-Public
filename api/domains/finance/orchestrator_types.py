@@ -105,6 +105,7 @@ class TaskContext:
     fetched_data: dict[str, Any] = field(default_factory=dict)  # source -> DataResult
     evidence_index: list[EvidenceIndexEntry] = field(default_factory=list)
     evidence_chunks: list[Any] = field(default_factory=list)  # EvidenceChunk
+    rss_snippets: list[dict[str, Any]] = field(default_factory=list)  # from evidence_collector
     stats_results: dict[str, Any] = field(default_factory=dict)
     llm_prompt: str | None = None
     llm_response: str | None = None

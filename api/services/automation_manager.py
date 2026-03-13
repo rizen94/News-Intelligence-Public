@@ -16,6 +16,7 @@ import time
 from dataclasses import dataclass
 from enum import Enum
 import threading
+import queue
 from concurrent.futures import ThreadPoolExecutor
 import traceback
 
@@ -52,6 +53,38 @@ class Task:
     error_message: Optional[str] = None
     metadata: Dict[str, Any] = None
 
+# Estimated duration in seconds per phase (single place to tune)
+PHASE_ESTIMATED_DURATION_SECONDS = {
+    "rss_processing": 120,
+    "article_processing": 180,
+    "ml_processing": 240,
+    "topic_clustering": 180,
+    "entity_extraction": 120,
+    "quality_scoring": 90,
+    "sentiment_analysis": 120,
+    "storyline_processing": 300,
+    "basic_summary_generation": 120,
+    "rag_enhancement": 600,
+    "event_extraction": 300,
+    "event_deduplication": 120,
+    "story_continuation": 300,
+    "timeline_generation": 300,
+    "cache_cleanup": 60,
+    "digest_generation": 180,
+    "watchlist_alerts": 60,
+    "data_cleanup": 300,
+    "health_check": 10,
+    "context_sync": 180,
+    "entity_profile_sync": 120,
+    "claim_extraction": 300,
+    "event_tracking": 240,
+    "event_coherence_review": 180,
+    "investigation_report_refresh": 300,
+    "entity_profile_build": 600,
+    "pattern_recognition": 120,
+    "storyline_automation": 180,
+}
+
 class AutomationManager:
     """Enterprise-grade automation manager"""
     
@@ -62,6 +95,8 @@ class AutomationManager:
         self.executor = ThreadPoolExecutor(max_workers=10)
         self.task_queue = asyncio.Queue()
         self.workers = []
+        # Thread-safe queue for coordinator-driven phase requests (run_phase from another thread)
+        self._phase_request_queue = queue.Queue()
         self.health_check_interval = 30  # seconds
         self.task_timeout = 300  # 5 minutes
         self.max_concurrent_tasks = 5
@@ -80,9 +115,89 @@ class AutomationManager:
                 'priority': TaskPriority.CRITICAL,
                 'phase': 1,
                 'depends_on': [],
-                'estimated_duration': 120  # 2 minutes
+                'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['rss_processing'],
             },
             
+            # PHASE 1b: Context-centric sync (backfill articles -> intelligence.contexts)
+            'context_sync': {
+                'interval': 1200,  # 20 minutes
+                'last_run': None,
+                'enabled': True,
+                'priority': TaskPriority.NORMAL,
+                'phase': 1,
+                'depends_on': [],
+                'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['context_sync'],
+            },
+            # PHASE 1c: Entity profile sync (entity_canonical -> entity_profiles, old_entity_to_new)
+            'entity_profile_sync': {
+                'interval': 21600,  # 6 hours
+                'last_run': None,
+                'enabled': True,
+                'priority': TaskPriority.NORMAL,
+                'phase': 1,
+                'depends_on': [],
+                'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['entity_profile_sync'],
+            },
+            # PHASE 2a: Claim extraction (contexts -> extracted_claims, context-centric)
+            'claim_extraction': {
+                'interval': 2400,  # 40 minutes
+                'last_run': None,
+                'enabled': True,
+                'priority': TaskPriority.NORMAL,
+                'phase': 2,
+                'depends_on': [],
+                'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['claim_extraction'],
+            },
+            # PHASE 2.3: Event tracking (contexts -> tracked_events, event_chronicles)
+            'event_tracking': {
+                'interval': 3600,  # 1 hour
+                'last_run': None,
+                'enabled': True,
+                'priority': TaskPriority.NORMAL,
+                'phase': 2,
+                'depends_on': [],
+                'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['event_tracking'],
+            },
+            # PHASE 3: Event coherence review (LLM verifies context-event fit)
+            'event_coherence_review': {
+                'interval': 7200,  # 2 hours
+                'last_run': None,
+                'enabled': True,
+                'priority': TaskPriority.LOW,
+                'phase': 3,
+                'depends_on': [],
+                'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['event_coherence_review'],
+            },
+            # PHASE 2.4: Refresh investigation reports when events gain new context (after event_tracking)
+            'investigation_report_refresh': {
+                'interval': 7200,  # 2 hours
+                'last_run': None,
+                'enabled': True,
+                'priority': TaskPriority.LOW,
+                'phase': 2,
+                'depends_on': ['event_tracking'],
+                'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['investigation_report_refresh'],
+            },
+            # PHASE 1.3: Entity profile builder (sections, relationships from contexts)
+            'entity_profile_build': {
+                'interval': 21600,  # 6 hours
+                'last_run': None,
+                'enabled': True,
+                'priority': TaskPriority.NORMAL,
+                'phase': 1,
+                'depends_on': [],
+                'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['entity_profile_build'],
+            },
+            # PHASE 2.2: Pattern recognition (network, temporal, behavioral, event)
+            'pattern_recognition': {
+                'interval': 7200,  # 2 hours
+                'last_run': None,
+                'enabled': True,
+                'priority': TaskPriority.NORMAL,
+                'phase': 2,
+                'depends_on': [],
+                'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['pattern_recognition'],
+            },
             # PHASE 2: Article Processing (Runs frequently, processes existing articles)
             'article_processing': {
                 'interval': 1200,  # 20 minutes - Relaxed to reduce load
@@ -91,7 +206,7 @@ class AutomationManager:
                 'priority': TaskPriority.HIGH,
                 'phase': 2,
                 'depends_on': [],  # Can process articles already in database, no RSS dependency
-                'estimated_duration': 180  # 3 minutes
+                'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['article_processing'],
             },
             
             # PHASE 3: ML Processing (Runs frequently on processed articles)
@@ -102,7 +217,7 @@ class AutomationManager:
                 'priority': TaskPriority.HIGH,
                 'phase': 3,
                 'depends_on': ['article_processing'],
-                'estimated_duration': 240  # 4 minutes
+                'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['ml_processing'],
             },
             
             # PHASE 5: Topic Clustering (Continuous iterative refinement)
@@ -113,7 +228,7 @@ class AutomationManager:
                 'priority': TaskPriority.HIGH,
                 'phase': 5,
                 'depends_on': ['article_processing'],  # Only needs articles, not full ML processing
-                'estimated_duration': 180  # 3 minutes - processes articles incrementally
+                'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['topic_clustering'],
             },
             
             # PHASE 4: Parallel ML & Entity Processing (Runs frequently)
@@ -124,7 +239,7 @@ class AutomationManager:
                 'priority': TaskPriority.NORMAL,
                 'phase': 4,
                 'depends_on': ['article_processing'],
-                'estimated_duration': 120,  # 2 minutes
+                'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['entity_extraction'],
                 'parallel_group': 'ml_entity_processing'  # Can run in parallel with ML
             },
             
@@ -136,7 +251,7 @@ class AutomationManager:
                 'priority': TaskPriority.NORMAL,
                 'phase': 4,
                 'depends_on': ['article_processing'],
-                'estimated_duration': 90,  # 1.5 minutes
+                'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['quality_scoring'],
                 'parallel_group': 'ml_entity_processing'  # Can run in parallel with ML
             },
             
@@ -148,7 +263,7 @@ class AutomationManager:
                 'priority': TaskPriority.NORMAL,
                 'phase': 4,
                 'depends_on': ['article_processing'],
-                'estimated_duration': 120,  # 2 minutes
+                'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['sentiment_analysis'],
                 'parallel_group': 'ml_entity_processing'  # Can run in parallel with ML
             },
             
@@ -160,9 +275,18 @@ class AutomationManager:
                 'priority': TaskPriority.HIGH,
                 'phase': 7,
                 'depends_on': ['ml_processing', 'sentiment_analysis'],
-                'estimated_duration': 300  # 5 minutes
+                'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['storyline_processing'],
             },
-            
+            # Governor-triggered: RAG discovery for one or all automation-enabled storylines
+            'storyline_automation': {
+                'interval': 1800,
+                'last_run': None,
+                'enabled': True,
+                'priority': TaskPriority.NORMAL,
+                'phase': 7,
+                'depends_on': [],
+                'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['storyline_automation'],
+            },
             # PHASE 8: RAG Enhancement (Every 30 minutes)
             # PHASE 6: Basic Summary Generation (Starts 15 minutes after RSS)
             'basic_summary_generation': {
@@ -172,7 +296,7 @@ class AutomationManager:
                 'priority': TaskPriority.HIGH,
                 'phase': 6,
                 'depends_on': ['storyline_processing'],
-                'estimated_duration': 120  # 2 minutes
+                'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['basic_summary_generation'],
             },
             
             'rag_enhancement': {
@@ -182,7 +306,7 @@ class AutomationManager:
                 'priority': TaskPriority.HIGH,
                 'phase': 8,
                 'depends_on': ['basic_summary_generation'],
-                'estimated_duration': 600  # 10 minutes
+                'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['rag_enhancement'],
             },
             
             # PHASE 9a: Event Extraction (v5.0 - runs after entity extraction)
@@ -193,7 +317,7 @@ class AutomationManager:
                 'priority': TaskPriority.NORMAL,
                 'phase': 9,
                 'depends_on': ['entity_extraction'],
-                'estimated_duration': 300,  # 5 minutes
+                'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['event_extraction'],
                 'parallel_group': 'event_processing'
             },
             
@@ -205,7 +329,7 @@ class AutomationManager:
                 'priority': TaskPriority.NORMAL,
                 'phase': 9,
                 'depends_on': ['event_extraction'],
-                'estimated_duration': 120,
+                'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['event_deduplication'],
                 'parallel_group': 'event_processing'
             },
             
@@ -217,7 +341,7 @@ class AutomationManager:
                 'priority': TaskPriority.NORMAL,
                 'phase': 9,
                 'depends_on': ['event_deduplication'],
-                'estimated_duration': 300,
+                'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['story_continuation'],
             },
 
             # PHASE 9d: Timeline Generation (Every 30 minutes)
@@ -228,7 +352,7 @@ class AutomationManager:
                 'priority': TaskPriority.NORMAL,
                 'phase': 9,
                 'depends_on': ['rag_enhancement'],
-                'estimated_duration': 300  # 5 minutes
+                'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['timeline_generation'],
             },
             
             # PHASE 10: Cache Cleanup (Every hour)
@@ -239,7 +363,7 @@ class AutomationManager:
                 'priority': TaskPriority.LOW,
                 'phase': 10,
                 'depends_on': [],
-                'estimated_duration': 60  # 1 minute
+                'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['cache_cleanup'],
             },
             
             # PHASE 11: Digest Generation (Every hour)
@@ -250,7 +374,7 @@ class AutomationManager:
                 'priority': TaskPriority.NORMAL,
                 'phase': 11,
                 'depends_on': ['timeline_generation'],
-                'estimated_duration': 180  # 3 minutes
+                'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['digest_generation'],
             },
             
             # PHASE 12: Watchlist Alert Generation (v5.0)
@@ -261,7 +385,7 @@ class AutomationManager:
                 'priority': TaskPriority.LOW,
                 'phase': 12,
                 'depends_on': ['story_continuation'],
-                'estimated_duration': 60,
+                'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['watchlist_alerts'],
             },
 
             # MAINTENANCE: Data Cleanup (Daily)
@@ -272,7 +396,7 @@ class AutomationManager:
                 'priority': TaskPriority.LOW,
                 'phase': 99,
                 'depends_on': [],
-                'estimated_duration': 300  # 5 minutes
+                'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['data_cleanup'],
             },
             
             # MONITORING: Health Check
@@ -283,7 +407,7 @@ class AutomationManager:
                 'priority': TaskPriority.CRITICAL,
                 'phase': 0,
                 'depends_on': [],
-                'estimated_duration': 10  # 10 seconds
+                'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['health_check'],
             }
         }
         
@@ -339,6 +463,21 @@ class AutomationManager:
         self.executor.shutdown(wait=True)
         
         logger.info("Automation Manager stopped")
+
+    def request_phase(
+        self,
+        phase_name: str,
+        domain: Optional[str] = None,
+        storyline_id: Optional[int] = None,
+    ) -> None:
+        """
+        Request a phase to run (thread-safe). Call from coordinator or API.
+        The scheduler will drain this queue and enqueue tasks with metadata.
+        """
+        try:
+            self._phase_request_queue.put_nowait((phase_name, domain, storyline_id))
+        except Exception as e:
+            logger.warning("AutomationManager request_phase failed: %s", e)
         
     async def _worker(self, worker_id: str):
         """Worker process for task execution"""
@@ -367,6 +506,27 @@ class AutomationManager:
         
         while self.is_running:
             try:
+                # Drain coordinator-driven phase requests (thread-safe)
+                try:
+                    while True:
+                        phase_name, domain, storyline_id = self._phase_request_queue.get_nowait()
+                        if phase_name not in self.schedules:
+                            logger.debug("request_phase: unknown phase %s, skipping", phase_name)
+                            continue
+                        schedule = self.schedules[phase_name]
+                        task = Task(
+                            id=f"{phase_name}_{int(datetime.now(timezone.utc).timestamp())}",
+                            name=phase_name,
+                            priority=schedule.get("priority", TaskPriority.NORMAL),
+                            status=TaskStatus.PENDING,
+                            created_at=datetime.now(timezone.utc),
+                            metadata={"domain": domain, "storyline_id": storyline_id},
+                        )
+                        await self.task_queue.put(task)
+                        logger.info("Governor requested phase: %s (domain=%s, storyline_id=%s)", phase_name, domain, storyline_id)
+                except queue.Empty:
+                    pass
+
                 current_time = datetime.now(timezone.utc)
                 
                 # Sort tasks by phase for proper sequencing
@@ -726,6 +886,22 @@ class AutomationManager:
             # Execute task based on type
             if task.name == 'rss_processing':
                 await self._execute_rss_processing(task)
+            elif task.name == 'context_sync':
+                await self._execute_context_sync(task)
+            elif task.name == 'entity_profile_sync':
+                await self._execute_entity_profile_sync(task)
+            elif task.name == 'claim_extraction':
+                await self._execute_claim_extraction(task)
+            elif task.name == 'event_tracking':
+                await self._execute_event_tracking(task)
+            elif task.name == 'investigation_report_refresh':
+                await self._execute_investigation_report_refresh(task)
+            elif task.name == 'event_coherence_review':
+                await self._execute_event_coherence_review(task)
+            elif task.name == 'entity_profile_build':
+                await self._execute_entity_profile_build(task)
+            elif task.name == 'pattern_recognition':
+                await self._execute_pattern_recognition(task)
             elif task.name == 'digest_generation':
                 await self._execute_digest_generation(task)
             elif task.name == 'data_cleanup':
@@ -744,6 +920,8 @@ class AutomationManager:
                 await self._execute_sentiment_analysis(task)
             elif task.name == 'storyline_processing':
                 await self._execute_storyline_processing(task)
+            elif task.name == 'storyline_automation':
+                await self._execute_storyline_automation(task)
             elif task.name == 'article_processing':
                 await self._execute_article_processing(task)
             elif task.name == 'entity_extraction':
@@ -800,11 +978,162 @@ class AutomationManager:
             self.tasks[task.id] = task
             
     async def _execute_rss_processing(self, task: Task):
-        """Execute RSS processing task"""
-        from services.rss import get_rss_processor
+        """Execute RSS processing: use domain feeds (collect_rss_feeds) so all politics/finance/science_tech.rss_feeds are used."""
+        from collectors.rss_collector import collect_rss_feeds
+        import asyncio
+        try:
+            loop = asyncio.get_event_loop()
+            added = await loop.run_in_executor(None, collect_rss_feeds)
+            if added > 0:
+                logger.info(f"RSS processing: {added} articles collected from domain feeds")
+        except Exception as e:
+            logger.warning(f"RSS processing failed: {e}")
+    
+    async def _execute_context_sync(self, task: Task):
+        """Backfill: sync domain articles to intelligence.contexts (Phase 1.2 context-centric)."""
+        try:
+            from config.context_centric_config import is_context_centric_task_enabled
+            if not is_context_centric_task_enabled("context_sync"):
+                return
+        except Exception:
+            pass
+        from services.context_processor_service import sync_domain_articles_to_contexts
+        import asyncio
         
-        rss_processor = get_rss_processor()
-        await rss_processor.process_all_feeds()
+        for domain_key in ("politics", "finance", "science-tech"):
+            try:
+                # Run in executor to avoid blocking (sync_domain is sync/DB-heavy)
+                total = await asyncio.get_event_loop().run_in_executor(
+                    None, lambda d=domain_key: sync_domain_articles_to_contexts(d, limit=500)
+                )
+                if total > 0:
+                    logger.info(f"Context sync {domain_key}: {total} contexts created")
+            except Exception as e:
+                logger.warning(f"Context sync {domain_key} failed: {e}")
+
+    async def _execute_entity_profile_sync(self, task: Task):
+        """Sync entity_canonical -> entity_profiles + old_entity_to_new (Phase 1.3 context-centric)."""
+        try:
+            from config.context_centric_config import is_context_centric_task_enabled
+            if not is_context_centric_task_enabled("entity_profile_sync"):
+                return
+        except Exception:
+            pass
+        from services.entity_profile_sync_service import sync_domain_entity_profiles
+        import asyncio
+
+        for domain_key in ("politics", "finance", "science-tech"):
+            try:
+                total = await asyncio.get_event_loop().run_in_executor(
+                    None, lambda d=domain_key: sync_domain_entity_profiles(d)
+                )
+                if total > 0:
+                    logger.info(f"Entity profile sync {domain_key}: {total} new mappings")
+            except Exception as e:
+                logger.warning(f"Entity profile sync {domain_key} failed: {e}")
+
+    async def _execute_claim_extraction(self, task: Task):
+        """Extract claims (subject/predicate/object) from contexts without claims (Phase 2.1 context-centric)."""
+        try:
+            from config.context_centric_config import is_context_centric_task_enabled
+            if not is_context_centric_task_enabled("claim_extraction"):
+                return
+        except Exception:
+            pass
+        from services.claim_extraction_service import run_claim_extraction_batch
+        try:
+            total = await run_claim_extraction_batch(limit=30)
+            if total > 0:
+                logger.info(f"Claim extraction: {total} claims inserted")
+        except Exception as e:
+            logger.warning(f"Claim extraction failed: {e}")
+
+    async def _execute_event_tracking(self, task: Task):
+        """Populate tracked_events and event_chronicles from contexts (Phase 2.3 context-centric)."""
+        try:
+            from config.context_centric_config import is_context_centric_task_enabled
+            if not is_context_centric_task_enabled("event_tracking"):
+                return
+        except Exception:
+            pass
+        try:
+            from services.event_tracking_service import run_event_tracking_batch
+            total = await run_event_tracking_batch(limit=20)
+            if total > 0:
+                logger.info(f"Event tracking: {total} chronicle entries added")
+        except Exception as e:
+            logger.warning(f"Event tracking failed: {e}")
+
+    async def _execute_investigation_report_refresh(self, task: Task):
+        """Regenerate investigation reports for events whose context set has changed (Phase 2.4)."""
+        try:
+            from config.context_centric_config import is_context_centric_task_enabled
+            if not is_context_centric_task_enabled("investigation_report_refresh"):
+                return
+        except Exception:
+            pass
+        from services.investigation_report_service import refresh_stale_investigation_reports
+        try:
+            refreshed = await refresh_stale_investigation_reports(limit=3)
+            if refreshed > 0:
+                logger.info(f"Investigation report refresh: {refreshed} reports updated")
+            else:
+                logger.debug("Investigation report refresh: no stale reports")
+        except Exception as e:
+            logger.warning(f"Investigation report refresh failed: {e}")
+
+    async def _execute_event_coherence_review(self, task: Task):
+        """LLM-powered review: verify each context in an event actually belongs (Phase 3)."""
+        try:
+            from config.context_centric_config import is_context_centric_task_enabled
+            if not is_context_centric_task_enabled("event_coherence_review"):
+                return
+        except Exception:
+            pass
+        from services.event_coherence_reviewer import review_all_open_events
+        try:
+            result = await review_all_open_events(relevance_threshold=0.5, auto_remove=True)
+            removed = result.get("total_contexts_removed", 0)
+            reviewed = result.get("events_reviewed", 0)
+            if removed > 0:
+                logger.info(f"Event coherence review: {removed} contexts removed from {reviewed} events")
+            else:
+                logger.debug(f"Event coherence review: {reviewed} events reviewed, all coherent")
+        except Exception as e:
+            logger.warning(f"Event coherence review failed: {e}")
+
+    async def _execute_entity_profile_build(self, task: Task):
+        """Build Wikipedia-style sections for entity_profiles from contexts (Phase 1.3)."""
+        try:
+            from config.context_centric_config import is_context_centric_task_enabled
+            if not is_context_centric_task_enabled("entity_profile_build"):
+                return
+        except Exception:
+            pass
+        from services.entity_profile_builder_service import run_profile_builder_batch
+        try:
+            updated = await run_profile_builder_batch(limit=15)
+            if updated > 0:
+                logger.info(f"Entity profile build: {updated} profiles updated")
+        except Exception as e:
+            logger.warning(f"Entity profile build failed: {e}")
+
+    async def _execute_pattern_recognition(self, task: Task):
+        """Discover patterns (network, temporal, behavioral, event) and persist to pattern_discoveries (Phase 2.2)."""
+        try:
+            from config.context_centric_config import is_context_centric_task_enabled
+            if not is_context_centric_task_enabled("pattern_recognition"):
+                return
+        except Exception:
+            pass
+        from services.pattern_recognition_service import run_pattern_discovery_batch
+        import asyncio
+        try:
+            total = await asyncio.get_event_loop().run_in_executor(None, run_pattern_discovery_batch)
+            if total > 0:
+                logger.info(f"Pattern recognition: {total} patterns discovered")
+        except Exception as e:
+            logger.warning(f"Pattern recognition failed: {e}")
         
     async def _execute_digest_generation(self, task: Task):
         """Execute digest generation task"""
@@ -814,24 +1143,30 @@ class AutomationManager:
         await digest_service.generate_digest_if_needed()
         
     async def _execute_data_cleanup(self, task: Task):
-        """Execute data cleanup task"""
-        # Clean up old articles (keep last 30 days)
+        """Execute data cleanup task — articles + intelligence layer."""
         cutoff_date = datetime.now(timezone.utc) - timedelta(days=30)
-        
-        conn = await self._get_db_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute("""
-            DELETE FROM articles 
-            WHERE published_at < %s AND created_at < %s
-        """, (cutoff_date, cutoff_date))
-        
-        deleted_count = cursor.rowcount
-        conn.commit()
-        cursor.close()
-        conn.close()
-        
-        logger.info(f"Data cleanup: deleted {deleted_count} old articles")
+
+        try:
+            conn = await self._get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute("""
+                DELETE FROM articles
+                WHERE published_at < %s AND created_at < %s
+            """, (cutoff_date, cutoff_date))
+            deleted_count = cursor.rowcount
+            conn.commit()
+            cursor.close()
+            conn.close()
+            logger.info(f"Data cleanup: deleted {deleted_count} old articles")
+        except Exception as e:
+            logger.warning(f"Data cleanup (articles): {e}")
+
+        try:
+            from services.intelligence_cleanup_controller import run_intelligence_cleanup
+            result = await run_intelligence_cleanup()
+            logger.info(f"Intelligence cleanup: {result.get('total_actions', 0)} actions taken")
+        except Exception as e:
+            logger.warning(f"Data cleanup (intelligence): {e}")
         
     async def _execute_health_check(self, task: Task):
         """Execute health check task"""
@@ -1044,6 +1379,42 @@ class AutomationManager:
                 logger.error(f"Error processing storyline {storyline['id']}: {e}")
         
         logger.info(f"Storyline processing completed: {processed_count} storylines processed")
+
+    async def _execute_storyline_automation(self, task: Task):
+        """Run RAG discovery for one storyline (from metadata) or all automation-enabled storylines."""
+        from services.storyline_automation_service import StorylineAutomationService
+        meta = task.metadata or {}
+        storyline_id = meta.get("storyline_id")
+        domain = meta.get("domain")
+        if storyline_id and domain:
+            try:
+                svc = StorylineAutomationService(domain=domain)
+                result = await svc.discover_articles_for_storyline(storyline_id, force_refresh=False)
+                count = len(result.get("articles", []))
+                logger.info("Storyline automation: storyline_id=%s domain=%s discovered %s articles", storyline_id, domain, count)
+            except Exception as e:
+                logger.warning("Storyline automation failed for storyline_id=%s: %s", storyline_id, e)
+        else:
+            # Run for all automation-enabled storylines (each domain)
+            for d in ("politics", "finance", "science_tech"):
+                try:
+                    svc = StorylineAutomationService(domain=d)
+                    conn = await self._get_db_connection()
+                    cur = conn.cursor()
+                    schema = d.replace("-", "_")
+                    cur.execute(f"""
+                        SELECT id FROM {schema}.storylines
+                        WHERE automation_enabled = true
+                        ORDER BY last_automation_run ASC NULLS FIRST
+                        LIMIT 5
+                    """)
+                    for row in cur.fetchall():
+                        await svc.discover_articles_for_storyline(row[0], force_refresh=False)
+                    cur.close()
+                    conn.close()
+                except Exception as e:
+                    logger.debug("Storyline automation batch %s: %s", d, e)
+            logger.info("Storyline automation: batch run across domains completed")
         
     async def _execute_article_processing(self, task: Task):
         """Execute article processing task"""
@@ -1326,7 +1697,7 @@ class AutomationManager:
     async def _execute_topic_clustering(self, task: Task):
         """Execute topic clustering task - continuous iterative refinement with confidence-based stopping"""
         try:
-            logger.info("🔄 Starting iterative topic clustering task with confidence-based prioritization (v4.0 - all domains)")
+            logger.info("🔄 Starting iterative topic clustering task with confidence-based prioritization (v5.0 - all domains)")
             
             # Import the topic clustering service
             from domains.content_analysis.services.topic_clustering_service import TopicClusteringService

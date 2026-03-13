@@ -16,7 +16,7 @@ from domains.content_analysis.services.topic_clustering_service import TopicClus
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
-    prefix="/api/v4",
+    prefix="/api",
     tags=["Topic Management"],
     responses={404: {"description": "Not found"}}
 )

@@ -1,0 +1,70 @@
+.storylines {
+  padding: 20px;
+}
+
+.storylines-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 30px;
+}
+
+.storylines-header h1 {
+  color: #2c3e50;
+  font-size: 2em;
+  margin: 0;
+}
+
+.storylines-stats {
+  margin-bottom: 30px;
+}
+
+.storylines-list {
+  display: grid;
+  gap: 20px;
+}
+
+.storyline-card {
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  padding: 20px;
+  transition: box-shadow 0.3s ease;
+}
+
+.storyline-card:hover {
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+}
+
+.storyline-header {
+  margin-bottom: 15px;
+}
+
+.storyline-title {
+  margin: 0 0 10px 0;
+  color: #2c3e50;
+  font-size: 1.2em;
+  line-height: 1.4;
+}
+
+.storyline-meta {
+  display: flex;
+  gap: 15px;
+  color: #666;
+  font-size: 0.9em;
+}
+
+.storyline-count {
+  font-weight: 600;
+}
+
+.storyline-description {
+  margin-bottom: 15px;
+  color: #555;
+  line-height: 1.6;
+}
+
+.storyline-actions {
+  display: flex;
+  gap: 10px;
+}

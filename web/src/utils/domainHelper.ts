@@ -1,6 +1,6 @@
 /**
  * Domain Helper Utility
- * Provides domain context and helper functions for v4.0 multi-domain architecture
+ * Provides domain context and helper functions for v5.0 multi-domain architecture
  */
 
 export type DomainKey = 'politics' | 'finance' | 'science-tech';

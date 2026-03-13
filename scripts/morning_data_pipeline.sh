@@ -15,7 +15,7 @@ echo "[$(date '+%Y-%m-%d %H:%M:%S')] Project: $PROJECT_DIR" >> "$LOG_FILE"
 
 cd "$API_DIR"
 
-# DB via SSH tunnel (required for NAS access)
+# DB: for Widow use DB_HOST=192.168.93.101 DB_PORT=5432 (or set in .env)
 export DB_HOST="${DB_HOST:-localhost}"
 export DB_PORT="${DB_PORT:-5433}"
 export DB_NAME="${DB_NAME:-news_intelligence}"

@@ -76,6 +76,7 @@ class LocalMonitoringSystem:
         self.cache_sizes = {}
         self.cache_hits = 0
         self.cache_misses = 0
+        self.eviction_count = 0
         
         # Monitoring data
         self.system_metrics = deque(maxlen=1000)  # Keep last 1000 measurements
@@ -409,10 +410,11 @@ class LocalMonitoringSystem:
         self._remove_from_cache(largest_key)
     
     def _remove_from_cache(self, key: str):
-        """Remove entry from cache"""
+        """Remove entry from cache; increments eviction_count when an entry is removed."""
         try:
             if key in self.cache:
                 del self.cache[key]
+                self.eviction_count += 1
             if key in self.cache_access_times:
                 del self.cache_access_times[key]
             if key in self.cache_sizes:
@@ -486,7 +488,7 @@ class LocalMonitoringSystem:
                 memory_usage_mb=memory_usage_mb,
                 oldest_entry=oldest_entry,
                 newest_entry=newest_entry,
-                eviction_count=0  # TODO: Track evictions
+                eviction_count=self.eviction_count
             )
         except Exception as e:
             logger.error(f"Error getting cache stats: {e}")
@@ -497,7 +499,7 @@ class LocalMonitoringSystem:
                 memory_usage_mb=0.0,
                 oldest_entry=datetime.now(),
                 newest_entry=datetime.now(),
-                eviction_count=0
+                eviction_count=getattr(self, "eviction_count", 0)
             )
     
     def get_alerts(self, level: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -583,6 +585,7 @@ class LocalMonitoringSystem:
             self.cache_access_times.clear()
             self.cache_sizes.clear()
             self.cache_hits = 0
+            self.eviction_count = 0
             self.cache_misses = 0
             logger.info("Cache cleared")
         except Exception as e:

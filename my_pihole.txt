@@ -1,0 +1,31 @@
+==============================================
+Pi-hole summary — 2026-03-03T23:22:05-05:00
+Host: petes@192.168.93.104
+==============================================
+
+--- Pi-hole status ---
+  [✓] FTL is listening on port 53
+     [✓] UDP (IPv4)
+     [✓] TCP (IPv4)
+     [✓] UDP (IPv6)
+     [✓] TCP (IPv6)
+
+  [✓] Pi-hole blocking is enabled
+
+--- Summary stats (queries, blocked, etc.) ---
+Chronometer is gone, use PADD (https://github.com/pi-hole/PADD)
+
+--- Adlists (blocklists) currently in gravity ---
+  (gravity.db not readable; try: cat /etc/pihole/adlists.list)
+
+--- Domains in gravity (blocklist size) ---
+
+--- Top blocked domains (last 24h, from FTL if available) ---
+  (pihole-FTL.db not readable)
+
+--- Blocking mode and settings (from pihole.toml if present) ---
+  (pihole.toml not found or empty)
+
+--- Recent Pi-hole version ---
+
+--- End Pi-hole summary ---

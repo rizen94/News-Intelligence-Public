@@ -15,7 +15,7 @@ from shared.database.connection import get_db_connection
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
-    prefix="/api/v4/user_management",
+    prefix="/api/user_management",
     tags=["User Management"],
     responses={404: {"description": "Not found"}}
 )

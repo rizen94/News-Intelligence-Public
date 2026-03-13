@@ -25,7 +25,7 @@ from .storyline_management import (
 
 # Create main router
 router = APIRouter(
-    prefix="/api/v4",
+    prefix="/api",
     tags=["Storyline Management"]
 )
 

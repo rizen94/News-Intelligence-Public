@@ -101,6 +101,9 @@ class FinanceOrchestrator:
         self._schedule_last_run: dict[str, datetime] = {}
         self._schedule_task: asyncio.Task | None = None
         self._schedule_stop = asyncio.Event()
+        # Queue worker: runs user-submitted queued tasks (e.g. analysis with wait=false)
+        self._queue_task: asyncio.Task | None = None
+        self._queue_stop = asyncio.Event()
         # Stale data check: (timestamp, evidence_index) per topic; reused if within threshold
         self._evidence_cache: dict[str, tuple[datetime, list[Any]]] = {}
         self._evidence_cache_ttl_seconds = 3600  # 1 hour
@@ -223,8 +226,8 @@ class FinanceOrchestrator:
                 "end": end,
                 "filings_per_company": task.parameters.get("filings_per_company", 1),
             }
-        if topic in ("gold",):
-            return {"actions": ["gold"], "start": start, "end": end}
+        if topic in ("gold", "silver", "platinum"):
+            return {"actions": [topic], "start": start, "end": end}
         if topic == "edgar":
             return {"actions": ["edgar"], "filings_per_company": task.parameters.get("filings_per_company", 1)}
         if topic == "fred":
@@ -244,6 +247,15 @@ class FinanceOrchestrator:
                 end = plan.get("end")
                 out = fetch_all(start=start, end=end, store=True)
                 return {"results": out, "report_id": f"gold_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"}
+            return await asyncio.get_event_loop().run_in_executor(self._executor, _sync)
+
+        async def _run_commodity(commodity: str) -> dict[str, Any]:
+            def _sync():
+                from domains.finance.commodity_fetcher import fetch_commodity
+                start = plan.get("start")
+                end = plan.get("end")
+                out = fetch_commodity(topic=commodity, start=start, end=end, store=True)
+                return {"results": out, "report_id": f"{commodity}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"}
             return await asyncio.get_event_loop().run_in_executor(self._executor, _sync)
 
         async def _run_edgar() -> dict[str, Any]:
@@ -269,6 +281,9 @@ class FinanceOrchestrator:
         tasks_to_run = []
         if "gold" in actions:
             tasks_to_run.append(("gold", _run_gold()))
+        for commodity in ("silver", "platinum"):
+            if commodity in actions:
+                tasks_to_run.append((commodity, _run_commodity(commodity)))
         if "edgar" in actions:
             tasks_to_run.append(("edgar", _run_edgar()))
         if "fred" in actions:
@@ -303,7 +318,7 @@ class FinanceOrchestrator:
         chunk_ids: list[str] = []
 
         for name, data in results.items():
-            if name == "gold":
+            if name == "gold" or name in ("silver", "platinum"):
                 r = data.get("results") or {}
                 for sid, obs_list in r.items():
                     count = len(obs_list) if isinstance(obs_list, list) else 0
@@ -452,6 +467,41 @@ class FinanceOrchestrator:
                 refresh_plan = self._plan_refresh(task)
                 await self._execute_refresh(task, refresh_plan)
                 self._build_evidence_index(task)
+                # If refresh returned no gold data, fall back to stored market data so the LLM has evidence
+                if (topic in ("gold", "all", "")) and not task.context.evidence_index:
+                    try:
+                        from domains.finance.gold_amalgamator import get_stored
+                        start = task.parameters.get("start_date") or task.parameters.get("start")
+                        end = task.parameters.get("end_date") or task.parameters.get("end")
+                        stored = get_stored(start=start, end=end)
+                        if stored:
+                            # Normalize to same shape as refresh_results["gold"]["results"] for _build_evidence_index
+                            normalized = {}
+                            for sid, obs_list in stored.items():
+                                if not obs_list:
+                                    continue
+                                normalized[sid] = [
+                                    {
+                                        "date": o.get("date", ""),
+                                        "value": o.get("value"),
+                                        "unit": (o.get("metadata") or {}).get("unit", "USD/oz"),
+                                    }
+                                    for o in obs_list[:100]
+                                    if o.get("date") and o.get("value") is not None
+                                ]
+                            if normalized:
+                                rr = task.context.fetched_data.setdefault("refresh_results", {})
+                                if "gold" not in rr:
+                                    rr["gold"] = {}
+                                rr["gold"]["results"] = rr["gold"].get("results") or {}
+                                for sid, obs in normalized.items():
+                                    rr["gold"]["results"][sid] = obs
+                                self._build_evidence_index(task)
+                                logger.info("Gold evidence from store (refresh had no data): %d entries", len(task.context.evidence_index))
+                    except Exception as e:
+                        logger.warning("Fallback to stored gold failed: %s", e)
+                if not task.context.evidence_index:
+                    logger.warning("Analysis task %s has no evidence (refresh and store fallback yielded nothing)", task.task_id)
                 if task.context.evidence_index and topic == "gold":
                     self._evidence_cache[cache_key] = (now, list(task.context.evidence_index))
 
@@ -470,6 +520,23 @@ class FinanceOrchestrator:
                 logger.debug("Vector retrieve failed: %s", e)
 
         task.context.evidence_chunks = chunks_text
+
+        # RSS evidence (finance-domain articles) for prompt
+        try:
+            from domains.finance.evidence_collector import collect as evidence_collect
+            bundle = evidence_collect(
+                query=query,
+                topic=topic,
+                hours=168,
+                max_rss=15,
+                include_rss=True,
+                include_api_summary=False,
+                include_rag=False,
+            )
+            task.context.rss_snippets = bundle.get("rss_snippets") or []
+        except Exception as e:
+            logger.debug("Evidence collector (RSS) failed: %s", e)
+            task.context.rss_snippets = []
 
         # Compute stats from evidence index
         stats_results: dict[str, Any] = {}
@@ -527,6 +594,8 @@ Do not invent or guess values. If evidence is insufficient, say so."""
             parts.append("## Evidence (cite by REF-ID)\n")
             for e in task.context.evidence_index[:50]:
                 parts.append(f"- {e.ref_id}: {e.source} {e.identifier} | {e.date} | {e.value} {e.unit} | {e.context}")
+        else:
+            parts.append("## Evidence\nNo evidence was retrieved for this query (sources may be temporarily unavailable or no data in date range).")
         if stats_results:
             parts.append("\n## Computed stats\n")
             for k, v in stats_results.items():
@@ -535,6 +604,13 @@ Do not invent or guess values. If evidence is insufficient, say so."""
             parts.append("\n## Relevant excerpts\n")
             for i, txt in enumerate(task.context.evidence_chunks[:5]):
                 parts.append(f"[Excerpt {i+1}]\n{txt[:500]}...\n")
+        if getattr(task.context, "rss_snippets", None):
+            parts.append("\n## News / RSS (recent finance articles)\n")
+            for s in task.context.rss_snippets[:10]:
+                title = s.get("title") or ""
+                snippet = (s.get("snippet") or "")[:300]
+                pub = s.get("published_at") or ""
+                parts.append(f"- {title} ({pub})\n  {snippet}\n")
         parts.append("\n## Response\nProvide a concise analysis based on the evidence above.")
 
         prompt = "\n".join(parts)
@@ -686,11 +762,70 @@ Do not invent or guess values. If evidence is insufficient, say so."""
         logger.info("Finance scheduler started")
 
     def stop_scheduler(self) -> None:
-        """Stop the scheduler."""
+        """Stop the scheduler and queue worker."""
         self._schedule_stop.set()
         if self._schedule_task:
             self._schedule_task.cancel()
             self._schedule_task = None
+        self.stop_queue_worker()
+
+    def start_queue_worker(self) -> None:
+        """Start background worker that processes queued tasks (analysis, refresh, ingest)."""
+        if self._queue_task and not self._queue_task.done():
+            return
+        self._queue_stop.clear()
+        self._queue_task = asyncio.create_task(self._queue_loop())
+        logger.info("Finance queue worker started")
+
+    def stop_queue_worker(self) -> None:
+        """Stop the queue worker."""
+        self._queue_stop.set()
+        if self._queue_task:
+            self._queue_task.cancel()
+            try:
+                self._queue_task.result()
+            except (asyncio.CancelledError, Exception):
+                pass
+            self._queue_task = None
+
+    async def _queue_loop(self) -> None:
+        """Process queued tasks: pick next by priority (high first), then run to completion."""
+        while not self._queue_stop.is_set():
+            try:
+                queued_ids = [
+                    tid for tid in self._task_order
+                    if self._tasks.get(tid) and self._tasks[tid].status == TaskStatus.queued
+                ]
+                if not queued_ids:
+                    try:
+                        await asyncio.wait_for(self._queue_stop.wait(), timeout=2.0)
+                    except asyncio.TimeoutError:
+                        pass
+                    continue
+                # Prefer high priority, then FIFO by _task_order
+                next_id = min(
+                    queued_ids,
+                    key=lambda tid: (self._tasks[tid].priority.sort_value, self._task_order.index(tid)),
+                )
+                logger.info("Queue worker running task %s (type=%s)", next_id, self._tasks[next_id].task_type.value)
+                try:
+                    result = await self.run_task(next_id)
+                    if result:
+                        logger.info("Queue task %s finished: %s", next_id, result.status.value)
+                    else:
+                        logger.warning("Queue task %s returned None", next_id)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    logger.exception("Queue task %s failed: %s", next_id, e)
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.warning("Queue loop iteration failed: %s", e)
+                try:
+                    await asyncio.wait_for(self._queue_stop.wait(), timeout=5.0)
+                except asyncio.TimeoutError:
+                    pass
 
     async def _schedule_loop(self) -> None:
         """Background loop: every minute check if any task is due, submit and run if so."""
@@ -997,6 +1132,7 @@ Do not invent or guess values. If evidence is insufficient, say so."""
                 confidence -= 0.1 * vr.fabricated
             confidence -= 0.1 * max(0, task.current_iteration)
             confidence = max(0.0, min(1.0, confidence))
+            rss = getattr(task.context, "rss_snippets", None) or []
             output = {
                 "response": task.context.llm_response,
                 "query": task.parameters.get("query", ""),
@@ -1005,6 +1141,7 @@ Do not invent or guess values. If evidence is insufficient, say so."""
                     "unsupported": vr.unsupported if vr else 0,
                     "fabricated": vr.fabricated if vr else 0,
                 } if vr else None,
+                "rss_snippets": [{"title": s.get("title"), "url": s.get("url"), "published_at": s.get("published_at")} for s in rss[:20]],
             }
         elif task.task_type in (TaskType.refresh, TaskType.ingest):
             if summary:

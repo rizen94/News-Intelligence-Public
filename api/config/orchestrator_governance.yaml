@@ -1,0 +1,69 @@
+# Orchestrator coordination — governance config
+# Used by OrchestratorCoordinator and governors. Keys snake_case.
+# See docs/ORCHESTRATOR_DEVELOPMENT_PLAN.md
+
+orchestrator:
+  loop_interval_seconds: 60
+  learning_rate: 0.1
+
+collection:
+  min_fetch_interval_seconds: 300
+  max_fetch_interval_seconds: 7200
+  empty_fetch_penalty: 2.0
+  breaking_news_threshold: 0.8
+  # Source ids and how the orchestrator formats requests (e.g. finance topic)
+  # Order affects rotation: each source runs when its interval has elapsed
+  sources:
+    - source_id: rss
+      handler: rss
+    - source_id: gold
+      handler: finance
+      topic: gold
+    - source_id: silver
+      handler: finance
+      topic: silver
+    - source_id: platinum
+      handler: finance
+      topic: platinum
+    - source_id: edgar
+      handler: finance
+      topic: edgar
+
+processing:
+  batch_size: 10
+  max_concurrent: 3
+  context_window_days: 7
+  # Phase intervals (seconds). Governor uses these for recommend_next_processing.
+  # Key: phase name (must match AutomationManager task names). scope: domain | storyline | null (global).
+  phases:
+    topic_clustering:
+      interval_seconds: 1200
+      scope: domain
+    article_processing:
+      interval_seconds: 1200
+      scope: null
+    entity_extraction:
+      interval_seconds: 1200
+      scope: null
+    context_sync:
+      interval_seconds: 1200
+      scope: null
+    event_tracking:
+      interval_seconds: 3600
+      scope: null
+    storyline_automation:
+      interval_seconds: 1800
+      scope: storyline
+    story_continuation:
+      interval_seconds: 1800
+      scope: storyline
+
+learning:
+  pattern_detection_window_days: 30
+  model_update_frequency_seconds: 21600
+  min_confidence_threshold: 0.7
+
+resources:
+  daily_llm_tokens: 100000
+  max_api_calls_per_hour: 1000
+  storage_warning_threshold: 0.8

@@ -73,3 +73,5 @@ For compiling `llama-cpp-python` with CUDA support:
 - `CMAKE_ARGS="-DGGML_CUDA=on" uv pip install llama-cpp-python --no-cache-dir`
 
 News Intelligence uses Ollama (pre-built) for LLM inference, so the toolkit is optional.
+
+**Optional GPU container setup:** Detailed steps for NVIDIA Container Toolkit and Docker GPU mode were in `GPU_SETUP.md`; that doc is in `docs/_archive/GPU_SETUP.md` for reference.

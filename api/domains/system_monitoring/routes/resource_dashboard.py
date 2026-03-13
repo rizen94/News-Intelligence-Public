@@ -1,0 +1,491 @@
+"""
+Resource & Health Dashboard — database stats, device disk/processes, aggregated health feeds.
+Serves the monitoring tab across all domains.
+Remote devices (Widow, NAS, Pi): disk and processes via SSH (df + ps) when agent_url is not set.
+"""
+
+import asyncio
+import os
+import logging
+import subprocess
+from typing import Any, Dict, List, Optional
+
+import psutil
+import yaml
+from fastapi import APIRouter, HTTPException
+
+from shared.database.connection import get_db_connection
+from shared.services.response_cache import cached_response
+
+logger = logging.getLogger(__name__)
+
+# Default SSH user for remote monitoring (env MONITORING_SSH_USER or per-device ssh_user in config)
+DEFAULT_SSH_TIMEOUT_SECONDS = 12
+
+router = APIRouter(
+    prefix="/api/system_monitoring",
+    tags=["System Monitoring - Resource Dashboard"],
+)
+
+# Path to monitoring config (devices + health feeds)
+_CONFIG_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))),
+    "config",
+    "monitoring_devices.yaml",
+)
+
+
+def _load_monitoring_config() -> Dict[str, Any]:
+    """Load monitoring_devices.yaml; return empty dict if missing."""
+    if not os.path.isfile(_CONFIG_PATH):
+        return {"devices": [], "health_feeds": [], "health_check_interval_seconds": 60}
+    try:
+        with open(_CONFIG_PATH) as f:
+            return yaml.safe_load(f) or {}
+    except Exception as e:
+        logger.warning("Failed to load monitoring config: %s", e)
+        return {"devices": [], "health_feeds": [], "health_check_interval_seconds": 60}
+
+
+# ---------------------------------------------------------------------------
+# Database stats: size, table count, record counts
+# ---------------------------------------------------------------------------
+
+@router.get("/database/stats")
+@cached_response(ttl=120)
+async def get_database_stats():
+    """
+    Database size (current DB), number of tables per schema, and record counts.
+    Used by the monitoring tab across all domains.
+    """
+    try:
+        conn = get_db_connection()
+        if not conn:
+            raise HTTPException(status_code=500, detail="Database connection failed")
+        try:
+            with conn.cursor() as cur:
+                # Total size of current database
+                cur.execute("""
+                    SELECT pg_database.datname,
+                           pg_size_pretty(pg_database_size(pg_database.datname)) AS size_pretty,
+                           pg_database_size(pg_database.datname) AS size_bytes
+                    FROM pg_database
+                    WHERE datname = current_database()
+                """)
+                db_row = cur.fetchone()
+                db_name = db_row[0] if db_row else "unknown"
+                size_pretty = db_row[1] if db_row else "0 bytes"
+                size_bytes = db_row[2] if db_row else 0
+
+                # Table count per schema (public + domain schemas)
+                cur.execute("""
+                    SELECT table_schema, COUNT(*) AS table_count
+                    FROM information_schema.tables
+                    WHERE table_schema NOT IN ('pg_catalog', 'information_schema')
+                      AND table_type = 'BASE TABLE'
+                    GROUP BY table_schema
+                    ORDER BY table_schema
+                """)
+                schemas = [{"schema": row[0], "table_count": row[1]} for row in cur.fetchall()]
+
+                # Record counts for known domain tables (articles, storylines, rss_feeds per schema)
+                try:
+                    cur.execute("""
+                        SELECT schema_name FROM domains WHERE is_active = true ORDER BY schema_name
+                    """)
+                    domain_schemas = [row[0] for row in cur.fetchall()]
+                except Exception:
+                    domain_schemas = []
+                if not domain_schemas:
+                    domain_schemas = ["politics", "finance", "science_tech"]
+
+                table_record_counts: List[Dict[str, Any]] = []
+                for schema in domain_schemas:
+                    for table in ("articles", "storylines", "rss_feeds"):
+                        try:
+                            from psycopg2 import sql
+                            cur.execute(
+                                sql.SQL("SELECT COUNT(*) FROM {}.{}").format(
+                                    sql.Identifier(schema), sql.Identifier(table)
+                                )
+                            )
+                            table_record_counts.append(
+                                {
+                                    "schema": schema,
+                                    "table": table,
+                                    "count": cur.fetchone()[0],
+                                }
+                            )
+                        except Exception:
+                            pass
+
+                # Total records (sum over domain articles + storylines + feeds)
+                total_articles = sum(
+                    r["count"] for r in table_record_counts if r["table"] == "articles"
+                )
+                total_storylines = sum(
+                    r["count"] for r in table_record_counts if r["table"] == "storylines"
+                )
+                total_feeds = sum(
+                    r["count"] for r in table_record_counts if r["table"] == "rss_feeds"
+                )
+
+            return {
+                "success": True,
+                "data": {
+                    "database_name": db_name,
+                    "size_pretty": size_pretty,
+                    "size_bytes": size_bytes,
+                    "schemas": schemas,
+                    "total_tables": sum(s["table_count"] for s in schemas),
+                    "table_record_counts": table_record_counts,
+                    "totals": {
+                        "articles": total_articles,
+                        "storylines": total_storylines,
+                        "rss_feeds": total_feeds,
+                    },
+                },
+            }
+        finally:
+            conn.close()
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Database stats error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# Devices: disk usage and processes (local now; remote via agent_url later)
+# ---------------------------------------------------------------------------
+
+def _get_local_disk_and_processes(project_path: Optional[str] = None) -> Dict[str, Any]:
+    """Get disk usage and top processes for the local machine."""
+    disk_root = psutil.disk_usage("/")
+    result = {
+        "disk": {
+            "total_bytes": disk_root.total,
+            "used_bytes": disk_root.used,
+            "free_bytes": disk_root.free,
+            "percent": disk_root.percent,
+            "mountpoint": "/",
+        },
+        "project_usage_bytes": None,
+        "processes": [],
+    }
+    if project_path and os.path.isdir(project_path):
+        try:
+            # Approximate project size (directory tree)
+            total = 0
+            for _root, _dirs, files in os.walk(project_path):
+                for f in files:
+                    fp = os.path.join(_root, f)
+                    try:
+                        total += os.path.getsize(fp)
+                    except OSError:
+                        pass
+            result["project_usage_bytes"] = total
+        except Exception:
+            pass
+    # Top processes by memory
+    procs = []
+    for p in psutil.process_iter(["pid", "name", "memory_percent", "cpu_percent"]):
+        try:
+            pinfo = p.info
+            procs.append(
+                {
+                    "pid": pinfo.get("pid"),
+                    "name": pinfo.get("name") or "?",
+                    "memory_percent": round(pinfo.get("memory_percent") or 0, 1),
+                    "cpu_percent": round(pinfo.get("cpu_percent") or 0, 1),
+                }
+            )
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+    procs.sort(key=lambda x: (x["memory_percent"] or 0), reverse=True)
+    result["processes"] = procs[:50]
+    return result
+
+
+def _get_remote_disk_and_processes_via_ssh(
+    host: str,
+    ssh_user: Optional[str] = None,
+    timeout_seconds: int = DEFAULT_SSH_TIMEOUT_SECONDS,
+    project_path_remote: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Run df and ps on remote host via SSH; return same shape as _get_local_disk_and_processes.
+    Requires passwordless SSH (e.g. key-based) from API host to host. See docs/MONITORING_SSH_SETUP.md.
+    """
+    user = ssh_user or os.environ.get("MONITORING_SSH_USER") or os.environ.get("USER", "newsapp")
+    target = f"{user}@{host}"
+    result = {
+        "disk": None,
+        "project_usage_bytes": None,
+        "processes": [],
+        "error": None,
+    }
+
+    # SSH options: no password prompt, short connect timeout
+    ssh_opts = "-o ConnectTimeout=5 -o BatchMode=yes -o StrictHostKeyChecking=accept-new"
+
+    # 1. Disk: df -B1 for bytes; use root "/" row
+    try:
+        cmd = f'ssh {ssh_opts} {target} "df -B1 --output=size,used,avail,pcent,target 2>/dev/null | awk \'NR==2 || / \\/ $/ {{print; exit}}\'"'
+        out = subprocess.run(
+            cmd,
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+        )
+        if out.returncode == 0 and out.stdout.strip():
+            parts = out.stdout.strip().split()
+            if len(parts) >= 5:
+                total_b = int(parts[0])
+                used_b = int(parts[1])
+                avail_b = int(parts[2])
+                pct_str = parts[3].rstrip("%")
+                mount = parts[4] if len(parts) > 4 else "/"
+                try:
+                    pct = float(pct_str)
+                except ValueError:
+                    pct = (used_b / total_b * 100) if total_b else 0
+                result["disk"] = {
+                    "total_bytes": total_b,
+                    "used_bytes": used_b,
+                    "free_bytes": avail_b,
+                    "percent": round(pct, 1),
+                    "mountpoint": mount,
+                }
+        else:
+            # Fallback: df without GNU --output (e.g. BusyBox)
+            cmd2 = f'ssh {ssh_opts} {target} "df -B1 2>/dev/null | awk \'NR==2 {{print $2,$3,$4,$5,$6}}\'"'
+            out2 = subprocess.run(cmd2, shell=True, capture_output=True, text=True, timeout=timeout_seconds)
+            if out2.returncode == 0 and out2.stdout.strip():
+                parts = out2.stdout.strip().split()
+                if len(parts) >= 4:
+                    total_b = int(parts[0])
+                    used_b = int(parts[1])
+                    avail_b = int(parts[2])
+                    pct_str = parts[3].rstrip("%")
+                    try:
+                        pct = float(pct_str)
+                    except ValueError:
+                        pct = (used_b / total_b * 100) if total_b else 0
+                    result["disk"] = {
+                        "total_bytes": total_b,
+                        "used_bytes": used_b,
+                        "free_bytes": avail_b,
+                        "percent": round(pct, 1),
+                        "mountpoint": parts[4] if len(parts) > 4 else "/",
+                    }
+    except subprocess.TimeoutExpired:
+        result["error"] = "ssh timeout (df)"
+        return result
+    except Exception as e:
+        result["error"] = str(e)[:200]
+        return result
+
+    # 2. Processes: ps -o pid,comm,%mem,%cpu (Linux)
+    try:
+        cmd = f'ssh {ssh_opts} {target} "ps -o pid,comm,%mem,%cpu --no-headers -e 2>/dev/null | head -51"'
+        out = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout_seconds)
+        if out.returncode == 0 and out.stdout.strip():
+            procs = []
+            for line in out.stdout.strip().split("\n")[:50]:
+                parts = line.split(None, 3)  # pid, comm, %mem, %cpu (comm may contain spaces; last 2 are numbers)
+                if len(parts) >= 4:
+                    try:
+                        procs.append({
+                            "pid": int(parts[0]),
+                            "name": (parts[1] or "?")[:50],
+                            "memory_percent": round(float(parts[2].replace(",", ".")), 1),
+                            "cpu_percent": round(float(parts[3].replace(",", ".")), 1),
+                        })
+                    except (ValueError, IndexError):
+                        continue
+                elif len(parts) == 3:
+                    try:
+                        procs.append({
+                            "pid": int(parts[0]),
+                            "name": (parts[1] or "?")[:50],
+                            "memory_percent": round(float(parts[2].replace(",", ".")), 1),
+                            "cpu_percent": 0.0,
+                        })
+                    except (ValueError, IndexError):
+                        continue
+            procs.sort(key=lambda x: x["memory_percent"], reverse=True)
+            result["processes"] = procs[:50]
+    except subprocess.TimeoutExpired:
+        result["error"] = result.get("error") or "ssh timeout (ps)"
+    except Exception as e:
+        result["error"] = result.get("error") or str(e)[:200]
+
+    # 3. Optional: project path size on remote (du -sb)
+    if project_path_remote and result["error"] is None:
+        try:
+            cmd = f'ssh {ssh_opts} {target} "du -sb {project_path_remote} 2>/dev/null | cut -f1"'
+            out = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout_seconds)
+            if out.returncode == 0 and out.stdout.strip():
+                result["project_usage_bytes"] = int(out.stdout.strip().split()[0])
+        except Exception:
+            pass
+
+    return result
+
+
+@router.get("/devices")
+@cached_response(ttl=60)
+async def get_devices():
+    """
+    Disk usage and processes per device (Legion, Widow, NAS, Pi).
+    Local device uses psutil; remote devices use SSH (df + ps) when host is set and agent_url is not.
+    See docs/MONITORING_SSH_SETUP.md for SSH key setup on remote hosts.
+    """
+    config = _load_monitoring_config()
+    devices_config = config.get("devices") or []
+    project_path = os.environ.get("PROJECT_ROOT") or os.getcwd()
+    loop = asyncio.get_event_loop()
+    timeout = config.get("ssh_timeout_seconds") or DEFAULT_SSH_TIMEOUT_SECONDS
+
+    result: List[Dict[str, Any]] = []
+    for dev in devices_config:
+        name = dev.get("name") or "unknown"
+        dtype = (dev.get("type") or "remote").lower()
+        if dtype == "local":
+            data = _get_local_disk_and_processes(dev.get("project_path") or project_path)
+            result.append(
+                {
+                    "name": name,
+                    "type": "local",
+                    "description": dev.get("description") or "",
+                    "disk": data["disk"],
+                    "project_usage_bytes": data["project_usage_bytes"],
+                    "processes": data["processes"],
+                    "status": "ok",
+                }
+            )
+        else:
+            agent_url = dev.get("agent_url")
+            host = dev.get("host")
+            if agent_url:
+                # Optional: HTTP agent not implemented yet
+                result.append(
+                    {
+                        "name": name,
+                        "type": "remote",
+                        "description": dev.get("description") or "",
+                        "host": host,
+                        "disk": None,
+                        "project_usage_bytes": None,
+                        "processes": None,
+                        "status": "unavailable",
+                        "message": "Remote agent not implemented yet",
+                    }
+                )
+            elif host:
+                # SSH-based disk/process fetch (passwordless keys required)
+                ssh_user = dev.get("ssh_user") or os.environ.get("MONITORING_SSH_USER")
+                project_path_remote = dev.get("project_path_remote")
+                try:
+                    data = await loop.run_in_executor(
+                        None,
+                        lambda h=host, u=ssh_user, t=timeout, p=project_path_remote: _get_remote_disk_and_processes_via_ssh(h, u, t, p),
+                    )
+                except Exception as e:
+                    logger.warning("SSH fetch for %s (%s) failed: %s", name, host, e)
+                    data = {"disk": None, "project_usage_bytes": None, "processes": [], "error": str(e)[:200]}
+                result.append(
+                    {
+                        "name": name,
+                        "type": "remote",
+                        "description": dev.get("description") or "",
+                        "host": host,
+                        "disk": data.get("disk"),
+                        "project_usage_bytes": data.get("project_usage_bytes"),
+                        "processes": data.get("processes") or [],
+                        "status": "ok" if data.get("error") is None else "error",
+                        "message": data.get("error") if data.get("error") else None,
+                    }
+                )
+            else:
+                result.append(
+                    {
+                        "name": name,
+                        "type": "remote",
+                        "description": dev.get("description") or "",
+                        "host": None,
+                        "disk": None,
+                        "project_usage_bytes": None,
+                        "processes": None,
+                        "status": "unconfigured",
+                        "message": "Add host (and SSH keys) or agent_url to config",
+                    }
+                )
+
+    # Total project space across devices (for now only local)
+    total_project_bytes = None
+    for r in result:
+        if r.get("project_usage_bytes") is not None:
+            total_project_bytes = (total_project_bytes or 0) + r["project_usage_bytes"]
+
+    return {
+        "success": True,
+        "data": {
+            "devices": result,
+            "total_project_usage_bytes": total_project_bytes,
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
+# Health feeds: last results from health monitor orchestrator (in-memory state)
+# ---------------------------------------------------------------------------
+
+# In-memory state populated by health_monitor_orchestrator
+_health_feed_results: Dict[str, Dict[str, Any]] = {}
+_health_feed_results_ts: Optional[float] = None
+
+
+def set_health_feed_results(results: Dict[str, Dict[str, Any]]) -> None:
+    """Called by health monitor orchestrator to store last poll results."""
+    global _health_feed_results, _health_feed_results_ts
+    import time
+    _health_feed_results.clear()
+    _health_feed_results.update(results)
+    _health_feed_results_ts = time.time()
+
+
+@router.get("/health/feeds")
+async def get_health_feeds():
+    """
+    Aggregated status of all configured health feeds (API health, route supervisor, orchestrator).
+    Populated by the health monitor orchestrator; if it has not run yet, returns config only.
+    """
+    config = _load_monitoring_config()
+    feeds_config = config.get("health_feeds") or []
+    results = []
+    for feed in feeds_config:
+        name = feed.get("name") or feed.get("url") or "unknown"
+        last = _health_feed_results.get(name) if _health_feed_results else None
+        results.append(
+            {
+                "name": name,
+                "url": feed.get("url"),
+                "method": feed.get("method", "GET"),
+                "last_ok": last.get("ok") if last else None,
+                "last_status_code": last.get("status_code") if last else None,
+                "last_message": last.get("message") if last else None,
+                "last_check_at": last.get("checked_at") if last else None,
+            }
+        )
+    import time
+    return {
+        "success": True,
+        "data": {
+            "feeds": results,
+            "last_updated_at": _health_feed_results_ts,
+            "interval_seconds": config.get("health_check_interval_seconds", 60),
+        },
+    }

@@ -1,6 +1,15 @@
 /**
  * API Configuration
- * Centralized API configuration with environment variable support and persistence
+ * Centralized API configuration with environment variable support and persistence.
+ *
+ * Connection flow:
+ * - Default (no VITE_API_URL, no localStorage): base URL is ''. Requests are relative
+ *   (e.g. /api/politics/articles). In dev, Vite proxies /api to http://localhost:8000,
+ *   so the API must be running on port 8000 for data to load.
+ * - If you set an API URL (e.g. http://host:8000 or http://host:8000/api/v4): it is
+ *   stored in localStorage. Domain-prefixed routes use that full base; context-centric
+ *   (flat /api/...) routes use origin only (getApiOrigin()) so paths stay /api/...
+ *   and do not become /api/v4/api/...
  */
 
 // Get API base URL from environment or use default
@@ -42,6 +51,18 @@ export const getCurrentApiUrl = (): string => {
   return getApiBaseUrl();
 };
 
+/** API origin only (no path). Use for context-centric and other flat /api/... routes so paths like /api/tracked_events/... resolve correctly. */
+export const getApiOrigin = (): string => {
+  const base = getApiBaseUrl();
+  if (!base || base === '') return '';
+  try {
+    const u = new URL(base);
+    return u.origin;
+  } catch {
+    return base;
+  }
+};
+
 // API Configuration
 export const API_CONFIG = {
   baseURL: getApiBaseUrl(),
@@ -53,7 +74,7 @@ export const API_CONFIG = {
 };
 
 // Health check endpoint
-export const HEALTH_CHECK_ENDPOINT = '/api/v4/system_monitoring/health';
+export const HEALTH_CHECK_ENDPOINT = '/api/system_monitoring/health';
 
 export default API_CONFIG;
 

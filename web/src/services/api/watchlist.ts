@@ -7,7 +7,7 @@ import Logger from '../../utils/logger';
 export const watchlistApi = {
   async getWatchlist() {
     try {
-      const response = await getApi().get('/api/v4/watchlist');
+      const response = await getApi().get('/api/watchlist');
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to fetch watchlist:', error);
@@ -17,7 +17,7 @@ export const watchlistApi = {
 
   async addToWatchlist(storylineId: number, options: { user_label?: string; notes?: string; alert_on_reactivation?: boolean; weekly_digest?: boolean } = {}) {
     try {
-      const response = await getApi().post(`/api/v4/watchlist/${storylineId}`, options);
+      const response = await getApi().post(`/api/watchlist/${storylineId}`, options);
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to add to watchlist:', error);
@@ -27,7 +27,7 @@ export const watchlistApi = {
 
   async removeFromWatchlist(storylineId: number) {
     try {
-      const response = await getApi().delete(`/api/v4/watchlist/${storylineId}`);
+      const response = await getApi().delete(`/api/watchlist/${storylineId}`);
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to remove from watchlist:', error);
@@ -37,7 +37,7 @@ export const watchlistApi = {
 
   async getWatchlistAlerts(unreadOnly = false, limit = 50) {
     try {
-      const response = await getApi().get('/api/v4/watchlist/alerts', { params: { unread_only: unreadOnly, limit } });
+      const response = await getApi().get('/api/watchlist/alerts', { params: { unread_only: unreadOnly, limit } });
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to fetch watchlist alerts:', error);
@@ -47,7 +47,7 @@ export const watchlistApi = {
 
   async markAlertRead(alertId: number) {
     try {
-      const response = await getApi().post(`/api/v4/watchlist/alerts/${alertId}/read`);
+      const response = await getApi().post(`/api/watchlist/alerts/${alertId}/read`);
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to mark alert read:', error);
@@ -57,7 +57,7 @@ export const watchlistApi = {
 
   async markAllAlertsRead() {
     try {
-      const response = await getApi().post('/api/v4/watchlist/alerts/read-all');
+      const response = await getApi().post('/api/watchlist/alerts/read-all');
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to mark all alerts read:', error);
@@ -67,7 +67,7 @@ export const watchlistApi = {
 
   async getActivityFeed(limit = 30) {
     try {
-      const response = await getApi().get('/api/v4/monitoring/activity-feed', { params: { limit } });
+      const response = await getApi().get('/api/monitoring/activity-feed', { params: { limit } });
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to fetch activity feed:', error);
@@ -77,7 +77,7 @@ export const watchlistApi = {
 
   async getDormantAlerts(days = 30) {
     try {
-      const response = await getApi().get('/api/v4/monitoring/dormant-alerts', { params: { days } });
+      const response = await getApi().get('/api/monitoring/dormant-alerts', { params: { days } });
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to fetch dormant alerts:', error);
@@ -87,7 +87,7 @@ export const watchlistApi = {
 
   async getCoverageGaps(days = 7) {
     try {
-      const response = await getApi().get('/api/v4/monitoring/coverage-gaps', { params: { days } });
+      const response = await getApi().get('/api/monitoring/coverage-gaps', { params: { days } });
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to fetch coverage gaps:', error);
@@ -97,7 +97,7 @@ export const watchlistApi = {
 
   async getCrossDomainConnections() {
     try {
-      const response = await getApi().get('/api/v4/monitoring/cross-domain-connections');
+      const response = await getApi().get('/api/monitoring/cross-domain-connections');
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to fetch cross-domain connections:', error);

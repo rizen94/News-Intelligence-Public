@@ -183,7 +183,7 @@ class DebugHelper {
   async checkNetworkStatus(apiUrl?: string): Promise<boolean> {
     try {
       const url = apiUrl || window.location.origin;
-      const response = await fetch(`${url}/api/v4/system_monitoring/health`, {
+      const response = await fetch(`${url}/api/system_monitoring/health`, {
         method: 'HEAD',
         cache: 'no-cache',
         signal: AbortSignal.timeout(5000),

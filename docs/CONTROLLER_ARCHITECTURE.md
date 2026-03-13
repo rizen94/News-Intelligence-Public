@@ -24,6 +24,7 @@ The News Intelligence system currently has **multiple overlapping orchestration 
 |-----------|----------|---------|-------|
 | **AutomationManager** | `api/services/automation_manager.py` | In-process, 10s poll | 20+ tasks (RSS, article, ML, topics, storyline, RAG, cleanup, etc.) |
 | **FinanceOrchestrator** | `api/domains/finance/orchestrator.py` | In-process, 60s poll | Gold, EDGAR, analysis; config from `finance_schedule.yaml` |
+| **OrchestratorCoordinator** | `api/services/orchestrator_coordinator.py` | In-process, configurable (default 60s) | Coordination loop: assess, plan, execute, learn. Delegates to CollectionGovernor; triggers RSS (via `collect_rss_feeds`) and gold refresh (via `FinanceOrchestrator.submit_task`). Does not replace existing controllers. |
 | **StorylineConsolidationService** | `api/services/storyline_consolidation_service.py` | In-process, 30 min interval | Storyline merge, parent creation, article pooling |
 | **TopicExtractionQueueWorker** | `api/domains/content_analysis/.../topic_extraction_queue_worker.py` | In-process, per-domain | Topic extraction for politics/finance/science-tech |
 | **MLProcessingService** | `api/services/ml_processing_service.py` | In-process | Background ML article processing |
@@ -37,19 +38,44 @@ The News Intelligence system currently has **multiple overlapping orchestration 
 
 ### 2.3 API Pipeline Triggers
 
+(API uses flat `/api/...`; no version segment in path.)
+
 | Endpoint | Method | Action |
 |----------|--------|--------|
-| `POST /api/v4/system_monitoring/pipeline/run_all` | POST | RSS → Topic Clustering → AI Analysis (sequential) |
-| `POST /api/v4/{domain}/rss_feeds/collect_now` | POST | Trigger RSS collection for domain |
-| `POST /api/v4/fetch_articles` | POST | Fetch articles from configured feeds |
-| `POST /storylines/consolidation/run` | POST | Run storyline consolidation |
-| `POST /api/v4/{domain}/content_analysis/topics/queue/process` | POST | Process topic queue manually |
+| `POST /api/system_monitoring/pipeline/trigger` | POST | Trigger pipeline (RSS / processing) |
+| `POST /api/{domain}/rss_feeds/collect_now` | POST | Trigger RSS collection for domain |
+| `POST /api/fetch_articles` (or domain-scoped) | POST | Fetch articles from configured feeds |
+| Storyline consolidation | API or internal | Run storyline consolidation |
+| `POST /api/{domain}/content_analysis/topics/queue/process` | POST | Process topic queue manually |
 
-### 2.4 Overlap and Redundancy
+### 2.4 Orchestrator Coordinator and Governors (Phase 1)
+
+- **OrchestratorCoordinator** runs a single loop: load state → ask **CollectionGovernor** for next fetch recommendation → execute (RSS or gold refresh) → record result and decision log → save state → sleep. It uses `api/config/orchestrator_governance.yaml` and persists state in `api/data/orchestrator_state.db` (SQLite). See [ORCHESTRATOR_ROADMAP_TO_INITIATIVE.md](ORCHESTRATOR_ROADMAP_TO_INITIATIVE.md); historical detail in `_archive/ORCHESTRATOR_DEVELOPMENT_PLAN.md` and `_archive/ORCHESTRATOR_TODO.md`.
+- **CollectionGovernor** (`api/services/collection_governor.py`) recommends when to fetch (RSS or gold) based on `last_collection_times` and min/max interval from config; it does not perform fetches — the coordinator calls existing `collect_rss_feeds()` and `FinanceOrchestrator.submit_task(refresh, topic=gold)`.
+- **API:** `GET /api/orchestrator/status`, `GET /api/orchestrator/metrics`.
+
+### 2.5 Overlap and Redundancy
 
 - **RSS collection** runs from: AutomationManager (1h), cron (2x daily), pipeline route, news_aggregation `collect_now` / `fetch_articles`
 - **Topic clustering** runs from: AutomationManager (20 min), pipeline route, topic queue worker, topic queue manual process
 - **Data cleanup** runs from: AutomationManager (24h `data_cleanup`), `AutomatedCleanupSystem` (standalone script, not wired into startup)
+
+### 2.6 Are orchestrators fully in control? (Current state: **no**)
+
+**Orchestrators do not yet fully control the system.** Several portions still run independently:
+
+| Under orchestrator control | Independent (not coordinated by orchestrator) |
+|----------------------------|-----------------------------------------------|
+| **FinanceOrchestrator** — All finance-domain work: gold/FRED/EDGAR refresh, analysis, schedule. Single owner for finance. | **AutomationManager** — Runs its own loop (10s poll); decides when to run rss_processing, article_processing, ml_processing, topic_clustering, storyline_processing, RAG, cleanup, etc. No orchestrator tells it when to run. |
+| **OrchestratorCoordinator** — Only decides *when* to run **RSS collection** and **gold refresh**. It calls `collect_rss_feeds()` and `FinanceOrchestrator.submit_task(refresh, topic=gold)`. Learning/resource governors inform collection timing. | **Cron** — Runs RSS (e.g. 6 AM, 6 PM) and log archive independently. |
+| | **StorylineConsolidationService** — Own 30 min timer from lifespan; not started or stopped by any orchestrator. |
+| | **TopicExtractionQueueWorker** — Per-domain workers started from lifespan; process topic queue on their own schedule. |
+| | **MLProcessingService** — Started from lifespan; independent. |
+| | **Pipeline/API triggers** — Manual `POST /api/system_monitoring/pipeline/trigger`, `collect_now`, etc. |
+
+So: **Finance domain** is fully under **FinanceOrchestrator**. **Collection timing** for RSS and gold is influenced by **OrchestratorCoordinator** (which can run them when the governor says so), but the same RSS and gold work can also be triggered by AutomationManager, cron, or API. The **data-processing pipeline** (article → ML → topics → storylines → RAG) is entirely under **AutomationManager** and related workers, not under OrchestratorCoordinator. To have “orchestrators fully in control,” you’d need either to (1) have OrchestratorCoordinator (or a single meta-orchestrator) drive or gate AutomationManager phases and cron, or (2) migrate those phases under the coordinator’s decision loop and deprecate the independent AutomationManager/cron triggers.
+
+**Roadmap:** For a phased path to a single loop where the app takes initiative to build and grow stories (with user guidance), see **[ORCHESTRATOR_ROADMAP_TO_INITIATIVE.md](ORCHESTRATOR_ROADMAP_TO_INITIATIVE.md)**.
 
 ---
 
@@ -311,6 +337,11 @@ Topic clustering:
 
 | Component | File(s) |
 |-----------|---------|
+| OrchestratorCoordinator | `api/services/orchestrator_coordinator.py` |
+| CollectionGovernor | `api/services/collection_governor.py` |
+| Orchestrator state | `api/services/orchestrator_state.py`; DB: `data/orchestrator_state.db` |
+| Orchestrator config | `api/config/orchestrator_governance.yaml`, `api/config/orchestrator_governance.py` |
+| Orchestrator API routes | `api/domains/system_monitoring/routes/orchestrator.py` |
 | AutomationManager | `api/services/automation_manager.py` |
 | FinanceOrchestrator | `api/domains/finance/orchestrator.py` |
 | Finance schedule config | `api/config/finance_schedule.yaml` |

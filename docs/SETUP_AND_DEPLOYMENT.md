@@ -354,16 +354,16 @@ docker ps --format "table {{.Names}}\t{{.Status}}"
 
 ## 🚀 GPU Acceleration (Optional)
 
-For enhanced ML performance, see **[GPU Setup Guide](./GPU_SETUP.md)** for GPU acceleration configuration.
+For enhanced ML performance, see **[Venv and GPU Setup](./VENV_AND_GPU_SETUP.md)** (optional GPU/container steps are in `_archive/GPU_SETUP.md`).
 
 ---
 
 ## 📚 Related Documentation
 
-- **Development Methodology**: `docs/DEVELOPMENT_METHODOLOGY.md`
-- **NAS Setup**: `docs/NAS_PERSISTENT_STORAGE_SETUP.md`
-- **Ollama Setup**: `docs/OLLAMA_SETUP.md`
-- **GPU Setup**: `docs/GPU_SETUP.md`
+- **Coding standards**: `docs/CODING_STYLE_GUIDE.md`
+- **NAS / storage**: `docs/NAS_LEGACY_AND_STORAGE.md`
+- **Ollama**: `docs/OLLAMA_SETUP.md`
+- **Venv and GPU**: `docs/VENV_AND_GPU_SETUP.md`
 - **API Reference**: `docs/API_REFERENCE.md`
 - **Troubleshooting**: `docs/TROUBLESHOOTING.md`
 

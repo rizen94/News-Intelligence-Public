@@ -10,7 +10,7 @@ export const topicsApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(
-        `/api/v4/${domainKey}/content_analysis/topics`,
+        `/api/${domainKey}/content_analysis/topics`,
         { params },
       );
       return response.data;
@@ -22,7 +22,7 @@ export const topicsApi = {
 
   async getTopicCategoriesStats(domain?: string) {
     try {
-      const response = await getApi().get('/api/v4/topics/categories/stats');
+      const response = await getApi().get('/api/topics/categories/stats');
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to fetch topic categories stats', error as Error);
@@ -34,7 +34,7 @@ export const topicsApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(
-        `/api/v4/${domainKey}/content_analysis/topics/${encodeURIComponent(topicName)}`,
+        `/api/${domainKey}/content_analysis/topics/${encodeURIComponent(topicName)}`,
       );
       return response.data;
     } catch (error) {
@@ -51,7 +51,7 @@ export const topicsApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().put(
-        `/api/v4/${domainKey}/content_analysis/topics/${encodeURIComponent(topicName)}`,
+        `/api/${domainKey}/content_analysis/topics/${encodeURIComponent(topicName)}`,
         data,
       );
       return response.data;
@@ -65,7 +65,7 @@ export const topicsApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(
-        `/api/v4/${domainKey}/content_analysis/topics/word_cloud`,
+        `/api/${domainKey}/content_analysis/topics/word_cloud`,
         { params: { topic_name: topicName } },
       );
       return response.data;
@@ -79,7 +79,7 @@ export const topicsApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(
-        `/api/v4/${domainKey}/content_analysis/topics/word_cloud`,
+        `/api/${domainKey}/content_analysis/topics/word_cloud`,
         { params: { time_period_hours: hours, limit, min_frequency: 1 } },
       );
       return response.data;
@@ -93,7 +93,7 @@ export const topicsApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(
-        `/api/v4/${domainKey}/content_analysis/topics/banned`,
+        `/api/${domainKey}/content_analysis/topics/banned`,
       );
       return response.data;
     } catch (error) {
@@ -106,7 +106,7 @@ export const topicsApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().post(
-        `/api/v4/${domainKey}/content_analysis/topics/banned`,
+        `/api/${domainKey}/content_analysis/topics/banned`,
         { topic_name: topicName, reason },
       );
       return response.data;
@@ -120,7 +120,7 @@ export const topicsApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().delete(
-        `/api/v4/${domainKey}/content_analysis/topics/banned/${encodeURIComponent(topicName)}`,
+        `/api/${domainKey}/content_analysis/topics/banned/${encodeURIComponent(topicName)}`,
       );
       return response.data;
     } catch (error) {
@@ -133,7 +133,7 @@ export const topicsApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(
-        `/api/v4/${domainKey}/content_analysis/topics/big_picture`,
+        `/api/${domainKey}/content_analysis/topics/big_picture`,
         { params: { hours: timePeriod } },
       );
       return response.data;
@@ -147,7 +147,7 @@ export const topicsApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(
-        `/api/v4/${domainKey}/articles/${articleId}/topics`,
+        `/api/${domainKey}/articles/${articleId}/topics`,
       );
       return response.data;
     } catch (error) {
@@ -160,7 +160,7 @@ export const topicsApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(
-        `/api/v4/${domainKey}/content_analysis/topics/big_picture`,
+        `/api/${domainKey}/content_analysis/topics/big_picture`,
       );
       return response.data;
     } catch (error) {
@@ -173,7 +173,7 @@ export const topicsApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(
-        `/api/v4/${domainKey}/content_analysis/topics/trending`,
+        `/api/${domainKey}/content_analysis/topics/trending`,
         { params: { hours: timePeriod, limit } },
       );
       return response.data;
@@ -192,7 +192,7 @@ export const topicsApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(
-        `/api/v4/${domainKey}/content_analysis/topics/${encodeURIComponent(clusterName)}/articles`,
+        `/api/${domainKey}/content_analysis/topics/${encodeURIComponent(clusterName)}/articles`,
         { params: { limit, offset } },
       );
       return response.data;
@@ -206,7 +206,7 @@ export const topicsApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(
-        `/api/v4/${domainKey}/content_analysis/topics/${encodeURIComponent(clusterName)}/summary`,
+        `/api/${domainKey}/content_analysis/topics/${encodeURIComponent(clusterName)}/summary`,
       );
       return response.data;
     } catch (error) {
@@ -223,7 +223,7 @@ export const topicsApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(
-        `/api/v4/${domainKey}/content_analysis/topics/merge_suggestions`,
+        `/api/${domainKey}/content_analysis/topics/merge_suggestions`,
         { params: { min_score: minScore, limit } },
       );
       return response.data;
@@ -241,7 +241,7 @@ export const topicsApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().post(
-        `/api/v4/${domainKey}/content_analysis/topics/merge_clusters`,
+        `/api/${domainKey}/content_analysis/topics/merge_clusters`,
         { primary_cluster: primaryCluster, secondary_cluster: secondaryCluster },
       );
       return response.data;
@@ -259,7 +259,7 @@ export const topicsApi = {
         requestBody.time_period_hours = params.time_period_hours;
       }
       const response = await getApi().post(
-        `/api/v4/${domainKey}/content_analysis/topics/cluster`,
+        `/api/${domainKey}/content_analysis/topics/cluster`,
         requestBody,
       );
       return response.data;
@@ -277,7 +277,7 @@ export const topicsApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().post(
-        `/api/v4/${domainKey}/content_analysis/topics/${encodeURIComponent(clusterName)}/convert_to_storyline`,
+        `/api/${domainKey}/content_analysis/topics/${encodeURIComponent(clusterName)}/convert_to_storyline`,
         { storyline_title: storylineTitle },
       );
       return response.data;
@@ -293,7 +293,7 @@ export const topicsApi = {
     domain?: string,
   ) {
     try {
-      const response = await getApi().post('/api/v4/topics/merge', {
+      const response = await getApi().post('/api/topics/merge', {
         topic_ids: [primaryTopic, secondaryTopic],
         keep_primary: true,
       });
@@ -307,7 +307,7 @@ export const topicsApi = {
   async getManagedTopics(params: any = {}, domain?: string) {
     try {
       const domainKey = domain || getCurrentDomain();
-      const response = await getApi().get(`/api/v4/${domainKey}/topics`, { params });
+      const response = await getApi().get(`/api/${domainKey}/topics`, { params });
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to fetch managed topics', error as Error);
@@ -318,7 +318,7 @@ export const topicsApi = {
   async getTopicsNeedingReview(threshold: number = 0.6, limit: number = 50) {
     try {
       const response = await getApi().get(
-        '/api/v4/topics/needing_review',
+        '/api/topics/needing_review',
         { params: { threshold, limit } },
       );
       return response.data;
@@ -330,7 +330,7 @@ export const topicsApi = {
 
   async getManagedTopic(topicId: number) {
     try {
-      const response = await getApi().get(`/api/v4/topics/${topicId}`);
+      const response = await getApi().get(`/api/topics/${topicId}`);
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to fetch managed topic', error as Error);
@@ -341,7 +341,7 @@ export const topicsApi = {
   async getManagedTopicArticles(topicId: number, params: any = {}) {
     try {
       const response = await getApi().get(
-        `/api/v4/topics/${topicId}/articles`,
+        `/api/topics/${topicId}/articles`,
         { params },
       );
       return response.data;
@@ -354,7 +354,7 @@ export const topicsApi = {
   async processArticleTopics(articleId: number) {
     try {
       const response = await getApi().post(
-        `/api/v4/articles/${articleId}/process_topics`,
+        `/api/articles/${articleId}/process_topics`,
       );
       return response.data;
     } catch (error) {
@@ -369,7 +369,7 @@ export const topicsApi = {
   ) {
     try {
       const response = await getApi().post(
-        `/api/v4/assignments/${assignmentId}/feedback`,
+        `/api/assignments/${assignmentId}/feedback`,
         feedback,
       );
       return response.data;

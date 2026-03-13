@@ -1,0 +1,131 @@
+.navigation {
+  width: 250px;
+  background: #2c3e50;
+  color: white;
+  height: 100vh;
+  position: fixed;
+  left: 0;
+  top: 0;
+  padding: 0;
+  overflow-y: auto;
+  z-index: 1000;
+}
+
+.nav-header {
+  padding: 20px;
+  border-bottom: 1px solid #34495e;
+  background: #34495e;
+}
+
+.nav-header h3 {
+  margin: 0;
+  color: #ecf0f1;
+  font-size: 1.2em;
+}
+
+.nav-domain-indicator {
+  margin-top: 12px;
+}
+
+.nav-domain-badge {
+  display: inline-block;
+  padding: 4px 12px;
+  background: #3498db;
+  color: white;
+  border-radius: 12px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* Domain-specific badge colors */
+.nav-domain-badge[data-domain="politics"] {
+  background: #1976d2;
+}
+
+.nav-domain-badge[data-domain="finance"] {
+  background: #2e7d32;
+}
+
+.nav-domain-badge[data-domain="science-tech"] {
+  background: #7b1fa2;
+}
+
+.nav-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.nav-item {
+  margin: 0;
+}
+
+.nav-link {
+  display: flex;
+  align-items: center;
+  padding: 15px 20px;
+  color: #bdc3c7;
+  text-decoration: none;
+  transition: all 0.3s ease;
+  border-left: 3px solid transparent;
+}
+
+.nav-link:hover {
+  background: #34495e;
+  color: #ecf0f1;
+  border-left-color: #3498db;
+}
+
+.nav-link.active {
+  background: #3498db;
+  color: white;
+  border-left-color: #2980b9;
+}
+
+.nav-icon {
+  margin-right: 12px;
+  font-size: 1.1em;
+  width: 20px;
+  text-align: center;
+}
+
+.nav-label {
+  font-weight: 500;
+}
+
+@media (max-width: 768px) {
+  .navigation {
+    width: 100%;
+    height: auto;
+    position: relative;
+  }
+
+  .nav-list {
+    display: flex;
+    overflow-x: auto;
+  }
+
+  .nav-item {
+    flex-shrink: 0;
+  }
+
+  .nav-link {
+    white-space: nowrap;
+    padding: 10px 15px;
+  }
+}
+
+.nav-badge {
+  background: #f44336;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: 10px;
+  padding: 1px 6px;
+  margin-left: 6px;
+  min-width: 18px;
+  text-align: center;
+  line-height: 1.4;
+}

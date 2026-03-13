@@ -1,0 +1,59 @@
+# Reduce Cursor context and indexing — keep AI and Git focused on source and docs
+
+# Virtual envs (large, not source)
+.venv/
+.venv.backup/
+venv/
+env/
+
+# Dependencies and build output
+node_modules/
+web/dist/
+web/node_modules/
+
+# Python bytecode and caches
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Logs and runtime data
+logs/
+log/
+*.log
+data/
+db_data/
+postgres_data/
+redis_data/
+api/temp/
+
+# Git and IDE
+.git/
+
+# Generated or heavy artifacts
+scripts/pi_reports/
+docs/_archive/
+backups/
+*.backup
+archive/
+
+# Large lockfiles (optional: remove if you want them in context)
+uv.lock
+
+# Secrets and local overrides (do not send to AI)
+.env
+.env.*
+*.local.json
+config/.secrets
+api/config/.secrets
+
+# Large/generated data
+*.csv
+models/
+
+# Very large single files (reduce indexing/context load — add back if you need them in context)
+tests/unit/test_finance_market_data_store.py
+web/DEVELOPMENT_SETUP.md
+api/_archived/

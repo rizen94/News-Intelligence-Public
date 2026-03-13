@@ -1,7 +1,7 @@
 #!/bin/bash
 # Add official government and SEC RSS feeds via API
 
-BASE_URL="http://localhost:8000/api/v4"
+BASE_URL="http://localhost:8000/api"
 
 echo "📰 Adding Official Government and SEC RSS Feeds"
 echo "============================================================"

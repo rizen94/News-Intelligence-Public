@@ -19,7 +19,7 @@ const financeAnalysisApi = {
       if (options?.date_range?.end) params.set('end_date', options.date_range.end);
       if (options?.wait !== undefined) params.set('wait', String(options.wait));
       const response = await getApi().post(
-        `/api/v4/${domainKey}/finance/analyze?${params.toString()}`
+        `/api/${domainKey}/finance/analyze?${params.toString()}`
       );
       return response.data;
     } catch (error) {
@@ -32,7 +32,7 @@ const financeAnalysisApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(
-        `/api/v4/${domainKey}/finance/trace/${taskId}`
+        `/api/${domainKey}/finance/trace/${taskId}`
       );
       return response.data;
     } catch (error) {
@@ -45,7 +45,7 @@ const financeAnalysisApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(
-        `/api/v4/${domainKey}/finance/tasks/${taskId}/ledger`
+        `/api/${domainKey}/finance/tasks/${taskId}/ledger`
       );
       return response.data;
     } catch (error) {
@@ -58,7 +58,7 @@ const financeAnalysisApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(
-        `/api/v4/${domainKey}/finance/tasks/${taskId}/status`
+        `/api/${domainKey}/finance/tasks/${taskId}/status`
       );
       return response.data;
     } catch (error) {
@@ -71,7 +71,7 @@ const financeAnalysisApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(
-        `/api/v4/${domainKey}/finance/tasks/${taskId}`
+        `/api/${domainKey}/finance/tasks/${taskId}`
       );
       return response.data;
     } catch (error) {
@@ -93,7 +93,7 @@ const financeAnalysisApi = {
       if (filters?.offset) params.set('offset', String(filters.offset));
       const qs = params.toString();
       const response = await getApi().get(
-        `/api/v4/${domainKey}/finance/tasks${qs ? `?${qs}` : ''}`
+        `/api/${domainKey}/finance/tasks${qs ? `?${qs}` : ''}`
       );
       return response.data;
     } catch (error) {
@@ -114,7 +114,7 @@ const financeAnalysisApi = {
       if (filters?.offset) params.set('offset', String(filters.offset));
       const qs = params.toString();
       const response = await getApi().get(
-        `/api/v4/${domainKey}/finance/evidence${qs ? `?${qs}` : ''}`
+        `/api/${domainKey}/finance/evidence${qs ? `?${qs}` : ''}`
       );
       return response.data;
     } catch (error) {
@@ -127,7 +127,7 @@ const financeAnalysisApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(
-        `/api/v4/${domainKey}/finance/sources/status`
+        `/api/${domainKey}/finance/sources/status`
       );
       return response.data;
     } catch (error) {
@@ -145,7 +145,7 @@ const financeAnalysisApi = {
       const domainKey = domain || getCurrentDomain();
       if (source === 'gold') {
         const response = await getApi().post(
-          `/api/v4/${domainKey}/finance/gold/fetch`,
+          `/api/${domainKey}/finance/gold/fetch`,
           null,
           { params }
         );
@@ -153,7 +153,7 @@ const financeAnalysisApi = {
       }
       if (source === 'edgar') {
         const response = await getApi().post(
-          `/api/v4/${domainKey}/finance/edgar/ingest`,
+          `/api/${domainKey}/finance/edgar/ingest`,
           null,
           { params: params || { filings_per_company: 1 } }
         );
@@ -161,7 +161,7 @@ const financeAnalysisApi = {
       }
       if (source === 'fred') {
         const response = await getApi().post(
-          `/api/v4/${domainKey}/finance/fetch-fred`,
+          `/api/${domainKey}/finance/fetch-fred`,
           null,
           { params: params || {} }
         );
@@ -177,7 +177,7 @@ const financeAnalysisApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(
-        `/api/v4/${domainKey}/finance/schedule`
+        `/api/${domainKey}/finance/schedule`
       );
       return response.data;
     } catch (error) {
@@ -197,7 +197,7 @@ const financeAnalysisApi = {
       if (filters?.offset) params.set('offset', String(filters.offset));
       const qs = params.toString();
       const response = await getApi().get(
-        `/api/v4/${domainKey}/finance/verification${qs ? `?${qs}` : ''}`
+        `/api/${domainKey}/finance/verification${qs ? `?${qs}` : ''}`
       );
       return response.data;
     } catch (error) {

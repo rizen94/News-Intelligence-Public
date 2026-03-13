@@ -39,8 +39,8 @@ def fetch(start: str | None = None, end: str | None = None) -> DataResult[list[d
                 source="freegoldapi",
                 status_code=r.status_code,
             )
-        except Exception:
-            pass
+        except Exception as _e:
+            logger.debug("Activity log skip: %s", _e)
         if r.status_code == 429:
             return DataResult.fail("FreeGoldAPI rate limited (429)", "rate_limit")
         r.raise_for_status()
@@ -79,7 +79,7 @@ def fetch(start: str | None = None, end: str | None = None) -> DataResult[list[d
                 error=str(e),
                 source="freegoldapi",
             )
-        except Exception:
-            pass
+        except Exception as _e:
+            logger.debug("Activity log skip: %s", _e)
         logger.warning("FreeGoldAPI fetch failed: %s", e)
         return DataResult.fail(str(e), "network")

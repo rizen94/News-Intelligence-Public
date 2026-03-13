@@ -1,7 +1,8 @@
 """
 Gold price amalgamator — fetches from multiple sources, normalizes, stores, and exposes unified view.
 
-Sources:
+Sources (preference order for USD):
+- metals_dev: USD/toz historical + spot, requires METALS_DEV_API_KEY
 - freegoldapi: USD/oz, no API key, historical + daily
 - fred_iq12260: Export Price Index (Dec 2024=100), requires FRED_API_KEY
 
@@ -10,7 +11,7 @@ Evidence ledger records each fetch with provenance for audit trail.
 """
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 try:
     from config.logging_config import get_component_logger
@@ -21,8 +22,22 @@ except Exception:
 from domains.finance.data.market_data_store import upsert_observations, get_series
 from domains.finance.data.evidence_ledger import record as ledger_record
 from domains.finance.gold_sources import freegoldapi, fred_gold
+from shared.data_result import DataResult
+
+
+def _metals_dev_fetch(start: str | None = None, end: str | None = None) -> DataResult[list[dict]]:
+    """Fetch gold timeseries from metals.dev (30-day windows). Same contract as freegoldapi.fetch."""
+    try:
+        from domains.finance.data_sources.metals_dev import fetch_timeseries
+    except ImportError:
+        return DataResult.fail("metals_dev adapter not available", "config")
+    end_dt = datetime.strptime(end, "%Y-%m-%d").date() if end else datetime.now(timezone.utc).date()
+    start_dt = datetime.strptime(start, "%Y-%m-%d").date() if start else (end_dt - timedelta(days=30))
+    return fetch_timeseries(start_dt.strftime("%Y-%m-%d"), end_dt.strftime("%Y-%m-%d"))
+
 
 SOURCES = [
+    ("metals_dev", _metals_dev_fetch, "USD/toz historical"),
     ("freegoldapi", freegoldapi.fetch, "USD/oz spot"),
     ("fred_iq12260", fred_gold.fetch, "Export price index"),
 ]
@@ -123,6 +138,10 @@ def get_stored(source_id: str | None = None, start: str | None = None, end: str 
     return out
 
 
+PREFERRED_SOURCE_ORDER = ["metals_dev", "freegoldapi", "fred_iq12260"]
+USD_UNITS = ("USD/oz", "USD/toz")
+
+
 def get_unified(
     prefer_unit: str = "USD/oz",
     start: str | None = None,
@@ -130,22 +149,19 @@ def get_unified(
     fetch_if_empty: bool = True,
 ) -> list[dict]:
     """
-    Get unified gold view. Prefers observations in prefer_unit (USD/oz or index).
+    Get unified gold view. Prefers metals_dev (USD/toz) then freegoldapi (USD/oz) then FRED index.
     Returns list of {"date": str, "value": float, "unit": str, "source_id": str}.
     """
     stored = get_stored(start=start, end=end)
 
-    # Prefer USD/oz (freegoldapi) for spot; fallback to index (fred)
-    preferred = []
-    fallback = []
+    by_source = {}
     for source_id, obs_list in stored.items():
-        unit = None
-        for o in (obs_list or [])[:1]:
-            unit = o.get("metadata", {}).get("unit", "")
-            break
         if not obs_list:
             continue
-        # Map to our format
+        unit = None
+        for o in (obs_list or [])[:1]:
+            unit = (o.get("metadata") or {}).get("unit", "")
+            break
         formatted = []
         for o in obs_list:
             meta = o.get("metadata") or {}
@@ -155,16 +171,38 @@ def get_unified(
                 "unit": meta.get("unit", ""),
                 "source_id": meta.get("source_id", source_id),
             })
-        if unit == prefer_unit:
-            preferred = formatted
-        else:
-            fallback = formatted
+        by_source[source_id] = (unit, formatted)
 
-    result = preferred if preferred else fallback
+    for sid in PREFERRED_SOURCE_ORDER:
+        if sid not in by_source:
+            continue
+        unit, formatted = by_source[sid]
+        if prefer_unit in USD_UNITS:
+            if unit in USD_UNITS:
+                result = formatted
+                break
+        elif unit == prefer_unit:
+            result = formatted
+            break
+    else:
+        result = list(by_source.values())[0][1] if by_source else []
+
     if not result and fetch_if_empty:
         fetch_all(start=start, end=end, store=True)
         return get_unified(prefer_unit=prefer_unit, start=start, end=end, fetch_if_empty=False)
     return result
+
+
+def get_history(days: int = 90, fetch_if_empty: bool = True) -> list[dict]:
+    """
+    Get historical daily gold prices for the last `days` days.
+    Prefers metals_dev then freegoldapi then FRED. Returns list of {"date": str, "value": float, "unit": str, "source_id": str}.
+    """
+    end_dt = datetime.now(timezone.utc).date()
+    start_dt = end_dt - timedelta(days=max(1, days))
+    start = start_dt.strftime("%Y-%m-%d")
+    end = end_dt.strftime("%Y-%m-%d")
+    return get_unified(start=start, end=end, fetch_if_empty=fetch_if_empty)
 
 
 def list_sources() -> list[dict]:

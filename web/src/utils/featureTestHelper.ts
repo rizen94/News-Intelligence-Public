@@ -170,7 +170,7 @@ export const registerDefaultTests = () => {
     critical: true,
     test: async() => {
       try {
-        const response = await fetch('/api/v4/system_monitoring/health', {
+        const response = await fetch('/api/system_monitoring/health', {
           method: 'GET',
           signal: AbortSignal.timeout(5000),
         });

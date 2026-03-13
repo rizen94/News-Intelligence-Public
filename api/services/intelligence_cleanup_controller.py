@@ -1,0 +1,411 @@
+"""
+Intelligence cleanup controller — automated maintenance for the intelligence layer.
+
+Designed to be called by the automation_manager (data_cleanup phase) or the
+newsroom orchestrator. Keeps entity profiles, tracked events, and contexts
+lean by removing noise, merging duplicates, and pruning stale data.
+
+Configurable retention policies control what gets cleaned and when.
+"""
+
+import logging
+from datetime import datetime, timezone, timedelta
+from typing import Any, Dict, Optional
+
+from shared.database.connection import get_db_connection
+
+logger = logging.getLogger(__name__)
+
+DOMAIN_SCHEMA = {
+    "politics": "politics",
+    "finance": "finance",
+    "science-tech": "science_tech",
+}
+
+ALL_DOMAINS = ["politics", "finance", "science-tech"]
+
+DEFAULT_POLICY = {
+    "entity_noise_removal": True,
+    "entity_duplicate_merge": True,
+    "entity_low_value_prune": True,
+    "entity_low_value_min_age_days": 14,
+    "entity_low_value_max_mentions": 1,
+    "stale_event_archive_days": 30,
+    "orphan_profile_cleanup": True,
+    "max_entity_profiles_per_domain": 10000,
+}
+
+
+def _schema(domain_key: str) -> str:
+    return DOMAIN_SCHEMA.get(domain_key, domain_key.replace("-", "_"))
+
+
+class IntelligenceCleanupController:
+    """
+    Stateless controller — call run() to execute a full cleanup cycle.
+    Each method is idempotent and safe to call repeatedly.
+    """
+
+    def __init__(self, policy: Optional[Dict[str, Any]] = None):
+        self.policy = {**DEFAULT_POLICY, **(policy or {})}
+
+    def run(self, domain_key: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Execute a full cleanup cycle for one domain or all domains.
+        Returns a summary of actions taken.
+        """
+        domains = [domain_key] if domain_key else ALL_DOMAINS
+        results: Dict[str, Any] = {}
+
+        for d in domains:
+            domain_result: Dict[str, Any] = {}
+            try:
+                if self.policy["entity_noise_removal"]:
+                    domain_result["noise_removed"] = self._remove_noise_entities(d)
+
+                if self.policy["entity_duplicate_merge"]:
+                    domain_result["duplicates_merged"] = self._merge_duplicate_entities(d)
+
+                if self.policy["entity_low_value_prune"]:
+                    domain_result["low_value_pruned"] = self._prune_low_value_entities(d)
+
+                if self.policy["orphan_profile_cleanup"]:
+                    domain_result["orphan_profiles_removed"] = self._cleanup_orphan_profiles(d)
+
+                cap = self.policy["max_entity_profiles_per_domain"]
+                if cap:
+                    domain_result["excess_capped"] = self._cap_entity_count(d, cap)
+
+            except Exception as e:
+                logger.error(f"Cleanup failed for {d}: {e}")
+                domain_result["error"] = str(e)
+
+            results[d] = domain_result
+
+        if self.policy.get("stale_event_archive_days"):
+            results["stale_events_archived"] = self._archive_stale_events(
+                self.policy["stale_event_archive_days"]
+            )
+
+        total = _sum_results(results)
+        logger.info(
+            f"Intelligence cleanup complete: {total} total actions across {len(domains)} domain(s)"
+        )
+        return {"domains": results, "total_actions": total}
+
+    # -- Entity noise removal --------------------------------------------------
+
+    def _remove_noise_entities(self, domain_key: str) -> int:
+        """Remove entities that are clearly not real entities (numbers, too-long, generic)."""
+        import re
+
+        conn = get_db_connection()
+        if not conn:
+            return 0
+
+        schema = _schema(domain_key)
+        removed = 0
+
+        generic_fragments = [
+            "no name", "mentioned", "unknown", "n/a", "not specified",
+            "unnamed", "unidentified",
+        ]
+
+        try:
+            with conn.cursor() as cur:
+                cur.execute(f"SELECT id, canonical_name, entity_type FROM {schema}.entity_canonical")
+                rows = cur.fetchall()
+
+                noise_ids = []
+                for row_id, name, etype in rows:
+                    s = name.strip()
+                    if (len(s) < 2
+                            or re.match(r'^[\d,.\s%$€£]+$', s)
+                            or len(s) > 80
+                            or any(g in s.lower() for g in generic_fragments)
+                            or (etype == "person" and (re.match(r'^\d', s) or len(s) > 60))):
+                        noise_ids.append(row_id)
+
+                if noise_ids:
+                    removed = self._delete_canonical_ids(cur, schema, domain_key, noise_ids)
+
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            logger.warning(f"noise removal {domain_key}: {e}")
+            _safe_rollback_close(conn)
+        return removed
+
+    # -- Duplicate merge -------------------------------------------------------
+
+    def _merge_duplicate_entities(self, domain_key: str) -> int:
+        """Merge entities with the same lowercase name + type."""
+        from collections import defaultdict
+
+        conn = get_db_connection()
+        if not conn:
+            return 0
+
+        schema = _schema(domain_key)
+        merged = 0
+
+        try:
+            with conn.cursor() as cur:
+                cur.execute(f"SELECT id, canonical_name, entity_type FROM {schema}.entity_canonical ORDER BY id")
+                rows = cur.fetchall()
+
+                by_lower = defaultdict(list)
+                for row_id, name, etype in rows:
+                    by_lower[(name.lower().strip(), etype)].append(row_id)
+
+                for _, ids in by_lower.items():
+                    if len(ids) < 2:
+                        continue
+                    keep_id = ids[0]
+                    merge_ids = ids[1:]
+                    cur.execute(f"""
+                        UPDATE {schema}.article_entities
+                        SET canonical_entity_id = %s
+                        WHERE canonical_entity_id = ANY(%s)
+                    """, (keep_id, merge_ids))
+                    self._delete_canonical_ids(cur, schema, domain_key, merge_ids)
+                    merged += len(merge_ids)
+
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            logger.warning(f"duplicate merge {domain_key}: {e}")
+            _safe_rollback_close(conn)
+        return merged
+
+    # -- Low-value entity pruning ----------------------------------------------
+
+    def _prune_low_value_entities(self, domain_key: str) -> int:
+        """
+        Remove entities that appear in very few articles and are old enough
+        that they won't gain more mentions. Controlled by policy thresholds.
+        """
+        conn = get_db_connection()
+        if not conn:
+            return 0
+
+        schema = _schema(domain_key)
+        min_age = timedelta(days=self.policy["entity_low_value_min_age_days"])
+        max_mentions = self.policy["entity_low_value_max_mentions"]
+        cutoff = datetime.now(timezone.utc) - min_age
+        pruned = 0
+
+        try:
+            with conn.cursor() as cur:
+                cur.execute(f"""
+                    SELECT ec.id
+                    FROM {schema}.entity_canonical ec
+                    WHERE ec.created_at < %s
+                      AND (
+                          SELECT COUNT(*) FROM {schema}.article_entities ae
+                          WHERE ae.canonical_entity_id = ec.id
+                      ) <= %s
+                """, (cutoff, max_mentions))
+                prune_ids = [r[0] for r in cur.fetchall()]
+
+                if prune_ids:
+                    pruned = self._delete_canonical_ids(cur, schema, domain_key, prune_ids)
+
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            logger.warning(f"low-value prune {domain_key}: {e}")
+            _safe_rollback_close(conn)
+        return pruned
+
+    # -- Orphan profile cleanup ------------------------------------------------
+
+    def _cleanup_orphan_profiles(self, domain_key: str) -> int:
+        """
+        Remove entity_profiles that no longer have a matching entity_canonical row.
+        """
+        conn = get_db_connection()
+        if not conn:
+            return 0
+
+        schema = _schema(domain_key)
+        removed = 0
+
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    DELETE FROM intelligence.entity_profiles ep
+                    WHERE ep.domain_key = %s
+                      AND NOT EXISTS (
+                          SELECT 1 FROM """ + schema + """.entity_canonical ec
+                          WHERE ec.id = ep.canonical_entity_id
+                      )
+                """, (domain_key,))
+                removed = cur.rowcount
+
+                cur.execute("""
+                    DELETE FROM intelligence.old_entity_to_new
+                    WHERE domain_key = %s
+                      AND old_entity_id NOT IN (
+                          SELECT id FROM """ + schema + """.entity_canonical
+                      )
+                """, (domain_key,))
+
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            logger.warning(f"orphan cleanup {domain_key}: {e}")
+            _safe_rollback_close(conn)
+        return removed
+
+    # -- Entity count cap ------------------------------------------------------
+
+    def _cap_entity_count(self, domain_key: str, max_count: int) -> int:
+        """
+        If entity count exceeds max_count, remove the least-referenced entities
+        until we're back under the cap.
+        """
+        conn = get_db_connection()
+        if not conn:
+            return 0
+
+        schema = _schema(domain_key)
+        removed = 0
+
+        try:
+            with conn.cursor() as cur:
+                cur.execute(f"SELECT COUNT(*) FROM {schema}.entity_canonical")
+                total = cur.fetchone()[0]
+                if total <= max_count:
+                    conn.close()
+                    return 0
+
+                excess = total - max_count
+                cur.execute(f"""
+                    SELECT ec.id FROM {schema}.entity_canonical ec
+                    LEFT JOIN (
+                        SELECT canonical_entity_id, COUNT(*) AS cnt
+                        FROM {schema}.article_entities
+                        WHERE canonical_entity_id IS NOT NULL
+                        GROUP BY canonical_entity_id
+                    ) ae ON ae.canonical_entity_id = ec.id
+                    ORDER BY COALESCE(ae.cnt, 0) ASC, ec.created_at ASC
+                    LIMIT %s
+                """, (excess,))
+                cap_ids = [r[0] for r in cur.fetchall()]
+
+                if cap_ids:
+                    removed = self._delete_canonical_ids(cur, schema, domain_key, cap_ids)
+
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            logger.warning(f"cap entities {domain_key}: {e}")
+            _safe_rollback_close(conn)
+        return removed
+
+    # -- Stale event archival --------------------------------------------------
+
+    def _archive_stale_events(self, max_age_days: int) -> int:
+        """
+        Remove tracked events that haven't had a new chronicle entry in
+        max_age_days AND have no end_date (open-ended stale events).
+        Sets end_date to today rather than deleting, preserving history.
+        """
+        conn = get_db_connection()
+        if not conn:
+            return 0
+
+        cutoff = datetime.now(timezone.utc) - timedelta(days=max_age_days)
+        archived = 0
+
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE intelligence.tracked_events te
+                    SET end_date = CURRENT_DATE, updated_at = NOW()
+                    WHERE te.end_date IS NULL
+                      AND te.updated_at < %s
+                      AND NOT EXISTS (
+                          SELECT 1 FROM intelligence.event_chronicles ec
+                          WHERE ec.event_id = te.id AND ec.created_at >= %s
+                      )
+                """, (cutoff, cutoff))
+                archived = cur.rowcount
+
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            logger.warning(f"stale event archive: {e}")
+            _safe_rollback_close(conn)
+        return archived
+
+    # -- Helpers ---------------------------------------------------------------
+
+    def _delete_canonical_ids(self, cur, schema: str, domain_key: str, ids: list) -> int:
+        """
+        Remove entity_canonical IDs and cascade to article_entities FK,
+        intelligence.old_entity_to_new, and intelligence.entity_profiles.
+        """
+        if not ids:
+            return 0
+
+        cur.execute(f"""
+            UPDATE {schema}.article_entities
+            SET canonical_entity_id = NULL
+            WHERE canonical_entity_id = ANY(%s)
+        """, (ids,))
+
+        cur.execute("""
+            DELETE FROM intelligence.old_entity_to_new
+            WHERE domain_key = %s AND old_entity_id = ANY(%s)
+        """, (domain_key, ids))
+
+        cur.execute("""
+            DELETE FROM intelligence.entity_profiles
+            WHERE domain_key = %s AND canonical_entity_id = ANY(%s)
+        """, (domain_key, ids))
+
+        cur.execute(f"""
+            DELETE FROM {schema}.entity_canonical WHERE id = ANY(%s)
+        """, (ids,))
+        return len(ids)
+
+
+def _safe_rollback_close(conn) -> None:
+    try:
+        conn.rollback()
+    except Exception:
+        pass
+    try:
+        conn.close()
+    except Exception:
+        pass
+
+
+def _sum_results(results: Dict[str, Any]) -> int:
+    total = 0
+    for val in results.values():
+        if isinstance(val, dict):
+            for v in val.values():
+                if isinstance(v, int):
+                    total += v
+        elif isinstance(val, int):
+            total += val
+    return total
+
+
+# -- Convenience function for orchestrator integration -------------------------
+
+async def run_intelligence_cleanup(
+    domain_key: Optional[str] = None,
+    policy: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """
+    Async wrapper for use by automation_manager or newsroom orchestrator.
+    Runs the full cleanup cycle in the default executor.
+    """
+    import asyncio
+    loop = asyncio.get_event_loop()
+    controller = IntelligenceCleanupController(policy=policy)
+    return await loop.run_in_executor(None, controller.run, domain_key)

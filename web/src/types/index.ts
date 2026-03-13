@@ -32,6 +32,43 @@ export interface PaginatedResponse<T> {
 // Article Types
 // ============================================================================
 
+/** API returns source_domain / published_at; we also alias source / published_date. Use helpers below for display. */
+export interface ArticleLike {
+  id: number | string;
+  title: string;
+  content?: string;
+  summary?: string;
+  excerpt?: string;
+  url?: string;
+  /** Display source: prefer source ?? source_domain */
+  source?: string;
+  source_domain?: string;
+  /** Display date: prefer published_date ?? published_at */
+  published_date?: string;
+  published_at?: string;
+  created_at?: string;
+  updated_at?: string;
+  category?: string;
+  tags?: string[];
+  sentiment_score?: number;
+  quality_score?: number;
+  processing_status?: string;
+  author?: string;
+  language?: string;
+  [key: string]: unknown;
+}
+
+/** Normalized display values for any article-like object (handles API naming). */
+export function articleSource(a: ArticleLike): string {
+  return a.source ?? a.source_domain ?? 'Unknown';
+}
+export function articlePublishedAt(a: ArticleLike): string | undefined {
+  return a.published_date ?? a.published_at ?? a.created_at;
+}
+export function articleBody(a: ArticleLike): string {
+  return (a.content ?? a.excerpt ?? a.summary ?? '').trim() || 'No content';
+}
+
 export interface Article {
   id: string;
   title: string;
@@ -39,7 +76,10 @@ export interface Article {
   summary?: string;
   url: string;
   source: string;
+  /** API may return published_at; we alias to published_date in responses */
   published_date: string;
+  published_at?: string;
+  source_domain?: string;
   created_at: string;
   updated_at: string;
   category?: string;

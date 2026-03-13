@@ -78,8 +78,8 @@ def fetch_filing_index(cik: str, form_filter: str | None = "10-K") -> DataResult
                 cik=cik_padded,
                 status_code=r.status_code,
             )
-        except Exception:
-            pass
+        except Exception as _e:
+            logger.debug("Activity log skip: %s", _e)
         if r.status_code == 429:
             return DataResult.fail("EDGAR rate limited (429)", "rate_limit")
         r.raise_for_status()
@@ -97,8 +97,8 @@ def fetch_filing_index(cik: str, form_filter: str | None = "10-K") -> DataResult
                 operation="index",
                 cik=cik_padded,
             )
-        except Exception:
-            pass
+        except Exception as _e:
+            logger.debug("Activity log skip: %s", _e)
         logger.warning("EDGAR fetch index failed for CIK %s: %s", cik, e)
         return DataResult.fail(str(e), "network")
 
@@ -155,8 +155,8 @@ def download_filing(cik: str, accession_number: str, primary_document: str) -> D
                 accession=accession_number,
                 status_code=r.status_code,
             )
-        except Exception:
-            pass
+        except Exception as _e:
+            logger.debug("Activity log skip: %s", _e)
         if r.status_code == 429:
             return DataResult.fail("EDGAR rate limited (429)", "rate_limit")
         r.raise_for_status()
@@ -175,8 +175,8 @@ def download_filing(cik: str, accession_number: str, primary_document: str) -> D
                 operation="download",
                 accession=accession_number,
             )
-        except Exception:
-            pass
+        except Exception as _e:
+            logger.debug("Activity log skip: %s", _e)
         logger.warning("EDGAR download failed %s: %s", url, e)
         return DataResult.fail(str(e), "network")
 

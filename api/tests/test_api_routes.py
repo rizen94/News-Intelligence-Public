@@ -234,7 +234,7 @@ def test_api_endpoints() -> Dict[str, Any]:
     
     # Test health endpoint
     print("\n  Testing Health Endpoint")
-    health_result = test_api_endpoint("GET", f"{API_BASE_URL}/api/v4/system_monitoring/health")
+    health_result = test_api_endpoint("GET", f"{API_BASE_URL}/api/system_monitoring/health")
     print_result(
         "Health Check",
         health_result["success"],
@@ -249,7 +249,7 @@ def test_api_endpoints() -> Dict[str, Any]:
         # Test articles endpoint
         articles_result = test_api_endpoint(
             "GET",
-            f"{API_BASE_URL}/api/v4/{domain}/articles",
+            f"{API_BASE_URL}/api/{domain}/articles",
             params={"limit": 10, "offset": 0}
         )
         print_result(
@@ -268,7 +268,7 @@ def test_api_endpoints() -> Dict[str, Any]:
         # Test storylines endpoint
         storylines_result = test_api_endpoint(
             "GET",
-            f"{API_BASE_URL}/api/v4/{domain}/storylines",
+            f"{API_BASE_URL}/api/{domain}/storylines",
             params={"limit": 10, "offset": 0}
         )
         print_result(
@@ -287,7 +287,7 @@ def test_api_endpoints() -> Dict[str, Any]:
         # Test RSS feeds endpoint
         rss_result = test_api_endpoint(
             "GET",
-            f"{API_BASE_URL}/api/v4/{domain}/rss_feeds"
+            f"{API_BASE_URL}/api/{domain}/rss_feeds"
         )
         print_result(
             f"{domain} - RSS Feeds",
@@ -315,7 +315,7 @@ def test_pagination() -> Dict[str, Any]:
     print(f"\n  Testing pagination for {domain}")
     page1_result = test_api_endpoint(
         "GET",
-        f"{API_BASE_URL}/api/v4/{domain}/articles",
+        f"{API_BASE_URL}/api/{domain}/articles",
         params={"limit": 5, "offset": 0}
     )
     
@@ -334,7 +334,7 @@ def test_pagination() -> Dict[str, Any]:
             if total > 5:
                 page2_result = test_api_endpoint(
                     "GET",
-                    f"{API_BASE_URL}/api/v4/{domain}/articles",
+                    f"{API_BASE_URL}/api/{domain}/articles",
                     params={"limit": 5, "offset": 5}
                 )
                 if page2_result["success"]:

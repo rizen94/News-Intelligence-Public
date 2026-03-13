@@ -2,6 +2,7 @@
 Orchestrator Decision Logger — structured decision records at branching points.
 Captures available_options, chosen_option, rationale, decision_inputs; outcome backfill.
 Writes to logs/orchestrator_decisions.jsonl and activity.jsonl.
+When file write or activity_logger forward fails, the write is no-op (failure swallowed).
 """
 
 import json

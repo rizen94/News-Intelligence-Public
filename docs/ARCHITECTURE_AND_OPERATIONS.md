@@ -1,6 +1,6 @@
 # News Intelligence — Architecture & Operations
 
-**Version:** v4.1 (post-Widow migration)  
+**Version:** v5.0 (stable)  
 **Last updated:** 2026-03-01
 
 ---

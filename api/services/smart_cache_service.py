@@ -54,7 +54,11 @@ class SmartCacheService:
         # Cache configuration
         self.max_memory_entries = 1000
         self.max_memory_size_mb = 100
-        self.default_ttl_seconds = 3600  # 1 hour
+        try:
+            from shared.constants import DEFAULT_CACHE_TTL_SECONDS
+            self.default_ttl_seconds = DEFAULT_CACHE_TTL_SECONDS
+        except ImportError:
+            self.default_ttl_seconds = 3600  # 1 hour fallback
         self.preload_threshold = 0.8  # Preload when hit rate drops below 80%
         
         # Service-specific TTL settings

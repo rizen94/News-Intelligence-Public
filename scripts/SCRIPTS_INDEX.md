@@ -4,9 +4,13 @@
 
 | Script | Purpose |
 |--------|---------|
-| `../start_system.sh` | Start all services |
+| `../start_system.sh` | Start all services (manual) |
+| `../start-news-intelligence.sh` | Same as above; symlink from `~/bin` to run from anywhere (see script header) |
 | `../stop_system.sh` | Stop API and frontend |
 | `../status_system.sh` | Check service status |
+| `archive_logs_to_nas.sh` | Copy old log files to NAS and trim local (run on Widow; keep disk clean) |
+| `export_cold_data_to_nas.sh` | Export old articles/contexts to NAS (optional prune); see docs/WIDOW_NAS_STORAGE_SPLIT.md |
+| `setup_autostart.sh` | Enable auto-start on boot (systemd user services) |
 | `setup_nas_ssh_tunnel.sh` | SSH tunnel to NAS (rollback only) |
 | `restart_api_with_db.sh` | Restart API |
 | `db_backup.sh` | DB backup (run on Widow) |
@@ -19,7 +23,7 @@
 | `deploy_to_widow.sh` | Deploy code to Widow |
 | `setup_widow_app.sh` | Setup on Widow (venv, systemd) |
 | `run_secondary_worker.py` | RSS daemon (Widow) |
-| `configure_widow_no_sleep.sh` | Disable Widow suspend |
+| `configure_widow_no_sleep.sh` | Keep server on full time (no suspend/hibernate/power-saver) — run on server |
 | `run_widow_updates.sh` | apt update on Widow |
 
 ## Utilities

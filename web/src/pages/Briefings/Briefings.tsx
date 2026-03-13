@@ -31,7 +31,9 @@ interface Article {
   id?: number;
   title?: string;
   source?: string;
+  source_domain?: string;
   published_date?: string;
+  published_at?: string;
   category?: string;
 }
 
@@ -230,8 +232,8 @@ const Briefings: React.FC = () => {
                               secondary={
                                 <Box>
                                   <Typography variant='body2' color='text.secondary'>
-                                    {article.source || 'Unknown Source'} &bull;{' '}
-                                    {formatDate(article.published_date)}
+                                    {article.source || article.source_domain || 'Unknown Source'} &bull;{' '}
+                                    {formatDate(article.published_date || article.published_at)}
                                   </Typography>
                                   {article.category && (
                                     <Chip label={article.category} size='small' sx={{ mt: 0.5 }} />

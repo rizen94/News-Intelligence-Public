@@ -16,7 +16,7 @@ from domains.content_analysis.services.topic_extraction_queue_worker import Topi
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
-    prefix="/api/v4",
+    prefix="/api",
     tags=["Topic Extraction Queue"],
     responses={404: {"description": "Not found"}}
 )

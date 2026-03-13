@@ -22,7 +22,7 @@ cat > "$WRAPPER_SCRIPT" << 'WRAPPER_EOF'
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LOG_DIR="$HOME/logs/news_intelligence"
-API_URL="http://localhost:8000/api/v4/system_monitoring/health"
+API_URL="http://localhost:8000/api/system_monitoring/health"
 
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting RSS collection health check..." >> "$LOG_DIR/rss_collection.log"
 

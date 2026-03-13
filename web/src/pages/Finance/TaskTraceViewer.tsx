@@ -184,7 +184,7 @@ export default function TaskTraceViewer() {
                     <TableCell>{String(llm.model || '-')}</TableCell>
                     <TableCell>{Number(llm.latency_ms ?? 0).toFixed(0)} ms</TableCell>
                     <TableCell>
-                      {llm.input_token_count ?? '-'} / {llm.output_token_count ?? '-'}
+                      {String(llm.input_token_count ?? '-')} / {String(llm.output_token_count ?? '-')}
                     </TableCell>
                   </TableRow>
                 ))}

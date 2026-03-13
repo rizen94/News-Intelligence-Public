@@ -15,7 +15,7 @@ export const articlesApi = {
         delete requestParams.page;
       }
       if (params.hours !== undefined) requestParams.hours = params.hours;
-      const response = await getApi().get(`/api/v4/${domainKey}/articles`, { params: requestParams });
+      const response = await getApi().get(`/api/${domainKey}/articles`, { params: requestParams });
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to fetch articles', error as Error);
@@ -26,7 +26,7 @@ export const articlesApi = {
   async getArticle(id: string, domain?: string) {
     try {
       const domainKey = domain || getCurrentDomain();
-      const response = await getApi().get(`/api/v4/${domainKey}/articles/${id}`);
+      const response = await getApi().get(`/api/${domainKey}/articles/${id}`);
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to fetch article', error as Error);
@@ -37,7 +37,7 @@ export const articlesApi = {
   async deleteArticle(id: string | number, domain?: string) {
     try {
       const domainKey = domain || getCurrentDomain();
-      const response = await getApi().delete(`/api/v4/${domainKey}/articles/${id}`);
+      const response = await getApi().delete(`/api/${domainKey}/articles/${id}`);
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to delete article', error as Error);
@@ -48,7 +48,7 @@ export const articlesApi = {
   async deleteArticlesBulk(articleIds: (string | number)[], domain?: string) {
     try {
       const domainKey = domain || getCurrentDomain();
-      const response = await getApi().delete(`/api/v4/${domainKey}/articles`, { data: articleIds });
+      const response = await getApi().delete(`/api/${domainKey}/articles`, { data: articleIds });
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to bulk delete articles', error as Error);
@@ -58,7 +58,7 @@ export const articlesApi = {
 
   async analyzeArticles(params: { source?: string; limit?: number; domains?: string; sample_size?: number }) {
     try {
-      const response = await getApi().get('/api/v4/system_monitoring/articles/analyze', { params });
+      const response = await getApi().get('/api/system_monitoring/articles/analyze', { params });
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to analyze articles', error as Error);
@@ -69,7 +69,7 @@ export const articlesApi = {
   async getArticleEvents(articleId: number | string, domain?: string) {
     try {
       const domainKey = domain || getCurrentDomain();
-      const response = await getApi().get(`/api/v4/${domainKey}/events`, { params: { article_id: articleId } });
+      const response = await getApi().get(`/api/${domainKey}/events`, { params: { article_id: articleId } });
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to fetch article events', error as Error);

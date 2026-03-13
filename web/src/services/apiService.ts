@@ -161,6 +161,10 @@ class APIService {
   getHealth = monitoringApi.getHealth;
   getMonitoringDashboard = monitoringApi.getMonitoringDashboard;
   getPipelineStatus = monitoringApi.getPipelineStatus;
+  getDatabaseStats = monitoringApi.getDatabaseStats;
+  getDevices = monitoringApi.getDevices;
+  getHealthFeeds = monitoringApi.getHealthFeeds;
+  getOrchestratorDashboard = monitoringApi.getOrchestratorDashboard;
   triggerPipeline = monitoringApi.triggerPipeline;
   getSystemHealth = monitoringApi.getSystemHealth;
   getSystemMetrics = monitoringApi.getSystemMetrics;

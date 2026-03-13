@@ -154,11 +154,19 @@ class ArticleService(DomainAwareService):
                 
                 cur.execute(query, params)
                 articles = cur.fetchall()
-                
+                # Normalize each article for frontend: add source and published_date aliases
+                def _normalize_list_item(a):
+                    d = dict(a)
+                    if d.get("source_domain") is not None and "source" not in d:
+                        d["source"] = d.get("source_domain")
+                    if d.get("published_at") is not None and "published_date" not in d:
+                        d["published_date"] = d.get("published_at")
+                    return d
+                normalized = [_normalize_list_item(a) for a in articles]
                 return {
                     'success': True,
                     'data': {
-                        'articles': [dict(article) for article in articles],
+                        'articles': normalized,
                         'domain': self.domain,
                         'count': len(articles),
                         'total': total,
@@ -187,7 +195,7 @@ class ArticleService(DomainAwareService):
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute(f"""
                     SELECT 
-                        id, title, content, url,
+                        id, title, content, excerpt, url,
                         published_at, source_domain, category,
                         language_code, feed_id, content_hash,
                         processing_status, created_at, updated_at,
@@ -196,10 +204,24 @@ class ArticleService(DomainAwareService):
                     WHERE id = %s
                 """, (article_id,))
                 
-                article = cur.fetchone()
-                if article:
-                    return dict(article)
-                return None
+                row = cur.fetchone()
+                if not row:
+                    return None
+                article = dict(row)
+                # Normalize for frontend: ensure body and summary have something to show
+                content = (article.get("content") or "").strip()
+                excerpt = (article.get("excerpt") or "").strip()
+                summary = (article.get("summary") or "").strip()
+                if not content and excerpt:
+                    article["content"] = excerpt
+                if not summary:
+                    article["summary"] = excerpt or (content[:500] + "..." if len(content) > 500 else content)
+                # Frontend compatibility: alias source_domain -> source, published_at -> published_date
+                if "source_domain" in article and "source" not in article:
+                    article["source"] = article.get("source_domain")
+                if "published_at" in article and "published_date" not in article:
+                    article["published_date"] = article.get("published_at")
+                return article
         except Exception as e:
             logger.error(f"Error getting article {article_id} from domain {self.domain}: {e}", exc_info=True)
             raise

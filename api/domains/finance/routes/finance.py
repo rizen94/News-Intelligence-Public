@@ -12,8 +12,10 @@ Domain validation rule:
 
 from fastapi import APIRouter, HTTPException, Path, Query, Request
 from typing import Dict, Any
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import logging
+from collections import Counter
+import re
 
 from shared.database.connection import get_db_connection
 from shared.services.domain_aware_service import validate_domain
@@ -22,8 +24,32 @@ from domains.finance.orchestrator_types import TaskType, TaskPriority
 
 logger = logging.getLogger(__name__)
 
+# Timeframe to timedelta for market endpoints
+_TIMEFRAME_MAP = {"1d": 1, "7d": 7, "30d": 30, "90d": 90, "1y": 365}
+
+
+def _parse_timeframe(timeframe: str) -> timedelta:
+    """Return timedelta(days=N) for timeframe string."""
+    days = _TIMEFRAME_MAP.get((timeframe or "7d").lower(), 7)
+    return timedelta(days=days)
+
+
+def _get_recent_finance_articles(days: int, limit: int = 200) -> list[Dict[str, Any]]:
+    """Fetch recent finance-domain articles. Returns list of dicts with id, title, summary, url, published_at, category."""
+    try:
+        from domains.news_aggregation.services.article_service import ArticleService
+        svc = ArticleService(domain="finance")
+        published_after = datetime.now(timezone.utc) - timedelta(days=days)
+        res = svc.get_articles(limit=limit, offset=0, include_content=False, filters={"published_after": published_after})
+        data = res.get("data") or {}
+        articles = data.get("articles") or []
+        return [dict(a) for a in articles]
+    except Exception as e:
+        logger.warning("_get_recent_finance_articles failed: %s", e)
+        return []
+
 router = APIRouter(
-    prefix="/api/v4",
+    prefix="/api",
     tags=["Finance"],
     responses={404: {"description": "Not found"}}
 )
@@ -66,9 +92,11 @@ async def get_finance_task(
     task_id: str = Path(..., description="Orchestrator task ID (e.g. fin-abc123)"),
 ):
     """Poll task status. Returns result if complete."""
+    logger.debug("Finance task poll: domain=%s task_id=%s", domain, task_id)
     _check_domain(domain)
     orch = getattr(request.app.state, "finance_orchestrator", None)
     if not orch:
+        logger.warning("Finance task poll rejected: orchestrator not available (domain=%s task_id=%s)", domain, task_id)
         raise HTTPException(status_code=503, detail="Finance orchestrator not available")
     status = orch.get_task_status(task_id)
     if not status:
@@ -103,6 +131,37 @@ async def get_finance_task(
                 for e in result.provenance[:100]
             ]
     return {"success": True, "data": out, "timestamp": datetime.now().isoformat()}
+
+
+@router.get("/{domain}/finance/evidence/preview")  # On-demand evidence bundle (RSS + optional API summary + RAG)
+async def finance_evidence_preview(
+    request: Request,
+    domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+    query: str | None = Query(None, description="Optional query for RAG"),
+    topic: str = Query("gold", description="Topic (e.g. gold) for API summary"),
+    hours: int = Query(168, ge=1, le=720, description="RSS lookback hours"),
+    max_rss: int = Query(15, ge=1, le=50),
+    include_rss: bool = Query(True),
+    include_api_summary: bool = Query(False),
+    include_rag: bool = Query(False),
+):
+    """Preview evidence bundle from evidence collector (RSS, optional API summary, optional RAG)."""
+    validate_domain(domain)
+    try:
+        from domains.finance.evidence_collector import collect as evidence_collect
+        bundle = evidence_collect(
+            query=query,
+            topic=topic,
+            hours=hours,
+            max_rss=max_rss,
+            include_rss=include_rss,
+            include_api_summary=include_api_summary,
+            include_rag=include_rag,
+        )
+        return {"success": True, "data": bundle, "timestamp": datetime.now().isoformat()}
+    except Exception as e:
+        logger.warning("Evidence preview failed: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/{domain}/finance/evidence")  # Paginated evidence index (provenance from completed tasks)
@@ -448,6 +507,316 @@ async def trigger_gold_fetch(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/{domain}/finance/gold/history")
+async def get_gold_history(
+    domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+    days: int = Query(90, ge=1, le=1825, description="Number of days of history"),
+    fetch_if_empty: bool = Query(True, description="Fetch from sources if stored data empty"),
+):
+    """Historical daily gold prices for commodity chart. Prefers metals_dev then freegoldapi then FRED."""
+    _check_domain(domain)
+    try:
+        from domains.finance.gold_amalgamator import get_history
+        obs = get_history(days=days, fetch_if_empty=fetch_if_empty)
+        return {
+            "success": True,
+            "data": {"observations": obs, "days": days},
+            "timestamp": datetime.now().isoformat(),
+        }
+    except Exception as e:
+        logger.error(f"Error fetching gold history: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{domain}/finance/gold/spot")
+async def get_gold_spot(
+    domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+):
+    """Current gold spot price (bid/ask/high/low/change). From metals.dev when key set, else amalgamator unified."""
+    _check_domain(domain)
+    try:
+        from domains.finance.data_sources.metals_dev import fetch_spot
+        res = fetch_spot(metal="gold", currency="USD")
+        if res.success and res.data:
+            return {"success": True, "data": res.data, "timestamp": datetime.now().isoformat()}
+        from domains.finance.gold_amalgamator import get_unified
+        obs = get_unified(prefer_unit="USD/oz", fetch_if_empty=True)
+        if not obs:
+            return {"success": True, "data": {"price": None, "unit": "USD/oz"}, "timestamp": datetime.now().isoformat()}
+        latest = obs[-1]
+        return {
+            "success": True,
+            "data": {
+                "price": latest.get("value"),
+                "unit": latest.get("unit", "USD/oz"),
+                "source_id": latest.get("source_id"),
+            },
+            "timestamp": datetime.now().isoformat(),
+        }
+    except Exception as e:
+        logger.error(f"Error fetching gold spot: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{domain}/finance/gold/authority")
+async def get_gold_authority(
+    domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+    authorities: str | None = Query("lbma,mcx,ibja", description="Comma-separated: lbma, mcx, ibja"),
+):
+    """Regional authority gold prices (LBMA London, MCX India, IBJA India) for geographic comparison."""
+    _check_domain(domain)
+    try:
+        from domains.finance.data_sources.metals_dev import fetch_authority
+        out = {}
+        for auth in (authorities or "lbma,mcx,ibja").split(","):
+            auth = auth.strip().lower()
+            if not auth:
+                continue
+            res = fetch_authority(authority=auth, currency="USD")
+            if res.success and res.data:
+                out[auth] = res.data
+        return {"success": True, "data": out, "timestamp": datetime.now().isoformat()}
+    except Exception as e:
+        logger.error(f"Error fetching gold authority: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{domain}/finance/gold/geo-events")
+async def get_gold_geo_events(
+    domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+    limit: int = Query(50, ge=1, le=200),
+):
+    """Finance-domain tracked events with geographic_scope for choropleth; gold-related filter optional."""
+    _check_domain(domain)
+    conn = get_db_connection()
+    if not conn:
+        raise HTTPException(status_code=503, detail="Database unavailable")
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, event_type, event_name, start_date, end_date, geographic_scope, domain_keys
+                FROM intelligence.tracked_events
+                WHERE %s = ANY(domain_keys)
+                ORDER BY start_date DESC NULLS LAST
+                LIMIT %s
+                """,
+                (domain, limit),
+            )
+            rows = cur.fetchall()
+        conn.close()
+        events = [
+            {
+                "id": r[0],
+                "event_type": r[1],
+                "event_name": r[2],
+                "start_date": str(r[3]) if r[3] else None,
+                "end_date": str(r[4]) if r[4] else None,
+                "geographic_scope": r[5],
+                "domain_keys": list(r[6]) if r[6] else [],
+            }
+            for r in rows
+        ]
+        by_region = {}
+        for ev in events:
+            scope = (ev.get("geographic_scope") or "").strip()
+            if not scope:
+                continue
+            for part in scope.replace(",", " ").split():
+                region = part.strip()
+                if len(region) < 2:
+                    continue
+                by_region.setdefault(region, []).append(ev["id"])
+        return {
+            "success": True,
+            "data": {"events": events, "by_region": by_region},
+            "timestamp": datetime.now().isoformat(),
+        }
+    except Exception as e:
+        logger.error(f"Error fetching gold geo-events: {e}", exc_info=True)
+        try:
+            conn.close()
+        except Exception:
+            pass
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/{domain}/finance/gold/fetch-history")
+async def trigger_gold_fetch_history(
+    domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+    days: int = Query(90, ge=1, le=1825),
+):
+    """Trigger historical gold data fetch from metals.dev and amalgamator (admin)."""
+    _check_domain(domain)
+    try:
+        from domains.finance.gold_amalgamator import fetch_all, get_history
+        end_dt = datetime.now(timezone.utc).date()
+        start_dt = end_dt - timedelta(days=days)
+        fetch_all(
+            start=start_dt.strftime("%Y-%m-%d"),
+            end=end_dt.strftime("%Y-%m-%d"),
+            store=True,
+        )
+        obs = get_history(days=days, fetch_if_empty=False)
+        return {
+            "success": True,
+            "data": {"observations_count": len(obs), "days": days},
+            "timestamp": datetime.now().isoformat(),
+        }
+    except Exception as e:
+        logger.error(f"Error fetching gold history: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{domain}/finance/commodity/{commodity}/history")
+async def get_commodity_history(
+    domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+    commodity: str = Path(..., pattern="^(gold|silver|platinum)$"),
+    days: int = Query(90, ge=1, le=1825),
+    fetch_if_empty: bool = Query(True),
+):
+    """Historical daily prices for one commodity. Gold uses amalgamator; silver/platinum use metals.dev."""
+    _check_domain(domain)
+    try:
+        if commodity == "gold":
+            from domains.finance.gold_amalgamator import get_history
+            obs = get_history(days=days, fetch_if_empty=fetch_if_empty)
+        else:
+            from domains.finance.data_sources.metals_dev import fetch_timeseries
+            end_dt = datetime.now(timezone.utc).date()
+            start_dt = end_dt - timedelta(days=days)
+            res = fetch_timeseries(
+                start_dt.strftime("%Y-%m-%d"),
+                end_dt.strftime("%Y-%m-%d"),
+                metal=commodity,
+            )
+            obs = res.data if res.success else []
+        return {
+            "success": True,
+            "data": {"observations": obs, "days": days},
+            "timestamp": datetime.now().isoformat(),
+        }
+    except Exception as e:
+        logger.error(f"Error fetching %s history: %s", commodity, e, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{domain}/finance/commodity/{commodity}/spot")
+async def get_commodity_spot(
+    domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+    commodity: str = Path(..., pattern="^(gold|silver|platinum)$"),
+):
+    """Current spot price for one metal. From metals.dev when key set; gold falls back to amalgamator."""
+    _check_domain(domain)
+    try:
+        from domains.finance.data_sources.metals_dev import fetch_spot
+        res = fetch_spot(metal=commodity, currency="USD")
+        if res.success and res.data:
+            return {"success": True, "data": res.data, "timestamp": datetime.now().isoformat()}
+        if commodity == "gold":
+            from domains.finance.gold_amalgamator import get_unified
+            obs = get_unified(prefer_unit="USD/oz", fetch_if_empty=True)
+            if obs:
+                latest = obs[-1]
+                return {
+                    "success": True,
+                    "data": {
+                        "price": latest.get("value"),
+                        "unit": latest.get("unit", "USD/oz"),
+                        "source_id": latest.get("source_id"),
+                    },
+                    "timestamp": datetime.now().isoformat(),
+                }
+        return {"success": True, "data": {"price": None, "unit": "USD/oz"}, "timestamp": datetime.now().isoformat()}
+    except Exception as e:
+        logger.error(f"Error fetching %s spot: %s", commodity, e, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{domain}/finance/commodity/{commodity}/authority")
+async def get_commodity_authority(
+    domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+    commodity: str = Path(..., pattern="^(gold|silver|platinum)$"),
+    authorities: str | None = Query("lbma,mcx,ibja"),
+):
+    """Regional authority prices (LBMA, MCX, IBJA). Same endpoint for all metals; API may return metal-specific rates."""
+    _check_domain(domain)
+    try:
+        from domains.finance.data_sources.metals_dev import fetch_authority
+        out = {}
+        for auth in (authorities or "lbma,mcx,ibja").split(","):
+            auth = auth.strip().lower()
+            if not auth:
+                continue
+            res = fetch_authority(authority=auth, currency="USD")
+            if res.success and res.data:
+                out[auth] = res.data
+        return {"success": True, "data": out, "timestamp": datetime.now().isoformat()}
+    except Exception as e:
+        logger.error(f"Error fetching %s authority: %s", commodity, e, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{domain}/finance/commodity/geo-events")
+async def get_commodity_geo_events(
+    domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+    limit: int = Query(50, ge=1, le=200),
+):
+    """Finance-domain tracked events with geographic_scope for choropleth; shared across commodities."""
+    _check_domain(domain)
+    conn = get_db_connection()
+    if not conn:
+        raise HTTPException(status_code=503, detail="Database unavailable")
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, event_type, event_name, start_date, end_date, geographic_scope, domain_keys
+                FROM intelligence.tracked_events
+                WHERE %s = ANY(domain_keys)
+                ORDER BY start_date DESC NULLS LAST
+                LIMIT %s
+                """,
+                (domain, limit),
+            )
+            rows = cur.fetchall()
+        conn.close()
+        events = [
+            {
+                "id": r[0],
+                "event_type": r[1],
+                "event_name": r[2],
+                "start_date": str(r[3]) if r[3] else None,
+                "end_date": str(r[4]) if r[4] else None,
+                "geographic_scope": r[5],
+                "domain_keys": list(r[6]) if r[6] else [],
+            }
+            for r in rows
+        ]
+        by_region = {}
+        for ev in events:
+            scope = (ev.get("geographic_scope") or "").strip()
+            if not scope:
+                continue
+            for part in scope.replace(",", " ").split():
+                region = part.strip()
+                if len(region) < 2:
+                    continue
+                by_region.setdefault(region, []).append(ev["id"])
+        return {
+            "success": True,
+            "data": {"events": events, "by_region": by_region},
+            "timestamp": datetime.now().isoformat(),
+        }
+    except Exception as e:
+        logger.error(f"Error fetching commodity geo-events: {e}", exc_info=True)
+        try:
+            conn.close()
+        except Exception:
+            pass
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/{domain}/finance/edgar/ingest")  # Infrastructure: EDGAR 10-K via orchestrator
 async def trigger_edgar_ingest(
     request: Request,
@@ -492,6 +861,7 @@ async def trigger_analysis(
     wait: bool = Query(True, description="If True, await completion; if False, return task_id for polling"),
 ):
     """Submit analysis task. Use wait=false to get task_id and poll GET /tasks/{id}."""
+    logger.info("Finance analyze request: domain=%s query=%r topic=%s wait=%s", domain, query[:80] if query else "", topic, wait)
     _check_domain(domain)
     orch = getattr(request.app.state, "finance_orchestrator", None)
     if not orch:
@@ -573,27 +943,54 @@ async def get_market_trends(
     sector: str | None = Query(None, description="Filter by sector")
 ):
     """
-    Get market trends and analytics for finance domain
-    
-    Note: This endpoint is a placeholder. The backend implementation
-    will analyze financial articles to extract market trends.
+    Get market trends: article volume by day and optional gold summary.
+    Minimal implementation using finance-domain articles and stored gold.
     """
     try:
-        # Validate domain
         if not validate_domain(domain):
             raise HTTPException(status_code=400, detail=f"Invalid domain: {domain}")
 
-        # For now, return a placeholder response
-        # TODO: Implement actual market trend analysis from financial articles
+        delta = _parse_timeframe(timeframe or "7d")
+        days = max(1, delta.days)
+        articles = _get_recent_finance_articles(days=days, limit=500)
+
+        # Article count by date (date string key)
+        by_date = Counter()
+        for a in articles:
+            pub = a.get("published_at") or a.get("published_date")
+            if pub:
+                d = pub.date() if hasattr(pub, "date") else (pub[:10] if isinstance(pub, str) else None)
+                if d:
+                    by_date[str(d)] += 1
+
+        trends = [{"date": d, "article_count": c} for d, c in sorted(by_date.items())]
+
+        # Optional: latest gold from store
+        gold_latest = None
+        try:
+            from domains.finance.gold_amalgamator import get_stored
+            end = datetime.now(timezone.utc).date()
+            start = end - timedelta(days=min(days, 31))
+            stored = get_stored(start=str(start), end=str(end))
+            if stored:
+                for obs_list in stored.values():
+                    if obs_list and isinstance(obs_list, list):
+                        with_val = [o for o in obs_list if o.get("value") is not None]
+                        if with_val:
+                            gold_latest = with_val[-1].get("value")
+                            break
+        except Exception:
+            pass
+
         return {
             "success": True,
             "data": {
-                "timeframe": timeframe,
+                "timeframe": timeframe or "7d",
                 "sector": sector,
-                "trends": [],
-                "message": "Market trends API endpoint is available but not yet implemented. This will analyze financial articles to extract market trends."
+                "trends": trends,
+                "total_articles": len(articles),
+                "gold_latest": gold_latest,
             },
-            "message": "Market trends endpoint - implementation pending",
             "timestamp": datetime.now().isoformat()
         }
 
@@ -602,6 +999,10 @@ async def get_market_trends(
     except Exception as e:
         logger.error(f"Error fetching market trends: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# Simple stopwords for title-word patterns (minimal set)
+_STOP = frozenset("a an the and or but in on at to for of with by from as is was are were be been being".split())
 
 
 @router.get("/{domain}/finance/market-patterns")
@@ -613,30 +1014,50 @@ async def get_market_patterns(
     offset: int = Query(0, ge=0)
 ):
     """
-    Get market patterns detected from financial articles
-    
-    Note: This endpoint is a placeholder. The backend implementation
-    will analyze financial articles to detect market patterns.
+    Get market patterns: simple keyword/category aggregates from recent finance articles.
+    Minimal implementation.
     """
     try:
-        # Validate domain
         if not validate_domain(domain):
             raise HTTPException(status_code=400, detail=f"Invalid domain: {domain}")
 
-        # For now, return a placeholder response
-        # TODO: Implement actual market pattern detection from financial articles
+        articles = _get_recent_finance_articles(days=30, limit=300)
+
+        # Category counts if present
+        by_category = Counter()
+        for a in articles:
+            cat = a.get("category") or a.get("processing_status") or "uncategorized"
+            if isinstance(cat, str):
+                by_category[cat] += 1
+
+        # Top words from titles (alphanumeric, length > 2, not stopwords)
+        word_counts = Counter()
+        for a in articles:
+            title = (a.get("title") or "").lower()
+            for word in re.findall(r"[a-z0-9]+", title):
+                if len(word) > 2 and word not in _STOP:
+                    word_counts[word] += 1
+
+        patterns = [
+            {"name": "category:" + k, "count": v, "type": "category"}
+            for k, v in by_category.most_common(15)
+        ] + [
+            {"name": "keyword:" + k, "count": v, "type": "keyword"}
+            for k, v in word_counts.most_common(20)
+        ]
+        patterns = patterns[offset : offset + limit]
+
         return {
             "success": True,
             "data": {
-                "patterns": [],
+                "patterns": patterns,
                 "pattern_type": pattern_type,
                 "min_confidence": min_confidence,
-                "total": 0,
+                "total": len(by_category) + len(word_counts),
+                "total_articles": len(articles),
                 "limit": limit,
                 "offset": offset,
-                "message": "Market patterns API endpoint is available but not yet implemented. This will analyze financial articles to detect market patterns."
             },
-            "message": "Market patterns endpoint - implementation pending",
             "timestamp": datetime.now().isoformat()
         }
 
@@ -645,6 +1066,14 @@ async def get_market_patterns(
     except Exception as e:
         logger.error(f"Error fetching market patterns: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# Keywords that suggest corporate-announcement content (minimal set)
+_ANNOUNCEMENT_KEYWORDS = [
+    "earnings", "acquisition", "dividend", "ceo", "merger", "revenue", "forecast",
+    "guidance", "ipo", "buyback", "layoff", "restructuring", "sec", "filings",
+    "quarterly", "annual report", "board", "cfo", "executive",
+]
 
 
 @router.get("/{domain}/finance/corporate-announcements")
@@ -656,30 +1085,49 @@ async def get_corporate_announcements(
     offset: int = Query(0, ge=0)
 ):
     """
-    Get corporate announcements from financial articles
-    
-    Note: This endpoint is a placeholder. The backend implementation
-    will extract corporate announcements from financial articles.
+    Get corporate announcements: finance articles matching announcement-related keywords.
+    Minimal implementation; filters title/summary by keyword presence.
     """
     try:
-        # Validate domain
         if not validate_domain(domain):
             raise HTTPException(status_code=400, detail=f"Invalid domain: {domain}")
 
-        # For now, return a placeholder response
-        # TODO: Implement actual corporate announcement extraction from financial articles
+        articles = _get_recent_finance_articles(days=30, limit=300)
+        combined = _ANNOUNCEMENT_KEYWORDS
+
+        announcements = []
+        for a in articles:
+            title = (a.get("title") or "").lower()
+            summary = (a.get("summary") or "").lower()
+            text = title + " " + summary
+            matched = [kw for kw in combined if kw in text]
+            if not matched:
+                continue
+            if company and company.lower() not in text:
+                continue
+            snippet = (a.get("summary") or a.get("title") or "")[:200]
+            pub = a.get("published_at") or a.get("published_date")
+            announcements.append({
+                "title": a.get("title"),
+                "url": a.get("url"),
+                "published_at": pub.isoformat() if hasattr(pub, "isoformat") else str(pub) if pub else None,
+                "snippet": snippet,
+                "matched_keywords": matched,
+            })
+
+        total = len(announcements)
+        announcements = announcements[offset : offset + limit]
+
         return {
             "success": True,
             "data": {
-                "announcements": [],
+                "announcements": announcements,
                 "company": company,
                 "announcement_type": announcement_type,
-                "total": 0,
+                "total": total,
                 "limit": limit,
                 "offset": offset,
-                "message": "Corporate announcements API endpoint is available but not yet implemented. This will extract corporate announcements from financial articles."
             },
-            "message": "Corporate announcements endpoint - implementation pending",
             "timestamp": datetime.now().isoformat()
         }
 

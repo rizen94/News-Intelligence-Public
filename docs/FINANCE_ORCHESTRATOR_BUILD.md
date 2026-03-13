@@ -206,7 +206,7 @@ Checklist:
 Checklist:
 - [x] GPU serialization — asyncio.Lock ensures one LLM call at a time
 - [x] plan_analysis() — determines query, topic, n_chunks
-- [ ] Stale data check — refresh triggered; currently always runs gold refresh for analysis
+- [x] Stale data check — gold evidence cached 1hr; analysis reuses cache when fresh
 - [x] retrieve_evidence() — embed query, vector_store.query for semantic chunks
 - [x] compute_stats() — latest_value, price_change_pct from evidence index
 - [x] build_prompt() — evidence index (REF-ids), stats, chunks, query; system prompt instructs citation
@@ -239,7 +239,7 @@ Checklist:
 - [x] finance_schedule.yaml: gold_refresh daily, edgar_ingest weekly
 - [x] Scheduled tasks use TaskPriority.low
 - [ ] User preemption — queue ordering (deferred; both use same run_task)
-- [ ] Catch-up on startup — first run executes all due tasks
+- [x] Catch-up on startup — scheduler treats last=None as due; runs all on first poll
 - [x] GET /{domain}/finance/schedule — next run, last run per task
 - [ ] Checkpointing for EDGAR — deferred
 

@@ -32,7 +32,7 @@ class FrontendHealthService {
 
     try {
       // Test API connection
-      const response = await fetch(`${this.apiBaseUrl}/api/v4/system_monitoring/health`, {
+      const response = await fetch(`${this.apiBaseUrl}/api/system_monitoring/health`, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
@@ -129,7 +129,7 @@ class FrontendHealthService {
       }
 
       // Report to route supervisor
-      await fetch(`${this.apiBaseUrl}/api/v4/system_monitoring/route_supervisor/check_now`, {
+      await fetch(`${this.apiBaseUrl}/api/system_monitoring/route_supervisor/check_now`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

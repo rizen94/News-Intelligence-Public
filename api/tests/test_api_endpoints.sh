@@ -71,7 +71,7 @@ test_endpoint() {
 echo "============================================================"
 echo "  1. HEALTH CHECK"
 echo "============================================================"
-test_endpoint "GET" "$API_BASE_URL/api/v4/system_monitoring/health" "System Health"
+test_endpoint "GET" "$API_BASE_URL/api/system_monitoring/health" "System Health"
 
 echo ""
 echo "============================================================"
@@ -84,15 +84,15 @@ for domain in politics finance science-tech; do
     echo "  ----------------------------------------"
     
     # Articles
-    test_endpoint "GET" "$API_BASE_URL/api/v4/$domain/articles" \
+    test_endpoint "GET" "$API_BASE_URL/api/$domain/articles" \
         "Articles" "limit=10&offset=0"
     
     # Storylines
-    test_endpoint "GET" "$API_BASE_URL/api/v4/$domain/storylines" \
+    test_endpoint "GET" "$API_BASE_URL/api/$domain/storylines" \
         "Storylines" "limit=10&offset=0"
     
     # RSS Feeds
-    test_endpoint "GET" "$API_BASE_URL/api/v4/$domain/rss_feeds" \
+    test_endpoint "GET" "$API_BASE_URL/api/$domain/rss_feeds" \
         "RSS Feeds"
 done
 
@@ -106,11 +106,11 @@ echo "  Testing pagination for politics domain"
 echo "  ----------------------------------------"
 
 # Test page 1
-test_endpoint "GET" "$API_BASE_URL/api/v4/politics/articles" \
+test_endpoint "GET" "$API_BASE_URL/api/politics/articles" \
     "Page 1 (offset=0)" "limit=5&offset=0"
 
 # Test page 2
-test_endpoint "GET" "$API_BASE_URL/api/v4/politics/articles" \
+test_endpoint "GET" "$API_BASE_URL/api/politics/articles" \
     "Page 2 (offset=5)" "limit=5&offset=5"
 
 echo ""

@@ -20,11 +20,11 @@
 |-------|------------|
 | Backend | Python 3, FastAPI, uvicorn |
 | Frontend | React, Material-UI, Vite |
-| Database | PostgreSQL (on NAS, via SSH tunnel) |
+| Database | PostgreSQL (default: Widow; optional NAS via SSH tunnel) |
 | Cache | Redis (Docker) |
 | LLM | Ollama — Llama 3.1 8B (primary), Mistral 7B (secondary), nomic-embed-text |
 | DB Access | psycopg2 connection pool + SQLAlchemy; `shared.database.connection` is single source |
-| API version | v4 (`/api/v4/...`) |
+| API paths | Flat `/api/...` (no version in path; e.g. `/api/{domain}/finance/analyze`, `/api/orchestrator/status`) |
 
 ---
 
@@ -40,7 +40,7 @@ Three content domains with shared schemas and per-domain tables:
 
 **Global:** watchlist, system_monitoring, health.
 
-**Database:** NAS at `192.168.93.100`; access via SSH tunnel `localhost:5433 → NAS:5432`. Direct DB connections are blocked.
+**Database:** PostgreSQL — default Widow (`DB_HOST` e.g. `192.168.93.101`); rollback to NAS via SSH tunnel `localhost:5433 → NAS:5432`. See [MIGRATION_TODO.md](MIGRATION_TODO.md) and env configuration.
 
 ---
 
@@ -122,16 +122,19 @@ Three content domains with shared schemas and per-domain tables:
 
 ## 6. API Structure
 
-| Domain | Prefix | Key routes |
-|--------|-------|-----------|
-| news_aggregation | `/api/v4/news_aggregation` | articles, feeds |
-| content_analysis | `/api/v4/content_analysis` | topics, extraction, dedup |
-| storyline_management | `/api/v4/storyline_management` | storylines, automation, timeline, watchlist |
-| intelligence_hub | `/api/v4/intelligence_hub` | trends, RAG, synthesis |
-| finance | `/api/v4/finance` | finance-specific |
-| system_monitoring | `/api/v4/system_monitoring` | health, supervisor |
+API uses **flat prefix** `/api` (no `/api/v4/` or version segment). Paths are domain-scoped where applicable.
 
-**Compatibility:** v3 compatibility layer for legacy clients.
+| Domain | Path pattern | Key routes |
+|--------|---------------|------------|
+| news_aggregation | `/api/{domain}/...` (feeds, articles, fetch_articles, collect_now) | articles, feeds |
+| content_analysis | `/api/{domain}/content_analysis/...` or `/api/articles/...` | topics, extraction, dedup |
+| storyline_management | `/api/{domain}/storylines/...` etc. | storylines, automation, timeline, watchlist |
+| intelligence_hub | `/api/intelligence_hub/...` | trends, RAG, synthesis |
+| finance | `/api/{domain}/finance/...` | analyze, tasks, schedule, evidence, gold, fetch-fred |
+| system_monitoring | `/api/system_monitoring/...` | health, pipeline, metrics |
+| orchestrator | `/api/orchestrator/...` | status, dashboard, decision_log, manual_override |
+
+**Compatibility:** v3 compatibility layer exists for legacy clients.
 
 ---
 

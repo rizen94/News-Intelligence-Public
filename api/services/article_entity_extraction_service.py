@@ -1,5 +1,5 @@
 """
-Article Entity Extraction Service - News Intelligence v4.0
+Article Entity Extraction Service - News Intelligence v5.0
 Extracts structured entities from headline + full text at intake.
 Stores: people, orgs, subjects, recurring events (article_entities)
         dates, times, countries (separate tables - excluded from topic clustering)

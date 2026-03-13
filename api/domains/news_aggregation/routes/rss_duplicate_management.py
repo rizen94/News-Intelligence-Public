@@ -13,7 +13,7 @@ from shared.database.connection import get_db_connection
 from scripts.rss_duplicate_detector import RSSDuplicateDetector
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/v4/rss_feeds", tags=["RSS Feed Duplicates"])
+router = APIRouter(prefix="/api/rss_feeds", tags=["RSS Feed Duplicates"])
 
 class DuplicateDetectionResponse(BaseModel):
     success: bool

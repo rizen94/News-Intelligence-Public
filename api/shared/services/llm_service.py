@@ -1,5 +1,5 @@
 """
-Shared LLM Service for News Intelligence System v4.0
+Shared LLM Service for News Intelligence System v5.0
 Uses Ollama-hosted Llama 3.1 8B (primary) and Mistral 7B (secondary)
 """
 
@@ -270,9 +270,14 @@ class LLMService:
             }
     
     async def _call_ollama(self, model: ModelType, prompt: str) -> str:
-        """
-        Make API call to Ollama
-        """
+        """Make API call to Ollama with circuit breaker protection."""
+        from services.circuit_breaker_service import get_circuit_breaker_service, CircuitBreakerOpenException
+        cb_service = get_circuit_breaker_service()
+        cb = cb_service.get_circuit_breaker("ollama")
+
+        if cb.state.value == "open":
+            raise Exception("Ollama circuit breaker is OPEN — skipping call to avoid cascading timeouts")
+
         try:
             response = await self.client.post(
                 f"{self.ollama_base_url}/api/generate",
@@ -283,22 +288,28 @@ class LLMService:
                     "options": {
                         "temperature": 0.7,
                         "top_p": 0.9,
-                        "num_predict": 2000  # Increased for comprehensive analysis
+                        "num_predict": 2000,
                     }
                 }
             )
-            
+
             if response.status_code == 200:
                 result = response.json()
+                await cb._record_success()
                 return result.get("response", "")
             else:
+                await cb._record_failure()
                 raise Exception(f"Ollama API error: {response.status_code} - {response.text}")
-                
+
         except httpx.TimeoutException:
+            await cb._record_failure()
             raise Exception("Ollama request timed out")
         except httpx.ConnectError:
+            await cb._record_failure()
             raise Exception("Cannot connect to Ollama service")
         except Exception as e:
+            if "circuit breaker" not in str(e).lower():
+                await cb._record_failure()
             raise Exception(f"Ollama API error: {str(e)}")
     
     async def get_model_status(self, timeout_seconds: Optional[float] = None) -> Dict[str, Any]:

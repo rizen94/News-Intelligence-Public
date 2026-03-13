@@ -71,6 +71,15 @@ docker logs news-intelligence-nginx --tail 50
 netstat -tlnp | grep 80
 ```
 
+### **Financial Analysis: "Network Error" or no result**
+**Symptoms**: Submit works then result page shows "Network Error", or submit fails with "Cannot reach API".
+**Causes**: (1) Backend not running or wrong API URL; (2) Finance orchestrator failed to start.
+**Solutions**:
+- **API reachable?** From the same host as the frontend: `curl -s http://localhost:8000/api/v4/system_monitoring/health` (or your API base URL). If you get connection refused, start the API (e.g. from `api/`: `uvicorn main_v4:app --host 0.0.0.0 --port 8000`).
+- **Proxy/API URL**: With Vite dev server, `/api` is proxied to `http://localhost:8000`. If the app is built or served elsewhere, set the API base URL (e.g. `VITE_API_URL` or the in-app API URL setting).
+- **Finance orchestrator**: If the backend starts but Finance Orchestrator fails to init, all finance analyze/task requests return **503** with detail "Finance orchestrator not available". Check API startup logs (stdout/stderr) for: `❌ Failed to initialize Finance Orchestrator: …`. Fix the underlying cause (e.g. missing ChromaDB, FRED key, or import error) then restart the API.
+- **Recent request in logs**: The API logs each finance analyze request (e.g. `Finance analyze request: domain=finance query='...' topic=...`). Logs go to stdout and, if file logging is enabled, to `api/logs/` (see `api/config/logging_config.py` and `LOG_DIR` in `api/config/settings.py`). Run the API in a terminal to see recent requests and any 503/orchestrator messages.
+
 ## 🐛 Error Messages
 
 ### **"generator object has no attribute 'query'"**

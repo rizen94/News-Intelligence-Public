@@ -10,7 +10,7 @@ export const intelligenceApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(
-        `/api/v4/${domainKey}/intelligence/rag/${storylineId}`,
+        `/api/${domainKey}/intelligence/rag/${storylineId}`,
         { params: query ? { query } : {} },
       );
       return response.data;
@@ -24,7 +24,7 @@ export const intelligenceApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().post(
-        `/api/v4/${domainKey}/intelligence/rag/query`,
+        `/api/${domainKey}/intelligence/rag/query`,
         { query },
       );
       return response.data;
@@ -38,7 +38,7 @@ export const intelligenceApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(
-        `/api/v4/${domainKey}/intelligence/quality/${storylineId}`,
+        `/api/${domainKey}/intelligence/quality/${storylineId}`,
       );
       return response.data;
     } catch (error) {
@@ -51,7 +51,7 @@ export const intelligenceApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().post(
-        `/api/v4/${domainKey}/intelligence/quality/batch`,
+        `/api/${domainKey}/intelligence/quality/batch`,
         { storyline_ids: storylineIds },
       );
       return response.data;
@@ -65,7 +65,7 @@ export const intelligenceApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(
-        `/api/v4/${domainKey}/intelligence/anomalies`,
+        `/api/${domainKey}/intelligence/anomalies`,
         { params: { limit } },
       );
       return response.data;
@@ -79,7 +79,7 @@ export const intelligenceApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().post(
-        `/api/v4/${domainKey}/intelligence/anomalies/watch`,
+        `/api/${domainKey}/intelligence/anomalies/watch`,
         { anomaly_id: anomalyId },
       );
       return response.data;
@@ -93,7 +93,7 @@ export const intelligenceApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(
-        `/api/v4/${domainKey}/intelligence/impact/${storylineId}`,
+        `/api/${domainKey}/intelligence/impact/${storylineId}`,
       );
       return response.data;
     } catch (error) {
@@ -106,7 +106,7 @@ export const intelligenceApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(
-        `/api/v4/${domainKey}/intelligence/impact/trending`,
+        `/api/${domainKey}/intelligence/impact/trending`,
         { params: { limit } },
       );
       return response.data;
@@ -120,7 +120,7 @@ export const intelligenceApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(
-        `/api/v4/${domainKey}/intelligence/dashboard`,
+        `/api/${domainKey}/intelligence/dashboard`,
       );
       return response.data;
     } catch (error) {
@@ -136,7 +136,7 @@ export const intelligenceApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(
-        `/api/v4/${domainKey}/events`,
+        `/api/${domainKey}/events`,
         { params },
       );
       return response.data;
@@ -154,7 +154,7 @@ export const intelligenceApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().post(
-        `/api/v4/${domainKey}/synthesis/storyline/${storylineId}`,
+        `/api/${domainKey}/synthesis/storyline/${storylineId}`,
         { depth },
       );
       return response.data;
@@ -173,7 +173,7 @@ export const intelligenceApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(
-        `/api/v4/${domainKey}/synthesis/storyline/${storylineId}/${format}`,
+        `/api/${domainKey}/synthesis/storyline/${storylineId}/${format}`,
         { params: { depth } },
       );
       return response.data;
@@ -191,7 +191,7 @@ export const intelligenceApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().post(
-        `/api/v4/${domainKey}/synthesis/bulk`,
+        `/api/${domainKey}/synthesis/bulk`,
         { storyline_ids: storylineIds, depth },
       );
       return response.data;
@@ -205,7 +205,7 @@ export const intelligenceApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(
-        `/api/v4/${domainKey}/synthesis/tasks/${taskId}`,
+        `/api/${domainKey}/synthesis/tasks/${taskId}`,
       );
       return response.data;
     } catch (error) {
@@ -218,7 +218,7 @@ export const intelligenceApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(
-        `/api/v4/${domainKey}/intelligence/digests`,
+        `/api/${domainKey}/intelligence/digests`,
         { params: { limit: count } },
       );
       return response.data;
@@ -232,7 +232,7 @@ export const intelligenceApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().post(
-        `/api/v4/${domainKey}/intelligence/digests/weekly`,
+        `/api/${domainKey}/intelligence/digests/weekly`,
       );
       return response.data;
     } catch (error) {
@@ -245,7 +245,7 @@ export const intelligenceApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().post(
-        `/api/v4/${domainKey}/intelligence/briefings/daily`,
+        `/api/${domainKey}/intelligence/briefings/daily`,
         { date },
       );
       return response.data;
@@ -259,7 +259,7 @@ export const intelligenceApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(
-        `/api/v4/${domainKey}/content_analysis/topics/trending`,
+        `/api/${domainKey}/content_analysis/topics/trending`,
         { params: { hours: days * 24, limit: 50 } },
       );
       return response.data;
@@ -277,7 +277,7 @@ export const intelligenceApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().post(
-        `/api/v4/${domainKey}/intelligence/rag/query`,
+        `/api/${domainKey}/intelligence/rag/query`,
         {
           query: `Generate a comprehensive dossier for story: ${storyId}`,
           include_rag: includeRag,

@@ -14,7 +14,7 @@ from config.database import get_db_connection
 from scripts.article_deduplication import ArticleDeduplicationSystem
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/v4/articles", tags=["Article Deduplication"])
+router = APIRouter(prefix="/api/articles", tags=["Article Deduplication"])
 
 class DeduplicationResponse(BaseModel):
     success: bool

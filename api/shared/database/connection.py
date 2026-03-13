@@ -1,5 +1,5 @@
 """
-Shared Database Connection Module for News Intelligence System v4.0
+Shared Database Connection Module for News Intelligence System v5.0
 With connection pooling for improved performance over SSH tunnel.
 Single source of truth for all DB connections (psycopg2 + SQLAlchemy).
 """
@@ -143,18 +143,19 @@ def _init_pool() -> pool.ThreadedConnectionPool:
         logger.info("Initializing connection pool: %s:%s/%s", config["host"], config["port"], config["database"])
         
         _connection_pool = pool.ThreadedConnectionPool(
-            minconn=2,      # Minimum connections to keep open
-            maxconn=25,     # Maximum connections (for background workers + API requests)
+            minconn=2,
+            maxconn=15,     # Reduced: only 4 connections used in practice; 15 gives headroom without waste
             host=config["host"],
             port=config["port"],
             database=config["database"],
             user=config["user"],
             password=config["password"],
-            connect_timeout=config.get("connect_timeout", 2)  # 2 second timeout
+            connect_timeout=config.get("connect_timeout", 5),
+            options="-c statement_timeout=15000",  # 15s hard limit per SQL statement
         )
         
         _pool_initialized = True
-        logger.info("✅ Connection pool initialized with 2-25 connections")
+        logger.info("Connection pool initialized: 2-15 connections, 15s statement timeout")
         
         return _connection_pool
 

@@ -1,6 +1,6 @@
 /**
  * Domain Context Provider
- * Provides domain context throughout the application for v4.0 multi-domain architecture
+ * Provides domain context throughout the application for v5.0 multi-domain architecture
  */
 
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';

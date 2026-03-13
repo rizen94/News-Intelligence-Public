@@ -225,32 +225,49 @@ class CircuitBreakerService:
         self.circuit_breakers: Dict[str, CircuitBreaker] = {}
         self.default_config = CircuitBreakerConfig()
         
-        # Service-specific configurations
         self.service_configs = {
+            'database': CircuitBreakerConfig(
+                failure_threshold=5,
+                recovery_timeout=30,
+                timeout=10,
+                retry_attempts=1,
+            ),
+            'ollama': CircuitBreakerConfig(
+                failure_threshold=3,
+                recovery_timeout=60,
+                timeout=60,
+                retry_attempts=1,
+            ),
             'wikipedia': CircuitBreakerConfig(
                 failure_threshold=3,
                 recovery_timeout=30,
                 timeout=10,
-                retry_attempts=2
+                retry_attempts=2,
             ),
             'gdelt': CircuitBreakerConfig(
                 failure_threshold=5,
                 recovery_timeout=60,
                 timeout=15,
-                retry_attempts=3
+                retry_attempts=3,
             ),
             'newsapi': CircuitBreakerConfig(
                 failure_threshold=3,
                 recovery_timeout=45,
                 timeout=10,
-                retry_attempts=2
+                retry_attempts=2,
             ),
-            'database': CircuitBreakerConfig(
-                failure_threshold=10,
-                recovery_timeout=30,
-                timeout=5,
-                retry_attempts=1
-            )
+            'edgar': CircuitBreakerConfig(
+                failure_threshold=3,
+                recovery_timeout=120,
+                timeout=15,
+                retry_attempts=2,
+            ),
+            'fred': CircuitBreakerConfig(
+                failure_threshold=3,
+                recovery_timeout=120,
+                timeout=15,
+                retry_attempts=2,
+            ),
         }
     
     def get_circuit_breaker(self, service_name: str) -> CircuitBreaker:

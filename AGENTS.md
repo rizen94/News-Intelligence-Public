@@ -21,7 +21,7 @@ Context for AI assistants. Use project terminology consistently.
 | Domain keys | **politics**, **finance**, **science-tech** | Politics, FINANCE |
 | Feed storage | **rss_feeds** | rssFeeds, RSS Feeds table |
 | Content clusters | **topics** | clusters, themes |
-| API version | **v4** or **api/v4** | v1, v2, v3 |
+| API routes | **`/api/{domain}/...`** (domain-scoped), **`/api/...`** (global) | `/api/v4/...` (legacy, removed) |
 | DB config | **get_db_config**, **get_db_connection**, **get_db** | getDatabaseConfig |
 | System health | **system_monitoring** | monitoring (ambiguous) |
 | Intelligence features | **intelligence_hub** | intelligence hub |
@@ -82,6 +82,18 @@ Context for AI assistants. Use project terminology consistently.
 - **Python:** See `docs/CODING_STYLE_GUIDE.md` — snake_case, `APIResponse(success, data, message)`.
 - **Frontend:** See `web/FRONTEND_STYLE_GUIDE.md` — use `Logger` (not `console.log`) for logging.
 - **API routes:** `snake_case` paths (e.g. `/rss_feeds/`, `/storylines/{id}/timeline`).
+
+---
+
+## API URL Conventions
+
+- **Backend routes all mount at `/api`** — no version prefix in the path.
+- **Domain-scoped:** `/api/{domain}/articles`, `/api/{domain}/storylines`, `/api/{domain}/finance/gold`, etc.
+- **Global:** `/api/system_monitoring/...`, `/api/orchestrator/...`, `/api/watchlist`, `/api/entity_profiles`, `/api/context_centric/...`.
+- **Frontend API modules** (`web/src/services/api/*.ts`) build URLs directly (e.g. `` `/api/${domainKey}/articles` ``).
+- **Request interceptor** (`apiConnectionManager.ts`) injects the domain for the few URLs that omit it, and sets the correct base URL for global vs domain-scoped routes.
+- **Never use `/api/v4/`** in frontend URLs — that prefix was removed; the backend has never used it.
+- See `docs/WEB_API_CONNECTIONS.md` for the full connection flow.
 
 ---
 

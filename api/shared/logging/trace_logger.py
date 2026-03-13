@@ -1,6 +1,7 @@
 """
 Task Execution Trace Logger — span-based task traces (OpenTelemetry-style).
 Writes to logs/task_traces.jsonl. Use SpanContext as context manager.
+When file write or activity_logger forward fails, the write is no-op (failure swallowed).
 """
 
 import json

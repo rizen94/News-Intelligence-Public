@@ -62,8 +62,8 @@ def _fetch_fred(
                 series_id=series_id,
                 status_code=r.status_code,
             )
-        except Exception:
-            pass
+        except Exception as _e:
+            logger.debug("Activity log skip: %s", _e)
         if r.status_code == 429:
             return DataResult.fail("FRED rate limited (429)", "rate_limit")
         r.raise_for_status()
@@ -85,8 +85,8 @@ def _fetch_fred(
                 source="fred",
                 series_id=series_id,
             )
-        except Exception:
-            pass
+        except Exception as _e:
+            logger.debug("Activity log skip: %s", _e)
         logger.warning("FRED fetch failed for %s: %s", series_id, e)
         return DataResult.fail(str(e), "network")
 

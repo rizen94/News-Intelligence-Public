@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 # Legacy router - routes are being migrated to feature-specific files
 # NOTE: This router is included via the consolidated router in __init__.py
-# Prefix removed since it's included in a router that already has /api/v4 prefix
+# Prefix removed since it's included in a router that already has /api prefix
 router = APIRouter(
     tags=["Storyline Management (Legacy)"],
     responses={404: {"description": "Not found"}}

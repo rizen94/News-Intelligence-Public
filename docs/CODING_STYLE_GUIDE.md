@@ -324,11 +324,13 @@ CREATE INDEX idx_articles_category_idx ON articles(category);
 ## 🌐 **API STANDARDS**
 
 ### **Router Prefix Convention (CRITICAL)**
+The project uses **flat `/api`** — no version segment in the path (e.g. `/api/{domain}/finance/...`, not `/api/v4/...`).
+
 ```python
 # ✅ CORRECT - Main domain routers (included directly in main_v4.py)
-# These should have the full /api/v4 prefix
+# Use prefix /api; no version in path
 router = APIRouter(
-    prefix="/api/v4",
+    prefix="/api",
     tags=["Domain Name"]
 )
 
@@ -339,22 +341,21 @@ router = APIRouter(
 )
 
 # ✅ CORRECT - Feature-specific routers with sub-paths
-# These can have a sub-path prefix if they're included directly in main_v4.py
 router = APIRouter(
-    prefix="/api/v4/system-monitoring",  # Full path if included in main
+    prefix="/api/system_monitoring",  # Full path if included in main
     tags=["System Monitoring"]
 )
 
-# ❌ WRONG - Double prefix (causes /api/v4/api/v4/...)
-# Parent router has /api/v4, child router also has /api/v4
-parent_router = APIRouter(prefix="/api/v4")
-child_router = APIRouter(prefix="/api/v4")  # ❌ WRONG!
-parent_router.include_router(child_router)  # Results in /api/v4/api/v4/...
+# ❌ WRONG - Double prefix (causes /api/api/...)
+# Parent router has /api, child router also has /api
+parent_router = APIRouter(prefix="/api")
+child_router = APIRouter(prefix="/api")  # ❌ WRONG!
+parent_router.include_router(child_router)  # Results in /api/api/...
 
 # ✅ CORRECT - Child router without prefix
-parent_router = APIRouter(prefix="/api/v4")
+parent_router = APIRouter(prefix="/api")
 child_router = APIRouter()  # ✅ No prefix - inherits from parent
-parent_router.include_router(child_router)  # Results in /api/v4/...
+parent_router.include_router(child_router)  # Results in /api/...
 ```
 
 ### **Router Inclusion Pattern**
@@ -362,10 +363,10 @@ parent_router.include_router(child_router)  # Results in /api/v4/...
 # ✅ CORRECT - Pattern for domain routers
 # In main_v4.py:
 from domains.storyline_management.routes import router as storyline_router
-app.include_router(storyline_router)  # Router has prefix="/api/v4"
+app.include_router(storyline_router)  # Router has prefix="/api"
 
 # In domains/storyline_management/routes/__init__.py:
-router = APIRouter(prefix="/api/v4")  # ✅ Main router has prefix
+router = APIRouter(prefix="/api")  # ✅ Main router has prefix
 router.include_router(crud_router)    # ✅ Sub-routers have NO prefix
 router.include_router(articles_router)
 
@@ -515,6 +516,15 @@ configs/.env
 ---
 
 ## 📝 **DOCUMENTATION STANDARDS**
+
+### **Keep docs in sync with code**
+When you make a **major change** (e.g. API path scheme, versioning, removal of a feature, or a new system boundary), **retroactively update all affected docs** so they stay accurate. Check at least:
+- Release notes (e.g. `RELEASE_v5.0_STABLE.md`)
+- Capabilities brief (`PROJECT_CAPABILITIES_BRIEF.md`)
+- Controller/architecture docs (`CONTROLLER_ARCHITECTURE.md`, `PROJECT_SCOPE_AND_DEVELOPMENT_STATUS.md`)
+- API reference or route tables in any of the above
+
+Avoid leaving references to old paths, versions, or behavior (e.g. `/api/v4/` when the code uses flat `/api/`).
 
 ### **File Naming Convention**
 ```markdown

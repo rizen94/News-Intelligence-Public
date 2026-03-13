@@ -17,7 +17,7 @@ from shared.services.route_supervisor import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
-    prefix="/api/v4/system_monitoring/route_supervisor",
+    prefix="/api/system_monitoring/route_supervisor",
     tags=["Route Supervisor"],
     responses={404: {"description": "Not found"}}
 )

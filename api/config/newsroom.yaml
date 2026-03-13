@@ -1,0 +1,25 @@
+# Newsroom Orchestrator v6 — optional config
+# Override with env: NEWSROOM_ORCHESTRATOR_ENABLED=true
+newsroom:
+  enabled: true
+  reporter:
+    poll_interval_seconds: 600
+    new_article_window_minutes: 15
+    breaking_news_keywords: []
+    priority_entities: []
+  journalist:
+    investigation_triggers:
+      multiple_entity_mentions: 3
+      pattern_confidence: 0.8
+      user_watchlist_hit: true
+    max_concurrent_investigations: 5
+  editor:
+    quality_threshold: 0.7
+    narrative_update_frequency: 3600
+  event_handling:
+    max_retries: 3
+    backoff_base_seconds: 2
+    dead_letter_after_retries: true
+  circuit_breaker:
+    failure_threshold: 5
+    recovery_minutes: 15

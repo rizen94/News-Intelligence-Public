@@ -8,7 +8,7 @@ Outputs:
   - logs/activity.log — human-readable
   - logs/activity.jsonl — JSON Lines for parsing/analysis
 
-Reduces complexity: one schema, two files, no per-component sprawl.
+When LOG_DIR is unavailable or file write fails, logging is no-op (failure swallowed).
 """
 
 import json

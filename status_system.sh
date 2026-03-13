@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# News Intelligence System v4.0 - Status Check Script
+# News Intelligence System v5.0 - Status Check Script
 # Shows the status of all system components
 
 # Colors for output
@@ -28,7 +28,7 @@ is_port_in_use() {
 }
 
 echo -e "${BLUE}=========================================="
-echo -e "News Intelligence System v4.0 - Status"
+echo -e "News Intelligence System v5.0 - Status"
 echo -e "==========================================${NC}"
 echo ""
 
@@ -67,7 +67,7 @@ echo ""
 echo -e "${CYAN}API Server:${NC}"
 if is_running "uvicorn.*main_v4"; then
     API_PID=$(pgrep -f "uvicorn.*main_v4" | head -1)
-    if curl -s http://localhost:8000/api/v4/system_monitoring/health > /dev/null 2>&1; then
+    if curl -s http://localhost:8000/api/system_monitoring/health > /dev/null 2>&1; then
         echo -e "  ${GREEN}✅ API Server: Running${NC} (PID: $API_PID, http://localhost:8000)"
         echo -e "  ${GREEN}   - AutomationManager: Active${NC}"
         echo -e "  ${GREEN}   - MLProcessingService: Active${NC}"

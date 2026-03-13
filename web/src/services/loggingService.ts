@@ -41,7 +41,7 @@ class LoggingService {
   private maxBufferSize = 100;
   private isProduction: boolean;
   private enableRemoteLogging: boolean = false;
-  private remoteLoggingEndpoint: string = '/api/v4/system_monitoring/logs';
+  private remoteLoggingEndpoint: string = '/api/system_monitoring/logs';
 
   constructor() {
     this.sessionId = this.generateSessionId();

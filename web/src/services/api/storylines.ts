@@ -18,7 +18,7 @@ export const storylinesApi = {
       if (params.status) apiParams.status = params.status;
 
       const response = await getApi().get(
-        `/api/v4/${domainKey}/storylines`,
+        `/api/${domainKey}/storylines`,
         { params: apiParams },
       );
       return response.data;
@@ -32,7 +32,7 @@ export const storylinesApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(
-        `/api/v4/${domainKey}/storylines/${id}`,
+        `/api/${domainKey}/storylines/${id}`,
       );
       return response.data;
     } catch (error: any) {
@@ -55,7 +55,7 @@ export const storylinesApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(
-        `/api/v4/${domainKey}/storylines/${id}/timeline`,
+        `/api/${domainKey}/storylines/${id}/timeline`,
       );
       return response.data;
     } catch (error) {
@@ -72,7 +72,7 @@ export const storylinesApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(
-        `/api/v4/${domainKey}/storylines/${id}/narrative`,
+        `/api/${domainKey}/storylines/${id}/narrative`,
         { params: { mode } },
       );
       return response.data;
@@ -89,7 +89,7 @@ export const storylinesApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().post(
-        `/api/v4/${domainKey}/storylines`,
+        `/api/${domainKey}/storylines`,
         storylineData,
       );
       return response.data;
@@ -107,7 +107,7 @@ export const storylinesApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().put(
-        `/api/v4/${domainKey}/storylines/${id}`,
+        `/api/${domainKey}/storylines/${id}`,
         data,
       );
       return response.data;
@@ -121,7 +121,7 @@ export const storylinesApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().delete(
-        `/api/v4/${domainKey}/storylines/${id}`,
+        `/api/${domainKey}/storylines/${id}`,
       );
       return response.data;
     } catch (error) {
@@ -137,7 +137,7 @@ export const storylinesApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().post(
-        `/api/v4/${domainKey}/storylines/discover`,
+        `/api/${domainKey}/storylines/discover`,
         params,
       );
       return response.data;
@@ -151,7 +151,7 @@ export const storylinesApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(
-        `/api/v4/${domainKey}/storylines/breaking_news`,
+        `/api/${domainKey}/storylines/breaking_news`,
         { params: { hours } },
       );
       return response.data;
@@ -165,7 +165,7 @@ export const storylinesApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(
-        `/api/v4/${domainKey}/storylines/compare`,
+        `/api/${domainKey}/storylines/compare`,
         { params: { min_similarity: minSimilarity } },
       );
       return response.data;
@@ -179,7 +179,7 @@ export const storylinesApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(
-        `/api/v4/${domainKey}/storylines/evolution`,
+        `/api/${domainKey}/storylines/evolution`,
         { params: { hours } },
       );
       return response.data;
@@ -197,7 +197,7 @@ export const storylinesApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(
-        `/api/v4/${domainKey}/storylines/merge_check`,
+        `/api/${domainKey}/storylines/merge_check`,
         { params: { storyline_id_1: storylineId1, storyline_id_2: storylineId2 } },
       );
       return response.data;
@@ -209,7 +209,7 @@ export const storylinesApi = {
 
   async getConsolidationStatus() {
     try {
-      const response = await getApi().get('/api/v4/storylines/consolidation/status');
+      const response = await getApi().get('/api/storylines/consolidation/status');
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to get consolidation status', error as Error);
@@ -220,8 +220,8 @@ export const storylinesApi = {
   async runConsolidation(domain?: string) {
     try {
       const url = domain
-        ? `/api/v4/${domain}/storylines/consolidation/run`
-        : '/api/v4/storylines/consolidation/run';
+        ? `/api/${domain}/storylines/consolidation/run`
+        : '/api/storylines/consolidation/run';
       const response = await getApi().post(url);
       return response.data;
     } catch (error) {
@@ -234,7 +234,7 @@ export const storylinesApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(
-        `/api/v4/${domainKey}/storylines/hierarchy`,
+        `/api/${domainKey}/storylines/hierarchy`,
         { params: { mega_only: megaOnly } },
       );
       return response.data;
@@ -248,7 +248,7 @@ export const storylinesApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(
-        `/api/v4/${domainKey}/storylines/mega`,
+        `/api/${domainKey}/storylines/mega`,
         { params: { limit } },
       );
       return response.data;
@@ -266,7 +266,7 @@ export const storylinesApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().post(
-        `/api/v4/${domainKey}/storylines/merge/${primaryId}/${secondaryId}`,
+        `/api/${domainKey}/storylines/merge/${primaryId}/${secondaryId}`,
       );
       return response.data;
     } catch (error) {
@@ -283,7 +283,7 @@ export const storylinesApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(
-        `/api/v4/${domainKey}/storylines/${storylineId}/related`,
+        `/api/${domainKey}/storylines/${storylineId}/related`,
         { params: { limit } },
       );
       return response.data;
@@ -297,7 +297,7 @@ export const storylinesApi = {
     const domainKey = domain || getCurrentDomain();
     try {
       const response = await getApi().post(
-        `/api/v4/${domainKey}/storylines/${id}/analyze`,
+        `/api/${domainKey}/storylines/${id}/analyze`,
       );
       return response?.data || { success: true, message: 'Analysis started' };
     } catch (error: any) {
@@ -305,7 +305,7 @@ export const storylinesApi = {
       if (error?.response?.status === 404 || error?.code === 'ERR_BAD_REQUEST') {
         try {
           const fallback = await getApi().post(
-            `/api/v4/${domainKey}/storylines/${id}/analyze`,
+            `/api/${domainKey}/storylines/${id}/analyze`,
           );
           return fallback?.data || { success: true, message: 'Analysis started' };
         } catch {
@@ -325,7 +325,7 @@ export const storylinesApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(
-        `/api/v4/${domainKey}/storylines/${storylineId}/available_articles`,
+        `/api/${domainKey}/storylines/${storylineId}/available_articles`,
         { params },
       );
       return response.data;
@@ -343,7 +343,7 @@ export const storylinesApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().post(
-        `/api/v4/${domainKey}/storylines/${storylineId}/articles/${articleId}`,
+        `/api/${domainKey}/storylines/${storylineId}/articles/${articleId}`,
       );
       return response.data;
     } catch (error) {
@@ -360,7 +360,7 @@ export const storylinesApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().delete(
-        `/api/v4/${domainKey}/storylines/${storylineId}/articles/${articleId}`,
+        `/api/${domainKey}/storylines/${storylineId}/articles/${articleId}`,
       );
       return response.data;
     } catch (error) {
@@ -373,7 +373,7 @@ export const storylinesApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(
-        `/api/v4/${domainKey}/storylines/${storylineId}/automation/settings`,
+        `/api/${domainKey}/storylines/${storylineId}/automation/settings`,
       );
       return response.data;
     } catch (error) {
@@ -390,7 +390,7 @@ export const storylinesApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().put(
-        `/api/v4/${domainKey}/storylines/${storylineId}/automation/settings`,
+        `/api/${domainKey}/storylines/${storylineId}/automation/settings`,
         settings,
       );
       return response.data;
@@ -408,7 +408,7 @@ export const storylinesApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().post(
-        `/api/v4/${domainKey}/storylines/${storylineId}/automation/discover?force_refresh=${forceRefresh}`,
+        `/api/${domainKey}/storylines/${storylineId}/automation/discover?force_refresh=${forceRefresh}`,
       );
       return response.data;
     } catch (error) {
@@ -421,7 +421,7 @@ export const storylinesApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(
-        `/api/v4/${domainKey}/storylines/${storylineId}/automation/suggestions`,
+        `/api/${domainKey}/storylines/${storylineId}/automation/suggestions`,
       );
       return response.data;
     } catch (error) {
@@ -438,7 +438,7 @@ export const storylinesApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().post(
-        `/api/v4/${domainKey}/storylines/${storylineId}/automation/suggestions/${suggestionId}/approve`,
+        `/api/${domainKey}/storylines/${storylineId}/automation/suggestions/${suggestionId}/approve`,
       );
       return response.data;
     } catch (error) {
@@ -455,7 +455,7 @@ export const storylinesApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().post(
-        `/api/v4/${domainKey}/storylines/${storylineId}/automation/suggestions/${suggestionId}/reject`,
+        `/api/${domainKey}/storylines/${storylineId}/automation/suggestions/${suggestionId}/reject`,
       );
       return response.data;
     } catch (error) {

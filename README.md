@@ -8,10 +8,12 @@ The News Intelligence System is an AI-powered news aggregation and analysis plat
 
 **Architecture:** Primary (API, ML, frontend) + Widow (PostgreSQL, RSS) + NAS (storage). See [docs/ARCHITECTURE_AND_OPERATIONS.md](docs/ARCHITECTURE_AND_OPERATIONS.md).
 
+**Project map:** API `api/main_v4.py` · Frontend `web/src/App.tsx` · Domains: politics, finance, science-tech (articles, storylines, topics, rss_feeds, events). Routes: `api/domains/*/routes/` · [docs/DOCS_INDEX.md](docs/DOCS_INDEX.md) and [AGENTS.md](AGENTS.md) for full index and standards.
+
 ### **Quick Access**
 - **Web Interface**: http://localhost:3000
 - **API Documentation**: http://localhost:8000/docs
-- **System Health**: http://localhost:8000/api/v4/system_monitoring/health
+- **System Health**: http://localhost:8000/api/system_monitoring/health
 
 ---
 
@@ -41,7 +43,7 @@ open http://localhost:3000
 ./stop_system.sh
 
 # Check system health
-curl http://localhost:8000/api/v4/system_monitoring/health
+curl http://localhost:8000/api/system_monitoring/health
 ```
 
 See [Setup and Deployment Guide](./docs/SETUP_AND_DEPLOYMENT.md) for detailed instructions.
@@ -96,29 +98,23 @@ See [Setup and Deployment Guide](./docs/SETUP_AND_DEPLOYMENT.md) for detailed in
 - **Port**: 6379
 - **Features**: Session storage, Data caching, Pipeline state
 
+### **Project map (quick reference)**
+- **Entry points:** API `api/main_v4.py` | Frontend `web/src/App.tsx` | API client `web/src/services/api/` + `apiService.ts`
+- **Domains:** politics, finance, science-tech (per-domain: articles, storylines, topics, rss_feeds, events; global: watchlist, monitoring, system_monitoring)
+- **Key flows:** RSS → processing → storyline linking → event extraction; storylines → analyze → timeline → watchlist
+- **Routes:** `api/domains/*/routes/` | Services: `api/services/`, `api/domains/*/services/` | Frontend: `web/src/pages/`
+
 ---
 
 ## 📚 Documentation
 
-### **Getting Started**
-- **[Setup and Deployment](./docs/SETUP_AND_DEPLOYMENT.md)** - Complete installation and deployment guide
-- **[Quick Start](./QUICK_START.md)** - Fast setup instructions
-- **[Development Methodology](./docs/DEVELOPMENT_METHODOLOGY.md)** - Development workflow and standards
-
-### **System Configuration**
-- **[Ollama Setup](./docs/OLLAMA_SETUP.md)** - AI model configuration and management
-- **[NAS Storage Setup](./docs/NAS_PERSISTENT_STORAGE_SETUP.md)** - Network storage configuration
-- **[NAS Database Requirement](./docs/NAS_DATABASE_REQUIREMENT.md)** - Database migration to NAS
-
-### **Technical Reference**
-- **[API Reference](./docs/API_REFERENCE.md)** - Complete API documentation
-- **[Database Schema](./docs/DATABASE_SCHEMA_DOCUMENTATION.md)** - Database structure and relationships
-- **[System Status](./docs/SYSTEM_STATUS.md)** - Current system health and status
-- **[Troubleshooting](./docs/TROUBLESHOOTING.md)** - Common issues and solutions
-
-### **Architecture & Design**
-- **[V4 Architecture](./docs/V4_COMPLETE_ARCHITECTURE.md)** - Complete system architecture
-- **[Coding Standards](./docs/CODING_STYLE_GUIDE.md)** - Code style and standards guide
+- **[Documentation index](./docs/DOCS_INDEX.md)** — Start here for all docs (setup, API, schema, domains, planning).
+- **[Quick Start](./QUICK_START.md)** — Start/stop/status.
+- **[Setup and Deployment](./docs/SETUP_AND_DEPLOYMENT.md)** — Installation and deployment.
+- **[API Reference](./docs/API_REFERENCE.md)** — API documentation.
+- **[Database Schema](./docs/DATABASE_SCHEMA_DOCUMENTATION.md)** — Schema and relationships.
+- **[Coding standards](./docs/CODING_STYLE_GUIDE.md)** — Code style and standards.
+- **[Troubleshooting](./docs/TROUBLESHOOTING.md)** — Common issues and solutions.
 
 ---
 
@@ -171,7 +167,7 @@ See [Setup and Deployment Guide](./docs/SETUP_AND_DEPLOYMENT.md) for detailed in
 docker-compose down && docker-compose up -d
 
 # Check system health
-curl http://localhost:8000/api/v4/system_monitoring/health
+curl http://localhost:8000/api/system_monitoring/health
 
 # View error logs
 docker logs news-intelligence-api --tail 50
@@ -211,7 +207,7 @@ docker logs news-intelligence-api --tail 50
 ### **Quick Diagnostics**
 ```bash
 # Check system health
-curl http://localhost:8000/api/v4/system_monitoring/health
+curl http://localhost:8000/api/system_monitoring/health
 
 # Check articles
 curl http://localhost:8000/api/articles/
@@ -224,14 +220,12 @@ python3 scripts/simple_integration.py
 ```
 
 ### **Documentation**
-- All documentation is in the `docs/` directory
-- System status: `docs/SYSTEM_STATUS.md`
-- API reference: `docs/API_REFERENCE.md`
-- Troubleshooting: `docs/TROUBLESHOOTING.md`
+- **Index:** [docs/DOCS_INDEX.md](docs/DOCS_INDEX.md) — full doc list
+- API: `docs/API_REFERENCE.md` | Troubleshooting: `docs/TROUBLESHOOTING.md`
 
 ---
 
 **System Status**: 🟢 **FULLY OPERATIONAL**  
 **Last Verified**: December 2024  
-**Version**: 4.0  
+**Version**: 5.0  
 **Next Check**: Recommended weekly

@@ -356,9 +356,10 @@ class RSSFetchingModule:
         return True
     
     async def _check_nlp_classifier(self, article: ArticleData) -> bool:
-        """Check article using NLP classifier (placeholder for future implementation)"""
-        # TODO: Implement local NLP classifier using HuggingFace transformers
-        # For now, return True to allow all articles
+        """Check article using NLP classifier.
+        Future: local NLP classifier (e.g. HuggingFace) for feed/category filtering.
+        Currently a no-op — all articles allowed.
+        """
         return True
     
     async def _is_duplicate(self, article: ArticleData) -> bool:

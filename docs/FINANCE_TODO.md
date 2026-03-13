@@ -12,6 +12,12 @@
 
 Run: `PYTHONPATH=api python3 scripts/validate_finance_pipeline.py`
 
+## Evidence
+
+- [x] **Evidence collector** — `api/domains/finance/evidence_collector.py` aggregates RSS (finance-domain articles), optional API summary, optional RAG. Used in analysis: `task.context.rss_snippets` and "## News / RSS" in prompt.
+- [x] **Evidence preview API** — `GET /api/{domain}/finance/evidence/preview` for on-demand bundle (query, topic, hours, max_rss, include_rss, include_api_summary, include_rag).
+- [x] **RSS in task result** — Analysis result `output.rss_snippets` includes title, url, published_at for news used in the analysis.
+
 ## Current Backend Development (in progress)
 
 ### From FINANCE_ORCHESTRATOR_BUILD.md — Remaining Items
@@ -21,6 +27,7 @@ Run: `PYTHONPATH=api python3 scripts/validate_finance_pipeline.py`
 - [ ] **User preemption** — Queue ordering so user tasks preempt scheduled (deferred)
 - [x] **Catch-up on startup** — Scheduler treats last=None as due; runs all on first poll
 - [ ] **Checkpointing for EDGAR** — Deferred
+- [x] **Placeholder endpoints** — `GET market-trends`, `GET market-patterns`, `GET corporate-announcements` implemented minimally (finance articles + gold where applicable; see CLEANUP_PLAN Phase B).
 
 ### API Gaps for Frontend Integration
 

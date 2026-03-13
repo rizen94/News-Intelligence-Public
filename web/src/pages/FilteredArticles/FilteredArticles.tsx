@@ -60,6 +60,7 @@ interface FilteredArticle {
   article_id: number;
   title: string;
   source: string;
+  source_domain?: string;
   url: string;
   reasons: string[];
   quality_score: number;
@@ -503,7 +504,7 @@ const FilteredArticles: React.FC = () => {
                               </Typography>
                             )}
                           </TableCell>
-                          <TableCell>{article.source}</TableCell>
+                          <TableCell>{article.source || article.source_domain || '—'}</TableCell>
                           <TableCell>
                             <Box display="flex" flexWrap="wrap" gap={0.5}>
                               {article.reasons.map((reason) => (

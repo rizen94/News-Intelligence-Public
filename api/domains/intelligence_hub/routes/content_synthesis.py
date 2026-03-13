@@ -17,7 +17,7 @@ from services.deep_content_synthesis import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/v4", tags=["Content Synthesis"])
+router = APIRouter(prefix="/api", tags=["Content Synthesis"])
 
 
 # =============================================================================
@@ -401,7 +401,7 @@ async def bulk_synthesize_storylines(
         "success": True,
         "task_id": task_id,
         "message": f"Synthesizing {len(storyline_ids)} storylines in background",
-        "check_status": f"/api/v4/{domain}/synthesis/tasks/{task_id}"
+        "check_status": f"/api/{domain}/synthesis/tasks/{task_id}"
     }
 
 

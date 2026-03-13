@@ -21,7 +21,7 @@ from domains.content_analysis.services.topic_merge_suggestions import get_merge_
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
-    prefix="/api/v4",
+    prefix="/api",
     tags=["Content Analysis"],
     responses={404: {"description": "Not found"}}
 )
@@ -82,13 +82,17 @@ async def get_articles(limit: int = 20, offset: int = 0, status: Optional[str] =
                 
                 articles = []
                 for row in cur.fetchall():
+                    pub_at = row[5].isoformat() if row[5] else None
+                    src_domain = row[4]
                     articles.append({
                         "id": row[0],
                         "title": row[1],
-                        "content": row[2][:500] + "..." if len(row[2]) > 500 else row[2],  # Truncate for list view
+                        "content": row[2][:500] + "..." if row[2] and len(row[2]) > 500 else (row[2] or ""),
                         "url": row[3],
-                        "source_domain": row[4],
-                        "published_at": row[5].isoformat() if row[5] else None,
+                        "source_domain": src_domain,
+                        "source": src_domain,
+                        "published_at": pub_at,
+                        "published_date": pub_at,
                         "summary": row[6],
                         "quality_score": row[7],
                         "sentiment_score": row[8],

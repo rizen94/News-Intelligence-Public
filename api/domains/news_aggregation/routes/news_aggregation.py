@@ -17,7 +17,7 @@ from domains.news_aggregation.services.article_service import ArticleService
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
-    prefix="/api/v4",
+    prefix="/api",
     tags=["News Aggregation"],
     responses={404: {"description": "Not found"}}
 )
@@ -149,96 +149,173 @@ async def get_domain_rss_feeds(
         logger.error(f"Error fetching RSS feeds for domain {domain}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/rss_feeds")
-async def create_rss_feed(feed_data: Dict[str, Any]):
-    """Create a new RSS feed with duplicate prevention"""
+def _get_schema_for_domain(conn, domain: str):
+    """Resolve schema_name from domain key. Raises HTTPException if invalid."""
+    if not validate_domain(domain):
+        raise HTTPException(status_code=400, detail=f"Invalid or inactive domain: {domain}")
+    with conn.cursor() as cur:
+        cur.execute("SELECT schema_name FROM domains WHERE domain_key = %s", (domain,))
+        result = cur.fetchone()
+        if not result:
+            raise HTTPException(status_code=400, detail=f"Domain {domain} not found")
+        return result[0]
+
+
+@router.post("/{domain}/rss_feeds")
+async def create_domain_rss_feed(
+    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    feed_data: Dict[str, Any] = Body(...),
+):
+    """Create a new RSS feed in the given domain with duplicate prevention."""
     try:
         conn = get_db_connection()
         if not conn:
             raise HTTPException(status_code=500, detail="Database connection failed")
-        
         try:
-            feed_url = feed_data.get("feed_url")
-            feed_name = feed_data.get("feed_name")
-            
-            # Check for existing feed with same URL
+            schema_name = _get_schema_for_domain(conn, domain)
+            feed_url = feed_data.get("feed_url") or feed_data.get("url")
+            feed_name = feed_data.get("feed_name") or feed_data.get("name")
+            if not feed_url or not feed_name:
+                raise HTTPException(status_code=400, detail="feed_url and feed_name are required")
             with conn.cursor() as cur:
-                cur.execute("""
-                    SELECT id, feed_name, is_active 
-                    FROM rss_feeds 
-                    WHERE feed_url = %s
+                cur.execute(f"""
+                    SELECT id, feed_name, is_active FROM {schema_name}.rss_feeds WHERE feed_url = %s
                 """, (feed_url,))
-                
-                existing_feed = cur.fetchone()
-                
-                if existing_feed:
-                    existing_id, existing_name, existing_active = existing_feed
+                existing = cur.fetchone()
+                if existing:
                     return {
                         "success": False,
                         "error": "duplicate_url",
-                        "data": {
-                            "existing_feed": {
-                                "id": existing_id,
-                                "name": existing_name,
-                                "is_active": existing_active
-                            }
-                        },
-                        "message": f"RSS feed with URL '{feed_url}' already exists (ID: {existing_id}, Name: '{existing_name}')"
+                        "data": {"existing_feed": {"id": existing[0], "name": existing[1], "is_active": existing[2]}},
+                        "message": f"RSS feed with URL already exists (ID: {existing[0]})",
                     }
-                
-                # Check for similar feed names
-                cur.execute("""
-                    SELECT id, feed_name, feed_url 
-                    FROM rss_feeds 
-                    WHERE LOWER(feed_name) = LOWER(%s)
-                """, (feed_name,))
-                
-                similar_feed = cur.fetchone()
-                
-                if similar_feed:
-                    similar_id, similar_name, similar_url = similar_feed
-                    return {
-                        "success": False,
-                        "error": "similar_name",
-                        "data": {
-                            "similar_feed": {
-                                "id": similar_id,
-                                "name": similar_name,
-                                "url": similar_url
-                            }
-                        },
-                        "message": f"RSS feed with similar name '{feed_name}' already exists (ID: {similar_id}, URL: '{similar_url}')"
-                    }
-                
-                # Create new feed
-                cur.execute("""
-                    INSERT INTO rss_feeds (feed_name, feed_url, is_active, fetch_interval_seconds, created_at)
+                fetch_interval = feed_data.get("fetch_interval_seconds") or (feed_data.get("update_interval") and int(feed_data["update_interval"]) * 60) or 3600
+                cur.execute(f"""
+                    INSERT INTO {schema_name}.rss_feeds (feed_name, feed_url, is_active, fetch_interval_seconds, created_at)
                     VALUES (%s, %s, %s, %s, %s)
                     RETURNING id
-                """, (
-                    feed_name,
-                    feed_url,
-                    feed_data.get("is_active", True),
-                    feed_data.get("fetch_interval_seconds", 3600),  # 1 hour default
-                    datetime.now()
-                ))
-                
+                """, (feed_name, feed_url, feed_data.get("is_active", True), fetch_interval, datetime.now()))
                 feed_id = cur.fetchone()[0]
                 conn.commit()
-                
                 return {
                     "success": True,
-                    "data": {"feed_id": feed_id},
+                    "data": {"feed_id": feed_id, "domain": domain},
                     "message": "RSS feed created successfully",
-                    "timestamp": datetime.now().isoformat()
+                    "timestamp": datetime.now().isoformat(),
                 }
-                
         finally:
             conn.close()
-            
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error creating RSS feed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/{domain}/rss_feeds/{feed_id}")
+async def update_domain_rss_feed(
+    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    feed_id: int = Path(..., description="Feed ID"),
+    feed_data: Dict[str, Any] = Body(...),
+):
+    """Update an RSS feed in the given domain."""
+    try:
+        conn = get_db_connection()
+        if not conn:
+            raise HTTPException(status_code=500, detail="Database connection failed")
+        try:
+            schema_name = _get_schema_for_domain(conn, domain)
+            updates = []
+            params = []
+            if "feed_name" in feed_data and feed_data["feed_name"] is not None:
+                updates.append("feed_name = %s")
+                params.append(feed_data["feed_name"])
+            elif "name" in feed_data and feed_data["name"] is not None:
+                updates.append("feed_name = %s")
+                params.append(feed_data["name"])
+            if "feed_url" in feed_data and feed_data["feed_url"] is not None:
+                updates.append("feed_url = %s")
+                params.append(feed_data["feed_url"])
+            elif "url" in feed_data and feed_data["url"] is not None:
+                updates.append("feed_url = %s")
+                params.append(feed_data["url"])
+            if "is_active" in feed_data:
+                updates.append("is_active = %s")
+                params.append(bool(feed_data["is_active"]))
+            if "fetch_interval_seconds" in feed_data:
+                updates.append("fetch_interval_seconds = %s")
+                params.append(int(feed_data["fetch_interval_seconds"]))
+            elif "update_interval" in feed_data and feed_data["update_interval"] is not None:
+                updates.append("fetch_interval_seconds = %s")
+                params.append(int(feed_data["update_interval"]) * 60)
+            if not updates:
+                raise HTTPException(status_code=400, detail="No fields to update")
+            updates.append("updated_at = %s")
+            params.append(datetime.now())
+            params.append(feed_id)
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"UPDATE {schema_name}.rss_feeds SET " + ", ".join(updates) + " WHERE id = %s",
+                    params,
+                )
+                if cur.rowcount == 0:
+                    raise HTTPException(status_code=404, detail=f"Feed {feed_id} not found in domain {domain}")
+                conn.commit()
+            return {
+                "success": True,
+                "data": {"feed_id": feed_id, "domain": domain},
+                "message": "RSS feed updated successfully",
+                "timestamp": datetime.now().isoformat(),
+            }
+        finally:
+            conn.close()
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating RSS feed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/{domain}/rss_feeds/{feed_id}")
+async def delete_domain_rss_feed(
+    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    feed_id: int = Path(..., description="Feed ID"),
+):
+    """Delete an RSS feed from the given domain."""
+    try:
+        conn = get_db_connection()
+        if not conn:
+            raise HTTPException(status_code=500, detail="Database connection failed")
+        try:
+            schema_name = _get_schema_for_domain(conn, domain)
+            with conn.cursor() as cur:
+                cur.execute(f"DELETE FROM {schema_name}.rss_feeds WHERE id = %s", (feed_id,))
+                if cur.rowcount == 0:
+                    raise HTTPException(status_code=404, detail=f"Feed {feed_id} not found in domain {domain}")
+                conn.commit()
+            return {
+                "success": True,
+                "data": {"feed_id": feed_id, "domain": domain},
+                "message": "RSS feed deleted successfully",
+                "timestamp": datetime.now().isoformat(),
+            }
+        finally:
+            conn.close()
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting RSS feed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/rss_feeds")
+async def create_rss_feed(feed_data: Dict[str, Any] = Body(...)):
+    """Create RSS feed (legacy). Prefer POST /{domain}/rss_feeds. Uses domain from body or defaults to politics."""
+    domain = feed_data.get("domain") or "politics"
+    if domain not in ("politics", "finance", "science-tech"):
+        raise HTTPException(status_code=400, detail="domain must be politics, finance, or science-tech")
+    # Delegate to domain-scoped create
+    return await create_domain_rss_feed(domain=domain, feed_data=feed_data)
 
 @router.post("/{domain}/rss_feeds/collect_now")
 async def collect_rss_feeds_now(
@@ -506,7 +583,7 @@ async def get_recent_articles_legacy(
 ):
     """
     Legacy endpoint - redirects to politics domain.
-    Use /api/v4/{domain}/articles instead.
+    Use /api/{domain}/articles instead.
     """
     # Redirect to politics domain
     return await get_domain_articles(

@@ -16,6 +16,7 @@ data/
 venv/
 env/
 .venv/
+.venv.backup/
 
 # Python cache and compiled files
 __pycache__/
@@ -101,6 +102,9 @@ news-system-export*.zip
 
 # Relocated archive (27GB, 508k files - kept external)
 archive/
+
+# Generated pi reports (scripts/pi_*.sh output)
+scripts/pi_reports/
 
 # Migration state overrides (may contain IPs, do not commit secrets)
 infrastructure/*.local.json

@@ -5,6 +5,8 @@ Flat /api/... routes. See docs/CONTEXT_CENTRIC_UPGRADE_PLAN.md.
 """
 
 import logging
+from datetime import date, datetime
+from decimal import Decimal
 from typing import Any, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Body
@@ -12,6 +14,21 @@ from fastapi import APIRouter, HTTPException, Query, Body
 from shared.database.connection import get_db_connection
 
 logger = logging.getLogger(__name__)
+
+
+def _json_safe(val: Any) -> Any:
+    """Convert value to JSON-serializable form (Decimal, date, datetime -> str)."""
+    if val is None:
+        return None
+    if isinstance(val, (date, datetime)):
+        return val.isoformat()
+    if isinstance(val, Decimal):
+        return float(val)
+    if isinstance(val, dict):
+        return {k: _json_safe(v) for k, v in val.items()}
+    if isinstance(val, list):
+        return [_json_safe(v) for v in val]
+    return val
 
 router = APIRouter(
     prefix="/api",
@@ -27,6 +44,113 @@ def _safe_count(cur, sql: str, default: int = 0) -> int:
         return row[0] if row is not None else default
     except Exception:
         return default
+
+
+@router.post("/context_centric/sync_entity_profiles", response_model=dict)
+def sync_entity_profiles(domain_key: Optional[str] = Query(None, description="Sync this domain only; omit to sync all")) -> dict:
+    """
+    Run entity_profile_sync: backfill entity_canonical from article_entities, then
+    copy entity_canonical -> intelligence.entity_profiles for the given domain (or all).
+    Returns counts of new profiles created per domain.
+    """
+    try:
+        from config.context_centric_config import is_context_centric_task_enabled
+        if not is_context_centric_task_enabled("entity_profile_sync"):
+            return {"success": False, "error": "entity_profile_sync task is disabled in context_centric config"}
+    except Exception:
+        pass
+    from services.entity_profile_sync_service import backfill_entity_canonical, sync_domain_entity_profiles
+
+    domains = [domain_key] if domain_key else ["politics", "finance", "science-tech"]
+    if domain_key and domain_key not in ("politics", "finance", "science-tech"):
+        raise HTTPException(status_code=400, detail="domain_key must be one of politics, finance, science-tech")
+
+    backfill_counts: dict[str, int] = {}
+    result: dict[str, int] = {}
+    for d in domains:
+        try:
+            backfilled = backfill_entity_canonical(d)
+            backfill_counts[d] = backfilled
+        except Exception as e:
+            logger.warning(f"backfill_entity_canonical {d}: {e}")
+            backfill_counts[d] = 0
+        try:
+            created = sync_domain_entity_profiles(d)
+            result[d] = created
+        except Exception as e:
+            logger.warning(f"sync_entity_profiles {d}: {e}")
+            result[d] = -1
+    return {"success": True, "created_by_domain": result, "canonical_backfilled": backfill_counts}
+
+
+@router.post("/context_centric/sync_contexts", response_model=dict)
+def sync_contexts(
+    domain_key: Optional[str] = Query(None, description="Sync this domain only; omit to sync all"),
+    limit: int = Query(500, ge=1, le=2000, description="Max articles to backfill per domain"),
+) -> dict:
+    """
+    Backfill intelligence.contexts from domain articles that don't have a context yet.
+    Use this to create finance (or other domain) contexts from existing articles when
+    politics is filling in but another domain is not yet.
+    """
+    from services.context_processor_service import sync_domain_articles_to_contexts
+
+    domains = [domain_key] if domain_key else ["politics", "finance", "science-tech"]
+    if domain_key and domain_key not in ("politics", "finance", "science-tech"):
+        raise HTTPException(status_code=400, detail="domain_key must be one of politics, finance, science-tech")
+
+    result: dict[str, int] = {}
+    for d in domains:
+        try:
+            created = sync_domain_articles_to_contexts(d, limit=limit)
+            result[d] = created
+        except Exception as e:
+            logger.warning(f"sync_contexts %s: %s", d, e)
+            result[d] = -1
+    return {"success": True, "contexts_created_by_domain": result}
+
+
+@router.post("/context_centric/cleanup", response_model=dict)
+def run_intelligence_cleanup(
+    domain_key: Optional[str] = Query(None, description="Clean this domain only; omit for all"),
+) -> dict:
+    """
+    Run the full intelligence cleanup cycle: noise removal, duplicate merge,
+    low-value entity pruning, orphan profile cleanup, entity cap, and stale
+    event archival. Safe to call repeatedly (idempotent).
+    """
+    if domain_key and domain_key not in ("politics", "finance", "science-tech"):
+        raise HTTPException(status_code=400, detail="domain_key must be one of politics, finance, science-tech")
+    from services.intelligence_cleanup_controller import IntelligenceCleanupController
+    controller = IntelligenceCleanupController()
+    return controller.run(domain_key=domain_key)
+
+
+@router.post("/context_centric/discover_events", response_model=dict)
+async def discover_events(
+    domain_key: Optional[str] = Query(None, description="Discover events in this domain only; omit for all"),
+    limit: int = Query(100, ge=1, le=500, description="Max contexts to analyze"),
+) -> dict:
+    """Analyze recent contexts with LLM to discover and create tracked events."""
+    from services.event_tracking_service import discover_events_from_contexts
+    result = await discover_events_from_contexts(domain_key=domain_key, limit=limit)
+    return result
+
+
+@router.post("/context_centric/review_events", response_model=dict)
+async def review_event_coherence_api(
+    event_id: Optional[int] = Query(None, description="Review a single event; omit to review all open events"),
+    threshold: float = Query(0.5, ge=0.0, le=1.0, description="Relevance threshold — contexts scoring below are removed"),
+    auto_remove: bool = Query(True, description="Automatically remove irrelevant contexts"),
+) -> dict:
+    """
+    LLM-powered coherence review: for each context in an event, verify it
+    actually belongs. Removes mismatches and logs reasoning.
+    """
+    from services.event_coherence_reviewer import review_event_coherence, review_all_open_events
+    if event_id is not None:
+        return await review_event_coherence(event_id, relevance_threshold=threshold, auto_remove=auto_remove)
+    return await review_all_open_events(relevance_threshold=threshold, auto_remove=auto_remove)
 
 
 @router.get("/context_centric/status", response_model=dict)
@@ -85,6 +209,7 @@ def context_centric_quality() -> dict:
                 schema = schema_map.get(domain_key, domain_key.replace("-", "_"))
                 row = {
                     "domain": domain_key,
+                    "rss_feeds_active": None,
                     "articles": None,
                     "article_entities": None,
                     "article_entities_with_canonical": None,
@@ -96,6 +221,11 @@ def context_centric_quality() -> dict:
                     "entity_coverage_pct": None,
                     "context_coverage_pct": None,
                 }
+                try:
+                    cur.execute(f"SELECT COUNT(*) FROM {schema}.rss_feeds WHERE is_active = true")
+                    row["rss_feeds_active"] = cur.fetchone()[0]
+                except Exception:
+                    pass
                 try:
                     cur.execute(f"SELECT COUNT(*) FROM {schema}.articles")
                     row["articles"] = cur.fetchone()[0]
@@ -249,17 +379,32 @@ def list_pattern_discoveries(
 
 
 def _row_to_profile(row: tuple) -> dict:
-    """Map entity_profiles row to dict."""
+    """Map entity_profiles row to dict (JSON-safe)."""
     return {
         "id": row[0],
         "domain_key": row[1],
         "canonical_entity_id": row[2],
         "compilation_date": str(row[3]) if row[3] else None,
-        "sections": row[4],
-        "relationships_summary": row[5],
-        "metadata": row[6],
+        "sections": _json_safe(row[4]) if row[4] is not None else None,
+        "relationships_summary": _json_safe(row[5]) if row[5] is not None else None,
+        "metadata": _json_safe(row[6]) if row[6] is not None else None,
         "created_at": row[7].isoformat() if row[7] else None,
         "updated_at": row[8].isoformat() if row[8] else None,
+    }
+
+
+def _row_to_profile_brief(row: tuple) -> dict:
+    """Map 7-column row (no sections/relationships) to list view. Keeps response small and fast."""
+    return {
+        "id": row[0],
+        "domain_key": row[1],
+        "canonical_entity_id": row[2],
+        "compilation_date": str(row[3]) if row[3] else None,
+        "sections": None,
+        "relationships_summary": None,
+        "metadata": _json_safe(row[4]) if row[4] is not None else None,
+        "created_at": row[5].isoformat() if row[5] else None,
+        "updated_at": row[6].isoformat() if row[6] else None,
     }
 
 
@@ -268,46 +413,77 @@ def list_entity_profiles(
     domain_key: Optional[str] = Query(None, description="Filter by domain"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
+    brief: bool = Query(False, description="If true, omit sections/relationships for faster list load"),
 ) -> dict:
-    """List entity profiles (intelligence.entity_profiles). Optional domain filter."""
+    """List entity profiles (intelligence.entity_profiles). Use brief=True for list views (skips heavy columns)."""
     conn = get_db_connection()
     if not conn:
         raise HTTPException(status_code=503, detail="Database unavailable")
     try:
         with conn.cursor() as cur:
-            if domain_key:
-                cur.execute(
-                    """
-                    SELECT id, domain_key, canonical_entity_id, compilation_date,
-                           sections, relationships_summary, metadata, created_at, updated_at
-                    FROM intelligence.entity_profiles
-                    WHERE domain_key = %s
-                    ORDER BY updated_at DESC NULLS LAST
-                    LIMIT %s OFFSET %s
-                    """,
-                    (domain_key, limit, offset),
-                )
+            if brief:
+                # Do not SELECT sections/relationships_summary — avoids huge transfer and timeout
+                if domain_key:
+                    cur.execute(
+                        """
+                        SELECT id, domain_key, canonical_entity_id, compilation_date,
+                               metadata, created_at, updated_at
+                        FROM intelligence.entity_profiles
+                        WHERE domain_key = %s
+                        ORDER BY updated_at DESC NULLS LAST
+                        LIMIT %s OFFSET %s
+                        """,
+                        (domain_key, limit, offset),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        SELECT id, domain_key, canonical_entity_id, compilation_date,
+                               metadata, created_at, updated_at
+                        FROM intelligence.entity_profiles
+                        ORDER BY updated_at DESC NULLS LAST
+                        LIMIT %s OFFSET %s
+                        """,
+                        (limit, offset),
+                    )
             else:
-                cur.execute(
-                    """
-                    SELECT id, domain_key, canonical_entity_id, compilation_date,
-                           sections, relationships_summary, metadata, created_at, updated_at
-                    FROM intelligence.entity_profiles
-                    ORDER BY updated_at DESC NULLS LAST
-                    LIMIT %s OFFSET %s
-                    """,
-                    (limit, offset),
-                )
+                if domain_key:
+                    cur.execute(
+                        """
+                        SELECT id, domain_key, canonical_entity_id, compilation_date,
+                               sections, relationships_summary, metadata, created_at, updated_at
+                        FROM intelligence.entity_profiles
+                        WHERE domain_key = %s
+                        ORDER BY updated_at DESC NULLS LAST
+                        LIMIT %s OFFSET %s
+                        """,
+                        (domain_key, limit, offset),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        SELECT id, domain_key, canonical_entity_id, compilation_date,
+                               sections, relationships_summary, metadata, created_at, updated_at
+                        FROM intelligence.entity_profiles
+                        ORDER BY updated_at DESC NULLS LAST
+                        LIMIT %s OFFSET %s
+                        """,
+                        (limit, offset),
+                    )
             rows = cur.fetchall()
         conn.close()
-        return {"items": [_row_to_profile(r) for r in rows], "limit": limit, "offset": offset}
+        to_item = _row_to_profile_brief if brief else _row_to_profile
+        return {"items": [to_item(r) for r in rows], "limit": limit, "offset": offset}
     except Exception as e:
-        logger.warning(f"list_entity_profiles: {e}")
+        logger.warning("list_entity_profiles: %s", e, exc_info=True)
         try:
             conn.close()
         except Exception:
             pass
-        raise HTTPException(status_code=500, detail="Failed to list entity profiles")
+        detail = str(e)
+        if "does not exist" in detail or "relation" in detail.lower():
+            detail = f"Entity profiles table may be missing. Run migration 143: {detail}"
+        raise HTTPException(status_code=500, detail=f"Failed to list entity profiles: {detail}")
 
 
 @router.get("/entity_profiles/{profile_id}", response_model=dict)
@@ -346,16 +522,23 @@ def get_entity_profile(profile_id: int) -> dict:
 @router.patch("/entity_profiles/{profile_id}", response_model=dict)
 def update_entity_profile(
     profile_id: int,
-    body: dict = Body(..., description="Fields to merge into metadata: importance, entity_type, tracking_params, alert_thresholds"),
+    body: dict = Body(..., description="Fields to merge into metadata: importance, entity_type, tracking_params, alert_thresholds, orchestrator_tags"),
 ) -> dict:
-    """Update entity profile metadata (Phase 4.2). Stores importance, entity_type, tracking_params, alert_thresholds in metadata JSONB."""
+    """Update entity profile metadata. Use orchestrator_tags (array of strings) so the orchestrator can prioritize for deeper stories."""
     conn = get_db_connection()
     if not conn:
         raise HTTPException(status_code=503, detail="Database unavailable")
-    allowed = {"importance", "entity_type", "tracking_params", "alert_thresholds"}
+    allowed = {"importance", "entity_type", "tracking_params", "alert_thresholds", "orchestrator_tags"}
     updates = {k: v for k, v in body.items() if k in allowed and v is not None}
     if not updates:
         return get_entity_profile(profile_id)
+    # Normalize orchestrator_tags to list of strings
+    if "orchestrator_tags" in updates:
+        raw = updates["orchestrator_tags"]
+        if isinstance(raw, list):
+            updates["orchestrator_tags"] = [str(x).strip() for x in raw if str(x).strip()]
+        else:
+            updates["orchestrator_tags"] = []
     try:
         with conn.cursor() as cur:
             cur.execute(
@@ -474,14 +657,17 @@ def merge_entity_profiles(
         raise HTTPException(status_code=500, detail="Failed to merge entity profiles")
 
 
-def _row_to_context(row: tuple) -> dict:
-    """Map contexts row to dict."""
+def _row_to_context(row: tuple, max_content_len: int = 2000) -> dict:
+    """Map contexts row to dict. Use max_content_len=400 for brief list view."""
+    content = row[4]
+    if content and len(content) > max_content_len:
+        content = content[:max_content_len] + "..."
     return {
         "id": row[0],
         "source_type": row[1],
         "domain_key": row[2],
         "title": row[3],
-        "content": (row[4][:2000] + "...") if row[4] and len(row[4]) > 2000 else row[4],
+        "content": content,
         "metadata": row[5],
         "created_at": row[6].isoformat() if row[6] else None,
         "updated_at": row[7].isoformat() if row[7] else None,
@@ -494,8 +680,9 @@ def list_contexts(
     source_type: Optional[str] = Query(None, description="e.g. article"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
+    brief: bool = Query(False, description="If true, truncate content for faster list load"),
 ) -> dict:
-    """List intelligence contexts. Optional domain and source_type filters."""
+    """List intelligence contexts. Optional domain and source_type filters. Use brief=True for list views."""
     conn = get_db_connection()
     if not conn:
         raise HTTPException(status_code=503, detail="Database unavailable")
@@ -546,7 +733,8 @@ def list_contexts(
                 )
             rows = cur.fetchall()
         conn.close()
-        return {"items": [_row_to_context(r) for r in rows], "limit": limit, "offset": offset}
+        content_len = 400 if brief else 2000
+        return {"items": [_row_to_context(r, content_len) for r in rows], "limit": limit, "offset": offset}
     except Exception as e:
         logger.warning(f"list_contexts: {e}")
         try:
@@ -556,8 +744,153 @@ def list_contexts(
         raise HTTPException(status_code=500, detail="Failed to list contexts")
 
 
+def _row_to_context_full(row: tuple) -> dict:
+    """Map contexts row to dict without truncating content."""
+    return {
+        "id": row[0],
+        "source_type": row[1],
+        "domain_key": row[2],
+        "title": row[3],
+        "content": row[4],
+        "metadata": row[5],
+        "created_at": row[6].isoformat() if row[6] else None,
+        "updated_at": row[7].isoformat() if row[7] else None,
+    }
+
+
+@router.get("/contexts/{context_id}", response_model=dict)
+def get_context(context_id: int) -> dict:
+    """Get a single context by id, with full content and linked article info."""
+    conn = get_db_connection()
+    if not conn:
+        raise HTTPException(status_code=503, detail="Database unavailable")
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, source_type, domain_key, title, content, metadata, created_at, updated_at
+                FROM intelligence.contexts
+                WHERE id = %s
+                """,
+                (context_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                conn.close()
+                raise HTTPException(status_code=404, detail="Context not found")
+            ctx = _row_to_context_full(row)
+
+            article = None
+            try:
+                cur.execute(
+                    "SELECT article_id FROM intelligence.article_to_context WHERE context_id = %s LIMIT 1",
+                    (context_id,),
+                )
+                link_row = cur.fetchone()
+                if link_row:
+                    article_id = link_row[0]
+                    schema_map = {"politics": "politics", "finance": "finance", "science-tech": "science_tech"}
+                    schema = schema_map.get(ctx["domain_key"], ctx["domain_key"].replace("-", "_"))
+                    cur.execute(
+                        f"""
+                        SELECT id, title, url, source, summary, published_date, content
+                        FROM {schema}.articles
+                        WHERE id = %s
+                        """,
+                        (article_id,),
+                    )
+                    art_row = cur.fetchone()
+                    if art_row:
+                        article = {
+                            "id": art_row[0],
+                            "title": art_row[1],
+                            "url": art_row[2],
+                            "source": art_row[3],
+                            "summary": art_row[4],
+                            "published_date": art_row[5].isoformat() if art_row[5] else None,
+                            "content": art_row[6][:5000] if art_row[6] else None,
+                        }
+            except Exception as e:
+                logger.debug(f"get_context article lookup: {e}")
+
+            ctx["article"] = article
+        conn.close()
+        return ctx
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.warning(f"get_context: {e}")
+        try:
+            conn.close()
+        except Exception:
+            pass
+        raise HTTPException(status_code=500, detail="Failed to get context")
+
+
+@router.patch("/contexts/{context_id}", response_model=dict)
+def update_context(
+    context_id: int,
+    body: dict = Body(..., description="Fields to merge into metadata; use orchestrator_tags (list of strings) for story prioritization"),
+) -> dict:
+    """Update context metadata. Use orchestrator_tags (array of strings) so the orchestrator can prioritize for deeper stories."""
+    conn = get_db_connection()
+    if not conn:
+        raise HTTPException(status_code=503, detail="Database unavailable")
+    allowed = {"orchestrator_tags"}
+    updates = {k: v for k, v in body.items() if k in allowed and v is not None}
+    if not updates:
+        return get_context(context_id)
+    # Normalize orchestrator_tags to list of strings
+    if "orchestrator_tags" in updates:
+        raw = updates["orchestrator_tags"]
+        if isinstance(raw, list):
+            updates["orchestrator_tags"] = [str(x).strip() for x in raw if str(x).strip()]
+        else:
+            updates["orchestrator_tags"] = []
+    try:
+        import json
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT metadata FROM intelligence.contexts WHERE id = %s",
+                (context_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                conn.close()
+                raise HTTPException(status_code=404, detail="Context not found")
+            meta = dict(row[0]) if row[0] else {}
+            meta.update(updates)
+            cur.execute(
+                """
+                UPDATE intelligence.contexts
+                SET metadata = %s, updated_at = NOW()
+                WHERE id = %s
+                RETURNING id, source_type, domain_key, title, content, metadata, created_at, updated_at
+                """,
+                (json.dumps(meta), context_id),
+            )
+            out = cur.fetchone()
+        conn.commit()
+        conn.close()
+        return _row_to_context_full(out)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.warning(f"update_context: {e}")
+        try:
+            conn.rollback()
+            conn.close()
+        except Exception:
+            pass
+        raise HTTPException(status_code=500, detail="Failed to update context")
+
+
+_EVENT_COLS = """id, event_type, event_name, start_date, end_date, geographic_scope,
+                   key_participant_entity_ids, milestones, sub_event_ids, created_at, updated_at, domain_keys"""
+
+
 def _row_to_event(row: tuple) -> dict:
-    """Map tracked_events row to dict (id, event_type, event_name, start_date, end_date, geographic_scope, key_participant_entity_ids, milestones, sub_event_ids, created_at, updated_at)."""
+    """Map tracked_events row to dict."""
     return {
         "id": row[0],
         "event_type": row[1],
@@ -570,44 +903,43 @@ def _row_to_event(row: tuple) -> dict:
         "sub_event_ids": list(row[8]) if row[8] else None,
         "created_at": row[9].isoformat() if row[9] else None,
         "updated_at": row[10].isoformat() if row[10] else None,
+        "domain_keys": list(row[11]) if row[11] else [],
     }
 
 
 @router.get("/tracked_events", response_model=dict)
 def list_tracked_events(
     event_type: Optional[str] = Query(None),
+    domain_key: Optional[str] = Query(None, description="Filter: events that include this domain"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ) -> dict:
-    """List tracked events (intelligence.tracked_events)."""
+    """List tracked events. Events can span multiple domains; domain_key filters to events that include that domain."""
     conn = get_db_connection()
     if not conn:
         raise HTTPException(status_code=503, detail="Database unavailable")
     try:
+        conditions = []
+        params: list = []
+        if event_type:
+            conditions.append("event_type = %s")
+            params.append(event_type)
+        if domain_key:
+            conditions.append("%s = ANY(domain_keys)")
+            params.append(domain_key)
+        where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+        params.extend([limit, offset])
         with conn.cursor() as cur:
-            if event_type:
-                cur.execute(
-                    """
-                    SELECT id, event_type, event_name, start_date, end_date, geographic_scope,
-                           key_participant_entity_ids, milestones, sub_event_ids, created_at, updated_at
-                    FROM intelligence.tracked_events
-                    WHERE event_type = %s
-                    ORDER BY start_date DESC NULLS LAST, updated_at DESC
-                    LIMIT %s OFFSET %s
-                    """,
-                    (event_type, limit, offset),
-                )
-            else:
-                cur.execute(
-                    """
-                    SELECT id, event_type, event_name, start_date, end_date, geographic_scope,
-                           key_participant_entity_ids, milestones, sub_event_ids, created_at, updated_at
-                    FROM intelligence.tracked_events
-                    ORDER BY start_date DESC NULLS LAST, updated_at DESC
-                    LIMIT %s OFFSET %s
-                    """,
-                    (limit, offset),
-                )
+            cur.execute(
+                f"""
+                SELECT {_EVENT_COLS}
+                FROM intelligence.tracked_events
+                {where}
+                ORDER BY start_date DESC NULLS LAST, updated_at DESC
+                LIMIT %s OFFSET %s
+                """,
+                tuple(params),
+            )
             rows = cur.fetchall()
         conn.close()
         return {"items": [_row_to_event(r) for r in rows], "limit": limit, "offset": offset}
@@ -629,9 +961,8 @@ def get_tracked_event(event_id: int) -> dict:
     try:
         with conn.cursor() as cur:
             cur.execute(
-                """
-                SELECT id, event_type, event_name, start_date, end_date, geographic_scope,
-                       key_participant_entity_ids, milestones, sub_event_ids, created_at, updated_at
+                f"""
+                SELECT {_EVENT_COLS}
                 FROM intelligence.tracked_events
                 WHERE id = %s
                 """,
@@ -674,6 +1005,97 @@ def get_tracked_event(event_id: int) -> dict:
         except Exception:
             pass
         raise HTTPException(status_code=500, detail="Failed to get tracked event")
+
+
+@router.get("/tracked_events/{event_id}/report", response_model=dict)
+def get_tracked_event_report(event_id: int) -> dict:
+    """Get the latest stored investigation report (dossier) for this event, if any."""
+    conn = get_db_connection()
+    if not conn:
+        raise HTTPException(status_code=503, detail="Database unavailable")
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT report_md, generated_at, context_ids_included, chronicle_count, context_count
+                FROM intelligence.event_reports
+                WHERE event_id = %s
+                """,
+                (event_id,),
+            )
+            row = cur.fetchone()
+        conn.close()
+        if not row:
+            raise HTTPException(status_code=404, detail="No report yet; POST to generate")
+        return {
+            "event_id": event_id,
+            "report_md": row[0],
+            "generated_at": row[1].isoformat() if row[1] else None,
+            "context_ids_included": list(row[2]) if row[2] else [],
+            "chronicle_count": row[3],
+            "context_count": row[4],
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.warning(f"get_tracked_event_report: {e}")
+        try:
+            conn.close()
+        except Exception:
+            pass
+        raise HTTPException(status_code=500, detail="Failed to get report")
+
+
+@router.post("/tracked_events/{event_id}/report", response_model=dict)
+async def generate_tracked_event_report(event_id: int) -> dict:
+    """Generate a journalism-style investigation dossier from event, chronicles, and contexts. Saves to event_reports."""
+    from services.investigation_report_service import generate_investigation_report
+
+    try:
+        result = await generate_investigation_report(event_id)
+    except Exception as e:
+        logger.exception("generate_tracked_event_report: service raised")
+        raise HTTPException(status_code=500, detail=f"Report generation failed: {str(e)}")
+
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail=result.get("error", "Report generation failed"))
+
+    conn = get_db_connection()
+    if not conn:
+        return result
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO intelligence.event_reports
+                (event_id, report_md, generated_at, context_ids_included, chronicle_count, context_count)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                ON CONFLICT (event_id) DO UPDATE SET
+                    report_md = EXCLUDED.report_md,
+                    generated_at = EXCLUDED.generated_at,
+                    context_ids_included = EXCLUDED.context_ids_included,
+                    chronicle_count = EXCLUDED.chronicle_count,
+                    context_count = EXCLUDED.context_count
+                """,
+                (
+                    event_id,
+                    result["report_md"],
+                    result["generated_at"],
+                    result.get("context_ids_included") or [],
+                    result.get("chronicle_count", 0),
+                    result.get("context_count", 0),
+                ),
+            )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.warning(f"save event_report: {e}")
+        try:
+            conn.rollback()
+            conn.close()
+        except Exception:
+            pass
+    return result
 
 
 @router.get("/claims", response_model=dict)

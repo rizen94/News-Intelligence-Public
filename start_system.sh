@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# News Intelligence System v4.0 - Comprehensive Startup Script
+# News Intelligence System v5.0 - Comprehensive Startup Script
 # Starts: SSH Tunnel, Redis, API Server, Frontend, and all background services
 
 set -e
@@ -95,9 +95,12 @@ is_running() {
     pgrep -f "$1" > /dev/null 2>&1
 }
 
-# Check if a port is in use
+# Check if a port is in use (only if something is LISTENing on it)
 is_port_in_use() {
-    lsof -i ":$1" > /dev/null 2>&1
+    ss -tlnp 2>/dev/null | grep -q ":$1 " && return 0
+    # Fallback: netstat or lsof (listeners only)
+    netstat -tlnp 2>/dev/null | grep -q ":$1 " && return 0
+    return 1
 }
 
 # Stop existing processes
@@ -239,6 +242,11 @@ conn.close()
 start_redis() {
     log "Starting Redis..."
     
+    if ! command -v docker &> /dev/null; then
+        warning "Docker not available — skipping Redis (cache features may be limited)"
+        return 0
+    fi
+    
     # Check if Redis container exists
     if docker ps -a --format '{{.Names}}' | grep -q "^${REDIS_CONTAINER}$"; then
         # Start existing container
@@ -336,7 +344,7 @@ start_api() {
     local max_attempts=30
     local attempt=0
     while [ $attempt -lt $max_attempts ]; do
-        if curl -s http://localhost:8000/api/v4/system_monitoring/health > /dev/null 2>&1; then
+        if curl -s http://localhost:8000/api/system_monitoring/health > /dev/null 2>&1; then
             success "API server started (PID: $API_PID)"
             info "  - AutomationManager: Auto-started (RSS, Articles, ML, Topic Clustering)"
             info "  - MLProcessingService: Auto-started"
@@ -429,7 +437,7 @@ verify_services() {
     fi
     
     # Check API
-    if curl -s http://localhost:8000/api/v4/system_monitoring/health > /dev/null 2>&1; then
+    if curl -s http://localhost:8000/api/system_monitoring/health > /dev/null 2>&1; then
         success "✅ API Server: Running (http://localhost:8000)"
         info "   - AutomationManager: Active (background tasks)"
         info "   - MLProcessingService: Active"
@@ -465,10 +473,10 @@ verify_services() {
         echo ""
         log "Process IDs:"
         if [ -f "$LOG_DIR/api.pid" ]; then
-            echo "  API PID:      $(cat $LOG_DIR/api.pid)"
+            echo "  API PID:      $(cat "$LOG_DIR/api.pid")"
         fi
         if [ -f "$LOG_DIR/frontend.pid" ]; then
-            echo "  Frontend PID: $(cat $LOG_DIR/frontend.pid)"
+            echo "  Frontend PID: $(cat "$LOG_DIR/frontend.pid")"
         fi
     else
         warning "Some services may not be fully ready. Check logs above."
@@ -480,7 +488,7 @@ verify_services() {
 # Main execution
 main() {
     log "=========================================="
-    log "News Intelligence System v4.0 - Startup"
+    log "News Intelligence System v5.0 - Startup"
     log "=========================================="
     log "Started at: $(date)"
     echo ""
@@ -488,10 +496,9 @@ main() {
     # Pre-flight checks
     info "Running pre-flight checks..."
     
-    # Check Docker
+    # Docker is optional (needed for Redis only); warn if missing
     if ! command -v docker &> /dev/null; then
-        error "Docker is not installed or not in PATH"
-        return 1
+        warning "Docker is not installed or not in PATH — Redis will be skipped (API and frontend will still start)"
     fi
     
     # Check Node.js
@@ -522,10 +529,9 @@ main() {
         return 1
     fi
     
-    # 2. Redis (cache)
+    # 2. Redis (cache; skipped if Docker not available)
     if ! start_redis; then
-        error "Redis startup failed"
-        return 1
+        warning "Redis startup failed — continuing without Redis"
     fi
     
     # 3. API Server (includes AutomationManager and MLProcessingService)

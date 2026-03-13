@@ -1,5 +1,5 @@
 """
-News Intelligence System v4.0 - Domain-Driven FastAPI Application
+News Intelligence System v5.0 - Domain-Driven FastAPI Application
 Uses Llama 3.1 8B (primary) and Mistral 7B (secondary) models
 """
 
@@ -44,6 +44,7 @@ from domains.news_aggregation.routes import router as news_aggregation_router
 from domains.content_analysis.routes import router as content_analysis_router
 from domains.storyline_management.routes import router as storyline_management_router
 from domains.intelligence_hub.routes import router as intelligence_hub_router
+from domains.intelligence_hub.routes.context_centric import router as context_centric_router
 from domains.finance.routes.finance import router as finance_router
 from domains.user_management.routes.user_management import router as user_management_router
 from domains.system_monitoring.routes import router as system_monitoring_router
@@ -64,33 +65,25 @@ from shared.database.connection import get_db_connection, check_database_health
 async def lifespan(app: FastAPI):
     """Application lifespan manager"""
     # Startup
-    logger.info("Starting News Intelligence System v4.0")
-    
+    logger.info("Starting News Intelligence System v5.0")
+
     # Initialize database connection pool early (persistent connection)
     try:
         from shared.database.connection import _init_pool, get_db_config, get_db_connection
-        
-        db_host = os.getenv("DB_HOST", "192.168.93.101")
-        db_port = int(os.getenv("DB_PORT", "5432"))
-        
-        # NAS tunnel mode: require tunnel when using localhost:5433
-        if db_host in ["localhost", "127.0.0.1", "::1"] and db_port == 5433:
-            import subprocess
-            tunnel_running = subprocess.run(
-                ["pgrep", "-f", "ssh -L 5433:localhost:5432.*192.168.93.100"],
-                capture_output=True
-            ).returncode == 0
-            if not tunnel_running:
-                raise ValueError("SSH tunnel required for localhost:5433. Run: ./scripts/setup_nas_ssh_tunnel.sh")
-            logger.info("SSH tunnel verified: localhost:5433 -> NAS")
-        else:
-            logger.info("Using Widow database: %s:%s", db_host, db_port)
-        
-        # Initialize connection pool (persistent connections)
+
+        # get_db_config enforces NAS tunnel rules and logs host/port
+        db_config = get_db_config()
+        logger.info(
+            "Database configuration resolved: %s:%s/%s",
+            db_config["host"],
+            db_config["port"],
+            db_config["database"],
+        )
+
         try:
             pool = _init_pool()
             logger.info("✅ Database connection pool initialized (persistent connections)")
-            
+
             # Test connection
             conn = get_db_connection()
             if conn:
@@ -102,22 +95,29 @@ async def lifespan(app: FastAPI):
                 logger.error("❌ Database connection test failed")
         except Exception as e:
             logger.error(f"❌ Failed to initialize database connection pool: {e}")
-            logger.error("   API will not be able to access database without DB_HOST environment variable")
+            logger.error("   API will not be able to access database without DB_HOST/DB_PORT configuration")
     except Exception as e:
         logger.error(f"❌ Database initialization error: {e}")
     
     # Initialize LLM service
-    try:
-        llm_status = await llm_service.get_model_status()
-        if llm_status["success"]:
-            logger.info(f"✅ LLM Service initialized - Primary: {llm_status.get('primary_model')}, Secondary: {llm_status.get('secondary_model')}")
-        else:
-            logger.warning(f"⚠️ LLM Service initialization failed: {llm_status.get('error')}")
-        
-        app.state.llm_service = llm_service
-    except Exception as e:
-        logger.error(f"❌ Failed to initialize LLM service: {e}")
-        app.state.llm_service = None
+    async def init_llm(app: FastAPI) -> None:
+        try:
+            llm_status = await llm_service.get_model_status()
+            if llm_status["success"]:
+                logger.info(
+                    "✅ LLM Service initialized - Primary: %s, Secondary: %s",
+                    llm_status.get("primary_model"),
+                    llm_status.get("secondary_model"),
+                )
+            else:
+                logger.warning("⚠️ LLM Service initialization failed: %s", llm_status.get("error"))
+
+            app.state.llm_service = llm_service
+        except Exception as exc:
+            logger.error("❌ Failed to initialize LLM service: %s", exc)
+            app.state.llm_service = None
+
+    await init_llm(app)
 
     # Log finance embedding config (no heavy imports)
     try:
@@ -148,25 +148,36 @@ async def lifespan(app: FastAPI):
         logger.info("✅ Finance Orchestrator initialized")
         if app.state.finance_orchestrator:
             app.state.finance_orchestrator.start_scheduler()
-            logger.info("✅ Finance scheduler started")
+            app.state.finance_orchestrator.start_queue_worker()
+            logger.info("✅ Finance scheduler and queue worker started")
     except Exception as e:
         logger.error("❌ Failed to initialize Finance Orchestrator: %s", e)
         app.state.finance_orchestrator = None
+
+    # Orchestrator coordinator (collection + processing governor, importance, loop: assess/plan/execute/learn)
+    try:
+        from services.orchestrator_coordinator import OrchestratorCoordinator
+        from collectors.rss_collector import collect_rss_feeds
+        from shared.database.connection import get_db_connection as get_db
+        coordinator = OrchestratorCoordinator(
+            get_finance_orchestrator=lambda: getattr(app.state, "finance_orchestrator", None),
+            get_automation=lambda: getattr(app.state, "automation", None),
+            get_db_connection=get_db,
+            collect_rss_feeds_fn=collect_rss_feeds,
+        )
+        app.state.orchestrator_coordinator = coordinator
+        coordinator.start_loop()
+        logger.info("✅ Orchestrator coordinator started (collection + processing governance)")
+    except Exception as e:
+        logger.error("❌ Failed to start Orchestrator coordinator: %s", e, exc_info=True)
+        app.state.orchestrator_coordinator = None
 
     # Start automation manager in background thread
     try:
         from services.automation_manager import AutomationManager
         from services.ml_processing_service import MLProcessingService
         import threading
-        
-        # DB config (Widow direct; rollback: localhost:5433 + NAS tunnel)
-        db_config = {
-            "host": os.getenv("DB_HOST", "192.168.93.101"),
-            "database": os.getenv("DB_NAME", "news_intel"),
-            "user": os.getenv("DB_USER", "newsapp"),
-            "password": os.getenv("DB_PASSWORD", ""),
-            "port": os.getenv("DB_PORT", "5432")
-        }
+
         automation = AutomationManager(db_config)
         
         # Start automation in background thread
@@ -262,6 +273,18 @@ async def lifespan(app: FastAPI):
         logger.error(f"❌ Failed to start Route Supervisor: {e}")
         app.state.route_supervisor = None
         app.state.route_supervisor_thread = None
+
+    # Health Monitor Orchestrator — polls health feeds and creates alerts on failure
+    try:
+        from services.health_monitor_orchestrator import get_health_monitor
+        base_url = os.getenv("API_BASE_URL", "http://127.0.0.1:8000")
+        health_monitor = get_health_monitor(base_url=base_url)
+        health_monitor.start()
+        app.state.health_monitor = health_monitor
+        logger.info("✅ Health Monitor Orchestrator started — monitoring health feeds")
+    except Exception as e:
+        logger.error("❌ Failed to start Health Monitor Orchestrator: %s", e)
+        app.state.health_monitor = None
     
     # Start Storyline Consolidation Service
     try:
@@ -303,11 +326,37 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"❌ Failed to start Storyline Consolidation Service: {e}")
         app.state.consolidation_service = None
+
+    # Start Newsroom Orchestrator v6 (optional, feature-flagged)
+    try:
+        from orchestration.config import load_newsroom_config
+        from orchestration.base import NewsroomOrchestrator
+        from shared.database.connection import get_db_connection
+        newsroom_config = load_newsroom_config()
+        if newsroom_config.get("enabled"):
+            newsroom_orchestrator = NewsroomOrchestrator(get_db_connection=get_db_connection, config=newsroom_config)
+            from orchestration.handlers import register_default_handlers
+            register_default_handlers(newsroom_orchestrator)
+            def run_newsroom():
+                newsroom_orchestrator.start()
+            newsroom_thread = threading.Thread(target=run_newsroom, daemon=True, name="NewsroomOrchestrator")
+            newsroom_thread.start()
+            app.state.newsroom_orchestrator = newsroom_orchestrator
+            app.state.newsroom_orchestrator_thread = newsroom_thread
+            logger.info("✅ Newsroom Orchestrator v6 started")
+        else:
+            app.state.newsroom_orchestrator = None
+            app.state.newsroom_orchestrator_thread = None
+            logger.info("Newsroom Orchestrator disabled (enabled=false or NEWSROOM_ORCHESTRATOR_ENABLED not set)")
+    except Exception as e:
+        logger.error(f"❌ Failed to start Newsroom Orchestrator: {e}")
+        app.state.newsroom_orchestrator = None
+        app.state.newsroom_orchestrator_thread = None
     
     yield
     
     # Shutdown
-    logger.info("Shutting down News Intelligence System v4.0")
+    logger.info("Shutting down News Intelligence System v5.0")
     
     # Close LLM service
     try:
@@ -334,6 +383,22 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Error stopping automation manager: {e}")
     
+    # Stop Health Monitor Orchestrator
+    try:
+        if hasattr(app.state, "health_monitor") and app.state.health_monitor:
+            app.state.health_monitor.stop()
+            logger.info("Health Monitor Orchestrator stopped")
+    except Exception as e:
+        logger.error("Error stopping Health Monitor Orchestrator: %s", e)
+
+    # Stop Orchestrator coordinator
+    try:
+        if hasattr(app.state, "orchestrator_coordinator") and app.state.orchestrator_coordinator:
+            app.state.orchestrator_coordinator.stop_loop()
+            logger.info("Orchestrator coordinator stopped")
+    except Exception as e:
+        logger.error("Error stopping Orchestrator coordinator: %s", e)
+
     # Stop Finance Scheduler
     try:
         if hasattr(app.state, 'finance_orchestrator') and app.state.finance_orchestrator:
@@ -360,11 +425,24 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Error stopping Consolidation Service: {e}")
 
+    # Stop Newsroom Orchestrator
+    try:
+        if hasattr(app.state, 'newsroom_orchestrator') and app.state.newsroom_orchestrator:
+            app.state.newsroom_orchestrator.is_running = False
+            if hasattr(app.state, 'newsroom_orchestrator_thread') and app.state.newsroom_orchestrator_thread:
+                app.state.newsroom_orchestrator_thread.join(timeout=5)
+                if app.state.newsroom_orchestrator_thread.is_alive():
+                    logger.warning("Newsroom Orchestrator thread did not stop gracefully")
+                else:
+                    logger.info("Newsroom Orchestrator stopped")
+    except Exception as e:
+        logger.error(f"Error stopping Newsroom Orchestrator: {e}")
+
 # Create FastAPI application
 app = FastAPI(
-    title="News Intelligence System v4.0",
+    title="News Intelligence System v5.0",
     description="""
-    ## News Intelligence System v4.0 - Domain-Driven AI Platform
+    ## News Intelligence System v5.0 - Domain-Driven AI Platform
     
     A comprehensive news aggregation and analysis platform featuring:
     
@@ -397,7 +475,7 @@ app = FastAPI(
     Currently no rate limiting in development mode.
     Production deployment will include rate limiting.
     """,
-    version="4.0.0",
+    version="5.0.0",
     lifespan=lifespan,
     docs_url="/docs",
     redoc_url="/redoc",
@@ -439,27 +517,45 @@ app = FastAPI(
 )
 
 # Add request tracking and standardized API logging
+REQUEST_TIMEOUT_SECONDS = 30  # hard ceiling for any single request
+
 @app.middleware("http")
 async def request_tracker_middleware(request: Request, call_next):
-    """Record API activity (for ML yield) and log every request with timestamp + status."""
+    """Record API activity and enforce a per-request timeout to prevent runaway queries."""
     import uuid
     from shared.services.api_request_tracker import record_request
     from shared.logging.activity_logger import log_api_request
-    # Generate/propagate request ID for correlation
+
     request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
     request.state.request_id = request_id
     record_request()
     start = time.perf_counter()
-    response = await call_next(request)
+
+    try:
+        response = await asyncio.wait_for(
+            call_next(request),
+            timeout=REQUEST_TIMEOUT_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        duration_ms = (time.perf_counter() - start) * 1000
+        path = request.url.path or "/"
+        logger.warning("Request timed out after %.0fms: %s %s", duration_ms, request.method, path)
+        response = JSONResponse(
+            status_code=504,
+            content={
+                "success": False,
+                "data": None,
+                "message": f"Request timed out after {REQUEST_TIMEOUT_SECONDS}s",
+                "timestamp": datetime.now().isoformat(),
+            },
+        )
+
     duration_ms = (time.perf_counter() - start) * 1000
     status_code = response.status_code if hasattr(response, "status_code") else 200
     path = request.url.path or "/"
     if request.query_params:
         path = f"{path}?{request.query_params}"
-    # Exclude health checks from activity logging (noise)
-    if path.rstrip("/").endswith("/health") or "/health" in path.split("?")[0]:
-        pass  # skip log
-    else:
+    if not (path.rstrip("/").endswith("/health") or "/health" in path.split("?")[0]):
         log_api_request(
             method=request.method,
             path=path,
@@ -467,7 +563,6 @@ async def request_tracker_middleware(request: Request, call_next):
             duration_ms=duration_ms,
             request_id=request_id,
         )
-    # Add request ID to response header for client correlation
     response.headers["X-Request-ID"] = request_id
     return response
 
@@ -509,6 +604,8 @@ app.include_router(news_aggregation_router)
 app.include_router(content_analysis_router)
 app.include_router(storyline_management_router)
 app.include_router(intelligence_hub_router)
+# Context-centric (tracked_events, report, entity_profiles, etc.) at /api/... so frontend always finds report endpoint
+app.include_router(context_centric_router)
 app.include_router(finance_router)
 app.include_router(user_management_router)
 app.include_router(system_monitoring_router)
@@ -523,8 +620,8 @@ async def root():
     return {
         "success": True,
         "data": {
-            "name": "News Intelligence System v4.0",
-            "version": "4.0.0",
+            "name": "News Intelligence System v5.0",
+            "version": "5.0.0",
             "architecture": "Domain-Driven Design",
             "ai_models": {
                 "primary": "llama3.1:8b",
@@ -541,7 +638,7 @@ async def root():
             "docs": "/docs",
             "redoc": "/redoc"
         },
-        "message": "News Intelligence System v4.0 is running",
+        "message": "News Intelligence System v5.0 is running",
         "timestamp": datetime.now().isoformat()
     }
 

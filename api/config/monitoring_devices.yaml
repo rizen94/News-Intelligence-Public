@@ -1,0 +1,46 @@
+# Monitoring: devices (Legion, Widow, NAS, Pi) and health feeds for the health monitor orchestrator.
+# Used by resource dashboard and health monitor orchestrator.
+# Remote devices: disk and processes are collected via SSH (df + ps). Set up passwordless SSH
+# from the API host to each remote; see docs/MONITORING_SSH_SETUP.md.
+
+devices:
+  - name: Legion
+    type: local
+    description: "Development/client machine (API and web run here)"
+    # project_path: optional; if set, disk usage for this path is reported as project_usage
+  - name: Widow
+    type: remote
+    host: "192.168.93.101"
+    description: "Database server (PostgreSQL)"
+    # ssh_user: optional; default from env MONITORING_SSH_USER or $USER
+    # agent_url: optional; when set, HTTP agent is used instead of SSH
+  - name: NAS
+    type: remote
+    host: "192.168.93.100"
+    description: "NAS storage / legacy DB tunnel target"
+  - name: Pi
+    type: remote
+    host: "192.168.93.104"
+    description: "Raspberry Pi (monitoring, document source, etc.)"
+    # ssh_user: optional; e.g. pi or your user on the Pi
+
+# Health feeds: the health monitor orchestrator polls these and creates an alert when one fails.
+# URLs are relative to the API base (e.g. same origin). Full URL can be used if needed.
+health_feeds:
+  - name: System Monitoring
+    url: "/api/system_monitoring/health"
+    method: GET
+    # Consider failed if status != 200 or body.status not in ["healthy", "degraded", "warning"]
+  - name: Route Supervisor
+    url: "/api/system_monitoring/route_supervisor/health"
+    method: GET
+  - name: Orchestrator
+    url: "/api/orchestrator/status"
+    method: GET
+    # Consider failed if status != 200
+
+# How often the health monitor runs (seconds)
+health_check_interval_seconds: 60
+
+# SSH timeout for remote device disk/process fetch (seconds)
+# ssh_timeout_seconds: 12

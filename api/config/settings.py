@@ -75,6 +75,7 @@ FRED_RATE_LIMIT_PER_MINUTE = 120
 BIGQUERY_PROJECT_ID = os.environ.get("BIGQUERY_PROJECT_ID", "")
 EDGAR_RATE_LIMIT_PER_SECOND = 10
 EDGAR_USER_AGENT = os.environ.get("EDGAR_USER_AGENT", "NewsIntelligence research@example.com")
+METALS_DEV_API_KEY = os.environ.get("METALS_DEV_API_KEY", "")
 
 # Finance vector store (collection name = finance_evidence_{model_suffix} — see vector_store.py)
 EMBEDDING_DIMENSION = 1024  # bge-large-en-v1.5

@@ -20,7 +20,7 @@ from services.domain_knowledge_service import get_domain_knowledge_service
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/v4", tags=["RAG Queries"])
+router = APIRouter(prefix="/api", tags=["RAG Queries"])
 
 
 # =============================================================================

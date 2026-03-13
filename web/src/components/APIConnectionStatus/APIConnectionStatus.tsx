@@ -30,11 +30,11 @@ const APIConnectionStatus: React.FC<APIConnectionStatusProps> = ({ showDetails =
       const connected = await connectionManager.testConnection();
       setIsConnected(connected);
       if (!connected) {
-        setError('Unable to connect to API server');
+        setError('API not reachable. Ensure the API is running (e.g. port 8000). In dev, the frontend proxies /api to localhost:8000.');
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       setIsConnected(false);
-      setError(err.message || 'Connection check failed');
+      setError((err as Error)?.message || 'Connection check failed. Is the API running on port 8000?');
     } finally {
       setIsChecking(false);
     }
@@ -75,7 +75,7 @@ const APIConnectionStatus: React.FC<APIConnectionStatusProps> = ({ showDetails =
 
   return (
     <Box display="flex" alignItems="center" gap={1}>
-      <Tooltip title={error || (isConnected ? 'API connection is active' : 'API connection failed - click to retry')}>
+      <Tooltip title={error || (isConnected ? 'API connection is active' : 'API connection failed. Start the API (e.g. uvicorn on port 8000) and click to retry.')}>
         <Chip
           icon={getStatusIcon()}
           label={getStatusText()}

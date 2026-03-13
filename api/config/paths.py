@@ -12,6 +12,8 @@ PROJECT_ROOT = _API_DIR.parent
 
 SOURCES_YAML = CONFIG_DIR / "sources.yaml"
 FINANCE_SCHEDULE_YAML = CONFIG_DIR / "finance_schedule.yaml"
+ORCHESTRATOR_GOVERNANCE_YAML = CONFIG_DIR / "orchestrator_governance.yaml"
+NEWSROOM_YAML = CONFIG_DIR / "newsroom.yaml"
 
 # Core directories
 DATA_DIR = PROJECT_ROOT / "data"
@@ -25,6 +27,9 @@ REPORTS_OUTPUT_DIR = REPORTS_DIR / "output"
 # Shared data
 CACHE_DB_PATH = DATA_DIR / "cache.db"
 CHROMA_DIR = DATA_DIR / "chroma"
+
+# Orchestrator coordination (state DB)
+ORCHESTRATOR_STATE_DB = DATA_DIR / "orchestrator_state.db"
 
 # Finance domain (siloed)
 FINANCE_DATA_DIR = DATA_DIR / "finance"

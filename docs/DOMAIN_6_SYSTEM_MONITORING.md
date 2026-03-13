@@ -153,10 +153,21 @@ class PerformanceOptimizationEngine:
 
 ## 🔌 **API Endpoints**
 
+### **Resource dashboard and health monitor (implemented)**
+Cross-domain monitoring tab: database size/tables/records, device disk and processes, API health feeds. Config: `api/config/monitoring_devices.yaml` (devices: Legion, Widow, NAS; health_feeds; health_check_interval_seconds).
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/system_monitoring/database/stats` | DB size, table count per schema, record counts (articles, storylines, rss_feeds) |
+| `GET /api/system_monitoring/devices` | Disk usage and process list per device (local = Legion; remote via agent_url when configured) |
+| `GET /api/system_monitoring/health/feeds` | Status of each configured health feed (System Monitoring, Route Supervisor, Orchestrator); populated by health monitor orchestrator |
+
+**Health monitor orchestrator**: Background loop (started in app lifespan) polls each health feed; on failure creates a `system_alerts` row (alert_type=health_check, severity=high) and updates in-memory state for `GET /api/system_monitoring/health/feeds`.
+
 ### **Health Monitoring**
 ```python
 # System Health
-GET    /api/v4/monitoring/health                    # Get system health status
+GET    /api/system_monitoring/health                # Get system health status (flat /api)
 GET    /api/v4/monitoring/health/services           # Get service health status
 GET    /api/v4/monitoring/health/dependencies       # Get dependency health
 POST   /api/v4/monitoring/health/check              # Perform health check

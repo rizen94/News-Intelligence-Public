@@ -37,6 +37,15 @@ fred:
       description: "M2 Money Supply"
       scope: shared
 
+metals_dev:
+  name: "Metals.dev"
+  type: api
+  module_path: "domains.finance.data_sources.metals_dev"
+  credentials:
+    - METALS_DEV_API_KEY
+  rate_limit:
+    per_minute: 10
+
 # Placeholder for future sources (uncomment when implemented)
 # gdelt:
 #   name: "GDELT"

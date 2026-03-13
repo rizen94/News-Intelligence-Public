@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """
 Route Supervisor Service
-Manages consistency between routes, monitors database connections, and logs breaks/disconnects
+Manages consistency between routes, monitors database connections, and logs breaks/disconnects.
 """
 
 import asyncio
+
+# Max response time (ms) above which a route is considered slow; used in health checks
+DEFAULT_MAX_RESPONSE_TIME_MS = 5000
 import logging
 import time
 from datetime import datetime, timedelta
@@ -104,8 +107,8 @@ class RouteSupervisor:
         self.last_full_check: Optional[datetime] = None
         self.frontend_url = "http://localhost:3000"
         
-        # Configuration
-        self.max_response_time_ms = 5000  # 5 seconds
+        # Configuration (tune via DEFAULT_MAX_RESPONSE_TIME_MS if needed)
+        self.max_response_time_ms = DEFAULT_MAX_RESPONSE_TIME_MS
         self.max_consecutive_failures = 3
         self.db_timeout_seconds = 5
     
@@ -145,8 +148,8 @@ class RouteSupervisor:
                         """)
                         result = cur.fetchone()
                         active_connections = result[0] if result else None
-                    except:
-                        pass
+                    except Exception as _e:
+                        logger.debug("pg_stat_activity check skip: %s", _e)
                 
                 conn.close()
                 
@@ -385,7 +388,7 @@ class RouteSupervisor:
             # Check if frontend can connect to API
             try:
                 api_response = requests.get(
-                    f"{self.frontend_url}/api/v4/system_monitoring/health",
+                    f"{self.frontend_url}/api/system_monitoring/health",
                     timeout=3,
                     allow_redirects=False
                 )
@@ -447,12 +450,12 @@ class RouteSupervisor:
     async def check_critical_routes(self) -> List[RouteHealth]:
         """Check critical routes for all domains"""
         critical_routes = [
-            ("/api/v4/{domain}/articles", "GET"),
-            ("/api/v4/{domain}/storylines", "GET"),
-            ("/api/v4/{domain}/content_analysis/topics", "GET"),
-            ("/api/v4/{domain}/rss_feeds", "GET"),
-            ("/api/v4/system_monitoring/health", "GET"),
-            ("/api/v4/system_monitoring/status", "GET"),
+            ("/api/{domain}/articles", "GET"),
+            ("/api/{domain}/storylines", "GET"),
+            ("/api/{domain}/content_analysis/topics", "GET"),
+            ("/api/{domain}/rss_feeds", "GET"),
+            ("/api/system_monitoring/health", "GET"),
+            ("/api/system_monitoring/status", "GET"),
         ]
         
         domains = ['politics', 'finance', 'science-tech']

@@ -1,6 +1,6 @@
 # NAS — Legacy & Storage
 
-**NAS (192.168.93.100)** is now **storage-only**. PostgreSQL was migrated to Widow in v4.1.
+**NAS (192.168.93.100)** is now **storage-only**. PostgreSQL was migrated to Widow in v5.0.
 
 ---
 

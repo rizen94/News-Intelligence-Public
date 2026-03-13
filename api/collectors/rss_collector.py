@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-RSS Feed Collector for News Intelligence System v3.0.0
+RSS Feed Collector for News Intelligence System v5.0
 Collects articles from RSS feeds with advanced deduplication.
 Excludes sports, entertainment, and pop culture content.
 """
@@ -158,79 +158,26 @@ def calculate_article_impact_score(title: str, content: str) -> float:
         # Boost score based on number of matches (diminishing returns)
         score += min(0.3, high_impact_matches * 0.03)  # Max +0.3 boost
     
-    # Low-impact indicators (decrease score)
+    # Low-impact indicators — only clearly non-news content (no ambiguous terms)
     low_impact_keywords = [
-        # Cooking & Recipes
-        'recipe', 'recipes', 'cooking', 'cook', 'cooks', 'baking', 'bake', 'baked',
-        'dish', 'dishes', 'ingredient', 'ingredients', 'cuisine', 'chef', 'chefs',
-        'kitchen', 'meal', 'meals', 'dinner', 'lunch', 'breakfast', 'dessert',
-        'appetizer', 'appetizers', 'entree', 'entrees', 'turkey recipe',
-        'chicken recipe', 'beef recipe', 'pasta recipe', 'how to cook',
-        'cooking tips', 'kitchen tips', 'meal prep', 'meal planning',
-        'food blog', 'food blogger', 'cookbook', 'cooking show',
-        
-        # Home & Lifestyle
-        'wrapping presents', 'gift wrapping', 'how to wrap', 'present wrapping',
-        'home decor', 'home decoration', 'interior design', 'home improvement',
-        'diy project', 'diy projects', 'craft', 'crafts', 'crafting',
-        'organizing tips', 'cleaning tips', 'home organization', 'decluttering',
-        'gardening tips', 'plant care', 'houseplants', 'indoor plants',
-        'decorating', 'renovation', 'renovations', 'remodel', 'remodeling',
-        
-        # Lifestyle & Self-Help
-        'lifestyle tips', 'life hacks', 'productivity tips', 'wellness tips',
-        'self care', 'self-care', 'mindfulness tips', 'meditation guide',
-        'fashion tips', 'style tips', 'wardrobe tips', 'outfit ideas',
-        'beauty tips', 'skincare routine', 'makeup tutorial', 'hair tips',
-        'travel tips', 'packing tips', 'vacation planning', 'holiday tips',
-        'relationship advice', 'dating advice', 'parenting tips', 'mom tips',
-        'dad tips', 'family tips', 'work-life balance',
-        
-        # Low-Value Content Patterns
-        'top 10', 'top 5', 'top 20', 'best of', 'worst of', 'ranking', 'rankings',
-        'listicle', 'listicles', 'buzzfeed', 'clickbait', 'viral', 'trending now',
-        'you won\'t believe', 'shocking', 'amazing trick', 'secret tip',
-        'hack that will', 'one weird trick', 'doctors hate', 'this one thing',
-        'number one reason', 'simple trick', 'easy way', 'quick fix',
-        
-        # Holiday/Seasonal Fluff
-        'holiday recipes', 'christmas recipes', 'thanksgiving recipes',
-        'holiday decorating', 'christmas decorating', 'holiday shopping',
-        'gift guide', 'gift ideas', 'holiday gift', 'stocking stuffers',
-        'holiday party', 'christmas party', 'new year\'s resolution',
-        'valentine\'s day', 'mother\'s day', 'father\'s day',
-        
-        # Personal Advice & Columns
-        'dear abby', 'advice column', 'ask amy', 'relationship advice',
-        'dating advice', 'parenting tips', 'mom tips', 'dad tips',
-        'horoscope', 'horoscopes', 'astrology', 'zodiac',
-        
-        # Entertainment & Celebrity (non-news)
-        'entertainment', 'celebrity', 'celebrities', 'gossip', 'rumor', 'rumors',
-        'red carpet', 'awards show', 'movie premiere', 'tv premiere',
-        'celebrity news', 'hollywood', 'paparazzi', 'tabloid', 'tabloids',
-        
-        # Opinion/Editorial (lower impact than news)
-        'opinion piece', 'opinion', 'editorial', 'editorials', 'commentary',
-        'op-ed', 'opinion column', 'my take', 'i think', 'in my opinion',
-        
-        # Sponsored/Advertising
-        'sponsored', 'advertisement', 'advertisements', 'ad', 'ads', 'promotion',
-        'promotional', 'sponsored content', 'paid partnership', 'affiliate',
-        'buy now', 'shop now', 'limited time', 'special offer',
-        
-        # How-To Guides (non-news)
-        'how to', 'how-to', 'tutorial', 'tutorials', 'guide', 'guides',
-        'step by step', 'instructions', 'walkthrough', 'tips and tricks',
-        
-        # Personal Stories (non-news)
-        'my story', 'personal story', 'what happened to me', 'my experience',
-        'testimonial', 'testimonials', 'review', 'reviews', 'product review',
-        
-        # Low-Value Patterns
-        'you should know', 'things you need', 'must have', 'essential',
-        'game changer', 'life changing', 'revolutionary', 'miracle',
-        'secret', 'secrets', 'hidden', 'unknown', 'nobody tells you'
+        # Recipes / cooking (unambiguous)
+        'recipe', 'recipes', 'how to cook', 'cooking tips', 'meal prep',
+        'food blog', 'cookbook', 'cooking show',
+
+        # Home / lifestyle tips (unambiguous)
+        'home decor', 'diy project', 'organizing tips', 'cleaning tips',
+        'gift wrapping', 'skincare routine', 'makeup tutorial',
+        'outfit ideas', 'wardrobe tips', 'packing tips',
+
+        # Clickbait patterns (unambiguous)
+        'you won\'t believe', 'one weird trick', 'doctors hate',
+        'hack that will', 'this one thing', 'number one reason',
+
+        # Advice columns (unambiguous)
+        'dear abby', 'ask amy', 'horoscope', 'horoscopes', 'zodiac',
+
+        # Sponsored content (unambiguous)
+        'sponsored content', 'paid partnership', 'advertorial',
     ]
     
     # Count low-impact keyword matches (more matches = lower score)
@@ -471,152 +418,96 @@ def is_excluded_content(title: str, content: str, feed_name: str = "", feed_url:
     # Combine all text for checking
     text_to_check = f"{title} {content} {feed_name}".lower()
     
-    # Sports keywords (comprehensive list)
+    # Sports keywords — only unambiguous sports terms (no common English words)
     sports_keywords = [
-        # General sports terms
-        'sport', 'sports', 'athlete', 'athletes', 'athletic', 'athletics',
-        'game', 'games', 'match', 'matches', 'team', 'teams', 'player', 'players',
-        'coach', 'coaches', 'league', 'leagues', 'championship', 'championships',
-        'tournament', 'tournaments', 'playoff', 'playoffs', 'season', 'seasons',
-        'score', 'scores', 'scoring', 'win', 'wins', 'won', 'lose', 'lost', 'loss',
-        'victory', 'defeat', 'beat', 'beating', 'defeated',
-        
-        # Specific sports
+        # Specific sports (unambiguous)
         'football', 'soccer', 'basketball', 'baseball', 'hockey', 'tennis',
-        'golf', 'cricket', 'rugby', 'volleyball', 'swimming', 'track', 'field',
-        'boxing', 'mma', 'ufc', 'wrestling', 'cycling', 'racing', 'nascar',
-        'formula', 'f1', 'motorsport', 'olympic', 'olympics', 'paralympic',
-        'world cup', 'super bowl', 'stanley cup', 'world series', 'final four',
+        'golf', 'cricket', 'rugby', 'volleyball', 'boxing', 'mma', 'ufc',
+        'nascar', 'motorsport', 'olympic', 'olympics', 'paralympic',
+
+        # Leagues and events (unambiguous)
         'nba', 'nfl', 'mlb', 'nhl', 'fifa', 'uefa', 'ncaa',
-        
-        # Sports-related terms
-        'stadium', 'arena', 'field', 'court', 'pitch', 'referee', 'umpire',
-        'quarterback', 'pitcher', 'goalkeeper', 'goalie', 'draft', 'trades',
-        'recruiting', 'signing', 'contract', 'extension', 'free agency',
+        'world cup', 'super bowl', 'stanley cup', 'world series', 'final four',
+        'championship game', 'playoff game', 'playoff series',
+
+        # Sports-specific roles (unambiguous)
+        'quarterback', 'pitcher', 'goalkeeper', 'goalie', 'referee', 'umpire',
+        'head coach', 'offensive coordinator', 'defensive coordinator',
+
+        # Sports-specific phrases (unambiguous)
         'fantasy football', 'fantasy baseball', 'fantasy basketball',
-        'betting', 'odds', 'spread', 'over/under', 'pick em',
-        
-        # Common sports phrases
-        'game-winning', 'game-winning', 'comeback', 'upset', 'blowout',
-        'injury report', 'injury update', 'starting lineup', 'depth chart',
-        'power rankings', 'mvp', 'all-star', 'hall of fame', 'rookie', 'veteran',
-        'trade deadline', 'free agency', 'draft pick', 'prospect', 'recruit'
+        'starting lineup', 'depth chart', 'injury report', 'injury update',
+        'power rankings', 'all-star game', 'hall of fame induction',
+        'draft pick', 'trade deadline', 'free agent signing',
+        'sports betting', 'point spread',
     ]
     
-    # Entertainment keywords
+    # Entertainment keywords — only unambiguous entertainment terms
     entertainment_keywords = [
-        # General entertainment
-        'entertainment', 'celebrity', 'celebrities', 'celebrity news',
-        'hollywood', 'tinseltown', 'star', 'stars', 'superstar', 'superstars',
-        'red carpet', 'awards show', 'award ceremony', 'oscars', 'grammys',
-        'emmys', 'golden globe', 'golden globes', 'tony awards',
-        
-        # TV/Streaming
-        'tv show', 'television show', 'reality tv', 'reality show', 'series finale',
-        'season premiere', 'new episode', 'streaming', 'netflix', 'hulu', 'disney+',
-        'hbo max', 'prime video', 'peacock', 'paramount+', 'apple tv+',
-        'tv ratings', 'viewership', 'nielsen ratings',
-        
-        # Movies
-        'movie', 'movies', 'film', 'films', 'cinema', 'box office', 'opening weekend',
-        'sequel', 'prequel', 'remake', 'reboot', 'franchise', 'franchises',
-        'oscar', 'oscars', 'academy award', 'best picture', 'best actor', 'best actress',
-        'director', 'screenplay', 'cinematography', 'film festival', 'premiere',
-        'trailer', 'teaser', 'behind the scenes', 'making of',
-        
-        # Music (pop culture)
-        'music', 'song', 'songs', 'album', 'albums', 'single', 'singles',
-        'artist', 'artists', 'singer', 'singers', 'rapper', 'rappers',
-        'concert', 'concerts', 'tour', 'tours', 'tour dates', 'live show',
-        'grammy', 'grammys', 'billboard', 'hot 100', 'top 40', 'chart',
-        'music video', 'mv', 'viral song', 'trending song', 'spotify', 'apple music',
-        'itunes', 'soundcloud', 'youtube music',
-        
-        # Celebrity gossip/personalities
-        'gossip', 'rumor', 'rumors', 'scandal', 'scandals', 'affair', 'affairs',
-        'dating', 'engaged', 'married', 'divorce', 'breakup', 'break up',
-        'paparazzi', 'tabloid', 'tabloids', 'paparazzi photo', 'exclusive',
-        'kardashian', 'jenner', 'real housewives', 'bachelor', 'bachelorette',
-        'love island', 'too hot to handle', 'dating show',
-        
-        # Showbiz news
-        'showbiz', 'show business', 'tinseltown', 'la la land',
-        'casting news', 'audition', 'role', 'part', 'character', 'cast',
-        'director', 'producer', 'screenwriter', 'showrunner',
+        # Celebrity/gossip (unambiguous)
+        'celebrity news', 'celebrity gossip', 'red carpet',
+        'paparazzi', 'tabloid gossip', 'reality tv', 'reality show',
+        'kardashian', 'jenner', 'real housewives', 'love island',
+
+        # Awards shows (unambiguous)
+        'oscars ceremony', 'grammy awards', 'emmy awards', 'golden globes ceremony',
+        'academy awards', 'tony awards',
+
+        # Box office / movie industry (unambiguous)
+        'box office', 'opening weekend', 'film festival', 'movie premiere',
+        'nielsen ratings', 'tv ratings',
+
+        # Music industry (unambiguous)
+        'billboard hot 100', 'top 40 chart', 'album release', 'concert tour',
+        'music video', 'spotify playlist',
+
+        # Showbiz (unambiguous)
+        'showbiz', 'show business', 'tinseltown',
     ]
     
-    # Pop culture keywords
+    # Pop culture keywords — only unambiguous pop culture terms
     pop_culture_keywords = [
-        # Social media influencers
-        'influencer', 'influencers', 'tiktok', 'tik tok', 'instagram model',
-        'youtube star', 'youtuber', 'youtubers', 'streamer', 'streamers',
-        'twitch', 'onlyfans', 'snapchat', 'tiktok star', 'viral video',
-        'viral moment', 'trending', 'trending topic', 'meme', 'memes',
-        
-        # Video games (pop culture)
-        'video game', 'video games', 'gaming', 'gamer', 'gamers', 'esports',
-        'playstation', 'xbox', 'nintendo', 'switch', 'ps5', 'xbox series',
-        'call of duty', 'fortnite', 'minecraft', 'among us', 'fall guys',
-        'streaming', 'twitch stream', 'speedrun', 'achievement', 'trophy',
-        
-        # Comics/Anime/Manga (pop culture)
-        'comic', 'comics', 'comic book', 'superhero', 'superheroes', 'supervillain',
-        'mcu', 'marvel', 'dc comics', 'batman', 'superman', 'spider-man',
-        'anime', 'manga', 'cosplay', 'convention', 'comic con',
-        
-        # Fandom/Geek culture
-        'fandom', 'fan theory', 'fan theories', 'ship', 'shipping', 'fanfiction',
-        'convention', 'con', 'expo', 'fandom drama', 'stan', 'stanning',
-        'kpop', 'jpop', 'boy band', 'girl group', 'idol', 'idols',
-        
-        # Fashion/Beauty (pop culture)
-        'fashion week', 'red carpet fashion', 'street style', 'trend',
-        'vogue', 'cosmopolitan', 'elle', 'harper\'s bazaar', 'style',
-        'makeup', 'beauty', 'skincare', 'beauty guru', 'mua',
-        
-        # Reality TV/Dating Shows
-        'bachelor', 'bachelorette', 'love island', 'too hot to handle',
-        'married at first sight', 'the challenge', 'survivor', 'amazing race',
-        'real housewives', 'keeping up with', 'vanderpump rules',
-        '90 day fiance', 'love after lockup', 'real world', 'road rules'
+        # Influencer culture (unambiguous)
+        'tiktok star', 'instagram model', 'youtube star', 'onlyfans',
+        'twitch streamer', 'viral tiktok',
+
+        # Gaming (unambiguous — note: science-tech should cover gaming industry news)
+        'esports tournament', 'fortnite', 'call of duty', 'speedrun',
+
+        # Comics/anime (unambiguous)
+        'comic con', 'cosplay', 'anime convention', 'manga release',
+
+        # Fandom (unambiguous)
+        'fan theory', 'fanfiction', 'kpop', 'jpop', 'boy band',
+
+        # Fashion/beauty (unambiguous — not "style" or "trend" alone)
+        'fashion week', 'red carpet fashion', 'beauty guru', 'makeup tutorial',
+
+        # Reality TV (unambiguous)
+        'married at first sight', 'the challenge', 'vanderpump rules',
+        '90 day fiance', 'love after lockup',
     ]
     
-    # Lifestyle/Fluff keywords (recipes, home tips, low-value content)
+    # Lifestyle/fluff keywords — only unambiguous non-news terms
     lifestyle_fluff_keywords = [
-        # Cooking/Recipes
-        'recipe', 'recipes', 'cooking', 'cook', 'chef', 'cuisine', 'dish', 'dishes',
-        'ingredient', 'ingredients', 'baking', 'bake', 'baked', 'oven', 'stovetop',
-        'turkey recipe', 'chicken recipe', 'beef recipe', 'pasta recipe', 'dessert recipe',
-        'how to cook', 'cooking tips', 'kitchen tips', 'meal prep', 'meal planning',
-        'food blog', 'food blogger', 'cookbook', 'cooking show',
-        
-        # Home/Lifestyle tips
-        'wrapping presents', 'gift wrapping', 'how to wrap', 'present wrapping',
-        'home decor', 'home decoration', 'interior design', 'home improvement',
-        'diy project', 'diy projects', 'craft', 'crafts', 'crafting',
-        'organizing tips', 'cleaning tips', 'home organization', 'decluttering',
-        'gardening tips', 'plant care', 'houseplants', 'indoor plants',
-        
-        # Lifestyle fluff
-        'lifestyle tips', 'life hacks', 'productivity tips', 'wellness tips',
-        'self care', 'self-care', 'mindfulness tips', 'meditation guide',
-        'fashion tips', 'style tips', 'wardrobe tips', 'outfit ideas',
-        'beauty tips', 'skincare routine', 'makeup tutorial', 'hair tips',
-        'travel tips', 'packing tips', 'vacation planning', 'holiday tips',
-        
-        # Low-value content patterns
-        'top 10', 'top 5', 'best of', 'worst of', 'ranking', 'listicle',
-        'buzzfeed', 'clickbait', 'viral', 'trending now', 'you won\'t believe',
-        'shocking', 'amazing trick', 'secret tip', 'hack that will',
-        
-        # Holiday/Seasonal fluff (non-news)
-        'holiday recipes', 'christmas recipes', 'thanksgiving recipes',
-        'holiday decorating', 'christmas decorating', 'holiday shopping',
-        'gift guide', 'gift ideas', 'holiday gift', 'stocking stuffers',
-        
-        # Personal advice columns
-        'dear abby', 'advice column', 'ask amy', 'relationship advice',
-        'dating advice', 'parenting tips', 'mom tips', 'dad tips'
+        # Recipes (unambiguous)
+        'recipe', 'recipes', 'how to cook', 'cooking tips', 'meal prep',
+        'meal planning', 'food blog', 'cookbook',
+
+        # Home/DIY (unambiguous)
+        'home decor', 'diy project', 'organizing tips', 'cleaning tips',
+        'gift wrapping', 'wrapping presents',
+
+        # Lifestyle tips (unambiguous)
+        'skincare routine', 'makeup tutorial', 'outfit ideas',
+        'wardrobe tips', 'packing tips',
+
+        # Advice columns (unambiguous)
+        'dear abby', 'ask amy', 'horoscope', 'zodiac sign',
+
+        # Holiday fluff (unambiguous)
+        'holiday recipes', 'christmas recipes', 'stocking stuffers',
+        'gift guide',
     ]
     
     # Check for exclusion keywords
@@ -629,33 +520,15 @@ def is_excluded_content(title: str, content: str, feed_name: str = "", feed_url:
             logger.debug(f"Article excluded (matched keyword '{keyword}'): {title[:60]}...")
             return True
     
-    # Additional pattern matching for common phrases
-    # Note: We avoid matching "vs" alone as it appears in political/news contexts too
+    # Pattern matching — only multi-word patterns that are unambiguously non-news
     exclusion_patterns = [
         r'\b\d+\s*-\s*\d+\s*(final|score|points?|goals?)\b',  # "3-2 final" (sports score)
         r'\b(football|basketball|baseball|hockey|soccer|tennis|golf|cricket)\s+(game|match|season|league|team)\b',
-        r'\b\w+\s+vs\.?\s+\w+\s+(game|match|final|semifinal|championship)\b',  # "Team vs Team game" (sports-specific)
-        r'\b(oscar|grammy|emmy|tony|golden globe)\s+(nomination|winner|nominee|awards?)\b',
+        r'\b\w+\s+vs\.?\s+\w+\s+(game|match|final|semifinal|championship)\b',
         r'\b(album|single|ep)\s+release\b',
-        r'\b(tv|television)\s+(show|series|premiere|episode)\b',
-        r'\bcelebrity\s+(news|gossip|rumor|scandal)\b',
-        r'\b(pop|rock|hip hop|rap|country)\s+(music|song|album|single)\b',
-        r'\b(video game|gaming|esports)\s+(news|update|release)\b',
-        r'\b(box office|opening weekend|film festival)\b',
-        # Lifestyle/Fluff patterns
-        r'\b(recipe|recipes|cooking|how to cook|baking|dish|ingredient)\b',
-        r'\b(wrapping presents|gift wrapping|how to wrap|present wrapping)\b',
-        r'\b(home decor|home decoration|diy project|organizing tips|cleaning tips)\b',
-        r'\b(lifestyle tips|life hacks|self care|wellness tips|mindfulness)\b',
-        r'\b(top \d+|best of|worst of|listicle|ranking)\b',  # Listicles
-        r'\b(holiday recipes|christmas recipes|thanksgiving recipes)\b',
-        r'\b(gift guide|gift ideas|holiday gift|stocking stuffers)\b',
-        r'\b(how to|how-to|tutorial|step by step|instructions)\b',  # How-to guides
-        r'\b(you won\'t believe|shocking|amazing trick|secret tip|one weird trick)\b',  # Clickbait
-        r'\b(sponsored|advertisement|ad|promotion|paid partnership)\b',  # Advertising
-        r'\b(opinion piece|editorial|commentary|op-ed|my take)\b',  # Opinion (lower impact)
-        r'\b(dear abby|advice column|relationship advice|dating advice)\b',  # Advice columns
-        r'\b(product review|my story|personal story|testimonial)\b'  # Personal/reviews
+        r'\bcelebrity\s+(gossip|rumor)\b',
+        r'\b(pop|rock|hip hop|rap|country)\s+(music|song|album)\b',
+        r'\b(you won\'t believe|one weird trick|doctors hate)\b',
     ]
     
     for pattern in exclusion_patterns:
@@ -670,7 +543,7 @@ def collect_rss_feeds() -> int:
     Collect articles from all active RSS feeds with deduplication
     Returns: Number of articles added
     """
-    logger.info("Starting RSS feed collection with deduplication (v4.0 domain-aware)...")
+    logger.info("Starting RSS feed collection with deduplication (v5.0 domain-aware)...")
     
     # Initialize deduplication manager if available
     dedup_manager = None
@@ -690,7 +563,7 @@ def collect_rss_feeds() -> int:
     try:
         cur = conn.cursor()
         
-        # Get all active RSS feeds from all domain schemas (v4.0)
+        # Get all active RSS feeds from all domain schemas (v5.0)
         # Query each domain schema: politics, finance, science_tech
         feeds = []
         domains = [
@@ -796,18 +669,18 @@ def collect_rss_feeds() -> int:
                             impact_score = calculate_article_impact_score(title, content)
                             quality_score = calculate_article_quality_score(title, content, feed_name)
                             
-                            # Filter by minimum quality score (>= 0.4)
-                            if quality_score < 0.4:
+                            # Filter by minimum quality score
+                            if quality_score < 0.3:
                                 filtered_quality += 1
                                 excluded_count += 1
-                                logger.debug(f"Article excluded (quality score {quality_score:.2f} < 0.4): {title[:60]}...")
+                                logger.debug(f"Article excluded (quality score {quality_score:.2f} < 0.3): {title[:60]}...")
                                 continue
                             
-                            # Filter by minimum impact score (>= 0.4)
-                            if impact_score < 0.4:
+                            # Filter by minimum impact score
+                            if impact_score < 0.25:
                                 filtered_impact += 1
                                 excluded_count += 1
-                                logger.debug(f"Article excluded (impact score {impact_score:.2f} < 0.4): {title[:60]}...")
+                                logger.debug(f"Article excluded (impact score {impact_score:.2f} < 0.25): {title[:60]}...")
                                 continue
                             
                             # Parse published date
@@ -862,6 +735,13 @@ def collect_rss_feeds() -> int:
                                 except Exception as queue_error:
                                     logger.debug(f"Could not queue article {article_id} for topic extraction: {queue_error}")
                                     # Non-critical, continue processing
+                                
+                                # Context-centric: ensure intelligence.contexts + article_to_context (Phase 1.2)
+                                try:
+                                    from services.context_processor_service import ensure_context_for_article
+                                    ensure_context_for_article(domain_key, article_id)
+                                except Exception as ctx_err:
+                                    logger.debug(f"Context processor skip: {ctx_err}")
                                 
                         except Exception as e:
                             logger.warning(f"Error processing article from {feed_name}: {e}")
@@ -962,9 +842,9 @@ def collect_rss_feeds() -> int:
             if total_filtered_ads > 0:
                 logger.info(f"     - Advertisements: {total_filtered_ads}")
             if total_filtered_quality > 0:
-                logger.info(f"     - Low quality score (<0.4): {total_filtered_quality}")
+                logger.info(f"     - Low quality score (<0.3): {total_filtered_quality}")
             if total_filtered_impact > 0:
-                logger.info(f"     - Low impact score (<0.4): {total_filtered_impact}")
+                logger.info(f"     - Low impact score (<0.25): {total_filtered_impact}")
             # Content exclusion (sports/entertainment) is the remainder
             content_excluded = total_excluded - total_filtered_clickbait - total_filtered_ads - total_filtered_quality - total_filtered_impact
             if content_excluded > 0:
@@ -1033,18 +913,15 @@ def collect_rss_feed(feed_url: str, feed_name: str = "Unknown") -> int:
                     logger.debug(f"Skipping advertisement: {title[:60]}...")
                     continue
                 
-                # Calculate scores for threshold filtering
                 impact_score = calculate_article_impact_score(title, content)
                 quality_score = calculate_article_quality_score(title, content, feed_name)
                 
-                # Filter by minimum quality score (>= 0.4)
-                if quality_score < 0.4:
-                    logger.debug(f"Skipping article (quality score {quality_score:.2f} < 0.4): {title[:60]}...")
+                if quality_score < 0.3:
+                    logger.debug(f"Skipping article (quality score {quality_score:.2f} < 0.3): {title[:60]}...")
                     continue
                 
-                # Filter by minimum impact score (>= 0.4)
-                if impact_score < 0.4:
-                    logger.debug(f"Skipping article (impact score {impact_score:.2f} < 0.4): {title[:60]}...")
+                if impact_score < 0.25:
+                    logger.debug(f"Skipping article (impact score {impact_score:.2f} < 0.25): {title[:60]}...")
                     continue
                 
                 published_date = None
@@ -1094,7 +971,7 @@ def collect_rss_feed(feed_url: str, feed_name: str = "Unknown") -> int:
                 # Ensure quality_score stays in [0, 1] (impact_score already clamped)
                 quality_score = max(0.0, min(1.0, quality_score))
 
-                # Insert article into domain schema (v4.0) with quality score and bias score
+                # Insert article into domain schema (v5.0) with quality score and bias score
                 cur.execute(f"""
                     INSERT INTO {schema_name}.articles
                     (title, url, content, summary, published_at, created_at, source_domain, quality_score, bias_score)
@@ -1121,6 +998,13 @@ def collect_rss_feed(feed_url: str, feed_name: str = "Unknown") -> int:
                     except Exception as queue_error:
                         logger.debug(f"Could not queue article {article_id} for topic extraction: {queue_error}")
                         # Non-critical, continue processing
+                    
+                    # Context-centric: ensure intelligence.contexts + article_to_context (Phase 1.2)
+                    try:
+                        from services.context_processor_service import ensure_context_for_article
+                        ensure_context_for_article(domain_key, article_id)
+                    except Exception as ctx_err:
+                        logger.debug(f"Context processor skip: {ctx_err}")
                     
             except Exception as e:
                 logger.warning(f"Error processing article: {e}")
