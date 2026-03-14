@@ -23,6 +23,24 @@ import traceback
 # Configure logging
 logger = logging.getLogger(__name__)
 
+# Phases that process batches; re-enqueue when pending work remains (continuous until empty)
+BATCH_PHASES_CONTINUOUS = {
+    "ml_processing",
+    "article_processing",
+    "entity_extraction",
+    "sentiment_analysis",
+    "quality_scoring",
+    "storyline_processing",
+    "basic_summary_generation",
+    "rag_enhancement",
+    "storyline_automation",
+    "entity_profile_build",
+    "timeline_generation",
+    "topic_clustering",
+    "event_extraction",
+}
+_SCHEMAS = ("politics", "finance", "science_tech")
+
 class TaskStatus(Enum):
     """Task execution status"""
     PENDING = "pending"
@@ -74,15 +92,21 @@ PHASE_ESTIMATED_DURATION_SECONDS = {
     "watchlist_alerts": 60,
     "data_cleanup": 300,
     "health_check": 10,
-    "context_sync": 180,
+    "context_sync": 60,   # ~5-10s per 100 contexts (production batch)
     "entity_profile_sync": 120,
-    "claim_extraction": 300,
-    "event_tracking": 240,
+    "claim_extraction": 60,   # 50 contexts @ 2-5s each, parallel 5 → ~20-50s
+    "event_tracking": 30,   # 1000 contexts scan ~15-20s (production)
     "event_coherence_review": 180,
     "investigation_report_refresh": 300,
     "entity_profile_build": 600,
     "pattern_recognition": 120,
     "storyline_automation": 180,
+    "story_enhancement": 300,
+    "entity_enrichment": 180,
+    "story_state_triggers": 120,
+    "pattern_matching": 90,
+    "cross_domain_synthesis": 120,
+    "relationship_extraction": 90,
 }
 
 class AutomationManager:
@@ -99,7 +123,7 @@ class AutomationManager:
         self._phase_request_queue = queue.Queue()
         self.health_check_interval = 30  # seconds
         self.task_timeout = 300  # 5 minutes
-        self.max_concurrent_tasks = 5
+        self.max_concurrent_tasks = 8  # More parallel work for full-time utilization
         
         # Dynamic resource allocation
         self.dynamic_resource_service = None
@@ -107,9 +131,9 @@ class AutomationManager:
         
         # Task schedules (cron-like) - Sequential processing with proper dependencies
         self.schedules = {
-            # PHASE 1: Data Collection (Every hour - reduced from 10 minutes)
+            # PHASE 1: Data Collection
             'rss_processing': {
-                'interval': 3600,  # 1 hour - Reduced frequency, cron handles twice-daily
+                'interval': 1800,  # 30 minutes - more frequent for all-day runs
                 'last_run': None,
                 'enabled': True,
                 'priority': TaskPriority.CRITICAL,
@@ -118,9 +142,9 @@ class AutomationManager:
                 'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['rss_processing'],
             },
             
-            # PHASE 1b: Context-centric sync (backfill articles -> intelligence.contexts)
+            # PHASE 1b: Context-centric sync (incremental: articles -> intelligence.contexts)
             'context_sync': {
-                'interval': 1200,  # 20 minutes
+                'interval': 900,  # 15 minutes - incremental sync, 100 contexts/batch, ~30-60s
                 'last_run': None,
                 'enabled': True,
                 'priority': TaskPriority.NORMAL,
@@ -138,9 +162,9 @@ class AutomationManager:
                 'depends_on': [],
                 'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['entity_profile_sync'],
             },
-            # PHASE 2a: Claim extraction (contexts -> extracted_claims, context-centric)
+            # PHASE 2a: Claim extraction (contexts -> extracted_claims; LLM rate limits)
             'claim_extraction': {
-                'interval': 2400,  # 40 minutes
+                'interval': 1800,  # 30 minutes - max 50 contexts/run, ~1-2 min, cost-controlled
                 'last_run': None,
                 'enabled': True,
                 'priority': TaskPriority.NORMAL,
@@ -148,9 +172,9 @@ class AutomationManager:
                 'depends_on': [],
                 'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['claim_extraction'],
             },
-            # PHASE 2.3: Event tracking (contexts -> tracked_events, event_chronicles)
+            # PHASE 2.3: Event tracking (contexts -> tracked_events; 6h window, overlapping)
             'event_tracking': {
-                'interval': 3600,  # 1 hour
+                'interval': 3600,  # 1 hour - max 1000 contexts/run, ~15-20s, catch delayed correlations
                 'last_run': None,
                 'enabled': True,
                 'priority': TaskPriority.NORMAL,
@@ -178,9 +202,19 @@ class AutomationManager:
                 'depends_on': ['event_tracking'],
                 'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['investigation_report_refresh'],
             },
+            # PHASE 2.5: Cross-domain synthesis (correlate events across politics/finance/science-tech)
+            'cross_domain_synthesis': {
+                'interval': 1800,  # 30 minutes
+                'last_run': None,
+                'enabled': True,
+                'priority': TaskPriority.NORMAL,
+                'phase': 2,
+                'depends_on': ['event_tracking'],
+                'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['cross_domain_synthesis'],
+            },
             # PHASE 1.3: Entity profile builder (sections, relationships from contexts)
             'entity_profile_build': {
-                'interval': 21600,  # 6 hours
+                'interval': 900,  # 15 minutes - run often, re-enqueue until profiles built
                 'last_run': None,
                 'enabled': True,
                 'priority': TaskPriority.NORMAL,
@@ -198,9 +232,19 @@ class AutomationManager:
                 'depends_on': [],
                 'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['pattern_recognition'],
             },
+            # P2: Relationship extraction (co-mentions -> entity_relationships)
+            'relationship_extraction': {
+                'interval': 900,  # 15 minutes
+                'last_run': None,
+                'enabled': True,
+                'priority': TaskPriority.NORMAL,
+                'phase': 2,
+                'depends_on': [],
+                'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['relationship_extraction'],
+            },
             # PHASE 2: Article Processing (Runs frequently, processes existing articles)
             'article_processing': {
-                'interval': 1200,  # 20 minutes - Relaxed to reduce load
+                'interval': 300,  # 5 minutes - run often, re-enqueue until empty
                 'last_run': None,
                 'enabled': True,
                 'priority': TaskPriority.HIGH,
@@ -211,7 +255,7 @@ class AutomationManager:
             
             # PHASE 3: ML Processing (Runs frequently on processed articles)
             'ml_processing': {
-                'interval': 1200,  # 20 minutes - Relaxed to reduce load
+                'interval': 300,  # 5 minutes - run often, re-enqueue until empty
                 'last_run': None,
                 'enabled': True,
                 'priority': TaskPriority.HIGH,
@@ -222,7 +266,7 @@ class AutomationManager:
             
             # PHASE 5: Topic Clustering (Continuous iterative refinement)
             'topic_clustering': {
-                'interval': 1200,  # 20 minutes - Relaxed from 5 min to reduce load
+                'interval': 300,  # 5 minutes - run often, drain backlog
                 'last_run': None,
                 'enabled': True,
                 'priority': TaskPriority.HIGH,
@@ -233,7 +277,7 @@ class AutomationManager:
             
             # PHASE 4: Parallel ML & Entity Processing (Runs frequently)
             'entity_extraction': {
-                'interval': 1200,  # 20 minutes - Relaxed to reduce load
+                'interval': 300,  # 5 minutes - run often, re-enqueue until empty
                 'last_run': None,
                 'enabled': True,
                 'priority': TaskPriority.NORMAL,
@@ -245,7 +289,7 @@ class AutomationManager:
             
             # PHASE 4: Parallel ML & Entity Processing (Runs frequently)
             'quality_scoring': {
-                'interval': 1200,  # 20 minutes - Relaxed to reduce load
+                'interval': 300,  # 5 minutes - run often
                 'last_run': None,
                 'enabled': True,
                 'priority': TaskPriority.NORMAL,
@@ -257,7 +301,7 @@ class AutomationManager:
             
             # PHASE 4: Parallel ML & Entity Processing (Runs frequently)
             'sentiment_analysis': {
-                'interval': 1200,  # 20 minutes - Relaxed to reduce load
+                'interval': 300,  # 5 minutes - run often, re-enqueue until empty
                 'last_run': None,
                 'enabled': True,
                 'priority': TaskPriority.NORMAL,
@@ -267,9 +311,9 @@ class AutomationManager:
                 'parallel_group': 'ml_entity_processing'  # Can run in parallel with ML
             },
             
-            # PHASE 7: Storyline Processing
+            # PHASE 7: Storyline Processing (summaries; continuous until empty)
             'storyline_processing': {
-                'interval': 1800,  # 30 minutes - Relaxed to reduce load
+                'interval': 300,  # 5 minutes - run often, re-enqueue until empty
                 'last_run': None,
                 'enabled': True,
                 'priority': TaskPriority.HIGH,
@@ -279,7 +323,7 @@ class AutomationManager:
             },
             # Governor-triggered: RAG discovery for one or all automation-enabled storylines
             'storyline_automation': {
-                'interval': 1800,
+                'interval': 300,  # 5 minutes - run often, re-enqueue until empty
                 'last_run': None,
                 'enabled': True,
                 'priority': TaskPriority.NORMAL,
@@ -288,9 +332,9 @@ class AutomationManager:
                 'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['storyline_automation'],
             },
             # PHASE 8: RAG Enhancement (Every 30 minutes)
-            # PHASE 6: Basic Summary Generation (Starts 15 minutes after RSS)
+            # PHASE 6: Basic Summary Generation
             'basic_summary_generation': {
-                'interval': 600,  # 10 minutes - Relaxed from 5 min
+                'interval': 300,  # 5 minutes - run often, re-enqueue until empty
                 'last_run': None,
                 'enabled': True,
                 'priority': TaskPriority.HIGH,
@@ -300,7 +344,7 @@ class AutomationManager:
             },
             
             'rag_enhancement': {
-                'interval': 1800,  # 30 minutes - Third cycle of RSS
+                'interval': 300,  # 5 minutes - run often, re-enqueue until storylines enhanced
                 'last_run': None,
                 'enabled': True,
                 'priority': TaskPriority.HIGH,
@@ -311,7 +355,7 @@ class AutomationManager:
             
             # PHASE 9a: Event Extraction (v5.0 - runs after entity extraction)
             'event_extraction': {
-                'interval': 1200,  # 20 minutes - Relaxed from 15 min
+                'interval': 300,  # 5 minutes - run often, re-enqueue until empty
                 'last_run': None,
                 'enabled': True,
                 'priority': TaskPriority.NORMAL,
@@ -323,7 +367,7 @@ class AutomationManager:
             
             # PHASE 9b: Event Deduplication (v5.0 - runs after event extraction)
             'event_deduplication': {
-                'interval': 1200,  # 20 minutes - Relaxed from 15 min
+                'interval': 600,  # 10 minutes
                 'last_run': None,
                 'enabled': True,
                 'priority': TaskPriority.NORMAL,
@@ -335,7 +379,7 @@ class AutomationManager:
             
             # PHASE 9c: Story Continuation Matching (v5.0)
             'story_continuation': {
-                'interval': 1200,  # 20 minutes - Relaxed from 15 min
+                'interval': 600,  # 10 minutes
                 'last_run': None,
                 'enabled': True,
                 'priority': TaskPriority.NORMAL,
@@ -344,15 +388,46 @@ class AutomationManager:
                 'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['story_continuation'],
             },
 
-            # PHASE 9d: Timeline Generation (Every 30 minutes)
+            # PHASE 9d: Timeline Generation (continuous until empty)
             'timeline_generation': {
-                'interval': 1800,  # 30 minutes - Same as RAG
+                'interval': 300,  # 5 minutes - run often, re-enqueue until empty
                 'last_run': None,
                 'enabled': True,
                 'priority': TaskPriority.NORMAL,
                 'phase': 9,
                 'depends_on': ['rag_enhancement'],
                 'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['timeline_generation'],
+            },
+
+            # Phase 3 RAG: Story state triggers (fact_change_log -> story_update_queue)
+            'story_state_triggers': {
+                'interval': 300,  # 5 minutes - 100-change batches, ~2s each; if behind >10k alert
+                'last_run': None,
+                'enabled': True,
+                'priority': TaskPriority.NORMAL,
+                'phase': 9,
+                'depends_on': [],
+                'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['story_state_triggers'],
+            },
+            # Phase 3 RAG: Entity enrichment (Wikipedia -> entity_profiles; LLM limits)
+            'entity_enrichment': {
+                'interval': 1800,  # 30 minutes - max 20 entities/run, 10s timeout/entity; skip if queue >1000
+                'last_run': None,
+                'enabled': True,
+                'priority': TaskPriority.NORMAL,
+                'phase': 9,
+                'depends_on': ['entity_profile_sync'],
+                'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['entity_enrichment'],
+            },
+            # Phase 3 RAG: Full enhancement cycle (triggers + enrichment + profile build)
+            'story_enhancement': {
+                'interval': 300,  # 5 minutes - max 10 stories/run, 60s budget
+                'last_run': None,
+                'enabled': True,
+                'priority': TaskPriority.NORMAL,
+                'phase': 9,
+                'depends_on': [],
+                'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['story_enhancement'],
             },
             
             # PHASE 10: Cache Cleanup (Every hour)
@@ -386,6 +461,16 @@ class AutomationManager:
                 'phase': 12,
                 'depends_on': ['story_continuation'],
                 'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['watchlist_alerts'],
+            },
+            # Phase 4 RAG: Watch patterns — match content, record pattern_matches, create watchlist alerts
+            'pattern_matching': {
+                'interval': 1800,  # 30 minutes
+                'last_run': None,
+                'enabled': True,
+                'priority': TaskPriority.LOW,
+                'phase': 12,
+                'depends_on': [],
+                'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['pattern_matching'],
             },
 
             # MAINTENANCE: Data Cleanup (Daily)
@@ -586,11 +671,11 @@ class AutomationManager:
                         if self._should_run_task(task_name, schedule, current_time):
                             await self._create_and_queue_task(task_name, schedule, current_time)
                 
-                await asyncio.sleep(10)  # Check every 10 seconds
+                await asyncio.sleep(5)  # Check every 5 seconds for more continuous iteration
                 
             except Exception as e:
                 logger.error(f"Scheduler error: {e}")
-                await asyncio.sleep(10)
+                await asyncio.sleep(5)
         
         logger.info("Scheduler stopped")
     
@@ -813,9 +898,11 @@ class AutomationManager:
         # Apply load factor to interval
         adjusted_interval = int(base_interval * self.metrics['load_factor'])
         
-        # Ensure minimum interval
-        min_interval = max(60, estimated * 2)  # At least 2x estimated duration
-        return max(adjusted_interval, min_interval)
+        # Ensure minimum interval (at least 2x estimated duration)
+        min_interval = max(60, estimated * 2)
+        # Cap at 1.5x base so we don't slow down too much during full-time runs
+        max_interval = int(base_interval * 1.5)
+        return min(max(adjusted_interval, min_interval), max_interval)
     
     def _update_processing_history(self, task_name: str, actual_duration: float):
         """Update processing history for adaptive timing"""
@@ -881,7 +968,20 @@ class AutomationManager:
                 pass
         
         logger.info(f"Worker {worker_id} executing task: {task.name}")
-        
+        task.started_at = datetime.now(timezone.utc)
+        try:
+            from services.activity_feed_service import get_activity_feed
+            message = self._activity_message(task)
+            get_activity_feed().add_current(
+                task.id,
+                message,
+                task_name=task.name,
+                domain=task.metadata.get("domain"),
+                storyline_id=task.metadata.get("storyline_id"),
+            )
+        except Exception as e:
+            logger.debug("Activity feed add_current: %s", e)
+
         try:
             # Execute task based on type
             if task.name == 'rss_processing':
@@ -896,12 +996,16 @@ class AutomationManager:
                 await self._execute_event_tracking(task)
             elif task.name == 'investigation_report_refresh':
                 await self._execute_investigation_report_refresh(task)
+            elif task.name == 'cross_domain_synthesis':
+                await self._execute_cross_domain_synthesis(task)
             elif task.name == 'event_coherence_review':
                 await self._execute_event_coherence_review(task)
             elif task.name == 'entity_profile_build':
                 await self._execute_entity_profile_build(task)
             elif task.name == 'pattern_recognition':
                 await self._execute_pattern_recognition(task)
+            elif task.name == 'relationship_extraction':
+                await self._execute_relationship_extraction(task)
             elif task.name == 'digest_generation':
                 await self._execute_digest_generation(task)
             elif task.name == 'data_cleanup':
@@ -940,6 +1044,14 @@ class AutomationManager:
                 await self._execute_story_continuation_v5(task)
             elif task.name == 'watchlist_alerts':
                 await self._execute_watchlist_alerts_v5(task)
+            elif task.name == 'story_enhancement':
+                await self._execute_story_enhancement(task)
+            elif task.name == 'entity_enrichment':
+                await self._execute_entity_enrichment(task)
+            elif task.name == 'story_state_triggers':
+                await self._execute_story_state_triggers(task)
+            elif task.name == 'pattern_matching':
+                await self._execute_pattern_matching(task)
             else:
                 raise ValueError(f"Unknown task type: {task.name}")
             
@@ -956,6 +1068,15 @@ class AutomationManager:
             self._update_processing_history(task.name, processing_time)
             
             logger.info(f"Task {task.name} completed in {processing_time:.2f}s (Phase {task.metadata.get('phase', 0)})")
+
+            # Continuous iteration: re-enqueue same phase when work remains so we run until empty
+            if task.name in BATCH_PHASES_CONTINUOUS:
+                try:
+                    if await self._has_pending_work(task.name):
+                        self.request_phase(task.name)
+                        logger.debug("Re-enqueued %s (pending work remains)", task.name)
+                except Exception as e:
+                    logger.debug("Re-enqueue check for %s: %s", task.name, e)
             
         except Exception as e:
             # Handle task failure
@@ -974,9 +1095,79 @@ class AutomationManager:
                 logger.info(f"Retrying task {task.name} (attempt {task.retry_count + 1})")
         
         finally:
+            try:
+                from services.activity_feed_service import get_activity_feed
+                get_activity_feed().complete(
+                    task.id,
+                    success=(task.status == TaskStatus.COMPLETED),
+                    error_message=getattr(task, "error_message", None),
+                )
+            except Exception as e:
+                logger.debug("Activity feed complete: %s", e)
             # Store task result
             self.tasks[task.id] = task
-            
+
+    def _activity_message(self, task: Task) -> str:
+        """Human-readable one-line message for monitoring UI."""
+        meta = task.metadata or {}
+        domain = meta.get("domain")
+        storyline_id = meta.get("storyline_id")
+        name = task.name
+        if name == "rss_processing":
+            return "Running RSS collection (all domains)"
+        if name == "context_sync":
+            return f"Syncing articles to contexts ({domain or 'all domains'})"
+        if name == "storyline_automation":
+            if storyline_id and domain:
+                return f"Storyline automation (storyline {storyline_id}, {domain})"
+            return f"Storyline automation ({domain or 'all'})"
+        if name == "entity_profile_sync":
+            return f"Syncing entity profiles ({domain or 'all domains'})"
+        if name == "entity_profile_build":
+            return "Building entity profiles from contexts"
+        if name == "claim_extraction":
+            return "Extracting claims from contexts"
+        if name == "event_tracking":
+            return f"Tracking events ({domain or 'all'})"
+        if name == "cross_domain_synthesis":
+            return "Cross-domain synthesis"
+        if name == "relationship_extraction":
+            return "Relationship extraction"
+        if name == "story_state_triggers":
+            return "Processing story state triggers"
+        if name == "entity_enrichment":
+            return "Running entity enrichment"
+        if name == "pattern_matching":
+            return "Running watch pattern matching"
+        if name == "story_enhancement":
+            return "Running story enhancement cycle"
+        if name == "topic_clustering":
+            return "Topic clustering"
+        if name == "ml_processing":
+            return "ML processing (summaries, features)"
+        if name == "article_processing":
+            return "Article processing"
+        if name == "entity_extraction":
+            return "Entity extraction"
+        if name == "event_extraction":
+            return "Event extraction"
+        if name == "story_continuation":
+            return "Story continuation"
+        if name == "watchlist_alerts":
+            return "Generating watchlist alerts"
+        if name == "data_cleanup":
+            return "Data cleanup"
+        if name == "health_check":
+            return "Health check"
+        if name == "cache_cleanup":
+            return "Cache cleanup"
+        if name == "digest_generation":
+            return "Digest generation"
+        # Generic fallback
+        if domain:
+            return f"{name.replace('_', ' ').title()} ({domain})"
+        return name.replace("_", " ").title()
+
     async def _execute_rss_processing(self, task: Task):
         """Execute RSS processing: use domain feeds (collect_rss_feeds) so all politics/finance/science_tech.rss_feeds are used."""
         from collectors.rss_collector import collect_rss_feeds
@@ -999,12 +1190,12 @@ class AutomationManager:
             pass
         from services.context_processor_service import sync_domain_articles_to_contexts
         import asyncio
-        
+
         for domain_key in ("politics", "finance", "science-tech"):
             try:
-                # Run in executor to avoid blocking (sync_domain is sync/DB-heavy)
+                # Production: 100 contexts/batch, ~5-10s per batch, prevents backlog
                 total = await asyncio.get_event_loop().run_in_executor(
-                    None, lambda d=domain_key: sync_domain_articles_to_contexts(d, limit=500)
+                    None, lambda d=domain_key: sync_domain_articles_to_contexts(d, limit=100)
                 )
                 if total > 0:
                     logger.info(f"Context sync {domain_key}: {total} contexts created")
@@ -1042,7 +1233,8 @@ class AutomationManager:
             pass
         from services.claim_extraction_service import run_claim_extraction_batch
         try:
-            total = await run_claim_extraction_batch(limit=30)
+            # Production: max 50 contexts (LLM rate limits), ~20-50s, parallel_requests in service
+            total = await run_claim_extraction_batch(limit=50)
             if total > 0:
                 logger.info(f"Claim extraction: {total} claims inserted")
         except Exception as e:
@@ -1058,7 +1250,8 @@ class AutomationManager:
             pass
         try:
             from services.event_tracking_service import run_event_tracking_batch
-            total = await run_event_tracking_batch(limit=20)
+            # Production: context_limit 1000 total, ~15-20s per run, 6h overlapping window
+            total = await run_event_tracking_batch(limit=100)
             if total > 0:
                 logger.info(f"Event tracking: {total} chronicle entries added")
         except Exception as e:
@@ -1081,6 +1274,20 @@ class AutomationManager:
                 logger.debug("Investigation report refresh: no stale reports")
         except Exception as e:
             logger.warning(f"Investigation report refresh failed: {e}")
+
+    async def _execute_cross_domain_synthesis(self, task: Task):
+        """Run cross-domain correlation job (events spanning domains -> cross_domain_correlations)."""
+        try:
+            from services.cross_domain_service import run_cross_domain_synthesis
+            result = run_cross_domain_synthesis(
+                domains=None,
+                time_window_days=7,
+                correlation_threshold=0.5,
+            )
+            if result.get("correlations"):
+                logger.info(f"Cross-domain synthesis: {len(result['correlations'])} correlation(s) written")
+        except Exception as e:
+            logger.warning(f"Cross-domain synthesis failed: {e}")
 
     async def _execute_event_coherence_review(self, task: Task):
         """LLM-powered review: verify each context in an event actually belongs (Phase 3)."""
@@ -1117,6 +1324,76 @@ class AutomationManager:
                 logger.info(f"Entity profile build: {updated} profiles updated")
         except Exception as e:
             logger.warning(f"Entity profile build failed: {e}")
+
+    async def _execute_story_enhancement(self, task: Task):
+        """Phase 3 RAG: Run full enhancement cycle (triggers + entity enrichment + profile build)."""
+        from services.enhancement_orchestrator_service import run_enhancement_cycle
+        try:
+            # Production: max 10 stories/run, 60s budget; 100 fact changes, 10 queue, 10 enrich, 10 build
+            result = await run_enhancement_cycle(fact_batch=100, queue_batch=10, enrich_limit=10, build_limit=10)
+            total = (
+                result.get("fact_change_log_processed", 0)
+                + result.get("story_update_queue_processed", 0)
+                + result.get("entity_profiles_enriched", 0)
+                + result.get("entity_profiles_built", 0)
+            )
+            if total > 0 or result.get("errors"):
+                logger.info(
+                    "Story enhancement cycle: fact_log=%s queue=%s enriched=%s built=%s",
+                    result.get("fact_change_log_processed", 0),
+                    result.get("story_update_queue_processed", 0),
+                    result.get("entity_profiles_enriched", 0),
+                    result.get("entity_profiles_built", 0),
+                )
+            if result.get("errors"):
+                logger.warning("Story enhancement errors: %s", result["errors"])
+        except Exception as e:
+            logger.warning(f"Story enhancement failed: {e}")
+
+    async def _execute_entity_enrichment(self, task: Task):
+        """Phase 3 RAG: Run entity enrichment batch (Wikipedia -> entity_profiles + versioned_facts)."""
+        from services.entity_enrichment_service import run_enrichment_batch
+        try:
+            # Production: max 20 entities per run (LLM limits); timeout 10s/entity; skip if queue >1000
+            updated = run_enrichment_batch(limit=20)
+            if updated > 0:
+                logger.info(f"Entity enrichment: {updated} profiles enriched")
+        except Exception as e:
+            logger.warning(f"Entity enrichment failed: {e}")
+
+    async def _execute_story_state_triggers(self, task: Task):
+        """Phase 3 RAG: Process fact_change_log and story_update_queue (story state refresh)."""
+        from services.story_state_trigger_service import process_fact_change_log, process_story_update_queue
+        try:
+            loop = asyncio.get_event_loop()
+            # Production: 100-change batches, ~2s each; alert if behind >10k
+                fact_processed = await loop.run_in_executor(None, lambda: process_fact_change_log(batch_size=100))
+                queue_processed = await loop.run_in_executor(None, lambda: process_story_update_queue(batch_size=20))
+            if fact_processed > 0 or queue_processed > 0:
+                logger.info("Story state triggers: fact_log=%s queue=%s", fact_processed, queue_processed)
+        except Exception as e:
+            logger.warning(f"Story state triggers failed: {e}")
+
+    async def _execute_pattern_matching(self, task: Task):
+        """Phase 4 RAG: Run watch pattern matching for all domains; record pattern_matches and create watchlist alerts."""
+        from services.watch_pattern_service import run_pattern_matching_all_domains
+        try:
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(None, lambda: run_pattern_matching_all_domains(limit_per_domain=30))
+            if result.get("matches_stored", 0) > 0 or result.get("alerts_created", 0) > 0:
+                logger.info("Pattern matching: matches_stored=%s alerts_created=%s", result.get("matches_stored", 0), result.get("alerts_created", 0))
+        except Exception as e:
+            logger.warning("Pattern matching failed: %s", e)
+
+    async def _execute_relationship_extraction(self, task: Task):
+        """Extract entity relationships from context co-mentions -> entity_relationships (P2)."""
+        try:
+            from services.relationship_extraction_service import extract_relationships_from_contexts
+            result = extract_relationships_from_contexts(domain_key=None, limit=50)
+            if result.get("extracted", 0) > 0:
+                logger.info("Relationship extraction: %d relationship(s) inserted", result["extracted"])
+        except Exception as e:
+            logger.warning("Relationship extraction failed: %s", e)
 
     async def _execute_pattern_recognition(self, task: Task):
         """Discover patterns (network, temporal, behavioral, event) and persist to pattern_discoveries (Phase 2.2)."""
@@ -1925,7 +2202,143 @@ class AutomationManager:
         """Get database connection from shared pool."""
         from shared.database.connection import get_db_connection
         return get_db_connection()
-    
+
+    async def _has_pending_work(self, phase_name: str) -> bool:
+        """Quick check: is there still work for this phase in any domain? Used to re-enqueue for continuous run."""
+        if phase_name not in BATCH_PHASES_CONTINUOUS:
+            return False
+        try:
+            conn = await self._get_db_connection()
+            if not conn:
+                return False
+            cur = conn.cursor()
+            try:
+                if phase_name == "ml_processing":
+                    for schema in _SCHEMAS:
+                        cur.execute(
+                            f"""SELECT 1 FROM {schema}.articles
+                                WHERE ml_processed = FALSE AND content IS NOT NULL AND LENGTH(content) > 100
+                                LIMIT 1"""
+                        )
+                        if cur.fetchone():
+                            return True
+                elif phase_name == "article_processing":
+                    for schema in _SCHEMAS:
+                        cur.execute(
+                            f"""SELECT 1 FROM {schema}.articles
+                                WHERE (content IS NULL OR LENGTH(content) < 100) AND url IS NOT NULL
+                                LIMIT 1"""
+                        )
+                        if cur.fetchone():
+                            return True
+                elif phase_name == "entity_extraction":
+                    for schema in _SCHEMAS:
+                        cur.execute(
+                            f"""SELECT 1 FROM {schema}.articles
+                                WHERE (entities IS NULL OR entities = '{{}}') AND content IS NOT NULL AND LENGTH(content) > 100
+                                LIMIT 1"""
+                        )
+                        if cur.fetchone():
+                            return True
+                elif phase_name == "sentiment_analysis":
+                    for schema in _SCHEMAS:
+                        cur.execute(
+                            f"""SELECT 1 FROM {schema}.articles
+                                WHERE sentiment_score IS NULL AND content IS NOT NULL AND LENGTH(content) > 50
+                                LIMIT 1"""
+                        )
+                        if cur.fetchone():
+                            return True
+                elif phase_name == "storyline_processing" or phase_name == "basic_summary_generation":
+                    for schema in _SCHEMAS:
+                        cur.execute(
+                            f"""SELECT 1 FROM {schema}.storylines
+                                WHERE master_summary IS NULL OR LENGTH(master_summary) < 100
+                                LIMIT 1"""
+                        )
+                        if cur.fetchone():
+                            return True
+                elif phase_name == "rag_enhancement":
+                    for schema in _SCHEMAS:
+                        cur.execute(
+                            f"""SELECT 1 FROM {schema}.storylines
+                                WHERE rag_enhanced_at IS NULL
+                                   OR rag_enhanced_at < CURRENT_TIMESTAMP - INTERVAL '1 hour'
+                                LIMIT 1"""
+                        )
+                        if cur.fetchone():
+                            return True
+                elif phase_name == "storyline_automation":
+                    for schema in _SCHEMAS:
+                        cur.execute(
+                            f"""SELECT 1 FROM {schema}.storylines
+                                WHERE automation_enabled = true
+                                LIMIT 1"""
+                        )
+                        if cur.fetchone():
+                            return True
+                elif phase_name == "entity_profile_build":
+                    cur.execute(
+                        """
+                        SELECT 1 FROM intelligence.entity_profiles ep
+                        WHERE (ep.sections IS NULL OR ep.sections::text IN ('[]', '{}', 'null'))
+                        AND EXISTS (
+                            SELECT 1 FROM intelligence.context_entity_mentions cem
+                            WHERE cem.entity_profile_id = ep.id
+                        )
+                        LIMIT 1
+                        """
+                    )
+                    if cur.fetchone():
+                        return True
+                elif phase_name == "quality_scoring":
+                    for schema in _SCHEMAS:
+                        cur.execute(
+                            f"""SELECT 1 FROM {schema}.articles
+                                WHERE quality_score IS NULL AND content IS NOT NULL AND LENGTH(content) > 100
+                                LIMIT 1"""
+                        )
+                        if cur.fetchone():
+                            return True
+                elif phase_name == "timeline_generation":
+                    for schema in _SCHEMAS:
+                        cur.execute(
+                            f"""SELECT 1 FROM {schema}.storylines
+                                WHERE timeline_summary IS NULL OR LENGTH(timeline_summary) < 100
+                                LIMIT 1"""
+                        )
+                        if cur.fetchone():
+                            return True
+                elif phase_name == "topic_clustering":
+                    for schema in _SCHEMAS:
+                        cur.execute(
+                            f"""SELECT 1 FROM {schema}.articles a
+                                WHERE a.content IS NOT NULL AND LENGTH(a.content) > 100
+                                AND NOT EXISTS (
+                                    SELECT 1 FROM {schema}.article_topic_assignments ata
+                                    WHERE ata.article_id = a.id
+                                )
+                                LIMIT 1"""
+                        )
+                        if cur.fetchone():
+                            return True
+                elif phase_name == "event_extraction":
+                    for schema in _SCHEMAS:
+                        cur.execute(
+                            f"""SELECT 1 FROM {schema}.articles
+                                WHERE processing_status = 'completed' AND timeline_processed = false
+                                AND content IS NOT NULL AND LENGTH(content) > 100
+                                LIMIT 1"""
+                        )
+                        if cur.fetchone():
+                            return True
+            finally:
+                cur.close()
+                conn.close()
+        except Exception as e:
+            logger.debug("_has_pending_work %s: %s", phase_name, e)
+        return False
+
     def get_status(self) -> Dict[str, Any]:
         """Get automation status"""
         return {
