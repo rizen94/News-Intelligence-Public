@@ -2,6 +2,10 @@
 
 Keep the repo and Cursor context manageable so Git and the AI use resources responsibly.
 
+## Single main branch: master
+
+**master** is the only active branch and holds the current working version. Older branches (production, production-rtx5090-optimized, ai-session-*) were removed; their tips are preserved as tags for reference: `archive/production`, `archive/production-rtx5090-optimized`, `archive/ai-session-20250925-175937`. To inspect an old state: `git show archive/production`, or `git checkout archive/production` (detached HEAD). Do not create long-lived alternate branches unless you have a clear reason; work on master and commit there.
+
 ## What’s ignored (and why)
 
 - **`.gitignore`** — Git does not track: venvs (`.venv/`, `.venv.backup/`), `node_modules/`, logs, `data/`, `archive/`, secrets, backups, `scripts/pi_reports/`, and the usual Python/IDE/OS cruft. See project root `.gitignore` for the full list.
