@@ -33,36 +33,12 @@ except ImportError:
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Import configuration from unified API config
-try:
-    from config.database import get_db_config  # use API's DB config
-    DB_CONFIG = get_db_config()
-    # Add timeouts/options
-    DB_CONFIG.update({
-        'connect_timeout': 10,
-        'options': '-c statement_timeout=30000'
-    })
-except Exception as e:
-    logger.error(f"Failed to load database config: {e}")
-    # Fallback config from env (Widow secondary or NAS)
-    DB_CONFIG = {
-        'host': os.getenv('DB_HOST', '192.168.93.101'),
-        'database': os.getenv('DB_NAME', 'news_intel'),
-        'user': os.getenv('DB_USER', 'newsapp'),
-        'password': os.getenv('DB_PASSWORD', ''),
-        'port': int(os.getenv('DB_PORT', '5432')),
-        'connect_timeout': 10,
-        'options': '-c statement_timeout=30000'
-    }
+# Use shared pool (run with api as cwd or PYTHONPATH=api)
+from shared.database.connection import get_db_connection as _get_conn
 
 def get_db_connection():
-    """Get database connection with timeout protection"""
-    try:
-        conn = psycopg2.connect(**DB_CONFIG)
-        return conn
-    except Exception as e:
-        logger.error(f"Database connection failed: {e}")
-        return None
+    """Get database connection from shared pool. Raises if DB unreachable."""
+    return _get_conn()
 
 def calculate_article_impact_score(title: str, content: str) -> float:
     """
@@ -549,7 +525,7 @@ def collect_rss_feeds() -> int:
     dedup_manager = None
     if DEDUPLICATION_AVAILABLE:
         try:
-            dedup_manager = DeduplicationManager(DB_CONFIG)
+            dedup_manager = DeduplicationManager(_db_config())
             logger.info("Deduplication system initialized successfully")
         except Exception as e:
             logger.warning(f"Failed to initialize deduplication system: {e}")

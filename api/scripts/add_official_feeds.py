@@ -37,13 +37,9 @@ except Exception as e:
     }
 
 def get_db_connection():
-    """Get database connection with timeout protection"""
-    try:
-        conn = psycopg2.connect(**DB_CONFIG)
-        return conn
-    except Exception as e:
-        logger.error(f"Database connection failed: {e}")
-        return None
+    """Get database connection from shared pool. Raises if DB unreachable."""
+    from shared.database.connection import get_db_connection as _get_conn
+    return _get_conn()
 
 # Official government and SEC feeds by domain
 OFFICIAL_FEEDS = {

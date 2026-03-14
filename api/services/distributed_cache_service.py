@@ -13,6 +13,7 @@ from datetime import datetime, timezone, timedelta
 from dataclasses import dataclass
 import psycopg2
 from psycopg2.extras import RealDictCursor
+from shared.database.connection import get_db_connection
 
 logger = logging.getLogger(__name__)
 
@@ -221,7 +222,7 @@ class DistributedCacheService:
             # In production, this would use service discovery (Consul, etcd, etc.)
             # For now, we'll simulate with database-based discovery
             
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cursor = conn.cursor(cursor_factory=RealDictCursor)
             
             cursor.execute("""

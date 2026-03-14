@@ -42,11 +42,11 @@ ENV_CRON="
 0 18 * * * cd $PROJECT_DIR && [ -f .env ] && export \$(grep -v '^#' .env | xargs) && $PYTHON scripts/log_archive_to_nas.py >> $LOG_DIR/log_archive.log 2>&1
 "
 
-# Script loads .env internally; just ensure we're in project dir
+# Script loads .env internally; just ensure we're in project dir. Quote paths for names with spaces.
 CRON_FINAL="
 # News Intelligence Log Archive - 2x daily (6 AM, 6 PM)
-0 6 * * * cd $PROJECT_DIR && $PYTHON scripts/log_archive_to_nas.py >> $LOG_DIR/log_archive.log 2>&1
-0 18 * * * cd $PROJECT_DIR && $PYTHON scripts/log_archive_to_nas.py >> $LOG_DIR/log_archive.log 2>&1
+0 6 * * * cd \"$PROJECT_DIR\" && \"$PYTHON\" scripts/log_archive_to_nas.py >> \"$LOG_DIR/log_archive.log\" 2>&1
+0 18 * * * cd \"$PROJECT_DIR\" && \"$PYTHON\" scripts/log_archive_to_nas.py >> \"$LOG_DIR/log_archive.log\" 2>&1
 "
 
 # Replace existing log archive cron with new entries

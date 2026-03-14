@@ -1,10 +1,10 @@
 """
 Gold price amalgamator — fetches from multiple sources, normalizes, stores, and exposes unified view.
 
-Sources (preference order for USD):
+Sources (preference order: FRED first, then metals.dev fallback):
+- fred_iq12260: Export Price Index (Dec 2024=100), requires FRED_API_KEY
 - metals_dev: USD/toz historical + spot, requires METALS_DEV_API_KEY
 - freegoldapi: USD/oz, no API key, historical + daily
-- fred_iq12260: Export Price Index (Dec 2024=100), requires FRED_API_KEY
 
 Stored under source="gold_amalgam", symbol=<source_id>.
 Evidence ledger records each fetch with provenance for audit trail.
@@ -37,9 +37,9 @@ def _metals_dev_fetch(start: str | None = None, end: str | None = None) -> DataR
 
 
 SOURCES = [
+    ("fred_iq12260", fred_gold.fetch, "Export price index"),
     ("metals_dev", _metals_dev_fetch, "USD/toz historical"),
     ("freegoldapi", freegoldapi.fetch, "USD/oz spot"),
-    ("fred_iq12260", fred_gold.fetch, "Export price index"),
 ]
 AMALGAM_SOURCE = "gold_amalgam"
 
@@ -138,7 +138,7 @@ def get_stored(source_id: str | None = None, start: str | None = None, end: str 
     return out
 
 
-PREFERRED_SOURCE_ORDER = ["metals_dev", "freegoldapi", "fred_iq12260"]
+PREFERRED_SOURCE_ORDER = ["fred_iq12260", "metals_dev", "freegoldapi"]
 USD_UNITS = ("USD/oz", "USD/toz")
 
 
@@ -149,7 +149,7 @@ def get_unified(
     fetch_if_empty: bool = True,
 ) -> list[dict]:
     """
-    Get unified gold view. Prefers metals_dev (USD/toz) then freegoldapi (USD/oz) then FRED index.
+    Get unified gold view. Prefers FRED then metals_dev (USD/toz) then freegoldapi (USD/oz).
     Returns list of {"date": str, "value": float, "unit": str, "source_id": str}.
     """
     stored = get_stored(start=start, end=end)
@@ -196,7 +196,7 @@ def get_unified(
 def get_history(days: int = 90, fetch_if_empty: bool = True) -> list[dict]:
     """
     Get historical daily gold prices for the last `days` days.
-    Prefers metals_dev then freegoldapi then FRED. Returns list of {"date": str, "value": float, "unit": str, "source_id": str}.
+    Prefers FRED then metals_dev then freegoldapi. Returns list of {"date": str, "value": float, "unit": str, "source_id": str}.
     """
     end_dt = datetime.now(timezone.utc).date()
     start_dt = end_dt - timedelta(days=max(1, days))

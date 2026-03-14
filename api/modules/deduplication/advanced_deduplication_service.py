@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from collections import defaultdict
 import psycopg2
 from psycopg2.extras import RealDictCursor
+from shared.database.connection import get_db_connection
 import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
@@ -174,7 +175,7 @@ class AdvancedDeduplicationService:
             DuplicateResult with detection results
         """
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cursor = conn.cursor(cursor_factory=RealDictCursor)
             
             # Check by URL first (most reliable)
@@ -274,7 +275,7 @@ class AdvancedDeduplicationService:
             DuplicateResult with detection results
         """
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cursor = conn.cursor(cursor_factory=RealDictCursor)
             
             # Get recent articles from other sources
@@ -437,7 +438,7 @@ class AdvancedDeduplicationService:
             List of ClusterResult objects representing potential storylines
         """
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cursor = conn.cursor(cursor_factory=RealDictCursor)
             
             # Get recent articles that could be similar
@@ -687,7 +688,7 @@ class AdvancedDeduplicationService:
             Dictionary with duplicate detection results
         """
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cursor = conn.cursor(cursor_factory=RealDictCursor)
             
             # Get articles to process
@@ -793,7 +794,7 @@ class AdvancedDeduplicationService:
     ):
         """Save duplicate detection results to database"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cursor = conn.cursor()
             
             # Save duplicate pairs
@@ -848,7 +849,7 @@ class AdvancedDeduplicationService:
     def get_deduplication_stats(self) -> Dict[str, Any]:
         """Get deduplication statistics"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cursor = conn.cursor(cursor_factory=RealDictCursor)
             
             # Total articles
@@ -905,12 +906,7 @@ def get_deduplication_service(db_config: Optional[Dict] = None) -> AdvancedDedup
     import os
     
     if db_config is None:
-        db_config = {
-            'host': os.getenv('DB_HOST', 'localhost'),
-            'database': os.getenv('DB_NAME', 'newsintelligence'),
-            'user': os.getenv('DB_USER', 'newsapp'),
-            'password': os.getenv('DB_PASSWORD', 'Database@NEWSINT2025'),
-            'port': os.getenv('DB_PORT', '5432')
-        }
+        from shared.database.connection import get_db_config
+        db_config = get_db_config()
     
     return AdvancedDeduplicationService(db_config)

@@ -367,6 +367,19 @@ class FinanceOrchestrator:
         # Gold: observations from each source
         gold_data = results.get("gold", {}).get("results") or {}
         max_per_source = 100
+        for metal in ("silver", "platinum"):
+            metal_raw = results.get(metal) or {}
+            metal_data = metal_raw.get("results") if isinstance(metal_raw.get("results"), dict) else metal_raw
+            if isinstance(metal_data, dict):
+                for sid, obs_list in metal_data.items():
+                    if not isinstance(obs_list, list):
+                        continue
+                    for o in obs_list[:max_per_source]:
+                        d = o.get("date", "")
+                        v = o.get("value")
+                        unit = o.get("unit", "USD/toz")
+                        if d and v is not None:
+                            _add(metal, sid, d, float(v), unit, "{} price {}".format(metal.capitalize(), unit))
         for sid, obs_list in gold_data.items():
             if not isinstance(obs_list, list):
                 continue
@@ -396,6 +409,105 @@ class FinanceOrchestrator:
 
         task.context.evidence_index = entries
         return entries
+
+    def _append_rss_and_historic_evidence(self, task: Task) -> None:
+        """
+        Append RSS snippets and historic context events to task.context.evidence_index
+        so they appear in the Evidence list on the result page (additional sources).
+        REF-ids continue from current max (e.g. REF-074, REF-075, ...).
+        """
+        entries = list(task.context.evidence_index or [])
+        ref_counter = len(entries)
+
+        def _next_ref() -> str:
+            nonlocal ref_counter
+            ref_counter += 1
+            return f"REF-{ref_counter:03d}"
+
+        def _parse_date(d: Any) -> date:
+            if hasattr(d, "date"):
+                return d.date() if hasattr(d, "date") else d
+            if isinstance(d, str) and len(d) >= 10:
+                try:
+                    return datetime.fromisoformat(d.replace("Z", "+00:00")).date()
+                except (ValueError, TypeError):
+                    pass
+            return date.today()
+
+        rss_snippets = getattr(task.context, "rss_snippets", None) or []
+        for s in rss_snippets[:20]:
+            title = (s.get("title") or "News")[:200]
+            snippet = (s.get("snippet") or "")[:500]
+            pub = s.get("published_at") or ""
+            url = s.get("url") or s.get("id") or ""
+            entries.append(EvidenceIndexEntry(
+                ref_id=_next_ref(),
+                source="rss",
+                identifier=url[:100] if url else "news",
+                date=_parse_date(pub) if pub else date.today(),
+                value=title,
+                unit="",
+                context=snippet,
+            ))
+
+        historic_events = getattr(task.context, "historic_context_events", None) or []
+        for ev in historic_events[:15]:
+            summary = (ev.get("event_summary") or ev.get("summary") or "")[:300]
+            date_approx = ev.get("date_approx")
+            source_ids = ev.get("source_ids") or []
+            agreement = ev.get("agreement_count") or 0
+            identifier = ",".join(source_ids)[:80] if source_ids else "historic"
+            entries.append(EvidenceIndexEntry(
+                ref_id=_next_ref(),
+                source="historic",
+                identifier=identifier,
+                date=_parse_date(date_approx) if date_approx else date.today(),
+                value=summary,
+                unit=f"{agreement} sources" if agreement else "",
+                context=summary,
+            ))
+
+        if entries != (task.context.evidence_index or []):
+            task.context.evidence_index = entries
+            logger.info(
+                "Appended RSS/historic evidence: %d RSS, %d historic; total evidence entries %d",
+                min(len(rss_snippets), 20),
+                min(len(historic_events), 15),
+                len(entries),
+            )
+
+    def _run_causes_focused_historic_if_needed(
+        self, task: Task, query: str, topic: str, start: str, end: str
+    ) -> None:
+        """
+        If the query suggests we care about causes (e.g. price drop/rise, why), run a second
+        historic-context search with a causes-focused query and merge the summary into context
+        so the LLM can explain why the move happened.
+        """
+        q = (query or "").lower()
+        cause_terms = ("drop", "fall", "decline", "rise", "why", "reason", "cause", "driver", "driven")
+        if not any(t in q for t in cause_terms) and len(q.split()) < 4:
+            return
+        causes_query = f"{query} causes reasons drivers" if len(query or "") > 10 else f"{topic or 'price'} decline causes reasons"
+        try:
+            from services.historic_context_orchestrator import run_historic_context
+            h = run_historic_context(
+                query=causes_query,
+                start_date=start,
+                end_date=end,
+                topic=topic,
+                trigger_type="analysis",
+                trigger_id=task.task_id,
+                max_expansions=0,
+            )
+            if h.get("success") and h.get("summary"):
+                extra = (h.get("summary") or "").strip()[:2500]
+                if extra:
+                    existing = getattr(task.context, "historic_context_summary", None) or ""
+                    task.context.historic_context_summary = f"{existing}\n\n## Causes-focused search\n{extra}"
+                    logger.info("Merged causes-focused historic context: %d chars", len(extra))
+        except Exception as e:
+            logger.debug("Causes-focused historic context failed: %s", e)
 
     async def _execute_ingest(self, task: Task) -> None:
         """Run EDGAR ingest (standalone, not chained from refresh)."""
@@ -451,7 +563,7 @@ class FinanceOrchestrator:
         n_chunks = plan.get("n_chunks", 5)
 
         # Ensure we have data: run refresh to build evidence index (or use cache if fresh for gold-only)
-        if topic in ("gold", "all", "fred", ""):
+        if topic in ("gold", "silver", "platinum", "all", "fred", ""):
             now = datetime.now(timezone.utc)
             cache_key = topic or "gold"
             cached = self._evidence_cache.get(cache_key) if topic == "gold" else None
@@ -500,6 +612,24 @@ class FinanceOrchestrator:
                                 logger.info("Gold evidence from store (refresh had no data): %d entries", len(task.context.evidence_index))
                     except Exception as e:
                         logger.warning("Fallback to stored gold failed: %s", e)
+                if not task.context.evidence_index and topic in ("silver", "platinum"):
+                    try:
+                        from domains.finance.commodity_store import get_manual_history
+                        obs_list = get_manual_history(topic, days=730)
+                        if obs_list:
+                            rr = task.context.fetched_data.setdefault("refresh_results", {})
+                            rr[topic] = {
+                                "results": {
+                                    topic: [
+                                        {"date": o.get("date"), "value": o.get("value"), "unit": o.get("unit", "USD/toz")}
+                                        for o in obs_list[:100]
+                                    ]
+                                }
+                            }
+                            self._build_evidence_index(task)
+                            logger.info("%s evidence from manual store: %d entries", topic.capitalize(), len(task.context.evidence_index))
+                    except Exception as e:
+                        logger.warning("Fallback to manual store for %s failed: %s", topic, e)
                 if not task.context.evidence_index:
                     logger.warning("Analysis task %s has no evidence (refresh and store fallback yielded nothing)", task.task_id)
                 if task.context.evidence_index and topic == "gold":
@@ -521,19 +651,41 @@ class FinanceOrchestrator:
 
         task.context.evidence_chunks = chunks_text
 
-        # RSS evidence (finance-domain articles) for prompt
+        # RSS + historic context: always include all sources. Default date range = last 2 years when not provided.
+        start = task.parameters.get("start_date") or task.parameters.get("start")
+        end = task.parameters.get("end_date") or task.parameters.get("end")
+        if not start or not end:
+            from datetime import date, timedelta
+            _end = date.today()
+            _start = _end - timedelta(days=730)
+            start = start or _start.isoformat()
+            end = end or _end.isoformat()
+            logger.info("Analysis task %s: using default date range %s to %s (all sources including historic context)", task.task_id, start, end)
+        else:
+            logger.info("Analysis task %s: date range %s to %s, including historic context", task.task_id, start, end)
         try:
             from domains.finance.evidence_collector import collect as evidence_collect
             bundle = evidence_collect(
                 query=query,
                 topic=topic,
+                start_date=start,
+                end_date=end,
                 hours=168,
                 max_rss=15,
                 include_rss=True,
                 include_api_summary=False,
                 include_rag=False,
+                include_historic_context=True,
             )
             task.context.rss_snippets = bundle.get("rss_snippets") or []
+            if bundle.get("historic_context_summary"):
+                task.context.historic_context_summary = bundle["historic_context_summary"]
+                task.context.historic_context_events = bundle.get("historic_context_events") or []
+                logger.info("Historic context summary length %d chars, events %d", len(bundle["historic_context_summary"]), len(bundle.get("historic_context_events") or []))
+            else:
+                logger.warning("Historic context returned empty summary (sources may have returned nothing)")
+            self._append_rss_and_historic_evidence(task)
+            self._run_causes_focused_historic_if_needed(task, query, topic, start, end)
         except Exception as e:
             logger.debug("Evidence collector (RSS) failed: %s", e)
             task.context.rss_snippets = []
@@ -587,12 +739,12 @@ class FinanceOrchestrator:
         """Build prompt with evidence index (REF-ids), chunks, stats. System prompt instructs citation."""
         system_prompt = """You are a financial analyst. Use ONLY the provided evidence for concrete claims.
 Cite every number, date, or percentage using its reference ID (e.g. REF-001).
-Do not invent or guess values. If evidence is insufficient, say so."""
+Do not invent or guess values. Structure your response: (1) establish what happened from the Evidence REF-ids; (2) explain causes or drivers using the Historic context and News sections when they contain relevant information; (3) if they do not, say so briefly. Do not ask the user for more information."""
 
         parts = [f"## Query\n{query}\n"]
         if task.context.evidence_index:
             parts.append("## Evidence (cite by REF-ID)\n")
-            for e in task.context.evidence_index[:50]:
+            for e in task.context.evidence_index[:100]:
                 parts.append(f"- {e.ref_id}: {e.source} {e.identifier} | {e.date} | {e.value} {e.unit} | {e.context}")
         else:
             parts.append("## Evidence\nNo evidence was retrieved for this query (sources may be temporarily unavailable or no data in date range).")
@@ -604,14 +756,28 @@ Do not invent or guess values. If evidence is insufficient, say so."""
             parts.append("\n## Relevant excerpts\n")
             for i, txt in enumerate(task.context.evidence_chunks[:5]):
                 parts.append(f"[Excerpt {i+1}]\n{txt[:500]}...\n")
-        if getattr(task.context, "rss_snippets", None):
-            parts.append("\n## News / RSS (recent finance articles)\n")
-            for s in task.context.rss_snippets[:10]:
+        historic = getattr(task.context, "historic_context_summary", None)
+        if historic:
+            parts.append("\n## Historic context (multi-source)\n")
+            parts.append(historic[:5000])
+            parts.append("\nUse this historic context where it helps explain causes or prior events. Events mentioned by more sources are more reliable.")
+        rss_snippets = getattr(task.context, "rss_snippets", None) or []
+        if rss_snippets:
+            parts.append("\n## News / reporting (use for causes, drivers, and context)\n")
+            for s in rss_snippets[:15]:
                 title = s.get("title") or ""
-                snippet = (s.get("snippet") or "")[:300]
+                snippet = (s.get("snippet") or "")[:350]
                 pub = s.get("published_at") or ""
                 parts.append(f"- {title} ({pub})\n  {snippet}\n")
-        parts.append("\n## Response\nProvide a concise analysis based on the evidence above.")
+            parts.append("Use the news/reporting above where relevant to explain causes, supply/demand, or market context. Cite price evidence (REF-ids) for levels and dates.")
+        else:
+            parts.append("\n## News / reporting\nNo news or reporting excerpts are available for this topic. Base your analysis on the price and other evidence above; note that causes or drivers are not evidenced.")
+        parts.append(
+            "\n## Response\n"
+            "1) Establish the move: Using the Evidence (REF-ids), state clearly what happened to price/levels and over which dates. Cite REF-ids for every number and date.\n"
+            "2) Explain causes: Use the Historic context and News / reporting sections above to explain why the move occurred (supply, demand, events, policy). If multiple sources agree on a cause, say so. If those sections do not contain specific causes, say so in one sentence (e.g. 'The provided news and historic context did not identify specific causes for this decline') and do not ask the user for more information.\n"
+            "3) Be concise. Do not invent figures. When in doubt, describe what the evidence shows."
+        )
 
         prompt = "\n".join(parts)
         return prompt, system_prompt

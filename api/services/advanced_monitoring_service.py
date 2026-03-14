@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from enum import Enum
 import psycopg2
 from psycopg2.extras import RealDictCursor
+from shared.database.connection import get_db_connection
 import json
 
 # Try to import Prometheus client
@@ -239,7 +240,7 @@ class AdvancedMonitoringService:
     async def _get_database_metrics(self) -> Dict[str, Any]:
         """Get database-related metrics"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cursor = conn.cursor(cursor_factory=RealDictCursor)
             
             # Get database connection count
@@ -280,7 +281,7 @@ class AdvancedMonitoringService:
     async def _get_cache_metrics(self) -> Dict[str, Any]:
         """Get cache-related metrics"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cursor = conn.cursor(cursor_factory=RealDictCursor)
             
             # Get cache statistics
@@ -309,7 +310,7 @@ class AdvancedMonitoringService:
     async def _get_processing_metrics(self) -> Dict[str, Any]:
         """Get processing-related metrics"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cursor = conn.cursor(cursor_factory=RealDictCursor)
             
             # Get processing statistics
@@ -455,7 +456,7 @@ class AdvancedMonitoringService:
     async def _store_alert(self, alert: Alert):
         """Store alert in database"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cursor = conn.cursor()
             
             cursor.execute("""
@@ -883,7 +884,7 @@ class AdvancedMonitoringService:
             if not PROMETHEUS_AVAILABLE or not self.registry:
                 return
             
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cursor = conn.cursor(cursor_factory=RealDictCursor)
             
             # Update RSS feed counts
@@ -930,7 +931,7 @@ class AdvancedMonitoringService:
             # Check database connection
             db_healthy = True
             try:
-                conn = psycopg2.connect(**self.db_config)
+                conn = get_db_connection()
                 conn.close()
             except Exception:
                 db_healthy = False
@@ -964,7 +965,7 @@ class AdvancedMonitoringService:
             # Check database connection
             db_ready = True
             try:
-                conn = psycopg2.connect(**self.db_config)
+                conn = get_db_connection()
                 conn.close()
             except Exception:
                 db_ready = False
@@ -1011,7 +1012,7 @@ class AdvancedMonitoringService:
                     alert.resolved_at = datetime.now(timezone.utc)
                     
                     # Update in database
-                    conn = psycopg2.connect(**self.db_config)
+                    conn = get_db_connection()
                     cursor = conn.cursor()
                     
                     cursor.execute("""

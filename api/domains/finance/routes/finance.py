@@ -10,12 +10,14 @@ Domain validation rule:
   Do NOT migrate those to _check_domain — it would hide legitimate DB dependency failures.
 """
 
-from fastapi import APIRouter, HTTPException, Path, Query, Request
-from typing import Dict, Any
-from datetime import datetime, timedelta, timezone
+from fastapi import APIRouter, HTTPException, Path, Query, Request, Body
+from typing import Dict, Any, Optional
+from datetime import datetime, timedelta, timezone, date
 import logging
 from collections import Counter
 import re
+
+from psycopg2.extras import RealDictCursor
 
 from shared.database.connection import get_db_connection
 from shared.services.domain_aware_service import validate_domain
@@ -675,29 +677,36 @@ async def get_commodity_history(
     days: int = Query(90, ge=1, le=1825),
     fetch_if_empty: bool = Query(True),
 ):
-    """Historical daily prices for one commodity. Gold uses amalgamator; silver/platinum use metals.dev."""
+    """Historical daily prices for one commodity.
+    Gold uses amalgamator (FRED preferred, then metals.dev). Silver/platinum: FRED first, then manual store.
+    """
     _check_domain(domain)
     try:
         if commodity == "gold":
             from domains.finance.gold_amalgamator import get_history
+
             obs = get_history(days=days, fetch_if_empty=fetch_if_empty)
         else:
-            from domains.finance.data_sources.metals_dev import fetch_timeseries
+            # Silver/platinum: try FRED first, then manual store (backfill + spot appends).
+            from domains.finance.data_sources.fred_commodity import fetch_commodity_history_from_fred
+            from domains.finance.commodity_store import get_manual_history
+
             end_dt = datetime.now(timezone.utc).date()
-            start_dt = end_dt - timedelta(days=days)
-            res = fetch_timeseries(
-                start_dt.strftime("%Y-%m-%d"),
-                end_dt.strftime("%Y-%m-%d"),
-                metal=commodity,
-            )
-            obs = res.data if res.success else []
+            start_dt = end_dt - timedelta(days=max(1, days))
+            start = start_dt.strftime("%Y-%m-%d")
+            end = end_dt.strftime("%Y-%m-%d")
+            fred_result = fetch_commodity_history_from_fred(commodity, start=start, end=end, store=False)
+            if fred_result.success and fred_result.data:
+                obs = fred_result.data
+            else:
+                obs = get_manual_history(commodity, days=days)
         return {
             "success": True,
             "data": {"observations": obs, "days": days},
             "timestamp": datetime.now().isoformat(),
         }
     except Exception as e:
-        logger.error(f"Error fetching %s history: %s", commodity, e, exc_info=True)
+        logger.error("Error fetching %s history: %s", commodity, e, exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -706,15 +715,91 @@ async def get_commodity_spot(
     domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
     commodity: str = Path(..., pattern="^(gold|silver|platinum)$"),
 ):
-    """Current spot price for one metal. From metals.dev when key set; gold falls back to amalgamator."""
+    """Current spot price for one metal. FRED first, then metals.dev (gold uses amalgamator as fallback)."""
     _check_domain(domain)
     try:
+        # Silver/platinum: try FRED latest first, then metals.dev
+        if commodity in ("silver", "platinum"):
+            from domains.finance.data_sources.fred_commodity import fetch_commodity_spot_from_fred
+            from domains.finance.data_sources.metals_dev import fetch_spot
+            from domains.finance.commodity_store import upsert_manual_observations
+
+            fred_spot = fetch_commodity_spot_from_fred(commodity)
+            if fred_spot.success and fred_spot.data:
+                return {
+                    "success": True,
+                    "data": {
+                        "price": fred_spot.data.get("price"),
+                        "unit": fred_spot.data.get("unit", "USD/toz"),
+                        "source_id": fred_spot.data.get("source_id", "fred"),
+                    },
+                    "timestamp": datetime.now().isoformat(),
+                }
+            res = fetch_spot(metal=commodity, currency="USD")
+            if res.success and res.data:
+                data = res.data
+                date_str = (data.get("timestamp") or datetime.now(timezone.utc).isoformat())[:10]
+                obs = [
+                    {
+                        "date": date_str,
+                        "value": data.get("price"),
+                        "metadata": {
+                            "unit": data.get("unit", "USD/toz"),
+                            "source_id": "metals_dev_spot",
+                            "raw": data,
+                        },
+                    }
+                ]
+                try:
+                    upsert_manual_observations(commodity, obs)
+                except Exception:
+                    logger.debug("Failed to upsert %s spot into manual store", commodity, exc_info=True)
+                return {"success": True, "data": data, "timestamp": datetime.now().isoformat()}
+            return {
+                "success": True,
+                "data": {"price": None, "unit": "USD/toz"},
+                "timestamp": datetime.now().isoformat(),
+            }
+
+        # Gold: try FRED latest first, then metals.dev, then amalgamator
+        from domains.finance.data_sources.fred_commodity import fetch_commodity_spot_from_fred
         from domains.finance.data_sources.metals_dev import fetch_spot
+        from domains.finance.commodity_store import upsert_manual_observations
+
+        fred_spot = fetch_commodity_spot_from_fred("gold")
+        if fred_spot.success and fred_spot.data:
+            return {
+                "success": True,
+                "data": {
+                    "price": fred_spot.data.get("price"),
+                    "unit": fred_spot.data.get("unit", "USD/toz"),
+                    "source_id": fred_spot.data.get("source_id", "fred"),
+                },
+                "timestamp": datetime.now().isoformat(),
+            }
         res = fetch_spot(metal=commodity, currency="USD")
         if res.success and res.data:
-            return {"success": True, "data": res.data, "timestamp": datetime.now().isoformat()}
+            data = res.data
+            date_str = (data.get("timestamp") or datetime.now(timezone.utc).isoformat())[:10]
+            obs = [
+                {
+                    "date": date_str,
+                    "value": data.get("price"),
+                    "metadata": {
+                        "unit": data.get("unit", "USD/toz"),
+                        "source_id": "metals_dev_spot",
+                        "raw": data,
+                    },
+                }
+            ]
+            try:
+                upsert_manual_observations(commodity, obs)
+            except Exception:
+                logger.debug("Failed to upsert %s spot into manual store", commodity, exc_info=True)
+            return {"success": True, "data": data, "timestamp": datetime.now().isoformat()}
         if commodity == "gold":
             from domains.finance.gold_amalgamator import get_unified
+
             obs = get_unified(prefer_unit="USD/oz", fetch_if_empty=True)
             if obs:
                 latest = obs[-1]
@@ -727,9 +812,13 @@ async def get_commodity_spot(
                     },
                     "timestamp": datetime.now().isoformat(),
                 }
-        return {"success": True, "data": {"price": None, "unit": "USD/oz"}, "timestamp": datetime.now().isoformat()}
+        return {
+            "success": True,
+            "data": {"price": None, "unit": "USD/oz"},
+            "timestamp": datetime.now().isoformat(),
+        }
     except Exception as e:
-        logger.error(f"Error fetching %s spot: %s", commodity, e, exc_info=True)
+        logger.error("Error fetching %s spot: %s", commodity, e, exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -861,7 +950,10 @@ async def trigger_analysis(
     wait: bool = Query(True, description="If True, await completion; if False, return task_id for polling"),
 ):
     """Submit analysis task. Use wait=false to get task_id and poll GET /tasks/{id}."""
-    logger.info("Finance analyze request: domain=%s query=%r topic=%s wait=%s", domain, query[:80] if query else "", topic, wait)
+    logger.info(
+        "Finance analyze request: domain=%s query=%r topic=%s wait=%s start_date=%s end_date=%s",
+        domain, query[:80] if query else "", topic, wait, start_date, end_date,
+    )
     _check_domain(domain)
     orch = getattr(request.app.state, "finance_orchestrator", None)
     if not orch:
@@ -871,6 +963,8 @@ async def trigger_analysis(
         params["start_date"] = start_date
     if end_date:
         params["end_date"] = end_date
+    if start_date and end_date:
+        logger.info("Historic context will run: date range %s to %s", start_date, end_date)
     try:
         task_id = orch.submit_task(
             TaskType.analysis,
@@ -900,6 +994,307 @@ async def trigger_analysis(
     except Exception as e:
         logger.error("Error in analysis: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# Research topics (saved analyses for continual refinement)
+# ---------------------------------------------------------------------------
+
+@router.get("/{domain}/finance/research-topics")
+async def list_research_topics(
+    domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    last_refined_task_id: str | None = Query(None, description="Return topic whose last refinement is this task"),
+):
+    """List saved research topics (analyses that can be refined over time)."""
+    validate_domain(domain)
+    conn = get_db_connection()
+    if not conn:
+        raise HTTPException(status_code=503, detail="Database unavailable")
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            if last_refined_task_id:
+                cur.execute(
+                    """
+                    SELECT id, name, query, topic, date_range_start, date_range_end, summary,
+                           source_task_id, last_refined_task_id, last_refined_at, created_at, updated_at
+                    FROM finance.research_topics
+                    WHERE last_refined_task_id = %s
+                    LIMIT 1
+                    """,
+                    (last_refined_task_id,),
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT id, name, query, topic, date_range_start, date_range_end, summary,
+                           source_task_id, last_refined_task_id, last_refined_at, created_at, updated_at
+                    FROM finance.research_topics
+                    ORDER BY updated_at DESC NULLS LAST, id DESC
+                    LIMIT %s OFFSET %s
+                    """,
+                    (limit, offset),
+                )
+            rows = cur.fetchall()
+        return {
+            "success": True,
+            "data": {"topics": [dict(r) for r in rows]},
+            "timestamp": datetime.now().isoformat(),
+        }
+    except Exception as e:
+        logger.exception("list_research_topics failed")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
+
+
+@router.get("/{domain}/finance/research-topics/{topic_id}")
+async def get_research_topic(
+    domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+    topic_id: int = Path(..., ge=1),
+):
+    """Get a single research topic by id."""
+    validate_domain(domain)
+    conn = get_db_connection()
+    if not conn:
+        raise HTTPException(status_code=503, detail="Database unavailable")
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT id, name, query, topic, date_range_start, date_range_end, summary,
+                       source_task_id, last_refined_task_id, last_refined_at, created_at, updated_at
+                FROM finance.research_topics WHERE id = %s
+                """,
+                (topic_id,),
+            )
+            row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Research topic not found")
+        return {"success": True, "data": dict(row), "timestamp": datetime.now().isoformat()}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("get_research_topic failed")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
+
+
+@router.post("/{domain}/finance/research-topics")
+async def create_research_topic(
+    request: Request,
+    domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+    body: dict = Body(...),
+):
+    """
+    Save a completed analysis as a research topic for continual refinement.
+    Body: task_id (required), name (required), query (required), topic (optional), date_range (optional {start,end}).
+    Summary is taken from the task result when available.
+    """
+    logger.info(
+        "create_research_topic: domain=%s body_keys=%s task_id=%s name_present=%s query_len=%s",
+        domain,
+        list(body.keys()) if isinstance(body, dict) else type(body).__name__,
+        body.get("task_id") if isinstance(body, dict) else None,
+        bool((body.get("name") or "").strip()) if isinstance(body, dict) else False,
+        len((body.get("query") or "").strip()) if isinstance(body, dict) else 0,
+    )
+    validate_domain(domain)
+    task_id = body.get("task_id")
+    name = (body.get("name") or "").strip()
+    query = (body.get("query") or "").strip()
+    if not task_id or not name or not query:
+        missing = []
+        if not task_id:
+            missing.append("task_id")
+        if not name:
+            missing.append("name")
+        if not query:
+            missing.append("query")
+        detail = f"task_id, name, and query are required; missing: {', '.join(missing)}"
+        logger.warning("create_research_topic validation failed: %s", detail)
+        raise HTTPException(status_code=400, detail=detail)
+    topic = (body.get("topic") or "gold").strip() or "gold"
+    date_range = body.get("date_range") or {}
+    start_date = date_range.get("start") if isinstance(date_range, dict) else None
+    end_date = date_range.get("end") if isinstance(date_range, dict) else None
+
+    summary = body.get("summary")
+    orch = getattr(request.app.state, "finance_orchestrator", None)
+    if orch and not summary:
+        result = orch.get_task_result(task_id)
+        if result and result.output:
+            summary = result.output.get("response") or ""
+
+    if not summary:
+        summary = ""
+
+    conn = get_db_connection()
+    if not conn:
+        logger.warning("create_research_topic: no DB connection (503)")
+        raise HTTPException(
+            status_code=503,
+            detail="Database unavailable. Set DB_PASSWORD in project-root .env and restart the API (e.g. ./start_system.sh or restart uvicorn).",
+        )
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                INSERT INTO finance.research_topics
+                (name, query, topic, date_range_start, date_range_end, summary, source_task_id, last_refined_at)
+                VALUES (%s, %s, %s, %s::date, %s::date, %s, %s, NULL)
+                RETURNING id, name, query, topic, date_range_start, date_range_end, summary,
+                          source_task_id, last_refined_task_id, last_refined_at, created_at, updated_at
+                """,
+                (name, query, topic, start_date or None, end_date or None, summary or None, task_id),
+            )
+            row = cur.fetchone()
+            conn.commit()
+        return {"success": True, "data": dict(row), "timestamp": datetime.now().isoformat()}
+    except Exception as e:
+        conn.rollback()
+        logger.exception("create_research_topic failed")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
+
+
+@router.post("/{domain}/finance/research-topics/{topic_id}/refine")
+async def refine_research_topic(
+    request: Request,
+    domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+    topic_id: int = Path(..., ge=1),
+):
+    """
+    Re-run analysis for this topic (same query, topic, date range) and return the new task_id.
+    User can poll the task and then update the topic from the result (PATCH with task_id).
+    """
+    validate_domain(domain)
+    conn = get_db_connection()
+    if not conn:
+        raise HTTPException(status_code=503, detail="Database unavailable")
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                "SELECT id, query, topic, date_range_start, date_range_end FROM finance.research_topics WHERE id = %s",
+                (topic_id,),
+            )
+            row = cur.fetchone()
+        if not row:
+            conn.close()
+            raise HTTPException(status_code=404, detail="Research topic not found")
+        conn.close()
+
+        query = row["query"]
+        topic = row["topic"] or "gold"
+        start_date = str(row["date_range_start"]) if row.get("date_range_start") else None
+        end_date = str(row["date_range_end"]) if row.get("date_range_end") else None
+
+        orch = getattr(request.app.state, "finance_orchestrator", None)
+        if not orch:
+            raise HTTPException(status_code=503, detail="Finance orchestrator not available")
+        params = {"query": query, "topic": topic}
+        if start_date:
+            params["start_date"] = start_date
+        if end_date:
+            params["end_date"] = end_date
+        new_task_id = orch.submit_task(TaskType.analysis, params, priority=TaskPriority.high)
+
+        conn = get_db_connection()
+        if not conn:
+            return {
+                "success": True,
+                "data": {"task_id": new_task_id, "message": "Refinement started; update topic from result when complete."},
+                "timestamp": datetime.now().isoformat(),
+            }
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE finance.research_topics
+                    SET last_refined_task_id = %s, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = %s
+                    """,
+                    (new_task_id, topic_id),
+                )
+                conn.commit()
+        finally:
+            conn.close()
+
+        return {
+            "success": True,
+            "data": {"task_id": new_task_id, "message": "Refinement started; open the result and use 'Update topic' to save the new summary."},
+            "timestamp": datetime.now().isoformat(),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("refine_research_topic failed")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.patch("/{domain}/finance/research-topics/{topic_id}")
+async def update_research_topic_from_task(
+    request: Request,
+    domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+    topic_id: int = Path(..., ge=1),
+    body: dict = Body(...),
+):
+    """
+    Update a research topic's summary (and last_refined_*) from a completed task result.
+    Body: task_id (required). Optionally name to rename the topic.
+    """
+    validate_domain(domain)
+    task_id = body.get("task_id")
+    name = body.get("name")
+    if not task_id:
+        raise HTTPException(status_code=400, detail="task_id is required")
+
+    summary = None
+    orch = getattr(request.app.state, "finance_orchestrator", None)
+    if orch:
+        result = orch.get_task_result(task_id)
+        if result and result.output:
+            summary = result.output.get("response")
+
+    conn = get_db_connection()
+    if not conn:
+        raise HTTPException(status_code=503, detail="Database unavailable")
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT id FROM finance.research_topics WHERE id = %s", (topic_id,))
+            if not cur.fetchone():
+                raise HTTPException(status_code=404, detail="Research topic not found")
+            updates = ["last_refined_task_id = %s", "last_refined_at = CURRENT_TIMESTAMP", "updated_at = CURRENT_TIMESTAMP"]
+            args = [task_id]
+            if summary is not None:
+                updates.insert(0, "summary = %s")
+                args.insert(0, summary)
+            if name is not None and str(name).strip():
+                updates.insert(0, "name = %s")
+                args.insert(0, str(name).strip())
+            args.append(topic_id)
+            cur.execute(
+                "UPDATE finance.research_topics SET " + ", ".join(updates) + " WHERE id = %s",
+                args,
+            )
+            conn.commit()
+            cur.execute(
+                "SELECT id, name, query, topic, summary, last_refined_task_id, last_refined_at, updated_at FROM finance.research_topics WHERE id = %s",
+                (topic_id,),
+            )
+            row = cur.fetchone()
+        return {"success": True, "data": dict(row), "timestamp": datetime.now().isoformat()}
+    except HTTPException:
+        raise
+    except Exception as e:
+        conn.rollback()
+        logger.exception("update_research_topic_from_task failed")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
 
 
 @router.post("/{domain}/finance/fetch-fred")  # Infrastructure: FRED via orchestrator

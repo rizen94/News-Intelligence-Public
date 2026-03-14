@@ -136,21 +136,14 @@ async def get_article_similarity(
     try:
         import psycopg2
         from psycopg2.extras import RealDictCursor
-        import os
+        from shared.database.connection import get_db_config, get_db_connection
         
-        db_config = {
-            "host": os.getenv("DB_HOST", "192.168.93.101"),
-            "port": int(os.getenv("DB_PORT", "5433")),
-            "database": os.getenv("DB_NAME", "news_intel"),
-            "user": os.getenv("DB_USER", "newsapp"),
-            "password": os.getenv("DB_PASSWORD", "newsapp_password")
-        }
-        
+        db_config = get_db_config()
         service = get_discovery_service(db_config)
         schema = domain.replace('-', '_')
         
         # Get the target article
-        conn = psycopg2.connect(**db_config)
+        conn = get_db_connection()
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(f"""
                 SELECT id, title, COALESCE(content, '') as content, created_at
@@ -227,21 +220,14 @@ async def analyze_cluster(
     try:
         import psycopg2
         from psycopg2.extras import RealDictCursor
-        import os
         import requests
+        from shared.database.connection import get_db_config, get_db_connection
         
-        db_config = {
-            "host": os.getenv("DB_HOST", "192.168.93.101"),
-            "port": int(os.getenv("DB_PORT", "5433")),
-            "database": os.getenv("DB_NAME", "news_intel"),
-            "user": os.getenv("DB_USER", "newsapp"),
-            "password": os.getenv("DB_PASSWORD", "newsapp_password")
-        }
-        
+        db_config = get_db_config()
         schema = domain.replace('-', '_')
         
         # Get articles
-        conn = psycopg2.connect(**db_config)
+        conn = get_db_connection()
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             placeholders = ','.join(['%s'] * len(article_ids))
             cur.execute(f"""

@@ -115,17 +115,8 @@ async def health_check():
             db_status = f"unhealthy: {str(e)[:50]}"
             logger.warning(f"Database health check error: {e}")
         
-        # Check Redis connection
-        redis_status = "healthy"
-        try:
-            import redis
-            r = redis.Redis(host='localhost', port=6379, decode_responses=True, socket_timeout=1)
-            r.ping()
-        except ImportError:
-            redis_status = "not_configured"
-        except Exception as e:
-            redis_status = f"unhealthy: {str(e)[:50]}"
-            logger.warning(f"Redis health check failed: {e}")
+        # Redis removed from architecture; report not_used so frontend can show N/A
+        redis_status = "not_used"
         
         # Circuit breaker status
         cb_summary = {}
@@ -143,19 +134,26 @@ async def health_check():
         except Exception:
             cb_summary = {"open_circuits": 0, "breakers": {}}
 
-        # Determine overall status
+        # Determine overall status and why (for troubleshooting)
         overall_status = "healthy"
-        if db_status != "healthy" or redis_status not in ["healthy", "not_configured"]:
+        degraded_reasons: List[str] = []
+        if db_status != "healthy":
             overall_status = "degraded"
+            degraded_reasons.append(f"database: {db_status}")
+        if redis_status not in ["healthy", "not_configured", "not_used"]:
+            overall_status = "degraded"
+            degraded_reasons.append(f"redis: {redis_status}")
         if cpu_percent > 90 or memory.percent > 90 or disk.percent > 95:
             overall_status = "warning"
         if cb_summary.get("open_circuits", 0) > 0:
             overall_status = "degraded"
+            degraded_reasons.append(f"circuit_breakers: {cb_summary.get('open_circuits', 0)} open (e.g. ollama)")
         
         return {
             "success": True,
             "domain": "system_monitoring",
             "status": overall_status,
+            "degraded_reasons": degraded_reasons if overall_status == "degraded" else None,
             "services": {
                 "database": db_status,
                 "redis": redis_status,
@@ -609,16 +607,7 @@ async def get_system_status():
                 """)
                 recent_deduplication_runs = cur.fetchone()[0]
                 
-                # Check Redis status
-                redis_status = "healthy"
-                try:
-                    import redis
-                    r = redis.Redis(host='localhost', port=6379, decode_responses=True)
-                    r.ping()
-                except Exception as e:
-                    redis_status = "unhealthy"
-                    logger.warning(f"Redis connection failed: {e}")
-                
+                # Redis removed from architecture
                 return {
                     "success": True,
                     "data": {
@@ -639,9 +628,9 @@ async def get_system_status():
                             "status": "healthy"
                         },
                         "redis": {
-                            "status": redis_status,
-                            "host": "localhost",
-                            "port": 6379
+                            "status": "not_used",
+                            "host": "",
+                            "port": 0
                         },
                         "alerts": {
                             "active_alerts": active_alerts,

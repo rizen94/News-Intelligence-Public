@@ -120,18 +120,39 @@ def get_db_config() -> Dict[str, Any]:
     else:
         logger.info("Using direct connection to database: %s:%s", db_host, db_port)
     
+    connect_timeout = int(os.getenv("DB_CONNECT_TIMEOUT", "5"))
+    statement_timeout_ms = int(os.getenv("DB_STATEMENT_TIMEOUT_MS", "15000"))
     return {
         "host": db_host,
         "port": str(db_port),
         "database": db_name,
         "user": os.getenv("DB_USER", "newsapp"),
         "password": os.getenv("DB_PASSWORD", ""),
-        "connect_timeout": 5
+        "connect_timeout": connect_timeout,
+        "statement_timeout_ms": statement_timeout_ms,
+    }
+
+
+def get_db_connect_kwargs() -> Dict[str, Any]:
+    """
+    Return kwargs suitable for psycopg2.connect() (same config + timeouts).
+    Use for code that must open a one-off connection instead of the pool.
+    """
+    config = get_db_config()
+    timeout_ms = config.get("statement_timeout_ms", 15000)
+    return {
+        "host": config["host"],
+        "port": config["port"],
+        "database": config["database"],
+        "user": config["user"],
+        "password": config["password"],
+        "connect_timeout": config.get("connect_timeout", 5),
+        "options": f"-c statement_timeout={timeout_ms}",
     }
 
 
 def _init_pool() -> pool.ThreadedConnectionPool:
-    """Initialize the connection pool (called once)"""
+    """Initialize the connection pool (called once). Pool size and timeouts via DB_POOL_MIN, DB_POOL_MAX, DB_STATEMENT_TIMEOUT_MS."""
     global _connection_pool, _pool_initialized
     
     with _pool_lock:
@@ -139,60 +160,82 @@ def _init_pool() -> pool.ThreadedConnectionPool:
             return _connection_pool
         
         config = get_db_config()
+        minconn = int(os.getenv("DB_POOL_MIN", "2"))
+        maxconn = int(os.getenv("DB_POOL_MAX", "20"))
+        maxconn = max(minconn, min(maxconn, 50))
+        timeout_ms = config.get("statement_timeout_ms", 15000)
+        options = f"-c statement_timeout={timeout_ms}"
         
-        logger.info("Initializing connection pool: %s:%s/%s", config["host"], config["port"], config["database"])
+        logger.info(
+            "Initializing connection pool: %s:%s/%s (pool %s-%s, statement_timeout=%sms)",
+            config["host"], config["port"], config["database"], minconn, maxconn, timeout_ms,
+        )
         
         _connection_pool = pool.ThreadedConnectionPool(
-            minconn=2,
-            maxconn=15,     # Reduced: only 4 connections used in practice; 15 gives headroom without waste
+            minconn=minconn,
+            maxconn=maxconn,
             host=config["host"],
             port=config["port"],
             database=config["database"],
             user=config["user"],
             password=config["password"],
             connect_timeout=config.get("connect_timeout", 5),
-            options="-c statement_timeout=15000",  # 15s hard limit per SQL statement
+            options=options,
         )
         
         _pool_initialized = True
-        logger.info("Connection pool initialized: 2-15 connections, 15s statement timeout")
+        logger.info("Connection pool initialized: %s-%s connections, %sms statement timeout", minconn, maxconn, timeout_ms)
         
         return _connection_pool
 
 
-def get_db_connection() -> Optional[psycopg2.extensions.connection]:
-    """
-    Get database connection from pool (persistent connection).
-    IMPORTANT: Always call conn.close() when done - it returns to pool.
-    
-    Uses connection pooling for better performance and persistence.
-    """
+def _validate_connection(conn) -> bool:
+    """Run a quick check; return True if connection is alive."""
     try:
-        # Initialize pool if not already done
-        pool = _init_pool()
-        
-        # Get connection from pool
-        conn = pool.getconn()
-        
-        # Return a PooledConnection wrapper that returns to pool on close
-        return PooledConnection(conn, pool)
-        
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1")
+            cur.fetchone()
+        return True
+    except Exception:
+        return False
+
+
+def get_db_connection():
+    """
+    Get a live database connection from the pool.
+    Always call conn.close() when done (returns to pool).
+    Raises if the database is unreachable (e.g. turned off); no silent None.
+    """
+    pool_ref = None
+    try:
+        pool_ref = _init_pool()
+        for attempt in range(2):
+            conn = pool_ref.getconn()
+            if _validate_connection(conn):
+                return PooledConnection(conn, pool_ref)
+            try:
+                conn.close()
+            except Exception:
+                pass
+        logger.warning("Pool returned stale connections; trying direct connect")
     except Exception as e:
-        logger.error(f"Database connection failed: {e}")
-        # Fallback to direct connection if pool fails
+        logger.error(f"Pool getconn failed: {e}")
+    # Fallback only when pool is unusable (e.g. all connections stale); same timeouts
+    try:
+        kwargs = get_db_connect_kwargs()
+        conn = psycopg2.connect(**kwargs)
+        if _validate_connection(conn):
+            return PooledConnection(conn, None)
         try:
-            config = get_db_config()
-            logger.warning("Falling back to direct connection (pool unavailable)")
-            return psycopg2.connect(
-                host=config["host"],
-                port=config["port"],
-                database=config["database"],
-                user=config["user"],
-                password=config["password"]
-            )
-        except Exception as e2:
-            logger.error(f"Direct connection fallback also failed: {e2}")
-            return None
+            conn.close()
+        except Exception:
+            pass
+    except Exception as e2:
+        logger.error(f"Direct connection failed: {e2}")
+    raise ConnectionError(
+        "Database connection failed (pool and direct). "
+        "Check DB_HOST, DB_PORT, DB_PASSWORD in .env and that the database is running."
+    )
 
 
 def return_connection(conn: psycopg2.extensions.connection) -> None:
@@ -218,16 +261,10 @@ def close_pool() -> None:
         logger.info("Connection pool closed")
 
 def check_database_health() -> Dict[str, Any]:
-    """Check database health"""
+    """Check database health. Returns success=False only when DB is unreachable."""
     conn = None
     try:
         conn = get_db_connection()
-        if not conn:
-            return {
-                "success": False,
-                "error": "Cannot connect to database"
-            }
-        
         with conn.cursor() as cur:
             cur.execute("SELECT 1")
             result = cur.fetchone()
@@ -244,36 +281,42 @@ def check_database_health() -> Dict[str, Any]:
                     "error": "Database query failed"
                 }
             
+    except ConnectionError as e:
+        return {"success": False, "error": str(e)}
     except Exception as e:
-        return {
-            "success": False,
-            "error": str(e)
-        }
+        return {"success": False, "error": str(e)}
     finally:
         if conn is not None:
             conn.close()
 
 
 def _init_sqlalchemy():
-    """Lazy-init SQLAlchemy engine (single source, uses get_db_config)"""
+    """Lazy-init SQLAlchemy engine (single source, uses get_db_config). Pool size via DB_POOL_*."""
     global _sqlalchemy_engine, _sqlalchemy_session_factory
     with _sqlalchemy_lock:
         if _sqlalchemy_engine is not None:
             return
         config = get_db_config()
-        url = f"postgresql://{config['user']}:{config['password']}@{config['host']}:{config['port']}/{config['database']}"
+        timeout_ms = config.get("statement_timeout_ms", 15000)
+        url = (
+            f"postgresql://{config['user']}:{config['password']}@{config['host']}:{config['port']}/{config['database']}"
+            f"?connect_timeout={config.get('connect_timeout', 5)}"
+            f"&options=-c statement_timeout%3D{timeout_ms}"
+        )
         from sqlalchemy import create_engine
         from sqlalchemy.orm import sessionmaker
+        pool_size = int(os.getenv("DB_POOL_MIN", "2"))
+        max_overflow = max(0, int(os.getenv("DB_POOL_MAX", "20")) - pool_size)
         _sqlalchemy_engine = create_engine(
             url,
             pool_pre_ping=True,
             pool_recycle=300,
-            pool_size=5,
-            max_overflow=5,
+            pool_size=min(pool_size, 10),
+            max_overflow=min(max_overflow, 20),
             echo=False,
         )
         _sqlalchemy_session_factory = sessionmaker(autocommit=False, autoflush=False, bind=_sqlalchemy_engine)
-        logger.info("SQLAlchemy engine initialized (pool 5+5)")
+        logger.info("SQLAlchemy engine initialized (pool %s+%s, statement_timeout=%sms)", pool_size, max_overflow, timeout_ms)
 
 
 def get_db() -> Generator:
@@ -294,10 +337,8 @@ def get_db_session():
 
 @contextmanager
 def get_db_cursor():
-    """Context manager for psycopg2 cursor with RealDictCursor"""
+    """Context manager for psycopg2 cursor with RealDictCursor. Raises if DB unreachable."""
     conn = get_db_connection()
-    if not conn:
-        raise Exception("Failed to obtain database connection")
     cursor = None
     try:
         cursor = conn.cursor(cursor_factory=RealDictCursor)

@@ -78,8 +78,9 @@ class RAGGenerationModule:
         self.logger = logging.getLogger(__name__)
     
     def get_db_connection(self):
-        """Get database connection"""
-        return psycopg2.connect(**self.db_config)
+        """Get database connection from shared pool."""
+        from shared.database.connection import get_db_connection as _get_conn
+        return _get_conn()
     
     def generate_embedding(self, text: str) -> Optional[List[float]]:
         """Generate embedding for text using Ollama"""

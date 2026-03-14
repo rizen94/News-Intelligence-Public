@@ -32,14 +32,13 @@ except ImportError as e:
     logger.warning(f"Article pruner not available: {e}")
     PRUNER_AVAILABLE = False
 
-def get_db_config() -> Dict[str, str]:
-    """Get database configuration from environment"""
-    return {
-        'host': os.getenv('DB_HOST', 'postgres'),
-        'database': os.getenv('DB_NAME', 'news_system'),
-        'user': os.getenv('DB_USER', 'newsapp'),
-        'password': os.getenv('DB_PASSWORD', '')
-    }
+def _get_db_config() -> Dict[str, str]:
+    """Database config from shared source. Run from api/ or with PYTHONPATH=api."""
+    _api = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    if _api not in sys.path:
+        sys.path.insert(0, _api)
+    from shared.database.connection import get_db_config
+    return get_db_config()
 
 def run_rss_collection() -> bool:
     """Run RSS collection from all active feeds"""
@@ -79,7 +78,7 @@ def run_article_pruning() -> bool:
     
     try:
         logger.info("Starting article pruning pipeline...")
-        db_config = get_db_config()
+        db_config = _get_db_config()
         pruner = ArticlePruner(db_config)
         
         # Run pruning with dry run first to show what would be done
@@ -127,9 +126,8 @@ def show_status() -> None:
     
     # Check database connection
     try:
-        import psycopg2
-        db_config = get_db_config()
-        conn = psycopg2.connect(**db_config)
+        from shared.database.connection import get_db_connection
+        conn = get_db_connection()
         cur = conn.cursor()
         
         # Get basic stats

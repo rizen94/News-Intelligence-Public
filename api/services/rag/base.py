@@ -13,6 +13,7 @@ from typing import Dict, List, Any, Optional, Tuple
 from datetime import datetime, timezone, timedelta
 import psycopg2
 from psycopg2.extras import RealDictCursor
+from shared.database.connection import get_db_connection
 import re
 from urllib.parse import quote
 
@@ -39,14 +40,8 @@ class BaseRAGService:
             db_config: Database configuration (optional, uses env vars if not provided)
         """
         if db_config is None:
-            db_config = {
-                'host': os.getenv('DB_HOST', 'localhost'),
-                'database': os.getenv('DB_NAME', 'news_intelligence'),
-                'user': os.getenv('DB_USER', 'newsapp'),
-                'password': os.getenv('DB_PASSWORD', 'newsapp_password'),
-                'port': int(os.getenv('DB_PORT', '5433')),
-            }
-        
+            from shared.database.connection import get_db_config
+            db_config = get_db_config()
         self.db_config = db_config
         self.session = requests.Session()
         self.session.headers.update({
@@ -368,7 +363,7 @@ class BaseRAGService:
     async def _save_rag_context(self, storyline_id: str, rag_context: Dict[str, Any]):
         """Save RAG context to database"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cursor = conn.cursor()
             
             # Insert or update RAG context
@@ -400,7 +395,7 @@ class BaseRAGService:
     async def get_rag_context(self, storyline_id: str) -> Optional[Dict[str, Any]]:
         """Get RAG context for a storyline"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cursor = conn.cursor(cursor_factory=RealDictCursor)
             
             cursor.execute("""

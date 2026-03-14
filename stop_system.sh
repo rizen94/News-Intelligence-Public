@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # News Intelligence System v4.0 - Stop Script
-# Stops: API Server, Frontend (keeps PostgreSQL and Redis running)
+# Stops: API Server, Frontend (keeps PostgreSQL running)
 
 set -e
 
@@ -34,6 +34,17 @@ is_running() {
     pgrep -f "$1" > /dev/null 2>&1
 }
 
+# Free a TCP port by killing the process listening on it (fallback when pkill misses)
+free_port() {
+    local port=$1
+    if command -v fuser &>/dev/null; then
+        fuser -k "${port}/tcp" 2>/dev/null || true
+    elif command -v lsof &>/dev/null; then
+        lsof -ti ":${port}" 2>/dev/null | xargs -r kill 2>/dev/null || true
+    fi
+    sleep 1
+}
+
 # Stop API server
 stop_api() {
     if is_running "uvicorn.*main_v4"; then
@@ -48,21 +59,32 @@ stop_api() {
     else
         warning "API server not running"
     fi
+    # Ensure port 8000 is free (e.g. different uvicorn invocation)
+    if ss -tlnp 2>/dev/null | grep -q ":8000 "; then
+        log "Freeing port 8000..."
+        free_port 8000
+    fi
 }
 
 # Stop Frontend
 stop_frontend() {
-    if is_running "node.*react-scripts\|vite.*start\|webpack.*serve"; then
+    if is_running "node.*react-scripts\|vite.*start\|webpack.*serve\|vite"; then
         log "Stopping frontend..."
-        pkill -f "react-scripts\|vite.*start\|webpack.*serve" || true
+        pkill -f "react-scripts\|vite.*start\|webpack.*serve\|vite" || true
         sleep 2
-        if is_running "node.*react-scripts\|vite.*start\|webpack.*serve"; then
+        if is_running "node.*react-scripts\|vite.*start\|webpack.*serve\|vite"; then
             warning "Frontend did not stop gracefully, forcing..."
-            pkill -9 -f "react-scripts\|vite.*start\|webpack.*serve" || true
+            pkill -9 -f "react-scripts\|vite.*start\|webpack.*serve\|vite" || true
         fi
         success "Frontend stopped"
     else
         warning "Frontend not running"
+    fi
+    # Ensure port 3000 is free (e.g. process name didn't match or leftover from previous run)
+    if ss -tlnp 2>/dev/null | grep -q ":3000 "; then
+        log "Freeing port 3000..."
+        free_port 3000
+        success "Port 3000 freed"
     fi
 }
 
@@ -87,7 +109,7 @@ main() {
     
     log ""
     success "Services stopped"
-    warning "Note: PostgreSQL and Redis are still running"
+    warning "Note: PostgreSQL is still running"
     log "=========================================="
 }
 

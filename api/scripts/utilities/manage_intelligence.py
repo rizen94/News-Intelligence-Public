@@ -10,8 +10,15 @@ import argparse
 import logging
 from datetime import datetime
 
-# Add the parent directory to the path to import modules
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Add api to path so shared.database.connection is available
+_API_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+if _API_ROOT not in sys.path:
+    sys.path.insert(0, _API_ROOT)
+
+def _get_db_config():
+    """Database config from shared source (DB_* env / .env)."""
+    from shared.database.connection import get_db_config
+    return get_db_config()
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -22,14 +29,7 @@ def run_intelligence_pipeline(batch_size: int = 100):
     try:
         from modules.intelligence.intelligence_orchestrator import IntelligenceOrchestrator
         
-        # Database configuration
-        db_config = {
-            'host': os.getenv('DB_HOST', 'postgres'),
-            'database': os.getenv('DB_NAME', 'news_aggregator'),
-            'user': os.getenv('DB_USER', 'dockside_admin'),
-            'password': os.getenv('DB_PASSWORD', 'secure_password_123')
-        }
-        
+        db_config = _get_db_config()
         logger.info("🚀 Starting intelligence processing pipeline...")
         
         orchestrator = IntelligenceOrchestrator(db_config)
@@ -56,14 +56,7 @@ def get_intelligence_status():
     try:
         from modules.intelligence.intelligence_orchestrator import IntelligenceOrchestrator
         
-        # Database configuration
-        db_config = {
-            'host': os.getenv('DB_HOST', 'postgres'),
-            'database': os.getenv('DB_NAME', 'news_system'),
-            'user': os.getenv('DB_USER', 'newsapp'),
-            'password': os.getenv('DB_PASSWORD', '')
-        }
-        
+        db_config = _get_db_config()
         orchestrator = IntelligenceOrchestrator(db_config)
         status = orchestrator.get_intelligence_status()
         
@@ -99,14 +92,7 @@ def process_single_article(article_id: int):
     try:
         from modules.intelligence.intelligence_orchestrator import IntelligenceOrchestrator
         
-        # Database configuration
-        db_config = {
-            'host': os.getenv('DB_HOST', 'postgres'),
-            'database': os.getenv('DB_NAME', 'news_aggregator'),
-            'user': os.getenv('DB_USER', 'dockside_admin'),
-            'password': os.getenv('DB_PASSWORD', 'secure_password_123')
-        }
-        
+        db_config = _get_db_config()
         logger.info(f"🔍 Processing single article {article_id}...")
         
         orchestrator = IntelligenceOrchestrator(db_config)
@@ -142,13 +128,7 @@ def create_custom_dataset(dataset_name: str, filters_str: str):
             return False
         
         # Database configuration
-        db_config = {
-            'host': os.getenv('DB_HOST', 'postgres'),
-            'database': os.getenv('DB_NAME', 'news_aggregator'),
-            'user': os.getenv('DB_USER', 'dockside_admin'),
-            'password': os.getenv('DB_PASSWORD', 'secure_password_123')
-        }
-        
+        db_config = _get_db_config()
         logger.info(f"📊 Creating custom dataset '{dataset_name}'...")
         
         orchestrator = IntelligenceOrchestrator(db_config)
@@ -182,13 +162,7 @@ def export_dataset(dataset_id: int, format_type: str = 'csv'):
         from modules.intelligence.intelligence_orchestrator import IntelligenceOrchestrator
         
         # Database configuration
-        db_config = {
-            'host': os.getenv('DB_HOST', 'postgres'),
-            'database': os.getenv('DB_NAME', 'news_system'),
-            'user': os.getenv('DB_USER', 'newsapp'),
-            'password': os.getenv('DB_PASSWORD', '')
-        }
-        
+        db_config = _get_db_config()
         logger.info(f"📤 Exporting dataset {dataset_id} in {format_type} format...")
         
         orchestrator = IntelligenceOrchestrator(db_config)

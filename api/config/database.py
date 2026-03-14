@@ -7,6 +7,7 @@ All DB access uses the single pooled connection in shared.
 from shared.database.connection import (
     get_db_connection,
     get_db_config,
+    get_db_connect_kwargs,
     get_db,
     get_db_session,
     get_db_cursor,
@@ -19,6 +20,7 @@ from shared.database.connection import (
 __all__ = [
     "get_db_connection",
     "get_db_config",
+    "get_db_connect_kwargs",
     "get_db",
     "get_db_session",
     "get_db_cursor",

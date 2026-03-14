@@ -1717,15 +1717,8 @@ class AutomationManager:
             LOW_CONFIDENCE_COUNT = 6  # 30% of batch size
             MEDIUM_CONFIDENCE_COUNT = 6  # 30% of batch size
             
-            # Initialize database config
-            db_config = {
-                "host": self.db_config.get('host', 'localhost'),
-                "database": self.db_config.get('database', 'news_intelligence'),
-                "user": self.db_config.get('user', 'newsapp'),
-                "password": self.db_config.get('password', 'newsapp_password'),
-                "port": self.db_config.get('port', 5432)
-            }
-            
+            from shared.database.connection import get_db_config
+            db_config = get_db_config()
             total_processed = 0
             total_graduated = 0
             
@@ -1929,13 +1922,9 @@ class AutomationManager:
             logger.error(f"❌ Error during topic clustering: {e}", exc_info=True)
         
     async def _get_db_connection(self):
-        """Get database connection"""
-        try:
-            conn = psycopg2.connect(**self.db_config)
-            return conn
-        except Exception as e:
-            logger.error(f"Database connection failed: {e}")
-            raise
+        """Get database connection from shared pool."""
+        from shared.database.connection import get_db_connection
+        return get_db_connection()
     
     def get_status(self) -> Dict[str, Any]:
         """Get automation status"""

@@ -5,6 +5,8 @@ Returns DataResult for observations; spot/authority return structured dicts for 
 """
 
 import logging
+import os
+import json
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -15,6 +17,7 @@ except Exception:
     logger = logging.getLogger(__name__)
 
 from config.settings import METALS_DEV_API_KEY
+from config.paths import FINANCE_DATA_DIR
 from domains.finance.data_sources.base import DataSourceBase
 from shared.data_result import DataResult
 
@@ -23,6 +26,70 @@ TIMESERIES_WINDOW_DAYS = 30
 CACHE_TTL_TIMESERIES = 86400 * 30
 CACHE_TTL_SPOT = 3600
 CACHE_TTL_AUTHORITY = 3600
+
+# Simple monthly budget tracking for free-tier usage.
+USAGE_FILE = FINANCE_DATA_DIR / "metals_dev_usage.json"
+METALS_DEV_MONTHLY_QUOTA = int(os.environ.get("METALS_DEV_MONTHLY_QUOTA", "100"))
+_tracked_metals_env = os.environ.get("METALS_DEV_TRACKED_METALS", "gold,silver,platinum")
+TRACKED_METALS = [m.strip().lower() for m in _tracked_metals_env.split(",") if m.strip()]
+
+
+def _load_usage() -> dict:
+    try:
+        with open(USAGE_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _save_usage(data: dict) -> None:
+    try:
+        USAGE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(USAGE_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+    except Exception as e:
+        logger.warning("Metals.dev usage tracking save failed: %s", e)
+
+
+def _can_call_metal(metal: str) -> bool:
+    """
+    Enforce approximate monthly budget across metals.
+    - Global quota: METALS_DEV_MONTHLY_QUOTA (default 100).
+    - Per-metal quota: floor(quota / max(1, len(TRACKED_METALS))).
+    """
+    try:
+        if METALS_DEV_MONTHLY_QUOTA <= 0:
+            return True  # disabled
+        metal = (metal or "").lower()
+        now = datetime.now(timezone.utc)
+        month_key = now.strftime("%Y-%m")
+        data = _load_usage()
+        month_usage = data.get(month_key) or {"total": 0, "per_metal": {}}
+        total = int(month_usage.get("total", 0))
+        per_metal = month_usage.get("per_metal") or {}
+        metal_count = int(per_metal.get(metal, 0))
+        metals_count = max(1, len(TRACKED_METALS))
+        per_metal_quota = max(1, METALS_DEV_MONTHLY_QUOTA // metals_count)
+        if total >= METALS_DEV_MONTHLY_QUOTA or metal_count >= per_metal_quota:
+            logger.info(
+                "Metals.dev budget exhausted for %s: total=%d/%d, metal=%d/%d",
+                metal,
+                total,
+                METALS_DEV_MONTHLY_QUOTA,
+                metal_count,
+                per_metal_quota,
+            )
+            return False
+        # Reserve this call
+        month_usage["total"] = total + 1
+        per_metal[metal] = metal_count + 1
+        month_usage["per_metal"] = per_metal
+        data[month_key] = month_usage
+        _save_usage(data)
+        return True
+    except Exception as e:
+        logger.warning("Metals.dev budget check failed (allowing call): %s", e)
+        return True
 
 
 def _cache_get(service: str, params: dict):
@@ -39,6 +106,12 @@ def _request(path: str, params: dict) -> DataResult[dict]:
     api_key = METALS_DEV_API_KEY
     if not api_key:
         return DataResult.fail("METALS_DEV_API_KEY not set", "auth")
+    # Respect monthly budget per metal when possible
+    metal = (params.get("metal") or params.get("authority") or "").lower()
+    if metal and not _can_call_metal(metal):
+        return DataResult.fail(
+            f"Metals.dev monthly budget exhausted for {metal}", "rate_limit"
+        )
     params = dict(params)
     params["api_key"] = api_key
     url = f"{BASE_URL}{path}"

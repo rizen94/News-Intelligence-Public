@@ -5,8 +5,7 @@
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LOG_DIR="$HOME/logs/news_intelligence"
 API_URL="http://localhost:8000/api/system_monitoring/health"
-PYTHON_BIN="${PROJECT_DIR}/.venv/bin/python"
-[ -x "$PYTHON_BIN" ] || PYTHON_BIN="python3"
+[ -f "\${PROJECT_DIR}/.env" ] && set -a && source "\${PROJECT_DIR}/.env" && set +a
 
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting RSS collection health check..." >> "$LOG_DIR/rss_collection.log"
 
@@ -21,8 +20,10 @@ echo "[$(date '+%Y-%m-%d %H:%M:%S')] ✅ API server is healthy. Running RSS coll
 
 # Run RSS collection via direct Python script (most reliable)
 cd "$PROJECT_DIR/api"
-export DB_HOST="${DB_HOST:-localhost}"
-export DB_PORT="${DB_PORT:-5433}"
+PYTHON_BIN="$PROJECT_DIR/.venv/bin/python"
+[ -x "$PYTHON_BIN" ] || PYTHON_BIN="python3"
+export DB_HOST="${DB_HOST:-192.168.93.101}"
+export DB_PORT="${DB_PORT:-5432}"
 
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] Running RSS collection for all domains..." >> "$LOG_DIR/rss_collection.log"
 

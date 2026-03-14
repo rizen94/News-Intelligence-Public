@@ -23,6 +23,7 @@ cat > "$WRAPPER_SCRIPT" << 'WRAPPER_EOF'
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LOG_DIR="$HOME/logs/news_intelligence"
 API_URL="http://localhost:8000/api/system_monitoring/health"
+[ -f "\${PROJECT_DIR}/.env" ] && set -a && source "\${PROJECT_DIR}/.env" && set +a
 
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting RSS collection health check..." >> "$LOG_DIR/rss_collection.log"
 
@@ -39,8 +40,8 @@ echo "[$(date '+%Y-%m-%d %H:%M:%S')] ✅ API server is healthy. Running RSS coll
 cd "$PROJECT_DIR/api"
 PYTHON_BIN="$PROJECT_DIR/.venv/bin/python"
 [ -x "$PYTHON_BIN" ] || PYTHON_BIN="python3"
-export DB_HOST="${DB_HOST:-localhost}"
-export DB_PORT="${DB_PORT:-5433}"
+export DB_HOST="${DB_HOST:-192.168.93.101}"
+export DB_PORT="${DB_PORT:-5432}"
 
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] Running RSS collection for all domains..." >> "$LOG_DIR/rss_collection.log"
 
@@ -76,10 +77,11 @@ WRAPPER_EOF
 chmod +x "$WRAPPER_SCRIPT"
 
 # Create cron job entries (twice daily: 6 AM and 6 PM)
+# Quote paths so names with spaces (e.g. "News Intelligence") are not split by cron
 CRON_JOBS="
 # News Intelligence RSS Collection - Twice daily with API health check (6 AM and 6 PM)
-0 6 * * * $WRAPPER_SCRIPT >> $LOG_DIR/rss_collection.log 2>&1
-0 18 * * * $WRAPPER_SCRIPT >> $LOG_DIR/rss_collection.log 2>&1
+0 6 * * * \"$WRAPPER_SCRIPT\" >> \"$LOG_DIR/rss_collection.log\" 2>&1
+0 18 * * * \"$WRAPPER_SCRIPT\" >> \"$LOG_DIR/rss_collection.log\" 2>&1
 "
 
 # Remove any existing RSS collection cron jobs first

@@ -19,26 +19,10 @@ import time
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Import configuration
-import sys
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', 'config'))
-try:
-    from database import get_database_config
-    DB_CONFIG = get_database_config()
-    DB_CONFIG.update({
-        'connect_timeout': 10,      # 10 second connection timeout
-        'options': '-c statement_timeout=30000'  # 30 second query timeout
-    })
-except ImportError:
-    # Fallback configuration if config module not available
-    DB_CONFIG = {
-        'host': os.getenv('DB_HOST', 'postgres'),
-        'database': os.getenv('DB_NAME', 'news_system'),
-        'user': os.getenv('DB_USER', 'newsapp'),
-        'password': os.getenv('DB_PASSWORD', ''),
-        'connect_timeout': 10,      # 10 second connection timeout
-        'options': '-c statement_timeout=30000'  # 30 second query timeout
-    }
+# Use shared connection (run with api as cwd or PYTHONPATH=api)
+def _get_connection():
+    from shared.database.connection import get_db_connection
+    return get_db_connection()
 
 def clean_content_preserve_paragraphs(content: str) -> str:
     """
@@ -72,13 +56,8 @@ def clean_content_preserve_paragraphs(content: str) -> str:
     return content
 
 def get_db_connection():
-    """Get database connection with timeout protection"""
-    try:
-        conn = psycopg2.connect(**DB_CONFIG)
-        return conn
-    except Exception as e:
-        logger.error(f"Database connection failed: {e}")
-        return None
+    """Get database connection from shared pool (raises if DB unreachable)."""
+    return _get_connection()
 
 def extract_article_content(url: str, timeout: int = 10) -> str:
     """

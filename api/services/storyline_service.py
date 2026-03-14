@@ -627,16 +627,8 @@ class StorylineService:
             import psycopg2
             import os
             
-            # Get database config
-            db_config = {
-                'host': os.getenv('DB_HOST', 'news-system-postgres'),
-                'database': os.getenv('DB_NAME', 'newsintelligence'),
-                'user': os.getenv('DB_USER', 'newsapp'),
-                'password': os.getenv('DB_PASSWORD', 'Database@NEWSINT2025'),
-                'port': os.getenv('DB_PORT', '5432')
-            }
-            
-            conn = psycopg2.connect(**db_config)
+            from shared.database.connection import get_db_connection
+            conn = get_db_connection()
             cursor = conn.cursor()
             
             # Create RAG context summary
@@ -940,15 +932,9 @@ class StorylineService:
 storyline_service = None
 
 def get_storyline_service() -> StorylineService:
-    """Get the global storyline service instance"""
+    """Get the global storyline service instance. Uses shared DB config (DB_* env / .env)."""
     global storyline_service
     if storyline_service is None:
-        db_config = {
-            'host': os.getenv('DB_HOST', 'news-system-postgres'),
-            'database': os.getenv('DB_NAME', 'newsintelligence'),
-            'user': os.getenv('DB_USER', 'newsapp'),
-            'password': os.getenv('DB_PASSWORD', 'Database@NEWSINT2025'),
-            'port': os.getenv('DB_PORT', '5432')
-        }
-        storyline_service = StorylineService(db_config)
+        from shared.database.connection import get_db_config
+        storyline_service = StorylineService(get_db_config())
     return storyline_service

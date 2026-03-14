@@ -12,6 +12,7 @@ from typing import Dict, List, Optional, Any
 from queue import Queue, Empty
 import json
 
+from shared.database.connection import get_db_connection
 from .summarization_service import MLSummarizationService
 
 logger = logging.getLogger(__name__)
@@ -246,9 +247,10 @@ class BackgroundMLProcessor:
         if not model_name:
             model_name = self.ml_service.model_name
         
+        conn = None
         try:
-            with psycopg2.connect(**self.db_config) as conn:
-                with conn.cursor() as cursor:
+            conn = get_db_connection()
+            with conn.cursor() as cursor:
                     cursor.execute("""
                         INSERT INTO ml_processing_queue 
                         (article_id, operation_type, model_name, priority, status)
@@ -265,12 +267,16 @@ class BackgroundMLProcessor:
         except Exception as e:
             logger.error(f"Error queueing article {article_id}: {e}")
             raise
+        finally:
+            if conn is not None:
+                conn.close()
     
     def get_processing_status(self, article_id: int = None) -> Dict[str, Any]:
         """Get processing status for articles or specific article"""
+        conn = None
         try:
-            with psycopg2.connect(**self.db_config) as conn:
-                with conn.cursor() as cursor:
+            conn = get_db_connection()
+            with conn.cursor() as cursor:
                     if article_id:
                         cursor.execute("""
                             SELECT 
@@ -331,12 +337,16 @@ class BackgroundMLProcessor:
         except Exception as e:
             logger.error(f"Error getting processing status: {e}")
             return {'error': str(e)}
+        finally:
+            if conn is not None:
+                conn.close()
     
     def get_queue_status(self) -> Dict[str, Any]:
         """Get current queue status"""
+        conn = None
         try:
-            with psycopg2.connect(**self.db_config) as conn:
-                with conn.cursor() as cursor:
+            conn = get_db_connection()
+            with conn.cursor() as cursor:
                     cursor.execute("""
                         SELECT 
                             status, operation_type, model_name,
@@ -373,13 +383,17 @@ class BackgroundMLProcessor:
         except Exception as e:
             logger.error(f"Error getting queue status: {e}")
             return {'error': str(e)}
+        finally:
+            if conn is not None:
+                conn.close()
     
     # Database helper methods
     def _get_queued_tasks(self) -> List[Dict]:
         """Get queued tasks from database"""
+        conn = None
         try:
-            with psycopg2.connect(**self.db_config) as conn:
-                with conn.cursor() as cursor:
+            conn = get_db_connection()
+            with conn.cursor() as cursor:
                     cursor.execute("""
                         SELECT queue_id, article_id, operation_type, model_name, priority
                         FROM ml_processing_queue 
@@ -403,6 +417,9 @@ class BackgroundMLProcessor:
         except Exception as e:
             logger.error(f"Error getting queued tasks: {e}")
             return []
+        finally:
+            if conn is not None:
+                conn.close()
     
     def _is_task_in_queue(self, queue_id: int) -> bool:
         """Check if task is already in processing queue"""
@@ -411,9 +428,10 @@ class BackgroundMLProcessor:
     
     def _get_article_data(self, article_id: int) -> Optional[Dict]:
         """Get article data from database"""
+        conn = None
         try:
-            with psycopg2.connect(**self.db_config) as conn:
-                with conn.cursor() as cursor:
+            conn = get_db_connection()
+            with conn.cursor() as cursor:
                     cursor.execute("""
                         SELECT id, title, content, url, source
                         FROM articles 
@@ -434,12 +452,16 @@ class BackgroundMLProcessor:
         except Exception as e:
             logger.error(f"Error getting article data: {e}")
             return None
+        finally:
+            if conn is not None:
+                conn.close()
     
     def _update_article_processing_status(self, article_id: int, status: str, error: str = None):
         """Update article processing status"""
+        conn = None
         try:
-            with psycopg2.connect(**self.db_config) as conn:
-                with conn.cursor() as cursor:
+            conn = get_db_connection()
+            with conn.cursor() as cursor:
                     if status == 'processing':
                         cursor.execute("""
                             UPDATE articles 
@@ -458,13 +480,17 @@ class BackgroundMLProcessor:
                     
         except Exception as e:
             logger.error(f"Error updating article processing status: {e}")
+        finally:
+            if conn is not None:
+                conn.close()
     
     def _update_article_with_results(self, article_id: int, operation_type: str, 
                                    result: Dict, duration: float, model_name: str):
         """Update article with ML processing results"""
+        conn = None
         try:
-            with psycopg2.connect(**self.db_config) as conn:
-                with conn.cursor() as cursor:
+            conn = get_db_connection()
+            with conn.cursor() as cursor:
                     # Update basic processing info
                     cursor.execute("""
                         UPDATE articles 
@@ -494,13 +520,17 @@ class BackgroundMLProcessor:
                     
         except Exception as e:
             logger.error(f"Error updating article with results: {e}")
+        finally:
+            if conn is not None:
+                conn.close()
     
     def _log_processing_start(self, article_id: int, operation_type: str, 
                             model_name: str, start_time: float):
         """Log processing start to database"""
+        conn = None
         try:
-            with psycopg2.connect(**self.db_config) as conn:
-                with conn.cursor() as cursor:
+            conn = get_db_connection()
+            with conn.cursor() as cursor:
                     cursor.execute("""
                         INSERT INTO ml_processing_logs 
                         (article_id, operation_type, model_name, started_at, status)
@@ -510,14 +540,18 @@ class BackgroundMLProcessor:
                     
         except Exception as e:
             logger.error(f"Error logging processing start: {e}")
+        finally:
+            if conn is not None:
+                conn.close()
     
     def _log_processing_completion(self, article_id: int, operation_type: str, 
                                  model_name: str, start_time: float, end_time: float, 
                                  duration: float, result: Dict):
         """Log processing completion to database"""
+        conn = None
         try:
-            with psycopg2.connect(**self.db_config) as conn:
-                with conn.cursor() as cursor:
+            conn = get_db_connection()
+            with conn.cursor() as cursor:
                     cursor.execute("""
                         UPDATE ml_processing_logs 
                         SET completed_at = %s, duration_seconds = %s, status = 'completed',
@@ -537,12 +571,16 @@ class BackgroundMLProcessor:
                     
         except Exception as e:
             logger.error(f"Error logging processing completion: {e}")
+        finally:
+            if conn is not None:
+                conn.close()
     
     def _update_queue_status(self, queue_id: int, status: str, result: Dict = None, error: str = None):
         """Update queue item status"""
+        conn = None
         try:
-            with psycopg2.connect(**self.db_config) as conn:
-                with conn.cursor() as cursor:
+            conn = get_db_connection()
+            with conn.cursor() as cursor:
                     if status == 'processing':
                         cursor.execute("""
                             UPDATE ml_processing_queue 
@@ -560,6 +598,9 @@ class BackgroundMLProcessor:
                     
         except Exception as e:
             logger.error(f"Error updating queue status: {e}")
+        finally:
+            if conn is not None:
+                conn.close()
     
     def _update_stats(self, duration: float, success: bool):
         """Update processing statistics"""

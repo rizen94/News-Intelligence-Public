@@ -12,13 +12,13 @@ try:
 except Exception:
     logger = logging.getLogger(__name__)
 
-from config.settings import FRED_API_KEY
+from config.settings import FRED_API_KEY, FRED_GOLD_SERIES_ID
 from domains.finance.data_sources.fred import get_client
 from shared.data_result import DataResult
 
 SOURCE_ID = "fred_iq12260"
 UNIT = "index"  # Dec 2024 = 100
-FRED_SERIES = "IQ12260"
+FRED_SERIES = FRED_GOLD_SERIES_ID or "IQ12260"
 
 
 def fetch(start: str | None = None, end: str | None = None) -> DataResult[list[dict]]:

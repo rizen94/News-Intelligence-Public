@@ -12,6 +12,7 @@ from datetime import datetime, timezone, timedelta
 from dataclasses import dataclass
 import psycopg2
 from psycopg2.extras import RealDictCursor
+from shared.database.connection import get_db_connection
 
 logger = logging.getLogger(__name__)
 
@@ -120,7 +121,7 @@ class DynamicResourceService:
     async def _get_active_db_connections(self) -> int:
         """Get number of active database connections"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cursor = conn.cursor(cursor_factory=RealDictCursor)
             
             cursor.execute("""
@@ -144,7 +145,7 @@ class DynamicResourceService:
         try:
             # This would normally get from the automation manager
             # For now, we'll estimate based on recent processing
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cursor = conn.cursor(cursor_factory=RealDictCursor)
             
             cursor.execute("""
@@ -167,7 +168,7 @@ class DynamicResourceService:
     async def _get_processing_load(self) -> float:
         """Get current processing load (0.0 to 1.0)"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cursor = conn.cursor(cursor_factory=RealDictCursor)
             
             # Get articles processed in last 10 minutes

@@ -15,15 +15,6 @@ services:
     networks:
       - news-network-v2
 
-  redis:
-    image: redis:7-alpine
-    container_name: news-intelligence-redis
-    ports:
-      - "6379:6379"
-    restart: unless-stopped
-    networks:
-      - news-network-v2
-
   api:
     build:
       context: ./api
@@ -31,12 +22,10 @@ services:
     container_name: news-intelligence-api
     environment:
       DATABASE_URL: postgresql://newsapp:newsapp_password@news-intelligence-postgres:5432/news_intelligence
-      REDIS_URL: redis://news-intelligence-redis:6379/0
       ENVIRONMENT: production
       PYTHONPATH: /app
     depends_on:
       - postgres
-      - redis
     restart: unless-stopped
     ports:
       - "8000:8000"

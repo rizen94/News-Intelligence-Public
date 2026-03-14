@@ -35,26 +35,23 @@ class IntelligenceDatabaseManager:
     """Manages the intelligence system database schema and operations."""
     
     def __init__(self, db_config: Dict = None):
-        """Initialize the database manager."""
-        self.db_config = db_config or {
-            'host': os.getenv('DB_HOST', 'postgres'),
-            'database': os.getenv('DB_NAME', 'news_system'),
-            'user': os.getenv('DB_USER', 'newsapp'),
-            'password': os.getenv('DB_PASSWORD', ''),
-            'port': os.getenv('DB_PORT', '5432'),
-            'connect_timeout': 10,
-            'statement_timeout': 30000
-        }
+        """Initialize the database manager. Uses shared DB config when db_config is None."""
+        if db_config is None:
+            import sys
+            _api = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+            if _api not in sys.path:
+                sys.path.insert(0, _api)
+            from shared.database.connection import get_db_config
+            db_config = get_db_config()
+            db_config = {**db_config, "connect_timeout": 10, "statement_timeout": 30000}
+        self.db_config = db_config
         
     def get_db_connection(self):
-        """Get database connection with timeout protection."""
-        try:
-            conn = psycopg2.connect(**self.db_config)
-            conn.autocommit = False
-            return conn
-        except Exception as e:
-            logger.error(f"Database connection failed: {e}")
-            raise
+        """Get database connection from shared pool."""
+        from shared.database.connection import get_db_connection as _get_conn
+        conn = _get_conn()
+        conn.autocommit = False
+        return conn
     
     def update_database_schema(self, schema_file: str = None) -> bool:
         """Update the database schema for the intelligence system."""

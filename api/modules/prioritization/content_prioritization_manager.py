@@ -6,6 +6,7 @@ High-level interface for managing content priority, story threads, and RAG conte
 
 import logging
 import psycopg2
+from shared.database.connection import get_db_connection
 from typing import Dict, List, Any, Optional, Tuple
 from datetime import datetime, timedelta
 import time
@@ -272,7 +273,7 @@ class ContentPrioritizationManager:
             self.logger.info(f"Starting priority processing of existing articles (batch_size={batch_size})")
             
             # Get articles that need priority assignment
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cursor = conn.cursor()
             
             cursor.execute("""
@@ -409,7 +410,7 @@ class ContentPrioritizationManager:
                                    priority_result: Dict[str, Any]) -> int:
         """Store article with priority information"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cursor = conn.cursor()
             
             # Check if article already exists
@@ -480,7 +481,7 @@ class ContentPrioritizationManager:
     def _update_article_priority(self, article_id: int, priority_result: Dict[str, Any]) -> None:
         """Update article priority in database"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cursor = conn.cursor()
             
             cursor.execute("""
@@ -510,7 +511,7 @@ class ContentPrioritizationManager:
                                  priority_result: Dict[str, Any]) -> None:
         """Assign article to a story thread"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cursor = conn.cursor()
             
             cursor.execute("""

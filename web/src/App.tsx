@@ -28,6 +28,8 @@ import SearchPage from './pages/Investigate/SearchPage';
 import MonitorPage from './pages/Monitor/MonitorPage';
 import AnalyzePage from './pages/Analyze/AnalyzePage';
 import CommodityDashboard from './pages/Finance/CommodityDashboard';
+import FinancialAnalysis from './pages/Finance/FinancialAnalysis';
+import FinancialAnalysisResult from './pages/Finance/FinancialAnalysisResult';
 
 const theme = createTheme({
   palette: {
@@ -77,6 +79,8 @@ function App() {
                   <Route path="investigate/search" element={<SearchPage />} />
                   <Route path="monitor" element={<MonitorPage />} />
                   <Route path="analyze" element={<AnalyzePage />} />
+                  <Route path="analysis" element={<FinancialAnalysis />} />
+                  <Route path="analysis/:taskId" element={<FinancialAnalysisResult />} />
                   <Route path="commodity" element={<Navigate to="commodity/gold" replace />} />
                   <Route path="commodity/:commodity" element={<CommodityDashboard />} />
                 </Route>

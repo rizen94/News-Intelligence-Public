@@ -42,15 +42,9 @@ class TopicClusteringService:
         return domain.replace('-', '_')
         
     def _get_db_connection(self):
-        """Get database connection with domain schema context"""
-        conn = psycopg2.connect(
-            host=self.db_config.get('host', 'localhost'),
-            database=self.db_config.get('database', 'news_intelligence'),
-            user=self.db_config.get('user', 'newsapp'),
-            password=self.db_config.get('password', 'newsapp_password'),
-            port=self.db_config.get('port', 5432)
-        )
-        # Set search path to domain schema
+        """Get database connection from shared pool and set search_path to domain schema."""
+        from shared.database.connection import get_db_connection
+        conn = get_db_connection()
         with conn.cursor() as cur:
             cur.execute(f"SET search_path TO {self.schema}, public")
         return conn

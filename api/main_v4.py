@@ -4,10 +4,13 @@ Uses Llama 3.1 8B (primary) and Mistral 7B (secondary) models
 """
 
 # Load .env before any config — override=False so shell/env take precedence
+# API often runs with CWD=api/, so load project-root .env (NEWS_API_KEY, FRED_API_KEY, etc.)
+import os
 from dotenv import load_dotenv
 load_dotenv(override=False)
-
-import os
+_env_root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".env")
+if os.path.isfile(_env_root):
+    load_dotenv(_env_root, override=False)
 import sys
 import logging
 import threading
@@ -73,6 +76,11 @@ async def lifespan(app: FastAPI):
 
         # get_db_config enforces NAS tunnel rules and logs host/port
         db_config = get_db_config()
+        if not (db_config.get("password") or "").strip():
+            logger.warning(
+                "⚠️ DB_PASSWORD is not set. Set it in project-root .env (e.g. DB_PASSWORD=your_password) "
+                "and restart the API. Save-as-topic and other DB features will return 503 until then."
+            )
         logger.info(
             "Database configuration resolved: %s:%s/%s",
             db_config["host"],
@@ -83,19 +91,23 @@ async def lifespan(app: FastAPI):
         try:
             pool = _init_pool()
             logger.info("✅ Database connection pool initialized (persistent connections)")
-
-            # Test connection
             conn = get_db_connection()
-            if conn:
-                with conn.cursor() as cur:
-                    cur.execute("SELECT 1")
-                conn.close()
-                logger.info("✅ Database connection test successful")
-            else:
-                logger.error("❌ Database connection test failed")
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1")
+            conn.close()
+            logger.info("✅ Database connection test successful")
+        except ConnectionError as e:
+            logger.error("❌ Database connection failed: %s", e)
+            logger.error(
+                "   Set DB_PASSWORD in project-root .env and restart (e.g. ./start_system.sh). "
+                "API will return 503 for DB-dependent routes until then."
+            )
         except Exception as e:
             logger.error(f"❌ Failed to initialize database connection pool: {e}")
-            logger.error("   API will not be able to access database without DB_HOST/DB_PORT configuration")
+            logger.error(
+                "   Set DB_PASSWORD in project-root .env and restart (e.g. ./start_system.sh). "
+                "API will return 503 for DB-dependent routes until then."
+            )
     except Exception as e:
         logger.error(f"❌ Database initialization error: {e}")
     

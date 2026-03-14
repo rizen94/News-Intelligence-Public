@@ -135,7 +135,7 @@ class DashboardService:
         return {
             "status": "healthy",
             "database": "connected",
-            "redis": "connected",
+            "redis": "not_used",
             "api": "running"
         }
     

@@ -24,9 +24,15 @@ import {
   FormControlLabel,
   useMediaQuery,
   useTheme,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  TextField,
 } from '@mui/material';
 import MenuBookIcon from '@mui/icons-material/MenuBook';
 import TimelineIcon from '@mui/icons-material/Timeline';
+import BookmarkAddIcon from '@mui/icons-material/BookmarkAdd';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useDomainRoute } from '../../hooks/useDomainRoute';
@@ -221,6 +227,12 @@ export default function FinancialAnalysisResult() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [claimHighlight, setClaimHighlight] = useState(true);
   const [ledgerEntries, setLedgerEntries] = useState<Array<{ source_id?: string; evidence_data?: { status?: string; error?: string }; created_at?: string }>>([]);
+  const [saveTopicDialogOpen, setSaveTopicDialogOpen] = useState(false);
+  const [saveTopicName, setSaveTopicName] = useState('');
+  const [saveTopicSaving, setSaveTopicSaving] = useState(false);
+  const [saveTopicError, setSaveTopicError] = useState<string | null>(null);
+  const [topicForUpdate, setTopicForUpdate] = useState<{ id: number; name: string } | null>(null);
+  const [updateTopicSaving, setUpdateTopicSaving] = useState(false);
 
   useEffect(() => {
     if (!taskId || !domain) return;
@@ -275,6 +287,18 @@ export default function FinancialAnalysisResult() {
     };
   }, [taskId, domain]);
 
+  useEffect(() => {
+    if (!taskId || !domain || data?.status !== 'complete') return;
+    apiService
+      .listFinanceResearchTopics({ last_refined_task_id: taskId }, domain)
+      .then((res: { data?: { topics?: Array<{ id: number; name: string }> } }) => {
+        const topics = res?.data?.topics ?? [];
+        if (topics.length === 1) setTopicForUpdate({ id: topics[0].id, name: topics[0].name });
+        else setTopicForUpdate(null);
+      })
+      .catch(() => setTopicForUpdate(null));
+  }, [taskId, domain, data?.status]);
+
   const phaseIndex = data?.phase
     ? Math.max(0, PHASE_ORDER.indexOf(data.phase))
     : 0;
@@ -293,6 +317,51 @@ export default function FinancialAnalysisResult() {
       const el = document.getElementById(`${EVIDENCE_ID_PREFIX}${refId}`);
       if (el) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }, isDesktop ? 0 : 150);
+  };
+
+  const outputPayload = (data?.output || data) as Record<string, unknown> | undefined;
+  const resultQuery = (outputPayload?.query ?? '') as string;
+
+  const handleSaveAsTopic = async () => {
+    if (!taskId || !domain || !saveTopicName.trim()) return;
+    setSaveTopicError(null);
+    setSaveTopicSaving(true);
+    try {
+      await apiService.createFinanceResearchTopic(
+        {
+          task_id: taskId,
+          name: saveTopicName.trim(),
+          query: resultQuery || 'Analysis',
+        },
+        domain
+      );
+      setSaveTopicDialogOpen(false);
+      setSaveTopicName('');
+    } catch (err: unknown) {
+      const ax = err as { response?: { data?: { detail?: string }; status?: number }; message?: string };
+      const message =
+        typeof ax?.response?.data?.detail === 'string'
+          ? ax.response.data.detail
+          : ax?.response?.data?.detail && typeof ax.response.data.detail === 'object' && 'msg' in ax.response.data.detail
+            ? String((ax.response.data.detail as { msg?: string }).msg)
+            : ax?.message && typeof ax.message === 'string'
+              ? ax.message
+              : 'Failed to save topic';
+      setSaveTopicError(message);
+    } finally {
+      setSaveTopicSaving(false);
+    }
+  };
+
+  const handleUpdateTopicFromResult = async () => {
+    if (!taskId || !domain || !topicForUpdate) return;
+    setUpdateTopicSaving(true);
+    try {
+      await apiService.updateFinanceResearchTopicFromTask(topicForUpdate.id, { task_id: taskId }, domain);
+      setTopicForUpdate(null);
+    } finally {
+      setUpdateTopicSaving(false);
+    }
   };
 
   if (error) {
@@ -387,7 +456,7 @@ export default function FinancialAnalysisResult() {
           )}
         </Box>
         {taskId && (
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2, flexWrap: 'wrap' }}>
             <Typography variant="body2" color="text.secondary">
               Task: {taskId}
             </Typography>
@@ -398,8 +467,66 @@ export default function FinancialAnalysisResult() {
             >
               View Trace
             </Button>
+            {data?.status === 'complete' && (
+              <>
+                <Button
+                  size="small"
+                  startIcon={<BookmarkAddIcon />}
+                  onClick={() => { setSaveTopicError(null); setSaveTopicName(''); setSaveTopicDialogOpen(true); }}
+                >
+                  Save as topic
+                </Button>
+                {topicForUpdate && (
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    disabled={updateTopicSaving}
+                    onClick={handleUpdateTopicFromResult}
+                  >
+                    {updateTopicSaving ? 'Updating…' : `Update topic “${topicForUpdate.name}”`}
+                  </Button>
+                )}
+              </>
+            )}
           </Box>
         )}
+
+        <Dialog open={saveTopicDialogOpen} onClose={() => !saveTopicSaving && setSaveTopicDialogOpen(false)} maxWidth="sm" fullWidth>
+          <DialogTitle>Save as research topic</DialogTitle>
+          <DialogContent>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+              Save this analysis as a topic you can refine over time with new research.
+            </Typography>
+            <TextField
+              autoFocus
+              margin="dense"
+              label="Topic name"
+              value={saveTopicName}
+              onChange={(e) => setSaveTopicName(e.target.value)}
+              fullWidth
+              placeholder="e.g. Gold price drivers Q4"
+            />
+            {saveTopicError && (
+              <Alert severity="error" sx={{ mt: 1 }}>
+                {saveTopicError}
+                <Typography variant="body2" sx={{ mt: 0.5 }}>
+                  In DevTools → Network, check the request to <code>research-topics</code> (method, status, response body). Check API server logs for <code>create_research_topic</code>.
+                </Typography>
+                {(saveTopicError.includes('503') || saveTopicError.toLowerCase().includes('unavailable')) && (
+                  <Typography variant="body2" sx={{ mt: 0.5 }}>
+                    Ensure the API backend is running and the database is reachable. If this is a new install, run migration 150 (finance.research_topics).
+                  </Typography>
+                )}
+              </Alert>
+            )}
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setSaveTopicDialogOpen(false)} disabled={saveTopicSaving}>Cancel</Button>
+            <Button variant="contained" onClick={handleSaveAsTopic} disabled={saveTopicSaving || !saveTopicName.trim()}>
+              {saveTopicSaving ? 'Saving…' : 'Create topic'}
+            </Button>
+          </DialogActions>
+        </Dialog>
 
         {loading && (
           <Box sx={{ mb: 2 }}>

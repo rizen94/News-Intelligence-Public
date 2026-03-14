@@ -9,6 +9,7 @@ import time
 from typing import Dict, List, Optional, Tuple, Any
 from datetime import datetime, timedelta
 import psycopg2
+from shared.database.connection import get_db_connection
 from collections import defaultdict, Counter
 import re
 
@@ -380,7 +381,7 @@ class MLRAGService:
                 logger.warning(f"Enhanced RAG retrieval failed: {e}, falling back to basic search")
             
             # Fallback to basic keyword search
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cursor = conn.cursor()
             
             # Extract keywords from query
@@ -917,7 +918,7 @@ class MLRAGService:
     def _get_story_articles(self, story_id: str) -> List[Dict[str, Any]]:
         """Get articles for a specific story"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cursor = conn.cursor()
             
             # Search for articles related to story
@@ -1075,7 +1076,7 @@ class MLRAGService:
                         context: Dict[str, Any], processing_time: float) -> None:
         """Log RAG request for analytics"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cursor = conn.cursor()
             
             cursor.execute("""
@@ -1263,7 +1264,7 @@ class MLRAGService:
     def _get_article_data(self, article_id: int) -> Optional[Dict[str, Any]]:
         """Get article data from database"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cursor = conn.cursor()
             
             cursor.execute("""
@@ -1321,7 +1322,7 @@ class MLRAGService:
     def _store_gdelt_enhancement(self, article_id: int, enhancement_data: Dict[str, Any]) -> bool:
         """Store GDELT enhancement data in database"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cursor = conn.cursor()
             
             # Update article with GDELT enhancement data
@@ -1347,7 +1348,7 @@ class MLRAGService:
     def _update_article_rag_status(self, article_id: int, status: str) -> bool:
         """Update article RAG processing status"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cursor = conn.cursor()
             
             cursor.execute("""

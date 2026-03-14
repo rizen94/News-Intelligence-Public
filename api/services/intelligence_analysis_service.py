@@ -103,19 +103,17 @@ class IntelligenceAnalysisService:
     """
 
     def __init__(self, db_config: Dict[str, Any] = None):
-        self.db_config = db_config or {
-            'host': os.getenv('DB_HOST', 'localhost'),
-            'port': int(os.getenv('DB_PORT', 5433)),
-            'database': os.getenv('DB_NAME', 'news_intelligence'),
-            'user': os.getenv('DB_USER', 'newsapp'),
-            'password': os.getenv('DB_PASSWORD', 'newsapp_password'),
-        }
+        if db_config is None:
+            from shared.database.connection import get_db_config
+            db_config = get_db_config()
+        self.db_config = db_config
         self.executor = ThreadPoolExecutor(max_workers=4)
         logger.info("Intelligence Analysis Service initialized")
 
     def get_db_connection(self):
-        """Get database connection"""
-        return psycopg2.connect(**self.db_config)
+        """Get database connection from shared pool."""
+        from shared.database.connection import get_db_connection as _get_conn
+        return _get_conn()
 
     # =========================================================================
     # RAG-ENHANCED ANALYSIS

@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
 import psycopg2
 from psycopg2.extras import RealDictCursor
+from shared.database.connection import get_db_connection
 import json
 import hashlib
 import re
@@ -84,7 +85,7 @@ class ArticleProcessingService:
         """Get current system load (0.0 to 1.0)"""
         try:
             # Simple system load calculation based on recent processing
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cursor = conn.cursor(cursor_factory=RealDictCursor)
             
             # Get recent processing volume
@@ -458,7 +459,7 @@ class ArticleProcessingService:
                 conn = None
                 cursor = None
                 try:
-                    conn = psycopg2.connect(**self.db_config)
+                    conn = get_db_connection()
                     cursor = conn.cursor()
                     
                     # Debug: Log article data
@@ -639,7 +640,7 @@ class ArticleProcessingService:
     def process_single_article(self, article_id: int) -> Dict[str, Any]:
         """Process a single article by ID"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cursor = conn.cursor(cursor_factory=RealDictCursor)
             
             # Get article details

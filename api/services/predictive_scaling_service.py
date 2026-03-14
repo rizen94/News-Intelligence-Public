@@ -11,6 +11,7 @@ from datetime import datetime, timezone, timedelta
 from dataclasses import dataclass
 import psycopg2
 from psycopg2.extras import RealDictCursor
+from shared.database.connection import get_db_connection
 import json
 
 logger = logging.getLogger(__name__)
@@ -106,7 +107,7 @@ class PredictiveScalingService:
     async def _get_historical_data(self) -> List[HistoricalDataPoint]:
         """Get historical system metrics for training"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cursor = conn.cursor(cursor_factory=RealDictCursor)
             
             # Get historical data from monitoring tables

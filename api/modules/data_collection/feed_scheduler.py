@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 import schedule
 import atexit
 
+from shared.database.connection import get_db_connection
 from modules.rss_feed_service import RSSFeedService
 
 logger = logging.getLogger(__name__)
@@ -190,7 +191,7 @@ class FeedScheduler:
     def get_collection_history(self, hours: int = 24) -> Dict[str, Any]:
         """Get collection history from database"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cursor = conn.cursor()
             
             # Get articles collected in the last N hours

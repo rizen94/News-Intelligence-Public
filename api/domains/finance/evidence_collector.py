@@ -1,8 +1,7 @@
 """
 Evidence Collector — aggregates RSS (finance-domain articles), API summary (gold/FRED),
 and RAG (finance vector store) into a single bundle for analysis prompts.
-Does not replace the finance orchestrator's refresh or vector retrieval; adds RSS
-(and optional API summary) so the prompt can include recent news.
+Uses the news orchestrator for topic-aware shortlist when query/topic are present.
 """
 
 import logging
@@ -27,41 +26,60 @@ def collect(
     include_rss: bool = True,
     include_api_summary: bool = False,
     include_rag: bool = False,
+    include_historic_context: bool = False,
+    use_news_orchestrator: bool = True,
 ) -> dict[str, Any]:
     """
     Collect evidence from RSS (finance-domain articles), optional API summary, optional RAG.
-    Returns dict: rss_snippets, api_summary (or None), rag_chunks (or []).
-    The finance orchestrator already does refresh + vector store; this adds RSS and
-    optionally a short API summary for the prompt.
+    When use_news_orchestrator is True and query or topic is set, uses the news orchestrator
+    to build a topic-relevant shortlist from articles and contexts. Otherwise falls back to
+    last N articles.
+    When include_historic_context is True and start_date/end_date are set, runs the historic
+    context orchestrator (multi-source parallel fetch, relevance + agreement) and adds
+    historic_context_summary and historic_context_events to the result.
+    Returns dict: rss_snippets, api_summary (or None), rag_chunks (or []), historic_context_summary (or None), historic_context_events (or []).
     """
     result: dict[str, Any] = {
         "rss_snippets": [],
         "api_summary": None,
         "rag_chunks": [],
+        "historic_context_summary": None,
+        "historic_context_events": [],
     }
 
     if include_rss:
         try:
-            from domains.news_aggregation.services.article_service import ArticleService
-            article_svc = ArticleService(domain="finance")
-            published_after = datetime.now(timezone.utc) - timedelta(hours=hours)
-            res = article_svc.get_articles(
-                limit=max_rss,
-                offset=0,
-                include_content=True,
-                filters={"published_after": published_after},
-            )
-            articles = (res.get("data") or {}).get("articles") or []
-            for a in articles:
-                snippet = (a.get("summary") or a.get("content") or "")[:400]
-                pub = a.get("published_at") or a.get("published_date")
-                result["rss_snippets"].append({
-                    "id": a.get("id"),
-                    "title": a.get("title") or "",
-                    "snippet": snippet,
-                    "published_at": pub.isoformat() if hasattr(pub, "isoformat") else str(pub) if pub else "",
-                    "url": a.get("url") or "",
-                })
+            if use_news_orchestrator and (query or topic):
+                from domains.finance.news_orchestrator import get_shortlist, shortlist_to_rss_snippets
+                shortlist = get_shortlist(
+                    query=query,
+                    topic=topic,
+                    hours=hours,
+                    max_items=max_rss,
+                    include_contexts=True,
+                )
+                result["rss_snippets"] = shortlist_to_rss_snippets(shortlist)
+            else:
+                from domains.news_aggregation.services.article_service import ArticleService
+                article_svc = ArticleService(domain="finance")
+                published_after = datetime.now(timezone.utc) - timedelta(hours=hours)
+                res = article_svc.get_articles(
+                    limit=max_rss,
+                    offset=0,
+                    include_content=True,
+                    filters={"published_after": published_after},
+                )
+                articles = (res.get("data") or {}).get("articles") or []
+                for a in articles:
+                    snippet = (a.get("summary") or a.get("content") or "")[:400]
+                    pub = a.get("published_at") or a.get("published_date")
+                    result["rss_snippets"].append({
+                        "id": a.get("id"),
+                        "title": a.get("title") or "",
+                        "snippet": snippet,
+                        "published_at": pub.isoformat() if hasattr(pub, "isoformat") else str(pub) if pub else "",
+                        "url": a.get("url") or "",
+                    })
         except Exception as e:
             logger.warning("Evidence collector RSS fetch failed: %s", e)
 
@@ -90,5 +108,26 @@ def collect(
                 result["rag_chunks"] = [d for d in docs if d][:5]
         except Exception as e:
             logger.debug("Evidence collector RAG failed: %s", e)
+
+    if include_historic_context and query and start_date and end_date:
+        try:
+            logger.info("Fetching historic context: query=%r topic=%s range=%s to %s", query[:60], topic, start_date, end_date)
+            from services.historic_context_orchestrator import run_historic_context
+            h = run_historic_context(
+                query=query,
+                start_date=start_date,
+                end_date=end_date,
+                topic=topic,
+                trigger_type="analysis",
+                max_expansions=1,
+            )
+            if h.get("success"):
+                result["historic_context_summary"] = h.get("summary")
+                result["historic_context_events"] = h.get("events") or []
+                logger.info("Historic context success: summary %d chars, %d events", len(h.get("summary") or ""), len(h.get("events") or []))
+            else:
+                logger.warning("Historic context returned success=False: %s", h.get("error", "unknown"))
+        except Exception as e:
+            logger.warning("Evidence collector historic context failed: %s", e)
 
     return result

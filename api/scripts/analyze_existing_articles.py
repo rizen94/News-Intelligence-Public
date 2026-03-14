@@ -36,27 +36,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Database configuration
-try:
-    from config.database import get_db_config
-    DB_CONFIG = get_db_config()
-except Exception as e:
-    logger.warning(f"Failed to load database config: {e}")
-    DB_CONFIG = {
-        'host': os.getenv('DB_HOST', '192.168.93.101'),
-        'database': os.getenv('DB_NAME', 'news_intel'),
-        'user': os.getenv('DB_USER', 'newsapp'),
-        'password': os.getenv('DB_PASSWORD', ''),
-        'port': int(os.getenv('DB_PORT', '5432')),
-    }
+# Use shared DB config (run with api as cwd or PYTHONPATH=api)
+from shared.database.connection import get_db_connection as _get_db_connection
 
 def get_db_connection():
-    """Get database connection"""
-    try:
-        return psycopg2.connect(**DB_CONFIG)
-    except Exception as e:
-        logger.error(f"Database connection failed: {e}")
-        return None
+    """Get database connection from shared pool. Raises if DB unreachable."""
+    return _get_db_connection()
 
 def analyze_article(article: Dict, schema_name: str) -> Dict:
     """

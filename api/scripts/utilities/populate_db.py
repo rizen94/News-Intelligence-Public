@@ -11,16 +11,14 @@ from datetime import datetime, timedelta
 from psycopg2.extras import RealDictCursor
 
 def get_db_connection():
-    """Get database connection"""
+    """Get database connection. Uses shared DB config (run from api/ or PYTHONPATH=api)."""
     try:
-        conn = psycopg2.connect(
-            host=os.getenv('DB_HOST', 'localhost'),
-            database=os.getenv('DB_NAME', 'news_system'),
-            user=os.getenv('DB_USER', 'newsapp'),
-            password=os.getenv('DB_PASSWORD', ''),
-            port=os.getenv('DB_PORT', '5432')
-        )
-        return conn
+        import sys
+        _api = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+        if _api not in sys.path:
+            sys.path.insert(0, _api)
+        from shared.database.connection import get_db_connection
+        return get_db_connection()
     except Exception as e:
         print(f"Database connection failed: {e}")
         return None

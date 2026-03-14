@@ -60,6 +60,7 @@ const Monitoring = () => {
   const [dbStats, setDbStats] = useState(null);
   const [devices, setDevices] = useState(null);
   const [healthFeeds, setHealthFeeds] = useState(null);
+  const [degradedReasons, setDegradedReasons] = useState<string[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [lastUpdate, setLastUpdate] = useState(null);
@@ -376,15 +377,16 @@ const Monitoring = () => {
         const redisStatus = monitoringResult.data.redis?.status || 'unknown';
         const alertsStatus = monitoringResult.data.alerts?.status || 'unknown';
 
-        // If all components are healthy, overall is healthy
+        // Redis is not used (removed from architecture); treat not_used as OK
+        const redisOk = redisStatus === 'healthy' || redisStatus === 'not_used';
         if (systemStatus === 'healthy' && databaseStatus === 'healthy' &&
-            redisStatus === 'healthy' && alertsStatus === 'healthy') {
+            redisOk && alertsStatus === 'healthy') {
           overallStatus = 'healthy';
         } else if (systemStatus === 'warning' || databaseStatus === 'warning' ||
-                   redisStatus === 'unhealthy' || alertsStatus === 'warning') {
+                   (redisStatus !== 'not_used' && redisStatus !== 'healthy') || alertsStatus === 'warning') {
           overallStatus = 'warning';
         } else if (systemStatus === 'unhealthy' || databaseStatus === 'unhealthy' ||
-                   redisStatus === 'unhealthy' || alertsStatus === 'unhealthy') {
+                   (redisStatus !== 'not_used' && redisStatus !== 'healthy') || alertsStatus === 'unhealthy') {
           overallStatus = 'unhealthy';
         } else {
           // Use API's overall_status if available, otherwise use calculated
@@ -397,6 +399,11 @@ const Monitoring = () => {
         // Fallback to pipeline status if available
         overallStatus = pipelineResult.data.pipeline_status === 'healthy' ? 'healthy' :
           pipelineResult.data.pipeline_status === 'error' ? 'unhealthy' : 'warning';
+      }
+      if (overallStatus === 'degraded' && Array.isArray(healthResult?.degraded_reasons)) {
+        setDegradedReasons(healthResult.degraded_reasons);
+      } else {
+        setDegradedReasons(null);
       }
 
       setSystemStatus({
@@ -1066,6 +1073,11 @@ Do you want to proceed with running AI sentiment analysis?`,
                     >
                       Overall Status
                     </Typography>
+                    {systemStatus?.overall === 'degraded' && degradedReasons?.length ? (
+                      <Typography variant='caption' display='block' color='text.secondary' sx={{ mt: 0.5, textAlign: 'center' }}>
+                        {degradedReasons.join(' · ')}
+                      </Typography>
+                    ) : null}
                   </Box>
                 </Grid>
                 <Grid item xs={12} md={3}>
@@ -1084,13 +1096,12 @@ Do you want to proceed with running AI sentiment analysis?`,
                 <Grid item xs={12} md={3}>
                   <Box textAlign='center'>
                     <Typography variant='h4' color='primary'>
-                      {systemStatus?.monitoringData?.data?.redis?.status ===
-                      'healthy'
-                        ? '✓'
+                      {['healthy', 'not_used'].includes(systemStatus?.monitoringData?.data?.redis?.status ?? '')
+                        ? '—'
                         : '✗'}
                     </Typography>
                     <Typography variant='body2' color='text.secondary'>
-                      Redis Cache
+                      Redis (not used)
                     </Typography>
                   </Box>
                 </Grid>

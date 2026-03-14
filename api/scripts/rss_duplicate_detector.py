@@ -41,15 +41,14 @@ class RSSDuplicateDetector:
         self.similar_feeds = []
         
     def connect_database(self):
-        """Connect to the database"""
+        """Connect to the database. Uses shared DB config (run from api/ or PYTHONPATH=api)."""
         try:
-            self.conn = psycopg2.connect(
-                host=os.getenv('DB_HOST', 'localhost'),
-                database=os.getenv('DB_NAME', 'news_intelligence'),
-                user=os.getenv('DB_USER', 'newsapp'),
-                password=os.getenv('DB_PASSWORD', 'newsapp_password'),
-                port=os.getenv('DB_PORT', '5432')
-            )
+            import sys
+            _api = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+            if _api not in sys.path:
+                sys.path.insert(0, _api)
+            from shared.database.connection import get_db_connection
+            self.conn = get_db_connection()
             logger.info("✅ Database connected successfully")
             return True
         except Exception as e:

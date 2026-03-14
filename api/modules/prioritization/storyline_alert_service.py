@@ -1,5 +1,6 @@
 import logging
 import psycopg2
+from shared.database.connection import get_db_connection
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timedelta
 import json
@@ -35,7 +36,7 @@ class StorylineAlertService:
             Alert data if significant update found, None otherwise
         """
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cursor = conn.cursor()
             
             # Get thread info
@@ -122,7 +123,7 @@ class StorylineAlertService:
             Alert ID if created successfully, None otherwise
         """
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cursor = conn.cursor()
             
             cursor.execute("""
@@ -164,7 +165,7 @@ class StorylineAlertService:
             List of unread alerts
         """
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cursor = conn.cursor()
             
             cursor.execute("""
@@ -214,7 +215,7 @@ class StorylineAlertService:
             True if successful, False otherwise
         """
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cursor = conn.cursor()
             
             cursor.execute("""
@@ -240,7 +241,7 @@ class StorylineAlertService:
             Dictionary with alert statistics
         """
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cursor = conn.cursor()
             
             cursor.execute("""

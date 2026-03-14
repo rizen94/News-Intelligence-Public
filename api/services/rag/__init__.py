@@ -235,8 +235,9 @@ class RAGService(BaseRAGService):
             return {"error": str(e)}
     
     def get_db_connection(self):
-        """Get database connection"""
-        return psycopg2.connect(**self.db_config)
+        """Get database connection from shared pool."""
+        from shared.database.connection import get_db_connection as _get_conn
+        return _get_conn()
 
 
 # Global instance for backward compatibility

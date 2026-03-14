@@ -9,6 +9,7 @@ import json
 from typing import Dict, List, Optional
 from datetime import datetime, timedelta
 import psycopg2
+from shared.database.connection import get_db_connection
 from .storyline_tracker import StorylineTracker
 from modules.deduplication.advanced_deduplication_service import (
     AdvancedDeduplicationService,
@@ -144,7 +145,7 @@ class DailyBriefingService:
     def _generate_system_overview(self, briefing_date: datetime) -> Dict[str, any]:
         """Generate system overview section"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cursor = conn.cursor()
             
             # Get system statistics
@@ -179,7 +180,7 @@ class DailyBriefingService:
     def _generate_content_analysis(self, briefing_date: datetime) -> Dict[str, any]:
         """Generate content analysis section"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cursor = conn.cursor()
             
             # Get content statistics for the day
@@ -292,7 +293,7 @@ class DailyBriefingService:
     def _generate_quality_metrics(self, briefing_date: datetime) -> Dict[str, any]:
         """Generate quality metrics section"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cursor = conn.cursor()
             
             # Get quality distribution for the day

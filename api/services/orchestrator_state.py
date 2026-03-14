@@ -126,6 +126,7 @@ def get_controller_state() -> dict[str, Any]:
         return {
             "current_cycle": 0,
             "last_collection_times": {},
+            "last_finance_interest_analysis": {},
             "processing_queue": [],
             "active_investigations": [],
             "resource_usage": {},
@@ -138,6 +139,7 @@ def get_controller_state() -> dict[str, Any]:
         return {
             "current_cycle": 0,
             "last_collection_times": {},
+            "last_finance_interest_analysis": {},
             "processing_queue": [],
             "active_investigations": [],
             "resource_usage": {},

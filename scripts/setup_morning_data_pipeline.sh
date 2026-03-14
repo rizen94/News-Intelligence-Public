@@ -54,12 +54,13 @@ WRAPPER_EOF
 chmod +x "$WRAPPER_SCRIPT"
 
 # Cron: Run at 4 AM, 5 AM, 6 AM (three batches for fresh morning data)
+# Quote paths so names with spaces (e.g. "News Intelligence") are not split by cron
 CRON_JOBS="
 # News Intelligence Morning Data Pipeline - RSS + entity + topic extraction
 # Run 3 batches between 4-6 AM for fresh data by morning
-0 4 * * * $WRAPPER_SCRIPT
-0 5 * * * $WRAPPER_SCRIPT
-0 6 * * * $WRAPPER_SCRIPT
+0 4 * * * \"$WRAPPER_SCRIPT\"
+0 5 * * * \"$WRAPPER_SCRIPT\"
+0 6 * * * \"$WRAPPER_SCRIPT\"
 "
 
 # Remove any existing pipeline cron jobs

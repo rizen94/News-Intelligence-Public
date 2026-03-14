@@ -183,7 +183,8 @@ class DeepContentSynthesisService:
         logger.info("Deep Content Synthesis Service initialized")
     
     def get_db_connection(self):
-        return psycopg2.connect(**self.db_config)
+        from shared.database.connection import get_db_connection as _get_conn
+        return _get_conn()
     
     # =========================================================================
     # FACT EXTRACTION

@@ -1,7 +1,7 @@
 """
 Newsroom Orchestrator v6 — base orchestrator.
 
-Uses shared get_db_connection(), in-process queue, optional Redis pub/sub.
+Uses shared get_db_connection(), in-process queue.
 Retry with backoff, dead letter on max retries. Runs Reporter poll on interval.
 """
 
@@ -15,7 +15,7 @@ from typing import Any, Callable, Dict, Optional
 from orchestration.config import load_newsroom_config
 from orchestration.events.envelope import EventEnvelope
 from orchestration.events.queue import InProcessEventQueue
-from orchestration.events.redis_bus import publish_event
+from orchestration.events.redis_bus import publish_event  # no-op (Redis removed)
 from orchestration.events.types import EventType
 
 logger = logging.getLogger("orchestration")
@@ -49,7 +49,7 @@ class NewsroomOrchestrator:
         self._dead_letter_after = eh.get("dead_letter_after_retries", True)
 
     def emit(self, envelope: EventEnvelope) -> None:
-        """Enqueue event and optionally publish to Redis."""
+        """Enqueue event (in-process)."""
         self._queue.put(envelope)
         with self._lock:
             self._last_event_at = time.time()

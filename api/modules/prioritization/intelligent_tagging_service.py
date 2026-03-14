@@ -1,5 +1,6 @@
 import logging
 import psycopg2
+from shared.database.connection import get_db_connection
 import re
 from typing import Dict, Any, List
 from datetime import datetime
@@ -133,7 +134,7 @@ class IntelligentTaggingService:
         Analyze and suggest tags for a story thread based on all its articles.
         """
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cursor = conn.cursor()
             
             cursor.execute("""
@@ -221,7 +222,7 @@ class IntelligentTaggingService:
             if 'error' in analysis_result:
                 return analysis_result
             
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cursor = conn.cursor()
             
             updates_made = 0
@@ -257,7 +258,7 @@ class IntelligentTaggingService:
         Get analytics about thread tags.
         """
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cursor = conn.cursor()
             
             cursor.execute("""

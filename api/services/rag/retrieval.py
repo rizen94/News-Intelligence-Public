@@ -11,6 +11,7 @@ from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime, timedelta
 import psycopg2
 from psycopg2.extras import RealDictCursor
+from shared.database.connection import get_db_connection
 import re
 from collections import Counter, defaultdict
 
@@ -190,7 +191,7 @@ class RAGRetrievalModule:
     ) -> List[Dict[str, Any]]:
         """Keyword-based search using PostgreSQL full-text search"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cursor = conn.cursor(cursor_factory=RealDictCursor)
             
             # Extract keywords
@@ -574,7 +575,7 @@ class RAGRetrievalModule:
     async def store_article_embedding(self, article_id: int, embedding: np.ndarray):
         """Store article embedding in database metadata"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cursor = conn.cursor()
             
             # Store embedding in metadata JSONB field

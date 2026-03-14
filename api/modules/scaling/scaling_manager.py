@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any, Tuple
 from dataclasses import dataclass
 import psycopg2
+from shared.database.connection import get_db_connection
 import json
 import os
 
@@ -87,7 +88,7 @@ class ScalingManager:
     def get_scaling_metrics(self) -> ScalingMetrics:
         """Get current scaling metrics"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cur = conn.cursor()
             
             # Get article counts
@@ -156,7 +157,7 @@ class ScalingManager:
         try:
             batch_id = f"batch_{batch_type}_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{hash(str(article_ids)) % 10000}"
             
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cur = conn.cursor()
             
             # Create batch record
@@ -198,7 +199,7 @@ class ScalingManager:
     def process_batch_intelligently(self, batch_id: str) -> Dict[str, Any]:
         """Process a batch of articles with intelligent resource management"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cur = conn.cursor()
             
             # Get batch info
@@ -304,7 +305,7 @@ class ScalingManager:
             logger.error(f"Error processing batch {batch_id}: {e}")
             # Mark batch as failed
             try:
-                conn = psycopg2.connect(**self.db_config)
+                conn = get_db_connection()
                 cur = conn.cursor()
                 cur.execute("""
                     UPDATE article_processing_batches
@@ -321,7 +322,7 @@ class ScalingManager:
     def _split_large_batch(self, batch_id: str, total_articles: int) -> Dict[str, Any]:
         """Split a large batch into smaller manageable batches"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cur = conn.cursor()
             
             # Get articles in the large batch
@@ -420,7 +421,7 @@ class ScalingManager:
     def check_rate_limit(self, resource_type: str, resource_key: str) -> bool:
         """Check if a request is within rate limits"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cur = conn.cursor()
             
             if resource_type not in self.rate_limits:
@@ -450,7 +451,7 @@ class ScalingManager:
     def get_storage_usage(self) -> Dict[str, Any]:
         """Get current storage usage statistics"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cur = conn.cursor()
             
             # Get table sizes
@@ -494,7 +495,7 @@ class ScalingManager:
     def run_cleanup_policies(self) -> Dict[str, int]:
         """Run storage cleanup policies"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cur = conn.cursor()
             
             cur.execute("SELECT * FROM run_cleanup_policies()")
@@ -549,7 +550,7 @@ class ScalingManager:
     def _store_scaling_metrics(self, metrics: ScalingMetrics):
         """Store scaling metrics in database"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cur = conn.cursor()
             
             cur.execute("""
@@ -598,7 +599,7 @@ class ScalingManager:
     def get_batch_status(self, batch_id: str) -> Optional[Dict[str, Any]]:
         """Get status of a processing batch"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cur = conn.cursor()
             
             cur.execute("""

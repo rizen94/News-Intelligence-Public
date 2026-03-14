@@ -205,6 +205,94 @@ const financeAnalysisApi = {
       throw error;
     }
   },
+
+  async listResearchTopics(
+    params?: { limit?: number; offset?: number; last_refined_task_id?: string },
+    domain?: string
+  ) {
+    try {
+      const domainKey = domain || getCurrentDomain();
+      const searchParams = new URLSearchParams();
+      if (params?.limit) searchParams.set('limit', String(params.limit));
+      if (params?.offset) searchParams.set('offset', String(params.offset));
+      if (params?.last_refined_task_id) searchParams.set('last_refined_task_id', params.last_refined_task_id);
+      const qs = searchParams.toString();
+      const response = await getApi().get(
+        `/api/${domainKey}/finance/research-topics${qs ? `?${qs}` : ''}`
+      );
+      return response.data;
+    } catch (error) {
+      Logger.apiError('Failed to list research topics', error as Error);
+      throw error;
+    }
+  },
+
+  async getResearchTopic(topicId: number, domain?: string) {
+    try {
+      const domainKey = domain || getCurrentDomain();
+      const response = await getApi().get(
+        `/api/${domainKey}/finance/research-topics/${topicId}`
+      );
+      return response.data;
+    } catch (error) {
+      Logger.apiError('Failed to get research topic', error as Error);
+      throw error;
+    }
+  },
+
+  async createResearchTopic(
+    payload: { task_id: string; name: string; query: string; topic?: string; date_range?: { start: string; end: string } },
+    domain?: string
+  ) {
+    const domainKey = domain || getCurrentDomain();
+    const url = `/api/${domainKey}/finance/research-topics`;
+    const body = {
+      task_id: payload.task_id,
+      name: payload.name,
+      query: payload.query,
+      ...(payload.topic && { topic: payload.topic }),
+      ...(payload.date_range && { date_range: payload.date_range }),
+    };
+    try {
+      Logger.debug('Create research topic', { url, body: { ...body, query: body.query?.slice(0, 50) } });
+      const response = await getApi().post(url, body);
+      return response.data;
+    } catch (error) {
+      Logger.apiError('Failed to create research topic', error as Error);
+      throw error;
+    }
+  },
+
+  async refineResearchTopic(topicId: number, domain?: string) {
+    try {
+      const domainKey = domain || getCurrentDomain();
+      const response = await getApi().post(
+        `/api/${domainKey}/finance/research-topics/${topicId}/refine`
+      );
+      return response.data;
+    } catch (error) {
+      Logger.apiError('Failed to refine research topic', error as Error);
+      throw error;
+    }
+  },
+
+  async updateResearchTopicFromTask(
+    topicId: number,
+    payload: { task_id: string; name?: string },
+    domain?: string
+  ) {
+    try {
+      const domainKey = domain || getCurrentDomain();
+      const response = await getApi().patch(
+        `/api/${domainKey}/finance/research-topics/${topicId}`,
+        payload
+      );
+      return response.data;
+    } catch (error) {
+      Logger.apiError('Failed to update research topic from task', error as Error);
+      throw error;
+    }
+  },
 };
 
 export { financeAnalysisApi };

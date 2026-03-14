@@ -157,8 +157,9 @@ class AIStorylineDiscovery:
             logger.warning(f"Could not check embedding model: {e}")
         
     def get_db_connection(self):
-        """Get database connection"""
-        return psycopg2.connect(**self.db_config)
+        """Get database connection from shared pool."""
+        from shared.database.connection import get_db_connection as _get_conn
+        return _get_conn()
     
     def _ensure_embedding_column(self, schema: str):
         """Ensure embedding column exists in articles table"""
@@ -1496,13 +1497,8 @@ def get_discovery_service(db_config: Dict[str, Any] = None) -> AIStorylineDiscov
     
     if _discovery_service is None:
         if db_config is None:
-            db_config = {
-                "host": os.getenv("DB_HOST", "localhost"),
-                "port": int(os.getenv("DB_PORT", "5433")),
-                "database": os.getenv("DB_NAME", "news_intelligence"),
-                "user": os.getenv("DB_USER", "newsapp"),
-                "password": os.getenv("DB_PASSWORD", "newsapp_password")
-            }
+            from shared.database.connection import get_db_config
+            db_config = get_db_config()
         _discovery_service = AIStorylineDiscovery(db_config)
     
     return _discovery_service

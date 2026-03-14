@@ -13,6 +13,7 @@ from psycopg2.extras import RealDictCursor
 import os
 import json
 
+from shared.database.connection import get_db_connection
 from services.smart_cache_service import get_cache_service
 from services.api_usage_monitor import get_usage_monitor
 from services.storyline_service import get_storyline_service
@@ -31,8 +32,8 @@ class ProgressiveEnhancementService:
         self.rag_service = get_rag_service()
         
     def _get_db_connection(self):
-        """Get database connection"""
-        return psycopg2.connect(**self.db_config)
+        """Get database connection from shared pool."""
+        return get_db_connection()
     
     async def create_storyline_with_auto_summary(self, storyline_data: Dict[str, Any]) -> Dict[str, Any]:
         """Create storyline and automatically generate basic summary"""
@@ -521,15 +522,9 @@ class ProgressiveEnhancementService:
 _progressive_service = None
 
 def get_progressive_service() -> ProgressiveEnhancementService:
-    """Get global progressive enhancement service instance"""
+    """Get global progressive enhancement service instance. Uses shared DB config (DB_* env / .env)."""
     global _progressive_service
     if _progressive_service is None:
-        db_config = {
-            'host': os.getenv('DB_HOST', 'news-system-postgres'),
-            'database': os.getenv('DB_NAME', 'newsintelligence'),
-            'user': os.getenv('DB_USER', 'newsapp'),
-            'password': os.getenv('DB_PASSWORD', 'Database@NEWSINT2025'),
-            'port': os.getenv('DB_PORT', '5432')
-        }
-        _progressive_service = ProgressiveEnhancementService(db_config)
+        from shared.database.connection import get_db_config
+        _progressive_service = ProgressiveEnhancementService(get_db_config())
     return _progressive_service

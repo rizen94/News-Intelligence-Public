@@ -13,6 +13,7 @@ from datetime import datetime, timezone, timedelta
 from dataclasses import dataclass
 import psycopg2
 from psycopg2.extras import RealDictCursor
+from shared.database.connection import get_db_connection
 
 logger = logging.getLogger(__name__)
 
@@ -171,7 +172,7 @@ class SmartCacheService:
     async def _get_from_db_cache(self, cache_key: str) -> Optional[CacheEntry]:
         """Get cache entry from database"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cursor = conn.cursor(cursor_factory=RealDictCursor)
             
             cursor.execute("""
@@ -206,7 +207,7 @@ class SmartCacheService:
     async def _store_in_db_cache(self, entry: CacheEntry, service: str, query: str, params: Dict[str, Any] = None):
         """Store cache entry in database"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cursor = conn.cursor()
             
             cursor.execute("""
@@ -386,7 +387,7 @@ class SmartCacheService:
                 del self.memory_cache[key]
             
             # Clean up database cache
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cursor = conn.cursor()
             
             cursor.execute("""
@@ -411,7 +412,7 @@ class SmartCacheService:
     async def invalidate_cache(self, service: str, pattern: str = None) -> int:
         """Invalidate cache entries for a service or pattern"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cursor = conn.cursor()
             
             if pattern:

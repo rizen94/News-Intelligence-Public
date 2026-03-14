@@ -6,6 +6,7 @@ Manages story threads, content priority, and user interest rules
 
 import logging
 import psycopg2
+from shared.database.connection import get_db_connection
 from typing import Dict, List, Any, Optional, Tuple
 from datetime import datetime, timedelta
 import json
@@ -39,7 +40,7 @@ class ContentPrioritizationEngine:
     def _load_priority_levels(self):
         """Load priority levels from database"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cursor = conn.cursor()
             
             cursor.execute("""
@@ -68,7 +69,7 @@ class ContentPrioritizationEngine:
     def _load_user_rules(self):
         """Load user interest rules from database"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cursor = conn.cursor()
             
             cursor.execute("""
@@ -105,7 +106,7 @@ class ContentPrioritizationEngine:
     def _load_collection_rules(self):
         """Load content collection rules from database"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cursor = conn.cursor()
             
             cursor.execute("""
@@ -284,7 +285,7 @@ class ContentPrioritizationEngine:
     def _find_story_thread_matches(self, title: str, content: str, category: str) -> List[Dict[str, Any]]:
         """Find matching story threads for an article"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cursor = conn.cursor()
             
             cursor.execute("""
@@ -340,7 +341,7 @@ class ContentPrioritizationEngine:
             Dictionary with thread information
         """
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cursor = conn.cursor()
             
             # Find priority level
@@ -407,7 +408,7 @@ class ContentPrioritizationEngine:
             Dictionary with rule information
         """
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cursor = conn.cursor()
             
             # Get or create profile
@@ -482,7 +483,7 @@ class ContentPrioritizationEngine:
             List of story threads
         """
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cursor = conn.cursor()
             
             query = """
@@ -533,7 +534,7 @@ class ContentPrioritizationEngine:
     def get_priority_statistics(self) -> Dict[str, Any]:
         """Get statistics about content priority distribution"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cursor = conn.cursor()
             
             # Get priority level counts

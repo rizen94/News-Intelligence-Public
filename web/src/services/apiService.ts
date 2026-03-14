@@ -209,6 +209,11 @@ class APIService {
   triggerFinanceRefresh = financeAnalysisApi.triggerRefresh;
   getFinanceRefreshSchedule = financeAnalysisApi.getRefreshSchedule;
   getFinanceVerificationHistory = financeAnalysisApi.getVerificationHistory;
+  listFinanceResearchTopics = financeAnalysisApi.listResearchTopics;
+  getFinanceResearchTopic = financeAnalysisApi.getResearchTopic;
+  createFinanceResearchTopic = financeAnalysisApi.createResearchTopic;
+  refineFinanceResearchTopic = financeAnalysisApi.refineResearchTopic;
+  updateFinanceResearchTopicFromTask = financeAnalysisApi.updateResearchTopicFromTask;
 
   // Story expectations (alias for storylines)
   async getActiveStories(domain?: string) {

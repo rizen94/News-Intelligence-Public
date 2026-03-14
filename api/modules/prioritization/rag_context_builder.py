@@ -6,6 +6,7 @@ Retrieves historical context and related content based on user interests and sto
 
 import logging
 import psycopg2
+from shared.database.connection import get_db_connection
 from typing import Dict, List, Any, Optional, Tuple
 from datetime import datetime, timedelta
 import json
@@ -154,7 +155,7 @@ class RAGContextBuilder:
     def _get_thread_info(self, thread_id: int) -> Optional[Dict[str, Any]]:
         """Get story thread information"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cursor = conn.cursor()
             
             cursor.execute("""
@@ -345,7 +346,7 @@ class RAGContextBuilder:
     def _get_thread_keywords(self, thread_id: int) -> List[str]:
         """Get keywords for a story thread"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cursor = conn.cursor()
             
             cursor.execute("""
@@ -368,7 +369,7 @@ class RAGContextBuilder:
                                    max_articles: int, before_date: datetime) -> List[Dict[str, Any]]:
         """Search for historical articles before a specific date"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cursor = conn.cursor()
             
             # Build search query
@@ -421,7 +422,7 @@ class RAGContextBuilder:
                                 max_articles: int, exclude_thread_id: int) -> List[Dict[str, Any]]:
         """Search for related articles"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cursor = conn.cursor()
             
             # Build search query
@@ -471,7 +472,7 @@ class RAGContextBuilder:
                                    max_articles: int) -> List[Dict[str, Any]]:
         """Search for background/educational articles"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cursor = conn.cursor()
             
             # Build search query for background content
@@ -522,7 +523,7 @@ class RAGContextBuilder:
     def _search_relevant_articles(self, keywords: List[str], max_articles: int) -> List[Dict[str, Any]]:
         """Search for relevant articles based on keywords"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cursor = conn.cursor()
             
             # Build search query
@@ -565,7 +566,7 @@ class RAGContextBuilder:
     def _get_thread_articles(self, thread_id: int, max_articles: int) -> List[Dict[str, Any]]:
         """Get articles assigned to a specific thread"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cursor = conn.cursor()
             
             query = """
@@ -945,7 +946,7 @@ class RAGContextBuilder:
                             context: Dict[str, Any]) -> None:
         """Log a RAG context request"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cursor = conn.cursor()
             
             # Use the existing table structure

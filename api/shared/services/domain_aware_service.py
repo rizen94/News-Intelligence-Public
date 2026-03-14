@@ -168,6 +168,9 @@ def validate_domain(domain: str) -> bool:
     """
     try:
         conn = get_db_connection()
+        if conn is None:
+            logger.debug("validate_domain %s: no DB connection", domain)
+            return False
         try:
             with conn.cursor() as cur:
                 cur.execute("""

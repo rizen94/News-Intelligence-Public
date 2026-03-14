@@ -8,21 +8,22 @@ import sys
 import psycopg2
 from datetime import datetime
 
+def _get_db_config():
+    """Database config from shared source. Run from api/ or PYTHONPATH=api."""
+    import sys
+    _api = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    if _api not in sys.path:
+        sys.path.insert(0, _api)
+    from shared.database.connection import get_db_config
+    return get_db_config()
+
 def create_basic_clusters():
     """Create basic clusters from existing articles"""
     print("Creating basic clusters from existing articles...")
     
-    # Database configuration
-    db_config = {
-        'host': 'postgres',
-        'database': 'news_system',
-        'user': 'newsapp',
-        'password': 'secure_password_123'
-    }
-    
     try:
-        # Connect to database
-        conn = psycopg2.connect(**db_config)
+        from shared.database.connection import get_db_connection
+        conn = get_db_connection()
         cursor = conn.cursor()
         
         print("✓ Connected to database")

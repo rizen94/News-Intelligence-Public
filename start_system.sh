@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # News Intelligence System v5.0 - Comprehensive Startup Script
-# Starts: SSH Tunnel, Redis, API Server, Frontend, and all background services
+# Starts: SSH Tunnel, API Server, Frontend, and all background services (Redis removed)
 
 set -e
 
@@ -16,20 +16,22 @@ NC='\033[0m' # No Color
 # Configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Load .env if present (Widow mode or NAS rollback)
+# Load .env if present. Store DB_PASSWORD here (and NEWS_API_KEY, FRED_API_KEY).
+# Required for DB: DB_PASSWORD must be set in .env for PostgreSQL authentication.
 if [[ -f "$SCRIPT_DIR/.env" ]]; then
     while IFS= read -r line; do
         [[ "$line" =~ ^#.*$ ]] && continue
-        [[ "$line" =~ ^DB_|^DATABASE ]] || continue
+        [[ "$line" =~ ^(DB_|DATABASE|NEWS_API_KEY|FRED_API_KEY)= ]] || continue
         key="${line%%=*}"; val="${line#*=}"; val="${val%\"}"; val="${val#\"}"
         export "$key"="$val"
-    done < <(grep -E '^DB_|^DATABASE' "$SCRIPT_DIR/.env" 2>/dev/null || true)
+    done < <(grep -E '^(DB_|DATABASE|NEWS_API_KEY|FRED_API_KEY)=' "$SCRIPT_DIR/.env" 2>/dev/null || true)
 fi
 
 # ============================================================================
 # DATABASE: Widow (direct) or NAS (SSH tunnel rollback)
 # Widow: DB_HOST=192.168.93.101, DB_PORT=5432, DB_NAME=news_intel
 # NAS rollback: DB_HOST=localhost, DB_PORT=5433 + setup_nas_ssh_tunnel.sh
+# Set DB_PASSWORD in .env (project root); it is loaded above and passed to the API.
 # ============================================================================
 export DB_HOST="${DB_HOST:-192.168.93.101}"
 export DB_PORT="${DB_PORT:-5432}"
@@ -64,8 +66,6 @@ API_DIR="$SCRIPT_DIR/api"
 WEB_DIR="$SCRIPT_DIR/web"
 API_LOG="$LOG_DIR/api_server.log"
 FRONTEND_LOG="$LOG_DIR/frontend.log"
-REDIS_CONTAINER="news-intelligence-redis"
-
 # Create logs directory
 mkdir -p "$LOG_DIR"
 
@@ -238,68 +238,6 @@ conn.close()
     fi
 }
 
-# Start Redis
-start_redis() {
-    log "Starting Redis..."
-    
-    if ! command -v docker &> /dev/null; then
-        warning "Docker not available — skipping Redis (cache features may be limited)"
-        return 0
-    fi
-    
-    # Check if Redis container exists
-    if docker ps -a --format '{{.Names}}' | grep -q "^${REDIS_CONTAINER}$"; then
-        # Start existing container
-        if docker ps --format '{{.Names}}' | grep -q "^${REDIS_CONTAINER}$"; then
-            success "Redis container already running"
-        else
-            docker start "$REDIS_CONTAINER" > /dev/null 2>&1
-            sleep 2
-            
-            # Wait for Redis to be ready
-            local max_attempts=10
-            local attempt=0
-            while [ $attempt -lt $max_attempts ]; do
-                if docker exec "$REDIS_CONTAINER" redis-cli ping > /dev/null 2>&1; then
-                    success "Redis started and ready"
-                    return 0
-                fi
-                attempt=$((attempt + 1))
-                sleep 1
-            done
-            
-            error "Redis container started but not responding"
-            return 1
-        fi
-    else
-        # Start via docker-compose if available
-        if [ -f "$SCRIPT_DIR/docker-compose.yml" ]; then
-            log "Starting Redis via docker-compose..."
-            cd "$SCRIPT_DIR"
-            docker-compose up -d redis > /dev/null 2>&1 || true
-            sleep 3
-            
-            if docker exec "$REDIS_CONTAINER" redis-cli ping > /dev/null 2>&1; then
-                success "Redis started via docker-compose"
-            else
-                warning "Redis may not be ready yet, but container started"
-            fi
-        else
-            warning "Redis container not found. Creating new container..."
-            docker run -d --name "$REDIS_CONTAINER" -p 6379:6379 redis:latest > /dev/null 2>&1 || {
-                error "Failed to create Redis container"
-                return 1
-            }
-            sleep 3
-            if docker exec "$REDIS_CONTAINER" redis-cli ping > /dev/null 2>&1; then
-                success "Redis container created and ready"
-            else
-                warning "Redis container created but may not be ready yet"
-            fi
-        fi
-    fi
-}
-
 # Start API Server
 start_api() {
     log "Starting API server..."
@@ -336,7 +274,9 @@ start_api() {
     # - MLProcessingService
     log "Starting API server (includes AutomationManager and ML Processing Service)..."
     log "Using SSH tunnel: DB_HOST=${DB_HOST} DB_PORT=${DB_PORT}"
-    nohup env DB_HOST="${DB_HOST}" DB_PORT="${DB_PORT}" DB_NAME="${DB_NAME}" DB_USER="${DB_USER}" DB_PASSWORD="${DB_PASSWORD}" "$PYTHON_BIN" -m uvicorn main_v4:app --host 0.0.0.0 --port 8000 --reload > "$API_LOG" 2>&1 &
+    nohup env DB_HOST="${DB_HOST}" DB_PORT="${DB_PORT}" DB_NAME="${DB_NAME}" DB_USER="${DB_USER}" DB_PASSWORD="${DB_PASSWORD}" \
+        NEWS_API_KEY="${NEWS_API_KEY:-}" FRED_API_KEY="${FRED_API_KEY:-}" \
+        "$PYTHON_BIN" -m uvicorn main_v4:app --host 0.0.0.0 --port 8000 --reload > "$API_LOG" 2>&1 &
     API_PID=$!
     
     # Wait for API to be ready
@@ -428,14 +368,6 @@ verify_services() {
         all_healthy=false
     fi
     
-    # Check Redis
-    if docker exec "$REDIS_CONTAINER" redis-cli ping > /dev/null 2>&1; then
-        success "✅ Redis: Running (Docker container: $REDIS_CONTAINER)"
-    else
-        error "❌ Redis: Not responding"
-        all_healthy=false
-    fi
-    
     # Check API
     if curl -s http://localhost:8000/api/system_monitoring/health > /dev/null 2>&1; then
         success "✅ API Server: Running (http://localhost:8000)"
@@ -496,11 +428,6 @@ main() {
     # Pre-flight checks
     info "Running pre-flight checks..."
     
-    # Docker is optional (needed for Redis only); warn if missing
-    if ! command -v docker &> /dev/null; then
-        warning "Docker is not installed or not in PATH — Redis will be skipped (API and frontend will still start)"
-    fi
-    
     # Check Node.js
     if ! command -v node &> /dev/null; then
         error "Node.js is not installed or not in PATH"
@@ -529,18 +456,13 @@ main() {
         return 1
     fi
     
-    # 2. Redis (cache; skipped if Docker not available)
-    if ! start_redis; then
-        warning "Redis startup failed — continuing without Redis"
-    fi
-    
-    # 3. API Server (includes AutomationManager and MLProcessingService)
+    # 2. API Server (includes AutomationManager and MLProcessingService)
     if ! start_api; then
         error "API server startup failed"
         return 1
     fi
     
-    # 4. Frontend
+    # 3. Frontend
     if ! start_frontend; then
         warning "Frontend startup had issues, but continuing..."
     fi

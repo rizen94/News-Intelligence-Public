@@ -8,6 +8,7 @@ import json
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime
 import psycopg2
+from shared.database.connection import get_db_connection
 
 from .summarization_service import MLSummarizationService
 from .content_analyzer import ContentAnalyzer
@@ -171,7 +172,7 @@ class MLPipeline:
     def _get_article(self, article_id: int) -> Optional[Dict]:
         """Get article from database"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cursor = conn.cursor()
             
             cursor.execute("""
@@ -283,7 +284,7 @@ class MLPipeline:
     def _store_ml_results(self, article_id: int, content_analysis: Dict, quality_score: Dict, ml_results: Dict) -> Dict:
         """Store ML results in database"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cursor = conn.cursor()
             
             # Prepare ML data for storage
@@ -355,7 +356,7 @@ class MLPipeline:
     def get_processing_status(self) -> Dict:
         """Get overall processing status"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cursor = conn.cursor()
             
             # Get processing statistics

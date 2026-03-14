@@ -13,7 +13,6 @@ NC='\033[0m' # No Color
 
 # Configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REDIS_CONTAINER="news-intelligence-redis"
 PYTHON_BIN="$SCRIPT_DIR/.venv/bin/python"
 [ -x "$PYTHON_BIN" ] || PYTHON_BIN="python3"
 
@@ -47,19 +46,6 @@ psycopg2.connect(host='192.168.93.101', port=5432, database='news_intel', user='
     echo -e "  ${GREEN}✅ PostgreSQL: Running${NC} (Widow 192.168.93.101:5432)"
 else
     echo -e "  ${RED}❌ PostgreSQL: Not responding${NC}"
-fi
-echo ""
-
-# Check Redis
-echo -e "${CYAN}Cache:${NC}"
-if docker ps --format '{{.Names}}' | grep -q "^${REDIS_CONTAINER}$"; then
-    if docker exec "$REDIS_CONTAINER" redis-cli ping > /dev/null 2>&1; then
-        echo -e "  ${GREEN}✅ Redis: Running${NC} (Docker: $REDIS_CONTAINER)"
-    else
-        echo -e "  ${YELLOW}⚠️  Redis: Container running but not responding${NC}"
-    fi
-else
-    echo -e "  ${RED}❌ Redis: Container not running${NC}"
 fi
 echo ""
 

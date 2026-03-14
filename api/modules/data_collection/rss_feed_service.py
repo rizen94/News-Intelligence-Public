@@ -12,6 +12,7 @@ import uuid
 from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime, timedelta
 import psycopg2
+from shared.database.connection import get_db_connection
 from urllib.parse import urlparse, urljoin
 import re
 from dataclasses import dataclass
@@ -439,7 +440,7 @@ class RSSFeedService:
         # Process articles one by one to avoid transaction issues
         for article in articles:
             try:
-                conn = psycopg2.connect(**self.db_config)
+                conn = get_db_connection()
                 cursor = conn.cursor()
                 
                 try:

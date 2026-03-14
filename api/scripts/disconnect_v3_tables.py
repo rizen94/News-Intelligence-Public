@@ -1,22 +1,22 @@
 #!/usr/bin/env python3
 """
 Disconnect V3 Database Tables
-Safely removes legacy tables after confirming v4 data integrity
+Safely removes legacy tables after confirming v4 data integrity.
+Run from api/ or with PYTHONPATH=api. Uses shared DB config (DB_* env / .env).
 """
 
 import os
+import sys
 import psycopg2
 from datetime import datetime
 
 def connect_database():
-    """Connect to the database"""
-    return psycopg2.connect(
-        host=os.getenv('DB_HOST', 'localhost'),
-        database=os.getenv('DB_NAME', 'news_intelligence'),
-        user=os.getenv('DB_USER', 'newsapp'),
-        password=os.getenv('DB_PASSWORD', 'newsapp_password'),
-        port=os.getenv('DB_PORT', '5432')
-    )
+    """Connect to the database using shared config."""
+    _api = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    if _api not in sys.path:
+        sys.path.insert(0, _api)
+    from shared.database.connection import get_db_connection
+    return get_db_connection()
 
 def verify_v4_data_integrity():
     """Verify v4 data is complete before removing v3 tables"""

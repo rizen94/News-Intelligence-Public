@@ -40,8 +40,9 @@ class APIUsageMonitor:
         self.last_reset = {}
         
     def _get_db_connection(self):
-        """Get database connection"""
-        return psycopg2.connect(**self.db_config)
+        """Get database connection from shared pool."""
+        from shared.database.connection import get_db_connection as _get_conn
+        return _get_conn()
     
     async def check_rate_limit(self, service: str) -> bool:
         """Check if service is within rate limits"""
@@ -222,16 +223,11 @@ class APIUsageMonitor:
 _usage_monitor = None
 
 def get_usage_monitor() -> APIUsageMonitor:
-    """Get global usage monitor instance"""
+    """Get global usage monitor instance. Uses shared DB config (DB_* env / .env)."""
     global _usage_monitor
     if _usage_monitor is None:
-        db_config = {
-            'host': os.getenv('DB_HOST', 'news-system-postgres'),
-            'database': os.getenv('DB_NAME', 'newsintelligence'),
-            'user': os.getenv('DB_USER', 'newsapp'),
-            'password': os.getenv('DB_PASSWORD', 'Database@NEWSINT2025'),
-            'port': os.getenv('DB_PORT', '5432')
-        }
+        from shared.database.connection import get_db_config
+        db_config = get_db_config()
         _usage_monitor = APIUsageMonitor(db_config)
     return _usage_monitor
 

@@ -61,8 +61,9 @@ class RAGDomainModule:
             self.knowledge_service = None
     
     def get_db_connection(self):
-        """Get database connection"""
-        return psycopg2.connect(**self.db_config)
+        """Get database connection from shared pool."""
+        from shared.database.connection import get_db_connection as _get_conn
+        return _get_conn()
     
     def retrieve_relevant_articles(
         self,

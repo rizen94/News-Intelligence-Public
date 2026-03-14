@@ -9,6 +9,7 @@ from typing import Dict, List, Optional, Tuple, Any
 from datetime import datetime, timedelta
 import psycopg2
 from psycopg2.extras import RealDictCursor
+from shared.database.connection import get_db_connection
 
 from modules.deduplication.advanced_deduplication_service import (
     AdvancedDeduplicationService,
@@ -314,7 +315,7 @@ class DeduplicationIntegrationService:
             Dictionary with storyline suggestions
         """
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cursor = conn.cursor(cursor_factory=RealDictCursor)
             
             # Get recent clusters with storyline suggestions
@@ -370,7 +371,7 @@ class DeduplicationIntegrationService:
     async def _get_articles_by_ids(self, article_ids: List[int]) -> List[ArticleMetadata]:
         """Get articles by IDs from database"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cursor = conn.cursor(cursor_factory=RealDictCursor)
             
             placeholders = ','.join(['%s'] * len(article_ids))
@@ -413,7 +414,7 @@ class DeduplicationIntegrationService:
     async def _store_clustering_results(self, clusters: List[ClusterResult]) -> List[ClusterResult]:
         """Store clustering results in database"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cursor = conn.cursor()
             
             stored_clusters = []
@@ -479,7 +480,7 @@ class DeduplicationIntegrationService:
     async def _get_existing_duplicates(self, article_id: int) -> List[Dict]:
         """Get existing duplicate pairs for an article"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cursor = conn.cursor(cursor_factory=RealDictCursor)
             
             cursor.execute("""
@@ -519,7 +520,7 @@ class DeduplicationIntegrationService:
                                         status: str, error_message: str = None):
         """Log deduplication operation"""
         try:
-            conn = psycopg2.connect(**self.db_config)
+            conn = get_db_connection()
             cursor = conn.cursor()
             
             cursor.execute("""

@@ -58,6 +58,14 @@ processing:
       interval_seconds: 1800
       scope: storyline
 
+# Finance topics to investigate periodically as background analysis (low priority).
+# Coordinator submits one analysis task per topic when interval_days have passed.
+finance_areas_of_interest:
+  - topic: platinum
+    query: "Platinum price decline since 2023 and recovery in 2025 — drivers, catalysts, and outlook"
+    priority: low
+    interval_days: 7
+
 learning:
   pattern_detection_window_days: 30
   model_update_frequency_seconds: 21600

@@ -1,1 +1,1 @@
-"""Event system: types, Redis pub/sub, priority queue."""
+"""Event system: types, priority queue (Redis removed)."""

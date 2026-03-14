@@ -55,7 +55,7 @@ export interface HealthCheckResponse {
   uptime: number;
   services: {
     database: 'healthy' | 'degraded' | 'error';
-    redis: 'healthy' | 'degraded' | 'error';
+    redis: 'healthy' | 'degraded' | 'error' | 'not_used';
     api: 'healthy' | 'degraded' | 'error';
   };
 }

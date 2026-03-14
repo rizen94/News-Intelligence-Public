@@ -7,6 +7,7 @@
 | `../start_system.sh` | Start all services (manual) |
 | `../start-news-intelligence.sh` | Same as above; symlink from `~/bin` to run from anywhere (see script header) |
 | `../stop_system.sh` | Stop API and frontend |
+| `../restart_system.sh` | Stop then start (e.g. after changing .env) |
 | `../status_system.sh` | Check service status |
 | `archive_logs_to_nas.sh` | Copy old log files to NAS and trim local (run on Widow; keep disk clean) |
 | `export_cold_data_to_nas.sh` | Export old articles/contexts to NAS (optional prune); see docs/WIDOW_NAS_STORAGE_SPLIT.md |
@@ -32,7 +33,12 @@
 |--------|---------|
 | `verify_gpu.py` | GPU/ML verification |
 | `verify_connections.py` | DB, Ollama, Redis check |
-| `rss_collection_with_health_check.sh` | RSS + health check |
+| `rss_collection_with_health_check.sh` | RSS + health check (used by cron) |
+| `run_last_24h_report.sh` | Run last-24h activity report (uses .venv-report) |
+| `setup_rss_cron_with_health_check.sh` | Install RSS cron (6/18) with quoted paths |
+| `setup_morning_data_pipeline.sh` | Install morning pipeline cron (4/5/6 AM) with quoted paths |
+| `setup_log_archive_cron.sh` | Install log-archive-to-NAS cron (6/18) with quoted paths |
+| `setup_log_cleanup_cron.sh` | Install pipeline_trace.log cleanup (2 AM) with quoted path |
 | `backup_database.sh` | DB backup |
 
 ## Archived

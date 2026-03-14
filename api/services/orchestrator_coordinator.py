@@ -221,6 +221,57 @@ class OrchestratorCoordinator:
 
                 state["current_cycle"] = current_cycle
                 state["last_collection_times"] = state.get("last_collection_times") or {}
+                state["last_finance_interest_analysis"] = state.get("last_finance_interest_analysis") or {}
+
+                # Finance areas of interest: trigger one background analysis per due topic per cycle
+                areas = (self._config or {}).get("finance_areas_of_interest") or []
+                if areas and self._processing_governor:
+                    now = datetime.now(timezone.utc)
+                    last_run = state["last_finance_interest_analysis"]
+                    triggered = False
+                    for entry in areas:
+                        if triggered:
+                            break
+                        if not isinstance(entry, dict):
+                            continue
+                        topic = (entry.get("topic") or "").strip()
+                        query = (entry.get("query") or "").strip()
+                        interval_days = int(entry.get("interval_days") or 7)
+                        priority = (entry.get("priority") or "low").strip().lower()
+                        if not topic or not query:
+                            continue
+                        last = last_run.get(topic)
+                        due = True
+                        if last:
+                            try:
+                                last_dt = datetime.fromisoformat(last.replace("Z", "+00:00"))
+                                if (now - last_dt).total_seconds() < interval_days * 86400:
+                                    due = False
+                            except (ValueError, TypeError):
+                                pass
+                        if not due:
+                            continue
+                        result = self._processing_governor.trigger_finance_analysis(
+                            query, topic, priority=priority
+                        )
+                        if result and result.get("task_id"):
+                            last_run[topic] = now.isoformat()
+                            state["last_finance_interest_analysis"] = last_run
+                            triggered = True
+                            try:
+                                orchestrator_state.append_decision_log(
+                                    "finance_interest_analysis",
+                                    factors={"topic": topic, "task_id": result.get("task_id")},
+                                    outcome="queued",
+                                )
+                            except Exception as e:
+                                logger.debug("Orchestrator append_decision_log failed: %s", e)
+                            logger.info(
+                                "Orchestrator queued finance area-of-interest analysis: topic=%s task_id=%s",
+                                topic,
+                                result.get("task_id"),
+                            )
+
                 try:
                     orchestrator_state.save_controller_state(state)
                 except Exception as e:

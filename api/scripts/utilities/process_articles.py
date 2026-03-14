@@ -1,28 +1,27 @@
 #!/usr/bin/env python3
 """
-Process articles and create clusters
+Process articles and create clusters. Run from api/ or with PYTHONPATH=api.
 """
 
 import os
 import sys
+
+# Ensure api is on path for shared and domain modules
+_API = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+if _API not in sys.path:
+    sys.path.insert(0, _API)
+
 from modules.intelligence.article_processor import ArticleProcessor
 from modules.intelligence.content_clusterer import ContentClusterer
 from services.pattern_entity_extractor import PatternEntityExtractor
+from shared.database.connection import get_db_config
 
 def process_articles():
     """Process articles and create clusters"""
     print("Processing articles and creating clusters...")
     
-    # Database configuration
-    db_config = {
-        'host': 'postgres',
-        'database': 'news_system',
-        'user': 'newsapp',
-        'password': 'secure_password_123'
-    }
-    
     try:
-        # Create processors
+        db_config = get_db_config()
         ap = ArticleProcessor(db_config)
         cc = ContentClusterer(db_config)
         ee = PatternEntityExtractor()

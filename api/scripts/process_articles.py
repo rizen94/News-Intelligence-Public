@@ -12,7 +12,7 @@ from datetime import datetime
 sys.path.append(os.path.join(os.path.dirname(__file__), 'api'))
 
 from modules.ml.ml_pipeline import MLPipeline
-from config.database import get_db_config
+from config.database import get_db_config, get_db_connection
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -21,15 +21,14 @@ logger = logging.getLogger(__name__)
 def process_raw_articles():
     """Process raw articles through the ML pipeline"""
     try:
-        # Get database config
+        # Get database config (for ML pipeline init) and connection from pool
         db_config = get_db_config()
         
         # Initialize ML pipeline
         ml_pipeline = MLPipeline(db_config)
         
-        # Get raw articles
-        import psycopg2
-        conn = psycopg2.connect(**db_config)
+        # Get raw articles via shared pool
+        conn = get_db_connection()
         cur = conn.cursor()
         
         cur.execute("""

@@ -32,19 +32,16 @@ class OptimizedMLWorker:
         self.worker_id = worker_id
         self.max_workers = max_workers
         self.batch_size = batch_size
-        self.db_config = {
-            'host': 'postgres',
-            'database': 'news_intelligence',
-            'user': 'newsapp',
-            'password': 'Database@NEWSINT2025'
-        }
+        from shared.database.connection import get_db_config
+        self.db_config = get_db_config()
         self.is_running = False
         self.processed_count = 0
         self.failed_count = 0
         
     def get_db_connection(self):
-        """Get database connection"""
-        return psycopg2.connect(**self.db_config)
+        """Get database connection from shared pool (DB_* env / .env)."""
+        from shared.database.connection import get_db_connection as _get_conn
+        return _get_conn()
     
     def process_article_batch(self, articles):
         """Process a batch of articles in parallel"""

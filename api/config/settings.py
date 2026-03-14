@@ -72,10 +72,16 @@ LOG_LLM_FULL_TEXT = os.environ.get("LOG_LLM_FULL_TEXT", "false").lower() in ("1"
 # ============================================================
 FRED_API_KEY = os.environ.get("FRED_API_KEY", "")
 FRED_RATE_LIMIT_PER_MINUTE = 120
+# Optional FRED series IDs for commodities (empty = skip FRED for that metal)
+FRED_GOLD_SERIES_ID = os.environ.get("FRED_GOLD_SERIES_ID", "IQ12260")
+FRED_SILVER_SERIES_ID = os.environ.get("FRED_SILVER_SERIES_ID", "")   # e.g. IP7106
+FRED_PLATINUM_SERIES_ID = os.environ.get("FRED_PLATINUM_SERIES_ID", "")  # e.g. IP7110
 BIGQUERY_PROJECT_ID = os.environ.get("BIGQUERY_PROJECT_ID", "")
 EDGAR_RATE_LIMIT_PER_SECOND = 10
 EDGAR_USER_AGENT = os.environ.get("EDGAR_USER_AGENT", "NewsIntelligence research@example.com")
 METALS_DEV_API_KEY = os.environ.get("METALS_DEV_API_KEY", "")
+# Historic context orchestrator — external APIs (optional)
+NEWS_API_KEY = os.environ.get("NEWS_API_KEY", "")
 
 # Finance vector store (collection name = finance_evidence_{model_suffix} — see vector_store.py)
 EMBEDDING_DIMENSION = 1024  # bge-large-en-v1.5
