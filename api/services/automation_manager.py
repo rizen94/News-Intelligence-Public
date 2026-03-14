@@ -1367,8 +1367,8 @@ class AutomationManager:
         try:
             loop = asyncio.get_event_loop()
             # Production: 100-change batches, ~2s each; alert if behind >10k
-                fact_processed = await loop.run_in_executor(None, lambda: process_fact_change_log(batch_size=100))
-                queue_processed = await loop.run_in_executor(None, lambda: process_story_update_queue(batch_size=20))
+            fact_processed = await loop.run_in_executor(None, lambda: process_fact_change_log(batch_size=100))
+            queue_processed = await loop.run_in_executor(None, lambda: process_story_update_queue(batch_size=20))
             if fact_processed > 0 or queue_processed > 0:
                 logger.info("Story state triggers: fact_log=%s queue=%s", fact_processed, queue_processed)
         except Exception as e:
