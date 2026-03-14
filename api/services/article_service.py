@@ -226,22 +226,48 @@ class ArticleService:
             raise
 
     async def analyze_article(self, article_id: str) -> Dict[str, Any]:
-        """Trigger AI analysis for article"""
+        """
+        Return stored analysis for article when available (sentiment, entities, summary, quality).
+        When no analysis is stored, returns analysis_available=False and a clear message so callers
+        can use content_analysis or news_aggregation analyze endpoints for on-demand LLM analysis.
+        """
         try:
             article = await self.get_article(article_id)
             if not article:
                 raise ValueError("Article not found")
-            
-            # Placeholder for AI analysis logic
-            analysis_result = {
+
+            sentiment = article.get("sentiment_score")
+            entities = article.get("entities")
+            summary = article.get("summary")
+            quality = article.get("quality_score")
+            readability = article.get("readability_score")
+            has_stored = (
+                sentiment is not None
+                or (entities and isinstance(entities, (list, dict)))
+                or (summary and str(summary).strip())
+                or quality is not None
+                or readability is not None
+            )
+
+            if has_stored:
+                return {
+                    "article_id": article_id,
+                    "analysis_available": True,
+                    "source": "stored",
+                    "sentiment_score": float(sentiment) if sentiment is not None else None,
+                    "entities": entities if isinstance(entities, (list, dict)) else (entities or []),
+                    "summary": summary if summary else None,
+                    "quality_score": float(quality) if quality is not None else None,
+                    "readability_score": float(readability) if readability is not None else None,
+                }
+            return {
                 "article_id": article_id,
-                "sentiment_score": 0.5,
+                "analysis_available": False,
+                "message": "No analysis stored for this article. Use POST /api/content_analysis/articles/{id}/analyze or /api/news_aggregation/articles/{id}/analyze_quality for on-demand analysis.",
+                "sentiment_score": None,
                 "entities": [],
-                "summary": "AI analysis placeholder",
-                "processing_time_ms": 1000
+                "summary": None,
             }
-            
-            return analysis_result
         except Exception as e:
             logger.error(f"Error analyzing article {article_id}: {e}")
             raise

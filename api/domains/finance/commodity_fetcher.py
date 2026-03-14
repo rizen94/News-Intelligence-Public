@@ -18,11 +18,11 @@ def fetch_commodity(
     start: str | None = None,
     end: str | None = None,
     store: bool = True,
-) -> dict[str, list[dict]]:
+) -> dict[str, list[dict] | bool | str]:
     """
     Fetch commodity data. topic in ("gold", "silver", "platinum").
     Gold delegates to gold_amalgamator (FRED first). Silver/platinum: FRED first, then metals.dev.
-    Returns {source_id: [obs, ...]}.
+    Returns {source_id: [obs, ...]}. When both sources fail, also includes "unavailable": True and "message": str.
     """
     topic = (topic or "gold").lower()
     if topic == "gold":
@@ -104,14 +104,14 @@ def fetch_commodity(
     except Exception as e:
         logger.debug("Commodity fetcher metals.dev flow failed: %s", e, exc_info=True)
 
-    # 3) Stub when both fail
+    # 3) Both sources failed: return explicit unavailable so callers can handle
     try:
         ledger_record(
             report_id=report_id,
             source_type=f"{topic}_price",
-            source_id=f"stub_{topic}",
+            source_id=f"unavailable_{topic}",
             evidence_data={
-                "status": "stub",
+                "status": "unavailable",
                 "observations_count": 0,
                 "description": f"{topic} collection requested; FRED and metals.dev unavailable",
                 "retrieved_at": datetime.now(timezone.utc).isoformat(),
@@ -119,5 +119,10 @@ def fetch_commodity(
         )
     except Exception:
         pass
-    logger.info("Commodity fetcher: %s stub fallback (FRED and metals.dev unavailable)", topic)
-    return {f"stub_{topic}": []}
+    logger.info("Commodity fetcher: %s unavailable (FRED and metals.dev failed)", topic)
+    # Same shape as success: {source_id: [obs]}; extra keys so callers can show clear message
+    return {
+        f"stub_{topic}": [],
+        "unavailable": True,
+        "message": "FRED and metals.dev unavailable; no commodity data returned.",
+    }

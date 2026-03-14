@@ -1,7 +1,9 @@
 """
 Resource & Health Dashboard — database stats, device disk/processes, aggregated health feeds.
 Serves the monitoring tab across all domains.
-Remote devices (Widow, NAS, Pi): disk and processes via SSH (df + ps) when agent_url is not set.
+Remote devices: use agent_url for HTTP metrics endpoint, or host + SSH (df + ps) when agent_url is not set.
+See docs/MONITORING_SSH_SETUP.md for SSH. HTTP agent contract: GET {agent_url} returns JSON with
+disk, project_usage_bytes, processes (same shape as SSH response).
 """
 
 import asyncio
@@ -11,6 +13,7 @@ import subprocess
 from typing import Any, Dict, List, Optional
 
 import psutil
+import requests
 import yaml
 from fastapi import APIRouter, HTTPException
 
@@ -335,6 +338,48 @@ def _get_remote_disk_and_processes_via_ssh(
     return result
 
 
+def _fetch_remote_via_http(agent_url: str, timeout_seconds: int = 10) -> Dict[str, Any]:
+    """
+    Fetch device metrics from a remote HTTP agent. Expects GET {agent_url} to return JSON:
+    disk (dict with total_gb, used_gb, free_gb, percent), project_usage_bytes (int or null),
+    processes (list of {pid, name, memory_percent, cpu_percent}).
+    Returns same shape as _get_remote_disk_and_processes_via_ssh for consistency.
+    """
+    result: Dict[str, Any] = {"disk": None, "project_usage_bytes": None, "processes": [], "error": None}
+    try:
+        r = requests.get(agent_url, timeout=timeout_seconds)
+        r.raise_for_status()
+        data = r.json()
+    except requests.RequestException as e:
+        result["error"] = str(e)[:200]
+        return result
+    except (ValueError, TypeError) as e:
+        result["error"] = f"Invalid JSON: {e}"[:200]
+        return result
+
+    disk_in = data.get("disk")
+    if isinstance(disk_in, dict):
+        result["disk"] = {
+            "total_gb": disk_in.get("total_gb"),
+            "used_gb": disk_in.get("used_gb"),
+            "free_gb": disk_in.get("free_gb"),
+            "percent": disk_in.get("percent"),
+        }
+    pu = data.get("project_usage_bytes")
+    result["project_usage_bytes"] = int(pu) if pu is not None and str(pu).isdigit() else None
+    procs = data.get("processes")
+    if isinstance(procs, list):
+        for p in procs[:50]:
+            if isinstance(p, dict):
+                result["processes"].append({
+                    "pid": int(p.get("pid", 0)),
+                    "name": (p.get("name") or "?")[:50],
+                    "memory_percent": round(float(p.get("memory_percent", 0) or 0), 1),
+                    "cpu_percent": round(float(p.get("cpu_percent", 0) or 0), 1),
+                })
+    return result
+
+
 @router.get("/devices")
 @cached_response(ttl=60)
 async def get_devices():
@@ -370,18 +415,25 @@ async def get_devices():
             agent_url = dev.get("agent_url")
             host = dev.get("host")
             if agent_url:
-                # Optional: HTTP agent not implemented yet
+                try:
+                    data = await loop.run_in_executor(
+                        None,
+                        lambda u=agent_url, t=timeout: _fetch_remote_via_http(u, timeout_seconds=t),
+                    )
+                except Exception as e:
+                    logger.warning("HTTP agent fetch for %s (%s) failed: %s", name, agent_url, e)
+                    data = {"disk": None, "project_usage_bytes": None, "processes": [], "error": str(e)[:200]}
                 result.append(
                     {
                         "name": name,
                         "type": "remote",
                         "description": dev.get("description") or "",
                         "host": host,
-                        "disk": None,
-                        "project_usage_bytes": None,
-                        "processes": None,
-                        "status": "unavailable",
-                        "message": "Remote agent not implemented yet",
+                        "disk": data.get("disk"),
+                        "project_usage_bytes": data.get("project_usage_bytes"),
+                        "processes": data.get("processes") or [],
+                        "status": "ok" if data.get("error") is None else "error",
+                        "message": data.get("error") if data.get("error") else None,
                     }
                 )
             elif host:

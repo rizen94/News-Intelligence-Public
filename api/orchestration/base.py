@@ -10,7 +10,7 @@ import logging
 import time
 import threading
 from datetime import datetime
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from orchestration.config import load_newsroom_config
 from orchestration.events.envelope import EventEnvelope
@@ -36,7 +36,7 @@ class NewsroomOrchestrator:
         self.get_db_connection = get_db_connection
         self.config = config or load_newsroom_config()
         self._queue = InProcessEventQueue()
-        self._handlers: Dict[EventType, Callable[[EventEnvelope], None]] = {}
+        self._handlers: Dict[EventType, List[Callable[..., None]]] = {}
         self._processed_keys: set = set()
         self._processed_max = 10000
         self.is_running = False
@@ -55,8 +55,10 @@ class NewsroomOrchestrator:
             self._last_event_at = time.time()
         publish_event(envelope.to_dict())
 
-    def register_handler(self, event_type: EventType, handler: Callable[[EventEnvelope], None]) -> None:
-        self._handlers[event_type] = handler
+    def register_handler(self, event_type: EventType, handler: Callable[..., None]) -> None:
+        if event_type not in self._handlers:
+            self._handlers[event_type] = []
+        self._handlers[event_type].append(handler)
 
     def _already_processed(self, key: Optional[str]) -> bool:
         if not key:
@@ -106,13 +108,17 @@ class NewsroomOrchestrator:
         if self._already_processed(key):
             logger.debug("Skip already processed: %s", key)
             return True
-        handler = self._handlers.get(envelope.event_type)
-        if not handler:
+        handlers = self._handlers.get(envelope.event_type) or []
+        if not handlers:
             logger.debug("No handler for %s", envelope.event_type.value)
             self._mark_processed(key)
             return True
         try:
-            handler(envelope)
+            for h in handlers:
+                try:
+                    h(envelope, self)
+                except TypeError:
+                    h(envelope)
             self._mark_processed(key)
             return True
         except Exception as e:
