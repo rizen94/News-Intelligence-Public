@@ -17,6 +17,7 @@ venv/
 env/
 .venv/
 .venv.backup/
+.venv-report/
 
 # Python cache and compiled files
 __pycache__/
@@ -110,3 +111,7 @@ scripts/pi_reports/
 infrastructure/*.local.json
 infrastructure/migration-state.local.json
 .db_password_widow
+
+# Local / machine-specific notes (do not commit)
+my_docker.txt
+my_pihole.txt

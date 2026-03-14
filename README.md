@@ -8,7 +8,7 @@ The News Intelligence System is an AI-powered news aggregation and analysis plat
 
 **Architecture:** Primary (API, ML, frontend) + Widow (PostgreSQL, RSS) + NAS (storage). See [docs/ARCHITECTURE_AND_OPERATIONS.md](docs/ARCHITECTURE_AND_OPERATIONS.md).
 
-**Project map:** API `api/main_v4.py` · Frontend `web/src/App.tsx` · Domains: politics, finance, science-tech (articles, storylines, topics, rss_feeds, events). Routes: `api/domains/*/routes/` · [docs/DOCS_INDEX.md](docs/DOCS_INDEX.md) and [AGENTS.md](AGENTS.md) for full index and standards.
+**Project map:** API `api/main_v4.py` · Frontend `web/src/App.tsx` · Domains: politics, finance, science-tech (articles, storylines, topics, rss_feeds, events). Routes: `api/domains/*/routes/` · **Documentation:** full index [docs/DOCS_INDEX.md](docs/DOCS_INDEX.md), quick start [QUICK_START.md](QUICK_START.md). Standards: [AGENTS.md](AGENTS.md).
 
 ### **Quick Access**
 - **Web Interface**: http://localhost:3000

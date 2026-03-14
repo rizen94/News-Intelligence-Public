@@ -19,12 +19,17 @@
 | [API_REFERENCE.md](API_REFERENCE.md) | API reference |
 | [API_ALIGNMENT.md](API_ALIGNMENT.md) | API–frontend routes and article fields alignment |
 | [DATABASE_SCHEMA_DOCUMENTATION.md](DATABASE_SCHEMA_DOCUMENTATION.md) | Schema |
+| [AUTOMATION_AND_LAST_24H_ACTIVITY.md](AUTOMATION_AND_LAST_24H_ACTIVITY.md) | **What ran / what was collected** — last-24h report script, automation sources, gaps to connect |
+| [CRON_LOGS_AND_REPORT_FOR_CLAUDE.md](CRON_LOGS_AND_REPORT_FOR_CLAUDE.md) | **Cron (quoted paths), logs, report** — one doc to fill and pass to Claude |
+| [DOCUMENTS_FOR_CLAUDE_SYSTEM_SUMMARY.md](DOCUMENTS_FOR_CLAUDE_SYSTEM_SUMMARY.md) | **Which docs to pass to Claude** — ordered list for system summary and missing pieces |
+| [CLAUDE_ASSESSMENT_SYSTEM_AND_GAPS.md](CLAUDE_ASSESSMENT_SYSTEM_AND_GAPS.md) | **Claude assessment** — what’s working, gaps, recommendations, P0–P4 action items |
 
 ## Setup & configuration
 
 | Doc | Purpose |
 |-----|---------|
 | [SETUP_AND_DEPLOYMENT.md](SETUP_AND_DEPLOYMENT.md) | Setup guide |
+| [DATABASE_CONNECTION_AUDIT.md](DATABASE_CONNECTION_AUDIT.md) | **DB connection** — single source of truth, why DB fails after migration, consistency fixes |
 | [WEB_API_CONNECTIONS.md](WEB_API_CONNECTIONS.md) | **Web→API connections** — base URL, proxy, why data doesn’t load, connection status, checklist |
 | [VENV_AND_GPU_SETUP.md](VENV_AND_GPU_SETUP.md) | Venv, GPU |
 | [OLLAMA_SETUP.md](OLLAMA_SETUP.md) | Ollama |

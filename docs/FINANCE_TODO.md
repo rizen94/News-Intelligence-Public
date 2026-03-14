@@ -18,6 +18,27 @@ Run: `PYTHONPATH=api python3 scripts/validate_finance_pipeline.py`
 - [x] **Evidence preview API** — `GET /api/{domain}/finance/evidence/preview` for on-demand bundle (query, topic, hours, max_rss, include_rss, include_api_summary, include_rag).
 - [x] **RSS in task result** — Analysis result `output.rss_snippets` includes title, url, published_at for news used in the analysis.
 
+## Finance areas of interest (background investigation)
+
+The orchestrator can run **background finance analysis** for configured topics so the system investigates market themes (e.g. platinum price decline and recovery) without manual requests.
+
+**Config:** `api/config/orchestrator_governance.yaml` — top-level key `finance_areas_of_interest`:
+
+```yaml
+finance_areas_of_interest:
+  - topic: platinum
+    query: "Platinum price decline since 2023 and recovery in 2025 — drivers, catalysts, and outlook"
+    priority: low
+    interval_days: 7
+```
+
+- **topic:** Finance topic (e.g. `platinum`, `gold`, `silver`).
+- **query:** Analysis question sent to the finance orchestrator.
+- **priority:** `low` (default), `medium`, or `high`.
+- **interval_days:** Re-run analysis at most this often (default 7).
+
+The coordinator loop submits one due analysis per cycle (low priority), so tasks run in the background. Results appear in the finance analysis task list and can be viewed like any other analysis. Add more entries to the list to track additional areas.
+
 ## Current Backend Development (in progress)
 
 ### From FINANCE_ORCHESTRATOR_BUILD.md — Remaining Items

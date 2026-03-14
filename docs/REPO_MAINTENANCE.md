@@ -9,7 +9,15 @@ Keep the repo and Cursor context manageable so Git and the AI use resources resp
 
 ## Commit in smaller, logical chunks
 
-When you have many changed files (e.g. 50+), Git and Cursor both do better if you commit in batches instead of one giant commit. Example split:
+When you have many changed files (e.g. 50+), Git and Cursor both do better if you commit in batches instead of one giant commit.
+
+**Suggested order for a “DB reliability + doc consolidation” session:**
+1. **Docs and repo hygiene** — `.gitignore`, `README.md`, `docs/REPO_MAINTENANCE.md`, `docs/DOCS_INDEX.md`, `QUICK_START.md`, any other `docs/*.md` only.
+2. **DB connection and scripts** — `api/shared/database/connection.py`, `api/config/database.py`, all `api/**` that use `get_db_connection`/pool, `start_system.sh`, `stop_system.sh`, `restart_system.sh`, `scripts/*.sh` (cron, report).
+3. **Migrations and new API** — `api/database/migrations/*.sql`, `api/scripts/run_migration_*.py`, new services/routes.
+4. **Frontend and config** — `web/src/**`, `configs/`, `pyproject.toml`, `docker-compose.yml`.
+
+Example split (generic):
 
 1. **Migrations and runners** — `api/database/migrations/*.sql`, `api/scripts/run_migration_*.py`
 2. **Context pipeline** — `api/services/context_processor_service.py`, `api/collectors/rss_collector.py`, `api/services/automation_manager.py`
@@ -39,6 +47,16 @@ Smaller commits mean smaller diffs, faster operations, and easier history.
 
 - **`.venv.backup`** — If you no longer need it, remove it to free several GB: `rm -rf .venv.backup` (it’s ignored by Git and Cursor).
 - **Old docs** — Keep superseded plans in `docs/_archive/`; they’re ignored by Cursor but still in Git for reference.
+
+## Merging branches and resolving conflicts
+
+- **Current branches:** `master`, `production`, `production-rtx5090-optimized` (and feature branches). Prefer merging into `master` first, then `production` when ready.
+- **Before merge:** Commit (or stash) all local changes. Run `./status_system.sh` and a quick API health check so the tree you merge is known-good.
+- **Conflict resolution:** If `git merge` reports conflicts:
+  1. `git status` — lists conflicted files (e.g. `api/main_v4.py`, `start_system.sh`).
+  2. Open each file; fix markers `<<<<<<<`, `=======`, `>>>>>>>` by keeping the correct version or combining both sides.
+  3. `git add <file>` for each resolved file, then `git commit` to complete the merge.
+- **Large change sets:** Commit in logical chunks (see “Commit in smaller, logical chunks” above) so merges produce smaller, reviewable conflict sets.
 
 ## Reference
 

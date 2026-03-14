@@ -32,6 +32,12 @@ This script will:
 
 **Note:** This stops API and Frontend but keeps PostgreSQL and Redis running.
 
+### Restart
+Use after changing `.env` (e.g. `NEWS_API_KEY`) so the API reloads config:
+```bash
+./restart_system.sh
+```
+
 ---
 
 ## 📋 System Requirements
@@ -54,12 +60,13 @@ This script will:
 
 ### Services
 1. **PostgreSQL** - Database (port 5432 or NAS)
-2. **Redis** - Cache (Docker container, port 6379)
-3. **API Server** - FastAPI backend (port 8000)
+2. **API Server** - FastAPI backend (port 8000)
    - Auto-starts AutomationManager (RSS processing, Article processing, ML processing, Topic clustering)
    - Auto-starts MLProcessingService
-4. **Frontend** - React application (port 80 via Docker or 3000 dev)
-5. **Ollama** - AI models (port 11434, user-level service)
+3. **Frontend** - React application (port 80 via Docker or 3000 dev)
+4. **Ollama** - AI models (port 11434, user-level service)
+
+Redis and Docker are not required; the app uses an in-process event queue. Docker is only needed if you run the full stack via docker-compose (postgres, api, web).
 
 ### Access URLs
 - **Frontend:** http://localhost:80 (production) or http://localhost:3000 (development)
@@ -115,6 +122,16 @@ cp configs/env.example .env
 # - DB_NAME, DB_USER, DB_PASSWORD
 # - NAS credentials (if using NAS)
 ```
+
+#### Optional: News API key (historic context)
+For Finance Analysis **historic context** (news from a date range when you set Start/End dates), add a News API key:
+
+1. **Get a key:** Go to [https://newsapi.org/register](https://newsapi.org/register), sign up (free tier available), and copy your API key.
+2. **Add to .env:** In the project root, add or edit:
+   ```bash
+   NEWS_API_KEY=your_api_key_here
+   ```
+3. Restart the API server so it picks up the new variable. Historic context will then include News API results alongside Wikipedia, FRED, and SEC EDGAR.
 
 ### 4. Start Services
 ```bash

@@ -5,13 +5,27 @@
 The News Intelligence System consists of multiple services that need to run concurrently:
 
 1. **PostgreSQL** - Database on Widow (192.168.93.101:5432)
-2. **Redis** - Cache (Docker container)
-3. **API Server** - FastAPI backend (port 8000)
+2. **API Server** - FastAPI backend (port 8000)
    - Auto-starts AutomationManager (RSS processing, Article processing, ML processing, Topic clustering)
    - Auto-starts MLProcessingService
-4. **Frontend** - React development server (port 3000)
+3. **Frontend** - React development server (port 3000)
+
+Redis and Docker are not required for normal runs; the start script only needs PostgreSQL, API, and Frontend.
 
 ## Quick Start
+
+### Configuration (before first run)
+
+Create a `.env` file in the project root and set the database password so the API can connect to PostgreSQL:
+
+```bash
+# In project root — copy from example and set your password
+cp configs/env.example .env
+# Edit .env and set:
+#   DB_PASSWORD=your_newsapp_password
+```
+
+The startup script and API load `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, and **`DB_PASSWORD`** from `.env`. Without `DB_PASSWORD`, you will get "Database unavailable" (503) when using features that need the database. Keep `.env` out of version control (it is in `.gitignore`).
 
 ### Start Everything
 
@@ -61,6 +75,14 @@ This script will:
 ```
 
 **Note:** This stops API and Frontend but keeps PostgreSQL and Redis running.
+
+### Restart (stop then start)
+
+Use after changing `.env` (e.g. adding `NEWS_API_KEY`) so the API picks up new variables:
+
+```bash
+./restart_system.sh
+```
 
 ## Manual Service Management
 

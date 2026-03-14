@@ -20,7 +20,8 @@ How the system uses each data source and what runs routinely.
 ## Configuration
 
 - **Collection sources and order**: `api/config/orchestrator_governance.yaml` → `collection.sources`. Add or remove `source_id` / `handler` / `topic` to change what the coordinator runs.
-- **RSS feeds**: Stored per domain in `politics.rss_feeds`, `finance.rss_feeds`, `science_tech.rss_feeds`. Manage via API or migrations; active feeds (`is_active = true`) are used by `collect_rss_feeds()`.
+- **RSS feeds**: Stored per domain in `politics.rss_feeds`, `finance.rss_feeds`, `science_tech.rss_feeds`. Migration 128 adds SEC/Fed/Treasury/FDIC for finance; migration 148 adds Kitco, Mining.com, Reuters, MarketWatch, Bloomberg, Yahoo Finance. Manage via API or migrations; active feeds (`is_active = true`) are used by `collect_rss_feeds()`.
+- **News orchestrator**: For finance analysis, the evidence collector uses the news orchestrator (`domains.finance.news_orchestrator`) to build a topic-relevant shortlist from finance articles and intelligence.contexts, so the LLM gets ranked news/disclosures in addition to price data.
 - **Finance topics**: Gold/silver/platinum/edgar are passed as `topic` to FinanceOrchestrator.refresh(). FRED is used inside gold (amalgamator) and can also be run as a standalone topic via the finance API.
 
 ## Optional / on-demand

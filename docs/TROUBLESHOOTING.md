@@ -71,6 +71,66 @@ docker logs news-intelligence-nginx --tail 50
 netstat -tlnp | grep 80
 ```
 
+### **Database not accessible (503, "Save as topic" fails)**
+**Symptoms**: "Request failed with status code 503" or "Database unavailable" when saving a research topic (or any endpoint that uses PostgreSQL).
+
+**How the API connects** (see `api/shared/database/connection.py`):
+- **Default (Widow)**: `DB_HOST=192.168.93.101`, `DB_PORT=5432`, `DB_NAME=news_intel`. Direct TCP to the Widow machine.
+- **NAS rollback**: `DB_HOST=localhost`, `DB_PORT=5433`, `DB_NAME=news_intelligence`. Requires an SSH tunnel; the API checks that the tunnel process is running.
+
+**Common causes**:
+1. **Widow unreachable** — You're not on the same network as 192.168.93.101, or Widow is off, or a firewall blocks port 5432.
+2. **API started without DB env** — If you start the API from an IDE or `uvicorn` without going through `./start_system.sh`, ensure `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, and `DB_PASSWORD` are set (e.g. in `.env` or exported). The API defaults to 192.168.93.101:5432; if that host is unreachable, every DB call returns 503.
+3. **NAS tunnel not running** — If you use `DB_HOST=localhost` and `DB_PORT=5433`, the tunnel must be up: `./scripts/setup_nas_ssh_tunnel.sh`. If the tunnel dies, the API gets no connection.
+4. **Wrong or missing password** — Store the PostgreSQL password in the project-root **`.env`** file as `DB_PASSWORD=your_password`. The API and `start_system.sh` read it from there. If `DB_PASSWORD` is missing or wrong, connections fail. (`.env` is in `.gitignore`; copy from `configs/env.example` if needed.)
+
+**Quick checks**:
+```bash
+# 1) See what the API is using (from project root, with same .env as API)
+source .env 2>/dev/null || true
+echo "DB_HOST=${DB_HOST:-192.168.93.101} DB_PORT=${DB_PORT:-5432} DB_NAME=${DB_NAME:-news_intel}"
+
+# 2) Widow reachable?
+ping -c 1 "${DB_HOST:-192.168.93.101}"
+
+# 3) PostgreSQL accepting connections?
+pg_isready -h "${DB_HOST:-192.168.93.101}" -p "${DB_PORT:-5432}" -U "${DB_USER:-newsapp}"
+
+# 4) Full connection test (requires PGPASSWORD or .pgpass)
+PGPASSWORD="${DB_PASSWORD}" psql -h "${DB_HOST:-192.168.93.101}" -p "${DB_PORT:-5432}" -U "${DB_USER:-newsapp}" -d "${DB_NAME:-news_intel}" -c "SELECT 1;" 2>&1
+```
+If (2) or (3) fails, fix network/Widow/PostgreSQL. If (4) fails with "password authentication failed", fix `DB_PASSWORD`. Restart the API after changing env so the connection pool picks up the new config.
+
+### **Common log errors (logs/api_server.log, logs/app.log)**
+
+| Log message | Cause | What to do |
+|-------------|--------|------------|
+| `fe_sendauth: no password supplied` | API has no `DB_PASSWORD` in env | Set `DB_PASSWORD` in project-root `.env` and **restart the API** (e.g. `./start_system.sh`). |
+| `Error validating domain X: 'NoneType' object has no attribute 'close'` | DB connection was `None`; code tried to close it | Fixed in code (validate_domain now checks for None). Ensure `DB_PASSWORD` is set and restart so DB connects. |
+| `426 Client Error: Upgrade Required` (News API) | News API plan or endpoint requires upgrade | Historic context uses News API; 426 means the API key/plan may need upgrading at newsapi.org. Analysis still runs using other sources (RSS, price data). |
+| `relation "intelligence.historic_context_requests" does not exist` | Migration 149 not applied | Run migration 149 if you want historic context requests persisted. Optional; fetches still run in-memory. |
+| `EDGAR fetch index failed for CIK 0000001832: 404` | SEC returns 404 for that CIK (e.g. AEM) | Data/source issue; one company’s filings may be missing or CIK wrong. Safe to ignore or fix CIK mapping in config. |
+| `Finance vector store add failed: chromadb not installed` | Optional ChromaDB not installed | Add `chromadb` to pyproject.toml and run `uv sync` if you want vector store. Analysis works without it. |
+| `EVAL_FAILED … all_sources_failed` | Finance task had no successful data sources | Often a follow-on from DB or EDGAR issues. Fix DB password and restart; then re-run the analysis. |
+
+### **Health check showing "degraded"**
+**Symptoms**: Monitoring page or health endpoint shows overall status **degraded** instead of healthy.
+
+**How it works**: The API `GET /api/system_monitoring/health` sets status to **degraded** when:
+1. **Database check fails** — e.g. connection timeout (2s), no password, or connection error. The health check runs a quick `SELECT 1` via `get_db_connection()` in a thread with a 2s timeout.
+2. **Circuit breakers open** — e.g. Ollama (or another service) was unreachable and the circuit opened; until it resets, the API reports degraded.
+
+**What to do**:
+1. **See the reason** — The health response now includes `degraded_reasons` (e.g. `["database: unhealthy: connection timeout"]` or `["circuit_breakers: 1 open (e.g. ollama)"]`). The Monitoring page shows these under the status chip when status is degraded.
+2. **If database** — Same as "Database not accessible" above: ensure `DB_PASSWORD` in project-root `.env`, start API with that env (e.g. `./start_system.sh`), and restart after changing `.env`. Check Widow reachability and `pg_isready` / `psql` as in the quick checks above.
+3. **If circuit breakers** — If Ollama (or another checked service) was down, the circuit may be open. Restart the API to reset circuits, or wait for the circuit’s reset window; once the service is reachable again, the next successful call will close the circuit.
+
+**Quick check**:
+```bash
+curl -s http://localhost:8000/api/system_monitoring/health | jq '.status, .degraded_reasons, .services.database'
+```
+Interpret `status`, `degraded_reasons`, and `services.database` to see why it’s degraded.
+
 ### **Financial Analysis: "Network Error" or no result**
 **Symptoms**: Submit works then result page shows "Network Error", or submit fails with "Cannot reach API".
 **Causes**: (1) Backend not running or wrong API URL; (2) Finance orchestrator failed to start.
