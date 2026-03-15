@@ -2159,3 +2159,110 @@ def list_canonical_entities(
         except Exception:
             pass
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# Entity position tracking endpoints (T2.2)
+# ---------------------------------------------------------------------------
+
+@router.get("/entity_positions", response_model=dict)
+def get_entity_positions(
+    domain_key: str = Query(...),
+    entity_id: int = Query(...),
+    limit: int = Query(50, ge=1, le=200),
+) -> dict:
+    """Get stored positions (stances, votes, statements) for a canonical entity."""
+    from services.entity_position_tracker_service import get_entity_positions as _get
+    return _get(domain_key, entity_id, limit=limit)
+
+
+@router.post("/entity_positions/extract", response_model=dict)
+def extract_entity_positions(
+    body: dict = Body(..., examples=[{"domain_key": "politics", "entity_id": 1, "max_articles": 10}]),
+) -> dict:
+    """Extract positions for a specific entity from its articles using LLM."""
+    domain_key = body.get("domain_key")
+    entity_id = body.get("entity_id")
+    if not domain_key or not entity_id:
+        raise HTTPException(status_code=400, detail="domain_key and entity_id required")
+
+    from services.entity_position_tracker_service import extract_positions_for_entity
+    return extract_positions_for_entity(
+        domain_key, entity_id,
+        max_articles=body.get("max_articles", 20),
+    )
+
+
+@router.post("/entity_positions/batch", response_model=dict)
+def run_position_tracker_batch(
+    domain_key: Optional[str] = Query(None),
+    min_mentions: int = Query(5, ge=1),
+    max_entities: int = Query(10, ge=1, le=50),
+) -> dict:
+    """
+    Batch-extract positions for top entities by mention count.
+    Suitable for manual trigger or scheduled runs.
+    """
+    from services.entity_position_tracker_service import run_position_tracker_batch as _batch
+    return _batch(
+        domain_key=domain_key,
+        min_mentions=min_mentions,
+        max_entities=max_entities,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Content synthesis endpoints (centralized intelligence aggregation)
+# ---------------------------------------------------------------------------
+
+@router.get("/synthesis/domain", response_model=dict)
+def get_domain_synthesis(
+    domain_key: str = Query(...),
+    hours: int = Query(24, ge=1, le=168),
+    max_articles: int = Query(30, ge=1, le=100),
+) -> dict:
+    """
+    Synthesize all intelligence for a domain within a time window.
+    Returns articles with ml_data, storylines with editorial ledes, events with briefings,
+    entities with mention counts, claims, and patterns — all in one response.
+    """
+    from services.content_synthesis_service import synthesize_domain_context
+    return synthesize_domain_context(
+        domain_key, hours=hours, max_articles=max_articles,
+    )
+
+
+@router.get("/synthesis/storyline/{storyline_id}", response_model=dict)
+def get_storyline_synthesis(
+    storyline_id: int,
+    domain_key: str = Query(...),
+) -> dict:
+    """
+    Synthesize all intelligence for a specific storyline: articles with enrichments,
+    entities, claims from linked contexts, and the editorial document.
+    """
+    from services.content_synthesis_service import synthesize_storyline_context
+    return synthesize_storyline_context(domain_key, storyline_id)
+
+
+@router.get("/synthesis/event/{event_id}", response_model=dict)
+def get_event_synthesis(event_id: int) -> dict:
+    """
+    Synthesize all intelligence for a tracked event: metadata, chronicles,
+    editorial briefing, related context.
+    """
+    from services.content_synthesis_service import synthesize_event_context
+    return synthesize_event_context(event_id)
+
+
+@router.get("/synthesis/entity/{entity_id}", response_model=dict)
+def get_entity_synthesis(
+    entity_id: int,
+    domain_key: str = Query(...),
+) -> dict:
+    """
+    Synthesize all intelligence for a canonical entity: dossier, positions,
+    relationships, recent articles, storyline references.
+    """
+    from services.content_synthesis_service import synthesize_entity_context
+    return synthesize_entity_context(domain_key, entity_id)

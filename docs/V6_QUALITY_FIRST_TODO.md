@@ -36,9 +36,9 @@
 - [x] API: **POST** `/api/tracked_events/{event_id}/chronicles/update` to trigger update; chronicles also returned in GET event by id.
 
 ### T2.2 Dossier intelligence layer ✅
-- [ ] Position tracker: extract voting records, policy positions into entity_positions (stub for later).
+- [x] Position tracker: `entity_position_tracker_service.py` extracts stances/votes/statements via LLM (with heuristic fallback), stores in `intelligence.entity_positions`. API: GET/POST `/api/entity_positions`, POST `/api/entity_positions/extract`, POST `/api/entity_positions/batch`.
 - [x] Relationship web: entity_dossiers.relationships populated from `intelligence.entity_relationships` (source/target domain + entity_id, relationship_type, confidence); storyline_refs kept in metadata.
-- [ ] Pattern/controversy: entity_dossiers.patterns left as `{}` for now; can feed from pattern_discoveries later.
+- [x] Pattern/controversy: dossier compiler now pulls pattern_discoveries by entity_profile_id into `entity_dossiers.patterns` during compilation.
 
 ### T2.3 Governance/orchestrator cycle alignment ✅
 - [x] Config: `orchestrator_governance.yaml` — `orchestrator.cycle_phases`, `event_tracking`, `entity_tracking`, `quality_thresholds` (snake_case).
@@ -118,7 +118,7 @@ Full code audit against intelligence-first principles. See [CODE_AUDIT_REPORT.md
 - [x] Analysis endpoints include narrative explanations alongside scores.
 
 Remaining:
-- [ ] Centralized content synthesis service (aggregate all intelligence phases into unified context).
+- [x] Centralized content synthesis service: `content_synthesis_service.py` with domain/storyline/event/entity scoped synthesis + LLM-ready text rendering. API: GET `/api/synthesis/domain`, `/api/synthesis/storyline/{id}`, `/api/synthesis/event/{id}`, `/api/synthesis/entity/{id}`.
 - [x] T1.2 entity resolution enhancements (disambiguation, alias population, cross-domain linking, UI).
 
 *Update this file as items are completed; move completed items to an “Done” section if desired.*
