@@ -1,30 +1,32 @@
 # News Intelligence — Current Capabilities Brief
 
-**Purpose:** Onboard an AI advisor (e.g., Claude 4.6) for advising on a new version.  
-**Audience:** Technical advisor needing quick, accurate project context.  
-**Last updated:** 2026-02-27
+**Purpose:** Onboard an AI advisor or developer with quick, accurate project context.  
+**Audience:** Technical advisor needing fast orientation.  
+**Last updated:** 2026-03-06
 
 ---
 
 ## 1. What It Is
 
-**News Intelligence** is an AI-powered news aggregation and analysis platform. It collects RSS feeds, extracts entities and topics, tracks storylines over time, and delivers intelligence dashboards. All LLM work runs on local models (Ollama).
+**News Intelligence** is an AI-powered news aggregation and analysis platform. It collects RSS feeds and documents, extracts entities and claims, resolves entities across domains, tracks storylines and events over time, verifies facts against multiple sources, and delivers editorial intelligence. All LLM work runs on local models (Ollama).
 
-**Core flow:** Collection → Entity/Topic extraction → Storyline tracking → Intelligence delivery
+**Core flow:** Collection → Entity/Topic extraction → Entity resolution → Claim/Context extraction → Storyline tracking → Event chronicles → Fact verification → Editorial output → Intelligence delivery
 
 ---
 
-## 2. Tech Stack (Current)
+## 2. Tech Stack
 
 | Layer | Technology |
 |-------|------------|
 | Backend | Python 3, FastAPI, uvicorn |
-| Frontend | React, Material-UI, Vite |
-| Database | PostgreSQL (default: Widow; optional NAS via SSH tunnel) |
+| Frontend | React 18, TypeScript (migration in progress), Vite, Material-UI v5 |
+| Database | PostgreSQL (Widow at 192.168.93.101:5432; rollback: NAS via SSH tunnel) |
+| Schemas | Per-domain (politics, finance, science_tech) + intelligence (cross-domain) |
 | Cache | Redis (Docker) |
 | LLM | Ollama — Llama 3.1 8B (primary), Mistral 7B (secondary), nomic-embed-text |
+| PDF parsing | pdfplumber (text + tables + metadata extraction) |
 | DB Access | psycopg2 connection pool + SQLAlchemy; `shared.database.connection` is single source |
-| API paths | Flat `/api/...` (no version in path; e.g. `/api/{domain}/finance/analyze`, `/api/orchestrator/status`) |
+| API paths | Flat `/api/...` (no version in path) |
 
 ---
 
@@ -34,57 +36,72 @@ Three content domains with shared schemas and per-domain tables:
 
 | Domain key | Tables (per domain) | Purpose |
 |------------|---------------------|---------|
-| politics | articles, storylines, topics, rss_feeds, events | Political news |
+| politics | articles, storylines, topics, rss_feeds, events, entity_canonical, article_entities | Political news |
 | finance | same | Financial / business news |
 | science-tech | same | Science & technology news |
 
-**Global:** watchlist, system_monitoring, health.
+**Cross-domain (intelligence schema):** entity_profiles, entity_dossiers, entity_positions, contexts, extracted_claims, tracked_events, event_chronicles, pattern_discoveries, processed_documents, document_intelligence, entity_relationships, narrative_threads.
 
-**Database:** PostgreSQL — default Widow (`DB_HOST` e.g. `192.168.93.101`); rollback to NAS via SSH tunnel `localhost:5433 → NAS:5432`. See [MIGRATION_TODO.md](MIGRATION_TODO.md) and env configuration.
+**Global:** watchlist, system_monitoring, health.
 
 ---
 
 ## 4. Implemented Capabilities
 
 ### 4.1 News Aggregation
-
-- **RSS collection:** Multi-feed collector; stores articles per domain
+- **RSS collection:** Multi-feed collector; stores articles per domain with full `content:encoded` body
 - **Feed management:** CRUD for feeds, duplicate detection
-- **Morning pipeline:** Cron (4–6 AM) runs `run_rss_and_process_all.py` — RSS fetch → entity extraction → topic extraction
-- **Scripts:** `scripts/rss_collection_with_health_check.sh`, `scripts/morning_data_pipeline.sh`
+- **Morning pipeline:** Cron (4–6 AM) runs RSS fetch → entity extraction → topic extraction
+- **PDF ingestion:** Download, parse (pdfplumber), extract sections/entities/findings → `processed_documents`
 
 ### 4.2 Content Analysis
-
-- **Entity extraction:** `ArticleEntityExtractionService` — LLM extracts people, orgs, subjects, recurring events, dates, times, countries, keywords
-- **Schema:** `article_entities`, `article_extracted_dates`, `article_extracted_times`, `article_extracted_countries`, `article_keywords`, `entity_canonical` (per domain)
-- **Topic extraction:** `LLMTopicExtractor`, `TopicExtractionQueueWorker` — queues articles, assigns topics; prompts exclude dates/times/countries from topics
+- **Entity extraction:** LLM extracts people, orgs, subjects, dates, times, countries, keywords with contextual excerpts
+- **Topic extraction:** LLM topic assignment via `TopicExtractionQueueWorker`
 - **Deduplication:** Article and RSS duplicate detection
 - **Quality scoring:** Content quality assessment
-- **Sentiment:** Sentiment analysis (basic)
+- **Sentiment analysis:** Per-article sentiment labels stored in `ml_data`
+- **ML enrichment:** Summarization, key point extraction, argument analysis → `ml_data` JSONB
 
-### 4.3 Storyline Management
+### 4.3 Entity Resolution
+- **Disambiguation:** Title prefix stripping, last-name fallback, bigram fuzzy matching
+- **Alias management:** Batch population from article mention variants
+- **Merge detection & execution:** Automatic merging of high-confidence duplicates; manual merge UI
+- **Cross-domain linking:** Same entity found across politics/finance/science-tech linked via entity_relationships
+- **Integration:** Runs as part of `entity_organizer` phase in AutomationManager
 
+### 4.4 Storyline Management
 - **CRUD:** Create, read, update, delete storylines
-- **Articles:** Add/remove articles to storylines
-- **Automation:** RAG-enhanced discovery; modes: disabled, manual (suggestions), auto-approve
-- **Entity merge:** `article_entities` merged into `story_entity_index` when articles are added
-- **Timeline:** Chronological event ordering
+- **Articles:** Add/remove articles; entity merge into `story_entity_index`
+- **Automation:** RAG-enhanced discovery; modes: disabled, manual, auto-approve
+- **Editorial documents:** `editorial_document` JSONB with lede, developments, analysis, outlook
+- **Timeline:** Chronological event ordering with narrative summaries
 - **Watchlist:** User watchlist for storylines
 
-### 4.4 Intelligence Hub
-
-- **IntelligenceHub:** Trends, briefings, analysis views
+### 4.5 Intelligence Hub
 - **RAG:** Semantic search, query expansion
-- **Synthesis:** Content synthesis endpoints
-- **Watchlist:** Shared watchlist integration
+- **Entity profiles & dossiers:** Cross-domain entity intelligence
+- **Entity positions:** LLM-extracted policy stances, votes, statements
+- **Contexts & claims:** Context creation from articles; claim extraction and tracking
+- **Tracked events:** Event lifecycle with chronicle builder and editorial briefings
+- **Narrative threads:** Cross-article narrative tracking
+- **Content synthesis:** Domain/storyline/event/entity scoped intelligence aggregation
+- **Briefings:** Editorial-first daily/weekly briefings with LLM lead generation
+- **Fact verification:** Multi-source corroboration, contradiction detection, source reliability scoring
 
-### 4.5 System Monitoring
+### 4.6 Finance
+- **Orchestrator:** Gold/FRED/EDGAR refresh, analysis task queue, evidence collection
+- **Analysis:** LLM-powered financial analysis with evidence provenance
+- **Market data:** Commodity dashboard, market patterns, corporate announcements
+- **Evidence:** RSS-derived news context included in analysis prompts
 
-- **Health:** DB, Redis, API, LLM status
+### 4.7 System Monitoring
+- **Health:** DB, Redis, API, LLM status checks
+- **Pipeline status:** ML processing, collection, and entity extraction status
+- **Orchestrator dashboard:** Coordinator status, governor states, run history
+- **Realtime monitoring:** Activity feeds, resource monitoring
 - **Route supervisor:** Route consistency and DB connection monitoring
-- **LLM activity:** Ollama usage tracking
 
-### 4.6 Automation (Background)
+### 4.8 Automation (Background)
 
 `AutomationManager` runs in-process with the API:
 
@@ -95,46 +112,56 @@ Three content domains with shared schemas and per-domain tables:
 | ml_processing | 20 min | Summarization, ML features |
 | topic_clustering | 20 min | Topic assignment |
 | entity_extraction | 20 min | Article entity extraction |
+| entity_organizer | 20 min | Entity resolution batch (disambiguate, merge, link) |
 | quality_scoring | 20 min | Quality scores |
 | sentiment_analysis | 20 min | Sentiment |
-| storyline_automation | Configurable | RAG-based article discovery for storylines |
+| storyline_automation | Configurable | RAG-based article discovery |
+| editorial_document_generation | 30 min | Generate/update storyline editorials |
+| editorial_briefing_generation | 30 min | Generate/update event briefings |
 
 ---
 
-## 5. Frontend (Current)
+## 5. Frontend
 
 **Layout:** Domain-first routing — `/:domain/dashboard`, `/:domain/articles`, etc.
 
 **Main pages (per domain):**
-
 - Dashboard, Articles, ArticleDetail, FilteredArticles, ArticleDeduplicationManager
 - Storylines, StorylineDiscovery, ConsolidationPanel, StoryDetail, SynthesizedView, StoryTimeline
 - Topics, TopicArticles
 - RSS Feeds, RSS Duplicate Manager
-- Intelligence, IntelligenceAnalysis, DomainRAG, StorylineTracking, Briefings, Events, Watchlist
-- ML Processing, Story Control Dashboard
+- Briefings (redesigned — editorial-first sections, LLM summary)
 
-**Finance-specific:** Market Research, Corporate Announcements, Market Patterns.
+**Investigate section:**
+- Entity profiles and canonical entity management (browse, merge, resolve)
+- Event tracking and detail pages
+- Processed documents (PDF pipeline status and results)
+- Narrative threads
 
-**Global:** Monitoring, Settings.
+**Monitor section:**
+- System health, pipeline status, orchestrator dashboard
+- Realtime activity monitoring, resource tracking
+
+**Finance-specific:** Market Research, Corporate Announcements, Market Patterns, Commodity Dashboard.
 
 ---
 
 ## 6. API Structure
 
-API uses **flat prefix** `/api` (no `/api/` or version segment). Paths are domain-scoped where applicable.
-
 | Domain | Path pattern | Key routes |
-|--------|---------------|------------|
-| news_aggregation | `/api/{domain}/...` (feeds, articles, fetch_articles, collect_now) | articles, feeds |
-| content_analysis | `/api/{domain}/content_analysis/...` or `/api/articles/...` | topics, extraction, dedup |
-| storyline_management | `/api/{domain}/storylines/...` etc. | storylines, automation, timeline, watchlist |
-| intelligence_hub | `/api/intelligence_hub/...` | trends, RAG, synthesis |
-| finance | `/api/{domain}/finance/...` | analyze, tasks, schedule, evidence, gold, fetch-fred |
+|--------|--------------|------------|
+| news_aggregation | `/api/{domain}/...` | articles, feeds, collect_now |
+| content_analysis | `/api/{domain}/content_analysis/...` | topics, extraction, dedup |
+| storyline_management | `/api/{domain}/storylines/...` | storylines, automation, timeline, watchlist |
+| intelligence_hub | `/api/intelligence_hub/...` | trends, RAG, synthesis, briefings |
+| context_centric | `/api/tracked_events/...`, `/api/entities/...`, `/api/contexts/...` | events, entities, contexts, claims, documents |
+| synthesis | `/api/synthesis/...` | domain, storyline, event, entity synthesis |
+| verification | `/api/verification/...` | corroborate, contradictions, completeness, batch |
+| cross_domain | `/api/cross_domain/...` | network graph, relationship extraction |
+| quality | `/api/quality/...` | feedback, assessment |
+| finance | `/api/{domain}/finance/...` | analyze, tasks, schedule, evidence, gold |
 | system_monitoring | `/api/system_monitoring/...` | health, pipeline, metrics |
-| orchestrator | `/api/orchestrator/...` | status, dashboard, decision_log, manual_override |
-
-**Compatibility:** v3 compatibility layer exists for legacy clients.
+| orchestrator | `/api/orchestrator/...` | status, dashboard, decision_log |
 
 ---
 
@@ -144,29 +171,34 @@ API uses **flat prefix** `/api` (no `/api/` or version segment). Paths are domai
 |---------|------|
 | API entry | `api/main_v4.py` |
 | DB connection | `api/shared/database/connection.py` |
-| DB shim | `api/config/database.py` (re-exports) |
 | Frontend entry | `web/src/App.tsx` |
 | Domain layout | `web/src/layout/MainLayout.tsx` |
-| Start system | `start_system.sh` (tunnel, Redis, API, frontend) |
-| SSH tunnel | `scripts/setup_nas_ssh_tunnel.sh` |
-| Morning pipeline | `scripts/morning_data_pipeline.sh` |
+| Context-centric routes | `api/domains/intelligence_hub/routes/context_centric.py` |
+| Entity resolution | `api/services/entity_resolution_service.py` |
+| Fact verification | `api/services/fact_verification_service.py` |
+| Content synthesis | `api/services/content_synthesis_service.py` |
+| Document processing | `api/services/document_processing_service.py` |
+| Editorial generation | `api/services/editorial_document_service.py` |
+| Start system | `start_system.sh` |
 | Agent guidance | `AGENTS.md` |
 
 ---
 
 ## 8. Constraints & Conventions
 
-- **DB:** SSH tunnel required (`localhost:5433`); no direct NAS connection
-- **Ports:** DB 5433 (tunnel), API 8000, frontend 3000
+- **DB:** Default Widow at `192.168.93.101:5432`; rollback to NAS via SSH tunnel `localhost:5433`
+- **Ports:** DB 5432 (Widow) or 5433 (tunnel), API 8000, frontend 3000
 - **Naming:** snake_case (Python, routes, DB); PascalCase (React components)
 - **Config:** Use documented values; avoid inventing new ports/hosts
 - **Single source:** One implementation per concern; `config.database` shims to `shared.database.connection`
+- **Intelligence-first:** APIs return stories not statistics; editorial documents are primary outputs
 
 ---
 
 ## 9. Planned / Not Yet Implemented
 
 - **Expanded election tracker:** Maps, live tracking, politician profiles (politics domain) — not scoped
+- **GPU OCR for scanned PDFs** — current PDF parser handles text-based only
 - **Multi-tenant, multi-language, advanced security** — on roadmap, not implemented
 
 ---
@@ -175,12 +207,13 @@ API uses **flat prefix** `/api` (no `/api/` or version segment). Paths are domai
 
 | Need | Doc |
 |------|-----|
+| High-level scope | `docs/PROJECT_SCOPE_AND_DEVELOPMENT_STATUS.md` |
 | Coding standards | `docs/CODING_STYLE_GUIDE.md` |
-| Entity schema design | `docs/ARTICLE_ENTITY_SCHEMA_DESIGN.md` |
-| Storyline automation | `docs/STORYLINE_AUTOMATION_GUIDE.md` |
-| NAS / DB setup | `docs/NAS_DATABASE_CONFIGURATION.md` |
+| Architecture principles | `docs/CORE_ARCHITECTURE_PRINCIPLES.md` |
+| Implementation rules | `docs/IMPLEMENTATION_CONSTRAINTS.md` |
+| Intelligence cascade | `docs/DATA_FLOW_ARCHITECTURE.md` |
 | Domain specs | `docs/DOMAIN_1_NEWS_AGGREGATION.md` … `DOMAIN_6_SYSTEM_MONITORING.md` |
-| API reference | `docs/API_DOCUMENTATION.md` |
+| v6 upgrade status | `docs/V6_QUALITY_FIRST_TODO.md` |
 
 ---
 

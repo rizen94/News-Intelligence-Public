@@ -1,17 +1,17 @@
 # News Intelligence — High-Level Scope & Development Status
 
-> **Purpose:** Full scope view of what is built, how it connects, and where gaps or disconnects are. Use this to assess “database → API → web” and plan next steps.  
+> **Purpose:** Full scope view of what is built, how it connects, and where gaps or disconnects are. Use this to assess "database → API → web" and plan next steps.  
 > **Audience:** Product/tech lead, onboarding.  
-> **Last updated:** 2026-03-03.
+> **Last updated:** 2026-03-06.
 
 ---
 
 ## 1. What We Have: Version and Naming
 
 - **Product:** News Intelligence — AI-powered news aggregation, analysis, and intelligence.
-- **Backend:** FastAPI app in `api/main_v4.py`; **version string is v5.0** (“News Intelligence System v5.0”).
-- **API:** **Flat paths** — `/api/...` (no `/api/` or `/api/v5/` in code). Some older docs still say “/api”; treat those as stale.
-- **Optional “v6”:** **Newsroom Orchestrator v6** is a feature-flagged component (event bus, roles: chief_editor, archivist, etc.). It is **optional** and not the main user-facing surface. When we say “v6,” we usually mean this orchestrator; the main platform is v5.
+- **Backend:** FastAPI app in `api/main_v4.py`; **version string is v6.0** — "News Intelligence System v6.0".
+- **API:** **Flat paths** — `/api/...` (no version in path).
+- **v6 Quality-First Upgrade:** Completed. This is the intelligence-first architecture: entity resolution, editorial documents, fact verification, PDF processing, content synthesis, event tracking, and entity dossiers. All phases (T1–T3) of the V6_QUALITY_FIRST_UPGRADE_PLAN are implemented.
 
 ---
 
@@ -19,35 +19,39 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│  WEB (React + MUI + Vite)                                                │
-│  MainLayout → /:domain/dashboard, articles, storylines, finance/...       │
-│  API calls via getApi() → baseURL (env/proxy) + /api/{domain}/...       │
+│  WEB (React + MUI + Vite)                                               │
+│  MainLayout → /:domain/dashboard, articles, storylines, finance/...     │
+│  Discover / Investigate / Monitor — entity profiles, events, documents  │
+│  API calls via getApi() → baseURL (env/proxy) + /api/{domain}/...      │
 └─────────────────────────────────────────────────────────────────────────┘
                                       │
                                       ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
-│  API (FastAPI, main_v4.py)                                               │
-│  Domains: news_aggregation, content_analysis, storyline_management,       │
+│  API (FastAPI, main_v4.py)                                              │
+│  Domains: news_aggregation, content_analysis, storyline_management,     │
 │           intelligence_hub, finance, user_management, system_monitoring │
-│  + OrchestratorCoordinator, FinanceOrchestrator, AutomationManager       │
+│  + OrchestratorCoordinator, AutomationManager, FinanceOrchestrator     │
+│  + Entity Resolution, Fact Verification, Content Synthesis, PDF Parser │
 └─────────────────────────────────────────────────────────────────────────┘
                                       │
           ┌───────────────────────────┼───────────────────────────┐
           ▼                           ▼                           ▼
 ┌──────────────────┐    ┌────────────────────────────┐    ┌──────────────────┐
-│  PostgreSQL      │    │  SQLite (finance +         │    │  Redis (optional)│
+│  PostgreSQL       │    │  SQLite (finance +         │    │  Redis (optional)│
 │  (Widow default)  │    │  orchestrator state)       │    │  Cache/sessions  │
-│  schemas:        │    │  market_data, evidence_    │    └──────────────────┘
-│  politics,       │    │  ledger, orchestrator_    │
-│  finance,        │    │  state.db, api_cache       │
-│  science_tech,   │    └────────────────────────────┘
-│  public          │
+│  schemas:         │    │  market_data, evidence_    │    └──────────────────┘
+│  politics,        │    │  ledger, orchestrator_     │
+│  finance,         │    │  state.db, api_cache       │
+│  science_tech,    │    └────────────────────────────┘
+│  public,          │
+│  intelligence     │ ← entity_profiles, contexts, claims, events,
+│                   │   dossiers, positions, documents, patterns
 └──────────────────┘
 ```
 
-- **Web:** Single React SPA. Routes are domain-scoped under `/:domain/*` (e.g. `/finance/analysis`, `/politics/dashboard`). API base URL from `VITE_API_URL` or localStorage; health check uses `/api/system_monitoring/health`.
-- **API:** One FastAPI app. Domain routers are mounted with prefix `/api`; paths look like `/api/{domain}/finance/analyze`, `/api/{domain}/storylines`, `/api/orchestrator/status`, etc.
-- **Data:** PostgreSQL holds per-domain content (articles, storylines, topics, rss_feeds, etc.). Finance also uses SQLite (market data, evidence ledger, orchestrator state, API cache). ChromaDB holds finance EDGAR embeddings.
+- **Web:** Single React SPA. Routes are domain-scoped under `/:domain/*`. Investigate section for entities, events, documents, narrative threads. Monitor section for system health and orchestrator status.
+- **API:** One FastAPI app. Domain routers mounted with prefix `/api`. Context-centric intelligence routes under `/api/entities/*`, `/api/synthesis/*`, `/api/verification/*`, `/api/tracked_events/*`.
+- **Data:** PostgreSQL holds per-domain content (articles, storylines, topics, rss_feeds) and the `intelligence` schema (entity_profiles, contexts, claims, tracked_events, entity_dossiers, entity_positions, processed_documents, pattern_discoveries, narrative_threads). Finance also uses SQLite + ChromaDB.
 
 ---
 
@@ -55,122 +59,172 @@
 
 | Store | Location | Written by | Read by |
 |-------|----------|------------|---------|
-| **PostgreSQL** | Widow (default) or NAS tunnel | RSS collector (per-domain schemas), article/topic/storyline pipelines, AutomationManager, topic workers | All domain APIs, ArticleService, evidence collector (finance.articles) |
-| **market_data.db** | data/finance/ | Gold/FRED refresh (FinanceOrchestrator, gold_amalgamator) | Gold routes, get_stored, market-trends |
-| **evidence_ledger.db** | data/finance/ | Finance refresh/ingest (orchestrator) | Ledger API, provenance |
+| **PostgreSQL** | Widow (default) or NAS tunnel | RSS collector (per-domain schemas), article/topic/storyline pipelines, AutomationManager, entity resolution, fact verification, document processing | All domain APIs, ArticleService, evidence collector, content synthesis, editorial generation |
+| **intelligence schema** | PostgreSQL (cross-domain) | Entity sync, context processor, claim extraction, event chronicle builder, dossier compiler, position tracker, document processing, pattern recognition | Context-centric APIs, synthesis service, verification service, editorial document service |
+| **market_data.db** | data/finance/ | Gold/FRED refresh (FinanceOrchestrator) | Gold routes, market-trends |
+| **evidence_ledger.db** | data/finance/ | Finance refresh/ingest | Ledger API, provenance |
 | **orchestrator_state.db** | data/orchestrator_state.db | OrchestratorCoordinator, governors | /api/orchestrator/*, dashboard |
-| **ChromaDB** | data/finance/chroma/ | EDGAR ingest (FinanceOrchestrator) | Analysis vector search, evidence chunks |
-| **api_cache.db** | data/finance/ | FRED/gold fetch | FRED path |
-
-**RSS → articles chain:** `collect_rss_feeds()` (rss_collector) reads `{schema}.rss_feeds`, fetches feeds, inserts into `{schema}.articles` (politics, finance, science_tech). So **finance.articles** is populated by RSS when feeds are registered for the finance domain. The **evidence collector** reads finance.articles via ArticleService(domain="finance") for the “News / RSS” section in analysis. So that chain is connected.
+| **ChromaDB** | data/finance/chroma/ | EDGAR ingest | Analysis vector search |
 
 ---
 
-## 4. Domains and Capabilities (What’s Built)
+## 4. Domains and Capabilities (What's Built)
 
 | Domain / area | Backend | Frontend | DB / state | Connected? |
 |---------------|---------|----------|------------|------------|
-| **News aggregation** | Routes: feeds, articles, fetch_articles, collect_now | RSSFeeds, (articles via MainLayout) | PostgreSQL per-domain | Yes (feeds CRUD, collect_now → RSS collector) |
-| **Content analysis** | Topics, dedup, topic queue, LLM activity | Topics, ArticleDeduplication, MLProcessing | PostgreSQL, queue tables | Yes |
-| **Storyline management** | CRUD, discovery, consolidation, automation, timeline, watchlist | Storylines, Discover, Consolidation, Timeline, Watchlist | PostgreSQL storylines, storyline_articles | Yes |
-| **Intelligence hub** | RAG, analysis, synthesis, briefings, events | Intelligence, Analysis, RAG, Briefings, Events, Tracking | PostgreSQL, RAG/vector | Yes |
-| **Finance** | Orchestrator: refresh (gold/FRED/EDGAR), analyze, schedule, tasks, evidence, verification, market-trends/patterns/corporate-announcements (minimal), evidence preview | FinancialAnalysis, FinancialAnalysisResult, EvidenceExplorer, SourceHealth, RefreshSchedule, FactCheckViewer, MarketResearch, MarketPatterns, CorporateAnnouncements | PostgreSQL (finance.articles), SQLite (market, ledger), ChromaDB | Yes (submit analyze → task → poll → result; evidence collector → RSS in prompt) |
-| **User management** | Routes under /api/user_management | (Limited UI) | PostgreSQL | Partial (backend present) |
-| **System monitoring** | Health, pipeline status, metrics, logs, orchestrator status/dashboard, route_supervisor | Monitoring page (dashboard, pipeline, orchestrator card, etc.) | PostgreSQL metrics, orchestrator_state.db | Yes (orchestrator dashboard API used by Monitoring page) |
+| **News aggregation** | Routes: feeds, articles, fetch_articles, collect_now | RSSFeeds, articles via MainLayout | PostgreSQL per-domain | Yes |
+| **Content analysis** | Topics, dedup, topic queue, LLM activity, quality scoring | Topics, ArticleDeduplication, MLProcessing | PostgreSQL, queue tables | Yes |
+| **Storyline management** | CRUD, discovery, consolidation, automation, timeline, watchlist, editorial_document | Storylines, Discover, Consolidation, Timeline, Watchlist | PostgreSQL storylines | Yes |
+| **Intelligence hub** | RAG, analysis, synthesis, briefings, events, entity profiles, dossiers, claims, contexts, documents, narrative threads, content synthesis | Intelligence, Analysis, RAG, Briefings, Events, Investigate (entities, events, documents, threads) | PostgreSQL + intelligence schema | Yes |
+| **Entity resolution** | Disambiguation (title-strip, last-name, fuzzy), alias population, merge candidates, auto-merge, cross-domain linking | Canonical entities tab: browse, search, merge, resolve | entity_canonical + intelligence.entity_relationships | Yes |
+| **Fact verification** | Multi-source corroboration, contradiction detection, source reliability (4-tier), completeness assessment | API endpoints; integrates with editorial pipeline | extracted_claims, articles, contexts | Yes |
+| **PDF processing** | Download + pdfplumber extraction, section identification, entity/findings extraction, batch processing | Processed documents page | intelligence.processed_documents | Yes |
+| **Content synthesis** | Domain/storyline/event/entity scoped aggregation, LLM-ready text rendering | API endpoints consumed by editorial services | Cross-schema aggregation | Yes |
+| **Finance** | Orchestrator: refresh, analyze, evidence, market-trends/patterns/corporate-announcements | FinancialAnalysis, EvidenceExplorer, MarketResearch, CommodityDashboard | PostgreSQL + SQLite + ChromaDB | Yes |
+| **User management** | Routes under /api/user_management | (Limited UI) | PostgreSQL | Partial |
+| **System monitoring** | Health, pipeline, metrics, logs, orchestrator dashboard, realtime | Monitoring page, Monitor page | PostgreSQL, orchestrator_state.db | Yes |
 
 ---
 
-## 5. End-to-End Chains (Top to Bottom)
+## 5. v6 Quality-First Upgrade — Completed Features
 
-### 5.1 Finance analysis (full chain)
+### 5.1 Intelligence Pipeline (Audit: 34 violations remediated)
 
-1. **User:** Opens `/finance/analysis`, enters query, submits.
-2. **Web:** `apiService.submitFinanceAnalysis(...)` → POST `/api/{domain}/finance/analyze` (domain = finance when on finance).
-3. **API:** Finance route → `request.app.state.finance_orchestrator.submit_task(analysis, ...)` → returns `task_id`.
-4. **Web:** Navigates to `/finance/analysis/:taskId`, polls GET `/api/{domain}/finance/tasks/{id}/status` (phase, progress).
-5. **API:** Orchestrator runs refresh (gold/FRED if needed), evidence index, **evidence collector** (RSS from finance.articles), vector search, prompt build, LLM, verification → task complete.
-6. **Web:** GET `/api/{domain}/finance/tasks/{id}` returns result with `output.response`, `output.rss_snippets`, `verification`, provenance.
-7. **DB:** Gold/FRED from market_data + evidence_ledger; RSS from PostgreSQL `finance.articles`; EDGAR from ChromaDB.
+The full intelligence cascade is now wired end-to-end:
 
-**Verdict:** Chain is connected from **database (PostgreSQL + SQLite + Chroma) → API → web**. Result page can show analysis, evidence, and (if we add it) “News used” from `output.rss_snippets`.
+```
+article → content → ml_data → entities → contexts → claims/events → storylines
+    ↓          ↓          ↓          ↓           ↓            ↓            ↓
+  stored    summary    canonical   profiles   extracted    tracked    editorial_document
+  content   key_pts    aliases     sections   claims       events     editorial_briefing
+            entities   positions   mentions   patterns    chronicles
+```
 
-### 5.2 RSS → articles → evidence in analysis
+Key changes:
+- RSS collector captures full `content:encoded` body
+- ML enrichments (`ml_data`) are consumed by all downstream phases
+- Entity extraction stores contextual excerpts alongside entity names
+- Storyline/basic summary phases seed `editorial_document` when empty
+- RAG analysis writes back to `editorial_document`
+- Briefings use editorial-first ordering (ledes → headlines → storylines → events → metrics)
+- LLM `generate_briefing_lead` produces narrative-quality leads
+- All API endpoints return editorial_document/editorial_briefing fields
 
-1. **Cron or API:** `collect_rss_feeds()` or POST collect_now.
-2. **RSS collector:** Reads `{schema}.rss_feeds`, fetches, inserts into `{schema}.articles` (including `finance.articles`).
-3. **Analysis:** Evidence collector calls `ArticleService(domain="finance").get_articles(...)` → reads `finance.articles` → `rss_snippets` in prompt.
-**Verdict:** Connected. Finance analysis sees RSS-derived news when finance-domain articles exist.
+### 5.2 Entity Resolution (T1.2)
 
-### 5.3 Orchestrator coordinator (collection loop)
+- **Disambiguation:** Title stripping ("President Biden" → "Joe Biden"), last-name fallback, bigram fuzzy matching
+- **Alias population:** Batch collects article mention variants into entity_canonical.aliases
+- **Merge detection:** Finds duplicate entities via shared names, substring matching, similarity scoring
+- **Auto-merge:** Automated merging above configurable confidence threshold
+- **Cross-domain linking:** Finds same entity across politics/finance/science-tech schemas
+- **Orchestrator integration:** `entity_organizer` phase runs full resolution batch
+- **API:** `/api/entities/resolve`, `/api/entities/canonical`, `/api/entities/merge_candidates`, `/api/entities/merge`, `/api/entities/auto_merge`, `/api/entities/cross_domain_link`, `/api/entities/run_resolution_batch`
 
-1. **Lifespan:** `OrchestratorCoordinator` started with `get_finance_orchestrator=lambda: app.state.finance_orchestrator`, `collect_rss_feeds_fn=collect_rss_feeds`.
-2. **Loop:** Coordinator asks CollectionGovernor → runs RSS or gold refresh → records in orchestrator_state.db.
-3. **API:** GET `/api/orchestrator/status`, `/api/orchestrator/dashboard` read from coordinator and state.
-4. **Web:** Monitoring page calls `getOrchestratorDashboard()` and shows Orchestrator card.
-**Verdict:** Connected.
+### 5.3 Entity Positions & Dossiers (T2.2)
 
-### 5.4 Storylines and articles (content flow)
+- **Position tracker:** LLM extraction of policy stances, votes, statements from articles; heuristic fallback
+- **Pattern linking:** Dossier compilation pulls pattern_discoveries into entity_dossiers.patterns
+- **Dossier enrichment:** Positions and patterns included alongside chronicle_data and relationships
 
-1. **RSS** → articles in domain schema.
-2. **AutomationManager / topic workers** → topic extraction, ML, etc.
-3. **Storyline APIs** → CRUD, discovery, add articles; frontend Storylines, Discover, Consolidation.
-**Verdict:** Connected; articles and storylines are in PostgreSQL and used by APIs and UI.
+### 5.4 Content Synthesis Service
+
+Centralized aggregation of all intelligence phases into unified context blocks:
+- **Domain scope:** Articles + ML enrichments + storylines + events + entities + claims + patterns
+- **Storyline scope:** Articles with full enrichments, entities, claims from linked contexts
+- **Event scope:** Metadata, chronicles, editorial briefing
+- **Entity scope:** Dossier, positions, relationships, recent articles
+- **LLM rendering:** `render_synthesis_for_llm()` converts synthesis to structured text for prompts
+- **API:** `/api/synthesis/domain`, `/api/synthesis/storyline/{id}`, `/api/synthesis/event/{id}`, `/api/synthesis/entity/{id}`
+
+### 5.5 PDF Document Processing (T3.2)
+
+- **Download:** Fetches PDFs from source_url with size/type validation
+- **Extraction:** pdfplumber for text, tables, and page-level content
+- **Section identification:** Heading detection (numbered, titled, all-caps patterns)
+- **Entity extraction:** LLM-based with heuristic fallback (capitalized phrases)
+- **Key findings:** LLM extraction of findings, conclusions, recommendations
+- **Batch processing:** Processes all unprocessed documents automatically
+- **API:** POST `/api/processed_documents/{id}/process`, POST `/api/processed_documents/batch_process`
+
+### 5.6 Fact Verification (T3.3)
+
+- **Multi-source corroboration:** Full-text search across articles; counts distinct sources confirming a claim
+- **Contradiction detection:** Groups claims by subject; checks for opposing predicates, numeric divergence, direct negation
+- **Source reliability:** 4-tier scoring (wire services → major papers → broadcast → other)
+- **Completeness assessment:** Source diversity, temporal coverage, sentiment spread, gap identification
+- **Full verification pipeline:** Corroboration + contradiction + reliability in one call
+- **API:** `/api/verification/claim/{id}`, `/api/verification/corroborate`, `/api/verification/contradictions`, `/api/verification/completeness`, `/api/verification/batch`, `/api/verification/source_reliability`
 
 ---
 
-## 6. Built but Not (or Weakly) Connected
+## 6. End-to-End Chains (Top to Bottom)
+
+### 6.1 Intelligence cascade (primary chain)
+
+1. **RSS/PDF:** RSS collector fetches feeds → articles per domain. Document processor downloads PDFs → extracted sections/findings.
+2. **ML enrichment:** AutomationManager runs entity extraction, topic clustering, sentiment, quality scoring, summarization. Results stored in `ml_data`, `article_entities`, `entity_canonical`.
+3. **Entity resolution:** Organizer phase merges duplicates, populates aliases, links cross-domain entities.
+4. **Context-centric:** Contexts created from articles; claims extracted; patterns discovered; entity profiles built.
+5. **Storyline management:** CRUD, article linking, editorial_document generation/seeding.
+6. **Event tracking:** Tracked events with chronicle builder; editorial_briefing generation.
+7. **Fact verification:** Claims verified against multiple sources; contradictions detected.
+8. **Content synthesis:** Aggregates all enrichments for editorial or briefing generation.
+9. **Briefings:** Editorial-first daily briefings with optional LLM lead paragraph.
+
+### 6.2 Finance analysis (full chain)
+
+1. User submits query → FinanceOrchestrator → refresh + evidence + LLM → result with provenance.
+2. Evidence collector reads `finance.articles` via ArticleService for RSS-derived context.
+
+### 6.3 Orchestrator coordination
+
+1. OrchestratorCoordinator drives collection timing (RSS, gold refresh).
+2. AutomationManager runs processing pipeline (phases 1–2, entity organizer with resolution batch).
+3. Scheduled dossier compilation and event chronicle updates from coordinator.
+
+---
+
+## 7. Built but Not (or Weakly) Connected
 
 | Item | Status | Note |
 |------|--------|------|
-| **Evidence preview API** | Built, not used by UI | GET `/api/{domain}/finance/evidence/preview` exists; no frontend button/page that calls it. Optional “Preview evidence” on finance analysis page would close the loop. |
-| **RSS snippets in result** | Backend done, UI optional | `output.rss_snippets` is in task result; FINANCE_TODO suggested showing “News used” on result page — not yet added. |
+| **Evidence preview API** | Built, not used by UI | GET `/api/{domain}/finance/evidence/preview` exists; no frontend button. |
+| **User management** | Backend routes exist | Limited or no dedicated frontend; auth not a primary focus. |
 | **Newsroom Orchestrator v6** | Feature-flagged, stubs | Chief editor / archivist are no-op stubs; event bus exists. Not required for main flows. |
-| **User management** | Backend routes exist | Limited or no dedicated frontend; auth not a primary focus in current scope. |
-| **DOCS: API version** | Stale | RELEASE_v5.0_STABLE and PROJECT_CAPABILITIES_BRIEF still mention “/api/”; code uses flat `/api/`. Should update docs. |
 
 ---
 
-## 7. Not Built / Deferred
+## 8. Not Built / Deferred
 
+- **Expanded election tracker:** Maps, live tracking, politician profiles (politics domain) — not scoped.
 - **User preemption:** Queue ordering so user tasks preempt scheduled (deferred).
 - **EDGAR checkpointing:** Resume long ingest from checkpoint (deferred).
-- **evaluate_ingest:** Automated check that EDGAR chunks are retrievable after ingest (deferred).
-- **Periodic evidence collection:** Separate scheduled job that pre-aggregates evidence (optional; we have on-demand in analysis + preview API).
-- **Unified “Remaining” doc:** One place that links MIGRATION_TODO Phase 8, FINANCE_TODO deferred, etc. (optional; see CLEANUP_PLAN section 6 for remaining doc tasks).
+- **Full GPU PDF OCR:** Current PDF parsing handles text-based PDFs; image-heavy/scanned PDFs would need OCR (deferred).
+- **Multi-tenant, multi-language, advanced security** — on roadmap, not implemented.
 
 ---
 
-## 8. Development Status Summary
+## 9. Development Status Summary
 
 | Dimension | Status |
 |-----------|--------|
-| **DB → API** | Connected: PostgreSQL (domains, articles, storylines, topics), SQLite (finance, orchestrator), ChromaDB (EDGAR) are read/written by the right services. |
-| **API → Web** | Connected: Domain routes and orchestrator routes are called by the frontend (financeAnalysis, monitoring, storylines, articles, etc.) with correct paths (`/api/{domain}/...` or `/api/orchestrator/...`). |
-| **End-to-end flows** | Finance analysis, RSS→articles→evidence, orchestrator loop, storylines/content: all wired top to bottom. |
-| **Gaps** | Evidence preview and “News used” UI are nice-to-haves; user management and v6 newsroom are partial/optional; docs have minor version/path stale references. |
-| **Risks** | No major “built but not connected” for core flows. Ensure `VITE_API_URL` (or proxy) and domain (e.g. finance) are correct when testing from the browser. |
-
----
-
-## 9. Orchestrators vs independent portions
-
-**Orchestrators are not fully in control of the whole system.** Summary:
-
-- **Under orchestrator control:** (1) **FinanceOrchestrator** — all finance-domain refresh and analysis. (2) **OrchestratorCoordinator** — only the *timing* of RSS collection and gold refresh (it calls `collect_rss_feeds()` and `FinanceOrchestrator.submit_task(refresh, gold)` when the CollectionGovernor says so).
-- **Still independent:** **AutomationManager** (its own loop; runs RSS, article processing, ML, topics, storylines, RAG, cleanup on its own schedule), **cron** (RSS, log archive), **StorylineConsolidationService** (30 min timer), **TopicExtractionQueueWorker** and **MLProcessingService** (started from lifespan, run independently). Pipeline and “collect_now” API triggers also fire without going through the coordinator.
-
-So the **data-processing pipeline** (article → ML → topics → storylines → RAG) is not under OrchestratorCoordinator. For full “orchestrators in control,” the coordinator (or a meta-orchestrator) would need to drive or gate AutomationManager phases and cron, or those would need to be migrated into the coordinator’s decision loop. See **CONTROLLER_ARCHITECTURE.md §2.6** for the same breakdown.
+| **DB → API** | Connected: PostgreSQL (domain schemas + intelligence schema), SQLite (finance, orchestrator), ChromaDB (EDGAR) are read/written by the right services. |
+| **API → Web** | Connected: Domain routes, context-centric routes, entity resolution, verification, synthesis all callable from frontend. |
+| **End-to-end flows** | Finance analysis, RSS→articles→ML→entities→storylines→editorial, orchestrator loop, entity resolution, fact verification, PDF processing: all wired. |
+| **Intelligence cascade** | Complete: article content flows through ML enrichment → entity resolution → context/claims → event tracking → editorial documents → briefings. |
+| **v6 TODO** | 55/61 items checked; 6 remaining are style-checklist reminders (ongoing conventions). All feature work complete. |
+| **Gaps** | Evidence preview UI, user management UI, and v6 newsroom stubs are partial/optional. |
 
 ---
 
 ## 10. Suggested Next Steps (Priority)
 
-1. **Docs:** ~~Update RELEASE_v5.0 and PROJECT_CAPABILITIES_BRIEF to say API uses flat `/api/`.~~ Done; CODING_STYLE_GUIDE now says to retroactively update docs on major changes.
-2. **UX:** Add “News used” (from `output.rss_snippets`) on the finance analysis result page.
-3. **Optional:** Add “Preview evidence” button that calls GET `/api/{domain}/finance/evidence/preview` and shows the bundle in a modal or panel.
-4. **Deferred:** Leave user preemption, EDGAR checkpointing, evaluate_ingest as backlog unless needed for a release.
-5. **Optional (orchestrator control):** If the goal is “orchestrators fully in control,” design how OrchestratorCoordinator (or a meta-orchestrator) drives or gates AutomationManager phases and cron, or migrate those into the coordinator’s loop; see CONTROLLER_ARCHITECTURE.md §2.6.
+1. **UX:** Expose fact verification and content synthesis in the frontend (verification badges on claims, synthesis panels on storylines/events).
+2. **Data sources:** Configure additional RSS feeds and document sources (government PDFs, think tank reports) to exercise the PDF pipeline.
+3. **Entity enrichment:** Populate entity positions for key political/financial entities to demonstrate the position tracker.
+4. **Editorial product:** Build the "Today's Report" page that consumes synthesis API and editorial documents for a reader-facing daily briefing.
+5. **Deferred:** Leave GPU OCR, multi-tenant, EDGAR checkpointing as backlog unless needed for a release.
 
 ---
 
-*This document is the single high-level scope and development-status reference. For controller/orchestrator detail see CONTROLLER_ARCHITECTURE.md and ORCHESTRATOR_ROADMAP_TO_INITIATIVE.md; for cleanup see CLEANUP_PLAN.md. Historical: _archive/ORCHESTRATOR_DEVELOPMENT_PLAN.md.*
+*This document is the single high-level scope and development-status reference. For architectural principles see CORE_ARCHITECTURE_PRINCIPLES.md; for the v6 upgrade plan see V6_QUALITY_FIRST_UPGRADE_PLAN.md and V6_QUALITY_FIRST_TODO.md; for controller detail see CONTROLLER_ARCHITECTURE.md.*
