@@ -87,7 +87,7 @@ async def get_articles(limit: int = 20, offset: int = 0, status: Optional[str] =
                     articles.append({
                         "id": row[0],
                         "title": row[1],
-                        "content": row[2][:500] + "..." if row[2] and len(row[2]) > 500 else (row[2] or ""),
+                        "content": row[2][:800] + "..." if row[2] and len(row[2]) > 800 else (row[2] or ""),
                         "url": row[3],
                         "source_domain": src_domain,
                         "source": src_domain,
@@ -262,22 +262,41 @@ async def get_article_analysis(article_id: int):
                 if not article:
                     raise HTTPException(status_code=404, detail="Article not found")
                 
+                # Build narrative explanation of analysis scores
+                sentiment_score = article[3]
+                sentiment_label = article[4] or ""
+                bias_score = article[6]
+                quality_score = article[8]
+                narrative_parts = []
+                if sentiment_label:
+                    narrative_parts.append(f"Sentiment is {sentiment_label.lower()}")
+                    if sentiment_score is not None:
+                        narrative_parts[-1] += f" ({sentiment_score:.2f})"
+                if quality_score is not None:
+                    level = "high" if quality_score >= 0.7 else "moderate" if quality_score >= 0.4 else "low"
+                    narrative_parts.append(f"{level} quality ({quality_score:.2f})")
+                if bias_score is not None:
+                    bias_level = "low" if bias_score < 0.3 else "moderate" if bias_score < 0.6 else "notable"
+                    narrative_parts.append(f"{bias_level} bias ({bias_score:.2f})")
+                narrative = ". ".join(narrative_parts) + "." if narrative_parts else ""
+
                 return {
                     "success": True,
                     "data": {
                         "article_id": article[0],
                         "title": article[1],
                         "summary": article[2],
+                        "narrative": narrative,
                         "sentiment": {
-                            "score": article[3],
-                            "label": article[4]
+                            "score": sentiment_score,
+                            "label": sentiment_label,
                         },
                         "entities": article[5],
                         "bias": {
-                            "score": article[6],
+                            "score": bias_score,
                             "indicators": article[7]
                         },
-                        "quality_score": article[8],
+                        "quality_score": quality_score,
                         "analysis_updated_at": article[9].isoformat() if article[9] else None
                     },
                     "timestamp": datetime.now().isoformat()
@@ -507,17 +526,20 @@ async def get_topics(
                             # Remove duplicates and None values
                             article_ids = list(set([aid for aid in article_ids_raw if aid is not None]))
                     
+                    cluster_name = row[1] or ""
+                    article_count = row[7] or 0
+                    description = row[2] or f"Topic cluster covering {cluster_name} with {article_count} articles"
                     topics.append({
                         "id": row[0],
-                        "name": row[1],  # cluster_name
-                        "description": row[2],  # cluster_description
-                        "type": row[3],  # cluster_type
+                        "name": cluster_name,
+                        "description": description,
+                        "type": row[3] or "semantic",
                         "created_at": row[4].isoformat() if row[4] else None,
                         "updated_at": row[5].isoformat() if row[5] else None,
                         "metadata": row[6] if row[6] else {},
-                        "article_count": row[7] or 0,
+                        "article_count": article_count,
                         "avg_relevance": float(row[8]) if row[8] else 0.0,
-                        "article_ids": article_ids  # Include article IDs for frontend matching
+                        "article_ids": article_ids
                     })
                 
                 # Apply date/country filter rules and banned topics - exclude from display
@@ -862,7 +884,7 @@ async def get_topic_articles(
                     articles.append({
                         "id": row[0],
                         "title": row[1],
-                        "content": row[2][:500] + "..." if len(row[2]) > 500 else row[2] if row[2] else "",
+                        "content": row[2][:800] + "..." if row[2] and len(row[2]) > 800 else (row[2] or ""),
                         "url": row[3],
                         "source_domain": row[4],
                         "published_at": row[5].isoformat() if row[5] else None,
@@ -935,9 +957,10 @@ async def get_topic_summary(
                 
                 topic_id, cluster_name, description, metadata = topic_result
                 
-                # Get recent articles for summary
+                # Get recent articles for summary (include content for richer LLM input)
                 cur.execute(f"""
-                    SELECT a.title, a.summary, a.published_at, a.sentiment_score
+                    SELECT a.title, a.summary, a.published_at, a.sentiment_score,
+                           LEFT(a.content, 800) as content_excerpt
                     FROM {schema}.articles a
                     JOIN {schema}.article_topic_clusters atc ON a.id = atc.article_id
                     WHERE atc.topic_cluster_id = %s
@@ -959,9 +982,15 @@ async def get_topic_summary(
                         "timestamp": datetime.now().isoformat()
                     }
                 
-                # Generate summary using LLM
-                article_texts = [f"Title: {article[0]}\nSummary: {article[1] or 'No summary available'}" 
-                               for article in articles]
+                # Generate summary using LLM — use content when summary is missing
+                article_texts = []
+                for article in articles:
+                    text_parts = [f"Title: {article[0]}"]
+                    if article[1]:
+                        text_parts.append(f"Summary: {article[1]}")
+                    elif len(article) > 4 and article[4]:
+                        text_parts.append(f"Content: {article[4]}")
+                    article_texts.append("\n".join(text_parts))
                 combined_text = "\n\n".join(article_texts)
                 
                 # Use LLM to generate topic summary
@@ -1637,7 +1666,21 @@ async def get_big_picture_analysis(
                     "avg_articles_per_topic": round(recent_articles_count / max(len(topic_distribution), 1), 1),
                     "time_period_hours": time_period_hours
                 }
-                
+
+                # Build narrative summary from available data
+                top_cat = topic_distribution[0]["category"] if topic_distribution else "general"
+                top_cat_count = topic_distribution[0]["count"] if topic_distribution else 0
+                trending_names = [t.get("name", "") for t in (trending_topics or [])[:3] if t.get("name")]
+                narrative_parts = []
+                narrative_parts.append(
+                    f"Over the last {time_period_hours} hours, {recent_articles_count} articles were analyzed "
+                    f"across {len(topic_distribution)} categories from {len(source_diversity)} sources."
+                )
+                if top_cat and top_cat_count:
+                    narrative_parts.append(f"Coverage is led by {top_cat} ({top_cat_count} articles).")
+                if trending_names:
+                    narrative_parts.append(f"Trending topics include {', '.join(trending_names)}.")
+
                 return {
                     "success": True,
                     "data": {
@@ -1645,6 +1688,7 @@ async def get_big_picture_analysis(
                         "topic_distribution": topic_distribution,
                         "trending_topics": trending_topics,
                         "source_diversity": source_diversity,
+                        "narrative": " ".join(narrative_parts),
                         "summary": {
                             "period": f"Last {time_period_hours} hours",
                             "articles_analyzed": recent_articles_count,
@@ -1706,20 +1750,24 @@ async def get_trending_topics(
                 
                 trending_topics = []
                 for row in cur.fetchall():
-                    # Calculate trend score
                     trend_score = row[1] * (float(row[2]) if row[2] else 0.0) * (row[5] or 1)
+                    topic_name = row[0] or ""
+                    article_count = row[1] or 0
+                    source_count = row[5] or 0
+                    direction = "rising" if article_count > 5 else "stable"
+                    description = f"{article_count} articles from {source_count} sources, {direction} trend"
                     
                     trending_topics.append({
-                        "name": row[0],
-                        "description": None,
+                        "name": topic_name,
+                        "description": description,
                         "category": 'semantic',
-                        "recent_articles": row[1],
+                        "recent_articles": article_count,
                         "avg_relevance": float(row[2]) if row[2] else 0.0,
                         "avg_sentiment": float(row[3]) if row[3] else 0.0,
                         "latest_article_date": row[4].isoformat() if row[4] else None,
-                        "source_diversity": row[5] or 0,
+                        "source_diversity": source_count,
                         "trend_score": round(trend_score, 2),
-                        "trend_direction": "rising" if row[1] > 5 else "stable"
+                        "trend_direction": direction,
                     })
                 banned = _get_banned_topics(cur, schema)
                 trending_topics = filter_topic_list(trending_topics, name_key="name", banned_topics=banned)

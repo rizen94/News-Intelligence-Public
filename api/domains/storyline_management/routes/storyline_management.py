@@ -118,7 +118,8 @@ async def get_domain_storylines(
                 # Get paginated storylines
                 query = f"""
                     SELECT id, title, description, created_at, updated_at,
-                           status, article_count
+                           status, article_count, document_status,
+                           editorial_document->>'lede' as editorial_lede
                     FROM {schema}.storylines 
                     {where_clause}
                     ORDER BY updated_at DESC
@@ -137,7 +138,9 @@ async def get_domain_storylines(
                         "created_at": row[3].isoformat() if row[3] else None,
                         "updated_at": row[4].isoformat() if row[4] else None,
                         "status": row[5],
-                        "article_count": row[6] if len(row) > 6 else 0
+                        "article_count": row[6] if len(row) > 6 else 0,
+                        "document_status": row[7] if len(row) > 7 else None,
+                        "editorial_lede": row[8] if len(row) > 8 else None,
                     })
                 
                 return {
@@ -507,7 +510,8 @@ async def get_domain_available_articles_for_storyline(
                 where_clause = "WHERE " + " AND ".join(where_conditions)
                 
                 query = f"""
-                    SELECT a.id, a.title, a.url, a.source_domain, a.published_at, a.summary
+                    SELECT a.id, a.title, a.url, a.source_domain, a.published_at, a.summary,
+                           LEFT(a.content, 300) as content_excerpt
                     FROM {schema}.articles a
                     {where_clause}
                     ORDER BY a.published_at DESC
@@ -525,7 +529,8 @@ async def get_domain_available_articles_for_storyline(
                         "url": row[2],
                         "source_domain": row[3],
                         "published_at": row[4].isoformat() if row[4] else None,
-                        "summary": row[5]
+                        "summary": row[5],
+                        "content_excerpt": row[6] if len(row) > 6 else None,
                     })
                 
                 return {
@@ -565,7 +570,8 @@ async def get_domain_storyline(
                 cur.execute(f"""
                     SELECT id, title, description, created_at, updated_at,
                            status, analysis_summary, quality_score, article_count,
-                           ml_processing_status, priority
+                           ml_processing_status, priority,
+                           editorial_document, document_version, document_status
                     FROM {schema}.storylines 
                     WHERE id = %s
                 """, (storyline_id,))
@@ -576,7 +582,8 @@ async def get_domain_storyline(
                 
                 # Get articles in storyline from domain schema
                 cur.execute(f"""
-                    SELECT a.id, a.title, a.url, a.source_domain, a.published_at, a.summary
+                    SELECT a.id, a.title, a.url, a.source_domain, a.published_at,
+                           a.summary, LEFT(a.content, 1000) as content_excerpt
                     FROM {schema}.articles a
                     JOIN {schema}.storyline_articles sa ON a.id = sa.article_id
                     WHERE sa.storyline_id = %s
@@ -591,7 +598,8 @@ async def get_domain_storyline(
                         "url": row[2],
                         "source_domain": row[3],
                         "published_at": row[4].isoformat() if row[4] else None,
-                        "summary": row[5]
+                        "summary": row[5],
+                        "content_excerpt": row[6] if len(row) > 6 else None,
                     })
                 
                 return {
@@ -608,7 +616,10 @@ async def get_domain_storyline(
                             "quality_score": float(storyline[7]) if storyline[7] else None,
                             "article_count": storyline[8] or 0,
                             "ml_processing_status": storyline[9] if len(storyline) > 9 else None,
-                            "priority": storyline[10] if len(storyline) > 10 else None
+                            "priority": storyline[10] if len(storyline) > 10 else None,
+                            "editorial_document": storyline[11] if len(storyline) > 11 else None,
+                            "document_version": storyline[12] if len(storyline) > 12 else None,
+                            "document_status": storyline[13] if len(storyline) > 13 else None,
                         },
                         "articles": articles
                     },
@@ -807,9 +818,28 @@ async def get_domain_storyline_timeline(
                         "updated_at": row[17].isoformat() if row[17] else None
                     })
                 
+                # Build narrative connecting timeline events
+                narrative = ""
+                if timeline_events:
+                    first = timeline_events[0]
+                    last = timeline_events[-1]
+                    first_title = first.get("title", "")
+                    last_title = last.get("title", "")
+                    first_date = first.get("event_date", "")
+                    last_date = last.get("event_date", "")
+                    narrative = f"Timeline spans {len(timeline_events)} events"
+                    if first_date and last_date and first_date != last_date:
+                        narrative += f" from {first_date} to {last_date}"
+                    narrative += "."
+                    if first_title and last_title and first_title != last_title:
+                        narrative += f" Coverage began with \"{first_title}\" and most recently \"{last_title}\"."
+
                 return {
                     "success": True,
-                    "data": {"timeline_events": timeline_events},
+                    "data": {
+                        "timeline_events": timeline_events,
+                        "narrative": narrative,
+                    },
                     "storyline_id": storyline_id,
                     "events_count": len(timeline_events),
                     "timestamp": datetime.now().isoformat()
@@ -854,7 +884,8 @@ async def get_domain_storyline_suggestions(
                 
                 # Get related articles (not in storyline) from domain schema
                 cur.execute(f"""
-                    SELECT a.id, a.title, a.summary, a.published_at, a.source_domain
+                    SELECT a.id, a.title, a.summary, a.published_at, a.source_domain,
+                           LEFT(a.content, 300) as content_excerpt
                     FROM {schema}.articles a
                     WHERE a.id NOT IN (
                         SELECT sa.article_id FROM {schema}.storyline_articles sa 
@@ -877,7 +908,8 @@ async def get_domain_storyline_suggestions(
                                 "title": row[1],
                                 "summary": row[2],
                                 "published_at": row[3].isoformat() if row[3] else None,
-                                "source_domain": row[4]
+                                "source_domain": row[4],
+                                "content_excerpt": row[5] if len(row) > 5 else None,
                             }
                             for row in related_articles
                         ]
@@ -1230,16 +1262,38 @@ async def process_storyline_rag_analysis(domain: str, storyline_id: int, storyli
                 try:
                     with conn.cursor() as cur:
                         cur.execute(f"SET search_path TO {schema}, public")
+
+                        analysis_text = analysis_result["analysis"]
+
+                        # Build editorial_document from the RAG analysis
+                        import json as _json
+                        editorial_doc = {
+                            "lede": analysis_text[:300] if analysis_text else "",
+                            "developments": [],
+                            "analysis": analysis_text or "",
+                            "outlook": "",
+                            "key_entities": [],
+                            "sources": list(set(a[5] for a in articles if len(a) > 5 and a[5])),
+                            "generated_at": datetime.now().isoformat(),
+                            "based_on_articles": [a[0] for a in articles if a[0]],
+                        }
+
                         cur.execute(f"""
                             UPDATE {schema}.storylines 
                             SET analysis_summary = %s,
                                 quality_score = %s,
                                 ml_processing_status = 'completed',
-                                updated_at = %s
+                                updated_at = %s,
+                                editorial_document = %s,
+                                document_version = COALESCE(document_version, 0) + 1,
+                                document_status = 'rag_analyzed',
+                                last_refinement = %s
                             WHERE id = %s
                         """, (
-                            analysis_result["analysis"],
-                            0.90,  # High quality score for RAG analysis (0.0-1.0 scale)
+                            analysis_text,
+                            0.90,
+                            datetime.now(),
+                            _json.dumps(editorial_doc),
                             datetime.now(),
                             storyline_id
                         ))

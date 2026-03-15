@@ -4,6 +4,7 @@ Read-only APIs for entity_profiles, contexts, tracked_events, claims.
 Flat /api/... routes. See docs/CONTEXT_CENTRIC_UPGRADE_PLAN.md.
 """
 
+import json
 import logging
 from datetime import date, datetime
 from decimal import Decimal
@@ -83,10 +84,96 @@ def sync_entity_profiles(domain_key: Optional[str] = Query(None, description="Sy
     return {"success": True, "created_by_domain": result, "canonical_backfilled": backfill_counts}
 
 
+@router.post("/context_centric/run_story_state_triggers", response_model=dict)
+def run_story_state_triggers(
+    step: str = Query("both", description="fact_log (process fact_change_log) | queue (process story_update_queue) | both"),
+    fact_batch: int = Query(100, ge=1, le=200, description="Max fact_change_log rows per run (production: 100)"),
+    queue_batch: int = Query(20, ge=1, le=100, description="Max story_update_queue rows per run"),
+) -> dict:
+    """
+    Process story state update pipeline: fact_change_log -> story_update_queue -> story state refresh.
+    See docs/STORY_STATE_UPDATE_TRIGGERS.md.
+    """
+    try:
+        from services.story_state_trigger_service import process_fact_change_log, process_story_update_queue
+        fact_processed = 0
+        queue_processed = 0
+        if step in ("fact_log", "both"):
+            fact_processed = process_fact_change_log(batch_size=fact_batch)
+        if step in ("queue", "both"):
+            queue_processed = process_story_update_queue(batch_size=queue_batch)
+        return {"success": True, "fact_change_log_processed": fact_processed, "story_update_queue_processed": queue_processed}
+    except Exception as e:
+        logger.warning("run_story_state_triggers: %s", e, exc_info=True)
+        return {"success": False, "error": str(e), "fact_change_log_processed": 0, "story_update_queue_processed": 0}
+
+
+@router.post("/context_centric/run_enhancement_cycle", response_model=dict)
+async def run_enhancement_cycle(
+    fact_batch: int = Query(100, ge=1, le=200, description="Fact change log batch (production: 100)"),
+    queue_batch: int = Query(10, ge=1, le=100, description="Story update queue batch; max 10 stories/run (production)"),
+    enrich_limit: int = Query(10, ge=1, le=50),
+    build_limit: int = Query(10, ge=1, le=30),
+) -> dict:
+    """
+    Phase 3 RAG: Run one full enhancement cycle (story state triggers + entity enrichment + profile build).
+    See docs/RAG_ENHANCEMENT_ROADMAP.md.
+    """
+    try:
+        from services.enhancement_orchestrator_service import run_enhancement_cycle as run_cycle
+        result = await run_cycle(fact_batch=fact_batch, queue_batch=queue_batch, enrich_limit=enrich_limit, build_limit=build_limit)
+        return {"success": True, **result}
+    except Exception as e:
+        logger.warning("run_enhancement_cycle: %s", e, exc_info=True)
+        return {"success": False, "error": str(e), "fact_change_log_processed": 0, "story_update_queue_processed": 0, "entity_profiles_enriched": 0, "entity_profiles_built": 0, "errors": [str(e)]}
+
+
+@router.post("/context_centric/run_pattern_matching", response_model=dict)
+def run_pattern_matching(
+    domain_key: Optional[str] = Query(None, description="Run for this domain only; omit to run all domains"),
+    limit: int = Query(50, ge=1, le=200, description="Max contexts per domain to check"),
+) -> dict:
+    """
+    Phase 4 RAG: Run watch pattern matching on recent contexts; store pattern_matches and create
+    watchlist_alerts when significance >= threshold and storyline is on watchlist.
+    See docs/RAG_ENHANCEMENT_ROADMAP.md.
+    """
+    try:
+        from services.watch_pattern_service import run_pattern_matching as run_pattern_matching_svc, run_pattern_matching_all_domains
+        if domain_key:
+            if domain_key not in ("politics", "finance", "science-tech"):
+                raise HTTPException(status_code=400, detail="domain_key must be one of politics, finance, science-tech")
+            result = run_pattern_matching_svc(domain_key=domain_key, limit=limit)
+        else:
+            result = run_pattern_matching_all_domains(limit_per_domain=min(limit, 100))
+        return {"success": True, **result}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.warning("run_pattern_matching: %s", e, exc_info=True)
+        return {"success": False, "error": str(e), "contexts_checked": 0, "matches_stored": 0, "alerts_created": 0, "errors": [str(e)]}
+
+
+@router.post("/context_centric/run_entity_enrichment", response_model=dict)
+def run_entity_enrichment(limit: int = Query(20, ge=1, le=50, description="Max profiles to enrich (production: 20)")) -> dict:
+    """
+    Run Phase 1 entity enrichment: Wikipedia (and optional GDELT) for entity_profiles
+    that lack a Wikipedia-derived section. Updates sections and versioned_facts.
+    See docs/RAG_ENHANCEMENT_ROADMAP.md.
+    """
+    try:
+        from services.entity_enrichment_service import run_enrichment_batch
+        updated = run_enrichment_batch(limit=limit)
+        return {"success": True, "updated": updated}
+    except Exception as e:
+        logger.warning("run_entity_enrichment: %s", e, exc_info=True)
+        return {"success": False, "error": str(e), "updated": 0}
+
+
 @router.post("/context_centric/sync_contexts", response_model=dict)
 def sync_contexts(
     domain_key: Optional[str] = Query(None, description="Sync this domain only; omit to sync all"),
-    limit: int = Query(500, ge=1, le=2000, description="Max articles to backfill per domain"),
+    limit: int = Query(100, ge=1, le=500, description="Max articles to backfill per domain (production: 100)"),
 ) -> dict:
     """
     Backfill intelligence.contexts from domain articles that don't have a context yet.
@@ -886,11 +973,12 @@ def update_context(
 
 
 _EVENT_COLS = """id, event_type, event_name, start_date, end_date, geographic_scope,
-                   key_participant_entity_ids, milestones, sub_event_ids, created_at, updated_at, domain_keys"""
+                   key_participant_entity_ids, milestones, sub_event_ids, created_at, updated_at, domain_keys,
+                   editorial_briefing, editorial_briefing_json, briefing_version, briefing_status"""
 
 
 def _row_to_event(row: tuple) -> dict:
-    """Map tracked_events row to dict."""
+    """Map tracked_events row to dict, including editorial briefing fields."""
     return {
         "id": row[0],
         "event_type": row[1],
@@ -904,6 +992,10 @@ def _row_to_event(row: tuple) -> dict:
         "created_at": row[9].isoformat() if row[9] else None,
         "updated_at": row[10].isoformat() if row[10] else None,
         "domain_keys": list(row[11]) if row[11] else [],
+        "editorial_briefing": row[12] if len(row) > 12 else None,
+        "editorial_briefing_json": row[13] if len(row) > 13 else None,
+        "briefing_version": row[14] if len(row) > 14 else None,
+        "briefing_status": row[15] if len(row) > 15 else None,
     }
 
 
@@ -941,8 +1033,18 @@ def list_tracked_events(
                 tuple(params),
             )
             rows = cur.fetchall()
+        items = [_row_to_event(r) for r in rows]
+        try:
+            from services.quality_feedback_service import get_latest_event_validations
+            event_ids = [e["id"] for e in items]
+            validations = get_latest_event_validations(event_ids, conn=conn)
+            for e in items:
+                e["validation_status"] = validations.get(e["id"])
+        except Exception:
+            for e in items:
+                e["validation_status"] = None
         conn.close()
-        return {"items": [_row_to_event(r) for r in rows], "limit": limit, "offset": offset}
+        return {"items": items, "limit": limit, "offset": offset}
     except Exception as e:
         logger.warning(f"list_tracked_events: {e}")
         try:
@@ -950,6 +1052,157 @@ def list_tracked_events(
         except Exception:
             pass
         raise HTTPException(status_code=500, detail="Failed to list tracked events")
+
+
+@router.post("/tracked_events", response_model=dict)
+def create_tracked_event(
+    body: dict = Body(
+        ...,
+        example={
+            "event_type": "election",
+            "event_name": "2026 Midterms",
+            "start_date": "2026-01-01",
+            "end_date": None,
+            "geographic_scope": "US",
+            "key_participant_entity_ids": [],
+            "milestones": [],
+            "sub_event_ids": None,
+            "domain_keys": ["politics"],
+        },
+    ),
+) -> dict:
+    """Create a tracked event. Required: event_type, event_name. Optional: start_date, end_date, geographic_scope, key_participant_entity_ids, milestones, sub_event_ids, domain_keys."""
+    conn = get_db_connection()
+    if not conn:
+        raise HTTPException(status_code=503, detail="Database unavailable")
+    try:
+        event_type = body.get("event_type") or ""
+        event_name = body.get("event_name") or ""
+        if not event_type or not event_name:
+            raise HTTPException(status_code=400, detail="event_type and event_name are required")
+        start_date = body.get("start_date")
+        end_date = body.get("end_date")
+        geographic_scope = body.get("geographic_scope")
+        key_participant_entity_ids = body.get("key_participant_entity_ids")
+        if key_participant_entity_ids is None:
+            key_participant_entity_ids = []
+        milestones = body.get("milestones")
+        if milestones is None:
+            milestones = []
+        sub_event_ids = body.get("sub_event_ids")
+        domain_keys = body.get("domain_keys")
+        if domain_keys is None:
+            domain_keys = []
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO intelligence.tracked_events
+                (event_type, event_name, start_date, end_date, geographic_scope,
+                 key_participant_entity_ids, milestones, sub_event_ids, domain_keys)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id, event_type, event_name, start_date, end_date, geographic_scope,
+                          key_participant_entity_ids, milestones, sub_event_ids, created_at, updated_at, domain_keys
+                """,
+                    (
+                    event_type,
+                    event_name,
+                    start_date,
+                    end_date,
+                    geographic_scope,
+                    json.dumps(key_participant_entity_ids) if isinstance(key_participant_entity_ids, list) else "[]",
+                    json.dumps(milestones) if isinstance(milestones, list) else "[]",
+                    sub_event_ids,
+                    domain_keys,
+                ),
+            )
+            row = cur.fetchone()
+            conn.commit()
+        conn.close()
+        if not row:
+            raise HTTPException(status_code=500, detail="Insert failed")
+        return {
+            "id": row[0],
+            "event_type": row[1],
+            "event_name": row[2],
+            "start_date": str(row[3]) if row[3] else None,
+            "end_date": str(row[4]) if row[4] else None,
+            "geographic_scope": row[5],
+            "key_participant_entity_ids": row[6],
+            "milestones": row[7],
+            "sub_event_ids": list(row[8]) if row[8] else None,
+            "created_at": row[9].isoformat() if row[9] else None,
+            "updated_at": row[10].isoformat() if row[10] else None,
+            "domain_keys": list(row[11]) if len(row) > 11 and row[11] else [],
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.warning(f"create_tracked_event: {e}")
+        try:
+            conn.close()
+        except Exception:
+            pass
+        raise HTTPException(status_code=500, detail=f"Failed to create event: {str(e)}")
+
+
+@router.put("/tracked_events/{event_id}", response_model=dict)
+def update_tracked_event(event_id: int, body: dict = Body(...)) -> dict:
+    """Update a tracked event. Send only fields to update (event_type, event_name, start_date, end_date, geographic_scope, key_participant_entity_ids, milestones, sub_event_ids, domain_keys)."""
+    conn = get_db_connection()
+    if not conn:
+        raise HTTPException(status_code=503, detail="Database unavailable")
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM intelligence.tracked_events WHERE id = %s", (event_id,))
+            if not cur.fetchone():
+                conn.close()
+                raise HTTPException(status_code=404, detail="Tracked event not found")
+            updates = []
+            params: list = []
+            for key in ("event_type", "event_name", "start_date", "end_date", "geographic_scope"):
+                if key in body and body[key] is not None:
+                    updates.append(f"{key} = %s")
+                    params.append(body[key])
+            if "key_participant_entity_ids" in body:
+                updates.append("key_participant_entity_ids = %s")
+                params.append(json.dumps(body["key_participant_entity_ids"]) if isinstance(body["key_participant_entity_ids"], list) else "[]")
+            if "milestones" in body:
+                updates.append("milestones = %s")
+                params.append(json.dumps(body["milestones"]) if isinstance(body["milestones"], list) else "[]")
+            if "sub_event_ids" in body:
+                updates.append("sub_event_ids = %s")
+                params.append(body["sub_event_ids"])
+            if "domain_keys" in body:
+                updates.append("domain_keys = %s")
+                params.append(body["domain_keys"] if isinstance(body["domain_keys"], list) else [])
+            if not updates:
+                cur.execute(
+                    f"SELECT {_EVENT_COLS} FROM intelligence.tracked_events WHERE id = %s",
+                    (event_id,),
+                )
+                row = cur.fetchone()
+                conn.close()
+                return _row_to_event(row)
+            updates.append("updated_at = CURRENT_TIMESTAMP")
+            params.append(event_id)
+            cur.execute(
+                "UPDATE intelligence.tracked_events SET " + ", ".join(updates) + " WHERE id = %s",
+                tuple(params),
+            )
+            conn.commit()
+            cur.execute(f"SELECT {_EVENT_COLS} FROM intelligence.tracked_events WHERE id = %s", (event_id,))
+            row = cur.fetchone()
+        conn.close()
+        return _row_to_event(row)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.warning(f"update_tracked_event: {e}")
+        try:
+            conn.close()
+        except Exception:
+            pass
+        raise HTTPException(status_code=500, detail=f"Failed to update event: {str(e)}")
 
 
 @router.get("/tracked_events/{event_id}", response_model=dict)
@@ -994,6 +1247,12 @@ def get_tracked_event(event_id: int) -> dict:
                     "created_at": r[6].isoformat() if r[6] else None,
                 })
             event["chronicles"] = chronicles
+            try:
+                from services.quality_feedback_service import get_latest_event_validations
+                validations = get_latest_event_validations([event_id], conn=conn)
+                event["validation_status"] = validations.get(event_id)
+            except Exception:
+                event["validation_status"] = None
         conn.close()
         return event
     except HTTPException:
@@ -1005,6 +1264,32 @@ def get_tracked_event(event_id: int) -> dict:
         except Exception:
             pass
         raise HTTPException(status_code=500, detail="Failed to get tracked event")
+
+
+@router.post("/tracked_events/{event_id}/chronicles/update", response_model=dict)
+def update_tracked_event_chronicles(
+    event_id: int,
+    body: dict = Body(default=None),
+) -> dict:
+    """Build or refresh one event_chronicles row for this event (T2.1). Gathers developments from storylines in event domains, computes momentum_score."""
+    from services.event_chronicle_builder_service import build_chronicle_for_event
+    params = body or {}
+    update_date = params.get("update_date")  # optional YYYY-MM-DD
+    developments_days = int(params.get("developments_days", 7))
+    if update_date:
+        from datetime import datetime
+        try:
+            update_date = datetime.strptime(update_date, "%Y-%m-%d").date()
+        except (ValueError, TypeError):
+            update_date = None
+    result = build_chronicle_for_event(
+        event_id,
+        update_date=update_date,
+        developments_days=developments_days,
+    )
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail=result.get("error", "Chronicle build failed"))
+    return result
 
 
 @router.get("/tracked_events/{event_id}/report", response_model=dict)
@@ -1098,6 +1383,361 @@ async def generate_tracked_event_report(event_id: int) -> dict:
     return result
 
 
+# ---------------------------------------------------------------------------
+# Entity dossiers (Phase 1 T1.3) — GET dossier, POST compile
+# ---------------------------------------------------------------------------
+
+@router.get("/entity_dossiers", response_model=dict)
+def get_entity_dossier(
+    domain_key: str = Query(..., description="Domain (politics, finance, science-tech)"),
+    entity_id: int = Query(..., ge=1, description="entity_canonical.id in that domain"),
+) -> dict:
+    """Get entity dossier for (domain_key, entity_id). Returns 404 if not compiled yet; use POST /entity_dossiers/compile to build."""
+    conn = get_db_connection()
+    if not conn:
+        raise HTTPException(status_code=503, detail="Database unavailable")
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, domain_key, entity_id, compilation_date, chronicle_data, relationships, positions, patterns, metadata, created_at
+                FROM intelligence.entity_dossiers
+                WHERE domain_key = %s AND entity_id = %s
+                """,
+                (domain_key, entity_id),
+            )
+            row = cur.fetchone()
+        conn.close()
+        if not row:
+            raise HTTPException(status_code=404, detail="Dossier not found; POST /entity_dossiers/compile to build")
+        return {
+            "id": row[0],
+            "domain_key": row[1],
+            "entity_id": row[2],
+            "compilation_date": str(row[3]) if row[3] else None,
+            "chronicle_data": row[4],
+            "relationships": row[5],
+            "positions": row[6],
+            "patterns": row[7],
+            "metadata": row[8],
+            "created_at": row[9].isoformat() if row[9] else None,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.warning(f"get_entity_dossier: {e}")
+        try:
+            conn.close()
+        except Exception:
+            pass
+        raise HTTPException(status_code=500, detail="Failed to get dossier")
+
+
+@router.post("/entity_dossiers/compile", response_model=dict)
+def compile_entity_dossier(body: dict = Body(..., example={"domain_key": "politics", "entity_id": 1})) -> dict:
+    """Build or refresh entity dossier from articles and storylines that mention the entity. Requires domain_key and entity_id."""
+    domain_key = body.get("domain_key")
+    entity_id = body.get("entity_id")
+    if not domain_key or entity_id is None:
+        raise HTTPException(status_code=400, detail="domain_key and entity_id are required")
+    try:
+        entity_id = int(entity_id)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="entity_id must be an integer")
+    from services.dossier_compiler_service import compile_dossier
+    result = compile_dossier(domain_key, entity_id)
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail=result.get("error", "Compilation failed"))
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Processed documents (Phase 3 T3.1) — list, get, create, ingest from config
+# ---------------------------------------------------------------------------
+
+@router.get("/processed_documents", response_model=dict)
+def list_processed_documents(
+    source_type: Optional[str] = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+) -> dict:
+    """List processed_documents (T3.1). Optional filter by source_type."""
+    conn = get_db_connection()
+    if not conn:
+        raise HTTPException(status_code=503, detail="Database unavailable")
+    try:
+        with conn.cursor() as cur:
+            if source_type:
+                cur.execute(
+                    """
+                    SELECT id, source_type, source_name, source_url, title, publication_date, document_type, created_at
+                    FROM intelligence.processed_documents
+                    WHERE source_type = %s
+                    ORDER BY created_at DESC
+                    LIMIT %s OFFSET %s
+                    """,
+                    (source_type, limit, offset),
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT id, source_type, source_name, source_url, title, publication_date, document_type, created_at
+                    FROM intelligence.processed_documents
+                    ORDER BY created_at DESC
+                    LIMIT %s OFFSET %s
+                    """,
+                    (limit, offset),
+                )
+            rows = cur.fetchall()
+        conn.close()
+        items = []
+        for r in rows:
+            items.append({
+                "id": r[0],
+                "source_type": r[1],
+                "source_name": r[2],
+                "source_url": r[3],
+                "title": r[4],
+                "publication_date": str(r[5]) if r[5] else None,
+                "document_type": r[6],
+                "created_at": r[7].isoformat() if r[7] else None,
+            })
+        return {"items": items, "limit": limit, "offset": offset}
+    except Exception as e:
+        logger.warning("list_processed_documents: %s", e)
+        try:
+            conn.close()
+        except Exception:
+            pass
+        raise HTTPException(status_code=500, detail="Failed to list processed documents")
+
+
+@router.get("/processed_documents/{document_id}", response_model=dict)
+def get_processed_document(document_id: int) -> dict:
+    """Get one processed_document by id (T3.1)."""
+    conn = get_db_connection()
+    if not conn:
+        raise HTTPException(status_code=503, detail="Database unavailable")
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, source_type, source_name, source_url, title, publication_date, authors, document_type,
+                       extracted_sections, key_findings, entities_mentioned, citations, metadata, created_at, updated_at
+                FROM intelligence.processed_documents
+                WHERE id = %s
+                """,
+                (document_id,),
+            )
+            row = cur.fetchone()
+        conn.close()
+        if not row:
+            raise HTTPException(status_code=404, detail="Document not found")
+        return {
+            "id": row[0],
+            "source_type": row[1],
+            "source_name": row[2],
+            "source_url": row[3],
+            "title": row[4],
+            "publication_date": str(row[5]) if row[5] else None,
+            "authors": list(row[6]) if row[6] else [],
+            "document_type": row[7],
+            "extracted_sections": row[8],
+            "key_findings": row[9],
+            "entities_mentioned": row[10],
+            "citations": row[11],
+            "metadata": _json_safe(row[12]) if row[12] else {},
+            "created_at": row[13].isoformat() if row[13] else None,
+            "updated_at": row[14].isoformat() if row[14] else None,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.warning("get_processed_document: %s", e)
+        try:
+            conn.close()
+        except Exception:
+            pass
+        raise HTTPException(status_code=500, detail="Failed to get document")
+
+
+@router.post("/processed_documents", response_model=dict)
+def create_processed_document(body: dict = Body(..., example={"source_url": "https://example.org/report.pdf", "title": "Report"})) -> dict:
+    """Create one processed_document from metadata (T3.1). Requires source_url; optional title, source_type, document_type, publication_date, authors."""
+    source_url = (body.get("source_url") or "").strip()
+    if not source_url:
+        raise HTTPException(status_code=400, detail="source_url is required")
+    from services.document_acquisition_service import create_document
+    pub_date = body.get("publication_date")
+    result = create_document(
+        source_url=source_url,
+        title=body.get("title"),
+        source_type=body.get("source_type"),
+        source_name=body.get("source_name"),
+        document_type=body.get("document_type"),
+        publication_date=pub_date if isinstance(pub_date, date) else None,
+        publication_date_str=pub_date if isinstance(pub_date, str) else None,
+        authors=body.get("authors"),
+        metadata=body.get("metadata"),
+    )
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail=result.get("error", "Create failed"))
+    return result
+
+
+@router.post("/processed_documents/ingest_from_config", response_model=dict)
+def ingest_processed_documents_from_config() -> dict:
+    """Run document acquisition from document_sources.ingest_urls (T3.1). Returns inserted count and any errors."""
+    from services.document_acquisition_service import ingest_from_config
+    return ingest_from_config()
+
+
+@router.post("/processed_documents/{document_id}/process", response_model=dict)
+def process_processed_document(
+    document_id: int,
+    body: dict = Body(None, example={"storyline_connections": [{"domain_key": "politics", "storyline_id": 1}]}),
+) -> dict:
+    """T3.2: Run document processing stub — link to storylines, optionally set placeholder extracted_sections/key_findings."""
+    from services.document_processing_service import process_document
+    body = body or {}
+    result = process_document(
+        document_id=document_id,
+        storyline_connections=body.get("storyline_connections"),
+        extracted_sections=body.get("extracted_sections"),
+        key_findings=body.get("key_findings"),
+        entities_mentioned=body.get("entities_mentioned"),
+    )
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail=result.get("error", "Processing failed"))
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Narrative threads (Phase 3 T3.3) — list, build, synthesize
+# ---------------------------------------------------------------------------
+
+@router.get("/narrative_threads", response_model=dict)
+def list_narrative_threads(
+    domain_key: Optional[str] = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+) -> dict:
+    """List narrative_threads (T3.3). Optional filter by domain_key."""
+    conn = get_db_connection()
+    if not conn:
+        raise HTTPException(status_code=503, detail="Database unavailable")
+    try:
+        with conn.cursor() as cur:
+            if domain_key:
+                cur.execute(
+                    """
+                    SELECT id, domain_key, storyline_id, summary, linked_article_ids, created_at
+                    FROM intelligence.narrative_threads
+                    WHERE domain_key = %s
+                    ORDER BY id DESC
+                    LIMIT %s OFFSET %s
+                    """,
+                    (domain_key, limit, offset),
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT id, domain_key, storyline_id, summary, linked_article_ids, created_at
+                    FROM intelligence.narrative_threads
+                    ORDER BY id DESC
+                    LIMIT %s OFFSET %s
+                    """,
+                    (limit, offset),
+                )
+            rows = cur.fetchall()
+        conn.close()
+        items = []
+        for r in rows:
+            items.append({
+                "id": r[0],
+                "domain_key": r[1],
+                "storyline_id": r[2],
+                "summary_snippet": (r[3] or "")[:500] if r[3] else None,
+                "linked_article_ids": list(r[4]) if r[4] else [],
+                "created_at": r[5].isoformat() if r[5] else None,
+            })
+        return {"items": items, "limit": limit, "offset": offset}
+    except Exception as e:
+        logger.warning("list_narrative_threads: %s", e)
+        try:
+            conn.close()
+        except Exception:
+            pass
+        raise HTTPException(status_code=500, detail="Failed to list narrative threads")
+
+
+@router.post("/narrative_threads/build", response_model=dict)
+def build_narrative_threads(
+    body: dict = Body(None, example={"domain_key": "politics", "limit": 50}),
+) -> dict:
+    """T3.3: Build or update narrative_threads from storylines for a domain."""
+    from services.narrative_thread_service import build_threads_for_domain
+    body = body or {}
+    domain_key = body.get("domain_key")
+    if not domain_key:
+        raise HTTPException(status_code=400, detail="domain_key is required")
+    limit = int(body.get("limit") or 50)
+    result = build_threads_for_domain(domain_key, limit=limit)
+    return result
+
+
+@router.post("/narrative_threads/synthesize", response_model=dict)
+def synthesize_narrative_threads(
+    body: dict = Body(None, example={"domain_key": "politics"}),
+) -> dict:
+    """T3.3 stub: Return synthesis from narrative threads (domain_key or thread_ids)."""
+    from services.narrative_thread_service import synthesize_threads
+    body = body or {}
+    result = synthesize_threads(domain_key=body.get("domain_key"), thread_ids=body.get("thread_ids"))
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail=result.get("error", "Synthesis failed"))
+    return result
+
+
+@router.post("/context_centric/entities/consolidate", response_model=dict)
+def run_entity_consolidation(
+    domain_key: Optional[str] = Query(None, description="Run for this domain only; omit for all domains"),
+) -> dict:
+    """
+    Run entity consolidation: merge duplicate entities, prune low-value, extract relationships.
+
+    Uses entity_organizer_service.run_cycle() (same as the consolidation scheduler and
+    entity_organizer automation phase). Returns cleanup stats and relationship counts.
+    """
+    from services.entity_organizer_service import run_cycle
+    result = run_cycle(domain_key=domain_key)
+    return {
+        "success": len(result.get("errors") or []) == 0,
+        "data": {
+            "cleanup": result.get("cleanup", {}),
+            "relationships_extracted": result.get("relationships_extracted", 0),
+            "errors": result.get("errors", []),
+        },
+    }
+
+
+@router.post("/context_centric/investigations/consolidate", response_model=dict)
+def run_investigation_consolidation(
+    limit_events: int = Query(200, ge=50, le=500, description="Max events to consider for clustering"),
+) -> dict:
+    """
+    Cluster related tracked_events (investigations) into superset events.
+
+    Finds events about the same theme (e.g. war in Iran from different angles),
+    creates one superset event per cluster with event_type='superset' and
+    sub_event_ids listing the component events. Returns clusters_found,
+    supersets_created, and any errors.
+    """
+    from services.investigation_consolidation_service import run_consolidation
+    result = run_consolidation(limit_events=limit_events)
+    return {"success": len(result.get("errors") or []) == 0, "data": result}
+
+
 @router.get("/claims", response_model=dict)
 def list_claims(
     context_id: Optional[int] = Query(None),
@@ -1145,6 +1785,15 @@ def list_claims(
                     "valid_to": r[7].isoformat() if r[7] else None,
                     "created_at": r[8].isoformat() if r[8] else None,
                 })
+            try:
+                from services.quality_feedback_service import get_latest_claim_validations
+                claim_ids = [c["id"] for c in items]
+                validations = get_latest_claim_validations(claim_ids, conn=conn)
+                for c in items:
+                    c["validation_status"] = validations.get(c["id"])
+            except Exception:
+                for c in items:
+                    c["validation_status"] = None
         conn.close()
         return {"items": items, "limit": limit, "offset": offset}
     except Exception as e:
@@ -1217,6 +1866,15 @@ def context_centric_search(
                     "valid_to": r[7].isoformat() if r[7] else None,
                     "created_at": r[8].isoformat() if r[8] else None,
                 })
+            try:
+                from services.quality_feedback_service import get_latest_claim_validations
+                claim_ids = [c["id"] for c in claims]
+                validations = get_latest_claim_validations(claim_ids, conn=conn)
+                for c in claims:
+                    c["validation_status"] = validations.get(c["id"])
+            except Exception:
+                for c in claims:
+                    c["validation_status"] = None
 
             # Contexts: optional q and entity_id (via context_entity_mentions)
             ctx_conditions = ["1=1"]

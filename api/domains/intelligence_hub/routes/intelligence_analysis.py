@@ -201,6 +201,8 @@ async def batch_quality_assessment(
                     "overall_score": assessment.overall_score,
                     "grade": _score_to_grade(assessment.overall_score),
                     "issues_count": len(assessment.issues),
+                    "issues": [str(i) for i in assessment.issues[:5]],
+                    "recommendations": [str(r) for r in (assessment.recommendations or [])[:3]],
                 })
             except Exception as e:
                 logger.warning(f"Failed to assess storyline {sid}: {e}")
@@ -386,7 +388,9 @@ async def get_high_impact_storylines(
         try:
             with conn.cursor() as cur:
                 cur.execute(f"""
-                    SELECT id, title, article_count
+                    SELECT id, title, article_count,
+                           editorial_document->>'lede' as editorial_lede,
+                           document_status
                     FROM {schema}.storylines
                     WHERE status = 'active' AND article_count >= 2
                     ORDER BY updated_at DESC
@@ -398,7 +402,10 @@ async def get_high_impact_storylines(
 
         # Assess impact for each
         impacts = []
-        for sid, title, count in storylines:
+        for row in storylines:
+            sid, title, count = row[0], row[1], row[2]
+            editorial_lede = row[3] if len(row) > 3 else None
+            doc_status = row[4] if len(row) > 4 else None
             try:
                 impact = svc.assess_storyline_impact(domain, sid)
                 if impact.overall_impact_score >= min_impact:
@@ -406,6 +413,8 @@ async def get_high_impact_storylines(
                         "storyline_id": sid,
                         "title": title,
                         "article_count": count,
+                        "editorial_lede": editorial_lede,
+                        "document_status": doc_status,
                         "impact_score": impact.overall_impact_score,
                         "impact_level": _score_to_level(impact.overall_impact_score),
                         "velocity": impact.velocity_score,
@@ -462,7 +471,7 @@ async def get_intelligence_dashboard(
         svc = service()
         schema = domain.replace('-', '_')
 
-        # Get basic counts
+        # Get basic counts + editorial ledes from top storylines
         conn = svc.get_db_connection()
         try:
             with conn.cursor() as cur:
@@ -473,6 +482,28 @@ async def get_intelligence_dashboard(
                         (SELECT COUNT(DISTINCT source_name) FROM {schema}.articles WHERE created_at > NOW() - INTERVAL '24 hours') as active_sources
                 """)
                 counts = cur.fetchone()
+
+                # Fetch editorial ledes from recent active storylines
+                cur.execute(f"""
+                    SELECT id, title, editorial_document->>'lede' as lede,
+                           document_status, article_count
+                    FROM {schema}.storylines
+                    WHERE status = 'active'
+                      AND editorial_document IS NOT NULL
+                      AND editorial_document->>'lede' IS NOT NULL
+                      AND editorial_document->>'lede' != ''
+                    ORDER BY updated_at DESC
+                    LIMIT 5
+                """)
+                editorial_storylines = []
+                for row in cur.fetchall():
+                    editorial_storylines.append({
+                        "storyline_id": row[0],
+                        "title": row[1],
+                        "lede": row[2],
+                        "document_status": row[3],
+                        "article_count": row[4] or 0,
+                    })
         finally:
             conn.close()
 
@@ -489,6 +520,7 @@ async def get_intelligence_dashboard(
                 "articles_24h": counts[1] if counts else 0,
                 "active_sources": counts[2] if counts else 0,
             },
+            "editorial_highlights": editorial_storylines,
             "health": {
                 "status": "critical" if len(critical_anomalies) > 2 else "warning" if critical_anomalies else "healthy",
                 "anomaly_count": len(anomalies),

@@ -34,26 +34,27 @@ class StorylineTracker:
             "resolved": 0.3
         }
     
-    def generate_topic_cloud(self, days: int = 1) -> Dict[str, any]:
+    def generate_topic_cloud(self, days: int = 1, schema: Optional[str] = None) -> Dict[str, any]:
         """
-        Generate a topic cloud/summary of breaking issues and topics
-        
+        Generate a topic cloud/summary of breaking issues and topics.
+
         Args:
             days: Number of days to analyze (default: 1 for daily briefing)
-            
+            schema: Optional schema name (e.g. politics, finance) to query that domain's articles table
+
         Returns:
             Dictionary containing topic cloud and breaking news summary
         """
         try:
             conn = get_db_connection()
             cursor = conn.cursor()
-            
-            # Get recent articles with ML processing
+
+            articles_from = f"{schema}.articles" if schema else "articles"
             cutoff_date = datetime.now() - timedelta(days=days)
-            cursor.execute("""
+            cursor.execute(f"""
                 SELECT id, title, content, summary, category, source, published_at, 
                        ml_data, quality_score, created_at
-                FROM articles 
+                FROM {articles_from}
                 WHERE created_at >= %s 
                 AND ml_data IS NOT NULL 
                 AND quality_score >= 0.3
@@ -207,35 +208,52 @@ class StorylineTracker:
             return {"error": str(e)}
     
     def _analyze_topics(self, articles: List) -> Dict[str, any]:
-        """Analyze topics from articles and create topic cloud"""
+        """Analyze topics from articles using content and ML data when available."""
         try:
             topic_frequency = Counter()
             category_frequency = Counter()
             source_frequency = Counter()
             quality_scores = defaultdict(list)
+            key_points_collected = []
             
             for article in articles:
-                # Extract topics from title and summary
                 title = article[1] or ""
+                content = article[2] or ""
                 summary = article[3] or ""
                 category = article[4] or "general"
                 source = article[5] or "unknown"
+                ml_data = article[7] if len(article) > 7 else None
                 quality_score = article[8] or 0.0
                 
-                # Simple topic extraction (can be enhanced with NLP)
-                words = (title + " " + summary).lower().split()
-                # Filter out common words
-                stop_words = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'is', 'are', 'was', 'were', 'be', 'been', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should', 'may', 'might', 'can', 'this', 'that', 'these', 'those', 'i', 'you', 'he', 'she', 'it', 'we', 'they', 'news', 'report', 'says', 'said'}
+                # Use ML key_points if available; otherwise fall back to title+content word extraction
+                if ml_data and isinstance(ml_data, dict):
+                    ml_summary = ml_data.get("summary", "")
+                    for kp in (ml_data.get("key_points") or []):
+                        if isinstance(kp, str) and kp.strip():
+                            key_points_collected.append(kp.strip())
+                            words = kp.lower().split()
+                            for word in words:
+                                if len(word) > 3:
+                                    topic_frequency[word] += 1
+                    if ml_summary:
+                        for word in ml_summary.lower().split():
+                            if len(word) > 3:
+                                topic_frequency[word] += 1
+
+                # Always extract from title + content body (not just summary)
+                text_to_analyze = title + " " + (summary or content[:500])
+                stop_words = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'is', 'are', 'was', 'were', 'be', 'been', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should', 'may', 'might', 'can', 'this', 'that', 'these', 'those', 'i', 'you', 'he', 'she', 'it', 'we', 'they', 'news', 'report', 'says', 'said', 'also', 'more', 'than', 'from', 'about', 'into', 'over', 'after', 'before', 'between', 'under', 'there', 'their', 'them', 'then', 'when', 'what', 'which', 'who', 'how', 'where', 'just', 'like', 'been', 'being', 'other', 'some', 'most', 'only', 'very', 'much', 'many'}
                 
+                words = text_to_analyze.lower().split()
                 for word in words:
-                    if len(word) > 3 and word not in stop_words:
-                        topic_frequency[word] += 1
+                    cleaned = word.strip('.,!?;:()[]"\'')
+                    if len(cleaned) > 3 and cleaned not in stop_words:
+                        topic_frequency[cleaned] += 1
                 
                 category_frequency[category] += 1
                 source_frequency[source] += 1
                 quality_scores[category].append(quality_score)
             
-            # Calculate average quality scores
             avg_quality = {cat: sum(scores)/len(scores) for cat, scores in quality_scores.items()}
             
             return {
@@ -243,7 +261,8 @@ class StorylineTracker:
                 "categories": dict(category_frequency.most_common(10)),
                 "sources": dict(source_frequency.most_common(10)),
                 "average_quality": avg_quality,
-                "total_articles": len(articles)
+                "total_articles": len(articles),
+                "key_points": key_points_collected[:15],
             }
             
         except Exception as e:
@@ -282,30 +301,35 @@ class StorylineTracker:
             return []
     
     def _generate_daily_summary(self, articles: List, breaking_topics: List) -> str:
-        """Generate a daily summary of news activity"""
+        """Generate a daily summary incorporating article content and breaking story details."""
         try:
             if not articles:
                 return "No significant news activity today."
             
             total_articles = len(articles)
             breaking_count = len(breaking_topics)
-            avg_quality = sum(article[8] or 0.0 for article in articles) / total_articles
             
-            # Get top categories
             categories = Counter(article[4] or "general" for article in articles)
             top_category = categories.most_common(1)[0][0] if categories else "general"
             
-            summary = f"Daily News Summary: {total_articles} articles processed with average quality score of {avg_quality:.2f}. "
-            summary += f"Top category: {top_category}. "
+            parts = []
+            parts.append(f"Today's coverage: {total_articles} articles, led by {top_category}.")
             
-            if breaking_count > 0:
-                summary += f"{breaking_count} breaking stories identified requiring attention. "
-            else:
-                summary += "No breaking stories identified. "
+            # Lead with breaking story titles if available
+            if breaking_count > 0 and breaking_topics:
+                top_breaking = [bt.get("title", "") for bt in breaking_topics[:3] if bt.get("title")]
+                if top_breaking:
+                    parts.append(f"Breaking: {'; '.join(top_breaking)}.")
+                else:
+                    parts.append(f"{breaking_count} breaking stories identified.")
             
-            summary += "Review topic cloud for detailed analysis and story dossiers for comprehensive coverage."
+            # Surface top headlines from highest-quality articles
+            top_articles = sorted(articles, key=lambda a: a[8] or 0.0, reverse=True)[:3]
+            top_titles = [a[1] for a in top_articles if a[1]]
+            if top_titles:
+                parts.append(f"Top stories: {'; '.join(top_titles)}.")
             
-            return summary
+            return " ".join(parts)
             
         except Exception as e:
             logger.error(f"Error generating daily summary: {e}")
@@ -325,20 +349,35 @@ class StorylineTracker:
             dossier += f"**Article Count**: {len(articles)}\n"
             dossier += f"**Time Span**: {self._calculate_time_span(articles)}\n\n"
             
-            # Executive Summary
+            # Executive Summary — use ML summary or content excerpt from best article
             dossier += "## EXECUTIVE SUMMARY\n\n"
             if articles:
                 best_article = max(articles, key=lambda x: x[8] or 0.0)
-                dossier += f"{best_article[3] or 'No summary available'}\n\n"
+                ml_data = best_article[7] if len(best_article) > 7 else None
+                if ml_data and isinstance(ml_data, dict) and ml_data.get("summary"):
+                    dossier += f"{ml_data['summary']}\n\n"
+                elif best_article[3]:
+                    dossier += f"{best_article[3]}\n\n"
+                elif best_article[2]:
+                    dossier += f"{best_article[2][:500]}\n\n"
+                else:
+                    dossier += "No summary available.\n\n"
             
-            # Timeline of Events
+            # Timeline of Events — include content excerpts
             dossier += "## TIMELINE OF EVENTS\n\n"
-            for i, article in enumerate(articles[:10], 1):  # Top 10 articles
+            for i, article in enumerate(articles[:10], 1):
                 published_at = article[6]
                 date_str = published_at.strftime('%Y-%m-%d') if published_at else 'Unknown date'
                 dossier += f"**{i}. {date_str}** - {article[1]}\n"
                 dossier += f"   Source: {article[5]}\n"
-                dossier += f"   Quality Score: {article[8] or 0.0:.2f}\n\n"
+                # Include a content excerpt
+                summary = article[3] or ""
+                content = article[2] or ""
+                excerpt = summary or content[:300]
+                if excerpt:
+                    dossier += f"   {excerpt[:300]}\n\n"
+                else:
+                    dossier += "\n"
             
             # Key Sources
             dossier += "## KEY SOURCES\n\n"
@@ -411,16 +450,20 @@ class StorylineTracker:
             source_diversity = len(set(article[5] for article in articles if article[5]))
             time_span = self._calculate_time_span(articles)
             
-            summary = f"Story Evolution Summary: {len(articles)} articles over {time_span}. "
-            summary += f"Source diversity: {source_diversity} sources. "
-            summary += f"Quality trend: {quality_trend}. "
-            
-            if len(articles) >= 5:
-                summary += "Story shows sustained coverage with multiple developments."
-            else:
-                summary += "Story has limited coverage, may be developing or resolved."
-            
-            return summary
+            parts = []
+            parts.append(f"Story tracked across {len(articles)} articles over {time_span} from {source_diversity} sources.")
+
+            # Surface the key narrative shifts using article titles
+            if timeline and len(timeline) >= 2:
+                first_title = timeline[0].get("title", "")
+                last_title = timeline[-1].get("title", "")
+                if first_title and last_title:
+                    parts.append(f"Coverage began with \"{first_title}\" and most recently \"{last_title}\".")
+
+            if quality_trend:
+                parts.append(f"Quality trend: {quality_trend}.")
+
+            return " ".join(parts)
             
         except Exception as e:
             logger.error(f"Error summarizing evolution: {e}")

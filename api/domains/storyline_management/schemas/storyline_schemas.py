@@ -107,6 +107,10 @@ class StorylineDetailResponse(StorylineResponse):
     background_information: Optional[Dict[str, Any]] = None
     context_last_updated: Optional[datetime] = None
     ml_processing_status: Optional[str] = None  # pending, processing, completed, failed
+    editorial_document: Optional[Dict[str, Any]] = None
+    document_version: Optional[int] = None
+    document_status: Optional[str] = None
+    last_refinement: Optional[datetime] = None
 
 
 class StorylineListItem(BaseModel):

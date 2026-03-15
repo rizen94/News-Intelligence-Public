@@ -52,7 +52,7 @@ async def get_domain_storylines(
     domain: str = Depends(validate_domain_dependency),
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(20, ge=1, le=100, description="Items per page"),
-    status: Optional[str] = Query(None, pattern="^(active|archived|draft)$", description="Filter by status")
+    status: Optional[str] = Query(None, description="Filter by status (e.g. active, archived, draft, completed, paused)")
 ):
     """Get paginated list of storylines for a specific domain"""
     try:
@@ -218,7 +218,8 @@ async def get_domain_storyline(
                            status, analysis_summary, quality_score, article_count,
                            last_evolution_at, evolution_count, background_information,
                            context_last_updated,
-                           COALESCE(ml_processing_status, 'completed') as ml_processing_status
+                           COALESCE(ml_processing_status, 'completed') as ml_processing_status,
+                           editorial_document, document_version, document_status, last_refinement
                     FROM {schema}.storylines 
                     WHERE id = %s
                 """, (storyline_id,))
@@ -256,7 +257,7 @@ async def get_domain_storyline(
                     except:
                         pass
                 
-                # storyline row: [0]id [1]title [2]description [3]created_at [4]updated_at [5]status [6]analysis_summary [7]quality_score [8]article_count [9]last_evolution_at [10]evolution_count [11]background_information [12]context_last_updated [13]ml_processing_status
+                # storyline row: [0]id [1]title [2]description [3]created_at [4]updated_at [5]status [6]analysis_summary [7]quality_score [8]article_count [9]last_evolution_at [10]evolution_count [11]background_information [12]context_last_updated [13]ml_processing_status [14]editorial_document [15]document_version [16]document_status [17]last_refinement
                 return StorylineDetailResponse(
                     id=storyline[0],
                     title=storyline[1],
@@ -272,7 +273,11 @@ async def get_domain_storyline(
                     articles=articles,
                     background_information=background_info,
                     context_last_updated=storyline[12],
-                    ml_processing_status=storyline[13] if len(storyline) > 13 else 'completed'
+                    ml_processing_status=storyline[13] if len(storyline) > 13 else 'completed',
+                    editorial_document=storyline[14] if len(storyline) > 14 else None,
+                    document_version=storyline[15] if len(storyline) > 15 else None,
+                    document_status=storyline[16] if len(storyline) > 16 else None,
+                    last_refinement=storyline[17] if len(storyline) > 17 else None,
                 )
                 
         finally:

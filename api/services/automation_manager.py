@@ -23,6 +23,44 @@ import traceback
 # Configure logging
 logger = logging.getLogger(__name__)
 
+# Backlog-driven scheduling: skip empty cycles, run more often when backlog is high
+try:
+    from services.backlog_metrics import (
+        get_all_backlog_counts,
+        SKIP_WHEN_EMPTY,
+        BACKLOG_HIGH_THRESHOLD,
+        BACKLOG_MODE_INTERVAL,
+    )
+except ImportError:
+    get_all_backlog_counts = None
+    SKIP_WHEN_EMPTY = frozenset()
+    BACKLOG_HIGH_THRESHOLD = 200
+    BACKLOG_MODE_INTERVAL = 300
+
+# Persist each automation run to DB so "last 24h" is based on wall-clock time, not API restart
+def _persist_automation_run(phase_name: str, started_at: datetime, finished_at: datetime, success: bool, error_message: Optional[str] = None) -> None:
+    """Write one run to automation_run_history (chronological; survives restart)."""
+    try:
+        from shared.database.connection import get_db_connection
+        conn = get_db_connection()
+        if not conn:
+            return
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO automation_run_history (phase_name, started_at, finished_at, success, error_message)
+                    VALUES (%s, %s, %s, %s, %s)
+                    """,
+                    (phase_name, started_at, finished_at, success, error_message),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.debug("persist automation_run_history: %s", e)
+
+
 # Phases that process batches; re-enqueue when pending work remains (continuous until empty)
 BATCH_PHASES_CONTINUOUS = {
     "ml_processing",
@@ -40,6 +78,15 @@ BATCH_PHASES_CONTINUOUS = {
     "event_extraction",
 }
 _SCHEMAS = ("politics", "finance", "science_tech")
+
+# Phases that constitute "data load"; when none have run recently, downtime loop runs entity organizer
+DATA_LOAD_PHASES = ("rss_processing", "article_processing", "entity_extraction")
+DOWNTIME_IDLE_SECONDS = 300   # Consider "downtime" if no data-load phase ran in last 5 min
+DOWNTIME_ORGANIZER_SLEEP = 45  # Seconds between organizer cycles during downtime
+DOWNTIME_POLL_SLEEP = 30       # Seconds to sleep when data load is active (before rechecking)
+
+# Cap concurrent Ollama/GPU tasks so I/O and DB-bound work are not starved
+MAX_CONCURRENT_OLLAMA_TASKS = 3
 
 class TaskStatus(Enum):
     """Task execution status"""
@@ -95,7 +142,7 @@ PHASE_ESTIMATED_DURATION_SECONDS = {
     "context_sync": 60,   # ~5-10s per 100 contexts (production batch)
     "entity_profile_sync": 120,
     "claim_extraction": 60,   # 50 contexts @ 2-5s each, parallel 5 → ~20-50s
-    "event_tracking": 30,   # 1000 contexts scan ~15-20s (production)
+    "event_tracking": 120,  # 300 contexts/run × 3 domains + chronicle updates, ~1-2 min
     "event_coherence_review": 180,
     "investigation_report_refresh": 300,
     "entity_profile_build": 600,
@@ -107,6 +154,10 @@ PHASE_ESTIMATED_DURATION_SECONDS = {
     "pattern_matching": 90,
     "cross_domain_synthesis": 120,
     "relationship_extraction": 90,
+    "entity_organizer": 180,  # cleanup + relationship extraction
+    "research_topic_refinement": 60,  # pick one topic, submit to finance orchestrator (idle-only)
+    "editorial_document_generation": 300,  # LLM-generate/refine editorial_document on storylines
+    "editorial_briefing_generation": 300,  # LLM-generate/refine editorial_briefing on tracked_events
 }
 
 class AutomationManager:
@@ -118,9 +169,12 @@ class AutomationManager:
         self.tasks: Dict[str, Task] = {}
         self.executor = ThreadPoolExecutor(max_workers=10)
         self.task_queue = asyncio.Queue()
+        self.ollama_semaphore = asyncio.Semaphore(MAX_CONCURRENT_OLLAMA_TASKS)
         self.workers = []
         # Thread-safe queue for coordinator-driven phase requests (run_phase from another thread)
         self._phase_request_queue = queue.Queue()
+        # Optional: callable() -> finance orchestrator, set by main after app.state.finance_orchestrator exists
+        self._get_finance_orchestrator = None
         self.health_check_interval = 30  # seconds
         self.task_timeout = 300  # 5 minutes
         self.max_concurrent_tasks = 8  # More parallel work for full-time utilization
@@ -169,17 +223,17 @@ class AutomationManager:
                 'enabled': True,
                 'priority': TaskPriority.NORMAL,
                 'phase': 2,
-                'depends_on': [],
+                'depends_on': ['context_sync'],
                 'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['claim_extraction'],
             },
-            # PHASE 2.3: Event tracking (contexts -> tracked_events; 6h window, overlapping)
+            # PHASE 2.3: Event tracking (contexts -> tracked_events; drain unlinked backlog)
             'event_tracking': {
-                'interval': 3600,  # 1 hour - max 1000 contexts/run, ~15-20s, catch delayed correlations
+                'interval': 900,  # 15 min - process more contexts per run when backlog is large
                 'last_run': None,
                 'enabled': True,
                 'priority': TaskPriority.NORMAL,
                 'phase': 2,
-                'depends_on': [],
+                'depends_on': ['context_sync'],
                 'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['event_tracking'],
             },
             # PHASE 3: Event coherence review (LLM verifies context-event fit)
@@ -219,7 +273,7 @@ class AutomationManager:
                 'enabled': True,
                 'priority': TaskPriority.NORMAL,
                 'phase': 1,
-                'depends_on': [],
+                'depends_on': ['context_sync'],
                 'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['entity_profile_build'],
             },
             # PHASE 2.2: Pattern recognition (network, temporal, behavioral, event)
@@ -241,6 +295,16 @@ class AutomationManager:
                 'phase': 2,
                 'depends_on': [],
                 'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['relationship_extraction'],
+            },
+            # Entity organizer: cleanup (merge/prune/cap) + relationship extraction; also runs in downtime loop
+            'entity_organizer': {
+                'interval': 600,  # 10 minutes - run after we have entities
+                'last_run': None,
+                'enabled': True,
+                'priority': TaskPriority.NORMAL,
+                'phase': 2,
+                'depends_on': ['entity_profile_sync'],
+                'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['entity_organizer'],
             },
             # PHASE 2: Article Processing (Runs frequently, processes existing articles)
             'article_processing': {
@@ -441,6 +505,26 @@ class AutomationManager:
                 'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['cache_cleanup'],
             },
             
+            # PHASE 10.5: Editorial Document Generation — build/refine editorial_document + editorial_briefing
+            'editorial_document_generation': {
+                'interval': 1800,  # 30 minutes
+                'last_run': None,
+                'enabled': True,
+                'priority': TaskPriority.NORMAL,
+                'phase': 10,
+                'depends_on': ['storyline_processing'],
+                'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['editorial_document_generation'],
+            },
+            'editorial_briefing_generation': {
+                'interval': 1800,  # 30 minutes
+                'last_run': None,
+                'enabled': True,
+                'priority': TaskPriority.NORMAL,
+                'phase': 10,
+                'depends_on': ['event_tracking'],
+                'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['editorial_briefing_generation'],
+            },
+
             # PHASE 11: Digest Generation (Every hour)
             'digest_generation': {
                 'interval': 3600,  # 1 hour
@@ -448,7 +532,7 @@ class AutomationManager:
                 'enabled': True,
                 'priority': TaskPriority.NORMAL,
                 'phase': 11,
-                'depends_on': ['timeline_generation'],
+                'depends_on': ['editorial_document_generation'],
                 'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['digest_generation'],
             },
             
@@ -471,6 +555,18 @@ class AutomationManager:
                 'phase': 12,
                 'depends_on': [],
                 'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['pattern_matching'],
+            },
+
+            # IDLE-ONLY: Research topic refinement (finance) — run when no data load / higher-priority work
+            'research_topic_refinement': {
+                'interval': 3600,  # consider every hour when idle
+                'last_run': None,
+                'enabled': True,
+                'priority': TaskPriority.LOW,
+                'phase': 98,
+                'depends_on': [],
+                'idle_only': True,
+                'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['research_topic_refinement'],
             },
 
             # MAINTENANCE: Data Cleanup (Daily)
@@ -530,7 +626,16 @@ class AutomationManager:
         metrics_collector = asyncio.create_task(self._metrics_collector())
         self.workers.append(metrics_collector)
         
+        # Entity organizer downtime loop: keep cleaning up and generating relationships between data loads
+        entity_organizer_loop = asyncio.create_task(self._entity_organizer_downtime_loop())
+        self.workers.append(entity_organizer_loop)
+        
         logger.info(f"Automation Manager started with {self.max_concurrent_tasks} workers")
+
+        # Keep the event loop running until shutdown (so worker/scheduler tasks keep running).
+        # Without this, run_until_complete(automation.start()) returns and the thread exits.
+        while self.is_running:
+            await asyncio.sleep(1)
         
     async def stop(self):
         """Stop the automation manager gracefully"""
@@ -554,16 +659,52 @@ class AutomationManager:
         phase_name: str,
         domain: Optional[str] = None,
         storyline_id: Optional[int] = None,
+        requested_activity_id: Optional[str] = None,
     ) -> None:
         """
         Request a phase to run (thread-safe). Call from coordinator or API.
         The scheduler will drain this queue and enqueue tasks with metadata.
+        If requested_activity_id is set (e.g. from Monitor trigger), the worker
+        will complete that activity when the task starts so Current activity shows the real task.
         """
         try:
-            self._phase_request_queue.put_nowait((phase_name, domain, storyline_id))
+            self._phase_request_queue.put_nowait((phase_name, domain, storyline_id, requested_activity_id))
         except Exception as e:
             logger.warning("AutomationManager request_phase failed: %s", e)
-        
+
+    def set_finance_orchestrator_getter(self, getter):
+        """Set callable() -> finance orchestrator (used by research_topic_refinement when idle)."""
+        self._get_finance_orchestrator = getter
+
+    def get_phase_request_warning(self, phase_name: str) -> Optional[str]:
+        """
+        If this phase is requested manually (e.g. from Monitor), check whether dependencies
+        have run recently. Returns a warning string if running out of order may process
+        incomplete data; returns None if OK.
+        """
+        if phase_name not in self.schedules:
+            return None
+        schedule = self.schedules[phase_name]
+        depends_on = schedule.get("depends_on") or []
+        if not depends_on:
+            return None
+        now = datetime.now(timezone.utc)
+        unsatisfied = []
+        for dep in depends_on:
+            if dep not in self.schedules:
+                continue
+            dep_schedule = self.schedules[dep]
+            if dep_schedule.get("last_run") is None:
+                unsatisfied.append(f"{dep} (never run)")
+                continue
+            time_since = (now - dep_schedule["last_run"]).total_seconds()
+            need = dep_schedule.get("estimated_duration", 60) * max(0.5, self.metrics.get("load_factor", 1.0))
+            if time_since < need:
+                unsatisfied.append(f"{dep} (run {int(time_since)}s ago)")
+        if not unsatisfied:
+            return None
+        return f"Dependencies may not be satisfied: {', '.join(unsatisfied)}. Task may process incomplete data."
+
     async def _worker(self, worker_id: str):
         """Worker process for task execution"""
         logger.info(f"Worker {worker_id} started")
@@ -585,16 +726,49 @@ class AutomationManager:
         
         logger.info(f"Worker {worker_id} stopped")
         
+    def _bootstrap_initial_tasks(self):
+        """Queue key phases immediately on startup so work starts without waiting for first interval."""
+        now = datetime.now(timezone.utc)
+        # Phases that should run once as soon as we start (no deps, or bootstrap allows)
+        for task_name in ("rss_processing", "health_check"):
+            schedule = self.schedules.get(task_name)
+            if not schedule or not schedule.get("enabled", True):
+                continue
+            if schedule.get("last_run") is not None:
+                continue
+            task = Task(
+                id=f"{task_name}_bootstrap_{int(now.timestamp())}",
+                name=task_name,
+                priority=schedule.get("priority", TaskPriority.NORMAL),
+                status=TaskStatus.PENDING,
+                created_at=now,
+                metadata={"scheduled": True, "phase": schedule.get("phase", 0), "bootstrap": True},
+            )
+            try:
+                self.task_queue.put_nowait(task)
+                schedule["last_run"] = now
+                logger.info("Startup: queued %s so processing begins immediately", task_name)
+            except asyncio.QueueFull:
+                logger.warning("Startup: task queue full, skipped bootstrap %s", task_name)
+
     async def _scheduler(self):
         """Task scheduler with dependency management"""
         logger.info("Scheduler started")
-        
+        # Kick off work immediately on startup (don't wait for first 5s tick)
+        self._bootstrap_initial_tasks()
+
         while self.is_running:
             try:
                 # Drain coordinator-driven phase requests (thread-safe)
                 try:
                     while True:
-                        phase_name, domain, storyline_id = self._phase_request_queue.get_nowait()
+                        item = self._phase_request_queue.get_nowait()
+                        # Support both 3-tuple (legacy) and 4-tuple (with requested_activity_id)
+                        if len(item) == 4:
+                            phase_name, domain, storyline_id, requested_activity_id = item
+                        else:
+                            phase_name, domain, storyline_id = item[0], item[1], item[2]
+                            requested_activity_id = None
                         if phase_name not in self.schedules:
                             logger.debug("request_phase: unknown phase %s, skipping", phase_name)
                             continue
@@ -605,7 +779,11 @@ class AutomationManager:
                             priority=schedule.get("priority", TaskPriority.NORMAL),
                             status=TaskStatus.PENDING,
                             created_at=datetime.now(timezone.utc),
-                            metadata={"domain": domain, "storyline_id": storyline_id},
+                            metadata={
+                                "domain": domain,
+                                "storyline_id": storyline_id,
+                                "requested_activity_id": requested_activity_id,
+                            },
                         )
                         await self.task_queue.put(task)
                         logger.info("Governor requested phase: %s (domain=%s, storyline_id=%s)", phase_name, domain, storyline_id)
@@ -613,6 +791,12 @@ class AutomationManager:
                     pass
 
                 current_time = datetime.now(timezone.utc)
+                backlog_counts: Dict[str, int] = {}
+                if get_all_backlog_counts:
+                    try:
+                        backlog_counts = get_all_backlog_counts()
+                    except Exception as e:
+                        logger.debug("Backlog counts unavailable: %s", e)
                 
                 # Sort tasks by phase for proper sequencing
                 sorted_tasks = sorted(self.schedules.items(), key=lambda x: x[1].get('phase', 0))
@@ -657,19 +841,32 @@ class AutomationManager:
                     # Increase parallel processing
                     self.max_concurrent_tasks = min(10, self.max_concurrent_tasks + 1)
                 
-                # Process each phase
+                # Process parallel groups first (phase order)
                 for phase in sorted(phase_groups.keys()):
                     phase_data = phase_groups[phase]
-                    
-                    # Process parallel groups first
                     for parallel_group, tasks in phase_data['parallel_groups'].items():
-                        if self._should_run_parallel_group(parallel_group, tasks, current_time):
+                        if self._should_run_parallel_group(parallel_group, tasks, current_time, backlog_counts):
                             await self._execute_parallel_phase(parallel_group)
-                    
-                    # Process sequential tasks
-                    for task_name, schedule in phase_data['sequential_tasks']:
-                        if self._should_run_task(task_name, schedule, current_time):
-                            await self._create_and_queue_task(task_name, schedule, current_time)
+
+                # Sequential tasks: collect all runnable across phases, then queue by priority then phase then backlog
+                all_runnable: List[Tuple[str, Dict[str, Any]]] = []
+                for phase in sorted(phase_groups.keys()):
+                    phase_data = phase_groups[phase]
+                    runnable = [
+                        (task_name, schedule)
+                        for task_name, schedule in phase_data['sequential_tasks']
+                        if self._should_run_task(task_name, schedule, current_time, backlog_counts)
+                    ]
+                    all_runnable.extend(runnable)
+                for task_name, schedule in sorted(
+                    all_runnable,
+                    key=lambda x: (
+                        schedule.get('priority', TaskPriority.NORMAL).value,
+                        schedule.get('phase', 0),
+                        -backlog_counts.get(x[0], 0),
+                    ),
+                ):
+                    await self._create_and_queue_task(task_name, schedule, current_time)
                 
                 await asyncio.sleep(5)  # Check every 5 seconds for more continuous iteration
                 
@@ -679,32 +876,56 @@ class AutomationManager:
         
         logger.info("Scheduler stopped")
     
-    def _should_run_parallel_group(self, parallel_group: str, tasks: List[Tuple[str, Dict]], current_time: datetime) -> bool:
+    def _should_run_parallel_group(
+        self,
+        parallel_group: str,
+        tasks: List[Tuple[str, Dict]],
+        current_time: datetime,
+        backlog_counts: Optional[Dict[str, int]] = None,
+    ) -> bool:
         """Check if parallel group should run"""
         if not tasks:
             return False
-        
-        # Check if any task in the group should run
+        backlog_counts = backlog_counts or {}
         for task_name, schedule in tasks:
-            if self._should_run_task(task_name, schedule, current_time):
+            if self._should_run_task(task_name, schedule, current_time, backlog_counts):
                 return True
         return False
-    
-    def _should_run_task(self, task_name: str, schedule: Dict[str, Any], current_time: datetime) -> bool:
-        """Check if individual task should run"""
-        # Check dependencies first
+
+    def _should_run_task(
+        self,
+        task_name: str,
+        schedule: Dict[str, Any],
+        current_time: datetime,
+        backlog_counts: Optional[Dict[str, int]] = None,
+    ) -> bool:
+        """Check if individual task should run. Uses backlog: skip when empty, shorten interval when backlog high."""
         if not self._check_dependencies(task_name, schedule):
             return False
-            
-        # Calculate adaptive interval
+
+        # Idle-only phases (e.g. research_topic_refinement) run only when no data load is active
+        if schedule.get("idle_only") and not self._is_system_idle():
+            return False
+
+        backlog_counts = backlog_counts or {}
+        backlog = backlog_counts.get(task_name, 0)
+
+        # Skip phases that have no work (avoid empty cycles)
+        if task_name in SKIP_WHEN_EMPTY and backlog == 0:
+            return False
+
         base_interval = schedule['interval']
         adaptive_interval = self._calculate_adaptive_interval(task_name, base_interval)
-        
-        # Check if task should run based on adaptive interval
-        if (schedule['last_run'] is None or 
-            (current_time - schedule['last_run']).total_seconds() >= adaptive_interval):
-            
-            # Check if dependencies are satisfied
+        # Backlog mode: run more often when there is a lot of pending work
+        if backlog > BACKLOG_HIGH_THRESHOLD:
+            effective_interval = min(adaptive_interval, BACKLOG_MODE_INTERVAL)
+        else:
+            effective_interval = adaptive_interval
+
+        if (
+            schedule['last_run'] is None
+            or (current_time - schedule['last_run']).total_seconds() >= effective_interval
+        ):
             if self._are_dependencies_satisfied(task_name, schedule, current_time):
                 return True
         return False
@@ -739,28 +960,36 @@ class AutomationManager:
         )
     
     def _are_dependencies_satisfied(self, task_name: str, schedule: Dict[str, Any], current_time: datetime) -> bool:
-        """Check if all dependencies have been satisfied recently"""
+        """Check if all dependencies have been satisfied recently.
+        When this task has never run, treat 'dependency never run' as satisfied so we queue
+        both (phase order ensures the dependency runs first); otherwise nothing would ever
+        call the dependent.
+        """
         depends_on = schedule.get('depends_on', [])
-        
+        this_never_run = schedule.get('last_run') is None
+
         for dep_task in depends_on:
             if dep_task not in self.schedules:
                 continue
-                
+
             dep_schedule = self.schedules[dep_task]
-            if dep_schedule['last_run'] is None:
+            dep_never_run = dep_schedule['last_run'] is None
+
+            # Bootstrap: if both this task and the dependency have never run, allow queuing
+            # so the scheduler queues both; phase order queues the dependency first.
+            if this_never_run and dep_never_run:
+                continue
+
+            if dep_never_run:
                 return False
-                
+
             # Check if dependency completed within reasonable time
             time_since_dep = (current_time - dep_schedule['last_run']).total_seconds()
             dep_duration = dep_schedule.get('estimated_duration', 60)
-            
-            # Apply load factor for adaptive timing
             adjusted_duration = dep_duration * self.metrics['load_factor']
-            
-            # Dependencies should have completed at least their estimated duration ago
             if time_since_dep < adjusted_duration:
                 return False
-                
+
         return True
     
     def _can_run_parallel(self, task_name: str) -> bool:
@@ -966,13 +1195,18 @@ class AutomationManager:
                     return
             except ImportError:
                 pass
-        
+            await self.ollama_semaphore.acquire()
+
         logger.info(f"Worker {worker_id} executing task: {task.name}")
         task.started_at = datetime.now(timezone.utc)
         try:
             from services.activity_feed_service import get_activity_feed
+            feed = get_activity_feed()
+            requested_id = (task.metadata or {}).get("requested_activity_id")
+            if requested_id:
+                feed.complete(requested_id, success=True)
             message = self._activity_message(task)
-            get_activity_feed().add_current(
+            feed.add_current(
                 task.id,
                 message,
                 task_name=task.name,
@@ -1006,6 +1240,8 @@ class AutomationManager:
                 await self._execute_pattern_recognition(task)
             elif task.name == 'relationship_extraction':
                 await self._execute_relationship_extraction(task)
+            elif task.name == 'entity_organizer':
+                await self._execute_entity_organizer(task)
             elif task.name == 'digest_generation':
                 await self._execute_digest_generation(task)
             elif task.name == 'data_cleanup':
@@ -1052,6 +1288,12 @@ class AutomationManager:
                 await self._execute_story_state_triggers(task)
             elif task.name == 'pattern_matching':
                 await self._execute_pattern_matching(task)
+            elif task.name == 'research_topic_refinement':
+                await self._execute_research_topic_refinement(task)
+            elif task.name == 'editorial_document_generation':
+                await self._execute_editorial_document_generation(task)
+            elif task.name == 'editorial_briefing_generation':
+                await self._execute_editorial_briefing_generation(task)
             else:
                 raise ValueError(f"Unknown task type: {task.name}")
             
@@ -1059,14 +1301,17 @@ class AutomationManager:
             task.status = TaskStatus.COMPLETED
             task.completed_at = datetime.now(timezone.utc)
             self.metrics['tasks_completed'] += 1
-            
+            if task.name in self.schedules:
+                self.schedules[task.name]['last_run'] = task.completed_at
+            _persist_automation_run(task.name, task.started_at, task.completed_at, True, None)
+
             # Calculate processing time
             processing_time = (task.completed_at - task.started_at).total_seconds()
             self._update_avg_processing_time(processing_time)
-            
+
             # Update processing history for adaptive timing
             self._update_processing_history(task.name, processing_time)
-            
+
             logger.info(f"Task {task.name} completed in {processing_time:.2f}s (Phase {task.metadata.get('phase', 0)})")
 
             # Continuous iteration: re-enqueue same phase when work remains so we run until empty
@@ -1077,14 +1322,30 @@ class AutomationManager:
                         logger.debug("Re-enqueued %s (pending work remains)", task.name)
                 except Exception as e:
                     logger.debug("Re-enqueue check for %s: %s", task.name, e)
-            
+
+            # Chain: request any phase that depends on this one so the pipeline keeps moving
+            for other_name, other_sched in self.schedules.items():
+                if not other_sched.get("enabled", True):
+                    continue
+                deps = other_sched.get("depends_on") or []
+                if task.name in deps:
+                    try:
+                        self.request_phase(other_name)
+                        logger.info("Chained: requested %s (depends on %s)", other_name, task.name)
+                    except Exception as e:
+                        logger.debug("Chain request %s: %s", other_name, e)
+
         except Exception as e:
             # Handle task failure
             task.status = TaskStatus.FAILED
             task.error_message = str(e)
             task.retry_count += 1
             self.metrics['tasks_failed'] += 1
-            
+            finished_at = datetime.now(timezone.utc)
+            if task.name in self.schedules:
+                self.schedules[task.name]['last_run'] = finished_at
+            _persist_automation_run(task.name, task.started_at, finished_at, False, str(e))
+
             logger.error(f"Task {task.name} failed: {e}")
             
             # Retry if under max retries
@@ -1095,6 +1356,8 @@ class AutomationManager:
                 logger.info(f"Retrying task {task.name} (attempt {task.retry_count + 1})")
         
         finally:
+            if task.name in _OLLAMA_TASKS:
+                self.ollama_semaphore.release()
             try:
                 from services.activity_feed_service import get_activity_feed
                 get_activity_feed().complete(
@@ -1133,6 +1396,8 @@ class AutomationManager:
             return "Cross-domain synthesis"
         if name == "relationship_extraction":
             return "Relationship extraction"
+        if name == "entity_organizer":
+            return "Entity organizer (cleanup + relationships)"
         if name == "story_state_triggers":
             return "Processing story state triggers"
         if name == "entity_enrichment":
@@ -1250,8 +1515,8 @@ class AutomationManager:
             pass
         try:
             from services.event_tracking_service import run_event_tracking_batch
-            # Production: context_limit 1000 total, ~15-20s per run, 6h overlapping window
-            total = await run_event_tracking_batch(limit=100)
+            # Higher limit to drain unlinked-context backlog; ~30 contexts/batch, 3 domains
+            total = await run_event_tracking_batch(limit=300)
             if total > 0:
                 logger.info(f"Event tracking: {total} chronicle entries added")
         except Exception as e:
@@ -1265,13 +1530,19 @@ class AutomationManager:
                 return
         except Exception:
             pass
-        from services.investigation_report_service import refresh_stale_investigation_reports
+        from services.investigation_report_service import (
+            create_initial_reports_for_new_events,
+            refresh_stale_investigation_reports,
+        )
         try:
+            created = await create_initial_reports_for_new_events(limit=5)
             refreshed = await refresh_stale_investigation_reports(limit=3)
-            if refreshed > 0:
-                logger.info(f"Investigation report refresh: {refreshed} reports updated")
+            if created > 0 or refreshed > 0:
+                logger.info(
+                    f"Investigation report refresh: {created} new, {refreshed} updated"
+                )
             else:
-                logger.debug("Investigation report refresh: no stale reports")
+                logger.debug("Investigation report refresh: no new or stale reports")
         except Exception as e:
             logger.warning(f"Investigation report refresh failed: {e}")
 
@@ -1385,6 +1656,77 @@ class AutomationManager:
         except Exception as e:
             logger.warning("Pattern matching failed: %s", e)
 
+    async def _execute_research_topic_refinement(self, task: Task):
+        """Idle-only: pick one finance research topic and submit a refinement (analysis) at low priority."""
+        getter = getattr(self, "_get_finance_orchestrator", None)
+        if not getter or not callable(getter):
+            logger.debug("Research topic refinement: no finance orchestrator getter")
+            return
+        orch = getter()
+        if not orch:
+            logger.debug("Research topic refinement: finance orchestrator not available")
+            return
+        conn = await self._get_db_connection()
+        if not conn:
+            logger.warning("Research topic refinement: no DB connection")
+            return
+        try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    SELECT id, query, topic, date_range_start, date_range_end
+                    FROM finance.research_topics
+                    ORDER BY last_refined_at NULLS FIRST, updated_at ASC
+                    LIMIT 1
+                    """
+                )
+                row = cur.fetchone()
+            if not row:
+                logger.debug("Research topic refinement: no topics to refine")
+                return
+            topic_id = row["id"]
+            query = row["query"]
+            topic = row["topic"] or "gold"
+            start_date = str(row["date_range_start"]) if row.get("date_range_start") else None
+            end_date = str(row["date_range_end"]) if row.get("date_range_end") else None
+            from domains.finance.orchestrator_types import TaskType, TaskPriority as FinTaskPriority
+            params = {"query": query, "topic": topic}
+            if start_date:
+                params["start_date"] = start_date
+            if end_date:
+                params["end_date"] = end_date
+            task_id = orch.submit_task(
+                TaskType.analysis,
+                params,
+                priority=FinTaskPriority.low,
+                reason="Idle-time research topic refinement",
+            )
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE finance.research_topics
+                    SET last_refined_task_id = %s, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = %s
+                    """,
+                    (task_id, topic_id),
+                )
+            conn.commit()
+            logger.info(
+                "Research topic refinement: topic_id=%s submitted as task_id=%s (low priority)",
+                topic_id, task_id,
+            )
+        except Exception as e:
+            logger.warning("Research topic refinement failed: %s", e)
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
     async def _execute_relationship_extraction(self, task: Task):
         """Extract entity relationships from context co-mentions -> entity_relationships (P2)."""
         try:
@@ -1394,6 +1736,70 @@ class AutomationManager:
                 logger.info("Relationship extraction: %d relationship(s) inserted", result["extracted"])
         except Exception as e:
             logger.warning("Relationship extraction failed: %s", e)
+
+    async def _execute_entity_organizer(self, task: Task):
+        """Run entity organizer: cleanup (merge/prune/cap) + relationship extraction. Part of data pipeline."""
+        try:
+            from services.entity_organizer_service import run_cycle
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(
+                self.executor,
+                lambda: run_cycle(domain_key=None, relationship_limit=100),
+            )
+            total_actions = result.get("cleanup", {}).get("total_actions", 0)
+            rel = result.get("relationships_extracted", 0)
+            if total_actions or rel:
+                logger.info(
+                    "Entity organizer: cleanup %s actions, %s relationship(s) extracted",
+                    total_actions, rel,
+                )
+            if result.get("errors"):
+                logger.debug("Entity organizer errors: %s", result["errors"])
+        except Exception as e:
+            logger.warning("Entity organizer failed: %s", e)
+
+    def _is_data_load_active(self) -> bool:
+        """True if any data-load phase (rss, article_processing, entity_extraction) ran recently."""
+        now = datetime.now(timezone.utc)
+        for phase in DATA_LOAD_PHASES:
+            s = self.schedules.get(phase)
+            if not s or s.get("last_run") is None:
+                continue
+            if (now - s["last_run"]).total_seconds() < DOWNTIME_IDLE_SECONDS:
+                return True
+        return False
+
+    def _is_system_idle(self) -> bool:
+        """True when no data-load phase ran recently — safe to run idle-only work (e.g. research topic refinement)."""
+        return not self._is_data_load_active()
+
+    async def _entity_organizer_downtime_loop(self):
+        """During downtime between data loads, loop: cleanup + relationship extraction (vectors between entities)."""
+        logger.info("Entity organizer downtime loop started")
+        while self.is_running:
+            try:
+                if self._is_data_load_active():
+                    await asyncio.sleep(DOWNTIME_POLL_SLEEP)
+                    continue
+                from services.entity_organizer_service import run_cycle
+                result = await asyncio.get_event_loop().run_in_executor(
+                    self.executor,
+                    lambda: run_cycle(domain_key=None, relationship_limit=50),
+                )
+                total_actions = result.get("cleanup", {}).get("total_actions", 0)
+                rel = result.get("relationships_extracted", 0)
+                if total_actions or rel:
+                    logger.info(
+                        "Entity organizer (downtime): cleanup %s actions, %s relationship(s)",
+                        total_actions, rel,
+                    )
+                await asyncio.sleep(DOWNTIME_ORGANIZER_SLEEP)
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.warning("Entity organizer downtime loop: %s", e)
+                await asyncio.sleep(DOWNTIME_ORGANIZER_SLEEP)
+        logger.info("Entity organizer downtime loop stopped")
 
     async def _execute_pattern_recognition(self, task: Task):
         """Discover patterns (network, temporal, behavioral, event) and persist to pattern_discoveries (Phase 2.2)."""
@@ -1412,6 +1818,25 @@ class AutomationManager:
         except Exception as e:
             logger.warning(f"Pattern recognition failed: {e}")
         
+    async def _execute_editorial_document_generation(self, task: Task):
+        """Generate/refine editorial_document for active storylines across all domains."""
+        from services.editorial_document_service import generate_storyline_editorial
+        for domain in ("politics", "finance", "science-tech"):
+            try:
+                result = await generate_storyline_editorial(domain, limit=5)
+                logger.info("Editorial doc generation (%s): %s", domain, result)
+            except Exception as e:
+                logger.warning("editorial_document_generation (%s): %s", domain, e)
+
+    async def _execute_editorial_briefing_generation(self, task: Task):
+        """Generate/refine editorial_briefing for tracked events."""
+        from services.editorial_document_service import generate_event_editorial
+        try:
+            result = await generate_event_editorial(limit=5)
+            logger.info("Editorial briefing generation: %s", result)
+        except Exception as e:
+            logger.warning("editorial_briefing_generation: %s", e)
+
     async def _execute_digest_generation(self, task: Task):
         """Execute digest generation task"""
         from services.digest_automation_service import get_digest_service
@@ -1615,15 +2040,18 @@ class AutomationManager:
         
         for article_id, content in articles:
             try:
-                # Analyze sentiment
                 sentiment = await ai_service.analyze_sentiment(content)
                 
-                # Update article with sentiment score
+                score = sentiment.get('score', 0)
+                label = sentiment.get('label', '')
+                # Store both score and label (preserving the qualitative assessment)
                 cursor.execute("""
                     UPDATE articles 
-                    SET sentiment_score = %s, updated_at = CURRENT_TIMESTAMP
+                    SET sentiment_score = %s,
+                        sentiment_label = COALESCE(%s, sentiment_label),
+                        updated_at = CURRENT_TIMESTAMP
                     WHERE id = %s
-                """, (sentiment.get('score', 0), article_id))
+                """, (score, label or None, article_id))
                 
                 analyzed_count += 1
             except Exception as e:
@@ -1636,21 +2064,45 @@ class AutomationManager:
         logger.info(f"Sentiment analysis completed: {analyzed_count} articles analyzed")
         
     async def _execute_storyline_processing(self, task: Task):
-        """Execute storyline processing task"""
+        """Execute storyline processing task — uses ML enrichments when generating summaries."""
         from services.storyline_service import get_storyline_service
         
         storyline_service = get_storyline_service()
         
-        # Process storylines that need updates
         storylines = await storyline_service.get_all_storylines()
         processed_count = 0
         
         for storyline in storylines:
             try:
-                # Generate summary if needed
                 if not storyline.get('master_summary') or len(storyline.get('master_summary', '')) < 100:
                     summary = await storyline_service.generate_storyline_summary(storyline['id'])
                     processed_count += 1
+
+                    # Also seed editorial_document from the summary if it's empty
+                    sid = storyline['id']
+                    if summary and not storyline.get('editorial_document'):
+                        try:
+                            from shared.database.connection import get_db_connection
+                            conn = get_db_connection()
+                            if conn:
+                                with conn.cursor() as cur:
+                                    cur.execute("""
+                                        UPDATE storylines
+                                        SET editorial_document = jsonb_build_object(
+                                                'lede', LEFT(%s, 300),
+                                                'developments', '[]'::jsonb,
+                                                'analysis', %s,
+                                                'outlook', '',
+                                                'generated_at', NOW()::text
+                                            ),
+                                            document_version = COALESCE(document_version, 0) + 1,
+                                            document_status = 'auto_seeded'
+                                        WHERE id = %s AND (editorial_document IS NULL OR editorial_document = '{}'::jsonb)
+                                    """, (summary, summary, sid))
+                                conn.commit()
+                                conn.close()
+                        except Exception as ed_err:
+                            logger.debug("Seed editorial_document for %s: %s", sid, ed_err)
                     
             except Exception as e:
                 logger.error(f"Error processing storyline {storyline['id']}: {e}")
@@ -1727,18 +2179,17 @@ class AutomationManager:
         logger.info(f"Article processing completed: {processed_count} articles processed")
         
     async def _execute_entity_extraction(self, task: Task):
-        """Execute entity extraction task"""
+        """Execute entity extraction task — stores entity list with contextual excerpts."""
         from services.ai_processing_service import get_ai_service
         
         ai_service = get_ai_service()
         
-        # Extract entities from recent articles
         conn = await self._get_db_connection()
         cursor = conn.cursor()
         
         cursor.execute("""
-            SELECT id, content FROM articles 
-            WHERE entities IS NULL OR entities = '{}'
+            SELECT id, content, title FROM articles 
+            WHERE (entities IS NULL OR entities = '{}')
             AND content IS NOT NULL 
             AND LENGTH(content) > 100
             ORDER BY created_at DESC 
@@ -1748,12 +2199,21 @@ class AutomationManager:
         articles = cursor.fetchall()
         extracted_count = 0
         
-        for article_id, content in articles:
+        for article_id, content, title in articles:
             try:
-                # Extract entities
                 entities = await ai_service.extract_entities(content)
                 
-                # Update article with entities
+                # Enrich entities with contextual excerpts from the article
+                if isinstance(entities, list):
+                    for ent in entities:
+                        if isinstance(ent, dict) and ent.get("name"):
+                            name = ent["name"]
+                            idx = content.lower().find(name.lower())
+                            if idx >= 0:
+                                start = max(0, idx - 50)
+                                end = min(len(content), idx + len(name) + 100)
+                                ent["context_excerpt"] = content[start:end].strip()
+                
                 cursor.execute("""
                     UPDATE articles 
                     SET entities = %s, updated_at = CURRENT_TIMESTAMP
@@ -1838,17 +2298,33 @@ class AutomationManager:
             conn.close()
 
     async def _execute_story_continuation_v5(self, task: Task):
-        """v5.0 -- Match events to existing storylines and manage lifecycle states."""
+        """v5.0 -- Match events to existing storylines and manage lifecycle states. Runs per domain (storylines/story_entity_index are per-schema)."""
         from services.story_continuation_service import StoryContinuationService
 
         conn = await self._get_db_connection()
+        if not conn:
+            logger.warning("Story continuation: no DB connection")
+            return
         try:
-            svc = StoryContinuationService(conn)
-            stats = await svc.process_recent_events(limit=30)
-            svc.update_lifecycle_states()
+            total = {"checked": 0, "linked": 0, "flagged": 0}
+            for schema in ("politics", "finance", "science_tech"):
+                try:
+                    svc = StoryContinuationService(conn, schema=schema)
+                    stats = await svc.process_recent_events(limit=30)
+                    svc.update_lifecycle_states()
+                    total["checked"] += stats["checked"]
+                    total["linked"] += stats["linked"]
+                    total["flagged"] += stats["flagged"]
+                    if stats["checked"] or stats["linked"] or stats["flagged"]:
+                        logger.debug(
+                            "Story continuation [%s]: checked=%s linked=%s flagged=%s",
+                            schema, stats["checked"], stats["linked"], stats["flagged"],
+                        )
+                except Exception as e:
+                    logger.warning("Story continuation failed for schema %s: %s", schema, e)
             logger.info(
                 f"v5 story continuation completed: "
-                f"checked={stats['checked']}, linked={stats['linked']}, flagged={stats['flagged']}"
+                f"checked={total['checked']}, linked={total['linked']}, flagged={total['flagged']}"
             )
         finally:
             conn.close()
@@ -1935,22 +2411,47 @@ class AutomationManager:
         logger.info(f"Timeline generation completed: {generated_count} timelines generated")
     
     async def _execute_basic_summary_generation(self, task: Task):
-        """Execute basic summary generation task"""
+        """Execute basic summary generation — also seeds editorial_document when empty."""
         from services.progressive_enhancement_service import get_progressive_service
         
         progressive_service = get_progressive_service()
         
-        # Get storylines that need basic summaries
         storylines = await progressive_service.storyline_service.get_all_storylines()
         generated_count = 0
         
         for storyline in storylines:
             try:
-                # Check if storyline needs basic summary
                 if not storyline.get('master_summary') or len(storyline.get('master_summary', '')) < 100:
                     result = await progressive_service.generate_basic_summary(storyline['id'])
                     if result.get('success'):
                         generated_count += 1
+
+                        # Seed editorial_document from the basic summary if empty
+                        summary_text = result.get('summary', '')
+                        sid = storyline['id']
+                        if summary_text and not storyline.get('editorial_document'):
+                            try:
+                                from shared.database.connection import get_db_connection
+                                conn = get_db_connection()
+                                if conn:
+                                    with conn.cursor() as cur:
+                                        cur.execute("""
+                                            UPDATE storylines
+                                            SET editorial_document = jsonb_build_object(
+                                                    'lede', LEFT(%s, 300),
+                                                    'developments', '[]'::jsonb,
+                                                    'analysis', %s,
+                                                    'outlook', '',
+                                                    'generated_at', NOW()::text
+                                                ),
+                                                document_version = COALESCE(document_version, 0) + 1,
+                                                document_status = 'auto_seeded'
+                                            WHERE id = %s AND (editorial_document IS NULL OR editorial_document = '{}'::jsonb)
+                                        """, (summary_text, summary_text, sid))
+                                    conn.commit()
+                                    conn.close()
+                            except Exception as ed_err:
+                                logger.debug("Seed editorial_document for %s: %s", sid, ed_err)
                         
             except Exception as e:
                 logger.error(f"Error generating basic summary for storyline {storyline['id']}: {e}")
@@ -2340,8 +2841,8 @@ class AutomationManager:
         return False
 
     def get_status(self) -> Dict[str, Any]:
-        """Get automation status"""
-        return {
+        """Get automation status. Includes backlog_counts when backlog_metrics is available."""
+        out = {
             'is_running': self.is_running,
             'active_workers': len([w for w in self.workers if not w.done()]),
             'queue_size': self.task_queue.qsize(),
@@ -2349,6 +2850,12 @@ class AutomationManager:
             'schedules': self.schedules,
             'recent_tasks': list(self.tasks.values())[-10:]  # Last 10 tasks
         }
+        if get_all_backlog_counts:
+            try:
+                out['backlog_counts'] = get_all_backlog_counts()
+            except Exception:
+                pass
+        return out
     
     def get_metrics(self) -> Dict[str, Any]:
         """Get detailed metrics"""

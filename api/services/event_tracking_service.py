@@ -125,7 +125,7 @@ async def discover_events_from_contexts(
         return {"events_created": 0, "message": "No unlinked contexts to analyze"}
 
     articles_text = "\n".join(
-        f"ID={r[0]} | {r[1] or '(no title)'} | {_strip_html((r[2] or '')[:200])}"
+        f"ID={r[0]} | {r[1] or '(no title)'} | {_strip_html((r[2] or '')[:600])}"
         for r in rows
     )
 
@@ -198,12 +198,27 @@ async def discover_events_from_contexts(
                     domains = [domain_key]
                 else:
                     domains = list({context_id_to_domain[cid] for cid in valid_ids if cid in context_id_to_domain})
+
+                # Build initial editorial briefing from LLM summary
+                initial_briefing = summary[:500] if summary else None
+                initial_briefing_json = json.dumps({
+                    "headline": event_name,
+                    "summary": summary or "",
+                    "impact": "",
+                    "what_next": "",
+                    "key_participants": [],
+                }) if summary else None
+
                 cur.execute("""
                     INSERT INTO intelligence.tracked_events
-                    (event_type, event_name, start_date, geographic_scope, key_participant_entity_ids, milestones, domain_keys)
-                    VALUES (%s, %s, %s, %s, '[]', '[]', %s)
+                    (event_type, event_name, start_date, geographic_scope,
+                     key_participant_entity_ids, milestones, domain_keys,
+                     editorial_briefing, editorial_briefing_json,
+                     briefing_version, briefing_status)
+                    VALUES (%s, %s, %s, %s, '[]', '[]', %s, %s, %s, 1, 'draft')
                     RETURNING id
-                """, (event_type, event_name, start, geo, domains))
+                """, (event_type, event_name, start, geo, domains,
+                      initial_briefing, initial_briefing_json))
                 event_id = cur.fetchone()[0]
 
                 developments = [{"context_id": cid, "type": "initial"} for cid in valid_ids]
@@ -249,11 +264,11 @@ async def discover_events_from_contexts(
 EVENT_DISCOVERY_DOMAINS = ("politics", "finance", "science_tech")
 
 
-async def run_event_tracking_batch(limit: int = 50) -> int:
+async def run_event_tracking_batch(limit: int = 300) -> int:
     """
     Batch wrapper called by the automation manager.
-    Discovers new events per domain (so finance/politics/science_tech get correct domain_keys),
-    then updates chronicles for existing ones.
+    Discovers new events per domain (unlinked contexts in batches of 30), then updates
+    chronicles for existing events. Run every 15 min with limit=300 to drain backlog.
     Returns total number of chronicle entries added.
     """
     batch_size = 30  # small enough for 8B model to return valid JSON
@@ -306,7 +321,7 @@ async def _update_existing_event_chronicles(limit: int = 20) -> int:
         for event_id, event_name, event_type, domain_keys, last_update in events:
             with conn.cursor() as cur:
                 cur.execute("""
-                    SELECT c.id, c.title
+                    SELECT c.id, c.title, LEFT(c.content, 400)
                     FROM intelligence.contexts c
                     WHERE c.created_at > COALESCE(%s, '2020-01-01'::date)
                       AND (c.title ILIKE %s OR c.content ILIKE %s)
@@ -320,13 +335,37 @@ async def _update_existing_event_chronicles(limit: int = 20) -> int:
                 new_contexts = cur.fetchall()
 
             if new_contexts:
-                developments = [{"context_id": c[0], "type": "update", "title": c[1]} for c in new_contexts]
+                developments = [
+                    {"context_id": c[0], "type": "update", "title": c[1], "excerpt": (c[2] or "")[:200]}
+                    for c in new_contexts
+                ]
+
+                # Build on prior analysis instead of starting empty
+                prior_analysis = {}
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        SELECT analysis FROM intelligence.event_chronicles
+                        WHERE event_id = %s ORDER BY update_date DESC LIMIT 1
+                    """, (event_id,))
+                    prev = cur.fetchone()
+                    if prev and prev[0] and isinstance(prev[0], dict):
+                        prior_analysis = prev[0]
+
+                new_titles = [c[1] for c in new_contexts if c[1]]
+                analysis = {
+                    "summary": prior_analysis.get("summary", ""),
+                    "context_count": prior_analysis.get("context_count", 0) + len(new_contexts),
+                    "latest_developments": "; ".join(new_titles[:5]),
+                    "prior_analysis_carried_forward": True,
+                }
+
                 with conn.cursor() as cur:
                     cur.execute("""
                         INSERT INTO intelligence.event_chronicles
                         (event_id, update_date, developments, analysis, predictions, momentum_score)
-                        VALUES (%s, CURRENT_DATE, %s, '{}', '[]', %s)
-                    """, (event_id, json.dumps(developments), min(1.0, len(new_contexts) * 0.1)))
+                        VALUES (%s, CURRENT_DATE, %s, %s, '[]', %s)
+                    """, (event_id, json.dumps(developments), json.dumps(analysis),
+                          min(1.0, len(new_contexts) * 0.1)))
                 updates += 1
 
         conn.commit()

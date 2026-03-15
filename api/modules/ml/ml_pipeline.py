@@ -370,19 +370,35 @@ class MLPipeline:
             """)
             
             stats = cursor.fetchone()
+
+            # Get recently processed article titles for context
+            cursor.execute("""
+                SELECT title, source_domain, processing_status
+                FROM articles
+                WHERE processing_status = 'ml_processed'
+                ORDER BY updated_at DESC
+                LIMIT 5
+            """)
+            recent = [
+                {"title": r[0], "source": r[1], "status": r[2]}
+                for r in cursor.fetchall()
+            ]
             
             # Get ML service status
             ml_status = self.ml_service.get_service_status()
             
             conn.close()
             
+            pending = stats[0] - stats[1]
             return {
                 "database_stats": {
                     "total_articles": stats[0],
                     "ml_processed": stats[1],
                     "with_summaries": stats[2],
-                    "with_ml_data": stats[3]
+                    "with_ml_data": stats[3],
+                    "pending_processing": pending,
                 },
+                "recently_processed": recent,
                 "ml_service_status": ml_status,
                 "checked_at": datetime.now().isoformat()
             }

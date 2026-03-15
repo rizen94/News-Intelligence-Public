@@ -70,7 +70,7 @@ def _insert_weekly_digest(
     week_end: date,
     weekly_briefing: Dict[str, Any],
 ) -> Optional[str]:
-    """Map weekly_briefing to weekly_digests columns and INSERT. Returns digest_id or None."""
+    """Map weekly_briefing to weekly_digests columns and INSERT. Enriches with editorial ledes."""
     if not weekly_briefing or "error" in weekly_briefing:
         return None
     summary = weekly_briefing.get("weekly_summary") or {}
@@ -84,12 +84,36 @@ def _insert_weekly_digest(
         return None
     try:
         with conn.cursor() as cur:
+            # Pull editorial ledes from storylines updated this week
+            editorial_suggestions = []
+            for schema in ("politics", "finance", "science_tech"):
+                try:
+                    cur.execute(f"""
+                        SELECT id, title, editorial_document->>'lede' as lede
+                        FROM {schema}.storylines
+                        WHERE updated_at >= %s
+                          AND editorial_document IS NOT NULL
+                          AND editorial_document->>'lede' IS NOT NULL
+                          AND editorial_document->>'lede' != ''
+                        ORDER BY updated_at DESC
+                        LIMIT 5
+                    """, (week_start,))
+                    for row in cur.fetchall():
+                        editorial_suggestions.append({
+                            "domain": schema.replace("_", "-"),
+                            "storyline_id": row[0],
+                            "title": row[1],
+                            "lede": row[2],
+                        })
+                except Exception:
+                    pass
+
             cur.execute(
                 """
                 INSERT INTO weekly_digests
                 (week_start, week_end, total_articles_analyzed, new_stories_suggested,
                  existing_stories_updated, top_trending_topics, story_suggestions, quality_metrics)
-                VALUES (%s, %s, %s, 0, 0, %s, '[]'::jsonb, %s)
+                VALUES (%s, %s, %s, 0, 0, %s, %s, %s)
                 RETURNING digest_id
                 """,
                 (
@@ -97,6 +121,7 @@ def _insert_weekly_digest(
                     week_end,
                     total_articles,
                     json.dumps(top_trending),
+                    json.dumps(editorial_suggestions),
                     json.dumps(quality_metrics),
                 ),
             )

@@ -9,6 +9,7 @@ import os
 import sys
 import logging
 import threading
+import hashlib
 import feedparser
 import psycopg2
 import re
@@ -563,6 +564,7 @@ def collect_rss_feeds() -> int:
                 continue
         
         total_articles_added = 0
+        total_articles_updated = 0
         total_duplicates_rejected = 0
         total_excluded = 0
         total_filtered_clickbait = 0
@@ -592,11 +594,12 @@ def collect_rss_feeds() -> int:
             if not feed_conn:
                 logger.error(f"Failed to get DB connection for feed: {feed_name}")
                 _rss_log("error", err="No DB connection")
-                return {'articles_added': 0, 'duplicates': 0, 'excluded': 0, 'error': 'No DB connection'}
+                return {'articles_added': 0, 'articles_updated': 0, 'duplicates': 0, 'excluded': 0, 'error': 'No DB connection'}
             
             try:
                 feed_cur = feed_conn.cursor()
                 articles_added = 0
+                articles_updated = 0
                 duplicates_rejected = 0
                 excluded_count = 0
                 filtered_clickbait = 0
@@ -620,7 +623,15 @@ def collect_rss_feeds() -> int:
                         try:
                             title = entry.get('title', '')[:500]
                             url = entry.get('link', '')[:500]
-                            content = entry.get('summary', '') or entry.get('description', '')
+                            # Prefer full article body (content:encoded) over excerpt
+                            content = ''
+                            if hasattr(entry, 'content') and entry.content:
+                                try:
+                                    content = entry.content[0].get('value', '')
+                                except (IndexError, AttributeError):
+                                    pass
+                            if not content:
+                                content = entry.get('summary', '') or entry.get('description', '')
                             
                             # Filter excluded content (sports/entertainment/pop culture)
                             if is_excluded_content(title, content, feed_name, feed_url):
@@ -667,13 +678,58 @@ def collect_rss_feeds() -> int:
                                 published_date = datetime(*entry.updated_parsed[:6])
                             else:
                                 published_date = datetime.now()
+                            feed_updated_dt = None
+                            if hasattr(entry, 'updated_parsed') and entry.updated_parsed:
+                                feed_updated_dt = datetime(*entry.updated_parsed[:6])
                             
-                            # Check for duplicates
+                            # Check for existing article by URL (update-aware)
                             feed_cur.execute(f"""
-                                SELECT id FROM {schema_name}.articles 
-                                WHERE url = %s OR (title = %s AND source_domain = %s)
-                            """, (url, title, feed_name))
-                            
+                                SELECT id, content, published_at, updated_at
+                                FROM {schema_name}.articles WHERE url = %s
+                            """, (url,))
+                            existing_by_url = feed_cur.fetchone()
+                            if existing_by_url:
+                                existing_id, existing_content, existing_pub, existing_updated = existing_by_url
+                                new_content_hash = hashlib.md5((content or '').encode()).hexdigest()
+                                existing_content_hash = hashlib.md5((existing_content or '').encode()).hexdigest() if existing_content else ''
+                                existing_ts = existing_updated or existing_pub
+                                content_changed = new_content_hash != existing_content_hash
+                                feed_says_newer = feed_updated_dt and existing_ts and feed_updated_dt > existing_ts
+                                should_update = content_changed or feed_says_newer or not (existing_content or '').strip()
+                                if should_update:
+                                    raw_bias = calculate_domain_bias_score(domain_key, title, content, feed_name)
+                                    bias_score = (raw_bias + 1) / 2 if raw_bias is not None else 0.5
+                                    bias_score = max(0.0, min(1.0, bias_score))
+                                    quality_score = max(0.0, min(1.0, quality_score))
+                                    feed_cur.execute(f"""
+                                        UPDATE {schema_name}.articles SET
+                                        title = %s, content = %s, summary = %s, published_at = %s,
+                                        source_domain = %s, quality_score = %s, bias_score = %s, updated_at = NOW()
+                                        WHERE id = %s
+                                    """, (title, content, None, published_date, feed_name, quality_score, bias_score, existing_id))
+                                    articles_updated += 1
+                                    try:
+                                        feed_cur.execute(f"""
+                                            INSERT INTO {schema_name}.topic_extraction_queue
+                                            (article_id, status, priority, created_at)
+                                            VALUES (%s, 'pending', 2, NOW())
+                                            ON CONFLICT (article_id) DO UPDATE SET status = 'pending', priority = 2, created_at = NOW()
+                                        """, (existing_id,))
+                                    except Exception:
+                                        pass
+                                    try:
+                                        from services.context_processor_service import ensure_context_for_article
+                                        ensure_context_for_article(domain_key, existing_id)
+                                    except Exception:
+                                        pass
+                                else:
+                                    duplicates_rejected += 1
+                                continue
+                            # Check for duplicate by title + source (different URL = different article, skip)
+                            feed_cur.execute(f"""
+                                SELECT id FROM {schema_name}.articles
+                                WHERE title = %s AND source_domain = %s
+                            """, (title, feed_name))
                             if feed_cur.fetchone():
                                 duplicates_rejected += 1
                                 continue
@@ -763,6 +819,7 @@ def collect_rss_feeds() -> int:
                     
                     return {
                         'articles_added': articles_added,
+                        'articles_updated': articles_updated,
                         'duplicates': duplicates_rejected,
                         'excluded': excluded_count,
                         'filtered_clickbait': filtered_clickbait,
@@ -776,12 +833,12 @@ def collect_rss_feeds() -> int:
                     logger.error(f"⏱️ Timeout processing feed: {feed_name}")
                     feed_conn.rollback()
                     _rss_log("error", err="Timeout")
-                    return {'articles_added': 0, 'duplicates': 0, 'excluded': 0, 'error': 'Timeout'}
+                    return {'articles_added': 0, 'articles_updated': 0, 'duplicates': 0, 'excluded': 0, 'error': 'Timeout'}
                 except Exception as e:
                     logger.error(f"❌ Error processing feed {feed_name}: {e}")
                     feed_conn.rollback()
                     _rss_log("error", err=str(e))
-                    return {'articles_added': 0, 'duplicates': 0, 'excluded': 0, 'error': str(e)}
+                    return {'articles_added': 0, 'articles_updated': 0, 'duplicates': 0, 'excluded': 0, 'error': str(e)}
                 finally:
                     feed_cur.close()
                     
@@ -797,6 +854,7 @@ def collect_rss_feeds() -> int:
         # Aggregate results from parallel processing
         for result in results:
             total_articles_added += result.get('articles_added', 0)
+            total_articles_updated += result.get('articles_updated', 0)
             total_duplicates_rejected += result.get('duplicates', 0)
             total_excluded += result.get('excluded', 0)
             total_filtered_clickbait += result.get('filtered_clickbait', 0)
@@ -809,6 +867,8 @@ def collect_rss_feeds() -> int:
         # Log final results with detailed breakdown
         logger.info(f"📊 RSS collection completed:")
         logger.info(f"  ✅ Articles added: {total_articles_added}")
+        if total_articles_updated > 0:
+            logger.info(f"  🔄 Articles updated (same URL, new content): {total_articles_updated}")
         if total_duplicates_rejected > 0:
             logger.info(f"  🔄 Duplicates rejected: {total_duplicates_rejected}")
         if total_excluded > 0:

@@ -18,6 +18,24 @@ from modules.deduplication.advanced_deduplication_service import (
 
 logger = logging.getLogger(__name__)
 
+# Briefing uses this many days of collected data (rolling window from briefing_date backward)
+BRIEFING_DAYS_WINDOW = 3
+
+# Allowed schema names (from domains table) to avoid injection when formatting SQL
+def _get_schema_for_domain(conn, domain: Optional[str]) -> Optional[str]:
+    """Resolve schema_name from domain key. Returns None if domain is None or not found."""
+    if not domain:
+        return None
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT schema_name FROM domains WHERE domain_key = %s", (domain,))
+            row = cur.fetchone()
+            return row[0] if row else None
+    except Exception as e:
+        logger.warning("Could not resolve schema for domain %s: %s", domain, e)
+        return None
+
+
 class DailyBriefingService:
     """
     Service for generating automated daily intelligence briefings
@@ -37,55 +55,87 @@ class DailyBriefingService:
     def generate_daily_briefing(self, 
                                briefing_date: Optional[datetime] = None,
                                include_deduplication: bool = True,
-                               include_storylines: bool = True) -> Dict[str, any]:
+                               include_storylines: bool = True,
+                               days_window: int = BRIEFING_DAYS_WINDOW,
+                               domain: Optional[str] = None) -> Dict[str, any]:
         """
-        Generate a comprehensive daily intelligence briefing
-        
+        Generate a comprehensive daily intelligence briefing from the past N days of data.
+
+        Uses a rolling window (default 3 days). When domain is provided, queries that
+        domain's schema (e.g. politics.articles); otherwise uses default schema.
+
         Args:
-            briefing_date: Date for the briefing (defaults to today)
+            briefing_date: End of window (defaults to now)
             include_deduplication: Whether to include deduplication stats
             include_storylines: Whether to include storyline analysis
-            
+            days_window: Number of days of data to include (default 3)
+            domain: Domain key (e.g. politics, finance, science-tech) to scope articles to that schema
+
         Returns:
             Dictionary containing the daily briefing
         """
         try:
             briefing_date = briefing_date or datetime.now()
+            start_date = briefing_date - timedelta(days=days_window)
             briefing_date_str = briefing_date.strftime('%Y-%m-%d')
-            
-            logger.info(f"Generating daily briefing for {briefing_date_str}")
-            
+            start_date_str = start_date.strftime('%Y-%m-%d')
+
+            # Resolve domain schema so we query the correct articles table
+            schema = None
+            if domain:
+                conn = get_db_connection()
+                if conn:
+                    try:
+                        schema = _get_schema_for_domain(conn, domain)
+                        if schema:
+                            logger.info("Briefing using domain %s (schema %s)", domain, schema)
+                    finally:
+                        conn.close()
+
+            articles_table = f"{schema}.articles" if schema else "articles"
+
+            logger.info(f"Generating daily briefing for {briefing_date_str} (data window: {start_date_str} to {briefing_date_str}, {days_window} days)")
+
             # Initialize briefing structure
             briefing = {
                 "briefing_date": briefing_date_str,
+                "start_date": start_date_str,
+                "days_window": days_window,
+                "domain": domain,
                 "generated_at": datetime.now().isoformat(),
                 "briefing_type": "daily_intelligence",
                 "sections": {}
             }
-            
-            # Generate system overview
-            briefing["sections"]["system_overview"] = self._generate_system_overview(briefing_date)
-            
-            # Generate content analysis
-            briefing["sections"]["content_analysis"] = self._generate_content_analysis(briefing_date)
-            
-            # Generate topic cloud and breaking news
+
+            # Generate system overview (last N days)
+            briefing["sections"]["system_overview"] = self._generate_system_overview(briefing_date, start_date, articles_table)
+
+            # Generate content analysis (last N days)
+            briefing["sections"]["content_analysis"] = self._generate_content_analysis(briefing_date, start_date, articles_table)
+
+            # Generate topic cloud and breaking news (last N days)
             if include_storylines:
-                briefing["sections"]["storyline_analysis"] = self._generate_storyline_analysis(briefing_date)
-            
+                briefing["sections"]["storyline_analysis"] = self._generate_storyline_analysis(briefing_date, days_window, schema)
+
             # Generate deduplication report
             if include_deduplication:
                 briefing["sections"]["deduplication_report"] = self._generate_deduplication_report()
-            
-            # Generate quality metrics
-            briefing["sections"]["quality_metrics"] = self._generate_quality_metrics(briefing_date)
-            
+
+            # Generate quality metrics (last N days)
+            briefing["sections"]["quality_metrics"] = self._generate_quality_metrics(briefing_date, start_date, articles_table)
+
+            # Editorial layer: key developments (headlines + storylines) for narrative, not just metrics
+            if schema:
+                briefing["sections"]["key_developments"] = self._extract_key_developments(
+                    start_date, articles_table, schema
+                )
+
             # Generate recommendations
             briefing["sections"]["recommendations"] = self._generate_recommendations(briefing)
-            
-            # Calculate briefing statistics
+
+            # Calculate briefing statistics (uses window counts)
             briefing["statistics"] = self._calculate_briefing_statistics(briefing)
-            
+
             logger.info(f"Daily briefing generated successfully for {briefing_date_str}")
             return briefing
             
@@ -142,78 +192,83 @@ class DailyBriefingService:
             logger.error(f"Error generating weekly briefing: {e}")
             return {"error": str(e)}
     
-    def _generate_system_overview(self, briefing_date: datetime) -> Dict[str, any]:
-        """Generate system overview section"""
+    def _generate_system_overview(self, briefing_date: datetime, start_date: datetime, articles_table: str = "articles") -> Dict[str, any]:
+        """Generate system overview section for the window [start_date, briefing_date]."""
         try:
             conn = get_db_connection()
             cursor = conn.cursor()
-            
-            # Get system statistics
-            cursor.execute("SELECT COUNT(*) FROM articles")
+
+            # Window: articles created/updated in the last N days
+            cursor.execute(f"SELECT COUNT(*) FROM {articles_table} WHERE created_at >= %s", (start_date,))
+            window_new = cursor.fetchone()[0]
+
+            cursor.execute(f"SELECT COUNT(*) FROM {articles_table} WHERE updated_at >= %s", (start_date,))
+            window_updated = cursor.fetchone()[0]
+
+            # Total in DB (for context)
+            cursor.execute(f"SELECT COUNT(*) FROM {articles_table}")
             total_articles = cursor.fetchone()[0]
-            
-            cursor.execute("SELECT COUNT(*) FROM articles WHERE created_at >= %s", (briefing_date.date(),))
-            today_articles = cursor.fetchone()[0]
-            
-            cursor.execute("SELECT COUNT(*) FROM articles WHERE updated_at >= %s", (briefing_date.date(),))
-            today_updated = cursor.fetchone()[0]
-            
-            # Get source count
-            cursor.execute("SELECT COUNT(DISTINCT source) FROM articles WHERE source IS NOT NULL")
-            total_sources = cursor.fetchone()[0]
-            
+
+            # Distinct sources in window
+            cursor.execute(
+                f"SELECT COUNT(DISTINCT source) FROM {articles_table} WHERE source IS NOT NULL AND created_at >= %s",
+                (start_date,),
+            )
+            window_sources = cursor.fetchone()[0]
+
             conn.close()
-            
+
             return {
-                "total_articles": total_articles,
-                "today_new_articles": today_articles,
-                "today_updated_articles": today_updated,
-                "total_sources": total_sources,
+                "total_articles": window_new,  # briefing stats use this for "N articles"
+                "today_new_articles": window_new,
+                "today_updated_articles": window_updated,
+                "total_sources": window_sources,
+                "all_time_articles": total_articles,
                 "system_status": "operational",
-                "last_updated": datetime.now().isoformat()
+                "last_updated": datetime.now().isoformat(),
             }
-            
+
         except Exception as e:
             logger.error(f"Error generating system overview: {e}")
             return {"error": str(e)}
     
-    def _generate_content_analysis(self, briefing_date: datetime) -> Dict[str, any]:
-        """Generate content analysis section"""
+    def _generate_content_analysis(self, briefing_date: datetime, start_date: datetime, articles_table: str = "articles") -> Dict[str, any]:
+        """Generate content analysis section for the window [start_date, briefing_date]."""
         try:
             conn = get_db_connection()
             cursor = conn.cursor()
-            
-            # Get content statistics for the day
-            cursor.execute("""
+
+            cursor.execute(f"""
                 SELECT 
                     category,
                     COUNT(*) as count,
                     AVG(COALESCE(quality_score, 0.5)) as avg_quality
-                FROM articles 
+                FROM {articles_table}
                 WHERE created_at >= %s 
                 GROUP BY category 
                 ORDER BY count DESC
-            """, (briefing_date.date(),))
-            
+            """, (start_date,))
+
             category_stats = cursor.fetchall()
-            
-            # Get top sources for the day
-            cursor.execute("""
+
+            cursor.execute(f"""
                 SELECT 
                     source,
                     COUNT(*) as count
-                FROM articles 
+                FROM {articles_table}
                 WHERE created_at >= %s 
                 AND source IS NOT NULL
                 GROUP BY source 
                 ORDER BY count DESC 
                 LIMIT 10
-            """, (briefing_date.date(),))
-            
+            """, (start_date,))
+
             source_stats = cursor.fetchall()
-            
+
+            total_analyzed = sum(row[1] for row in category_stats)
+
             conn.close()
-            
+
             return {
                 "category_distribution": [
                     {
@@ -224,24 +279,22 @@ class DailyBriefingService:
                     for row in category_stats
                 ],
                 "top_sources": [
-                    {
-                        "source": row[0],
-                        "count": row[1]
-                    }
+                    {"source": row[0], "count": row[1]}
                     for row in source_stats
                 ],
-                "analysis_date": briefing_date.strftime('%Y-%m-%d')
+                "total_articles_analyzed": total_analyzed,
+                "analysis_date": briefing_date.strftime('%Y-%m-%d'),
+                "start_date": start_date.strftime('%Y-%m-%d'),
             }
-            
+
         except Exception as e:
             logger.error(f"Error generating content analysis: {e}")
             return {"error": str(e)}
     
-    def _generate_storyline_analysis(self, briefing_date: datetime) -> Dict[str, any]:
-        """Generate storyline analysis section"""
+    def _generate_storyline_analysis(self, briefing_date: datetime, days_window: int, schema: Optional[str] = None) -> Dict[str, any]:
+        """Generate storyline analysis section for the last days_window days."""
         try:
-            # Get topic cloud for the day
-            topic_cloud = self.storyline_tracker.generate_topic_cloud(days=1)
+            topic_cloud = self.storyline_tracker.generate_topic_cloud(days=days_window, schema=schema)
             
             if "error" in topic_cloud:
                 return {"error": topic_cloud["error"]}
@@ -290,14 +343,13 @@ class DailyBriefingService:
             logger.error(f"Error generating deduplication report: {e}")
             return {"error": str(e)}
     
-    def _generate_quality_metrics(self, briefing_date: datetime) -> Dict[str, any]:
-        """Generate quality metrics section"""
+    def _generate_quality_metrics(self, briefing_date: datetime, start_date: datetime, articles_table: str = "articles") -> Dict[str, any]:
+        """Generate quality metrics section for the window [start_date, briefing_date]."""
         try:
             conn = get_db_connection()
             cursor = conn.cursor()
-            
-            # Get quality distribution for the day
-            cursor.execute("""
+
+            cursor.execute(f"""
                 SELECT 
                     CASE 
                         WHEN COALESCE(quality_score, 0.5) >= 0.8 THEN 'high'
@@ -305,37 +357,33 @@ class DailyBriefingService:
                         ELSE 'low'
                     END as quality_level,
                     COUNT(*) as count
-                FROM articles 
+                FROM {articles_table}
                 WHERE created_at >= %s 
                 GROUP BY quality_level
                 ORDER BY quality_level DESC
-            """, (briefing_date.date(),))
-            
+            """, (start_date,))
+
             quality_distribution = cursor.fetchall()
-            
-            # Get average quality by category
-            cursor.execute("""
+
+            cursor.execute(f"""
                 SELECT 
                     category,
                     AVG(COALESCE(quality_score, 0.5)) as avg_quality,
                     COUNT(*) as count
-                FROM articles 
+                FROM {articles_table}
                 WHERE created_at >= %s 
                 GROUP BY category 
                 HAVING COUNT(*) >= 3
                 ORDER BY avg_quality DESC
-            """, (briefing_date.date(),))
-            
+            """, (start_date,))
+
             category_quality = cursor.fetchall()
-            
+
             conn.close()
-            
+
             return {
                 "quality_distribution": [
-                    {
-                        "level": row[0],
-                        "count": row[1]
-                    }
+                    {"level": row[0], "count": row[1]}
                     for row in quality_distribution
                 ],
                 "category_quality": [
@@ -348,11 +396,117 @@ class DailyBriefingService:
                 ],
                 "overall_quality_score": self._calculate_overall_quality(quality_distribution)
             }
-            
+
         except Exception as e:
             logger.error(f"Error generating quality metrics: {e}")
             return {"error": str(e)}
-    
+
+    def _extract_key_developments(self, start_date: datetime, articles_table: str, schema: str) -> Dict[str, any]:
+        """Extract editorial narratives, headlines, and storyline titles for briefings. Uses editorial_document when available."""
+        try:
+            conn = get_db_connection()
+            if not conn:
+                return {"top_headlines": [], "top_storylines": [], "editorial_ledes": [], "event_briefings": [], "error": "No connection"}
+            cursor = conn.cursor()
+            top_headlines = []
+            top_storylines = []
+            editorial_ledes = []
+            event_briefings = []
+
+            # Top headlines by quality — include summary for richer briefing context
+            try:
+                cursor.execute(
+                    f"""
+                    SELECT title, source, summary
+                    FROM {articles_table}
+                    WHERE created_at >= %s AND title IS NOT NULL AND TRIM(title) != ''
+                    ORDER BY COALESCE(quality_score, 0) DESC, created_at DESC
+                    LIMIT 10
+                    """,
+                    (start_date,),
+                )
+                for row in cursor.fetchall():
+                    top_headlines.append({
+                        "title": (row[0] or "").strip(),
+                        "source": row[1] or "",
+                        "summary": (row[2] or "").strip(),
+                    })
+            except Exception as e:
+                logger.debug("key_developments headlines: %s", e)
+
+            # Storylines with editorial_document ledes when available
+            storylines_table = f"{schema}.storylines"
+            try:
+                cursor.execute(
+                    f"""
+                    SELECT id, title,
+                           COALESCE(total_articles, article_count, 0),
+                           updated_at,
+                           editorial_document, document_status
+                    FROM {storylines_table}
+                    WHERE updated_at >= %s AND title IS NOT NULL AND TRIM(title) != ''
+                    ORDER BY updated_at DESC
+                    LIMIT 8
+                    """,
+                    (start_date,),
+                )
+                for row in cursor.fetchall():
+                    sid = row[0]
+                    stitle = (row[1] or "").strip()
+                    ed = row[4] if len(row) > 4 else None
+                    top_storylines.append({
+                        "id": sid,
+                        "title": stitle,
+                        "article_count": int(row[2]) if row[2] is not None else 0,
+                        "updated_at": row[3].isoformat() if hasattr(row[3], "isoformat") else str(row[3]) if row[3] else None,
+                        "document_status": row[5] if len(row) > 5 else None,
+                    })
+                    # Extract lede from editorial_document if present
+                    if ed and isinstance(ed, dict) and ed.get("lede"):
+                        editorial_ledes.append({"storyline_id": sid, "title": stitle, "lede": ed["lede"]})
+            except Exception as e:
+                logger.debug("key_developments storylines: %s", e)
+
+            # Event briefings from tracked_events
+            try:
+                cursor.execute(
+                    """
+                    SELECT id, event_name, editorial_briefing, editorial_briefing_json
+                    FROM intelligence.tracked_events
+                    WHERE updated_at >= %s
+                      AND editorial_briefing IS NOT NULL
+                    ORDER BY updated_at DESC
+                    LIMIT 5
+                    """,
+                    (start_date,),
+                )
+                for row in cursor.fetchall():
+                    eid, ename, briefing_text, briefing_json = row
+                    headline = ""
+                    if briefing_json and isinstance(briefing_json, dict):
+                        headline = briefing_json.get("headline", "")
+                    event_briefings.append({
+                        "event_id": eid,
+                        "event_name": (ename or "").strip(),
+                        "headline": headline,
+                        "briefing_excerpt": (briefing_text or "")[:200],
+                    })
+            except Exception as e:
+                logger.debug("key_developments events: %s", e)
+
+            conn.close()
+            has_content = len(top_headlines) > 0 or len(top_storylines) > 0 or len(editorial_ledes) > 0 or len(event_briefings) > 0
+            return {
+                "top_headlines": top_headlines,
+                "top_storylines": top_storylines,
+                "editorial_ledes": editorial_ledes,
+                "event_briefings": event_briefings,
+                "has_content": has_content,
+            }
+        except Exception as e:
+            logger.error("Error extracting key developments: %s", e)
+            return {"top_headlines": [], "top_storylines": [], "editorial_ledes": [], "event_briefings": [], "has_content": False, "error": str(e)}
+
     def _generate_recommendations(self, briefing: Dict) -> Dict[str, any]:
         """Generate recommendations based on briefing data"""
         try:

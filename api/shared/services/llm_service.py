@@ -269,6 +269,27 @@ class LLMService:
                 "model_used": model.value
             }
     
+    async def generate_briefing_lead(self, context: str, domain: str = "") -> Dict[str, Any]:
+        """
+        Generate a short editorial lead paragraph for a daily briefing from headline/storyline context.
+        Uses a direct prompt (no article-summary wrapper). Returns {"success", "summary" or "error"}.
+        """
+        if not (context or "").strip():
+            return {"success": False, "error": "Empty context"}
+        prompt = (
+            "You are writing the lead paragraph for a daily news briefing."
+            + (f" Domain: {domain}." if domain else "")
+            + " Based only on the following headlines and storylines, write 2–3 short sentences that tell the reader what matters most. Be factual and concise. No preamble.\n\n"
+            + context[:2500]
+        )
+        try:
+            model = self.select_model(TaskType.QUICK_SUMMARY)
+            response = await self._call_ollama(model, prompt)
+            return {"success": True, "summary": (response or "").strip()}
+        except Exception as e:
+            logger.debug("generate_briefing_lead failed: %s", e)
+            return {"success": False, "error": str(e)}
+
     async def _call_ollama(self, model: ModelType, prompt: str) -> str:
         """Make API call to Ollama with circuit breaker protection."""
         from services.circuit_breaker_service import get_circuit_breaker_service, CircuitBreakerOpenException

@@ -61,18 +61,14 @@ See [Setup and Deployment Guide](./docs/SETUP_AND_DEPLOYMENT.md) for detailed in
 | **ML Pipeline** | 🟡 Ready | Ollama service available, models ready |
 | **Integration** | 🟢 Operational | End-to-end pipeline working |
 
-### **API Endpoints Status**
-```
-✅ /api/health/                    - System health
-✅ /api/articles/                  - Article management
-✅ /api/articles/stats/overview    - Article statistics
-✅ /api/articles/{id}              - Individual articles
-✅ /api/rss/feeds/                 - RSS feed management
-✅ /api/rss/feeds/stats/overview   - RSS statistics
-✅ /api/storylines/                - Storyline management
-✅ /api/deduplication/statistics   - Duplicate detection
-✅ /api/intelligence/analytics     - Intelligence analytics
-```
+### **API endpoints**
+Routes use flat `/api` (no version in path). Examples:
+- **Health:** `GET /api/system_monitoring/health`
+- **Articles:** `GET /api/{domain}/articles` (domain: politics | finance | science-tech)
+- **Storylines:** `GET /api/{domain}/storylines`
+- **RSS feeds:** `GET /api/{domain}/rss_feeds`
+- **Intelligence:** `GET /api/intelligence_hub/...`
+Full API docs: http://localhost:8000/docs
 
 ---
 
@@ -225,7 +221,25 @@ python3 scripts/simple_integration.py
 
 ---
 
+---
+
+## Core System Invariants
+
+These invariants define what the system guarantees. If any invariant is violated, the system is broken regardless of whether it appears to "work."
+
+1. **If an article has been processed, its key facts are extractable.** The `ml_data` field contains summary, key points, sentiment, and argument analysis derived from the article's actual content. Processing that only updates status flags without extracting intelligence is incomplete.
+
+2. **If a storyline exists, it has (or will have) an editorial narrative.** The `editorial_document` JSONB field on storylines is the primary output — a structured narrative with lede, developments, analysis, and outlook. A storyline with only a title and article count is not finished.
+
+3. **If an event is tracked, it has a chronological briefing.** The `editorial_briefing` and `event_chronicles` fields tell the story of the event over time. An event with only a name and date range is not finished.
+
+4. **User-facing APIs return stories, not statistics.** Briefings lead with "what happened" (headlines, storylines, narrative), not "how many articles were processed." Counts and metrics are supporting data, never the primary content.
+
+See `docs/CORE_ARCHITECTURE_PRINCIPLES.md` for the full principles and `docs/IMPLEMENTATION_CONSTRAINTS.md` for code-level rules.
+
+---
+
 **System Status**: 🟢 **FULLY OPERATIONAL**  
-**Last Verified**: December 2024  
+**Last Verified**: March 2026  
 **Version**: 5.0  
 **Next Check**: Recommended weekly

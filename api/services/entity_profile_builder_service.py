@@ -90,9 +90,9 @@ async def build_profile_sections(entity_profile_id: int) -> bool:
         # Build combined text (titles + snippet of content) for LLM
         parts = []
         for ctx_id, title, content in contexts[:20]:
-            content_preview = (content or "")[:500].replace("\n", " ")
+            content_preview = (content or "")[:1200].replace("\n", " ")
             parts.append(f"[Source {ctx_id}] {title or 'Untitled'}\n{content_preview}")
-        combined = "\n\n".join(parts)[:8000]
+        combined = "\n\n".join(parts)[:10000]
 
         prompt = f"""Given the following entity and excerpts from news contexts where they are mentioned, produce a short profile.
 
