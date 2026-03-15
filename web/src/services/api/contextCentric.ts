@@ -12,7 +12,7 @@ function apiPath(absolutePath: string): string {
   return absolutePath.startsWith('/') ? absolutePath : `/${absolutePath}`;
 }
 
-/** Use server origin (no path) so /api/tracked_events/... etc. resolve correctly when API base URL has a path (e.g. /api/v4). */
+/** Use server origin (no path) so /api/tracked_events/... etc. resolve correctly when API base URL has a path. */
 function contextCentricConfig(): { baseURL?: string } {
   const origin = getApiOrigin();
   return origin ? { baseURL: origin } : {};
@@ -119,6 +119,52 @@ export interface ContextCentricQualityDomain {
 export interface ContextCentricQuality {
   by_domain: Record<string, ContextCentricQualityDomain>;
   summary: string;
+}
+
+/** Phase 3 T3.1: Processed document (list row). */
+export interface ProcessedDocument {
+  id: number;
+  source_type: string | null;
+  source_name: string | null;
+  source_url: string | null;
+  title: string | null;
+  publication_date: string | null;
+  document_type: string | null;
+  created_at: string | null;
+}
+
+/** Phase 3 T3.3: Narrative thread (list row). */
+export interface NarrativeThread {
+  id: number;
+  domain_key: string;
+  storyline_id: number;
+  summary_snippet: string | null;
+  linked_article_ids: number[];
+  created_at: string | null;
+}
+
+/** T1.2: Canonical entity from entity_canonical table. */
+export interface CanonicalEntity {
+  canonical_entity_id: number;
+  canonical_name: string;
+  entity_type: string;
+  aliases: string[];
+  mention_count?: number;
+  confidence?: number;
+  match_reason?: string;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+/** T1.2: Merge candidate — pair of canonical entities that likely refer to the same real-world entity. */
+export interface MergeCandidate {
+  source_id: number;
+  source_name: string;
+  target_id: number;
+  target_name: string;
+  entity_type: string;
+  confidence: number;
+  reason: string;
 }
 
 const handleError = (message: string, error: unknown): never => {
@@ -268,6 +314,74 @@ export const contextCentricApi = {
       return response.data;
     } catch (error) {
       return handleError('Failed to fetch tracked event', error);
+    }
+  },
+
+  /** Phase 1: Create tracked event. */
+  async createTrackedEvent(body: {
+    event_type: string;
+    event_name: string;
+    start_date?: string | null;
+    end_date?: string | null;
+    geographic_scope?: string | null;
+    key_participant_entity_ids?: unknown[];
+    milestones?: unknown[];
+    sub_event_ids?: number[] | null;
+    domain_keys?: string[];
+  }): Promise<TrackedEvent & { id: number }> {
+    try {
+      const response = await getApi().post<TrackedEvent & { id: number }>(
+        apiPath('/api/tracked_events'),
+        body,
+        contextCentricConfig(),
+      );
+      return response.data;
+    } catch (error) {
+      return handleError('Failed to create tracked event', error);
+    }
+  },
+
+  /** Phase 2 T2.1: Trigger chronicle update for event (build developments, momentum_score). */
+  async triggerEventChronicleUpdate(
+    eventId: number,
+    body?: { update_date?: string; developments_days?: number },
+  ): Promise<{ success: boolean; chronicle_id?: number; developments_count?: number; momentum_score?: number; error?: string }> {
+    try {
+      const response = await getApi().post<{ success: boolean; chronicle_id?: number; developments_count?: number; momentum_score?: number; error?: string }>(
+        apiPath(`/api/tracked_events/${eventId}/chronicles/update`),
+        body ?? {},
+        contextCentricConfig(),
+      );
+      return response.data;
+    } catch (error) {
+      return handleError('Failed to refresh chronicles', error);
+    }
+  },
+
+  /** Phase 1: Update tracked event. */
+  async updateTrackedEvent(
+    eventId: number,
+    body: Partial<{
+      event_type: string;
+      event_name: string;
+      start_date: string | null;
+      end_date: string | null;
+      geographic_scope: string | null;
+      key_participant_entity_ids: unknown[];
+      milestones: unknown[];
+      sub_event_ids: number[] | null;
+      domain_keys: string[];
+    }>,
+  ): Promise<TrackedEvent> {
+    try {
+      const response = await getApi().put<TrackedEvent>(
+        apiPath(`/api/tracked_events/${eventId}`),
+        body,
+        contextCentricConfig(),
+      );
+      return response.data;
+    } catch (error) {
+      return handleError('Failed to update tracked event', error);
     }
   },
 
@@ -423,6 +537,230 @@ export const contextCentricApi = {
       return response.data;
     } catch (error) {
       return handleError('Failed to search', error);
+    }
+  },
+
+  // Phase 3 T3.1: Processed documents
+  async getProcessedDocuments(params?: { source_type?: string; limit?: number; offset?: number }) {
+    try {
+      const response = await getApi().get<{ items: ProcessedDocument[]; limit: number; offset: number }>(
+        apiPath('/api/processed_documents'),
+        { ...contextCentricConfig(), params: params ?? {} },
+      );
+      return response.data;
+    } catch (error) {
+      return handleError('Failed to fetch processed documents', error);
+    }
+  },
+
+  async getProcessedDocument(documentId: number) {
+    try {
+      const response = await getApi().get<ProcessedDocument & { authors?: string[]; extracted_sections?: unknown; key_findings?: unknown; entities_mentioned?: unknown; citations?: unknown; metadata?: unknown; updated_at?: string | null }>(
+        apiPath(`/api/processed_documents/${documentId}`),
+        contextCentricConfig(),
+      );
+      return response.data;
+    } catch (error) {
+      return handleError('Failed to fetch processed document', error);
+    }
+  },
+
+  async createProcessedDocument(body: { source_url: string; title?: string; source_type?: string; source_name?: string; document_type?: string; publication_date?: string; authors?: string[]; metadata?: Record<string, unknown> }) {
+    try {
+      const response = await getApi().post<{ success: boolean; document_id?: number; error?: string }>(
+        apiPath('/api/processed_documents'),
+        body,
+        contextCentricConfig(),
+      );
+      return response.data;
+    } catch (error) {
+      return handleError('Failed to create processed document', error);
+    }
+  },
+
+  async ingestProcessedDocumentsFromConfig(): Promise<{ inserted: number; errors: string[] }> {
+    try {
+      const response = await getApi().post<{ inserted: number; errors: string[] }>(
+        apiPath('/api/processed_documents/ingest_from_config'),
+        {},
+        contextCentricConfig(),
+      );
+      return response.data;
+    } catch (error) {
+      return handleError('Failed to ingest from config', error);
+    }
+  },
+
+  // Phase 3 T3.3: Narrative threads
+  async getNarrativeThreads(params?: { domain_key?: string; limit?: number; offset?: number }) {
+    try {
+      const response = await getApi().get<{ items: NarrativeThread[]; limit: number; offset: number }>(
+        apiPath('/api/narrative_threads'),
+        { ...contextCentricConfig(), params: params ?? {} },
+      );
+      return response.data;
+    } catch (error) {
+      return handleError('Failed to fetch narrative threads', error);
+    }
+  },
+
+  async buildNarrativeThreads(body: { domain_key: string; limit?: number }): Promise<{ success: boolean; built: number; errors: string[] }> {
+    try {
+      const response = await getApi().post<{ success: boolean; built: number; errors: string[] }>(
+        apiPath('/api/narrative_threads/build'),
+        body,
+        contextCentricConfig(),
+      );
+      return response.data;
+    } catch (error) {
+      return handleError('Failed to build narrative threads', error);
+    }
+  },
+
+  async synthesizeNarrativeThreads(body?: { domain_key?: string; thread_ids?: number[] }): Promise<{ success: boolean; synthesis?: string; thread_count?: number; threads?: NarrativeThread[]; error?: string }> {
+    try {
+      const response = await getApi().post<{ success: boolean; synthesis?: string; thread_count?: number; threads?: NarrativeThread[]; error?: string }>(
+        apiPath('/api/narrative_threads/synthesize'),
+        body ?? {},
+        contextCentricConfig(),
+      );
+      return response.data;
+    } catch (error) {
+      return handleError('Failed to synthesize narrative threads', error);
+    }
+  },
+
+  // Entity resolution (T1.2)
+
+  async getCanonicalEntities(params: {
+    domain_key: string;
+    entity_type?: string;
+    search?: string;
+    min_mentions?: number;
+    limit?: number;
+    offset?: number;
+  }): Promise<{ success: boolean; entities: CanonicalEntity[]; domain_key: string }> {
+    try {
+      const response = await getApi().get<{ success: boolean; entities: CanonicalEntity[]; domain_key: string }>(
+        apiPath('/api/entities/canonical'),
+        { ...contextCentricConfig(), params },
+      );
+      return response.data;
+    } catch (error) {
+      return handleError('Failed to fetch canonical entities', error);
+    }
+  },
+
+  async resolveEntity(body: {
+    domain_key: string;
+    entity_name: string;
+    entity_type?: string;
+  }): Promise<{ success: boolean; match: CanonicalEntity | null; candidates: CanonicalEntity[] }> {
+    try {
+      const response = await getApi().post<{ success: boolean; match: CanonicalEntity | null; candidates: CanonicalEntity[] }>(
+        apiPath('/api/entities/resolve'),
+        body,
+        contextCentricConfig(),
+      );
+      return response.data;
+    } catch (error) {
+      return handleError('Failed to resolve entity', error);
+    }
+  },
+
+  async getMergeCandidates(params: {
+    domain_key: string;
+    min_confidence?: number;
+    limit?: number;
+  }): Promise<{ success: boolean; candidates: MergeCandidate[] }> {
+    try {
+      const response = await getApi().get<{ success: boolean; candidates: MergeCandidate[] }>(
+        apiPath('/api/entities/merge_candidates'),
+        { ...contextCentricConfig(), params },
+      );
+      return response.data;
+    } catch (error) {
+      return handleError('Failed to fetch merge candidates', error);
+    }
+  },
+
+  async mergeCanonicalEntities(body: {
+    domain_key: string;
+    keep_id: number;
+    merge_id: number;
+  }): Promise<{ success: boolean; keep_id?: number; merged_id?: number; articles_reassigned?: number; aliases_added?: number; error?: string }> {
+    try {
+      const response = await getApi().post<{ success: boolean; keep_id?: number; merged_id?: number; articles_reassigned?: number; aliases_added?: number; error?: string }>(
+        apiPath('/api/entities/merge'),
+        body,
+        contextCentricConfig(),
+      );
+      return response.data;
+    } catch (error) {
+      return handleError('Failed to merge entities', error);
+    }
+  },
+
+  async populateAliases(domain_key?: string, min_mentions?: number): Promise<{ success: boolean; results: Record<string, { updated: number; new_aliases: number }> }> {
+    try {
+      const params: Record<string, string | number> = {};
+      if (domain_key) params.domain_key = domain_key;
+      if (min_mentions != null) params.min_mentions = min_mentions;
+      const response = await getApi().post<{ success: boolean; results: Record<string, { updated: number; new_aliases: number }> }>(
+        apiPath('/api/entities/populate_aliases'),
+        {},
+        { ...contextCentricConfig(), params },
+      );
+      return response.data;
+    } catch (error) {
+      return handleError('Failed to populate aliases', error);
+    }
+  },
+
+  async autoMergeEntities(domain_key?: string, min_confidence?: number): Promise<{ success: boolean; results: Record<string, { merges_performed: number }> }> {
+    try {
+      const params: Record<string, string | number> = {};
+      if (domain_key) params.domain_key = domain_key;
+      if (min_confidence != null) params.min_confidence = min_confidence;
+      const response = await getApi().post<{ success: boolean; results: Record<string, { merges_performed: number }> }>(
+        apiPath('/api/entities/auto_merge'),
+        {},
+        { ...contextCentricConfig(), params },
+      );
+      return response.data;
+    } catch (error) {
+      return handleError('Failed to auto-merge entities', error);
+    }
+  },
+
+  async crossDomainLinkEntities(min_confidence?: number): Promise<{ success: boolean; linked: number; relationships_created: number }> {
+    try {
+      const params: Record<string, number> = {};
+      if (min_confidence != null) params.min_confidence = min_confidence;
+      const response = await getApi().post<{ success: boolean; linked: number; relationships_created: number }>(
+        apiPath('/api/entities/cross_domain_link'),
+        {},
+        { ...contextCentricConfig(), params },
+      );
+      return response.data;
+    } catch (error) {
+      return handleError('Failed to cross-domain link entities', error);
+    }
+  },
+
+  async runResolutionBatch(autoMergeConfidence?: number, crossDomainConfidence?: number): Promise<Record<string, unknown>> {
+    try {
+      const params: Record<string, number> = {};
+      if (autoMergeConfidence != null) params.auto_merge_confidence = autoMergeConfidence;
+      if (crossDomainConfidence != null) params.cross_domain_confidence = crossDomainConfidence;
+      const response = await getApi().post<Record<string, unknown>>(
+        apiPath('/api/entities/run_resolution_batch'),
+        {},
+        { ...contextCentricConfig(), params },
+      );
+      return response.data;
+    } catch (error) {
+      return handleError('Failed to run resolution batch', error);
     }
   },
 };

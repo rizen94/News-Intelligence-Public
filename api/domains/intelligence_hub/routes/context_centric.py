@@ -1961,3 +1961,201 @@ def context_centric_search(
         except Exception:
             pass
         raise HTTPException(status_code=500, detail="Failed to search")
+
+
+# ---------------------------------------------------------------------------
+# Entity resolution endpoints (T1.2)
+# ---------------------------------------------------------------------------
+
+@router.post("/entities/resolve", response_model=dict)
+def resolve_entity(
+    body: dict = Body(..., examples=[{"domain_key": "politics", "entity_name": "Biden", "entity_type": "person"}]),
+) -> dict:
+    """
+    Resolve an entity name to canonical entity, returning the best match and candidates.
+    Body: {domain_key, entity_name, entity_type}.
+    """
+    domain_key = body.get("domain_key", "politics")
+    entity_name = body.get("entity_name", "")
+    entity_type = body.get("entity_type", "person")
+    if not entity_name:
+        raise HTTPException(status_code=400, detail="entity_name required")
+
+    from services.entity_resolution_service import resolve_with_candidates
+    result = resolve_with_candidates(domain_key, entity_name, entity_type, limit=10)
+    return {"success": True, **result}
+
+
+@router.post("/entities/populate_aliases", response_model=dict)
+def populate_entity_aliases(
+    domain_key: Optional[str] = Query(None, description="Domain to process; omit for all"),
+    min_mentions: int = Query(2, description="Minimum articles for an alias to be added"),
+) -> dict:
+    """
+    Batch-populate entity_canonical.aliases from article_entities mention variants.
+    """
+    from services.entity_resolution_service import populate_aliases_from_mentions, ALL_DOMAINS
+
+    domains = [domain_key] if domain_key else ALL_DOMAINS
+    results = {}
+    for d in domains:
+        results[d] = populate_aliases_from_mentions(d, min_mentions=min_mentions)
+    return {"success": True, "results": results}
+
+
+@router.get("/entities/merge_candidates", response_model=dict)
+def get_merge_candidates(
+    domain_key: str = Query(..., description="Domain to scan"),
+    min_confidence: float = Query(0.5, description="Minimum confidence threshold"),
+    limit: int = Query(50, ge=1, le=200),
+) -> dict:
+    """
+    Find pairs of canonical entities that likely refer to the same real-world entity.
+    Returns candidates with confidence scores and match reasons.
+    """
+    from services.entity_resolution_service import find_merge_candidates
+    return find_merge_candidates(domain_key, min_confidence=min_confidence, limit=limit)
+
+
+@router.post("/entities/merge", response_model=dict)
+def merge_entities(
+    body: dict = Body(..., examples=[{"domain_key": "politics", "keep_id": 1, "merge_id": 2}]),
+) -> dict:
+    """
+    Merge two canonical entities: reassign article_entities, combine aliases, delete the merged entity.
+    Body: {domain_key, keep_id, merge_id}.
+    """
+    domain_key = body.get("domain_key")
+    keep_id = body.get("keep_id")
+    merge_id = body.get("merge_id")
+    if not all([domain_key, keep_id, merge_id]):
+        raise HTTPException(status_code=400, detail="domain_key, keep_id, and merge_id required")
+
+    from services.entity_resolution_service import merge_canonical_entities
+    return merge_canonical_entities(domain_key, keep_id=keep_id, merge_id=merge_id)
+
+
+@router.post("/entities/auto_merge", response_model=dict)
+def auto_merge_entities(
+    domain_key: Optional[str] = Query(None, description="Domain to auto-merge; omit for all"),
+    min_confidence: float = Query(0.9, description="Only merge above this confidence"),
+) -> dict:
+    """
+    Automatically merge canonical entities with confidence >= threshold.
+    High confidence (>= 0.9) means title-stripped or shared alias matches.
+    """
+    from services.entity_resolution_service import auto_merge_high_confidence, ALL_DOMAINS
+
+    domains = [domain_key] if domain_key else ALL_DOMAINS
+    results = {}
+    for d in domains:
+        results[d] = auto_merge_high_confidence(d, min_confidence=min_confidence)
+    return {"success": True, "results": results}
+
+
+@router.post("/entities/cross_domain_link", response_model=dict)
+def cross_domain_link_entities(
+    min_confidence: float = Query(0.8, description="Minimum confidence for cross-domain linking"),
+    limit: int = Query(100, ge=1, le=500),
+) -> dict:
+    """
+    Find the same entity across domain schemas (politics, finance, science-tech)
+    and create cross_domain_same_entity relationships.
+    """
+    from services.entity_resolution_service import link_cross_domain_entities
+    return link_cross_domain_entities(min_confidence=min_confidence, limit=limit)
+
+
+@router.post("/entities/run_resolution_batch", response_model=dict)
+def run_entity_resolution_batch(
+    auto_merge_confidence: float = Query(0.9),
+    cross_domain_confidence: float = Query(0.8),
+) -> dict:
+    """
+    Run a full entity resolution cycle: populate aliases, auto-merge duplicates,
+    link cross-domain entities. Suitable for scheduled or manual trigger.
+    """
+    from services.entity_resolution_service import run_resolution_batch
+    return run_resolution_batch(
+        auto_merge_confidence=auto_merge_confidence,
+        cross_domain_confidence=cross_domain_confidence,
+    )
+
+
+@router.get("/entities/canonical", response_model=dict)
+def list_canonical_entities(
+    domain_key: str = Query(..., description="Domain to query"),
+    entity_type: Optional[str] = Query(None, description="Filter by type (person, organization, subject, recurring_event)"),
+    search: Optional[str] = Query(None, description="Search canonical_name or aliases"),
+    min_mentions: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+) -> dict:
+    """List canonical entities with alias info and mention counts."""
+    from services.entity_resolution_service import _schema_for_domain
+
+    schema = _schema_for_domain(domain_key)
+    conn = get_db_connection()
+    if not conn:
+        raise HTTPException(status_code=500, detail="Database connection failed")
+
+    try:
+        with conn.cursor() as cur:
+            where_clauses = []
+            params: list = []
+
+            if entity_type:
+                where_clauses.append("ec.entity_type = %s")
+                params.append(entity_type)
+            if search:
+                where_clauses.append(
+                    "(LOWER(ec.canonical_name) LIKE LOWER(%s) OR EXISTS "
+                    "(SELECT 1 FROM unnest(COALESCE(ec.aliases, '{}')) a WHERE LOWER(a) LIKE LOWER(%s)))"
+                )
+                params.extend([f"%{search}%", f"%{search}%"])
+
+            where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
+
+            having_clause = ""
+            if min_mentions > 0:
+                having_clause = f"HAVING COUNT(ae.id) >= {int(min_mentions)}"
+
+            cur.execute(
+                f"""
+                SELECT ec.id, ec.canonical_name, ec.entity_type, ec.aliases,
+                       COUNT(ae.id) AS mention_count,
+                       ec.created_at, ec.updated_at
+                FROM {schema}.entity_canonical ec
+                LEFT JOIN {schema}.article_entities ae ON ae.canonical_entity_id = ec.id
+                {where_sql}
+                GROUP BY ec.id, ec.canonical_name, ec.entity_type, ec.aliases,
+                         ec.created_at, ec.updated_at
+                {having_clause}
+                ORDER BY COUNT(ae.id) DESC, ec.canonical_name
+                LIMIT %s OFFSET %s
+                """,
+                (*params, limit, offset),
+            )
+            rows = cur.fetchall()
+
+            entities = []
+            for row in rows:
+                entities.append({
+                    "canonical_entity_id": row[0],
+                    "canonical_name": row[1],
+                    "entity_type": row[2],
+                    "aliases": row[3] or [],
+                    "mention_count": row[4],
+                    "created_at": _json_safe(row[5]),
+                    "updated_at": _json_safe(row[6]),
+                })
+
+        conn.close()
+        return {"success": True, "entities": entities, "domain_key": domain_key, "limit": limit, "offset": offset}
+    except Exception as e:
+        logger.warning("list_canonical_entities: %s", e)
+        try:
+            conn.close()
+        except Exception:
+            pass
+        raise HTTPException(status_code=500, detail=str(e))

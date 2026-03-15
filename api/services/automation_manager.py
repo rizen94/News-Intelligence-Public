@@ -1738,7 +1738,7 @@ class AutomationManager:
             logger.warning("Relationship extraction failed: %s", e)
 
     async def _execute_entity_organizer(self, task: Task):
-        """Run entity organizer: cleanup (merge/prune/cap) + relationship extraction. Part of data pipeline."""
+        """Run entity organizer: cleanup + relationship extraction + resolution (alias population + auto-merge + cross-domain linking)."""
         try:
             from services.entity_organizer_service import run_cycle
             loop = asyncio.get_event_loop()
@@ -1757,6 +1757,33 @@ class AutomationManager:
                 logger.debug("Entity organizer errors: %s", result["errors"])
         except Exception as e:
             logger.warning("Entity organizer failed: %s", e)
+
+        # Entity resolution: populate aliases from mentions, auto-merge near-duplicates, cross-domain linking
+        try:
+            from services.entity_resolution_service import run_resolution_batch
+            loop = asyncio.get_event_loop()
+            res_result = await loop.run_in_executor(
+                self.executor,
+                lambda: run_resolution_batch(auto_merge_confidence=0.9, cross_domain_confidence=0.8),
+            )
+            for domain_key, domain_res in res_result.get("domains", {}).items():
+                aliases = domain_res.get("aliases", {})
+                merges = domain_res.get("merges", {})
+                if aliases.get("new_aliases", 0) or merges.get("merges_performed", 0):
+                    logger.info(
+                        "Entity resolution %s: %d aliases added, %d merges",
+                        domain_key,
+                        aliases.get("new_aliases", 0),
+                        merges.get("merges_performed", 0),
+                    )
+            cross = res_result.get("cross_domain", {})
+            if cross.get("relationships_created", 0):
+                logger.info(
+                    "Entity resolution cross-domain: %d relationships created",
+                    cross.get("relationships_created", 0),
+                )
+        except Exception as e:
+            logger.warning("Entity resolution batch failed: %s", e)
 
     def _is_data_load_active(self) -> bool:
         """True if any data-load phase (rss, article_processing, entity_extraction) ran recently."""

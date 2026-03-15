@@ -13,17 +13,18 @@
 - [x] Minimal UI: Investigate page — list events, **Create event** button + dialog; Event detail — **Edit event** button + dialog (name, type, dates, scope, domain_keys).
 - [x] Documented in DOMAIN_6 and below.
 
-### T1.2 Entity resolution enhancements
-- [ ] Extend `entity_canonical` usage: ensure aliases and alternate names are populated from article_entities; add disambiguation step (same person, name variations) in entity extraction or a dedicated resolution job.
-- [ ] Cross-domain entity linking: service that inserts/updates `intelligence.entity_relationships` from article_entities + entity_canonical across domains; call from pipeline or orchestrator.
-- [ ] Add API or internal method: resolve_entity(domain, name, type) → canonical_entity_id or candidate list.
-- [ ] Optional: UI to view/link entities across domains.
+### T1.2 Entity resolution enhancements ✓
+- [x] Extend `entity_canonical` usage: alias population from article_entities (`populate_aliases_from_mentions`), title-stripping disambiguation (“President Biden” → “Joe Biden”), last-name fallback, bigram fuzzy matching.
+- [x] Cross-domain entity linking: `link_cross_domain_entities()` scans all domain schemas, matches by name/alias overlap or fuzzy similarity, creates `cross_domain_same_entity` relationships in `intelligence.entity_relationships`.
+- [x] API: `POST /api/entities/resolve` returns ranked candidates with confidence + match_reason; `GET /api/entities/canonical` lists with aliases + mention counts; merge, auto_merge, populate_aliases, cross_domain_link, run_resolution_batch endpoints.
+- [x] UI: EntitiesListPage “Canonical entities” tab — browse with aliases, search/filter, resolve dialog, merge candidates review, one-click merge, populate aliases, auto-merge, cross-domain link buttons.
+- [x] Orchestrator integration: `entity_organizer` phase now runs `run_resolution_batch()` after cleanup + relationship extraction.
 
 ### T1.3 Entity dossier schema + basic compilation ✅ Phase 1 done
 - [x] Migrations: **Migration 144** — `intelligence.entity_dossiers`, `entity_positions`.
 - [x] **DossierCompiler**: `api/services/dossier_compiler_service.py` — given (domain_key, entity_id), builds chronicle from article_entities + articles and storylines; upserts entity_dossiers.
 - [x] API: **GET** `/api/entity_dossiers?domain_key=&entity_id=`; **POST** `/api/entity_dossiers/compile` with body `{ domain_key, entity_id }`.
-- [ ] Optional: trigger compilation from orchestrator or pipeline after T2.3.
+- [x] Optional: trigger compilation from orchestrator — already done in OrchestratorCoordinator (Phase 5).
 
 ---
 
@@ -42,7 +43,7 @@
 ### T2.3 Governance/orchestrator cycle alignment ✅
 - [x] Config: `orchestrator_governance.yaml` — `orchestrator.cycle_phases`, `event_tracking`, `entity_tracking`, `quality_thresholds` (snake_case).
 - [x] OrchestratorCoordinator: when event_tracking enabled and interval due, runs `_run_scheduled_chronicle_updates` for up to max_events_per_cycle; state key `last_event_chronicle_update`.
-- [ ] Document cycle in CONTROLLER_ARCHITECTURE or ORCHESTRATOR_ROADMAP (optional follow-up).
+- [x] Document cycle in CONTROLLER_ARCHITECTURE §2.4.1 (Phase 5).
 
 ---
 
@@ -72,7 +73,7 @@
 - [x] **Migrations 155–160** applied via `api/scripts/run_migrations_155_to_160.py`.
 - [x] **Frontend: Processed documents** — List page at `/:domain/investigate/documents`; API client in `contextCentric.ts`.
 - [x] **Frontend: Narrative threads** — Phase 5 (see below).
-- [ ] T1.2 entity resolution enhancements (disambiguation, cross-domain linking) when prioritized.
+- [x] T1.2 entity resolution enhancements — completed (disambiguation, alias population, cross-domain linking, UI, orchestrator integration).
 
 ---
 
@@ -118,6 +119,6 @@ Full code audit against intelligence-first principles. See [CODE_AUDIT_REPORT.md
 
 Remaining:
 - [ ] Centralized content synthesis service (aggregate all intelligence phases into unified context).
-- [ ] T1.2 entity resolution enhancements (disambiguation, cross-domain linking).
+- [x] T1.2 entity resolution enhancements (disambiguation, alias population, cross-domain linking, UI).
 
 *Update this file as items are completed; move completed items to an “Done” section if desired.*
