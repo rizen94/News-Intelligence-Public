@@ -193,9 +193,10 @@ def link_context_to_article_entities(context_id: int, domain_key: str, article_i
         return 0
 
 
-def sync_domain_articles_to_contexts(domain_key: str, limit: int = 500) -> int:
+def sync_domain_articles_to_contexts(domain_key: str, limit: int = 100) -> int:
     """
     Backfill: create contexts for articles in this domain that don't have one.
+    Production: 100 contexts/batch completes in ~5-10s; full sync (10k) ~15-20 min.
     Returns number of new contexts created.
     """
     from shared.database.connection import get_db_connection

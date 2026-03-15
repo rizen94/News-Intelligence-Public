@@ -29,7 +29,7 @@ class TestTopicClustering:
                 articles.append(article_id)
         
         # Trigger topic clustering
-        response = api_client.post(f"{TestConfig.API_BASE_URL}/api/v4/content-analysis/topics/cluster")
+        response = api_client.post(f"{TestConfig.API_BASE_URL}/api/politics/content_analysis/topics/cluster")
         TestUtils.assert_response_success(response)
         
         # Wait a moment for processing
@@ -37,7 +37,7 @@ class TestTopicClustering:
         time.sleep(2)
         
         # Get topic clusters
-        response = api_client.get(f"{TestConfig.API_BASE_URL}/api/v4/content-analysis/topics")
+        response = api_client.get(f"{TestConfig.API_BASE_URL}/api/politics/content_analysis/topics")
         TestUtils.assert_response_success(response)
         
         data = response.json()["data"]
@@ -64,7 +64,7 @@ class TestTopicClustering:
                 articles.append(article_id)
         
         # Get word cloud data
-        response = api_client.get(f"{TestConfig.API_BASE_URL}/api/v4/content-analysis/topics/word-cloud")
+        response = api_client.get(f"{TestConfig.API_BASE_URL}/api/politics/content_analysis/topics/word_cloud")
         TestUtils.assert_response_success(response)
         
         data = response.json()["data"]
@@ -99,11 +99,11 @@ class TestTopicClustering:
                 topic_articles.append(article_id)
         
         # Trigger clustering
-        response = api_client.post(f"{TestConfig.API_BASE_URL}/api/v4/content-analysis/topics/cluster")
+        response = api_client.post(f"{TestConfig.API_BASE_URL}/api/politics/content_analysis/topics/cluster")
         TestUtils.assert_response_success(response)
         
         # Get topics
-        response = api_client.get(f"{TestConfig.API_BASE_URL}/api/v4/content-analysis/topics")
+        response = api_client.get(f"{TestConfig.API_BASE_URL}/api/politics/content_analysis/topics")
         TestUtils.assert_response_success(response)
         
         topics = response.json()["data"]["topics"]
@@ -111,14 +111,14 @@ class TestTopicClustering:
             topic_name = topics[0]["name"]
             
             # Get topic summary
-            response = api_client.get(f"{TestConfig.API_BASE_URL}/api/v4/content-analysis/topics/{topic_name}/summary")
+            response = api_client.get(f"{TestConfig.API_BASE_URL}/api/politics/content_analysis/topics/{topic_name}/summary")
             TestUtils.assert_response_success(response)
             
             summary_data = response.json()["data"]
             TestUtils.assert_data_integrity(summary_data, ["summary", "total_articles", "key_points"])
             
             # Get articles for topic
-            response = api_client.get(f"{TestConfig.API_BASE_URL}/api/v4/content-analysis/topics/{topic_name}/articles")
+            response = api_client.get(f"{TestConfig.API_BASE_URL}/api/politics/content_analysis/topics/{topic_name}/articles")
             TestUtils.assert_response_success(response)
             
             articles_data = response.json()["data"]

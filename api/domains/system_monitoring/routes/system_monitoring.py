@@ -38,6 +38,78 @@ router = APIRouter(
     responses={404: {"description": "Not found"}}
 )
 
+
+def _get_gpu_metrics() -> Dict[str, Any]:
+    """
+    Get GPU utilization and VRAM (percent). Tries nvidia-smi first (no extra deps), then GPUtil.
+    Returns dict with gpu_utilization_percent, gpu_vram_percent (0-100), and optionally
+    gpu_temperature_c, gpu_memory_used_mb, gpu_memory_total_mb. All keys may be None if unavailable.
+    """
+    import subprocess
+    result = {
+        "gpu_utilization_percent": None,
+        "gpu_vram_percent": None,
+        "gpu_temperature_c": None,
+        "gpu_memory_used_mb": None,
+        "gpu_memory_total_mb": None,
+    }
+    # Prefer nvidia-smi (works without GPUtil)
+    try:
+        proc = subprocess.run(
+            [
+                "nvidia-smi",
+                "--query-gpu=utilization.gpu,memory.used,memory.total,temperature.gpu",
+                "--format=csv,noheader,nounits",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if proc.returncode == 0 and proc.stdout.strip():
+            parts = [p.strip() for p in proc.stdout.strip().split(",")]
+            if len(parts) >= 3:
+                util = parts[0].strip().replace(" %", "")
+                mem_used = parts[1].strip().replace(" MiB", "").replace(" ", "")
+                mem_total = parts[2].strip().replace(" MiB", "").replace(" ", "")
+                result["gpu_utilization_percent"] = float(util) if util.isdigit() else None
+                try:
+                    u_mb = int(mem_used)
+                    t_mb = int(mem_total)
+                    result["gpu_memory_used_mb"] = u_mb
+                    result["gpu_memory_total_mb"] = t_mb
+                    result["gpu_vram_percent"] = round(100.0 * u_mb / t_mb, 1) if t_mb else None
+                except (ValueError, TypeError):
+                    pass
+                if len(parts) >= 4:
+                    temp = parts[3].strip().replace(" C", "")
+                    try:
+                        result["gpu_temperature_c"] = int(temp)
+                    except (ValueError, TypeError):
+                        pass
+            return result
+    except (FileNotFoundError, subprocess.TimeoutExpired, Exception):
+        pass
+    # Fallback: GPUtil
+    try:
+        import GPUtil
+        gpus = GPUtil.getGPUs()
+        if gpus:
+            gpu = gpus[0]
+            result["gpu_utilization_percent"] = round((gpu.load or 0) * 100, 1)
+            result["gpu_vram_percent"] = round((gpu.memoryUtil or 0) * 100, 1)
+            if getattr(gpu, "memoryUsed", None) is not None:
+                result["gpu_memory_used_mb"] = int(gpu.memoryUsed)
+            if getattr(gpu, "memoryTotal", None) is not None:
+                result["gpu_memory_total_mb"] = int(gpu.memoryTotal)
+            if getattr(gpu, "temperature", None) is not None:
+                result["gpu_temperature_c"] = int(gpu.temperature)
+    except ImportError:
+        pass
+    except Exception:
+        pass
+    return result
+
+
 @router.get("/orchestrator")
 async def orchestrator_status(request: Request):
     """Newsroom Orchestrator v6 status: enabled, running, last_event_at, queue_depth."""
@@ -57,21 +129,11 @@ async def health_check():
         memory = psutil.virtual_memory()
         disk = psutil.disk_usage('/')
 
-        # Get GPU info if available
-        gpu_vram_percent = None
-        gpu_utilization_percent = None
-        try:
-            import GPUtil
-            gpus = GPUtil.getGPUs()
-            if gpus:
-                gpu = gpus[0]
-                gpu_vram_percent = gpu.memoryUtil * 100
-                gpu_utilization_percent = gpu.load * 100
-        except ImportError:
-            pass
-        except Exception:
-            pass
-        
+        # Get GPU info if available (nvidia-smi or GPUtil)
+        gpu = _get_gpu_metrics()
+        gpu_vram_percent = gpu.get("gpu_vram_percent")
+        gpu_utilization_percent = gpu.get("gpu_utilization_percent")
+
         # Check database connection (with quick timeout to prevent stalling)
         db_status = "healthy"
         try:
@@ -167,6 +229,9 @@ async def health_check():
                 "disk_percent": disk.percent,
                 "gpu_vram_percent": gpu_vram_percent,
                 "gpu_utilization_percent": gpu_utilization_percent,
+                "gpu_temperature_c": gpu.get("gpu_temperature_c"),
+                "gpu_memory_used_mb": gpu.get("gpu_memory_used_mb"),
+                "gpu_memory_total_mb": gpu.get("gpu_memory_total_mb"),
                 "timestamp": datetime.now().isoformat()
             },
             "timestamp": datetime.now().isoformat()
@@ -185,6 +250,351 @@ async def health_check():
             },
             "error": str(e)
         }
+
+
+@router.get("/monitoring/overview")
+async def get_monitoring_overview():
+    """
+    Enhanced monitoring: connection status (API, database, webserver) and live activity feed.
+    Use for the monitoring UI that shows system health and "what the backend is doing".
+    """
+    import threading
+    import queue as queue_module
+
+    connections: Dict[str, Any] = {"api": "ok"}
+    db_status = "unknown"
+    try:
+        result_queue = queue_module.Queue()
+        exception_queue = queue_module.Queue()
+
+        def db_check():
+            try:
+                conn = get_db_connection()
+                if conn:
+                    with conn.cursor() as cur:
+                        cur.execute("SELECT 1")
+                    conn.close()
+                    result_queue.put(True)
+                else:
+                    result_queue.put(False)
+            except Exception as e:
+                exception_queue.put(e)
+
+        thread = threading.Thread(target=db_check, daemon=True)
+        thread.start()
+        thread.join(timeout=2)
+        if thread.is_alive():
+            db_status = "timeout"
+        elif not exception_queue.empty():
+            db_status = "unhealthy"
+        elif not result_queue.empty() and result_queue.get():
+            db_status = "healthy"
+        else:
+            db_status = "unhealthy"
+    except Exception:
+        db_status = "unhealthy"
+    connections["database"] = db_status
+
+    webserver: Dict[str, Any] = {}
+    try:
+        from shared.services.route_supervisor import get_route_supervisor
+        supervisor = get_route_supervisor()
+        if supervisor.frontend_health:
+            f = supervisor.frontend_health
+            webserver = {
+                "status": f.status.value if hasattr(f.status, "value") else str(f.status),
+                "response_time_ms": getattr(f, "response_time_ms", None),
+                "api_connection": getattr(f, "api_connection", None),
+                "url": getattr(f, "url", None),
+                "last_check": f.last_check.isoformat() if getattr(f, "last_check", None) else None,
+            }
+    except Exception as e:
+        webserver = {"status": "unknown", "error": str(e)[:80]}
+    connections["webserver"] = webserver
+
+    activities: Dict[str, Any] = {}
+    try:
+        from services.activity_feed_service import get_activity_feed
+        activities = get_activity_feed().get_snapshot(recent_limit=50)
+    except Exception as e:
+        logger.debug("Activity feed: %s", e)
+        activities = {"current": [], "recent": []}
+
+    return {
+        "success": True,
+        "connections": connections,
+        "activities": activities,
+        "timestamp": datetime.now().isoformat(),
+    }
+
+
+def _get_last_run_from_db(phase_name: str) -> Optional[datetime]:
+    """Latest finished_at for this phase from automation_run_history (survives restart)."""
+    try:
+        conn = get_db_connection()
+        if not conn:
+            return None
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT finished_at FROM automation_run_history WHERE phase_name = %s ORDER BY finished_at DESC LIMIT 1",
+                    (phase_name,),
+                )
+                row = cur.fetchone()
+                return row[0] if row else None
+        finally:
+            conn.close()
+    except Exception:
+        return None
+
+
+@router.get("/automation/status")
+async def get_automation_status(request: Request) -> Dict[str, Any]:
+    """
+    AutomationManager status for monitoring: is_running, queue_size, active_workers,
+    and per-phase last_run + interval so the UI can show phase timeline and next-due.
+    last_run is augmented from automation_run_history when in-memory is missing (survives API restart).
+    """
+    automation = getattr(request.app.state, "automation", None)
+    if automation is None or not hasattr(automation, "get_status"):
+        return {
+            "success": True,
+            "data": {
+                "is_running": False,
+                "queue_size": 0,
+                "active_workers": 0,
+                "phases": [],
+                "message": "Automation manager not available",
+            },
+        }
+    try:
+        status = automation.get_status()
+        schedules = status.get("schedules") or {}
+        phase_group_labels = {
+            0: "Monitoring",
+            1: "Data collection & context",
+            2: "Articles, context & events",
+            3: "Event review & ML",
+            4: "ML & entity (parallel)",
+            5: "Topic clustering",
+            6: "Summaries",
+            7: "Storylines",
+            8: "RAG enhancement",
+            9: "Events, timelines & enrichment",
+            10: "Maintenance",
+            11: "Digests",
+            12: "Watchlist & patterns",
+            99: "Maintenance",
+        }
+        phases = []
+        for name, sched in schedules.items():
+            if not isinstance(sched, dict):
+                continue
+            last_run = sched.get("last_run")
+            # Use DB last_run when in-memory is missing (e.g. after API restart)
+            if last_run is None:
+                db_last = _get_last_run_from_db(name)
+                if db_last is not None:
+                    last_run = db_last
+            phase_num = sched.get("phase")
+            phases.append({
+                "name": name,
+                "last_run": last_run.isoformat() if hasattr(last_run, "isoformat") else str(last_run) if last_run else None,
+                "interval_seconds": sched.get("interval"),
+                "enabled": sched.get("enabled", True),
+                "phase": phase_num,
+                "phase_group_label": phase_group_labels.get(phase_num, f"Phase {phase_num}"),
+                "parallel_group": sched.get("parallel_group"),
+            })
+        phases.sort(key=lambda p: (p.get("phase") or 0, p.get("name") or ""))
+        return {
+            "success": True,
+            "data": {
+                "is_running": status.get("is_running", False),
+                "queue_size": status.get("queue_size", 0),
+                "active_workers": status.get("active_workers", 0),
+                "phases": phases,
+            },
+        }
+    except Exception as e:
+        logger.warning("get_automation_status failed: %s", e)
+        return {"success": False, "data": {}, "error": str(e)[:200]}
+
+
+@router.get("/sources_collected")
+async def get_sources_collected(
+    minutes: int = Query(30, ge=1, le=1440, description="Look back window in minutes"),
+) -> Dict[str, Any]:
+    """
+    List all data sources that were actually pulled from in the last N minutes.
+    Includes: RSS feeds (per feed, from last_fetched_at), orchestrator collection
+    sources (rss, gold, silver, platinum from last_collection_times), and pipeline
+    stages that ran (e.g. rss_collection from pipeline_checkpoints).
+    """
+    from datetime import timezone as tz
+    cutoff = datetime.now(tz.utc) - timedelta(minutes=minutes)
+    cutoff_iso = cutoff.isoformat()
+
+    out = {
+        "window_minutes": minutes,
+        "cutoff_utc": cutoff_iso,
+        "rss_feeds": [],
+        "orchestrator_sources": [],
+        "pipeline_stages": [],
+        "summary": [],
+    }
+
+    # 1) RSS feeds: any feed with last_fetched_at in the window (per-domain tables)
+    conn = get_db_connection()
+    if conn:
+        try:
+            for schema, domain_key in [("politics", "politics"), ("finance", "finance"), ("science_tech", "science-tech")]:
+                try:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            f"""
+                            SELECT feed_name, feed_url, last_fetched_at
+                            FROM {schema}.rss_feeds
+                            WHERE is_active = true
+                              AND last_fetched_at IS NOT NULL
+                              AND last_fetched_at >= %s
+                            ORDER BY last_fetched_at DESC
+                            """,
+                            (cutoff,),
+                        )
+                        for row in cur.fetchall():
+                            out["rss_feeds"].append({
+                                "feed_name": row[0] or "",
+                                "feed_url": (row[1] or "")[:200],
+                                "domain": domain_key,
+                                "last_fetched_at": row[2].isoformat() if hasattr(row[2], "isoformat") else str(row[2]),
+                            })
+                except Exception as e:
+                    logger.debug("sources_collected rss %s: %s", schema, e)
+            conn.close()
+        except Exception as e:
+            logger.debug("sources_collected db: %s", e)
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    # 2) Orchestrator collection sources (rss, gold, silver, platinum) from last_collection_times
+    try:
+        from services import orchestrator_state
+        state = orchestrator_state.get_controller_state()
+        times = state.get("last_collection_times") or {}
+        for source_id, last_iso in times.items():
+            if not last_iso:
+                continue
+            try:
+                # Parse and compare (last_iso may be with or without Z)
+                last_dt = datetime.fromisoformat(last_iso.replace("Z", "+00:00"))
+                if last_dt.tzinfo is None:
+                    last_dt = last_dt.replace(tzinfo=tz.utc)
+                if last_dt >= cutoff:
+                    out["orchestrator_sources"].append({
+                        "source_id": source_id,
+                        "last_collected_at": last_iso,
+                    })
+            except (ValueError, TypeError):
+                continue
+    except Exception as e:
+        logger.debug("sources_collected orchestrator_state: %s", e)
+
+    # 3) Pipeline stages that ran in the window (e.g. rss_collection)
+    conn2 = get_db_connection()
+    if conn2:
+        try:
+            with conn2.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT DISTINCT stage, MAX(timestamp) AS last_ts
+                    FROM pipeline_checkpoints
+                    WHERE timestamp >= %s
+                    GROUP BY stage
+                    ORDER BY last_ts DESC
+                    """,
+                    (cutoff,),
+                )
+                for row in cur.fetchall():
+                    out["pipeline_stages"].append({
+                        "stage": row[0],
+                        "last_run_at": row[1].isoformat() if hasattr(row[1], "isoformat") else str(row[1]),
+                    })
+            conn2.close()
+        except Exception as e:
+            logger.debug("sources_collected pipeline_checkpoints: %s", e)
+            try:
+                conn2.close()
+            except Exception:
+                pass
+
+    # Summary line for UI
+    n_rss = len(out["rss_feeds"])
+    n_orch = len(out["orchestrator_sources"])
+    n_stages = len(out["pipeline_stages"])
+    parts = []
+    if n_rss:
+        parts.append(f"{n_rss} RSS feed(s)")
+    if n_orch:
+        parts.append(f"{n_orch} orchestrator source(s): {', '.join(s['source_id'] for s in out['orchestrator_sources'])}")
+    if n_stages:
+        parts.append(f"pipeline stages: {', '.join(s['stage'] for s in out['pipeline_stages'])}")
+    out["summary"] = parts if parts else ["No sources collected in the last {} minutes".format(minutes)]
+
+    return {"success": True, "data": out}
+
+
+@router.post("/monitoring/trigger_phase")
+async def trigger_phase(request: Request, body: Dict[str, Any] = Body(..., embed=False)):
+    """
+    Request that the AutomationManager run a phase (e.g. rss_processing).
+    The task is enqueued and will show in Current activity while it runs.
+    Adds a "Requested: {phase} — queued" entry immediately so the Monitor shows it.
+    """
+    phase = (body.get("phase") or "").strip()
+    if not phase:
+        raise HTTPException(status_code=400, detail="phase required (e.g. rss_processing)")
+    automation = getattr(request.app.state, "automation", None)
+    if automation is None or not hasattr(automation, "request_phase"):
+        raise HTTPException(status_code=503, detail="Automation manager not available")
+    import time
+    requested_activity_id = f"requested_{phase}_{int(time.time())}"
+    try:
+        from services.activity_feed_service import get_activity_feed
+        get_activity_feed().add_current(
+            requested_activity_id,
+            f"Requested: {phase} — queued",
+            phase=phase,
+        )
+    except Exception as e:
+        logger.debug("Activity feed add_current (requested): %s", e)
+    try:
+        automation.request_phase(
+            phase,
+            domain=body.get("domain"),
+            storyline_id=body.get("storyline_id"),
+            requested_activity_id=requested_activity_id,
+        )
+    except Exception as e:
+        logger.warning("trigger_phase failed: %s", e)
+        try:
+            from services.activity_feed_service import get_activity_feed
+            get_activity_feed().complete(requested_activity_id, success=False, error_message=str(e)[:200])
+        except Exception:
+            pass
+        raise HTTPException(status_code=500, detail=str(e))
+    msg = f"Phase {phase} requested; check Current activity on Monitor."
+    warning = None
+    if hasattr(automation, "get_phase_request_warning"):
+        try:
+            warning = automation.get_phase_request_warning(phase)
+        except Exception:
+            pass
+    if warning:
+        msg += f" {warning}"
+    return {"success": True, "message": msg, "warning": warning}
 
 
 @router.get("/fast_stats")
@@ -482,6 +892,122 @@ async def resolve_alert(alert_id: int):
         logger.error(f"Error resolving alert: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+# =============================================================================
+# ANOMALY MONITORING (data-flow anomalies: volume, source, storyline)
+# =============================================================================
+
+@router.get("/anomalies")
+async def get_anomalies(
+    domain: Optional[str] = Query(None, description="politics, finance, or science-tech; omit for all"),
+    hours: int = Query(24, ge=1, le=168),
+    sensitivity: float = Query(2.0, ge=0.5, le=5.0),
+    include_investigated: bool = Query(False, description="Include anomalies already marked investigated"),
+):
+    """List data-flow anomalies (article volume, source behavior, storyline growth). Uses IntelligenceAnalysisService."""
+    try:
+        from services.intelligence_analysis_service import get_intelligence_service
+        svc = get_intelligence_service()
+        domains_to_check = [domain] if domain else ["politics", "finance", "science_tech"]
+        all_anomalies = []
+        for d in domains_to_check:
+            try:
+                anomalies = svc.detect_anomalies(d, hours=hours, sensitivity=sensitivity)
+                for a in anomalies:
+                    all_anomalies.append({
+                        "domain": d,
+                        "entity_type": a.entity_type,
+                        "entity_id": a.entity_id,
+                        "anomaly_type": a.anomaly_type,
+                        "severity": a.severity,
+                        "description": a.description,
+                        "detected_value": a.detected_value,
+                        "expected_range": list(a.expected_range),
+                        "evidence": a.supporting_evidence,
+                        "detected_at": a.detected_at.isoformat(),
+                    })
+            except Exception as e:
+                logger.debug("detect_anomalies %s: %s", d, e)
+        if not include_investigated and all_anomalies:
+            try:
+                conn = get_db_connection()
+                if conn:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            """
+                            SELECT domain, entity_type, entity_id FROM intelligence.anomaly_investigations
+                            WHERE investigated_at > NOW() - INTERVAL '7 days'
+                            """
+                        )
+                        investigated = {(r[0], r[1], r[2]) for r in cur.fetchall()}
+                    conn.close()
+                    all_anomalies = [
+                        a for a in all_anomalies
+                        if (a["domain"], a["entity_type"], a["entity_id"]) not in investigated
+                    ]
+            except Exception:
+                pass
+        severity_counts = defaultdict(int)
+        for a in all_anomalies:
+            severity_counts[a["severity"]] += 1
+        return {
+            "success": True,
+            "data": {
+                "anomalies": all_anomalies,
+                "total": len(all_anomalies),
+                "severity_breakdown": dict(severity_counts),
+                "requires_attention": severity_counts.get("critical", 0) + severity_counts.get("high", 0) > 0,
+            },
+            "message": None,
+        }
+    except Exception as e:
+        logger.error("get_anomalies failed: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/investigate_anomaly")
+async def investigate_anomaly(
+    domain: str = Body(..., embed=True),
+    entity_type: str = Body(..., embed=True),
+    entity_id: int = Body(..., embed=True),
+    action: str = Body("investigated", embed=True),
+    note: Optional[str] = Body(None, embed=True),
+    anomaly_type: Optional[str] = Body(None, embed=True),
+):
+    """Record that an anomaly was reviewed (investigated, dismissed, or escalated)."""
+    if action not in ("investigated", "dismissed", "escalated"):
+        raise HTTPException(status_code=400, detail="action must be investigated, dismissed, or escalated")
+    try:
+        conn = get_db_connection()
+        if not conn:
+            raise HTTPException(status_code=503, detail="Database unavailable")
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO intelligence.anomaly_investigations
+                (domain, entity_type, entity_id, anomaly_type, action, note)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                RETURNING id
+                """,
+                (domain, entity_type, entity_id, anomaly_type or "", action, note),
+            )
+            row = cur.fetchone()
+        conn.commit()
+        conn.close()
+        return {
+            "success": True,
+            "data": {"id": row[0], "action": action},
+            "message": None,
+        }
+    except Exception as e:
+        logger.warning("investigate_anomaly failed: %s", e)
+        try:
+            conn.rollback()
+            conn.close()
+        except Exception:
+            pass
+        raise HTTPException(status_code=500, detail=str(e))
+
 @router.get("/status")
 @cached_response(ttl=30)  # Cache system status for 30 seconds
 async def get_system_status():
@@ -498,32 +1024,11 @@ async def get_system_status():
                 memory = psutil.virtual_memory()
                 disk = psutil.disk_usage('/')
 
-                # Get GPU info if available
-                logger.info("🔍 Starting GPU monitoring in /status endpoint")
-                gpu_vram_percent = None
-                gpu_utilization_percent = None
-                try:
-                    logger.info("🔍 Attempting to import GPUtil")
-                    import GPUtil
-                    logger.info("🔍 GPUtil imported successfully")
-                    gpus = GPUtil.getGPUs()
-                    logger.info(f"🔍 Found {len(gpus)} GPUs")
-                    if gpus:
-                        gpu = gpus[0]
-                        gpu_vram_percent = gpu.memoryUtil * 100
-                        gpu_utilization_percent = gpu.load * 100
-                        logger.info(f"✅ GPU monitoring successful: VRAM={gpu_vram_percent}%, Utilization={gpu_utilization_percent}%")
-                    else:
-                        logger.warning("❌ No GPUs found")
-                except ImportError as e:
-                    logger.warning(f"❌ GPUtil not available: {e}")
-                except Exception as e:
-                    logger.error(f"❌ GPU monitoring failed: {e}")
-                    import traceback
-                    logger.error(f"❌ GPU monitoring traceback: {traceback.format_exc()}")
-                
-                logger.info(f"🔍 Final GPU values: VRAM={gpu_vram_percent}, Utilization={gpu_utilization_percent}")
-                
+                # Get GPU info if available (nvidia-smi or GPUtil)
+                gpu = _get_gpu_metrics()
+                gpu_vram_percent = gpu.get("gpu_vram_percent")
+                gpu_utilization_percent = gpu.get("gpu_utilization_percent")
+
                 # OPTIMIZED: Get all database metrics in a single query (reduces round-trips)
                 week_ago = datetime.now() - timedelta(days=7)
                 cur.execute("""
@@ -617,6 +1122,9 @@ async def get_system_status():
                             "disk_percent": disk.percent,
                             "gpu_vram_percent": gpu_vram_percent,
                             "gpu_utilization_percent": gpu_utilization_percent,
+                            "gpu_temperature_c": gpu.get("gpu_temperature_c"),
+                            "gpu_memory_used_mb": gpu.get("gpu_memory_used_mb"),
+                            "gpu_memory_total_mb": gpu.get("gpu_memory_total_mb"),
                             "status": "healthy" if cpu_percent < 80 and memory.percent < 80 and disk.percent < 90 else "warning"
                         },
                         "database": {
@@ -852,21 +1360,9 @@ async def process_metric_collection():
                 memory = psutil.virtual_memory()
                 disk = psutil.disk_usage('/')
 
-                # Get GPU info if available
-                gpu_vram_percent = None
-                gpu_utilization_percent = None
-                try:
-                    import GPUtil
-                    gpus = GPUtil.getGPUs()
-                    if gpus:
-                        gpu = gpus[0]
-                        gpu_vram_percent = gpu.memoryUtil * 100
-                        gpu_utilization_percent = gpu.load * 100
-                except ImportError:
-                    pass
-                except Exception:
-                    pass
-                
+                # Get GPU info if available (nvidia-smi or GPUtil)
+                gpu = _get_gpu_metrics()
+
                 # Store metrics in database
                 metrics = [
                     ("cpu_percent", cpu_percent, "percent"),
@@ -875,6 +1371,10 @@ async def process_metric_collection():
                     ("memory_available", memory.available, "bytes"),
                     ("disk_free", disk.free, "bytes")
                 ]
+                if gpu.get("gpu_utilization_percent") is not None:
+                    metrics.append(("gpu_utilization_percent", gpu["gpu_utilization_percent"], "percent"))
+                if gpu.get("gpu_vram_percent") is not None:
+                    metrics.append(("gpu_vram_percent", gpu["gpu_vram_percent"], "percent"))
                 
                 for metric_name, metric_value, unit in metrics:
                     # Convert tags dict to JSON string for JSONB column
@@ -1379,6 +1879,165 @@ async def get_log_statistics(days: int = 7):
     except Exception as e:
         logger.error(f"Error getting log statistics: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/process_run_summary")
+async def get_process_run_summary(
+    request: Request,
+    hours: int = Query(24, ge=1, le=168, description="Look back window in hours"),
+    activity_lines: int = Query(80, ge=0, le=200, description="Max lines from activity.jsonl (0 = skip)"),
+) -> Dict[str, Any]:
+    """
+    Review what has been running and what has not been triggered recently.
+    Uses automation_run_history (DB) so "last 24h" is chronological, not since API restart.
+    Returns: phases run in last N hours, phases not run (or never), pipeline checkpoints in window,
+    and recent activity log entries (from activity.jsonl) when available.
+    """
+    from datetime import timezone as tz
+    cutoff = datetime.now(tz.utc) - timedelta(hours=hours)
+    cutoff_iso = cutoff.isoformat()
+
+    out = {
+        "window_hours": hours,
+        "cutoff_utc": cutoff_iso,
+        "phases_run_recently": [],
+        "phases_not_run_recently": [],
+        "pipeline_checkpoints_recent": [],
+        "recent_activity": [],
+        "activity_file_used": None,
+    }
+
+    # 1) Automation phases: run recently vs not (from automation_run_history — survives restart)
+    conn = get_db_connection()
+    run_in_window = {}  # phase_name -> last finished_at in window
+    last_run_ever = {}  # phase_name -> last finished_at (any time)
+    if conn:
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT phase_name, finished_at
+                    FROM automation_run_history
+                    WHERE finished_at >= %s
+                    ORDER BY finished_at DESC
+                    """,
+                    (cutoff,),
+                )
+                for row in cur.fetchall():
+                    name, finished = row[0], row[1]
+                    if name not in run_in_window:
+                        run_in_window[name] = finished
+                cur.execute(
+                    """
+                    SELECT phase_name, MAX(finished_at) AS last_finished
+                    FROM automation_run_history
+                    GROUP BY phase_name
+                    """
+                )
+                for row in cur.fetchall():
+                    last_run_ever[row[0]] = row[1]
+        except Exception as e:
+            logger.debug("process_run_summary automation_run_history: %s", e)
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    # Build list of known phase names (from in-memory schedules if available, else from DB)
+    schedule_names = set()
+    schedule_info = {}  # name -> { interval, phase }
+    automation = getattr(request.app.state, "automation", None)
+    if automation and hasattr(automation, "get_status"):
+        try:
+            status = automation.get_status()
+            schedules = status.get("schedules") or {}
+            for name, sched in schedules.items():
+                if isinstance(sched, dict) and sched.get("enabled", True):
+                    schedule_names.add(name)
+                    schedule_info[name] = {"interval": sched.get("interval"), "phase": sched.get("phase")}
+        except Exception as e:
+            logger.debug("process_run_summary schedules: %s", e)
+    if not schedule_names and last_run_ever:
+        schedule_names = set(last_run_ever.keys())
+
+    for name in sorted(schedule_names):
+        info = schedule_info.get(name, {})
+        last_ts = last_run_ever.get(name)
+        last_iso = last_ts.isoformat() if last_ts and hasattr(last_ts, "isoformat") else (str(last_ts) if last_ts else None)
+        entry = {
+            "name": name,
+            "last_run": last_iso,
+            "interval_seconds": info.get("interval"),
+            "phase": info.get("phase"),
+        }
+        if name in run_in_window:
+            out["phases_run_recently"].append(entry)
+        else:
+            out["phases_not_run_recently"].append(entry)
+    out["phases_run_recently"].sort(key=lambda x: (x.get("phase") or 0, x.get("name") or ""))
+    out["phases_not_run_recently"].sort(key=lambda x: (x.get("phase") or 0, x.get("name") or ""))
+
+    # 2) Pipeline checkpoints in the window
+    conn = get_db_connection()
+    if conn:
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT stage, status, timestamp
+                    FROM pipeline_checkpoints
+                    WHERE timestamp >= %s
+                    ORDER BY timestamp DESC
+                    LIMIT 200
+                    """,
+                    (cutoff,),
+                )
+                for row in cur.fetchall():
+                    out["pipeline_checkpoints_recent"].append({
+                        "stage": row[0],
+                        "status": row[1],
+                        "timestamp": row[2].isoformat() if hasattr(row[2], "isoformat") else str(row[2]),
+                    })
+            conn.close()
+        except Exception as e:
+            logger.debug("process_run_summary pipeline_checkpoints: %s", e)
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    # 3) Recent activity from activity.jsonl (if present)
+    if activity_lines > 0:
+        log_path = None
+        try:
+            from pathlib import Path
+            try:
+                from config.paths import LOG_DIR
+                log_path = Path(LOG_DIR) / "activity.jsonl"
+            except Exception:
+                log_path = Path(__file__).resolve().parents[4] / "logs" / "activity.jsonl"
+            if log_path.exists():
+                with open(log_path, "r") as f:
+                    lines = [ln.strip() for ln in f.readlines() if ln.strip()]
+                for line in lines[-activity_lines:]:
+                    try:
+                        import json
+                        obj = json.loads(line)
+                        out["recent_activity"].append({
+                            "timestamp": obj.get("timestamp"),
+                            "component": obj.get("component"),
+                            "event_type": obj.get("event_type"),
+                            "status": obj.get("status"),
+                            "message": obj.get("message"),
+                        })
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                out["activity_file_used"] = str(log_path)
+        except Exception as e:
+            logger.debug("process_run_summary activity.jsonl: %s", e)
+
+    return {"success": True, "data": out}
 
 
 @router.get("/logs/realtime")

@@ -87,6 +87,9 @@ export default function CommodityDashboard() {
     events: [],
     by_region: {},
   });
+  const [regulatoryEvents, setRegulatoryEvents] = useState<
+    { id: number; event_type: string; event_name: string; start_date: string | null; geographic_scope: string | null }[]
+  >([]);
   const [selectedCountry, setSelectedCountry] = useState<string | null>(null);
   const [selectedEventIds, setSelectedEventIds] = useState<number[]>([]);
   const [loading, setLoading] = useState(true);
@@ -96,11 +99,12 @@ export default function CommodityDashboard() {
     setLoading(true);
     const days = DAYS_MAP[timeRange];
     try {
-      const [histRes, spotRes, authRes, geoRes] = await Promise.all([
+      const [histRes, spotRes, authRes, geoRes, regRes] = await Promise.all([
         monitoringApi.getCommodityHistory(commodity, { days, fetch_if_empty: true }, domain),
         monitoringApi.getCommoditySpot(commodity, domain),
         monitoringApi.getCommodityAuthority(commodity, {}, domain),
-        monitoringApi.getCommodityGeoEvents({ limit: 50 }, domain),
+        monitoringApi.getCommodityGeoEvents({ limit: 50, commodity }, domain),
+        monitoringApi.getCommodityRegulatoryEvents({ limit: 15, commodity }, domain),
       ]);
       const obs = (histRes?.data?.observations ?? []) as { date: string; value: number }[];
       setHistory(obs);
@@ -110,6 +114,9 @@ export default function CommodityDashboard() {
         events: (geoRes?.data?.events ?? []) as GeoEvent[],
         by_region: (geoRes?.data?.by_region ?? {}) as Record<string, number[]>,
       });
+      setRegulatoryEvents(
+        (regRes?.data?.events ?? []) as { id: number; event_type: string; event_name: string; start_date: string | null; geographic_scope: string | null }[],
+      );
     } finally {
       setLoading(false);
     }
@@ -370,11 +377,36 @@ export default function CommodityDashboard() {
         </Grid>
         <Grid item xs={12} md={4}>
           <Card variant="outlined">
-            <CardHeader title="National & regulatory" subheader="Country-level events" />
+            <CardHeader
+              title="National & regulatory"
+              subheader="International regulatory and national announcements"
+            />
             <CardContent>
-              <Typography variant="body2" color="text.secondary">
-                Events with geographic scope appear in the map and timeline. Select a country on the map to filter.
-              </Typography>
+              {loading ? (
+                <Skeleton variant="text" height={24} sx={{ mb: 0.5 }} />
+              ) : regulatoryEvents.length > 0 ? (
+                <List dense disablePadding>
+                  {regulatoryEvents.slice(0, 8).map((ev) => (
+                    <ListItemButton key={ev.id} disablePadding sx={{ py: 0.25, px: 0 }} disableRipple>
+                      <ListItemText
+                        primary={ev.event_name}
+                        secondary={ev.start_date ? new Date(ev.start_date).toLocaleDateString() : null}
+                        primaryTypographyProps={{ variant: 'body2', noWrap: true, title: ev.event_name }}
+                        secondaryTypographyProps={{ variant: 'caption' }}
+                      />
+                      {ev.event_type && ev.event_type !== 'other' && (
+                        <Chip size="small" label={ev.event_type} sx={{ ml: 0.5, flexShrink: 0 }} color={EVENT_TYPE_COLORS[ev.event_type] ?? 'default'} />
+                      )}
+                    </ListItemButton>
+                  ))}
+                </List>
+              ) : (
+                <Typography variant="body2" color="text.secondary">
+                  We watch major countries and trading hubs: central banks (Fed, ECB, BoE, BoC, SNB), regulators,
+                  and national announcements. Events appear here as the pipeline ingests finance RSS and extracts
+                  regulatory/policy events; country-level events also appear on the map.
+                </Typography>
+              )}
             </CardContent>
           </Card>
         </Grid>

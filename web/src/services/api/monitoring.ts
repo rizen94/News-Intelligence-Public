@@ -16,6 +16,17 @@ export const monitoringApi = {
     }
   },
 
+  /** Enhanced monitoring: connection status (API, database, webserver) + live activity feed */
+  async getMonitoringOverview() {
+    try {
+      const response = await getApi().get('/api/system_monitoring/monitoring/overview');
+      return response.data;
+    } catch (error) {
+      Logger.apiError('Failed to fetch monitoring overview', error as Error);
+      return { success: false, connections: {}, activities: { current: [], recent: [] }, error: (error as any).message };
+    }
+  },
+
   async getDatabaseStats() {
     try {
       const response = await getApi().get('/api/system_monitoring/database/stats');
@@ -73,6 +84,57 @@ export const monitoringApi = {
     } catch (error) {
       Logger.apiError('Failed to fetch orchestrator dashboard', error as Error);
       return { success: false, status: {}, error: (error as any).message };
+    }
+  },
+
+  /** Data sources actually pulled in the last N minutes (RSS feeds, orchestrator sources, pipeline stages). */
+  async getSourcesCollected(minutes: number = 30) {
+    try {
+      const response = await getApi().get('/api/system_monitoring/sources_collected', {
+        params: { minutes },
+      });
+      return response.data;
+    } catch (error) {
+      Logger.apiError('Failed to fetch sources collected', error as Error);
+      return { success: false, data: {}, error: (error as any).message };
+    }
+  },
+
+  /** What has been running vs not triggered recently (phases, pipeline checkpoints, activity log). */
+  async getProcessRunSummary(hours: number = 24, activityLines: number = 80) {
+    try {
+      const response = await getApi().get('/api/system_monitoring/process_run_summary', {
+        params: { hours, activity_lines: activityLines },
+      });
+      return response.data;
+    } catch (error) {
+      Logger.apiError('Failed to fetch process run summary', error as Error);
+      return { success: false, data: {}, error: (error as any).message };
+    }
+  },
+
+  /** Automation manager: phases with last_run, queue_size, active_workers (for phase timeline). */
+  async getAutomationStatus() {
+    try {
+      const response = await getApi().get('/api/system_monitoring/automation/status');
+      return response.data;
+    } catch (error) {
+      Logger.apiError('Failed to fetch automation status', error as Error);
+      return { success: false, data: { phases: [], queue_size: 0 }, error: (error as any).message };
+    }
+  },
+
+  /** Request that a phase run now (e.g. rss_processing, digest_generation). */
+  async triggerPhase(phase: string, options?: { domain?: string; storyline_id?: number }) {
+    try {
+      const response = await getApi().post('/api/system_monitoring/monitoring/trigger_phase', {
+        phase,
+        ...options,
+      });
+      return response.data;
+    } catch (error) {
+      Logger.apiError('Failed to trigger phase', error as Error);
+      return { success: false, error: (error as any).message };
     }
   },
 
@@ -533,7 +595,10 @@ export const monitoringApi = {
     }
   },
 
-  async getCommodityGeoEvents(params: { limit?: number } = {}, domain?: string) {
+  async getCommodityGeoEvents(
+    params: { limit?: number; commodity?: 'gold' | 'silver' | 'platinum' } = {},
+    domain?: string,
+  ) {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(`/api/${domainKey}/finance/commodity/geo-events`, { params });
@@ -541,6 +606,20 @@ export const monitoringApi = {
     } catch (error) {
       Logger.apiError('Failed to fetch commodity geo-events', error as Error);
       return { success: false, data: { events: [], by_region: {} }, error: (error as Error).message };
+    }
+  },
+
+  async getCommodityRegulatoryEvents(
+    params: { limit?: number; commodity?: 'gold' | 'silver' | 'platinum' } = {},
+    domain?: string,
+  ) {
+    try {
+      const domainKey = domain || getCurrentDomain();
+      const response = await getApi().get(`/api/${domainKey}/finance/commodity/regulatory-events`, { params });
+      return response.data;
+    } catch (error) {
+      Logger.apiError('Failed to fetch commodity regulatory-events', error as Error);
+      return { success: false, data: { events: [] }, error: (error as Error).message };
     }
   },
 

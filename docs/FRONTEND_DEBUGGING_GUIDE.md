@@ -525,7 +525,7 @@ export const debugHelper = {
   // Network status
   checkNetworkStatus: async () => {
     try {
-      const response = await fetch('/api/v4/system-monitoring/health', {
+      const response = await fetch('/api/system_monitoring/health', {
         method: 'HEAD',
         cache: 'no-cache'
       });

@@ -249,6 +249,18 @@ Checklist:
 - [x] FRED fetch route migrated to orchestrator (POST fetch-fred → refresh topic=fred)
 - [x] GET /{domain}/finance/tasks/{task_id} — poll task status and result
 - [x] POST analyze ?wait=false — return task_id for async polling
+- [x] POST analyze ?deep=true — same as analyze but more RSS (35), RAG on, historic max_expansions=2
+- [x] POST analyze/enhance — re-run analysis with deep=true (review and get more data later)
+
+### Analysis evidence and “get more data later”
+
+Every analysis run pulls evidence from: (1) price/store (gold/silver/platinum, FRED), (2) orchestrator vector-store retrieval (n_chunks), (3) evidence_collector (RSS shortlist via news orchestrator, optional RAG, historic context). By default we use **RAG on**, **max_rss=25**, and **historic context** with one expansion. The prompt includes Evidence (REF-ids), Relevant excerpts (vector + RAG), Historic context, and News/reporting.
+
+To let the system **review and pull in more data later**:
+
+- **deep=true** on POST analyze — increases to max_rss=35, RAG on, historic_max_expansions=2, n_chunks=10. Use for a single “deeper” run.
+- **POST analyze/enhance** — same query/topic/date range as a prior analysis, but runs with deep=true so the model gets more RSS, more RAG excerpts, and an extra historic expansion. Returns the new analysis result. Use after an initial answer when you want a second pass with richer context.
+- **Research topic refine** — re-runs analysis for a saved topic (same query/topic/range). Can be wired to use deep=true so each refinement pulls more evidence.
 
 ---
 

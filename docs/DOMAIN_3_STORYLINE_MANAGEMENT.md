@@ -182,47 +182,47 @@ class ProactiveStoryDetector:
 ### **Storyline Management**
 ```python
 # Storyline CRUD Operations
-GET    /api/v4/storylines                           # List all storylines
-POST   /api/v4/storylines                           # Create new storyline
-GET    /api/v4/storylines/{storyline_id}            # Get specific storyline
-PUT    /api/v4/storylines/{storyline_id}            # Update storyline
-DELETE /api/v4/storylines/{storyline_id}            # Delete storyline
+GET    /api/storylines                           # List all storylines
+POST   /api/storylines                           # Create new storyline
+GET    /api/storylines/{storyline_id}            # Get specific storyline
+PUT    /api/storylines/{storyline_id}            # Update storyline
+DELETE /api/storylines/{storyline_id}            # Delete storyline
 
 # Storyline Operations
-POST   /api/v4/storylines/{storyline_id}/evolve     # Evolve storyline with new content
-POST   /api/v4/storylines/{storyline_id}/analyze    # Deep RAG analysis
-GET    /api/v4/storylines/{storyline_id}/report     # Get comprehensive report
-POST   /api/v4/storylines/{storyline_id}/validate   # Validate storyline quality
+POST   /api/storylines/{storyline_id}/evolve     # Evolve storyline with new content
+POST   /api/storylines/{storyline_id}/analyze    # Deep RAG analysis
+GET    /api/storylines/{storyline_id}/report     # Get comprehensive report
+POST   /api/storylines/{storyline_id}/validate   # Validate storyline quality
 ```
 
 ### **Timeline Management**
 ```python
 # Timeline Operations
-GET    /api/v4/storylines/{storyline_id}/timeline   # Get storyline timeline
-POST   /api/v4/storylines/{storyline_id}/timeline   # Update timeline
-GET    /api/v4/storylines/{storyline_id}/events     # Get timeline events
-POST   /api/v4/storylines/{storyline_id}/events     # Add timeline event
-GET    /api/v4/storylines/{storyline_id}/patterns    # Get temporal patterns
+GET    /api/storylines/{storyline_id}/timeline   # Get storyline timeline
+POST   /api/storylines/{storyline_id}/timeline   # Update timeline
+GET    /api/storylines/{storyline_id}/events     # Get timeline events
+POST   /api/storylines/{storyline_id}/events     # Add timeline event
+GET    /api/storylines/{storyline_id}/patterns    # Get temporal patterns
 ```
 
 ### **RAG Analysis**
 ```python
 # RAG-Enhanced Analysis
-POST   /api/v4/storylines/{storyline_id}/rag-analysis # Comprehensive RAG analysis
-GET    /api/v4/storylines/{storyline_id}/context     # Get storyline context
-POST   /api/v4/storylines/{storyline_id}/context     # Update storyline context
-GET    /api/v4/storylines/{storyline_id}/insights    # Get RAG-generated insights
-POST   /api/v4/storylines/{storyline_id}/correlate   # Find storyline correlations
+POST   /api/storylines/{storyline_id}/rag-analysis # Comprehensive RAG analysis
+GET    /api/storylines/{storyline_id}/context     # Get storyline context
+POST   /api/storylines/{storyline_id}/context     # Update storyline context
+GET    /api/storylines/{storyline_id}/insights    # Get RAG-generated insights
+POST   /api/storylines/{storyline_id}/correlate   # Find storyline correlations
 ```
 
 ### **Proactive Detection**
 ```python
 # Proactive Story Detection
-GET    /api/v4/storylines/emerging                  # Get emerging storylines
-POST   /api/v4/storylines/detect                    # Detect new storylines
-GET    /api/v4/storylines/correlations              # Get storyline correlations
-POST   /api/v4/storylines/predict                   # Predict story developments
-GET    /api/v4/storylines/trends                    # Get storyline trends
+GET    /api/storylines/emerging                  # Get emerging storylines
+POST   /api/storylines/detect                    # Detect new storylines
+GET    /api/storylines/correlations              # Get storyline correlations
+POST   /api/storylines/predict                   # Predict story developments
+GET    /api/storylines/trends                    # Get storyline trends
 ```
 
 ## 📊 **Data Models**

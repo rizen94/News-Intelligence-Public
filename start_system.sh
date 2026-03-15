@@ -39,6 +39,22 @@ export DB_NAME="${DB_NAME:-news_intel}"
 export DB_USER="${DB_USER:-newsapp}"
 export DB_PASSWORD="${DB_PASSWORD:-}"
 
+# Require DB password so the API never starts without credentials (avoids 503s on all DB routes)
+if [[ -z "${DB_PASSWORD}" ]]; then
+    if [[ "${DB_HOST}" == "192.168.93.101" ]] && [[ -f "$SCRIPT_DIR/.db_password_widow" ]]; then
+        export DB_PASSWORD="$(cat "$SCRIPT_DIR/.db_password_widow" | head -1 | tr -d '\n\r')"
+        echo -e "${CYAN}[INFO]${NC} Using DB password from .db_password_widow"
+    fi
+fi
+if [[ -z "${DB_PASSWORD}" ]]; then
+    echo -e "${RED}[ERROR]${NC} DB_PASSWORD is not set. The API will return 503 for all database routes without it." >&2
+    echo -e "  Set it in project-root .env:" >&2
+    echo -e "    DB_PASSWORD=your_newsapp_password" >&2
+    echo -e "  Or (Widow only) create .db_password_widow with the password on the first line." >&2
+    echo -e "  Then run this script again." >&2
+    exit 1
+fi
+
 if [[ "${DB_HOST}" == "192.168.93.101" ]]; then
     echo -e "${CYAN}[INFO]${NC} Using Widow database (direct) at ${DB_HOST}:${DB_PORT}"
 elif [[ "${DB_HOST}" == "localhost" ]] || [[ "${DB_HOST}" == "127.0.0.1" ]]; then

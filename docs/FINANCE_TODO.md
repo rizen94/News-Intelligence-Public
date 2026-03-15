@@ -67,7 +67,7 @@ The coordinator loop submits one due analysis per cycle (low priority), so tasks
 
 **Status:** Core pages and API service implemented. Routes and nav added for Finance domain.
 
-**Context:** Extends existing News Intelligence React SPA. MUI v5, Axios, react-markdown, Recharts, MUI DataGrid. New pages under `/finance/*`. API via `/api/v4/finance/...`.
+**Context:** Extends existing News Intelligence React SPA. MUI v5, Axios, react-markdown, Recharts, MUI DataGrid. New pages under `/finance/*`. API via `/api/finance/...`.
 
 ### New Routes (implemented)
 

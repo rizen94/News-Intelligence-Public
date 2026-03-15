@@ -250,6 +250,13 @@ quality_thresholds:
 8. **T3.2** — Document processing (PDF extraction, entity/topic tagging).  
 9. **T3.3** — Narrative construction (thread detection, synthesis, quality checks).
 
+**Phase 4 (polish and frontend)**  
+10. Apply migrations 155–160; frontend for processed documents and narrative threads.
+
+**Phase 5 (orchestrator triggers and narrative UI)**  
+11. Scheduled dossier compilation from OrchestratorCoordinator (`entity_tracking.dossier_compile_interval_seconds`, `max_dossiers_per_cycle`).  
+12. Narrative threads list/synthesis UI under Investigate. Document cycle and triggers in CONTROLLER_ARCHITECTURE.md.
+
 ---
 
 ## 8. Success metrics (unchanged intent)

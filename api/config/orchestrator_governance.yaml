@@ -1,10 +1,47 @@
 # Orchestrator coordination — governance config
 # Used by OrchestratorCoordinator and governors. Keys snake_case.
-# See docs/ORCHESTRATOR_DEVELOPMENT_PLAN.md
+# See docs/ORCHESTRATOR_DEVELOPMENT_PLAN.md, docs/V6_QUALITY_FIRST_UPGRADE_PLAN.md
 
 orchestrator:
   loop_interval_seconds: 60
   learning_rate: 0.1
+  # Phase 2 T2.3: cycle phases (assessment → prioritization → deep_processing → quality_review → synthesis)
+  cycle_phases:
+    - assessment
+    - prioritization
+    - deep_processing
+    - quality_review
+    - synthesis
+
+# Phase 2 T2.3: event tracking — chronicle builder runs on interval
+event_tracking:
+  enabled: true
+  update_interval_seconds: 86400   # 24h; chronicle update per tracked event
+  max_events_per_cycle: 3          # max events to update in one coordinator cycle
+
+# Phase 2 T2.3 / Phase 5: entity tracking + scheduled dossier compilation
+entity_tracking:
+  enabled: true
+  dossier_compile_interval_seconds: 86400   # 24h; compile dossiers for entities missing or stale
+  max_dossiers_per_cycle: 2
+
+# Phase 2 T2.3: quality thresholds for prioritization
+quality_thresholds:
+  min_quality_score: 0.5
+  min_importance_for_processing: 0.3
+
+# Phase 3 T3.1: document acquisition — sources and types for pipeline
+document_sources:
+  source_priorities:
+    - government
+    - think_tank
+    - research
+  document_types:
+    - report
+    - analysis
+    - briefing
+  # Optional: list of URLs or {url, title, source_type} to ingest (manual or crawl)
+  ingest_urls: []
 
 collection:
   min_fetch_interval_seconds: 300
@@ -12,19 +49,28 @@ collection:
   empty_fetch_penalty: 2.0
   breaking_news_threshold: 0.8
   # Source ids and how the orchestrator formats requests (e.g. finance topic)
-  # Order affects rotation: each source runs when its interval has elapsed
+  # Order affects rotation: each source runs when its interval has elapsed.
+  # Commodity price sources (gold, silver, platinum): use longer intervals so we
+  # don't poll prices every 5 min; during off-hours use even longer (daily price won't change).
+  # Commodity *news* comes from RSS (finance domain feeds: Kitco, Mining.com, etc.), not from these.
   sources:
     - source_id: rss
       handler: rss
     - source_id: gold
       handler: finance
       topic: gold
+      min_fetch_interval_seconds: 3600   # 1 hour when markets open
+      off_hours_interval_seconds: 14400  # 4 hours when markets closed
     - source_id: silver
       handler: finance
       topic: silver
+      min_fetch_interval_seconds: 3600
+      off_hours_interval_seconds: 14400
     - source_id: platinum
       handler: finance
       topic: platinum
+      min_fetch_interval_seconds: 3600
+      off_hours_interval_seconds: 14400
     - source_id: edgar
       handler: finance
       topic: edgar
@@ -34,28 +80,31 @@ processing:
   max_concurrent: 3
   context_window_days: 7
   # Phase intervals (seconds). Governor uses these for recommend_next_processing.
-  # Key: phase name (must match AutomationManager task names). scope: domain | storyline | null (global).
+  # Aligned with production batch design (docs/BATCH_PROCESSING_DESIGN.md).
   phases:
     topic_clustering:
-      interval_seconds: 1200
+      interval_seconds: 300
       scope: domain
     article_processing:
-      interval_seconds: 1200
+      interval_seconds: 300
       scope: null
     entity_extraction:
-      interval_seconds: 1200
+      interval_seconds: 300
       scope: null
     context_sync:
-      interval_seconds: 1200
+      interval_seconds: 900   # 15 min incremental sync
+      scope: null
+    claim_extraction:
+      interval_seconds: 1800 # 30 min, max 50 contexts/run
       scope: null
     event_tracking:
-      interval_seconds: 3600
+      interval_seconds: 3600 # 1 hour
       scope: null
     storyline_automation:
-      interval_seconds: 1800
+      interval_seconds: 300
       scope: storyline
     story_continuation:
-      interval_seconds: 1800
+      interval_seconds: 600
       scope: storyline
 
 # Finance topics to investigate periodically as background analysis (low priority).

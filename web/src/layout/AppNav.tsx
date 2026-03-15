@@ -10,12 +10,18 @@ import SearchIcon from '@mui/icons-material/Search';
 import MonitorHeartIcon from '@mui/icons-material/MonitorHeart';
 import AnalyticsIcon from '@mui/icons-material/Analytics';
 import ShowChartIcon from '@mui/icons-material/ShowChart';
+import AutoStoriesIcon from '@mui/icons-material/AutoStories';
+import MenuBookIcon from '@mui/icons-material/MenuBook';
+import NewspaperIcon from '@mui/icons-material/Newspaper';
 
 export const APP_NAV_WIDTH = 220;
 
 const NAV_ITEMS: { path: string; label: string; icon: React.ReactNode; domain?: string }[] = [
   { path: 'dashboard', label: 'Dashboard', icon: <DashboardIcon /> },
   { path: 'discover', label: 'Discover', icon: <ExploreIcon /> },
+  { path: 'storylines', label: 'Storylines', icon: <AutoStoriesIcon /> },
+  { path: 'briefings', label: 'Briefings', icon: <MenuBookIcon /> },
+  { path: 'report', label: "Today's Report", icon: <NewspaperIcon /> },
   { path: 'investigate', label: 'Investigate', icon: <SearchIcon /> },
   { path: 'monitor', label: 'Monitor', icon: <MonitorHeartIcon /> },
   { path: 'analyze', label: 'Analyze', icon: <AnalyticsIcon /> },

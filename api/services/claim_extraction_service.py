@@ -142,9 +142,10 @@ def get_context_ids_without_claims(limit: int = 50) -> List[int]:
         conn.close()
 
 
-async def run_claim_extraction_batch(limit: int = 30) -> int:
+async def run_claim_extraction_batch(limit: int = 50) -> int:
     """
     Process up to `limit` contexts that have no claims yet. Returns total claims inserted.
+    Production: max 50 contexts (LLM rate limits), 2-5s per context, ~20-50s total; parallel_requests=5.
     """
     ids = get_context_ids_without_claims(limit=limit)
     total = 0

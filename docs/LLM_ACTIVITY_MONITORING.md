@@ -6,7 +6,7 @@ Real-time visibility into LLM usage and current processing status. Know exactly 
 
 ## Quick Status Check
 
-**Endpoint:** `GET /api/v4/content_analysis/llm/status`
+**Endpoint:** `GET /api/content_analysis/llm/status`
 
 **Response:**
 ```json
@@ -28,7 +28,7 @@ Real-time visibility into LLM usage and current processing status. Know exactly 
 
 ## Full Activity View
 
-**Endpoint:** `GET /api/v4/content_analysis/llm/activity?include_history=true&history_limit=20`
+**Endpoint:** `GET /api/content_analysis/llm/activity?include_history=true&history_limit=20`
 
 **Shows:**
 - LLM availability status
@@ -52,7 +52,7 @@ Real-time visibility into LLM usage and current processing status. Know exactly 
 
 ## Comprehensive Dashboard
 
-**Endpoint:** `GET /api/v4/content_analysis/llm/dashboard`
+**Endpoint:** `GET /api/content_analysis/llm/dashboard`
 
 **Shows Everything:**
 - LLM status and availability
@@ -63,7 +63,7 @@ Real-time visibility into LLM usage and current processing status. Know exactly 
 
 ## Domain-Specific View
 
-**Endpoint:** `GET /api/v4/{domain}/content_analysis/llm/activity`
+**Endpoint:** `GET /api/{domain}/content_analysis/llm/activity`
 
 **Shows:** LLM activity filtered to specific domain (politics, finance, science-tech)
 
@@ -102,25 +102,25 @@ The tracker updates in real-time:
 
 ### 1. Check if LLM is being used right now
 ```bash
-curl http://localhost:8000/api/v4/content_analysis/llm/status
+curl http://localhost:8000/api/content_analysis/llm/status
 ```
 Look for `active_tasks > 0` and `llm_available: true`
 
 ### 2. See what articles are currently processing
 ```bash
-curl http://localhost:8000/api/v4/content_analysis/llm/activity
+curl http://localhost:8000/api/content_analysis/llm/activity
 ```
 Check `current_processing.tasks` array
 
 ### 3. Monitor queue backlog
 ```bash
-curl http://localhost:8000/api/v4/content_analysis/llm/dashboard
+curl http://localhost:8000/api/content_analysis/llm/dashboard
 ```
 Check `queue_status.{domain}.pending` - shows articles waiting
 
 ### 4. Check domain-specific activity
 ```bash
-curl http://localhost:8000/api/v4/politics/content_analysis/llm/activity
+curl http://localhost:8000/api/politics/content_analysis/llm/activity
 ```
 See only politics domain tasks
 

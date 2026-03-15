@@ -156,62 +156,62 @@ class SmartNotificationSystem:
 ### **Authentication & Authorization**
 ```python
 # User Authentication
-POST   /api/v4/users/auth/login                    # User login
-POST   /api/v4/users/auth/logout                   # User logout
-POST   /api/v4/users/auth/register                 # User registration
-POST   /api/v4/users/auth/refresh                  # Refresh authentication token
-GET    /api/v4/users/auth/me                       # Get current user info
+POST   /api/users/auth/login                    # User login
+POST   /api/users/auth/logout                   # User logout
+POST   /api/users/auth/register                 # User registration
+POST   /api/users/auth/refresh                  # Refresh authentication token
+GET    /api/users/auth/me                       # Get current user info
 
 # Authorization
-GET    /api/v4/users/permissions                   # Get user permissions
-POST   /api/v4/users/permissions/check             # Check specific permission
-GET    /api/v4/users/roles                         # Get user roles
+GET    /api/users/permissions                   # Get user permissions
+POST   /api/users/permissions/check             # Check specific permission
+GET    /api/users/roles                         # Get user roles
 ```
 
 ### **User Profile Management**
 ```python
 # Profile Operations
-GET    /api/v4/users/profile                       # Get user profile
-PUT    /api/v4/users/profile                       # Update user profile
-POST   /api/v4/users/profile/avatar               # Upload avatar
-GET    /api/v4/users/profile/preferences           # Get user preferences
-PUT    /api/v4/users/profile/preferences           # Update user preferences
+GET    /api/users/profile                       # Get user profile
+PUT    /api/users/profile                       # Update user profile
+POST   /api/users/profile/avatar               # Upload avatar
+GET    /api/users/profile/preferences           # Get user preferences
+PUT    /api/users/profile/preferences           # Update user preferences
 
 # Account Management
-GET    /api/v4/users/account                       # Get account info
-PUT    /api/v4/users/account                       # Update account info
-POST   /api/v4/users/account/delete                # Delete account
-GET    /api/v4/users/account/privacy               # Get privacy settings
-PUT    /api/v4/users/account/privacy                # Update privacy settings
+GET    /api/users/account                       # Get account info
+PUT    /api/users/account                       # Update account info
+POST   /api/users/account/delete                # Delete account
+GET    /api/users/account/privacy               # Get privacy settings
+PUT    /api/users/account/privacy                # Update privacy settings
 ```
 
 ### **Personalization**
 ```python
 # Content Personalization
-POST   /api/v4/users/personalize/content          # Get personalized content
-GET    /api/v4/users/personalize/recommendations   # Get personalized recommendations
-POST   /api/v4/users/personalize/learn             # Learn from user interaction
-GET    /api/v4/users/personalize/preferences       # Get learned preferences
+POST   /api/users/personalize/content          # Get personalized content
+GET    /api/users/personalize/recommendations   # Get personalized recommendations
+POST   /api/users/personalize/learn             # Learn from user interaction
+GET    /api/users/personalize/preferences       # Get learned preferences
 
 # Dashboard Customization
-GET    /api/v4/users/dashboard                     # Get personalized dashboard
-PUT    /api/v4/users/dashboard/layout              # Update dashboard layout
-POST   /api/v4/users/dashboard/widgets             # Add dashboard widgets
-DELETE /api/v4/users/dashboard/widgets/{widget_id}  # Remove dashboard widget
+GET    /api/users/dashboard                     # Get personalized dashboard
+PUT    /api/users/dashboard/layout              # Update dashboard layout
+POST   /api/users/dashboard/widgets             # Add dashboard widgets
+DELETE /api/users/dashboard/widgets/{widget_id}  # Remove dashboard widget
 ```
 
 ### **User Analytics**
 ```python
 # Behavior Analytics
-GET    /api/v4/users/analytics/behavior            # Get behavior analytics
-GET    /api/v4/users/analytics/usage               # Get usage analytics
-GET    /api/v4/users/analytics/engagement          # Get engagement metrics
-POST   /api/v4/users/analytics/track               # Track user interaction
+GET    /api/users/analytics/behavior            # Get behavior analytics
+GET    /api/users/analytics/usage               # Get usage analytics
+GET    /api/users/analytics/engagement          # Get engagement metrics
+POST   /api/users/analytics/track               # Track user interaction
 
 # Feedback Management
-POST   /api/v4/users/feedback                      # Submit user feedback
-GET    /api/v4/users/feedback                      # Get user feedback
-POST   /api/v4/users/feedback/rating               # Submit rating
+POST   /api/users/feedback                      # Submit user feedback
+GET    /api/users/feedback                      # Get user feedback
+POST   /api/users/feedback/rating               # Submit rating
 ```
 
 ## 📊 **Data Models**

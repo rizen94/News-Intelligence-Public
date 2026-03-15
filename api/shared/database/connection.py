@@ -121,7 +121,9 @@ def get_db_config() -> Dict[str, Any]:
         logger.info("Using direct connection to database: %s:%s", db_host, db_port)
     
     connect_timeout = int(os.getenv("DB_CONNECT_TIMEOUT", "5"))
-    statement_timeout_ms = int(os.getenv("DB_STATEMENT_TIMEOUT_MS", "15000"))
+    # Default 60s so automation phases (event_tracking, story_continuation, etc.) don't get killed.
+    # For heavy processing set DB_STATEMENT_TIMEOUT_MS=120000 (2 min) or 300000 (5 min) in .env.
+    statement_timeout_ms = int(os.getenv("DB_STATEMENT_TIMEOUT_MS", "60000"))
     return {
         "host": db_host,
         "port": str(db_port),
@@ -139,7 +141,7 @@ def get_db_connect_kwargs() -> Dict[str, Any]:
     Use for code that must open a one-off connection instead of the pool.
     """
     config = get_db_config()
-    timeout_ms = config.get("statement_timeout_ms", 15000)
+    timeout_ms = config.get("statement_timeout_ms", 60000)
     return {
         "host": config["host"],
         "port": config["port"],
@@ -163,7 +165,7 @@ def _init_pool() -> pool.ThreadedConnectionPool:
         minconn = int(os.getenv("DB_POOL_MIN", "2"))
         maxconn = int(os.getenv("DB_POOL_MAX", "20"))
         maxconn = max(minconn, min(maxconn, 50))
-        timeout_ms = config.get("statement_timeout_ms", 15000)
+        timeout_ms = config.get("statement_timeout_ms", 60000)
         options = f"-c statement_timeout={timeout_ms}"
         
         logger.info(
@@ -297,7 +299,7 @@ def _init_sqlalchemy():
         if _sqlalchemy_engine is not None:
             return
         config = get_db_config()
-        timeout_ms = config.get("statement_timeout_ms", 15000)
+        timeout_ms = config.get("statement_timeout_ms", 60000)
         url = (
             f"postgresql://{config['user']}:{config['password']}@{config['host']}:{config['port']}/{config['database']}"
             f"?connect_timeout={config.get('connect_timeout', 5)}"

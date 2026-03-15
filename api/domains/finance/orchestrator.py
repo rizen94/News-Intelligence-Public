@@ -435,7 +435,7 @@ class FinanceOrchestrator:
             return date.today()
 
         rss_snippets = getattr(task.context, "rss_snippets", None) or []
-        for s in rss_snippets[:20]:
+        for s in rss_snippets[:40]:
             title = (s.get("title") or "News")[:200]
             snippet = (s.get("snippet") or "")[:500]
             pub = s.get("published_at") or ""
@@ -451,7 +451,7 @@ class FinanceOrchestrator:
             ))
 
         historic_events = getattr(task.context, "historic_context_events", None) or []
-        for ev in historic_events[:15]:
+        for ev in historic_events[:30]:
             summary = (ev.get("event_summary") or ev.get("summary") or "")[:300]
             date_approx = ev.get("date_approx")
             source_ids = ev.get("source_ids") or []
@@ -471,8 +471,8 @@ class FinanceOrchestrator:
             task.context.evidence_index = entries
             logger.info(
                 "Appended RSS/historic evidence: %d RSS, %d historic; total evidence entries %d",
-                min(len(rss_snippets), 20),
-                min(len(historic_events), 15),
+                min(len(rss_snippets), 40),
+                min(len(historic_events), 30),
                 len(entries),
             )
 
@@ -535,10 +535,12 @@ class FinanceOrchestrator:
             raise
 
     def _plan_analysis(self, task: Task) -> dict[str, Any]:
-        """Determine data needs for analysis. May queue refresh if stale."""
+        """Determine data needs for analysis. May queue refresh if stale. deep=True increases RAG and historic context."""
         query = task.parameters.get("query", "")
         topic = task.parameters.get("topic") or "gold"
-        return {"query": query, "topic": topic, "n_chunks": 5}
+        deep = bool(task.parameters.get("deep"))
+        n_chunks = 25 if deep else 15
+        return {"query": query, "topic": topic, "n_chunks": n_chunks, "deep": deep}
 
     async def _execute_analysis(self, task: Task, plan: dict[str, Any], is_revision: bool = False) -> None:
         """Run refresh/retrieve/stats/build prompt + LLM. If is_revision, only call LLM with revision prompt."""
@@ -561,6 +563,7 @@ class FinanceOrchestrator:
         query = plan.get("query", "")
         topic = plan.get("topic", "gold")
         n_chunks = plan.get("n_chunks", 5)
+        deep = plan.get("deep", False)
 
         # Ensure we have data: run refresh to build evidence index (or use cache if fresh for gold-only)
         if topic in ("gold", "silver", "platinum", "all", "fred", ""):
@@ -665,17 +668,19 @@ class FinanceOrchestrator:
             logger.info("Analysis task %s: date range %s to %s, including historic context", task.task_id, start, end)
         try:
             from domains.finance.evidence_collector import collect as evidence_collect
+            max_rss = 35 if deep else 25
             bundle = evidence_collect(
                 query=query,
                 topic=topic,
                 start_date=start,
                 end_date=end,
                 hours=168,
-                max_rss=15,
+                max_rss=max_rss,
                 include_rss=True,
                 include_api_summary=False,
-                include_rag=False,
+                include_rag=True,
                 include_historic_context=True,
+                historic_max_expansions=2 if deep else 1,
             )
             task.context.rss_snippets = bundle.get("rss_snippets") or []
             if bundle.get("historic_context_summary"):
@@ -686,6 +691,15 @@ class FinanceOrchestrator:
                 logger.warning("Historic context returned empty summary (sources may have returned nothing)")
             self._append_rss_and_historic_evidence(task)
             self._run_causes_focused_historic_if_needed(task, query, topic, start, end)
+            # Merge RAG chunks from evidence collector into evidence_chunks so prompt gets them
+            rag_chunks = bundle.get("rag_chunks") or []
+            if rag_chunks:
+                existing = list(task.context.evidence_chunks or [])
+                for r in rag_chunks:
+                    if r:
+                        existing.append(r[:800] if isinstance(r, str) else str(r)[:800])
+                task.context.evidence_chunks = existing[:30]
+                logger.info("Evidence: %d vector + %d RAG chunks", len(chunks_text), len(rag_chunks))
         except Exception as e:
             logger.debug("Evidence collector (RSS) failed: %s", e)
             task.context.rss_snippets = []
@@ -742,9 +756,17 @@ Cite every number, date, or percentage using its reference ID (e.g. REF-001).
 Do not invent or guess values. Structure your response: (1) establish what happened from the Evidence REF-ids; (2) explain causes or drivers using the Historic context and News sections when they contain relevant information; (3) if they do not, say so briefly. Do not ask the user for more information."""
 
         parts = [f"## Query\n{query}\n"]
-        if task.context.evidence_index:
+        index = task.context.evidence_index or []
+        # Reserve space for both price and narrative: price entries can crowd out articles if we only take first N
+        price_sources = ("gold", "silver", "platinum", "fred", "edgar_10k")
+        narrative_sources = ("rss", "historic")
+        price_entries = [e for e in index if e.source in price_sources][:80]
+        narrative_entries = [e for e in index if e.source in narrative_sources][:50]
+        if price_entries or narrative_entries:
             parts.append("## Evidence (cite by REF-ID)\n")
-            for e in task.context.evidence_index[:100]:
+            for e in price_entries:
+                parts.append(f"- {e.ref_id}: {e.source} {e.identifier} | {e.date} | {e.value} {e.unit} | {e.context}")
+            for e in narrative_entries:
                 parts.append(f"- {e.ref_id}: {e.source} {e.identifier} | {e.date} | {e.value} {e.unit} | {e.context}")
         else:
             parts.append("## Evidence\nNo evidence was retrieved for this query (sources may be temporarily unavailable or no data in date range).")
@@ -753,18 +775,18 @@ Do not invent or guess values. Structure your response: (1) establish what happe
             for k, v in stats_results.items():
                 parts.append(f"- {k}: {v}")
         if task.context.evidence_chunks:
-            parts.append("\n## Relevant excerpts\n")
-            for i, txt in enumerate(task.context.evidence_chunks[:5]):
+            parts.append("\n## Relevant excerpts (RAG / vector)\n")
+            for i, txt in enumerate(task.context.evidence_chunks[:18]):
                 parts.append(f"[Excerpt {i+1}]\n{txt[:500]}...\n")
         historic = getattr(task.context, "historic_context_summary", None)
         if historic:
             parts.append("\n## Historic context (multi-source)\n")
-            parts.append(historic[:5000])
+            parts.append(historic[:6000])
             parts.append("\nUse this historic context where it helps explain causes or prior events. Events mentioned by more sources are more reliable.")
         rss_snippets = getattr(task.context, "rss_snippets", None) or []
         if rss_snippets:
             parts.append("\n## News / reporting (use for causes, drivers, and context)\n")
-            for s in rss_snippets[:15]:
+            for s in rss_snippets[:30]:
                 title = s.get("title") or ""
                 snippet = (s.get("snippet") or "")[:350]
                 pub = s.get("published_at") or ""
@@ -1302,6 +1324,9 @@ Do not invent or guess values. Structure your response: (1) establish what happe
             output = {
                 "response": task.context.llm_response,
                 "query": task.parameters.get("query", ""),
+                "topic": task.parameters.get("topic", "gold"),
+                "start_date": task.parameters.get("start_date"),
+                "end_date": task.parameters.get("end_date"),
                 "verification": {
                     "verified": vr.verified if vr else 0,
                     "unsupported": vr.unsupported if vr else 0,

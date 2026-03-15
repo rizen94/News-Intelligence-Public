@@ -15,6 +15,9 @@ try:
 except Exception:
     logger = logging.getLogger(__name__)
 
+# Terms that must match as whole words to avoid false positives (e.g. "gold" vs "Goldman Sachs")
+WORD_BOUNDARY_TERMS: frozenset[str] = frozenset({"gold"})
+
 # Topic -> search terms (for scoring relevance)
 TOPIC_KEYWORDS: dict[str, list[str]] = {
     "gold": ["gold", "bullion", "precious metal", "yellow metal", "ounce", "oz"],
@@ -41,12 +44,38 @@ def _terms_for_topic_and_query(topic: str, query: str | None) -> set[str]:
     return terms
 
 
-def _score_text(text: str, terms: set[str]) -> float:
-    """Score text by number of term matches (case-insensitive)."""
+def _term_matches(text: str, term: str, topic: str | None = None) -> bool:
+    """True if term appears in text. Terms in WORD_BOUNDARY_TERMS match as whole word only (e.g. gold vs Goldman Sachs)."""
+    if not text or not term:
+        return False
+    lower = text.lower()
+    if topic and term in WORD_BOUNDARY_TERMS:
+        return bool(re.search(r"\b" + re.escape(term) + r"\b", lower))
+    if " " in term:
+        return term in lower
+    return term in lower
+
+
+def _score_text(text: str, terms: set[str], topic: str | None = None) -> float:
+    """Score text by number of term matches (case-insensitive). topic used for word-boundary rules (e.g. gold vs Goldman)."""
     if not text or not terms:
         return 0.0
-    lower = text.lower()
-    return sum(1 for t in terms if t in lower)
+    return sum(1 for t in terms if _term_matches(text, t, topic))
+
+
+def is_relevant_to_commodity(text: str | None, commodity: str) -> bool:
+    """
+    Return True if text (e.g. event_name) is relevant to the given commodity.
+    Uses TOPIC_KEYWORDS for gold/silver/platinum; "gold" matches as whole word only
+    so "Goldman Sachs" is not treated as gold-the-metal.
+    """
+    if not text or not commodity:
+        return False
+    topic_lower = commodity.lower()
+    if topic_lower not in TOPIC_KEYWORDS:
+        return True
+    terms = set(TOPIC_KEYWORDS[topic_lower])
+    return _score_text(text, terms, topic=topic_lower) >= 1
 
 
 def get_shortlist(
@@ -83,7 +112,7 @@ def get_shortlist(
             snippet = (content or title)[:400]
             pub = a.get("published_at") or a.get("published_date")
             published_at = pub.isoformat() if hasattr(pub, "isoformat") else str(pub) if pub else ""
-            score = _score_text(title, terms) * 2.0 + _score_text(snippet, terms)
+            score = _score_text(title, terms, topic=topic) * 2.0 + _score_text(snippet, terms, topic=topic)
             shortlist.append((score, {
                 "id": a.get("id"),
                 "title": title,
@@ -119,7 +148,7 @@ def get_shortlist(
                     ctx_id, title, content, created_at = row
                     title = (title or "")[:500]
                     snippet = (content or "")[:400]
-                    score = _score_text(title, terms) * 2.0 + _score_text(snippet, terms)
+                    score = _score_text(title, terms, topic=topic) * 2.0 + _score_text(snippet, terms, topic=topic)
                     shortlist.append((score, {
                         "id": f"ctx-{ctx_id}",
                         "title": title,

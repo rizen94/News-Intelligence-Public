@@ -13,7 +13,7 @@ v5.0 is the current stable release. Built on the Widow migration (v4.1): databas
 - Same architecture as v4.1 (Widow migration complete)
 - Version strings updated project-wide to 5.0
 - Documentation consolidated and indices simplified
-- API uses **flat paths** — `/api/...` (no version segment; e.g. `/api/{domain}/finance/analyze`, `/api/orchestrator/status`). Previous docs referred to `/api/v4/`; that has been retired.
+- API uses **flat paths** — `/api/...` (no version segment; e.g. `/api/{domain}/finance/analyze`, `/api/orchestrator/status`). Previous docs referred to `/api/`; that has been retired.
 
 ---
 

@@ -29,8 +29,9 @@ class TopicExtractionQueueWorker:
         self.schema = schema
         self.ollama_url = ollama_url
         self.is_running = False
-        self.batch_size = 5  # Process 5 articles at a time
-        self.poll_interval = 60  # Check queue every 60 seconds
+        self.batch_size = 10  # Process 10 articles per batch for better utilization
+        self.poll_interval = 60  # When idle, check every 60 seconds
+        self.poll_interval_busy = 5  # When work available, check every 5 seconds (continuous until empty)
         self.max_retries = 10
         
         # Initialize extractor
@@ -48,8 +49,10 @@ class TopicExtractionQueueWorker:
         
         while self.is_running:
             try:
-                await self._process_queue_batch()
-                await asyncio.sleep(self.poll_interval)
+                had_work = await self._process_queue_batch()
+                # Continuous iteration: short sleep when work available, longer when idle
+                interval = self.poll_interval_busy if had_work else self.poll_interval
+                await asyncio.sleep(interval)
             except Exception as e:
                 logger.error(f"Error in queue worker loop: {e}")
                 await asyncio.sleep(self.poll_interval)
@@ -59,18 +62,18 @@ class TopicExtractionQueueWorker:
         self.is_running = False
         logger.info("🛑 Stopping topic extraction queue worker")
     
-    async def _process_queue_batch(self):
-        """Process a batch of queued articles, and find unprocessed articles if queue is empty"""
+    async def _process_queue_batch(self) -> bool:
+        """Process a batch of queued articles; find unprocessed if queue empty. Returns True if work was done."""
         try:
             # Priority hierarchy: yield to web page loads — don't compete with API requests
             from shared.services.api_request_tracker import should_yield_to_api
             if should_yield_to_api():
                 logger.debug(f"Yielding to API — skipping topic extraction this cycle for {self.schema}")
-                return
+                return False
             conn = self.get_db_connection()
             if not conn:
                 logger.warning("Cannot process queue: database connection failed")
-                return
+                return False
             
             try:
                 with conn.cursor() as cur:
@@ -138,7 +141,7 @@ class TopicExtractionQueueWorker:
                     
                     if not queued_items:
                         # Still no items to process
-                        return
+                        return False
                     
                     logger.info(f"📋 Processing {len(queued_items)} queued articles for topic extraction")
                     
@@ -272,9 +275,11 @@ class TopicExtractionQueueWorker:
                             
             finally:
                 conn.close()
+            return True  # We processed a batch
                 
         except Exception as e:
             logger.error(f"Error processing queue batch: {e}")
+            return False
     
     def get_queue_stats(self) -> Dict[str, Any]:
         """Get statistics about the queue"""

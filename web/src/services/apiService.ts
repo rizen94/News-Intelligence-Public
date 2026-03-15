@@ -160,11 +160,16 @@ class APIService {
   // Monitoring & deduplication
   getHealth = monitoringApi.getHealth;
   getMonitoringDashboard = monitoringApi.getMonitoringDashboard;
+  getMonitoringOverview = monitoringApi.getMonitoringOverview;
   getPipelineStatus = monitoringApi.getPipelineStatus;
   getDatabaseStats = monitoringApi.getDatabaseStats;
   getDevices = monitoringApi.getDevices;
   getHealthFeeds = monitoringApi.getHealthFeeds;
   getOrchestratorDashboard = monitoringApi.getOrchestratorDashboard;
+  getSourcesCollected = monitoringApi.getSourcesCollected;
+  getProcessRunSummary = monitoringApi.getProcessRunSummary;
+  getAutomationStatus = monitoringApi.getAutomationStatus;
+  triggerPhase = monitoringApi.triggerPhase;
   triggerPipeline = monitoringApi.triggerPipeline;
   getSystemHealth = monitoringApi.getSystemHealth;
   getSystemMetrics = monitoringApi.getSystemMetrics;

@@ -14,6 +14,7 @@ from typing import Dict, List, Any, Optional, Union
 
 from shared.database.connection import get_db_connection
 from shared.services.llm_service import LLMService, ModelType
+from services.entity_resolution_service import resolve_to_canonical
 
 logger = logging.getLogger(__name__)
 
@@ -161,7 +162,7 @@ Rules:
             def _item_in_headline(item: Any) -> bool:
                 return bool(isinstance(item, dict) and item.get("in_headline", False))
 
-            # 1. article_entities (people, orgs, subjects, recurring_events)
+            # 1. article_entities (people, orgs, subjects, recurring_events) with canonical resolution
             for entity_type, key in [
                 ("person", "people"),
                 ("organization", "organizations"),
@@ -174,15 +175,17 @@ Rules:
                         continue
                     mention = "headline" if _item_in_headline(item) else "body"
                     conf = _item_conf(item)
+                    canonical_id = resolve_to_canonical(schema, name, entity_type, create_if_missing=True)
                     try:
                         cur.execute(f"""
                             INSERT INTO {schema}.article_entities
-                            (article_id, entity_name, entity_type, mention_source, confidence, source_text_snippet)
-                            VALUES (%s, %s, %s, %s, %s, %s)
+                            (article_id, entity_name, entity_type, mention_source, confidence, source_text_snippet, canonical_entity_id)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s)
                             ON CONFLICT (article_id, entity_name, entity_type) DO UPDATE SET
                                 confidence = EXCLUDED.confidence,
-                                mention_source = EXCLUDED.mention_source
-                        """, (article_id, name[:255], entity_type, mention, conf, name[:200]))
+                                mention_source = EXCLUDED.mention_source,
+                                canonical_entity_id = COALESCE(EXCLUDED.canonical_entity_id, article_entities.canonical_entity_id)
+                        """, (article_id, name[:255], entity_type, mention, conf, name[:200], canonical_id))
                         counts["entities"] += 1
                     except Exception as e:
                         logger.debug(f"article_entities insert skip: {e}")

@@ -62,6 +62,7 @@ import {
   DeleteSweep as CleanupIcon,
   PlayArrow as PlayArrowIcon,
   Stop as StopIcon,
+  VideogameAsset as VideogameAssetIcon,
 } from '@mui/icons-material';
 
 import apiService from '../../services/apiService';
@@ -145,13 +146,15 @@ const RealtimeMonitor: React.FC = () => {
             system_health_score: statusData.overall_status === 'healthy' ? 100 : 50,
             timestamp: healthData.value.timestamp || new Date().toISOString(),
           });
+          // Prefer status for current system metrics (includes GPU)
+          setSystemMetrics(statusData.system ?? null);
         }
       }
       if (statsData.status === 'fulfilled' && statsData.value?.success) {
         setLogStats(statsData.value);
       }
-      if (metricsData.status === 'fulfilled' && metricsData.value) {
-        setSystemMetrics(metricsData.value);
+      if (metricsData.status === 'fulfilled' && metricsData.value && !healthData.value?.data?.system) {
+        setSystemMetrics(metricsData.value?.data?.metrics?.[0] ?? metricsData.value);
       }
 
       Logger.info('Real-time monitoring data loaded successfully');
@@ -590,6 +593,98 @@ const RealtimeMonitor: React.FC = () => {
                   </CardContent>
                 </Card>
               </Grid>
+              {/* GPU: show when metrics available; highlight overwork (≥85% warning, ≥95% error) */}
+              {(systemMetrics.gpu_utilization_percent != null || systemMetrics.gpu_vram_percent != null) && (
+                <>
+                  <Grid item xs={12} md={4}>
+                    <Card
+                      sx={{
+                        borderLeft: systemMetrics.gpu_utilization_percent != null && systemMetrics.gpu_utilization_percent >= 95
+                          ? '4px solid'
+                          : systemMetrics.gpu_utilization_percent != null && systemMetrics.gpu_utilization_percent >= 85
+                            ? '4px solid'
+                            : undefined,
+                        borderColor: systemMetrics.gpu_utilization_percent != null && systemMetrics.gpu_utilization_percent >= 95
+                          ? 'error.main'
+                          : systemMetrics.gpu_utilization_percent != null && systemMetrics.gpu_utilization_percent >= 85
+                            ? 'warning.main'
+                            : undefined,
+                      }}
+                    >
+                      <CardContent>
+                        <Typography variant='h6' gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                          <VideogameAssetIcon fontSize='small' /> GPU Utilization
+                          {systemMetrics.gpu_utilization_percent != null && systemMetrics.gpu_utilization_percent >= 85 && (
+                            <Chip size='small' label={systemMetrics.gpu_utilization_percent >= 95 ? 'Overwork' : 'High'} color={systemMetrics.gpu_utilization_percent >= 95 ? 'error' : 'warning'} sx={{ ml: 0.5 }} />
+                          )}
+                        </Typography>
+                        <Typography variant='h4' color='primary'>
+                          {systemMetrics.gpu_utilization_percent != null ? `${systemMetrics.gpu_utilization_percent.toFixed(1)}%` : '—'}
+                        </Typography>
+                        <LinearProgress
+                          variant='determinate'
+                          value={Math.min(systemMetrics.gpu_utilization_percent ?? 0, 100)}
+                          color={systemMetrics.gpu_utilization_percent != null && systemMetrics.gpu_utilization_percent >= 95 ? 'error' : systemMetrics.gpu_utilization_percent != null && systemMetrics.gpu_utilization_percent >= 85 ? 'warning' : 'primary'}
+                          sx={{ mt: 2 }}
+                        />
+                      </CardContent>
+                    </Card>
+                  </Grid>
+                  <Grid item xs={12} md={4}>
+                    <Card
+                      sx={{
+                        borderLeft: systemMetrics.gpu_vram_percent != null && systemMetrics.gpu_vram_percent >= 95
+                          ? '4px solid'
+                          : systemMetrics.gpu_vram_percent != null && systemMetrics.gpu_vram_percent >= 85
+                            ? '4px solid'
+                            : undefined,
+                        borderColor: systemMetrics.gpu_vram_percent != null && systemMetrics.gpu_vram_percent >= 95
+                          ? 'error.main'
+                          : systemMetrics.gpu_vram_percent != null && systemMetrics.gpu_vram_percent >= 85
+                            ? 'warning.main'
+                            : undefined,
+                      }}
+                    >
+                      <CardContent>
+                        <Typography variant='h6' gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                          <MemoryIcon fontSize='small' /> GPU VRAM
+                          {systemMetrics.gpu_vram_percent != null && systemMetrics.gpu_vram_percent >= 85 && (
+                            <Chip size='small' label={systemMetrics.gpu_vram_percent >= 95 ? 'Overwork' : 'High'} color={systemMetrics.gpu_vram_percent >= 95 ? 'error' : 'warning'} sx={{ ml: 0.5 }} />
+                          )}
+                        </Typography>
+                        <Typography variant='h4' color='primary'>
+                          {systemMetrics.gpu_vram_percent != null ? `${systemMetrics.gpu_vram_percent.toFixed(1)}%` : '—'}
+                        </Typography>
+                        {(systemMetrics.gpu_memory_used_mb != null && systemMetrics.gpu_memory_total_mb != null) && (
+                          <Typography variant='body2' color='text.secondary' sx={{ mt: 0.5 }}>
+                            {systemMetrics.gpu_memory_used_mb} / {systemMetrics.gpu_memory_total_mb} MB
+                          </Typography>
+                        )}
+                        <LinearProgress
+                          variant='determinate'
+                          value={Math.min(systemMetrics.gpu_vram_percent ?? 0, 100)}
+                          color={systemMetrics.gpu_vram_percent != null && systemMetrics.gpu_vram_percent >= 95 ? 'error' : systemMetrics.gpu_vram_percent != null && systemMetrics.gpu_vram_percent >= 85 ? 'warning' : 'primary'}
+                          sx={{ mt: 2 }}
+                        />
+                      </CardContent>
+                    </Card>
+                  </Grid>
+                  {systemMetrics.gpu_temperature_c != null && (
+                    <Grid item xs={12} md={4}>
+                      <Card>
+                        <CardContent>
+                          <Typography variant='h6' gutterBottom>
+                            GPU Temperature
+                          </Typography>
+                          <Typography variant='h4' color='primary'>
+                            {systemMetrics.gpu_temperature_c}°C
+                          </Typography>
+                        </CardContent>
+                      </Card>
+                    </Grid>
+                  )}
+                </>
+              )}
             </>
           )}
         </Grid>

@@ -37,6 +37,7 @@ import React, { useEffect, useState } from 'react';
 import apiService from '../services/apiService';
 import Logger from '../utils/logger';
 import { api } from '../services/apiService';
+import { storylinesApi } from '../services/api/storylines';
 
 import StorylineConfirmationDialog from './StorylineConfirmationDialog';
 
@@ -106,11 +107,10 @@ const ArticleReader = ({ article, open, onClose, onAddToStoryline }) => {
 
   const loadStorylines = async() => {
     try {
-      const response = await api.get('/api/storyline-management/storylines');
-      const data = response.data;
-      if (data.success) setStorylines(data.data?.storylines || data.data || []);
+      const data = await storylinesApi.getStorylines();
+      if (data && data.success !== false) setStorylines(data.data?.storylines || data.data || []);
     } catch (e) {
-      console.error('Failed to load storylines');
+      Logger.error('ArticleReader', 'Failed to load storylines', e);
     }
   };
 

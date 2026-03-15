@@ -140,43 +140,43 @@ class DuplicateDetector:
 ### **Feed Management**
 ```python
 # Feed CRUD Operations
-GET    /api/v4/news/feeds                    # List all feeds
-POST   /api/v4/news/feeds                    # Add new feed
-GET    /api/v4/news/feeds/{feed_id}          # Get specific feed
-PUT    /api/v4/news/feeds/{feed_id}          # Update feed
-DELETE /api/v4/news/feeds/{feed_id}          # Delete feed
+GET    /api/news/feeds                    # List all feeds
+POST   /api/news/feeds                    # Add new feed
+GET    /api/news/feeds/{feed_id}          # Get specific feed
+PUT    /api/news/feeds/{feed_id}          # Update feed
+DELETE /api/news/feeds/{feed_id}          # Delete feed
 
 # Feed Operations
-POST   /api/v4/news/feeds/{feed_id}/refresh  # Refresh feed content
-GET    /api/v4/news/feeds/{feed_id}/health    # Check feed health
-POST   /api/v4/news/feeds/{feed_id}/validate # Validate feed
+POST   /api/news/feeds/{feed_id}/refresh  # Refresh feed content
+GET    /api/news/feeds/{feed_id}/health    # Check feed health
+POST   /api/news/feeds/{feed_id}/validate # Validate feed
 ```
 
 ### **Content Ingestion**
 ```python
 # Article Management
-GET    /api/v4/news/articles                 # List articles
-GET    /api/v4/news/articles/{article_id}    # Get specific article
-POST   /api/v4/news/ingest                   # Manual ingestion
-GET    /api/v4/news/articles/{article_id}/duplicates # Find duplicates
+GET    /api/news/articles                 # List articles
+GET    /api/news/articles/{article_id}    # Get specific article
+POST   /api/news/ingest                   # Manual ingestion
+GET    /api/news/articles/{article_id}/duplicates # Find duplicates
 
 # Source Management
-GET    /api/v4/news/sources                  # List sources
-GET    /api/v4/news/sources/{source_id}      # Get source details
-GET    /api/v4/news/sources/quality          # Source quality metrics
+GET    /api/news/sources                  # List sources
+GET    /api/news/sources/{source_id}      # Get source details
+GET    /api/news/sources/quality          # Source quality metrics
 ```
 
 ### **Quality Control**
 ```python
 # Quality Assessment
-POST   /api/v4/news/quality/analyze          # Analyze content quality
-GET    /api/v4/news/quality/scores           # Get quality scores
-POST   /api/v4/news/quality/recommendations  # Get quality recommendations
+POST   /api/news/quality/analyze          # Analyze content quality
+GET    /api/news/quality/scores           # Get quality scores
+POST   /api/news/quality/recommendations  # Get quality recommendations
 
 # Content Processing
-POST   /api/v4/news/process/categorize       # Categorize content
-POST   /api/v4/news/process/deduplicate      # Process duplicates
-POST   /api/v4/news/process/normalize       # Normalize content
+POST   /api/news/process/categorize       # Categorize content
+POST   /api/news/process/deduplicate      # Process duplicates
+POST   /api/news/process/normalize       # Normalize content
 ```
 
 ## 📊 **Data Models**

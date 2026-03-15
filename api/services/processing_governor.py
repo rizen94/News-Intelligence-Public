@@ -184,6 +184,25 @@ class ProcessingGovernor:
 
         if not candidates:
             return None
+        # Optional: boost priority for phases with higher extraction quality (from extraction_metrics)
+        try:
+            from services.quality_feedback_service import get_extraction_metrics
+            metrics_result = get_extraction_metrics(since_days=30)
+            if metrics_result.get("success") and metrics_result.get("metrics"):
+                phase_quality: dict[str, float] = {}
+                for m in metrics_result.get("metrics", []):
+                    phase_name = m.get("phase") or "claim_extraction"
+                    avg = m.get("avg_accuracy_score")
+                    if avg is not None and phase_name:
+                        phase_quality[phase_name] = float(avg)
+                if phase_quality:
+                    for i, (pri, key, action) in enumerate(candidates):
+                        phase = action.get("phase")
+                        boost = phase_quality.get(phase, 0.5)
+                        if boost > 0.7:
+                            candidates[i] = (pri + 0.1, key, action)
+        except Exception as e:
+            logger.debug("ProcessingGovernor extraction_metrics boost failed: %s", e)
         candidates.sort(key=lambda x: (-x[0], x[1]))
         return candidates[0][2]
 

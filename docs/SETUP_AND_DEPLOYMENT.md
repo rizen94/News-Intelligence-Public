@@ -45,7 +45,7 @@ Use after changing `.env` (e.g. `NEWS_API_KEY`) so the API reloads config:
 ### Required Software
 - **PostgreSQL** 12+ (running on localhost:5432 or NAS)
 - **Docker** and Docker Compose (for Redis and containers)
-- **Python** 3.9+ (with virtual environment)
+- **Python** 3.10+ (3.11+ recommended for Finance ChromaDB/embeddings; use project `.venv`)
 - **Node.js** 16+ (with npm)
 - **Redis** (via Docker container)
 
@@ -72,7 +72,7 @@ Redis and Docker are not required; the app uses an in-process event queue. Docke
 - **Frontend:** http://localhost:80 (production) or http://localhost:3000 (development)
 - **API:** http://localhost:8000
 - **API Documentation:** http://localhost:8000/docs
-- **Health Check:** http://localhost:8000/api/v4/system-monitoring/health
+- **Health Check:** http://localhost:8000/api/system_monitoring/health
 - **Ollama:** http://localhost:11434
 
 ---
@@ -111,6 +111,17 @@ GRANT ALL PRIVILEGES ON DATABASE news_intelligence TO newsapp;
 #### NAS PostgreSQL (Recommended)
 See `docs/NAS_DATABASE_REQUIREMENT.md` and `docs/NAS_PERSISTENT_STORAGE_SETUP.md` for NAS database configuration.
 
+#### Run migrations (v4/v5/v6 schema)
+From the project root, with DB credentials in `.env` or `.db_password_widow`:
+```bash
+# Migrations 140–154 (orchestration, intelligence, context-centric, watch patterns)
+PYTHONPATH=api .venv/bin/python3 api/scripts/run_migrations_140_to_152.py
+
+# Migrations 155–161 (quality feedback, cross-domain, processed_documents, automation_run_history, etc.)
+PYTHONPATH=api .venv/bin/python3 api/scripts/run_migrations_155_to_160.py
+```
+See `scripts/SCRIPTS_INDEX.md` for the full list.
+
 ### 3. Environment Configuration
 ```bash
 # Copy example environment file
@@ -122,6 +133,21 @@ cp configs/env.example .env
 # - DB_NAME, DB_USER, DB_PASSWORD
 # - NAS credentials (if using NAS)
 ```
+
+#### Finance vector store (ChromaDB)
+The Finance domain uses ChromaDB for evidence embeddings (e.g. EDGAR filings). To have it **working** (not just failing gracefully):
+
+1. **Use the project virtualenv** — `start_system.sh` uses `.venv` when present. ChromaDB’s dependency (onnxruntime) needs **Python 3.11+**; the project’s `.venv` should be created with 3.11 or 3.12.
+2. **Install/sync dependencies** from project root:
+   ```bash
+   uv sync
+   ```
+   If you previously had a Python 3.10 venv and see `onnxruntime` "no wheel for cp310", recreate the venv with 3.12:
+   ```bash
+   uv venv --python python3.12 --clear .venv
+   uv sync
+   ```
+3. **Verify** — Run `./.venv/bin/python scripts/validate_finance_pipeline.py`; the "Vector Store (ChromaDB)" step should report **PASS**. Data is stored under `data/finance/chroma/`.
 
 #### Optional: News API key (historic context)
 For Finance Analysis **historic context** (news from a date range when you set Start/End dates), add a News API key:

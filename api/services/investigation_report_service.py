@@ -359,3 +359,80 @@ async def refresh_stale_investigation_reports(limit: int = 3) -> int:
             except Exception:
                 pass
     return refreshed
+
+
+async def create_initial_reports_for_new_events(limit: int = 5) -> int:
+    """
+    Find tracked_events that have no row in event_reports, generate a report for each (up to limit), and save.
+    Returns number of new reports created. Called by investigation_report_refresh so new events get dossiers.
+    """
+    conn = get_db_connection()
+    if not conn:
+        return 0
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT te.id FROM intelligence.tracked_events te
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM intelligence.event_reports er WHERE er.event_id = te.id
+                )
+                ORDER BY te.id DESC
+                LIMIT %s
+                """,
+                (limit,),
+            )
+            event_ids = [r[0] for r in cur.fetchall()]
+        conn.close()
+    except Exception as e:
+        logger.warning(f"create_initial_reports_for_new_events: list failed: {e}")
+        try:
+            conn.close()
+        except Exception:
+            pass
+        return 0
+
+    created = 0
+    for event_id in event_ids:
+        result = await generate_investigation_report(event_id)
+        if not result.get("success"):
+            logger.warning(f"create_initial report event_id={event_id}: {result.get('error')}")
+            continue
+        conn = get_db_connection()
+        if not conn:
+            continue
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO intelligence.event_reports
+                    (event_id, report_md, generated_at, context_ids_included, chronicle_count, context_count)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (event_id) DO UPDATE SET
+                        report_md = EXCLUDED.report_md,
+                        generated_at = EXCLUDED.generated_at,
+                        context_ids_included = EXCLUDED.context_ids_included,
+                        chronicle_count = EXCLUDED.chronicle_count,
+                        context_count = EXCLUDED.context_count
+                    """,
+                    (
+                        event_id,
+                        result["report_md"],
+                        result["generated_at"],
+                        result.get("context_ids_included") or [],
+                        result.get("chronicle_count", 0),
+                        result.get("context_count", 0),
+                    ),
+                )
+            conn.commit()
+            conn.close()
+            created += 1
+            logger.info(f"Created initial investigation report for event_id={event_id}")
+        except Exception as e:
+            logger.warning(f"create_initial_reports_for_new_events: save event_id={event_id}: {e}")
+            try:
+                conn.rollback()
+                conn.close()
+            except Exception:
+                pass
+    return created

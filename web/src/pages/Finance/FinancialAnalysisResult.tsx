@@ -326,12 +326,18 @@ export default function FinancialAnalysisResult() {
     if (!taskId || !domain || !saveTopicName.trim()) return;
     setSaveTopicError(null);
     setSaveTopicSaving(true);
+    const outputPayloadForTopic = (data?.output || data) as Record<string, unknown> | undefined;
+    const commodity = (outputPayloadForTopic?.topic as string) || 'gold';
+    const startDate = outputPayloadForTopic?.start_date as string | undefined;
+    const endDate = outputPayloadForTopic?.end_date as string | undefined;
     try {
       await apiService.createFinanceResearchTopic(
         {
           task_id: taskId,
           name: saveTopicName.trim(),
           query: resultQuery || 'Analysis',
+          topic: commodity,
+          ...(startDate || endDate ? { date_range: { start: startDate, end: endDate } } : {}),
         },
         domain
       );

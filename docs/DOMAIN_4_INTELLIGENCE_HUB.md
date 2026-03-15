@@ -156,47 +156,47 @@ class RecommendationEngine:
 ### **Predictive Analytics**
 ```python
 # Trend Prediction
-GET    /api/v4/intelligence/trends                    # Get trend predictions
-POST   /api/v4/intelligence/trends/predict           # Predict specific trends
-GET    /api/v4/intelligence/trends/{trend_id}        # Get trend details
-POST   /api/v4/intelligence/trends/analyze           # Analyze trend data
+GET    /api/intelligence/trends                    # Get trend predictions
+POST   /api/intelligence/trends/predict           # Predict specific trends
+GET    /api/intelligence/trends/{trend_id}        # Get trend details
+POST   /api/intelligence/trends/analyze           # Analyze trend data
 
 # Event Prediction
-POST   /api/v4/intelligence/events/predict           # Predict event outcomes
-GET    /api/v4/intelligence/events/predictions        # Get event predictions
-POST   /api/v4/intelligence/events/assess            # Assess event impact
+POST   /api/intelligence/events/predict           # Predict event outcomes
+GET    /api/intelligence/events/predictions        # Get event predictions
+POST   /api/intelligence/events/assess            # Assess event impact
 ```
 
 ### **Strategic Analysis**
 ```python
 # Strategic Insights
-POST   /api/v4/intelligence/strategic/analyze        # Generate strategic insights
-GET    /api/v4/intelligence/strategic/insights       # Get strategic insights
-POST   /api/v4/intelligence/strategic/recommend     # Get strategic recommendations
-GET    /api/v4/intelligence/strategic/analysis       # Get analysis reports
+POST   /api/intelligence/strategic/analyze        # Generate strategic insights
+GET    /api/intelligence/strategic/insights       # Get strategic insights
+POST   /api/intelligence/strategic/recommend     # Get strategic recommendations
+GET    /api/intelligence/strategic/analysis       # Get analysis reports
 
 # Policy Analysis
-POST   /api/v4/intelligence/policy/analyze           # Analyze policy implications
-GET    /api/v4/intelligence/policy/analysis           # Get policy analysis
-POST   /api/v4/intelligence/policy/impact             # Assess policy impact
+POST   /api/intelligence/policy/analyze           # Analyze policy implications
+GET    /api/intelligence/policy/analysis           # Get policy analysis
+POST   /api/intelligence/policy/impact             # Assess policy impact
 ```
 
 ### **Pattern Recognition**
 ```python
 # Anomaly Detection
-POST   /api/v4/intelligence/patterns/anomalies       # Detect anomalies
-GET    /api/v4/intelligence/patterns/anomalies       # Get detected anomalies
-POST   /api/v4/intelligence/patterns/correlations    # Find correlations
-GET    /api/v4/intelligence/patterns/behavioral       # Get behavioral analysis
+POST   /api/intelligence/patterns/anomalies       # Detect anomalies
+GET    /api/intelligence/patterns/anomalies       # Get detected anomalies
+POST   /api/intelligence/patterns/correlations    # Find correlations
+GET    /api/intelligence/patterns/behavioral       # Get behavioral analysis
 ```
 
 ### **Recommendations**
 ```python
 # Content Recommendations
-POST   /api/v4/intelligence/recommendations/content  # Get content recommendations
-POST   /api/v4/intelligence/recommendations/sources  # Get source recommendations
-POST   /api/v4/intelligence/recommendations/topics   # Get topic recommendations
-GET    /api/v4/intelligence/recommendations/personal # Get personalized recommendations
+POST   /api/intelligence/recommendations/content  # Get content recommendations
+POST   /api/intelligence/recommendations/sources  # Get source recommendations
+POST   /api/intelligence/recommendations/topics   # Get topic recommendations
+GET    /api/intelligence/recommendations/personal # Get personalized recommendations
 ```
 
 ## 📊 **Data Models**
@@ -415,6 +415,65 @@ class RecommendationService:
 - [ ] Comprehensive testing
 - [ ] Quality validation
 - [ ] Documentation completion
+
+---
+
+## Phase 1 (v6 quality-first) — Implemented
+
+**Reference:** [V6_QUALITY_FIRST_UPGRADE_PLAN.md](V6_QUALITY_FIRST_UPGRADE_PLAN.md), [V6_QUALITY_FIRST_TODO.md](V6_QUALITY_FIRST_TODO.md).
+
+### Tracked events (T1.1)
+- **API** (flat `/api/...` in `context_centric.py`): `GET /api/tracked_events` (list), `GET /api/tracked_events/{id}` (detail + chronicles), **`POST /api/tracked_events`** (create), **`PUT /api/tracked_events/{id}`** (update).
+- **UI:** Investigate page — "Create event" button and dialog; Event detail page — "Edit event" button and dialog (name, type, dates, scope, domain_keys).
+- **Schema:** `intelligence.tracked_events`, `intelligence.event_chronicles` (migration 144; migration 156 adds `domain_keys`).
+
+### Entity dossiers (T1.3)
+- **API:** `GET /api/entity_dossiers?domain_key=&entity_id=` (return dossier or 404), **`POST /api/entity_dossiers/compile`** with body `{ domain_key, entity_id }` to build/refresh.
+- **Service:** `api/services/dossier_compiler_service.py` — compiles chronicle from `article_entities` + articles and storylines for the given entity; upserts `intelligence.entity_dossiers` (chronicle_data, relationships from storyline refs).
+- **Schema:** `intelligence.entity_dossiers`, `intelligence.entity_positions` (migration 144).
+
+---
+
+## Phase 2 (v6 quality-first) — Implemented
+
+### Event chronicle builder (T2.1)
+- **Service:** `api/services/event_chronicle_builder_service.py` — `build_chronicle_for_event(event_id)` gathers developments from storylines (per event domain_keys), computes momentum_score, inserts `intelligence.event_chronicles`. `_run_scheduled_chronicle_updates(max_events, get_db_connection)` runs updates for the coordinator.
+- **API:** **POST** `/api/tracked_events/{event_id}/chronicles/update` (optional body: `update_date`, `developments_days`) triggers a chronicle build; chronicles are also included in **GET** `/api/tracked_events/{id}`.
+
+### Dossier intelligence layer (T2.2)
+- **Relationships:** Dossier compiler now populates `entity_dossiers.relationships` from `intelligence.entity_relationships` (source/target domain + entity_id, relationship_type, confidence). Storyline refs are kept in `metadata.storyline_refs`.
+- **Patterns/positions:** `patterns` left as `{}`; `positions` left as `[]` (stub for later).
+
+### Governance / coordinator (T2.3)
+- **Config:** `api/config/orchestrator_governance.yaml` — `orchestrator.cycle_phases`, `event_tracking` (enabled, update_interval_seconds, max_events_per_cycle), `entity_tracking`, `quality_thresholds` (min_quality_score, min_importance_for_processing). Defaults in `orchestrator_governance.py`.
+- **Coordinator:** When `event_tracking.enabled` and interval elapsed, `OrchestratorCoordinator` calls `_run_scheduled_chronicle_updates` (up to max_events_per_cycle); state key `last_event_chronicle_update` records last run.
+
+---
+
+## Phase 3 (v6 quality-first) — Implemented
+
+### Document pipeline (T3.1, T3.2)
+- **Migration 160:** `intelligence.processed_documents` (source_type, source_url, title, publication_date, extracted_sections, key_findings, entities_mentioned, etc.), `intelligence.document_intelligence` (document_id, storyline_connections, supports/contradicts).
+- **Config:** `document_sources` in `orchestrator_governance.yaml` (source_priorities, document_types, ingest_urls).
+- **Acquisition:** `api/services/document_acquisition_service.py` — create_document(), ingest_from_config(); **Processing stub:** `api/services/document_processing_service.py` — process_document() links to storylines, optional placeholder extracted_sections/key_findings.
+- **API:** GET/POST `/api/processed_documents`, GET `/api/processed_documents/{id}`, POST `/api/processed_documents/ingest_from_config`, POST `/api/processed_documents/{id}/process`.
+
+### Narrative threads (T3.3)
+- **Service:** `api/services/narrative_thread_service.py` — ensure_narrative_thread(), build_threads_for_domain() (from storylines → narrative_threads summary + linked_article_ids); synthesize_threads() stub (concatenated summary; full conflict resolution later).
+- **API:** GET `/api/narrative_threads`, POST `/api/narrative_threads/build`, POST `/api/narrative_threads/synthesize`.
+
+---
+
+## Phase 4 (v6 quality-first) — Implemented
+
+- **Migrations 155–160** applied via `api/scripts/run_migrations_155_to_160.py`.
+- **Frontend:** Processed documents list at `/:domain/investigate/documents`; API client in `contextCentric.ts`.
+
+## Phase 5 (v6 quality-first) — Implemented
+
+- **Orchestrator dossier compile:** When `entity_tracking.enabled` and `dossier_compile_interval_seconds` elapsed, coordinator runs `_run_scheduled_dossier_compiles` (dossier_compiler_service); config: `dossier_compile_interval_seconds`, `max_dossiers_per_cycle`; state: `last_dossier_compile_run`.
+- **Narrative threads UI:** Page at `/:domain/investigate/narrative-threads` (list, Build for domain, Synthesize); "Narrative threads" button on Investigate.
+- **Docs:** CONTROLLER_ARCHITECTURE.md §2.4.1 documents orchestrator cycle (event chronicle updates, dossier compilation).
 
 ---
 

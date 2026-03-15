@@ -57,10 +57,10 @@ def test_endpoint(endpoint, expected_fields=None):
 
 # Test all endpoints
 endpoints = [
-    "/api/v4/system-monitoring/health",
-    "/api/v4/news-aggregation/articles/recent",
-    "/api/v4/news-aggregation/rss-feeds",
-    "/api/v4/storyline-management/storylines"
+    "/api/system_monitoring/health",
+    "/api/articles/recent",
+    "/api/politics/rss_feeds",
+    "/api/politics/storylines"
 ]
 
 for endpoint in endpoints:

@@ -228,10 +228,7 @@ journalctl --user -u news-intel-api -f     # Tail API logs
 systemctl --user disable news-intel-api news-intel-web
 ```
 
-> **Note:** The services read DB credentials from `.env`. The API waits 10 seconds
-> after boot for the network to settle; the frontend waits for the API to start first.
-> If Widow (DB host) is unreachable at boot, the API will fail and systemd will
-> retry after 10 seconds (up to the default retry limit).
+> **Note:** The API **requires** `DB_PASSWORD` (from project-root `.env` or, on Widow only, `.db_password_widow`). If it is missing, the API exits at startup to avoid 503s on all DB routes. Use `./start_system.sh` for manual starts (it loads `.env` and passes env to the API). If your systemd service runs uvicorn directly, ensure the service has `EnvironmentFile=` pointing at the project `.env`. The API waits 10 seconds after boot for the network to settle; the frontend waits for the API to start first. If Widow (DB host) is unreachable at boot, the API will fail and systemd will retry after 10 seconds (up to the default retry limit).
 
 Service files live at `~/.config/systemd/user/news-intel-api.service` and
 `~/.config/systemd/user/news-intel-web.service`.

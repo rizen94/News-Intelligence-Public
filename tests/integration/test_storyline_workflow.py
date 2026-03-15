@@ -17,7 +17,7 @@ class TestStorylineWorkflow:
         assert storyline_id is not None, "Failed to create storyline"
         
         # Step 2: Verify storyline was created
-        response = api_client.get(f"{TestConfig.API_BASE_URL}/api/v4/storyline-management/storylines/{storyline_id}")
+        response = api_client.get(f"{TestConfig.API_BASE_URL}/api/politics/storylines/{storyline_id}")
         TestUtils.assert_response_success(response)
         
         storyline_data = response.json()["data"]
@@ -41,20 +41,20 @@ class TestStorylineWorkflow:
         # Step 4: Add articles to storyline
         for article_id in articles:
             response = api_client.post(
-                f"{TestConfig.API_BASE_URL}/api/v4/storyline-management/storylines/{storyline_id}/articles/{article_id}",
+                f"{TestConfig.API_BASE_URL}/api/politics/storylines/{storyline_id}/articles/{article_id}",
                 json={"relevance_score": 0.8}
             )
             TestUtils.assert_response_success(response)
         
         # Step 5: Verify articles are in storyline
-        response = api_client.get(f"{TestConfig.API_BASE_URL}/api/v4/storyline-management/storylines/{storyline_id}")
+        response = api_client.get(f"{TestConfig.API_BASE_URL}/api/politics/storylines/{storyline_id}")
         TestUtils.assert_response_success(response)
         
         storyline_data = response.json()["data"]
         assert storyline_data["article_count"] == len(articles)
         
         # Step 6: Test timeline generation
-        response = api_client.get(f"{TestConfig.API_BASE_URL}/api/v4/storyline-management/storylines/{storyline_id}/timeline")
+        response = api_client.get(f"{TestConfig.API_BASE_URL}/api/politics/storylines/{storyline_id}/timeline")
         TestUtils.assert_response_success(response)
         
         timeline_data = response.json()["data"]
@@ -70,13 +70,13 @@ class TestStorylineWorkflow:
         
         # Add article to storyline
         response = api_client.post(
-            f"{TestConfig.API_BASE_URL}/api/v4/storyline-management/storylines/{storyline_id}/articles/{article_id}",
+            f"{TestConfig.API_BASE_URL}/api/politics/storylines/{storyline_id}/articles/{article_id}",
             json={"relevance_score": 0.9}
         )
         TestUtils.assert_response_success(response)
         
         # Verify article is in storyline
-        response = api_client.get(f"{TestConfig.API_BASE_URL}/api/v4/storyline-management/storylines/{storyline_id}")
+        response = api_client.get(f"{TestConfig.API_BASE_URL}/api/politics/storylines/{storyline_id}")
         TestUtils.assert_response_success(response)
         
         storyline_data = response.json()["data"]
@@ -84,12 +84,12 @@ class TestStorylineWorkflow:
         
         # Remove article from storyline
         response = api_client.delete(
-            f"{TestConfig.API_BASE_URL}/api/v4/storyline-management/storylines/{storyline_id}/articles/{article_id}"
+            f"{TestConfig.API_BASE_URL}/api/politics/storylines/{storyline_id}/articles/{article_id}"
         )
         TestUtils.assert_response_success(response)
         
         # Verify article is removed
-        response = api_client.get(f"{TestConfig.API_BASE_URL}/api/v4/storyline-management/storylines/{storyline_id}")
+        response = api_client.get(f"{TestConfig.API_BASE_URL}/api/politics/storylines/{storyline_id}")
         TestUtils.assert_response_success(response)
         
         storyline_data = response.json()["data"]
@@ -116,13 +116,13 @@ class TestStorylineWorkflow:
                 
                 # Add to storyline
                 response = api_client.post(
-                    f"{TestConfig.API_BASE_URL}/api/v4/storyline-management/storylines/{storyline_id}/articles/{article_id}",
+                    f"{TestConfig.API_BASE_URL}/api/politics/storylines/{storyline_id}/articles/{article_id}",
                     json={"relevance_score": 0.7}
                 )
                 TestUtils.assert_response_success(response)
         
         # Generate timeline
-        response = api_client.get(f"{TestConfig.API_BASE_URL}/api/v4/storyline-management/storylines/{storyline_id}/timeline")
+        response = api_client.get(f"{TestConfig.API_BASE_URL}/api/politics/storylines/{storyline_id}/timeline")
         TestUtils.assert_response_success(response)
         
         timeline_data = response.json()["data"]

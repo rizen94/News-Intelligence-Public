@@ -65,9 +65,9 @@ def _default_config() -> dict[str, Any]:
             "breaking_news_threshold": 0.8,
             "sources": [
                 {"source_id": "rss", "handler": "rss"},
-                {"source_id": "gold", "handler": "finance", "topic": "gold"},
-                {"source_id": "silver", "handler": "finance", "topic": "silver"},
-                {"source_id": "platinum", "handler": "finance", "topic": "platinum"},
+                {"source_id": "gold", "handler": "finance", "topic": "gold", "min_fetch_interval_seconds": 3600, "off_hours_interval_seconds": 14400},
+                {"source_id": "silver", "handler": "finance", "topic": "silver", "min_fetch_interval_seconds": 3600, "off_hours_interval_seconds": 14400},
+                {"source_id": "platinum", "handler": "finance", "topic": "platinum", "min_fetch_interval_seconds": 3600, "off_hours_interval_seconds": 14400},
             ],
         },
         "processing": {
@@ -85,5 +85,24 @@ def _default_config() -> dict[str, Any]:
             "daily_llm_tokens": 100000,
             "max_api_calls_per_hour": 1000,
             "storage_warning_threshold": 0.8,
+        },
+        "event_tracking": {
+            "enabled": False,
+            "update_interval_seconds": 86400,
+            "max_events_per_cycle": 3,
+        },
+        "entity_tracking": {
+            "enabled": True,
+            "dossier_compile_interval_seconds": 86400,
+            "max_dossiers_per_cycle": 2,
+        },
+        "quality_thresholds": {
+            "min_quality_score": 0.5,
+            "min_importance_for_processing": 0.3,
+        },
+        "document_sources": {
+            "source_priorities": ["government", "think_tank", "research"],
+            "document_types": ["report", "analysis", "briefing"],
+            "ingest_urls": [],
         },
     }

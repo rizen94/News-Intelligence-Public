@@ -82,7 +82,7 @@ New index added: `finance.article_topic_clusters(article_id)` — was doing 531 
 - 503 Service Unavailable: 1,283 (13%) — watchlist/alerts
 - 404 Not Found: 781 (8%) — duplicates/stats endpoint missing
 
-**Root cause:** The `v4.1.0 Widow migration` commit at 20:38 on Mar 1 likely changed backend route handling while the frontend was still using `/api/v4/` prefixed URLs. The 400 errors on domain routes (`/api/v4/politics/articles`) confirm a URL mismatch. The 500 errors on system_monitoring suggest the database was also slow or temporarily unreachable during the migration. Recovery at Mar 3 01:00 likely coincided with a manual restart or cache refresh.
+**Root cause:** The `v4.1.0 Widow migration` commit at 20:38 on Mar 1 likely changed backend route handling while the frontend was still using `/api/v4/` prefixed URLs. The 400 errors on domain routes (`/api/v4/politics/articles`) confirm a URL mismatch. *(Current API uses flat `/api` with no version segment; frontend and docs have been aligned.)* The 500 errors on system_monitoring suggest the database was also slow or temporarily unreachable during the migration. Recovery at Mar 3 01:00 likely coincided with a manual restart or cache refresh.
 
 **Prevention:** The request timeout middleware (added today) would have returned fast 504s instead of letting requests hang for 20-942 seconds.
 

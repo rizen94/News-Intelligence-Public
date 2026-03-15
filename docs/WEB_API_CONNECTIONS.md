@@ -18,7 +18,7 @@ route structure, where every router mounts at `/api`.
 | Context-centric | `/api/entity_profiles`, `/api/contexts` | `/api/entity_profiles`, `/api/contexts` |
 | Watchlist | `/api/watchlist` | `/api/watchlist` |
 
-> **History:** Frontend URLs previously used `/api/v4/...` but the backend never
+> **History:** Frontend URLs previously used `/api/...` but the backend never
 > had a `/v4/` prefix in its routes. This mismatch was corrected by removing `/v4/`
 > from all frontend API service files and from the request interceptor in
 > `apiConnectionManager.ts`.

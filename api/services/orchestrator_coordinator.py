@@ -24,6 +24,10 @@ from .processing_governor import ProcessingGovernor
 # Run pattern analysis every this many cycles (~30 min at 60s)
 PATTERN_ANALYSIS_INTERVAL_CYCLES = 30
 
+# Throttle decision log so we don't flood with repeated idle / process_phase entries
+DECISION_LOG_IDLE_THROTTLE_SECONDS = 300   # Log "no_action"/"idle" at most every 5 min
+DECISION_LOG_PHASE_THROTTLE_SECONDS = 120  # Log same "process_phase"/"queued" at most every 2 min
+
 
 class OrchestratorCoordinator:
     """
@@ -73,6 +77,9 @@ class OrchestratorCoordinator:
         self._stop = asyncio.Event()
         self._task: asyncio.Task | None = None
         self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="orch_coord")
+        self._last_idle_log_at: datetime | None = None
+        self._last_process_phase_log_at: datetime | None = None
+        self._last_process_phase_name: str | None = None
 
     def start_loop(self) -> None:
         """Start the primary coordination loop (assess, plan, execute, learn, sleep)."""
@@ -168,11 +175,17 @@ class OrchestratorCoordinator:
                     state = orchestrator_state.get_controller_state()
                 else:
                     try:
-                        orchestrator_state.append_decision_log(
-                            "no_action",
-                            factors={"cycle": current_cycle},
-                            outcome="idle",
-                        )
+                        now_ts = datetime.now(timezone.utc)
+                        if (
+                            self._last_idle_log_at is None
+                            or (now_ts - self._last_idle_log_at).total_seconds() >= DECISION_LOG_IDLE_THROTTLE_SECONDS
+                        ):
+                            orchestrator_state.append_decision_log(
+                                "no_action",
+                                factors={"cycle": current_cycle},
+                                outcome="idle",
+                            )
+                            self._last_idle_log_at = now_ts
                     except Exception as e:
                         logger.warning("Orchestrator append_decision_log failed: %s", e)
 
@@ -198,16 +211,27 @@ class OrchestratorCoordinator:
                                 success=True,
                             )
                             try:
-                                orchestrator_state.append_decision_log(
-                                    "process_phase",
-                                    factors={
-                                        "cycle": current_cycle,
-                                        "phase": processing_action["phase"],
-                                        "domain": processing_action.get("domain"),
-                                        "storyline_id": processing_action.get("storyline_id"),
-                                    },
-                                    outcome="queued",
+                                phase_name = processing_action["phase"]
+                                now_ts = datetime.now(timezone.utc)
+                                skip = (
+                                    self._last_process_phase_name == phase_name
+                                    and self._last_process_phase_log_at is not None
+                                    and (now_ts - self._last_process_phase_log_at).total_seconds()
+                                    < DECISION_LOG_PHASE_THROTTLE_SECONDS
                                 )
+                                if not skip:
+                                    orchestrator_state.append_decision_log(
+                                        "process_phase",
+                                        factors={
+                                            "cycle": current_cycle,
+                                            "phase": phase_name,
+                                            "domain": processing_action.get("domain"),
+                                            "storyline_id": processing_action.get("storyline_id"),
+                                        },
+                                        outcome="queued",
+                                    )
+                                    self._last_process_phase_log_at = now_ts
+                                    self._last_process_phase_name = phase_name
                             except Exception as e:
                                 logger.warning("Orchestrator append_decision_log failed: %s", e)
                         except Exception as e:
@@ -271,6 +295,66 @@ class OrchestratorCoordinator:
                                 topic,
                                 result.get("task_id"),
                             )
+
+                # Phase 2 T2.3: event chronicle updates (when due)
+                event_tracking = (self._config or {}).get("event_tracking") or {}
+                if event_tracking.get("enabled") and self._get_db_connection:
+                    interval_sec = int(event_tracking.get("update_interval_seconds") or 86400)
+                    last_ts = state.get("last_event_chronicle_update")
+                    due = True
+                    if last_ts:
+                        try:
+                            last_dt = datetime.fromisoformat(last_ts.replace("Z", "+00:00"))
+                            if (datetime.now(timezone.utc) - last_dt).total_seconds() < interval_sec:
+                                due = False
+                        except (ValueError, TypeError):
+                            pass
+                    if due:
+                        max_events = int(event_tracking.get("max_events_per_cycle") or 3)
+                        try:
+                            from .event_chronicle_builder_service import _run_scheduled_chronicle_updates
+                            loop = asyncio.get_event_loop()
+                            updated = await loop.run_in_executor(
+                                self._executor,
+                                _run_scheduled_chronicle_updates,
+                                max_events,
+                                self._get_db_connection,
+                            )
+                            state["last_event_chronicle_update"] = datetime.now(timezone.utc).isoformat()
+                            if updated:
+                                logger.info("Orchestrator ran event chronicle updates for %s event(s)", updated)
+                        except Exception as e:
+                            logger.debug("Orchestrator event chronicle updates failed: %s", e)
+
+                # Phase 5: dossier compilation (when entity_tracking enabled and interval due)
+                entity_tracking = (self._config or {}).get("entity_tracking") or {}
+                if entity_tracking.get("enabled") and self._get_db_connection:
+                    interval_sec = int(entity_tracking.get("dossier_compile_interval_seconds") or 86400)
+                    last_ts = state.get("last_dossier_compile_run")
+                    due = True
+                    if last_ts:
+                        try:
+                            last_dt = datetime.fromisoformat(last_ts.replace("Z", "+00:00"))
+                            if (datetime.now(timezone.utc) - last_dt).total_seconds() < interval_sec:
+                                due = False
+                        except (ValueError, TypeError):
+                            pass
+                    if due:
+                        max_dossiers = int(entity_tracking.get("max_dossiers_per_cycle") or 2)
+                        try:
+                            from .dossier_compiler_service import _run_scheduled_dossier_compiles
+                            loop = asyncio.get_event_loop()
+                            compiled = await loop.run_in_executor(
+                                self._executor,
+                                _run_scheduled_dossier_compiles,
+                                max_dossiers,
+                                self._get_db_connection,
+                            )
+                            state["last_dossier_compile_run"] = datetime.now(timezone.utc).isoformat()
+                            if compiled:
+                                logger.info("Orchestrator ran dossier compilation for %s entity(ies)", compiled)
+                        except Exception as e:
+                            logger.debug("Orchestrator dossier compile failed: %s", e)
 
                 try:
                     orchestrator_state.save_controller_state(state)

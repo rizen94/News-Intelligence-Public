@@ -25,11 +25,17 @@ import EventDetailPage from './pages/Investigate/EventDetailPage';
 import EntityDetailPage from './pages/Investigate/EntityDetailPage';
 import EntitiesListPage from './pages/Investigate/EntitiesListPage';
 import SearchPage from './pages/Investigate/SearchPage';
+import ProcessedDocumentsPage from './pages/Investigate/ProcessedDocumentsPage';
+import NarrativeThreadsPage from './pages/Investigate/NarrativeThreadsPage';
 import MonitorPage from './pages/Monitor/MonitorPage';
 import AnalyzePage from './pages/Analyze/AnalyzePage';
 import CommodityDashboard from './pages/Finance/CommodityDashboard';
 import FinancialAnalysis from './pages/Finance/FinancialAnalysis';
 import FinancialAnalysisResult from './pages/Finance/FinancialAnalysisResult';
+import Storylines from './pages/Storylines/Storylines';
+import StorylineDetail from './pages/Storylines/StorylineDetail';
+import Briefings from './pages/Briefings/Briefings';
+import ReportPage from './pages/Report/ReportPage';
 
 const theme = createTheme({
   palette: {
@@ -72,11 +78,17 @@ function App() {
                   <Route path="dashboard" element={<Dashboard />} />
                   <Route path="discover" element={<DiscoverPage />} />
                   <Route path="discover/contexts/:id" element={<ContextDetailPage />} />
+                  <Route path="storylines" element={<Storylines />} />
+                  <Route path="storylines/:id" element={<StorylineDetail />} />
+                  <Route path="briefings" element={<Briefings />} />
+                  <Route path="report" element={<ReportPage />} />
                   <Route path="investigate" element={<InvestigatePage />} />
                   <Route path="investigate/events/:id" element={<EventDetailPage />} />
                   <Route path="investigate/entities" element={<EntitiesListPage />} />
                   <Route path="investigate/entities/:id" element={<EntityDetailPage />} />
                   <Route path="investigate/search" element={<SearchPage />} />
+                  <Route path="investigate/documents" element={<ProcessedDocumentsPage />} />
+                  <Route path="investigate/narrative-threads" element={<NarrativeThreadsPage />} />
                   <Route path="monitor" element={<MonitorPage />} />
                   <Route path="analyze" element={<AnalyzePage />} />
                   <Route path="analysis" element={<FinancialAnalysis />} />

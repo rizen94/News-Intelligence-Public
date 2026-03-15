@@ -27,7 +27,7 @@ From **Mar 1 15:00 to Mar 3 00:00**, error rates hit 73–100% every hour.
 - **Symptom:** All API responses returned 400/404/500/503 with response times of 5–12 seconds (vs normal 114ms).
 - **Root cause:** Most likely a database or network dependency failure — the request pattern (76 req/hr steady) shows the frontend polling on schedule but getting only errors back.
 - **Recovery:** Error rate dropped to 0.6% by Mar 3 01:00.
-- **Single worst request:** `GET /api/v4/politics/content_analysis/topics` — **942 seconds** (15+ minutes), returned 500. This was at Mar 3 00:00 during the tail of the outage.
+- **Single worst request:** `GET /api/v4/politics/content_analysis/topics` — **942 seconds** (15+ minutes), returned 500. This was at Mar 3 00:00 during the tail of the outage. *(Current API uses `/api/{domain}/...` with no v4 segment.)*
 
 ---
 

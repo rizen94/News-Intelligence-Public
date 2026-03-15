@@ -17,7 +17,7 @@ class TestPerformanceAndLoad:
         print("⚡ Testing concurrent request handling...")
         
         def make_request():
-            response = api_client.get(f"{TestConfig.API_BASE_URL}/api/v4/content-analysis/articles")
+            response = api_client.get(f"{TestConfig.API_BASE_URL}/api/articles")
             return response.status_code == 200
         
         # Make 10 concurrent requests
@@ -34,10 +34,10 @@ class TestPerformanceAndLoad:
         print("⏱️ Testing API response times...")
         
         endpoints_to_test = [
-            "/api/v4/system-monitoring/status",
-            "/api/v4/content-analysis/articles",
-            "/api/v4/storyline-management/storylines",
-            "/api/v4/content-analysis/topics/word-cloud"
+            "/api/system_monitoring/status",
+            "/api/articles",
+            "/api/politics/storylines",
+            "/api/politics/content_analysis/topics/word_cloud"
         ]
         
         max_response_time = 2.0  # 2 seconds max
@@ -72,14 +72,14 @@ class TestPerformanceAndLoad:
                 article_ids.append(article_id)
         
         # Test retrieving all articles
-        response = api_client.get(f"{TestConfig.API_BASE_URL}/api/v4/content-analysis/articles")
+        response = api_client.get(f"{TestConfig.API_BASE_URL}/api/articles")
         TestUtils.assert_response_success(response)
         
         data = response.json()["data"]
         assert len(data["articles"]) >= len(article_ids), "Should retrieve all created articles"
         
         # Test pagination
-        response = api_client.get(f"{TestConfig.API_BASE_URL}/api/v4/content-analysis/articles", 
+        response = api_client.get(f"{TestConfig.API_BASE_URL}/api/articles", 
                                 params={"limit": 10, "page": 1})
         TestUtils.assert_response_success(response)
         

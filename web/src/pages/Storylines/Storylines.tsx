@@ -161,12 +161,18 @@ const Storylines: React.FC = () => {
 
       const response = await apiService.getStorylines(params, domain);
 
-      // Handle both response formats
+      // Handle response formats: crud returns { data, pagination, domain }; legacy may return { success, data: { storylines, total } }
       let storylinesData: Storyline[] = [];
+      const pagination = response.pagination;
+      const totalFromPagination = pagination?.total;
       if (response.data && Array.isArray(response.data)) {
         storylinesData = response.data;
-        setTotalPages(response.pagination?.pages || 1);
-        setTotalStorylines(response.pagination?.total || response.data.length);
+        setTotalPages(pagination?.pages ?? 1);
+        setTotalStorylines(totalFromPagination ?? storylinesData.length);
+      } else if (response.data?.data && Array.isArray(response.data.data)) {
+        storylinesData = response.data.data;
+        setTotalPages(response.data.pagination?.pages ?? 1);
+        setTotalStorylines(response.data.pagination?.total ?? storylinesData.length);
       } else if (response.success && response.data?.storylines) {
         storylinesData = response.data.storylines || [];
         setTotalPages(Math.ceil((response.data.total || 0) / (viewMode === 'grid' ? 12 : 20)));

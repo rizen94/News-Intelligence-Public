@@ -73,9 +73,11 @@ REVIEW_THRESHOLD = 0.5
 class StoryContinuationService:
     """Matches new events to existing storylines across unbounded time windows."""
 
-    def __init__(self, conn, llm: Optional[LLMService] = None):
+    def __init__(self, conn, llm: Optional[LLMService] = None, schema: Optional[str] = None):
         self.conn = conn
         self.llm = llm or LLMService()
+        # When set (e.g. 'politics', 'finance', 'science_tech'), search_path is set and storyline_id stored as "schema:id"
+        self.schema = schema
 
     # ------------------------------------------------------------------
     # Public API
@@ -117,16 +119,24 @@ class StoryContinuationService:
         return None
 
     async def process_recent_events(self, limit: int = 30) -> Dict[str, int]:
-        """Batch-match unlinked events to storylines."""
+        """Batch-match unlinked events to storylines. Uses story_entity_index and storylines in current search_path."""
         cursor = self.conn.cursor()
-        cursor.execute("""
-            SELECT id FROM chronological_events
-            WHERE storyline_id = '' OR storyline_id IS NULL
-            ORDER BY extraction_timestamp DESC
-            LIMIT %s
-        """, (limit,))
-        rows = cursor.fetchall()
-        cursor.close()
+        try:
+            if self.schema:
+                cursor.execute("SET search_path TO %s, public", (self.schema,))
+            cursor.execute("""
+                SELECT id FROM chronological_events
+                WHERE storyline_id = '' OR storyline_id IS NULL
+                ORDER BY extraction_timestamp DESC
+                LIMIT %s
+            """, (limit,))
+            rows = cursor.fetchall()
+        except Exception as e:
+            logger.warning("Story continuation: failed to list unlinked events (check search_path / schema): %s", e)
+            cursor.close()
+            return {"checked": 0, "linked": 0, "flagged": 0}
+        finally:
+            cursor.close()
 
         stats = {"checked": 0, "linked": 0, "flagged": 0}
         for (eid,) in rows:
@@ -201,8 +211,15 @@ class StoryContinuationService:
             cursor.close()
 
     def update_lifecycle_states(self):
-        """Transition storylines between lifecycle states based on activity."""
+        """Transition storylines between lifecycle states based on activity. Uses storylines in current search_path."""
         cursor = self.conn.cursor()
+        try:
+            if self.schema:
+                cursor.execute("SET search_path TO %s, public", (self.schema,))
+        except Exception as e:
+            logger.warning("Story continuation: failed to set search_path for lifecycle update: %s", e)
+            cursor.close()
+            return
         now = datetime.now(timezone.utc)
         try:
             cursor.execute("""

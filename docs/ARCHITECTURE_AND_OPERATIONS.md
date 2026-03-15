@@ -36,7 +36,7 @@ Three-machine setup:
 - Frontend: http://localhost:3000
 - API: http://localhost:8000
 - API docs: http://localhost:8000/docs
-- Health: http://localhost:8000/api/v4/system_monitoring/health
+- Health: http://localhost:8000/api/system_monitoring/health
 
 ---
 
@@ -94,6 +94,33 @@ sudo systemctl status postgresql
 | `scripts/deploy_to_widow.sh` | Deploy code to Widow |
 | `scripts/configure_widow_no_sleep.sh` | Disable Widow sleep (run on Widow) |
 | `scripts/decommission_nas_postgresql.sh` | Stop NAS PostgreSQL |
+
+---
+
+## Data pipeline and automations
+
+When the API is running (`./start_system.sh`), the following run **without manual triggers**:
+
+| Component | What runs | Trigger |
+|-----------|-----------|--------|
+| **OrchestratorCoordinator** | Assess → plan → execute → learn every 60s | FastAPI lifespan |
+| **Collection** | RSS fetch when CollectionGovernor recommends (min interval 5 min) | Coordinator loop |
+| **Collection** | Finance refresh (gold/silver/platinum) when governor recommends | Coordinator loop |
+| **AutomationManager** | All phases on intervals (rss_processing 30 min, article_processing 5 min, digest_generation 1 hr, etc.) | Background thread + scheduler |
+| **Processing** | One phase per cycle via ProcessingGovernor (importance + watchlist) | Coordinator calls `automation.request_phase()` |
+| **Finance orchestrator** | Scheduled refresh and queue worker | FastAPI lifespan |
+| **Digest** | Weekly digest when phase runs (digest_generation depends on timeline_generation) | AutomationManager phase |
+| **Health monitor** | Polls health feeds, creates alerts on failure | FastAPI lifespan |
+| **Storyline consolidation** | Periodic consolidation (configurable interval) | Background thread |
+| **Route supervisor** | Route and DB connection monitoring | Background thread |
+
+**Optional (feature-flagged):**
+
+- **Newsroom Orchestrator v6** (reporter_tick → ARTICLE_INGESTED, journalist/editor/archivist/chief_editor): only runs if `newsroom.enabled` is true in `api/config/newsroom.yaml` or `NEWSROOM_ORCHESTRATOR_ENABLED=1`. Default is disabled.
+
+**Cron / external:** Optional. `scripts/rss_collection_with_health_check.sh` can be used as a fallback (e.g. if API is down); when the API is up, RSS is driven by the coordinator and AutomationManager.
+
+**Confidence:** The data pipeline is fully connected for normal operation: start the system and collection, processing, digest, and downstream phases run on their schedules and governor recommendations. No manual trigger is required so long as the system is on and DB/LLM are available.
 
 ---
 

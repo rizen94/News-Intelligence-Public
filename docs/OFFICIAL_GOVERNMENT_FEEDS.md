@@ -135,7 +135,7 @@ ON CONFLICT (feed_url) DO NOTHING;
 
 Or use the API endpoint (when domain support is added):
 ```bash
-curl -X POST "http://localhost:8000/api/v4/{domain}/rss_feeds" \
+curl -X POST "http://localhost:8000/api/{domain}/rss_feeds" \
   -H "Content-Type: application/json" \
   -d '{
     "feed_name": "SEC Press Releases",

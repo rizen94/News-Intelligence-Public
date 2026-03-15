@@ -11,6 +11,7 @@ Domain validation rule:
 """
 
 from fastapi import APIRouter, HTTPException, Path, Query, Request, Body
+from fastapi.responses import JSONResponse
 from typing import Dict, Any, Optional
 from datetime import datetime, timedelta, timezone, date
 import logging
@@ -588,12 +589,13 @@ async def get_gold_geo_events(
     domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
     limit: int = Query(50, ge=1, le=200),
 ):
-    """Finance-domain tracked events with geographic_scope for choropleth; gold-related filter optional."""
+    """Finance-domain tracked events relevant to gold (event_name/scope matched to gold topic keywords)."""
     _check_domain(domain)
     conn = get_db_connection()
     if not conn:
         raise HTTPException(status_code=503, detail="Database unavailable")
     try:
+        fetch_limit = limit * 3
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -603,7 +605,7 @@ async def get_gold_geo_events(
                 ORDER BY start_date DESC NULLS LAST
                 LIMIT %s
                 """,
-                (domain, limit),
+                (domain, fetch_limit),
             )
             rows = cur.fetchall()
         conn.close()
@@ -619,6 +621,12 @@ async def get_gold_geo_events(
             }
             for r in rows
         ]
+        from domains.finance.news_orchestrator import is_relevant_to_commodity
+        combined = [
+            (ev, (ev.get("event_name") or "") + " " + (ev.get("geographic_scope") or ""))
+            for ev in events
+        ]
+        events = [ev for ev, text in combined if is_relevant_to_commodity(text, "gold")][:limit]
         by_region = {}
         for ev in events:
             scope = (ev.get("geographic_scope") or "").strip()
@@ -850,13 +858,22 @@ async def get_commodity_authority(
 async def get_commodity_geo_events(
     domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
     limit: int = Query(50, ge=1, le=200),
+    commodity: str | None = Query(
+        None,
+        description="Filter to events relevant to this commodity (gold, silver, platinum). Omit to return all finance events.",
+    ),
 ):
-    """Finance-domain tracked events with geographic_scope for choropleth; shared across commodities."""
+    """Finance-domain tracked events with geographic_scope for choropleth.
+    When commodity is set (gold/silver/platinum), only events whose name/scope match that commodity's
+    topic keywords are returned, so the timeline is specific to the metal rather than all market news.
+    """
     _check_domain(domain)
     conn = get_db_connection()
     if not conn:
         raise HTTPException(status_code=503, detail="Database unavailable")
     try:
+        # Fetch more rows if we filter by commodity so we still have enough after filtering
+        fetch_limit = limit * 3 if commodity and commodity.lower() in ("gold", "silver", "platinum") else limit
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -866,7 +883,7 @@ async def get_commodity_geo_events(
                 ORDER BY start_date DESC NULLS LAST
                 LIMIT %s
                 """,
-                (domain, limit),
+                (domain, fetch_limit),
             )
             rows = cur.fetchall()
         conn.close()
@@ -882,6 +899,13 @@ async def get_commodity_geo_events(
             }
             for r in rows
         ]
+        if commodity and commodity.lower() in ("gold", "silver", "platinum"):
+            from domains.finance.news_orchestrator import is_relevant_to_commodity
+            combined = [
+                (ev, (ev.get("event_name") or "") + " " + (ev.get("geographic_scope") or ""))
+                for ev in events
+            ]
+            events = [ev for ev, text in combined if is_relevant_to_commodity(text, commodity)][:limit]
         by_region = {}
         for ev in events:
             scope = (ev.get("geographic_scope") or "").strip()
@@ -899,6 +923,74 @@ async def get_commodity_geo_events(
         }
     except Exception as e:
         logger.error(f"Error fetching commodity geo-events: {e}", exc_info=True)
+        try:
+            conn.close()
+        except Exception:
+            pass
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+REGULATORY_EVENT_TYPES = ("regulatory", "policy", "government_bond")
+
+
+@router.get("/{domain}/finance/commodity/regulatory-events")
+async def get_commodity_regulatory_events(
+    domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+    limit: int = Query(20, ge=1, le=100),
+    commodity: str | None = Query(
+        None,
+        description="Filter to events relevant to this commodity (gold, silver, platinum). Omit to return all regulatory events.",
+    ),
+):
+    """Finance-domain tracked events with event_type regulatory, policy, or government_bond.
+    Used by the commodity dashboard 'National & regulatory' panel. Optionally filtered by commodity keywords.
+    """
+    _check_domain(domain)
+    conn = get_db_connection()
+    if not conn:
+        raise HTTPException(status_code=503, detail="Database unavailable")
+    try:
+        fetch_limit = limit * 3 if commodity and commodity.lower() in ("gold", "silver", "platinum") else limit
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, event_type, event_name, start_date, end_date, geographic_scope, domain_keys
+                FROM intelligence.tracked_events
+                WHERE %s = ANY(domain_keys)
+                  AND event_type = ANY(%s)
+                ORDER BY start_date DESC NULLS LAST
+                LIMIT %s
+                """,
+                (domain, list(REGULATORY_EVENT_TYPES), fetch_limit),
+            )
+            rows = cur.fetchall()
+        conn.close()
+        events = [
+            {
+                "id": r[0],
+                "event_type": r[1],
+                "event_name": r[2],
+                "start_date": str(r[3]) if r[3] else None,
+                "end_date": str(r[4]) if r[4] else None,
+                "geographic_scope": r[5],
+                "domain_keys": list(r[6]) if r[6] else [],
+            }
+            for r in rows
+        ]
+        if commodity and commodity.lower() in ("gold", "silver", "platinum"):
+            from domains.finance.news_orchestrator import is_relevant_to_commodity
+            combined = [
+                (ev, (ev.get("event_name") or "") + " " + (ev.get("geographic_scope") or ""))
+                for ev in events
+            ]
+            events = [ev for ev, text in combined if is_relevant_to_commodity(text, commodity)][:limit]
+        return {
+            "success": True,
+            "data": {"events": events},
+            "timestamp": datetime.now().isoformat(),
+        }
+    except Exception as e:
+        logger.error(f"Error fetching commodity regulatory-events: {e}", exc_info=True)
         try:
             conn.close()
         except Exception:
@@ -948,11 +1040,12 @@ async def trigger_analysis(
     start_date: str | None = Query(None, description="Date range start YYYY-MM-DD"),
     end_date: str | None = Query(None, description="Date range end YYYY-MM-DD"),
     wait: bool = Query(True, description="If True, await completion; if False, return task_id for polling"),
+    deep: bool = Query(False, description="If True, pull more RSS, RAG, and historic expansions for richer context"),
 ):
-    """Submit analysis task. Use wait=false to get task_id and poll GET /tasks/{id}."""
+    """Submit analysis task. Use wait=false to get task_id and poll GET /tasks/{id}. Use deep=true for more evidence (RAG, more news, historic expansions)."""
     logger.info(
-        "Finance analyze request: domain=%s query=%r topic=%s wait=%s start_date=%s end_date=%s",
-        domain, query[:80] if query else "", topic, wait, start_date, end_date,
+        "Finance analyze request: domain=%s query=%r topic=%s wait=%s deep=%s start_date=%s end_date=%s",
+        domain, query[:80] if query else "", topic, wait, deep, start_date, end_date,
     )
     _check_domain(domain)
     orch = getattr(request.app.state, "finance_orchestrator", None)
@@ -963,6 +1056,8 @@ async def trigger_analysis(
         params["start_date"] = start_date
     if end_date:
         params["end_date"] = end_date
+    if deep:
+        params["deep"] = True
     if start_date and end_date:
         logger.info("Historic context will run: date range %s to %s", start_date, end_date)
     try:
@@ -993,6 +1088,53 @@ async def trigger_analysis(
         raise
     except Exception as e:
         logger.error("Error in analysis: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/{domain}/finance/analyze/enhance")
+async def trigger_analysis_enhance(
+    request: Request,
+    domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+    query: str = Query(..., description="Same analysis query to run with more context"),
+    topic: str = Query("gold", description="Data topic: gold, silver, platinum, all, fred"),
+    start_date: str | None = Query(None, description="Date range start YYYY-MM-DD"),
+    end_date: str | None = Query(None, description="Date range end YYYY-MM-DD"),
+    wait: bool = Query(True, description="If True, await completion; if False, return task_id for polling"),
+):
+    """
+    Re-run analysis with more data: more RSS (35), RAG on, historic context with 2 expansions.
+    Use after an initial analysis when you want the system to review and pull in more evidence.
+    Returns same shape as POST /analyze.
+    """
+    _check_domain(domain)
+    orch = getattr(request.app.state, "finance_orchestrator", None)
+    if not orch:
+        raise HTTPException(status_code=503, detail="Finance orchestrator not available")
+    params: dict = {"query": query, "topic": topic, "deep": True}
+    if start_date:
+        params["start_date"] = start_date
+    if end_date:
+        params["end_date"] = end_date
+    try:
+        task_id = orch.submit_task(TaskType.analysis, params, priority=TaskPriority.high)
+        if not wait:
+            return {"success": True, "data": {"task_id": task_id, "enhance": True}, "timestamp": datetime.now().isoformat()}
+        result = await orch.run_task(task_id)
+        if not result:
+            raise HTTPException(status_code=503, detail="Enhance analysis failed")
+        if hasattr(result.status, "value") and result.status.value == "failed":
+            raise HTTPException(status_code=503, detail=result.warnings[0] if result.warnings else "Enhance failed")
+        data = result.output or {}
+        out = {"response": data.get("response", ""), "query": data.get("query", query), "task_id": task_id, "enhance": True}
+        if data.get("verification"):
+            out["verification"] = data["verification"]
+        if result.confidence is not None:
+            out["confidence"] = result.confidence
+        return {"success": True, "data": out, "timestamp": datetime.now().isoformat()}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Enhance analysis failed: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1123,10 +1265,18 @@ async def create_research_topic(
 
     summary = body.get("summary")
     orch = getattr(request.app.state, "finance_orchestrator", None)
-    if orch and not summary:
+    if orch:
         result = orch.get_task_result(task_id)
         if result and result.output:
-            summary = result.output.get("response") or ""
+            if not summary:
+                summary = result.output.get("response") or ""
+            # Use task's commodity (topic) when not provided so platinum analyses save as platinum
+            if (not body.get("topic") or (topic or "").strip() == "gold") and result.output.get("topic"):
+                topic = (result.output.get("topic") or "gold").strip() or "gold"
+            if not start_date and result.output.get("start_date"):
+                start_date = result.output.get("start_date")
+            if not end_date and result.output.get("end_date"):
+                end_date = result.output.get("end_date")
 
     if not summary:
         summary = ""
@@ -1178,7 +1328,8 @@ async def refine_research_topic(
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
-                "SELECT id, query, topic, date_range_start, date_range_end FROM finance.research_topics WHERE id = %s",
+                """SELECT id, query, topic, date_range_start, date_range_end, last_refined_task_id
+                   FROM finance.research_topics WHERE id = %s""",
                 (topic_id,),
             )
             row = cur.fetchone()
@@ -1187,14 +1338,30 @@ async def refine_research_topic(
             raise HTTPException(status_code=404, detail="Research topic not found")
         conn.close()
 
+        # Guard: don't start another refinement if one is already queued or running
+        last_task_id = row.get("last_refined_task_id")
+        orch = getattr(request.app.state, "finance_orchestrator", None)
+        if not orch:
+            raise HTTPException(status_code=503, detail="Finance orchestrator not available")
+        if last_task_id:
+            existing = orch.get_task_status(last_task_id)
+            if existing:
+                status = (existing.get("status") or "").lower()
+                if status in ("queued", "planning", "executing", "evaluating", "revising"):
+                    return JSONResponse(
+                        status_code=409,
+                        content={
+                            "detail": "Refinement already in progress",
+                            "task_id": last_task_id,
+                            "status": status,
+                        },
+                    )
+
         query = row["query"]
         topic = row["topic"] or "gold"
         start_date = str(row["date_range_start"]) if row.get("date_range_start") else None
         end_date = str(row["date_range_end"]) if row.get("date_range_end") else None
 
-        orch = getattr(request.app.state, "finance_orchestrator", None)
-        if not orch:
-            raise HTTPException(status_code=503, detail="Finance orchestrator not available")
         params = {"query": query, "topic": topic}
         if start_date:
             params["start_date"] = start_date

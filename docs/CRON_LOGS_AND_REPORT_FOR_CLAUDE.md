@@ -1,6 +1,23 @@
 # News Intelligence — Cron, logs, and activity report (for Claude)
 
-Single reference: cron jobs (with path-with-space fixes), log locations, how to run the last-24h report, and space to paste results for Claude to process.
+Single reference: **doc list to pass to Claude**, cron jobs (quoted paths), log locations, last-24h report, and placeholders to paste results.
+
+---
+
+## 0. Docs to pass to Claude (in order)
+
+Pass these in order so Claude gets context first. Then paste the last-24h report and log excerpts into sections 4–5 below.
+
+| # | Document | Why |
+|---|----------|-----|
+| 1 | **AGENTS.md** (project root) | Terminology, entry points, key flows. |
+| 2 | **PROJECT_SCOPE_AND_DEVELOPMENT_STATUS.md** | What’s built, DB→API→web, gaps. |
+| 3 | **ARCHITECTURE_AND_OPERATIONS.md** | Architecture, ops, troubleshooting. |
+| 4 | **AUTOMATION_AND_LAST_24H_ACTIVITY.md** | What runs (cron, coordinator, AutomationManager), where it’s recorded. |
+| 5 | This doc | Cron, logs, report, and **paste areas** for report + logs. |
+| 6 | **CLEANUP_PLAN.md**, **DATABASE_CONNECTION_AUDIT.md**, **TROUBLESHOOTING.md** | Cleanup tasks, DB fixes, common failures. |
+
+Optional: FINANCE_TODO, V6_QUALITY_FIRST_TODO, CONTEXT_CENTRIC_UPGRADE_PLAN. **Light bundle:** 1 → 2 → 4 → this doc (with sections 4–5 filled).
 
 ---
 
@@ -131,3 +148,5 @@ Paste any relevant log excerpts (errors, last runs, or “no activity” lines) 
 - **Cron:** All News Intelligence cron entries use **quoted** paths so the space in “News Intelligence” does not break execution. Use the setup scripts or the corrected crontab block above.
 - **Logs:** Key logs are under `~/logs/news_intelligence/` and project `logs/`; paths are in the table in section 2.
 - **Activity:** Run `./scripts/run_last_24h_report.sh` and paste the output and any log excerpts into sections 4 and 5 above, then pass this document to Claude for analysis (what ran, what was collected, what failed or was neglected).
+
+**Prompt for Claude:** *“Using the attached docs and pasted last-24h report and logs: (1) Summarize how the system behaves—what runs, what gets collected, where it’s recorded. (2) List missing pieces or gaps. (3) Suggest a short prioritized list of next steps to harden visibility and close gaps.”*

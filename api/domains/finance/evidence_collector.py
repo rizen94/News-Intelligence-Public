@@ -27,6 +27,7 @@ def collect(
     include_api_summary: bool = False,
     include_rag: bool = False,
     include_historic_context: bool = False,
+    historic_max_expansions: int = 1,
     use_news_orchestrator: bool = True,
 ) -> dict[str, Any]:
     """
@@ -37,6 +38,7 @@ def collect(
     When include_historic_context is True and start_date/end_date are set, runs the historic
     context orchestrator (multi-source parallel fetch, relevance + agreement) and adds
     historic_context_summary and historic_context_events to the result.
+    historic_max_expansions: when > 1, allows extra time-window expansions for prior significant events (deeper context).
     Returns dict: rss_snippets, api_summary (or None), rag_chunks (or []), historic_context_summary (or None), historic_context_events (or []).
     """
     result: dict[str, Any] = {
@@ -103,9 +105,9 @@ def collect(
             from domains.finance.data.vector_store import query as vs_query
             vec = embed_text(query)
             if vec:
-                r = vs_query([vec], n_results=5)
+                r = vs_query([vec], n_results=15)
                 docs = r.get("documents", [[]])[0] or []
-                result["rag_chunks"] = [d for d in docs if d][:5]
+                result["rag_chunks"] = [d for d in docs if d][:15]
         except Exception as e:
             logger.debug("Evidence collector RAG failed: %s", e)
 
@@ -119,7 +121,7 @@ def collect(
                 end_date=end_date,
                 topic=topic,
                 trigger_type="analysis",
-                max_expansions=1,
+                max_expansions=max(1, int(historic_max_expansions)),
             )
             if h.get("success"):
                 result["historic_context_summary"] = h.get("summary")

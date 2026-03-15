@@ -122,7 +122,7 @@ Three content domains with shared schemas and per-domain tables:
 
 ## 6. API Structure
 
-API uses **flat prefix** `/api` (no `/api/v4/` or version segment). Paths are domain-scoped where applicable.
+API uses **flat prefix** `/api` (no `/api/` or version segment). Paths are domain-scoped where applicable.
 
 | Domain | Path pattern | Key routes |
 |--------|---------------|------------|
@@ -146,7 +146,7 @@ API uses **flat prefix** `/api` (no `/api/v4/` or version segment). Paths are do
 | DB connection | `api/shared/database/connection.py` |
 | DB shim | `api/config/database.py` (re-exports) |
 | Frontend entry | `web/src/App.tsx` |
-| Domain layout | `web/src/components/shared/DomainLayout/DomainLayout.tsx` |
+| Domain layout | `web/src/layout/MainLayout.tsx` |
 | Start system | `start_system.sh` (tunnel, Redis, API, frontend) |
 | SSH tunnel | `scripts/setup_nas_ssh_tunnel.sh` |
 | Morning pipeline | `scripts/morning_data_pipeline.sh` |

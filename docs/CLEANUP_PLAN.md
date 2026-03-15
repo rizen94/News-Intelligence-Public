@@ -34,12 +34,12 @@
 
 ## 2. Renaming scheme (align with coding standards)
 
-Standards (from CODING_STYLE_GUIDE): **snake_case** (files, functions, variables, DB columns), **PascalCase** (classes), **UPPER_SNAKE_CASE** (constants), **flat `/api`** (no `/api/v4` in path).
+Standards (from CODING_STYLE_GUIDE): **snake_case** (files, functions, variables, DB columns), **PascalCase** (classes), **UPPER_SNAKE_CASE** (constants), **flat `/api`** (no `/api` in path).
 
 ### 2.1 API router prefix (doc vs code)
 
 - **Current code:** Routers use `prefix="/api"` or `prefix="/api/system_monitoring"`, etc. Paths are flat `/api/...`. **Correct.**
-- **CODING_STYLE_GUIDE.md:** Section “Router Prefix Convention” still describes `/api/v4` as the main prefix and warns against double prefix. **Action:** Update CODING_STYLE_GUIDE.md to state that the project uses **flat `/api`** (no version in path), and that sub-routers must not duplicate `/api` when included under a parent that already has `prefix="/api"`. Remove or rewrite `/api/v4` examples so they match current usage.
+- **CODING_STYLE_GUIDE.md:** Section “Router Prefix Convention” still describes `/api` as the main prefix and warns against double prefix. **Action:** Update CODING_STYLE_GUIDE.md to state that the project uses **flat `/api`** (no version in path), and that sub-routers must not duplicate `/api` when included under a parent that already has `prefix="/api"`. Remove or rewrite `/api` examples so they match current usage.
 
 ### 2.2 Python
 
@@ -48,7 +48,7 @@ Standards (from CODING_STYLE_GUIDE): **snake_case** (files, functions, variables
 
 ### 2.3 Frontend (web/)
 
-- **Components/pages:** PascalCase for component names and folder names (e.g. `FinancialAnalysis.tsx`, `DomainLayout.tsx`) is correct for React. **Action:** None.
+- **Components/pages:** PascalCase for component names and folder names (e.g. `FinancialAnalysis.tsx`, `MainLayout.tsx`) is correct for React. **Action:** None.
 - **Files:** Mix of PascalCase (components/pages) and camelCase (e.g. `apiService.ts`). CODING_STYLE_GUIDE does not mandate frontend; common practice is PascalCase for components, camelCase for utilities. **Action:** None unless you adopt a strict frontend guide.
 
 ### 2.4 Database and API paths
@@ -59,7 +59,7 @@ Standards (from CODING_STYLE_GUIDE): **snake_case** (files, functions, variables
 
 | Item | Current | Target | Priority |
 |------|---------|--------|----------|
-| CODING_STYLE_GUIDE API prefix section | /api/v4 | Flat /api, no version | High |
+| CODING_STYLE_GUIDE API prefix section | /api | Flat /api, no version | High |
 | REMAINING_DOCUMENTATION_TASKS | N/A (merged into Section 6 of this doc) | — | Done |
 | Optional[X] in Python | Many files | X \| None (incremental) | Low |
 
@@ -110,8 +110,8 @@ Standards (from CODING_STYLE_GUIDE): **snake_case** (files, functions, variables
 ## 4. Documentation fixes (concrete)
 
 1. **docs/README.md:** Replace “Check `docs/REMAINING_DOCUMENTATION_TASKS.md` for pending tasks” with either (a) a link to a new `docs/REMAINING_DOCUMENTATION_TASKS.md` that lists 3–5 items (e.g. sync FINANCE_ORCHESTRATOR_BUILD, review API prefix in guide), or (b) “See FINANCE_TODO.md and ORCHESTRATOR_TODO.md for domain-specific remaining work.”
-2. **docs/CODING_STYLE_GUIDE.md:** In “Router Prefix Convention”, switch all examples from `prefix="/api/v4"` to `prefix="/api"` and state that the project does not use a version segment in the path. Keep the “no double prefix” rule.
-3. **docs/FINANCE_TODO.md:** Already states API is flat; ensure no remaining “/api/v4” in that file.
+2. **docs/CODING_STYLE_GUIDE.md:** In “Router Prefix Convention”, switch all examples from `prefix="/api"` to `prefix="/api"` and state that the project does not use a version segment in the path. Keep the “no double prefix” rule.
+3. **docs/FINANCE_TODO.md:** Already states API is flat; ensure no remaining “/api” in that file.
 4. **docs/FINANCE_ORCHESTRATOR_BUILD.md:** Sync checkboxes with FINANCE_TODO (e.g. “Stale data check”, “Catch-up on startup” marked done in TODO should be [x] in BUILD).
 
 ---
@@ -129,7 +129,7 @@ Standards (from CODING_STYLE_GUIDE): **snake_case** (files, functions, variables
 
 Short checklist of pending doc updates. For domain-specific work, see [FINANCE_TODO.md](./FINANCE_TODO.md); orchestrator tracking is in _archive/ORCHESTRATOR_TODO.md.
 
-- [x] CODING_STYLE_GUIDE: API prefix updated to flat `/api` (no `/api/v4`).
+- [x] CODING_STYLE_GUIDE: API prefix updated to flat `/api` (no `/api`).
 - [x] FINANCE_ORCHESTRATOR_BUILD: Checkboxes synced with FINANCE_TODO (stale data check, catch-up on startup).
 - [ ] Review other "Remaining" / "Phase 8" sections across docs and add cross-links in DOCS_INDEX if useful.
 - [x] Finance placeholder endpoints (market-trends, market-patterns, corporate-announcements) implemented minimally; FINANCE_TODO and CLEANUP_PLAN updated.

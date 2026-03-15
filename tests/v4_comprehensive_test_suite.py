@@ -179,7 +179,7 @@ class V4TestSuite:
         
         # Test 1: Health endpoint
         try:
-            response = requests.get(f"{self.api_base_url}/api/v4/system-monitoring/health", timeout=10)
+            response = requests.get(f"{self.api_base_url}/api/system_monitoring/health", timeout=10)
             if response.status_code == 200:
                 data = response.json()
                 if 'status' in data or 'success' in data:
@@ -209,7 +209,7 @@ class V4TestSuite:
         
         # Test 2: Articles endpoint
         try:
-            response = requests.get(f"{self.api_base_url}/api/v4/news-aggregation/articles/recent", timeout=10)
+            response = requests.get(f"{self.api_base_url}/api/articles/recent", timeout=10)
             if response.status_code == 200:
                 data = response.json()
                 if 'data' in data and 'articles' in data['data']:
@@ -259,7 +259,7 @@ class V4TestSuite:
         
         # Test 3: RSS Feeds endpoint
         try:
-            response = requests.get(f"{self.api_base_url}/api/v4/news-aggregation/rss-feeds", timeout=10)
+            response = requests.get(f"{self.api_base_url}/api/politics/rss_feeds", timeout=10)
             if response.status_code == 200:
                 data = response.json()
                 if 'data' in data and 'feeds' in data['data']:
@@ -309,7 +309,7 @@ class V4TestSuite:
         
         # Test 4: Storylines endpoint
         try:
-            response = requests.get(f"{self.api_base_url}/api/v4/storyline-management/storylines", timeout=10)
+            response = requests.get(f"{self.api_base_url}/api/politics/storylines", timeout=10)
             if response.status_code == 200:
                 data = response.json()
                 if 'data' in data and 'storylines' in data['data']:
@@ -379,7 +379,7 @@ class V4TestSuite:
             
             # Get API counts
             try:
-                response = requests.get(f"{self.api_base_url}/api/v4/news-aggregation/articles/recent", timeout=10)
+                response = requests.get(f"{self.api_base_url}/api/articles/recent", timeout=10)
                 if response.status_code == 200:
                     data = response.json()
                     api_articles_count = len(data.get('data', {}).get('articles', []))
@@ -412,7 +412,7 @@ class V4TestSuite:
             
             # Test RSS feeds consistency
             try:
-                response = requests.get(f"{self.api_base_url}/api/v4/news-aggregation/rss-feeds", timeout=10)
+                response = requests.get(f"{self.api_base_url}/api/politics/rss_feeds", timeout=10)
                 if response.status_code == 200:
                     data = response.json()
                     api_feeds_count = len(data.get('data', {}).get('feeds', []))
@@ -456,10 +456,10 @@ class V4TestSuite:
         
         # Test 1: API response times
         endpoints = [
-            "/api/v4/system-monitoring/health",
-            "/api/v4/news-aggregation/articles/recent",
-            "/api/v4/news-aggregation/rss-feeds",
-            "/api/v4/storyline-management/storylines"
+            "/api/system_monitoring/health",
+            "/api/articles/recent",
+            "/api/politics/rss_feeds",
+            "/api/politics/storylines"
         ]
         
         for endpoint in endpoints:
@@ -553,16 +553,17 @@ class V4TestSuite:
             with open(api_service_path, 'r') as f:
                 content = f.read()
                 
+            # API uses flat /api (no version in path); frontend must not use /api/v4/
             if "api/v4/" in content:
                 self.log_test_result(
-                    "api_service_v4", True, 
-                    "API service configured for v4 endpoints", 
+                    "api_service_flat", False, 
+                    "API service must not use /api/v4/; use flat /api paths", 
                     "frontend"
                 )
             else:
                 self.log_test_result(
-                    "api_service_v4", False, 
-                    "API service not configured for v4 endpoints", 
+                    "api_service_flat", True, 
+                    "API service uses flat /api paths (no v4)", 
                     "frontend"
                 )
         else:

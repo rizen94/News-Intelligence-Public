@@ -110,7 +110,7 @@ If (2) or (3) fails, fix network/Widow/PostgreSQL. If (4) fails with "password a
 | `426 Client Error: Upgrade Required` (News API) | News API plan or endpoint requires upgrade | Historic context uses News API; 426 means the API key/plan may need upgrading at newsapi.org. Analysis still runs using other sources (RSS, price data). |
 | `relation "intelligence.historic_context_requests" does not exist` | Migration 149 not applied | Run migration 149 if you want historic context requests persisted. Optional; fetches still run in-memory. |
 | `EDGAR fetch index failed for CIK 0000001832: 404` | SEC returns 404 for that CIK (e.g. AEM) | Data/source issue; one company’s filings may be missing or CIK wrong. Safe to ignore or fix CIK mapping in config. |
-| `Finance vector store add failed: chromadb not installed` | Optional ChromaDB not installed | Add `chromadb` to pyproject.toml and run `uv sync` if you want vector store. Analysis works without it. |
+| `ChromaDB not installed; finance vector store disabled` (one-time INFO) | ChromaDB not in the runtime env (wrong venv or Python &lt; 3.11) | Use the project `.venv` (Python 3.11+). From project root: `uv venv --python python3.12 --clear .venv` then `uv sync`. Restart the API so it uses `.venv`. See **Setup and Deployment** → Finance vector store (ChromaDB). |
 | `EVAL_FAILED … all_sources_failed` | Finance task had no successful data sources | Often a follow-on from DB or EDGAR issues. Fix DB password and restart; then re-run the analysis. |
 
 ### **Health check showing "degraded"**
@@ -135,10 +135,47 @@ Interpret `status`, `degraded_reasons`, and `services.database` to see why it’
 **Symptoms**: Submit works then result page shows "Network Error", or submit fails with "Cannot reach API".
 **Causes**: (1) Backend not running or wrong API URL; (2) Finance orchestrator failed to start.
 **Solutions**:
-- **API reachable?** From the same host as the frontend: `curl -s http://localhost:8000/api/v4/system_monitoring/health` (or your API base URL). If you get connection refused, start the API (e.g. from `api/`: `uvicorn main_v4:app --host 0.0.0.0 --port 8000`).
+- **API reachable?** From the same host as the frontend: `curl -s http://localhost:8000/api/system_monitoring/health` (or your API base URL). If you get connection refused, start the API (e.g. from `api/`: `uvicorn main_v4:app --host 0.0.0.0 --port 8000`).
 - **Proxy/API URL**: With Vite dev server, `/api` is proxied to `http://localhost:8000`. If the app is built or served elsewhere, set the API base URL (e.g. `VITE_API_URL` or the in-app API URL setting).
 - **Finance orchestrator**: If the backend starts but Finance Orchestrator fails to init, all finance analyze/task requests return **503** with detail "Finance orchestrator not available". Check API startup logs (stdout/stderr) for: `❌ Failed to initialize Finance Orchestrator: …`. Fix the underlying cause (e.g. missing ChromaDB, FRED key, or import error) then restart the API.
 - **Recent request in logs**: The API logs each finance analyze request (e.g. `Finance analyze request: domain=finance query='...' topic=...`). Logs go to stdout and, if file logging is enabled, to `api/logs/` (see `api/config/logging_config.py` and `LOG_DIR` in `api/config/settings.py`). Run the API in a terminal to see recent requests and any 503/orchestrator messages.
+
+### **ML / processing / story continuation phases failing or timing out**
+**Symptoms**: Automation phases (event_tracking, event_extraction, story_continuation, claim_extraction, ml_processing, etc.) show as failed in the Monitor, or logs show "Task X failed", "Event tracking failed", "canceling statement due to user request", or "statement timeout".
+
+**Are we loading too much?** Batch sizes are bounded (e.g. 30–100 contexts per event_tracking batch, 50 claim_extraction, 30 story_continuation). The pipeline does **not** load unbounded data; it processes in fixed-size batches. Failures are usually due to **timeouts** or **slow queries**, not memory or "too much data" in one go.
+
+**Main causes of fail state**:
+
+1. **Database statement timeout (most common)**  
+   The connection pool uses a per-statement timeout (default **60 seconds**; configurable via `DB_STATEMENT_TIMEOUT_MS`). Any single SQL that runs longer is killed by PostgreSQL ("canceling statement due to user request").  
+   - **Event tracking** and **backlog_metrics** run queries that scan `intelligence.contexts` and `intelligence.event_chronicles` with `NOT EXISTS` and `LIKE` on JSONB text. As data grows, these can exceed the timeout.  
+   - **Fix**: For the process that runs the automation manager (same process as the API), set a higher timeout so long-running phase queries are not killed:
+     - In project root `.env`: `DB_STATEMENT_TIMEOUT_MS=120000` (2 minutes) or `300000` (5 minutes).  
+     - Restart the API so the pool is recreated with the new value.  
+   - Default was raised to 60000 (1 min); for heavy processing (event_tracking, story_continuation, entity_profile_build), **120000–300000** is recommended.
+
+2. **Slow or heavy queries**  
+   - **Event tracking**: "Unlinked contexts" and "event chronicles" use a pattern like `ec.developments::text LIKE '%"context_id": 123%'`, which cannot use a normal index. With large tables, these queries get slower and hit the statement timeout.  
+   - **Backlog counts**: Refreshed every 30s; the same style of query can hit the timeout if `contexts` / `event_chronicles` are large.  
+   - **Mitigation**: Increase `DB_STATEMENT_TIMEOUT_MS` as above. Longer term, consider an index or a junction table (e.g. `context_id` → `event_id`) so "context linked to event" does not require a full scan of `event_chronicles`.
+
+3. **Ollama / LLM congestion**  
+   Phases that call Ollama (event_extraction, story_continuation, claim_extraction, ml_processing, etc.) share a semaphore (`MAX_CONCURRENT_OLLAMA_TASKS = 3`). If Ollama is slow or busy, tasks wait; the **HTTP client** has a 180s timeout, so very long calls can fail.  
+   - **Fix**: Ensure Ollama is running and not overloaded; reduce concurrent load (e.g. fewer phases enabled) or increase Ollama resources if many phases run at once.
+
+4. **Retries and backoff**  
+   The automation manager retries failed tasks (up to `max_retries`) with backoff. If the **root cause** is statement timeout, increase `DB_STATEMENT_TIMEOUT_MS` so the first run succeeds instead of relying on retries.
+
+**Quick checks**:
+```bash
+# Current timeout in use (API must be running with same env)
+# In .env:
+grep DB_STATEMENT_TIMEOUT_MS .env || echo "Not set (using default 60000 ms)"
+
+# Logs: look for timeout or cancel
+grep -E "canceling|statement timeout|Task .* failed|event_tracking failed|story_continuation failed" api/logs/*.log 2>/dev/null | tail -20
+```
 
 ## 🐛 Error Messages
 
@@ -250,10 +287,10 @@ docker-compose up -d
 ### **File Synchronization Issues**
 ```bash
 # Check if container files are up to date
-docker exec news-intelligence-api ls -la /app/routes/
+docker exec news-intelligence-api ls -la /app/domains/news_aggregation/routes/
 
-# Copy updated files to container
-docker cp api/routes/articles.py news-intelligence-api:/app/routes/articles.py
+# Copy updated route file to container (example: news_aggregation domain)
+docker cp api/domains/news_aggregation/routes/news_aggregation.py news-intelligence-api:/app/domains/news_aggregation/routes/news_aggregation.py
 
 # Restart API container
 docker restart news-intelligence-api

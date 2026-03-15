@@ -39,7 +39,7 @@ class APIConnectionManager {
             'orchestrator', 'context_centric', 'entity_profiles', 'contexts', 'tracked_events', 'claims', 'pattern_discoveries',
           ];
           const isGlobalRoute = globalRoutes.includes(firstSegment);
-          // Global routes (context_centric, entity_profiles, etc.) must use origin-only base so path is /api/... not /api/v4/api/...
+          // Global routes (context_centric, entity_profiles, etc.) use origin-only base so path stays /api/...
           if (isGlobalRoute) {
             const origin = getApiOrigin();
             config.baseURL = origin !== '' ? origin : getCurrentApiUrl();
@@ -83,7 +83,7 @@ class APIConnectionManager {
 
   public async testConnection(): Promise<boolean> {
     try {
-      // Use same base as request interceptor: origin for global-style routes so path is /api/... not /api/v4/api/...
+      // Use same base as request interceptor: origin for global-style routes so path stays /api/...
       const base = getCurrentApiUrl();
       const origin = getApiOrigin();
       const healthBase = origin !== '' ? origin : base;

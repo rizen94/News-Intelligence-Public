@@ -15,7 +15,7 @@ The project uses multiple logging layers: a centralized component-based logger (
 │                         LOGGING LANDSCAPE                                 │
 ├─────────────────────────────────────────────────────────────────────────┤
 │  FRONTEND (web)                                                          │
-│  ├── loggingService.ts  → buffer + POST /api/v4/.../logs                 │
+│  ├── loggingService.ts  → buffer + POST /api/.../logs                 │
 │  └── utils/logger.ts    → console (DEV only), no remote                  │
 ├─────────────────────────────────────────────────────────────────────────┤
 │  BACKEND (api)                                                           │
@@ -114,7 +114,7 @@ The project uses multiple logging layers: a centralized component-based logger (
 ### 3.1 LoggingService (`web/src/services/loggingService.ts`)
 
 - Session/user context, log levels, buffering.
-- Sends errors/warnings to `/api/v4/system_monitoring/logs` in production.
+- Sends errors/warnings to `/api/system_monitoring/logs` in production.
 - **Gap:** POST `/logs` and `/logs/batch` endpoints do not exist; remote logs are not persisted.
 - Flushes buffer every 30s and on beforeunload.
 - Sanitizes sensitive fields (password, token, etc.).
@@ -183,7 +183,7 @@ The project uses multiple logging layers: a centralized component-based logger (
 | **Health check logging** | Avoid noise from /health | Exclude health checks from activity logging, or log at DEBUG only. |
 | **Security events** | Auth failures, rate limits | Use security_logger for auth/rate-limit events; ensure it’s invoked. |
 
-| **Frontend log ingestion** | Persist client errors remotely | Add POST `/api/v4/system_monitoring/logs` and `/logs/batch`; store in activity.jsonl or errors.log. |
+| **Frontend log ingestion** | Persist client errors remotely | Add POST `/api/system_monitoring/logs` and `/logs/batch`; store in activity.jsonl or errors.log. |
 
 ### Log Archive to NAS (2x/day)
 
@@ -215,7 +215,7 @@ cd api && python scripts/run_migration_139.py
 3. **External API logging:** Log all outbound calls (FRED, EDGAR, etc.) with URL, status, duration.
 4. **Exclude health checks:** Do not log `/health` (and similar) to activity, or log at DEBUG.
 5. **Document retention:** State retention period and how LogStorageService is triggered.
-6. **Frontend log endpoint:** Implement POST `/api/v4/system_monitoring/logs` and `/logs/batch` so client errors are persisted.
+6. **Frontend log endpoint:** Implement POST `/api/system_monitoring/logs` and `/logs/batch` so client errors are persisted.
 
 ### 6.5 Log Analysis Recommendations (LLM & Orchestrator Observability)
 
@@ -338,7 +338,7 @@ cd api && python scripts/run_migration_139.py
 | Add `log_external_call()` to activity logger | Small | Phase 0 |
 | Instrument FRED, EDGAR, freegoldapi adapters | Medium | Phase 1 (log_external_call) |
 | Exclude `/health` (and similar) from activity logging | Small | None |
-| Implement POST `/api/v4/system_monitoring/logs` and `/logs/batch` | Medium | None |
+| Implement POST `/api/system_monitoring/logs` and `/logs/batch` | Medium | None |
 | Add `level` to activity schema; user_id/session_id optional | Small | Phase 0 |
 | Document retention policy and LogStorageService trigger | Small | None |
 

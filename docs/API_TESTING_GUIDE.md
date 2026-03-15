@@ -55,14 +55,14 @@
 
 ### **Test 1: Health Check**
 ```bash
-curl http://localhost:8000/api/v4/system_monitoring/health
+curl http://localhost:8000/api/system_monitoring/health
 ```
 **Expected**: `{"success": true, ...}`
 
 ### **Test 2: Articles Endpoint**
 ```bash
 # Test pagination
-curl "http://localhost:8000/api/v4/politics/articles?limit=10&offset=0"
+curl "http://localhost:8000/api/politics/articles?limit=10&offset=0"
 ```
 **Expected**:
 - Status: 200
@@ -72,7 +72,7 @@ curl "http://localhost:8000/api/v4/politics/articles?limit=10&offset=0"
 
 ### **Test 3: Storylines Endpoint**
 ```bash
-curl "http://localhost:8000/api/v4/politics/storylines?limit=10&offset=0"
+curl "http://localhost:8000/api/politics/storylines?limit=10&offset=0"
 ```
 **Expected**:
 - Status: 200
@@ -81,7 +81,7 @@ curl "http://localhost:8000/api/v4/politics/storylines?limit=10&offset=0"
 
 ### **Test 4: RSS Feeds Endpoint**
 ```bash
-curl "http://localhost:8000/api/v4/politics/rss_feeds"
+curl "http://localhost:8000/api/politics/rss_feeds"
 ```
 **Expected**:
 - Status: 200
@@ -91,10 +91,10 @@ curl "http://localhost:8000/api/v4/politics/rss_feeds"
 ### **Test 5: Pagination**
 ```bash
 # Page 1
-curl "http://localhost:8000/api/v4/politics/articles?limit=5&offset=0"
+curl "http://localhost:8000/api/politics/articles?limit=5&offset=0"
 
 # Page 2
-curl "http://localhost:8000/api/v4/politics/articles?limit=5&offset=5"
+curl "http://localhost:8000/api/politics/articles?limit=5&offset=5"
 ```
 **Expected**:
 - Different articles returned

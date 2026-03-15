@@ -10,7 +10,7 @@
 
 - **Product:** News Intelligence — AI-powered news aggregation, analysis, and intelligence.
 - **Backend:** FastAPI app in `api/main_v4.py`; **version string is v5.0** (“News Intelligence System v5.0”).
-- **API:** **Flat paths** — `/api/...` (no `/api/v4/` or `/api/v5/` in code). Some older docs still say “/api/v4”; treat those as stale.
+- **API:** **Flat paths** — `/api/...` (no `/api/` or `/api/v5/` in code). Some older docs still say “/api”; treat those as stale.
 - **Optional “v6”:** **Newsroom Orchestrator v6** is a feature-flagged component (event bus, roles: chief_editor, archivist, etc.). It is **optional** and not the main user-facing surface. When we say “v6,” we usually mean this orchestrator; the main platform is v5.
 
 ---
@@ -20,7 +20,7 @@
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
 │  WEB (React + MUI + Vite)                                                │
-│  DomainLayout → /:domain/dashboard, articles, storylines, finance/...   │
+│  MainLayout → /:domain/dashboard, articles, storylines, finance/...       │
 │  API calls via getApi() → baseURL (env/proxy) + /api/{domain}/...       │
 └─────────────────────────────────────────────────────────────────────────┘
                                       │
@@ -70,7 +70,7 @@
 
 | Domain / area | Backend | Frontend | DB / state | Connected? |
 |---------------|---------|----------|------------|------------|
-| **News aggregation** | Routes: feeds, articles, fetch_articles, collect_now | RSSFeeds, (articles via DomainLayout) | PostgreSQL per-domain | Yes (feeds CRUD, collect_now → RSS collector) |
+| **News aggregation** | Routes: feeds, articles, fetch_articles, collect_now | RSSFeeds, (articles via MainLayout) | PostgreSQL per-domain | Yes (feeds CRUD, collect_now → RSS collector) |
 | **Content analysis** | Topics, dedup, topic queue, LLM activity | Topics, ArticleDeduplication, MLProcessing | PostgreSQL, queue tables | Yes |
 | **Storyline management** | CRUD, discovery, consolidation, automation, timeline, watchlist | Storylines, Discover, Consolidation, Timeline, Watchlist | PostgreSQL storylines, storyline_articles | Yes |
 | **Intelligence hub** | RAG, analysis, synthesis, briefings, events | Intelligence, Analysis, RAG, Briefings, Events, Tracking | PostgreSQL, RAG/vector | Yes |
@@ -126,7 +126,7 @@
 | **RSS snippets in result** | Backend done, UI optional | `output.rss_snippets` is in task result; FINANCE_TODO suggested showing “News used” on result page — not yet added. |
 | **Newsroom Orchestrator v6** | Feature-flagged, stubs | Chief editor / archivist are no-op stubs; event bus exists. Not required for main flows. |
 | **User management** | Backend routes exist | Limited or no dedicated frontend; auth not a primary focus in current scope. |
-| **DOCS: API version** | Stale | RELEASE_v5.0_STABLE and PROJECT_CAPABILITIES_BRIEF still mention “/api/v4/”; code uses flat `/api/`. Should update docs. |
+| **DOCS: API version** | Stale | RELEASE_v5.0_STABLE and PROJECT_CAPABILITIES_BRIEF still mention “/api/”; code uses flat `/api/`. Should update docs. |
 
 ---
 

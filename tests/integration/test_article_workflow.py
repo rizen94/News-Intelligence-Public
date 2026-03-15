@@ -17,7 +17,7 @@ class TestArticleWorkflow:
         assert article_id is not None, "Failed to create article"
         
         # Step 2: Verify article was created
-        response = api_client.get(f"{TestConfig.API_BASE_URL}/api/v4/content-analysis/articles/{article_id}")
+        response = api_client.get(f"{TestConfig.API_BASE_URL}/api/articles/{article_id}")
         TestUtils.assert_response_success(response)
         
         article_data = response.json()["data"]
@@ -26,11 +26,11 @@ class TestArticleWorkflow:
         assert article_data["source_domain"] == sample_article["source_domain"]
         
         # Step 3: Test article processing
-        response = api_client.post(f"{TestConfig.API_BASE_URL}/api/v4/content-analysis/articles/{article_id}/analyze")
+        response = api_client.post(f"{TestConfig.API_BASE_URL}/api/articles/{article_id}/analyze")
         TestUtils.assert_response_success(response)
         
         # Step 4: Verify processing results
-        response = api_client.get(f"{TestConfig.API_BASE_URL}/api/v4/content-analysis/articles/{article_id}")
+        response = api_client.get(f"{TestConfig.API_BASE_URL}/api/articles/{article_id}")
         TestUtils.assert_response_success(response)
         
         processed_article = response.json()["data"]
@@ -55,7 +55,7 @@ class TestArticleWorkflow:
                 articles.append(article_id)
         
         # Test search functionality
-        response = api_client.get(f"{TestConfig.API_BASE_URL}/api/v4/content-analysis/articles", 
+        response = api_client.get(f"{TestConfig.API_BASE_URL}/api/articles", 
                                 params={"search": "technology"})
         TestUtils.assert_response_success(response)
         
@@ -63,7 +63,7 @@ class TestArticleWorkflow:
         assert len(data["articles"]) > 0, "Search should return results"
         
         # Test filtering by source
-        response = api_client.get(f"{TestConfig.API_BASE_URL}/api/v4/content-analysis/articles",
+        response = api_client.get(f"{TestConfig.API_BASE_URL}/api/articles",
                                 params={"source_domain": "example.com"})
         TestUtils.assert_response_success(response)
         

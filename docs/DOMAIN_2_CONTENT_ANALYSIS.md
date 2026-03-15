@@ -235,51 +235,51 @@ class TopicModeler:
 ### **Sentiment Analysis**
 ```python
 # Sentiment Analysis
-POST   /api/v4/analysis/sentiment                    # Analyze article sentiment
-GET    /api/v4/analysis/sentiment/{article_id}       # Get sentiment for article
-POST   /api/v4/analysis/sentiment/contextual         # Contextual sentiment analysis
-GET    /api/v4/analysis/sentiment/trends             # Sentiment trend analysis
-POST   /api/v4/analysis/sentiment/evolution          # Track sentiment evolution
+POST   /api/analysis/sentiment                    # Analyze article sentiment
+GET    /api/analysis/sentiment/{article_id}       # Get sentiment for article
+POST   /api/analysis/sentiment/contextual         # Contextual sentiment analysis
+GET    /api/analysis/sentiment/trends             # Sentiment trend analysis
+POST   /api/analysis/sentiment/evolution          # Track sentiment evolution
 ```
 
 ### **Entity Extraction**
 ```python
 # Entity Management
-POST   /api/v4/analysis/entities                     # Extract entities from article
-GET    /api/v4/analysis/entities/{entity_id}         # Get entity details
-POST   /api/v4/analysis/entities/relationships       # Map entity relationships
-GET    /api/v4/analysis/entities/{entity_id}/mentions # Get entity mentions
-POST   /api/v4/analysis/entities/resolve             # Resolve entity references
+POST   /api/analysis/entities                     # Extract entities from article
+GET    /api/analysis/entities/{entity_id}         # Get entity details
+POST   /api/analysis/entities/relationships       # Map entity relationships
+GET    /api/analysis/entities/{entity_id}/mentions # Get entity mentions
+POST   /api/analysis/entities/resolve             # Resolve entity references
 ```
 
 ### **Content Summarization**
 ```python
 # Summarization
-POST   /api/v4/analysis/summarize                    # Generate article summary
-POST   /api/v4/analysis/summarize/multi-perspective  # Multi-perspective summary
-POST   /api/v4/analysis/summarize/progressive        # Progressive summary
-GET    /api/v4/analysis/summarize/{summary_id}       # Get summary details
-POST   /api/v4/analysis/summarize/custom             # Custom summary style
+POST   /api/analysis/summarize                    # Generate article summary
+POST   /api/analysis/summarize/multi-perspective  # Multi-perspective summary
+POST   /api/analysis/summarize/progressive        # Progressive summary
+GET    /api/analysis/summarize/{summary_id}       # Get summary details
+POST   /api/analysis/summarize/custom             # Custom summary style
 ```
 
 ### **Bias Detection**
 ```python
 # Bias Analysis
-POST   /api/v4/analysis/bias                         # Detect content bias
-GET    /api/v4/analysis/bias/{source_id}             # Get source bias profile
-GET    /api/v4/analysis/bias/trends                  # Bias trend analysis
-POST   /api/v4/analysis/bias/compare                 # Compare bias across sources
-GET    /api/v4/analysis/bias/dashboard               # Bias analysis dashboard
+POST   /api/analysis/bias                         # Detect content bias
+GET    /api/analysis/bias/{source_id}             # Get source bias profile
+GET    /api/analysis/bias/trends                  # Bias trend analysis
+POST   /api/analysis/bias/compare                 # Compare bias across sources
+GET    /api/analysis/bias/dashboard               # Bias analysis dashboard
 ```
 
 ### **Topic Modeling**
 ```python
 # Topic Discovery
-POST   /api/v4/analysis/topics/discover             # Discover topics
-GET    /api/v4/analysis/topics                       # List topics
-GET    /api/v4/analysis/topics/{topic_id}            # Get topic details
-GET    /api/v4/analysis/topics/{topic_id}/evolution  # Topic evolution
-POST   /api/v4/analysis/topics/relationships         # Find topic relationships
+POST   /api/analysis/topics/discover             # Discover topics
+GET    /api/analysis/topics                       # List topics
+GET    /api/analysis/topics/{topic_id}            # Get topic details
+GET    /api/analysis/topics/{topic_id}/evolution  # Topic evolution
+POST   /api/analysis/topics/relationships         # Find topic relationships
 ```
 
 ## 📊 **Data Models**

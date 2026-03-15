@@ -33,6 +33,11 @@ DEFAULT_POLICY = {
     "stale_event_archive_days": 30,
     "orphan_profile_cleanup": True,
     "max_entity_profiles_per_domain": 10000,
+    # Retention for unbounded intelligence tables (keep under ~1 TB). Set to 0 to disable.
+    "retention_fact_log_days": 7,
+    "retention_queue_days": 7,
+    "retention_pattern_matches_days": 90,
+    "retention_storyline_states_days": 365,
 }
 
 
@@ -86,6 +91,10 @@ class IntelligenceCleanupController:
             results["stale_events_archived"] = self._archive_stale_events(
                 self.policy["stale_event_archive_days"]
             )
+
+        retention = self._apply_intelligence_retention()
+        if retention:
+            results["retention"] = retention
 
         total = _sum_results(results)
         logger.info(
@@ -339,6 +348,75 @@ class IntelligenceCleanupController:
             logger.warning(f"stale event archive: {e}")
             _safe_rollback_close(conn)
         return archived
+
+    # -- Intelligence table retention (keep under ~1 TB) -----------------------
+
+    def _apply_intelligence_retention(self) -> Optional[Dict[str, int]]:
+        """
+        Delete old processed/obsolete rows from fact_change_log, story_update_queue,
+        pattern_matches, and storyline_states. Only runs when policy retention_*_days > 0.
+        """
+        out: Dict[str, int] = {}
+        conn = get_db_connection()
+        if not conn:
+            return out
+
+        try:
+            with conn.cursor() as cur:
+                if self.policy.get("retention_fact_log_days"):
+                    cutoff = datetime.now(timezone.utc) - timedelta(days=self.policy["retention_fact_log_days"])
+                    cur.execute(
+                        """
+                        DELETE FROM intelligence.fact_change_log
+                        WHERE processed = TRUE AND processed_at IS NOT NULL AND processed_at < %s
+                        """,
+                        (cutoff,),
+                    )
+                    out["fact_change_log_deleted"] = cur.rowcount
+
+                if self.policy.get("retention_queue_days"):
+                    cutoff = datetime.now(timezone.utc) - timedelta(days=self.policy["retention_queue_days"])
+                    cur.execute(
+                        """
+                        DELETE FROM intelligence.story_update_queue
+                        WHERE processed = TRUE AND processed_at IS NOT NULL AND processed_at < %s
+                        """,
+                        (cutoff,),
+                    )
+                    out["story_update_queue_deleted"] = cur.rowcount
+
+                if self.policy.get("retention_pattern_matches_days"):
+                    cutoff = datetime.now(timezone.utc) - timedelta(days=self.policy["retention_pattern_matches_days"])
+                    cur.execute(
+                        "DELETE FROM intelligence.pattern_matches WHERE created_at < %s",
+                        (cutoff,),
+                    )
+                    out["pattern_matches_deleted"] = cur.rowcount
+
+                if self.policy.get("retention_storyline_states_days"):
+                    cutoff = datetime.now(timezone.utc) - timedelta(days=self.policy["retention_storyline_states_days"])
+                    cur.execute(
+                        "DELETE FROM intelligence.storyline_states WHERE created_at < %s",
+                        (cutoff,),
+                    )
+                    out["storyline_states_deleted"] = cur.rowcount
+
+            conn.commit()
+            conn.close()
+            if out:
+                logger.info(
+                    "Intelligence retention: fact_log=%s queue=%s pattern_matches=%s storyline_states=%s",
+                    out.get("fact_change_log_deleted", 0),
+                    out.get("story_update_queue_deleted", 0),
+                    out.get("pattern_matches_deleted", 0),
+                    out.get("storyline_states_deleted", 0),
+                )
+        except Exception as e:
+            logger.warning("Intelligence retention failed: %s", e)
+            _safe_rollback_close(conn)
+        if out and sum(out.values()) > 0:
+            return out
+        return None
 
     # -- Helpers ---------------------------------------------------------------
 

@@ -77,10 +77,11 @@ async def lifespan(app: FastAPI):
         # get_db_config enforces NAS tunnel rules and logs host/port
         db_config = get_db_config()
         if not (db_config.get("password") or "").strip():
-            logger.warning(
-                "⚠️ DB_PASSWORD is not set. Set it in project-root .env (e.g. DB_PASSWORD=your_password) "
-                "and restart the API. Save-as-topic and other DB features will return 503 until then."
+            logger.error(
+                "DB_PASSWORD is not set. Set it in project-root .env (e.g. DB_PASSWORD=your_password) "
+                "and start the API with that env (e.g. ./start_system.sh). Exiting to avoid 503s on all DB routes."
             )
+            sys.exit(1)
         logger.info(
             "Database configuration resolved: %s:%s/%s",
             db_config["host"],
@@ -207,6 +208,8 @@ async def lifespan(app: FastAPI):
         # Store automation manager for shutdown
         app.state.automation = automation
         app.state.automation_thread = automation_thread
+        # Idle-time research topic refinement: automation can submit low-priority analysis tasks
+        automation.set_finance_orchestrator_getter(lambda: getattr(app.state, "finance_orchestrator", None))
         
         # Start ML processing service
         try:
@@ -298,46 +301,54 @@ async def lifespan(app: FastAPI):
         logger.error("❌ Failed to start Health Monitor Orchestrator: %s", e)
         app.state.health_monitor = None
     
-    # Start Storyline Consolidation Service
+    # Start unified Consolidation Scheduler (storylines, entities, investigations, events)
     try:
-        from services.storyline_consolidation_service import (
-            get_consolidation_service,
-            CONSOLIDATION_INTERVAL_MINUTES
+        from services.consolidation_scheduler import (
+            CONSOLIDATION_INTERVAL_SECONDS,
+            CONSOLIDATION_STARTUP_DELAY_SECONDS,
+            CONSOLIDATION_TYPES,
+            run_consolidation_step,
+            get_next_step_name,
         )
-        
-        consolidation_service = get_consolidation_service(db_config)
-        
-        # Background thread for periodic consolidation
         consolidation_stop_event = threading.Event()
-        
-        def run_periodic_consolidation():
-            """Run consolidation periodically"""
-            interval_seconds = CONSOLIDATION_INTERVAL_MINUTES * 60
+        consolidation_run_count = [0]  # mutable so thread can increment
+
+        def run_consolidation_loop():
+            """Run one consolidation type per interval; stagger so each runs ~2x per day."""
+            import time
+            if CONSOLIDATION_STARTUP_DELAY_SECONDS > 0:
+                consolidation_stop_event.wait(CONSOLIDATION_STARTUP_DELAY_SECONDS)
             while not consolidation_stop_event.is_set():
+                step_name = get_next_step_name(consolidation_run_count[0])
                 try:
-                    logger.info("🔄 Running scheduled storyline consolidation...")
-                    result = consolidation_service.run_all_domains()
-                    logger.info(f"✅ Consolidation complete: {result.get('stats', {})}")
+                    logger.info("🔄 Running scheduled consolidation: %s", step_name)
+                    result = run_consolidation_step(step_name)
+                    if result.get("success"):
+                        logger.info("✅ Consolidation %s complete: %s", step_name, result.get("message", ""))
+                    else:
+                        logger.warning("⚠️ Consolidation %s finished with issues: %s", step_name, result.get("message", ""))
                 except Exception as e:
-                    logger.error(f"❌ Consolidation error: {e}")
-                
-                # Wait for next interval (or stop signal)
-                consolidation_stop_event.wait(interval_seconds)
-        
+                    logger.error("❌ Consolidation %s error: %s", step_name, e)
+                consolidation_run_count[0] += 1
+                consolidation_stop_event.wait(CONSOLIDATION_INTERVAL_SECONDS)
+
         consolidation_thread = threading.Thread(
-            target=run_periodic_consolidation, 
+            target=run_consolidation_loop,
             daemon=True,
-            name="StorylineConsolidation"
+            name="ConsolidationScheduler",
         )
         consolidation_thread.start()
-        
-        logger.info(f"✅ Storyline Consolidation Service started - runs every {CONSOLIDATION_INTERVAL_MINUTES} minutes")
-        app.state.consolidation_service = consolidation_service
+        logger.info(
+            "✅ Consolidation Scheduler started — rotation %s every %s s",
+            CONSOLIDATION_TYPES,
+            CONSOLIDATION_INTERVAL_SECONDS,
+        )
         app.state.consolidation_thread = consolidation_thread
         app.state.consolidation_stop_event = consolidation_stop_event
     except Exception as e:
-        logger.error(f"❌ Failed to start Storyline Consolidation Service: {e}")
-        app.state.consolidation_service = None
+        logger.error("❌ Failed to start Consolidation Scheduler: %s", e)
+        app.state.consolidation_thread = None
+        app.state.consolidation_stop_event = None
 
     # Start Newsroom Orchestrator v6 (optional, feature-flagged)
     try:
@@ -427,13 +438,13 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Error stopping Route Supervisor: {e}")
     
-    # Stop Consolidation Service
+    # Stop Consolidation Scheduler
     try:
         if hasattr(app.state, 'consolidation_stop_event') and app.state.consolidation_stop_event:
             app.state.consolidation_stop_event.set()
             if hasattr(app.state, 'consolidation_thread') and app.state.consolidation_thread:
                 app.state.consolidation_thread.join(timeout=5)
-            logger.info("Storyline Consolidation Service stopped")
+            logger.info("Consolidation Scheduler stopped")
     except Exception as e:
         logger.error(f"Error stopping Consolidation Service: {e}")
 
@@ -540,7 +551,7 @@ async def request_tracker_middleware(request: Request, call_next):
 
     request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
     request.state.request_id = request_id
-    record_request()
+    record_request(path=request.url.path or "")
     start = time.perf_counter()
 
     try:

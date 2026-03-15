@@ -1,13 +1,12 @@
-# 📝 News Intelligence System v4.0 - Coding Style Guide
+# News Intelligence System — Coding Style Guide
 
-## 📋 **OVERVIEW**
+## Overview
 
-This document establishes coding standards, naming conventions, and architectural patterns for the News Intelligence System to ensure consistency, maintainability, and prevent configuration fragmentation.
+Coding standards, naming conventions, and architectural patterns for the News Intelligence System. Ensures consistency, maintainability, and a single source of truth for config.
 
-**Last Updated**: 2026-02-21  
-**Version**: 4.2  
-**Status**: Active  
-**Update**: Elevated "Reuse Before Create" as core tenet — search existing and archived code before building anything new
+**Last updated:** 2026-03  
+**Status:** Active  
+**API:** Flat `/api` (no version in path). See "Router Prefix Convention" below.
 
 ---
 
@@ -45,10 +44,10 @@ Before creating any new file, service, or component:
 
 Archive locations to check:
 - `archive/` — full project backups and old versions
-- `web/_archived_duplicates/` — archived frontend components
+- `web/_archived_interface/` — archived frontend components (e.g. old DomainLayout)
 - `api/_archived/` — archived API files
 - `scripts/archive/` — archived scripts
-- `docs/archive/` — archived documentation
+- `docs/_archive/` — archived documentation (excluded from Cursor context)
 
 #### **The "Improve Existing" Pattern**
 ```python
@@ -117,12 +116,12 @@ class RSSService:
 ```python
 # ✅ CORRECT - Use snake_case for files
 api/config/database.py
-api/routes/articles.py
-api/services/health_service.py
+api/domains/news_aggregation/routes/news_aggregation.py
+api/services/article_service.py
 
 # ❌ WRONG - Don't use camelCase or kebab-case
 api/config/databaseConfig.py
-api/routes/article-routes.py
+api/domains/news_aggregation/routes/article-routes.py
 ```
 
 ### **Class Naming Conventions**
@@ -324,7 +323,7 @@ CREATE INDEX idx_articles_category_idx ON articles(category);
 ## 🌐 **API STANDARDS**
 
 ### **Router Prefix Convention (CRITICAL)**
-The project uses **flat `/api`** — no version segment in the path (e.g. `/api/{domain}/finance/...`, not `/api/v4/...`).
+The project uses **flat `/api`** — no version segment in the path (e.g. `/api/{domain}/finance/...`, not `/api/...`).
 
 ```python
 # ✅ CORRECT - Main domain routers (included directly in main_v4.py)
@@ -360,18 +359,17 @@ parent_router.include_router(child_router)  # Results in /api/...
 
 ### **Router Inclusion Pattern**
 ```python
-# ✅ CORRECT - Pattern for domain routers
-# In main_v4.py:
-from domains.storyline_management.routes import router as storyline_router
-app.include_router(storyline_router)  # Router has prefix="/api"
+# ✅ CORRECT - In api/main_v4.py:
+from domains.storyline_management.routes import router as storyline_management_router
+app.include_router(storyline_management_router)  # Router has prefix="/api"
 
-# In domains/storyline_management/routes/__init__.py:
-router = APIRouter(prefix="/api")  # ✅ Main router has prefix
-router.include_router(crud_router)    # ✅ Sub-routers have NO prefix
+# In api/domains/storyline_management/routes/__init__.py:
+router = APIRouter(prefix="/api")
+router.include_router(crud_router)      # Sub-routers have no prefix
 router.include_router(articles_router)
 
-# In domains/storyline_management/routes/storyline_crud.py:
-router = APIRouter()  # ✅ NO prefix - inherits from parent
+# In api/domains/storyline_management/routes/storyline_crud.py:
+router = APIRouter()  # No prefix — path comes from parent
 ```
 
 ### **Route Naming Convention**
@@ -436,48 +434,45 @@ async def get_articles():
 ```
 News Intelligence/
 ├── api/                          # Backend API
+│   ├── main_v4.py                # Application entry point
 │   ├── config/
-│   │   ├── database.py           # ✅ SINGLE database config
-│   │   └── paths.py              # Path management
-│   ├── routes/                   # API routes
-│   │   ├── articles.py
-│   │   ├── health.py
-│   │   └── storylines.py
+│   │   ├── database.py           # Re-exports shared.database.connection
+│   │   └── paths.py               # Path management
+│   ├── shared/
+│   │   └── database/
+│   │       └── connection.py     # ✅ SINGLE source: get_db_config, get_db_connection
+│   ├── domains/                  # Domain-scoped routes and services
+│   │   └── {domain}/routes/      # e.g. storyline_management, system_monitoring
 │   ├── services/                 # Business logic
-│   │   ├── health_service.py
-│   │   └── article_service.py
-│   ├── schemas/                  # Data models
-│   │   ├── robust_schemas.py
-│   │   └── response_schemas.py
-│   └── main.py                   # Application entry point
-├── web/                          # Frontend
+│   └── database/migrations/     # SQL migrations
+├── web/                          # Frontend (React + Vite + MUI)
 │   ├── src/
-│   │   ├── components/
+│   │   ├── App.tsx               # Routes, DomainProvider, MainLayout
+│   │   ├── layout/MainLayout.tsx # Domain shell (sidebar, nav)
 │   │   ├── pages/
-│   │   └── services/
+│   │   ├── components/
+│   │   └── services/api/         # API client modules
 │   └── package.json
-├── docker-compose.yml            # ✅ SINGLE compose file
 ├── docs/                         # Documentation
-│   ├── ARCHITECTURAL_STANDARDS.md
+│   ├── DOCS_INDEX.md             # Start here
 │   ├── CODING_STYLE_GUIDE.md
-│   └── API_DOCUMENTATION.md
+│   ├── ARCHITECTURE_AND_OPERATIONS.md
+│   └── _archive/                 # Superseded docs (excluded from Cursor)
 └── scripts/                      # Utility scripts
-    ├── test_database_connection.py
-    └── validate_architecture.py
 ```
 
 ### **Configuration File Standards**
 ```python
-# ✅ CORRECT - Single configuration file per concern
-api/config/database.py          # Database configuration
-api/config/paths.py             # Path management
-docker-compose.yml              # Container orchestration
+# ✅ CORRECT - Single source per concern
+api/shared/database/connection.py  # get_db_config, get_db_connection (pool)
+api/config/database.py             # Re-exports shared (backward compat)
+api/config/paths.py                # Path management
+docker-compose.yml                 # Container orchestration
 
-# ❌ WRONG - Multiple configuration files
-api/config/database.py
+# ❌ WRONG - Duplicate or legacy config
 api/config/robust_database.py
 api/config/unified_database.py
-api/database/connection.py
+# Do not use inline DB config; use get_db_config() or get_db_connection()
 ```
 
 ---
@@ -524,7 +519,7 @@ When you make a **major change** (e.g. API path scheme, versioning, removal of a
 - Controller/architecture docs (`CONTROLLER_ARCHITECTURE.md`, `PROJECT_SCOPE_AND_DEVELOPMENT_STATUS.md`)
 - API reference or route tables in any of the above
 
-Avoid leaving references to old paths, versions, or behavior (e.g. `/api/v4/` when the code uses flat `/api/`).
+Avoid leaving references to old paths, versions, or behavior (e.g. `/api/` when the code uses flat `/api/`).
 
 ### **File Naming Convention**
 ```markdown
@@ -665,12 +660,24 @@ docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}"
 
 ---
 
+## **Documentation alignment**
+
+When you change the **API** (routes, path segments, response shape) or **core behaviour** (entry points, DB config, domain layout):
+
+1. **Update docs in the same change (or next commit):** `AGENTS.md`, this guide, `ARCHITECTURE_AND_OPERATIONS.md`, and any domain/feature doc that references the change.
+2. **Paths:** Flat `/api` (no version in path). Route segments: `snake_case` (e.g. `system_monitoring`, `rss_feeds`). Domain-scoped: `/api/{domain}/...` with domain `politics` | `finance` | `science-tech`.
+3. **Code and tests:** Keep test URLs and frontend API calls in sync with real routes (no `/api/v4/`, no kebab-case route segments).
+4. **Single source:** Entry points and file layout in `AGENTS.md` and “Project structure” in this guide must match the repo (`main_v4.py`, `api/domains/*/routes/`, `MainLayout.tsx`).
+
+---
+
 ## 📚 **REFERENCE DOCUMENTATION**
 
 ### **Related Documents**
-- [ARCHITECTURAL_STANDARDS.md](./ARCHITECTURAL_STANDARDS.md) - Architecture standards
+- [DOCS_INDEX.md](./DOCS_INDEX.md) - Documentation index
+- [ARCHITECTURE_AND_OPERATIONS.md](./ARCHITECTURE_AND_OPERATIONS.md) - Architecture and ops
 - [DATABASE_SCHEMA_DOCUMENTATION.md](./DATABASE_SCHEMA_DOCUMENTATION.md) - Database schema
-- [API_DOCUMENTATION.md](./API_DOCUMENTATION.md) - API endpoints
+- [API_REFERENCE.md](./API_REFERENCE.md) - API endpoints
 
 ### **External References**
 - [PEP 8 - Python Style Guide](https://pep8.org/)

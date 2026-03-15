@@ -1,0 +1,305 @@
+"""
+Cross-domain synthesis service — find correlations across politics, finance, science-tech.
+Populates intelligence.cross_domain_correlations; supports unified timeline.
+See docs/DATA_PIPELINE_ENHANCEMENTS_ROADMAP.md.
+"""
+
+import logging
+import uuid
+from datetime import date, timedelta
+from typing import Any, Dict, List, Optional
+
+from shared.database.connection import get_db_connection
+
+logger = logging.getLogger(__name__)
+
+DOMAINS = ("politics", "finance", "science_tech")
+
+
+def run_cross_domain_synthesis(
+    domains: Optional[List[str]] = None,
+    time_window_days: int = 7,
+    correlation_threshold: float = 0.5,
+) -> Dict[str, Any]:
+    """
+    Find cross-domain relationships (events spanning domains, shared entities, temporal overlap),
+    persist to intelligence.cross_domain_correlations. Returns correlation_id(s) and list of correlations.
+    """
+    conn = get_db_connection()
+    if not conn:
+        return {"success": False, "error": "Database connection failed", "correlations": []}
+    target_domains = [d for d in (domains or list(DOMAINS)) if d in DOMAINS]
+    if len(target_domains) < 2:
+        return {"success": True, "correlation_id": None, "correlations": [], "message": "Need at least 2 domains"}
+    since = date.today() - timedelta(days=time_window_days)
+    try:
+        with conn.cursor() as cur:
+            # Events in window with domain_keys (array or similar)
+            cur.execute(
+                """
+                SELECT id, event_type, event_name, start_date,
+                       COALESCE(domain_keys, '{}') AS domain_keys,
+                       COALESCE(key_participant_entity_ids, '[]') AS key_participant_entity_ids
+                FROM intelligence.tracked_events
+                WHERE (start_date IS NULL OR start_date >= %s)
+                ORDER BY start_date DESC NULLS LAST
+                LIMIT 500
+                """,
+                (since,),
+            )
+            rows = cur.fetchall()
+        conn.close()
+    except Exception as e:
+        logger.warning("run_cross_domain_synthesis query: %s", e)
+        try:
+            conn.close()
+        except Exception:
+            pass
+        return {"success": False, "error": str(e), "correlations": []}
+
+    # Build correlation rows: (domain_1, domain_2, event_ids, entity_ids, type, strength)
+    seen_pairs: Dict[tuple, Dict[str, Any]] = {}
+    for r in rows:
+        event_id, event_type, event_name, start_date, domain_keys, key_participant = r
+        event_domains = list(domain_keys) if isinstance(domain_keys, (list, tuple)) else []
+        entity_ids = []
+        if isinstance(key_participant, list):
+            for x in key_participant:
+                if isinstance(x, int):
+                    entity_ids.append(x)
+                elif isinstance(x, dict) and "id" in x:
+                    entity_ids.append(x["id"])
+        for i, d1 in enumerate(event_domains):
+            for d2 in event_domains[i + 1 :]:
+                if d1 not in target_domains or d2 not in target_domains:
+                    continue
+                pair = (min(d1, d2), max(d1, d2))
+                if pair not in seen_pairs:
+                    seen_pairs[pair] = {
+                        "domain_1": pair[0],
+                        "domain_2": pair[1],
+                        "event_ids": [],
+                        "entity_profile_ids": [],
+                        "correlation_type": "temporal",
+                        "correlation_strength": correlation_threshold,
+                    }
+                rec = seen_pairs[pair]
+                if event_id not in rec["event_ids"]:
+                    rec["event_ids"].append(event_id)
+                for eid in entity_ids:
+                    if eid not in rec["entity_profile_ids"]:
+                        rec["entity_profile_ids"].append(eid)
+
+    if not seen_pairs:
+        return {"success": True, "correlation_id": None, "correlations": [], "meta_storylines": []}
+
+    conn = get_db_connection()
+    if not conn:
+        return {"success": True, "correlation_id": None, "correlations": list(seen_pairs.values()), "meta_storylines": []}
+    inserted = []
+    try:
+        with conn.cursor() as cur:
+            for pair, rec in seen_pairs.items():
+                strength = min(1.0, 0.5 + 0.1 * (len(rec["event_ids"]) + len(rec["entity_profile_ids"])))
+                if strength < correlation_threshold:
+                    continue
+                cor_id = uuid.uuid4()
+                cur.execute(
+                    """
+                    INSERT INTO intelligence.cross_domain_correlations
+                    (correlation_id, domain_1, domain_2, entity_profile_ids, event_ids, correlation_strength, correlation_type)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        cor_id,
+                        rec["domain_1"],
+                        rec["domain_2"],
+                        rec["entity_profile_ids"][:100],
+                        rec["event_ids"][:100],
+                        strength,
+                        rec["correlation_type"],
+                    ),
+                )
+                inserted.append({
+                    "correlation_id": str(cor_id),
+                    "domain_1": rec["domain_1"],
+                    "domain_2": rec["domain_2"],
+                    "event_ids": rec["event_ids"],
+                    "entity_profile_ids": rec["entity_profile_ids"],
+                    "correlation_strength": strength,
+                    "correlation_type": rec["correlation_type"],
+                })
+        conn.commit()
+    except Exception as e:
+        logger.warning("run_cross_domain_synthesis insert: %s", e)
+        if conn:
+            conn.rollback()
+    finally:
+        if conn:
+            conn.close()
+    # Meta-storylines: one per correlation (storylines that span domains)
+    meta_storylines = [
+        {
+            "title": f"{c['domain_1']}–{c['domain_2']} correlation",
+            "domain_1": c["domain_1"],
+            "domain_2": c["domain_2"],
+            "correlation_id": c["correlation_id"],
+            "event_ids": c["event_ids"],
+            "entity_profile_ids": c.get("entity_profile_ids", []),
+            "correlation_strength": c.get("correlation_strength"),
+        }
+        for c in inserted
+    ]
+    return {
+        "success": True,
+        "correlation_id": str(inserted[0]["correlation_id"]) if inserted else None,
+        "correlations": inserted,
+        "meta_storylines": meta_storylines,
+    }
+
+
+def get_cross_domain_correlations(
+    domain_1: Optional[str] = None,
+    domain_2: Optional[str] = None,
+    since_days: Optional[int] = None,
+    limit: int = 50,
+) -> Dict[str, Any]:
+    """Read correlation rows with optional filters."""
+    conn = get_db_connection()
+    if not conn:
+        return {"success": False, "correlations": [], "error": "Database connection failed"}
+    try:
+        conditions = ["1=1"]
+        args: List[Any] = []
+        if domain_1:
+            conditions.append("domain_1 = %s")
+            args.append(domain_1)
+        if domain_2:
+            conditions.append("domain_2 = %s")
+            args.append(domain_2)
+        if since_days is not None:
+            conditions.append("discovered_at >= NOW() - INTERVAL '1 day' * %s")
+            args.append(since_days)
+        args.append(limit)
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT correlation_id, domain_1, domain_2, entity_profile_ids, event_ids,
+                       correlation_strength, correlation_type, discovered_at, metadata
+                FROM intelligence.cross_domain_correlations
+                WHERE """ + " AND ".join(conditions) + """
+                ORDER BY discovered_at DESC
+                LIMIT %s
+                """,
+                tuple(args),
+            )
+            rows = cur.fetchall()
+        conn.close()
+        correlations = []
+        for r in rows:
+            correlations.append({
+                "correlation_id": str(r[0]),
+                "domain_1": r[1],
+                "domain_2": r[2],
+                "entity_profile_ids": list(r[3]) if r[3] else [],
+                "event_ids": list(r[4]) if r[4] else [],
+                "correlation_strength": float(r[5]) if r[5] is not None else None,
+                "correlation_type": r[6],
+                "discovered_at": r[7].isoformat() if r[7] else None,
+                "metadata": r[8] or {},
+            })
+        return {"success": True, "correlations": correlations}
+    except Exception as e:
+        logger.warning("get_cross_domain_correlations: %s", e)
+        try:
+            conn.close()
+        except Exception:
+            pass
+        return {"success": False, "correlations": [], "error": str(e)}
+
+
+def get_unified_timeline(
+    domains: Optional[List[str]] = None,
+    since_days: Optional[int] = None,
+    limit: int = 100,
+) -> Dict[str, Any]:
+    """Chronological events across domains with domain_key, event_type, entity links."""
+    conn = get_db_connection()
+    if not conn:
+        return {"success": False, "events": [], "error": "Database connection failed"}
+    try:
+        conditions = ["1=1"]
+        args: List[Any] = []
+        if since_days is not None:
+            conditions.append("(te.start_date IS NULL OR te.start_date >= CURRENT_DATE - INTERVAL '1 day' * %s)")
+            args.append(since_days)
+        if domains:
+            conditions.append("te.domain_keys && %s")
+            args.append(domains)
+        args.append(limit)
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT te.id, te.event_type, te.event_name, te.start_date, te.end_date,
+                       te.geographic_scope, te.key_participant_entity_ids, te.domain_keys, te.created_at
+                FROM intelligence.tracked_events te
+                WHERE """ + " AND ".join(conditions) + """
+                ORDER BY te.start_date DESC NULLS LAST, te.created_at DESC
+                LIMIT %s
+                """,
+                tuple(args),
+            )
+            rows = cur.fetchall()
+        conn.close()
+        events = []
+        for r in rows:
+            events.append({
+                "id": r[0],
+                "event_type": r[1],
+                "event_name": r[2],
+                "start_date": str(r[3]) if r[3] else None,
+                "end_date": str(r[4]) if r[4] else None,
+                "geographic_scope": r[5],
+                "key_participant_entity_ids": r[6] if isinstance(r[6], list) else (list(r[6]) if r[6] else []),
+                "domain_keys": list(r[7]) if r[7] else [],
+                "created_at": r[8].isoformat() if r[8] else None,
+            })
+        return {"success": True, "events": events}
+    except Exception as e:
+        logger.warning("get_unified_timeline: %s", e)
+        try:
+            conn.close()
+        except Exception:
+            pass
+        return {"success": False, "events": [], "error": str(e)}
+
+
+def get_meta_storylines(
+    domain_1: Optional[str] = None,
+    domain_2: Optional[str] = None,
+    since_days: Optional[int] = None,
+    limit: int = 50,
+) -> Dict[str, Any]:
+    """Meta-storylines (cross-domain storylines) derived from cross_domain_correlations."""
+    result = get_cross_domain_correlations(
+        domain_1=domain_1,
+        domain_2=domain_2,
+        since_days=since_days,
+        limit=limit,
+    )
+    if not result.get("success"):
+        return {"success": False, "meta_storylines": [], "error": result.get("error")}
+    meta_storylines = [
+        {
+            "title": f"{c['domain_1']}–{c['domain_2']} correlation",
+            "domain_1": c["domain_1"],
+            "domain_2": c["domain_2"],
+            "correlation_id": c["correlation_id"],
+            "event_ids": c["event_ids"],
+            "entity_profile_ids": c.get("entity_profile_ids", []),
+            "correlation_strength": c.get("correlation_strength"),
+            "discovered_at": c.get("discovered_at"),
+        }
+        for c in result.get("correlations", [])
+    ]
+    return {"success": True, "meta_storylines": meta_storylines}

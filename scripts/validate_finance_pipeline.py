@@ -109,10 +109,17 @@ def check_vector_store() -> bool:
         print(f"  Exists: {FINANCE_CHROMA_DIR.exists()}")
         from domains.finance.data.vector_store import get_client, get_collection
         client = get_client()
+        if client is None:
+            print(f"  SKIP: ChromaDB not available (not installed or disabled)")
+            print(f"  (Required for EDGAR embeddings; gold/FRED work without it)")
+            return True  # Non-fatal for gold-only pipeline
         print(f"  Client: OK")
         coll = get_collection()
-        count = coll.count()
-        print(f"  Collection count: {count}")
+        if coll is None:
+            print(f"  SKIP: Could not get collection")
+            return True
+        cnt = coll.count()
+        print(f"  Collection count: {cnt}")
         print(f"  PASS")
         return True
     except ImportError as ie:

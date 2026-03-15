@@ -1,18 +1,24 @@
 /**
  * Tracked event detail — chronicles, linked contexts, and investigation report (dossier).
+ * Phase 1: Edit event (v6 quality-first).
  */
 import React, { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Card, CardHeader, CardContent, Typography, Button, Box, Skeleton,
   Chip, Divider, List, ListItemButton, ListItemText, Alert,
+  Dialog, DialogTitle, DialogContent, DialogActions, TextField, FormControlLabel, Checkbox,
 } from '@mui/material';
 import ArrowBack from '@mui/icons-material/ArrowBack';
 import Article from '@mui/icons-material/Article';
 import Refresh from '@mui/icons-material/Refresh';
+import Edit from '@mui/icons-material/Edit';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { contextCentricApi, type TrackedEvent } from '@/services/api/contextCentric';
+
+const DOMAIN_KEYS = ['politics', 'finance', 'science-tech'];
+const EVENT_TYPES = ['election', 'legislation', 'investigation', 'policy', 'economic', 'diplomatic', 'conflict', 'disaster', 'market_event'];
 
 interface Chronicle {
   id: number;
@@ -38,6 +44,18 @@ export default function EventDetailPage() {
   } | null>(null);
   const [reportLoading, setReportLoading] = useState(false);
   const [reportError, setReportError] = useState<string | null>(null);
+  const [editOpen, setEditOpen] = useState(false);
+  const [editForm, setEditForm] = useState<{
+    event_type: string;
+    event_name: string;
+    start_date: string;
+    end_date: string;
+    geographic_scope: string;
+    domain_keys: string[];
+  }>({ event_type: '', event_name: '', start_date: '', end_date: '', geographic_scope: '', domain_keys: [] });
+  const [editSubmitting, setEditSubmitting] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
+  const [chronicleRefreshing, setChronicleRefreshing] = useState(false);
 
   const numId = id ? parseInt(id, 10) : NaN;
 
@@ -78,6 +96,42 @@ export default function EventDetailPage() {
     if (!Number.isNaN(numId)) loadReport();
   }, [numId, loadReport]);
 
+  const handleEditOpen = useCallback(() => {
+    if (!event) return;
+    setEditForm({
+      event_type: event.event_type ?? 'election',
+      event_name: event.event_name ?? '',
+      start_date: event.start_date ? event.start_date.slice(0, 10) : '',
+      end_date: event.end_date ? event.end_date.slice(0, 10) : '',
+      geographic_scope: event.geographic_scope ?? '',
+      domain_keys: Array.isArray(event.domain_keys) ? [...event.domain_keys] : [],
+    });
+    setEditError(null);
+    setEditOpen(true);
+  }, [event]);
+
+  const handleEditSubmit = useCallback(async () => {
+    if (!event || !editForm.event_name.trim()) return;
+    setEditSubmitting(true);
+    setEditError(null);
+    try {
+      await contextCentricApi.updateTrackedEvent(event.id, {
+        event_type: editForm.event_type,
+        event_name: editForm.event_name.trim(),
+        start_date: editForm.start_date || null,
+        end_date: editForm.end_date || null,
+        geographic_scope: editForm.geographic_scope.trim() || null,
+        domain_keys: editForm.domain_keys,
+      });
+      setEditOpen(false);
+      loadEvent();
+    } catch (e: unknown) {
+      setEditError((e as Error)?.message ?? 'Failed to update event');
+    } finally {
+      setEditSubmitting(false);
+    }
+  }, [event, editForm, loadEvent]);
+
   const handleGenerateReport = useCallback(() => {
     if (Number.isNaN(numId)) return;
     setReportLoading(true);
@@ -110,9 +164,96 @@ export default function EventDetailPage() {
 
   return (
     <Box>
-      <Button startIcon={<ArrowBack />} onClick={() => navigate(`/${domain}/investigate`)} sx={{ mb: 2 }}>
-        Back to Investigate
-      </Button>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+        <Button startIcon={<ArrowBack />} onClick={() => navigate(`/${domain}/investigate`)}>
+          Back to Investigate
+        </Button>
+        {event && (
+          <>
+            <Button
+              variant="outlined"
+              size="small"
+              startIcon={<Refresh />}
+              onClick={async () => {
+                if (Number.isNaN(numId)) return;
+                setChronicleRefreshing(true);
+                try {
+                  await contextCentricApi.triggerEventChronicleUpdate(numId);
+                  loadEvent();
+                } finally {
+                  setChronicleRefreshing(false);
+                }
+              }}
+              disabled={chronicleRefreshing}
+            >
+              {chronicleRefreshing ? 'Refreshing…' : 'Refresh chronicles'}
+            </Button>
+            <Button variant="outlined" size="small" startIcon={<Edit />} onClick={handleEditOpen}>
+              Edit event
+            </Button>
+          </>
+        )}
+      </Box>
+
+      <Dialog open={editOpen} onClose={() => !editSubmitting && setEditOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Edit tracked event</DialogTitle>
+        <DialogContent>
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 1 }}>
+            <TextField
+              label="Event name"
+              value={editForm.event_name}
+              onChange={(e) => setEditForm((f) => ({ ...f, event_name: e.target.value }))}
+              required
+              fullWidth
+              size="small"
+            />
+            <TextField
+              select
+              SelectProps={{ native: true }}
+              label="Event type"
+              value={editForm.event_type}
+              onChange={(e) => setEditForm((f) => ({ ...f, event_type: e.target.value }))}
+              fullWidth
+              size="small"
+            >
+              {EVENT_TYPES.map((t) => (
+                <option key={t} value={t}>{t}</option>
+              ))}
+            </TextField>
+            <TextField label="Start date" type="date" value={editForm.start_date} onChange={(e) => setEditForm((f) => ({ ...f, start_date: e.target.value }))} InputLabelProps={{ shrink: true }} fullWidth size="small" />
+            <TextField label="End date" type="date" value={editForm.end_date} onChange={(e) => setEditForm((f) => ({ ...f, end_date: e.target.value }))} InputLabelProps={{ shrink: true }} fullWidth size="small" />
+            <TextField label="Geographic scope" value={editForm.geographic_scope} onChange={(e) => setEditForm((f) => ({ ...f, geographic_scope: e.target.value }))} fullWidth size="small" placeholder="e.g. US, EU" />
+            <Box>
+              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>Domains</Typography>
+              {DOMAIN_KEYS.map((d) => (
+                <FormControlLabel
+                  key={d}
+                  control={
+                    <Checkbox
+                      checked={editForm.domain_keys.includes(d)}
+                      onChange={(_, checked) =>
+                        setEditForm((f) => ({
+                          ...f,
+                          domain_keys: checked ? [...f.domain_keys, d] : f.domain_keys.filter((k) => k !== d),
+                        }))
+                      }
+                    />
+                  }
+                  label={d}
+                />
+              ))}
+            </Box>
+            {editError && <Typography color="error" variant="body2">{editError}</Typography>}
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setEditOpen(false)} disabled={editSubmitting}>Cancel</Button>
+          <Button variant="contained" onClick={handleEditSubmit} disabled={editSubmitting}>
+            {editSubmitting ? 'Saving…' : 'Save'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
       {loading ? (
         <Skeleton variant="rectangular" height={200} sx={{ borderRadius: 1 }} />
       ) : !event ? (

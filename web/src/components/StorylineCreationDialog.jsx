@@ -7,7 +7,7 @@ import {
   Button,
   TextField,
 } from '@mui/material';
-import { api } from '../services/apiService';
+import { storylinesApi } from '../services/api/storylines';
 
 const StorylineCreationDialog = ({ open, onClose, onCreated }) => {
   const [title, setTitle] = useState('');
@@ -19,21 +19,17 @@ const StorylineCreationDialog = ({ open, onClose, onCreated }) => {
     try {
       setLoading(true);
       setError(null);
-      const response = await api.post(
-        '/api/storyline-management/storylines',
-        {
-          title,
-          description,
-        },
-      );
-      const data = response.data;
-      if (data.success) {
-        onCreated && onCreated(data.data);
+      const data = await storylinesApi.createStoryline({ title, description });
+      // API returns storyline object directly, or { success: false, error } on failure
+      const storyline = data && data.data !== undefined ? data.data : data;
+      const isError = data && data.success === false;
+      if (storyline && storyline.id != null && !isError) {
+        onCreated && onCreated(storyline);
         onClose();
         setTitle('');
         setDescription('');
       } else {
-        setError(data.error || 'Failed to create storyline');
+        setError((data && data.error) || 'Failed to create storyline');
       }
     } catch (err) {
       setError(err.message || 'Failed to create storyline');

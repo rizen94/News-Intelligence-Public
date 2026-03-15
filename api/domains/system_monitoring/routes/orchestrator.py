@@ -164,23 +164,62 @@ async def orchestrator_manual_override(
                 allowed_sources = ["rss", "gold", "silver", "platinum"]
             if source not in allowed_sources:
                 return {"success": False, "error": f"source must be one of: {', '.join(allowed_sources)}"}
-            coordinator = getattr(request.app.state, "orchestrator_coordinator", None)
-            if coordinator and hasattr(coordinator, "run_manual_collect"):
-                result = await coordinator.run_manual_collect(source)
-                return {"success": True, "result": result}
-            # Fallback: run collect directly and record
-            if source == "rss":
-                from collectors.rss_collector import collect_rss_feeds
-                count = collect_rss_feeds()
-                orchestrator_state.append_decision_log("manual_override", outcome=f"force_rss_{count}")
-                return {"success": True, "result": {"source": "rss", "articles_collected": count}}
+            # Report to activity feed so Monitor shows "Current activity" during collection
+            activity_id = f"force_collect_{source}_{int(__import__('time').time())}"
+            try:
+                from services.activity_feed_service import get_activity_feed
+                get_activity_feed().add_current(
+                    activity_id,
+                    f"Running {source.upper()} collection (manual trigger)",
+                    source=source,
+                )
+            except Exception:
+                pass
+            try:
+                coordinator = getattr(request.app.state, "orchestrator_coordinator", None)
+                if coordinator and hasattr(coordinator, "run_manual_collect"):
+                    result = await coordinator.run_manual_collect(source)
+                    try:
+                        from services.activity_feed_service import get_activity_feed
+                        get_activity_feed().complete(activity_id, success=True)
+                    except Exception:
+                        pass
+                    return {"success": True, "result": result}
+                # Fallback: run collect directly and record
+                if source == "rss":
+                    from collectors.rss_collector import collect_rss_feeds
+                    count = collect_rss_feeds()
+                    orchestrator_state.append_decision_log("manual_override", outcome=f"force_rss_{count}")
+                    try:
+                        from services.activity_feed_service import get_activity_feed
+                        get_activity_feed().complete(activity_id, success=True)
+                    except Exception:
+                        pass
+                    return {"success": True, "result": {"source": "rss", "articles_collected": count}}
+            except Exception as e:
+                try:
+                    from services.activity_feed_service import get_activity_feed
+                    get_activity_feed().complete(activity_id, success=False, error_message=str(e)[:200])
+                except Exception:
+                    pass
+                raise
             if source in ("gold", "silver", "platinum"):
                 orch = getattr(request.app.state, "finance_orchestrator", None)
                 if not orch:
+                    try:
+                        from services.activity_feed_service import get_activity_feed
+                        get_activity_feed().complete(activity_id, success=False, error_message="Finance orchestrator not available")
+                    except Exception:
+                        pass
                     return {"success": False, "error": "Finance orchestrator not available"}
                 from domains.finance.orchestrator_types import TaskType, TaskPriority
                 task_id = orch.submit_task(TaskType.refresh, {"topic": source}, priority=TaskPriority.high)
                 orchestrator_state.append_decision_log("manual_override", outcome=f"force_{source}_{task_id}")
+                try:
+                    from services.activity_feed_service import get_activity_feed
+                    get_activity_feed().complete(activity_id, success=True)
+                except Exception:
+                    pass
                 return {"success": True, "result": {"source": source, "task_id": task_id}}
         return {"success": False, "error": f"unknown action: {action}"}
     except Exception as e:

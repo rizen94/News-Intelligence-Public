@@ -24,7 +24,30 @@ SOURCE_SILVER = "silver"
 SOURCE_PLATINUM = "platinum"
 SOURCE_EDGAR = "edgar"
 
+# Commodity price sources: use longer intervals; off-hours use off_hours_interval (markets closed)
+COMMODITY_PRICE_SOURCE_IDS = {SOURCE_GOLD, SOURCE_SILVER, SOURCE_PLATINUM}
+
 DEFAULT_SOURCE_IDS = [SOURCE_RSS, SOURCE_GOLD, SOURCE_SILVER, SOURCE_PLATINUM, SOURCE_EDGAR]
+
+
+def _is_us_market_hours(now: datetime | None = None) -> bool:
+    """True if current time is within US market hours (NYSE/NYMEX ~9:30–16:00 Eastern). Uses UTC for consistency."""
+    from datetime import timezone as tz
+    utc = now or datetime.now(tz.utc)
+    if utc.tzinfo is None:
+        utc = utc.replace(tzinfo=tz.utc)
+    # Weekday in UTC: Mon=0 .. Fri=4
+    if utc.weekday() >= 5:
+        return False
+    # 13:30–21:00 UTC ≈ 8:30–16:00 Eastern (EST/EDT)
+    hour, minute = utc.hour, utc.minute
+    if hour < 13:
+        return False
+    if hour > 21:
+        return False
+    if hour == 13 and minute < 30:
+        return False
+    return True
 
 
 def get_collection_source_ids(config: dict[str, Any] | None = None) -> list[str]:
@@ -81,10 +104,26 @@ class CollectionGovernor:
             "empty_fetch_penalty": float(overrides.get("empty_fetch_penalty", self._empty_fetch_penalty)),
         }
 
-    def _effective_interval_seconds(self, source_id: str) -> float:
-        """Min interval scaled by empty-fetch backoff from source profile."""
+    def _base_interval_seconds(self, source_id: str, now: datetime | None = None) -> float:
+        """Base min interval for this source: per-source config, or global. Commodity price sources use longer off-hours."""
         cfg = self._get_effective_config()
-        base = cfg["min_interval_seconds"]
+        collection = (self._config or {}).get("collection") or {}
+        sources = collection.get("sources") or []
+        for s in sources:
+            if s.get("source_id") != source_id:
+                continue
+            base = float(s.get("min_fetch_interval_seconds") or cfg["min_interval_seconds"])
+            if source_id in COMMODITY_PRICE_SOURCE_IDS:
+                off_hours = s.get("off_hours_interval_seconds")
+                if off_hours is not None and not _is_us_market_hours(now):
+                    base = max(base, float(off_hours))
+            return base
+        return cfg["min_interval_seconds"]
+
+    def _effective_interval_seconds(self, source_id: str, now: datetime | None = None) -> float:
+        """Min interval: per-source base (with off-hours for commodity prices), then scaled by empty-fetch backoff."""
+        base = self._base_interval_seconds(source_id, now)
+        cfg = self._get_effective_config()
         try:
             from . import orchestrator_state
             profile = orchestrator_state.get_source_profile(source_id)
@@ -93,8 +132,6 @@ class CollectionGovernor:
             empty_count = profile.get("last_empty_fetch_count") or 0
             if empty_count <= 0:
                 return base
-            # Exponential backoff: base * penalty^empty_count, cap at max_interval
-            cfg = self._get_effective_config()
             effective = base * (cfg["empty_fetch_penalty"] ** min(empty_count, 10))
             return min(effective, cfg["max_interval_seconds"])
         except Exception:
@@ -120,7 +157,7 @@ class CollectionGovernor:
 
         for source_id in source_ids:
             last = last_collection_times.get(source_id)
-            effective_interval = self._effective_interval_seconds(source_id)
+            effective_interval = self._effective_interval_seconds(source_id, now)
             if last is None:
                 candidates.append((source_id, 0.0))
                 continue
@@ -135,7 +172,31 @@ class CollectionGovernor:
 
         if not candidates:
             return None
-        source_id = max(candidates, key=lambda x: x[1])[0]
+        # Tie-break by source reliability (use source_rankings: prefer higher-reliability when due)
+        reliability_by_source: dict[str, float] = {}
+        try:
+            from services.quality_feedback_service import get_source_rankings
+            result = get_source_rankings(limit=100)
+            if result.get("success") and result.get("rankings"):
+                for r in result.get("rankings", []):
+                    name = r.get("source_name")
+                    score = r.get("accuracy_score")
+                    if name is not None and score is not None:
+                        reliability_by_source[name] = float(score)
+                # Map generic source_id (e.g. "rss") to avg of matching rankings or neutral
+                for sid in source_ids:
+                    if sid in reliability_by_source:
+                        continue
+                    matches = [v for k, v in reliability_by_source.items() if sid in k.lower() or k.lower() in sid]
+                    reliability_by_source[sid] = sum(matches) / len(matches) if matches else 0.5
+        except Exception as e:
+            logger.debug("CollectionGovernor source_rankings failed: %s", e)
+        # Sort by elapsed desc, then reliability desc (prefer due + high-reliability)
+        def sort_key(item: tuple[str, float]) -> tuple[float, float]:
+            sid, elapsed = item
+            rel = reliability_by_source.get(sid, 0.5)
+            return (elapsed, rel)
+        source_id = max(candidates, key=sort_key)[0]
         return {"source": source_id}
 
     def record_fetch_result(

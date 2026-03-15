@@ -15,9 +15,10 @@ from typing import Dict, Any, List
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'api'))
 
 class TestConfig:
-    """Test configuration and constants"""
+    """Test configuration and constants. API uses flat /api (no version in path); paths use snake_case."""
     
     API_BASE_URL = "http://localhost:8001"
+    TEST_DOMAIN = "politics"  # Domain for domain-scoped routes: politics | finance | science-tech
     DB_CONFIG = {
         "host": "localhost",
         "database": "news_intelligence",
@@ -119,7 +120,7 @@ class TestDataManager:
     
     def create_article(self, article_data):
         """Create a test article"""
-        response = self.api.post(f"{TestConfig.API_BASE_URL}/api/v4/content-analysis/articles", 
+        response = self.api.post(f"{TestConfig.API_BASE_URL}/api/articles", 
                                 json=article_data)
         if response.status_code == 200:
             article_id = response.json()["data"]["id"]
@@ -129,7 +130,7 @@ class TestDataManager:
     
     def create_storyline(self, storyline_data):
         """Create a test storyline"""
-        response = self.api.post(f"{TestConfig.API_BASE_URL}/api/v4/storyline-management/storylines",
+        response = self.api.post(f"{TestConfig.API_BASE_URL}/api/politics/storylines",
                                 json=storyline_data)
         if response.status_code == 200:
             storyline_id = response.json()["data"]["storyline_id"]
@@ -139,7 +140,7 @@ class TestDataManager:
     
     def create_rss_feed(self, feed_data):
         """Create a test RSS feed"""
-        response = self.api.post(f"{TestConfig.API_BASE_URL}/api/v4/news-aggregation/rss-feeds",
+        response = self.api.post(f"{TestConfig.API_BASE_URL}/api/politics/rss_feeds",
                                 json=feed_data)
         if response.status_code == 200:
             feed_id = response.json()["data"]["id"]
@@ -151,11 +152,11 @@ class TestDataManager:
         """Clean up all created resources"""
         for resource_type, resource_id in self.created_resources:
             if resource_type == "article":
-                self.api.delete(f"{TestConfig.API_BASE_URL}/api/v4/content-analysis/articles/{resource_id}")
+                self.api.delete(f"{TestConfig.API_BASE_URL}/api/articles/{resource_id}")
             elif resource_type == "storyline":
-                self.api.delete(f"{TestConfig.API_BASE_URL}/api/v4/storyline-management/storylines/{resource_id}")
+                self.api.delete(f"{TestConfig.API_BASE_URL}/api/politics/storylines/{resource_id}")
             elif resource_type == "rss_feed":
-                self.api.delete(f"{TestConfig.API_BASE_URL}/api/v4/news-aggregation/rss-feeds/{resource_id}")
+                self.api.delete(f"{TestConfig.API_BASE_URL}/api/politics/rss_feeds/{resource_id}")
 
 @pytest.fixture(scope="function")
 def test_data_manager(api_client, db_connection):

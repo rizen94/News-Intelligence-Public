@@ -60,12 +60,14 @@ Each storyline has its own automation settings:
 
 ## Usage
 
+All automation endpoints use `/api/{domain}/storylines/...` where `{domain}` is one of `politics`, `finance`, or `science-tech`.
+
 ### Setting Up Automation
 
 1. **Enable Automation for a Storyline**
 
 ```bash
-PUT /api/v4/storyline-management/storylines/{storyline_id}/automation/settings
+PUT /api/{domain}/storylines/{storyline_id}/automation/settings
 ```
 
 ```json
@@ -90,7 +92,7 @@ PUT /api/v4/storyline-management/storylines/{storyline_id}/automation/settings
 2. **Trigger Article Discovery**
 
 ```bash
-POST /api/v4/storyline-management/storylines/{storyline_id}/automation/discover?force_refresh=true
+POST /api/{domain}/storylines/{storyline_id}/automation/discover?force_refresh=true
 ```
 
 This will:
@@ -103,7 +105,7 @@ This will:
 3. **View Pending Suggestions**
 
 ```bash
-GET /api/v4/storyline-management/storylines/{storyline_id}/automation/suggestions
+GET /api/{domain}/storylines/{storyline_id}/automation/suggestions
 ```
 
 Returns:
@@ -115,7 +117,7 @@ Returns:
 4. **Approve a Suggestion**
 
 ```bash
-POST /api/v4/storyline-management/storylines/{storyline_id}/automation/suggestions/{suggestion_id}/approve
+POST /api/{domain}/storylines/{storyline_id}/automation/suggestions/{suggestion_id}/approve
 ```
 
 Adds the article to the storyline.
@@ -123,7 +125,7 @@ Adds the article to the storyline.
 5. **Reject a Suggestion**
 
 ```bash
-POST /api/v4/storyline-management/storylines/{storyline_id}/automation/suggestions/{suggestion_id}/reject?reason=Not relevant
+POST /api/{domain}/storylines/{storyline_id}/automation/suggestions/{suggestion_id}/reject?reason=Not relevant
 ```
 
 Marks the suggestion as rejected.

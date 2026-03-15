@@ -54,6 +54,20 @@ The News Intelligence system currently has **multiple overlapping orchestration 
 - **CollectionGovernor** (`api/services/collection_governor.py`) recommends when to fetch (RSS or gold) based on `last_collection_times` and min/max interval from config; it does not perform fetches — the coordinator calls existing `collect_rss_feeds()` and `FinanceOrchestrator.submit_task(refresh, topic=gold)`.
 - **API:** `GET /api/orchestrator/status`, `GET /api/orchestrator/metrics`.
 
+### 2.4.1 Orchestrator cycle (v6 Phase 2–5)
+
+Config in `orchestrator_governance.yaml` defines **cycle phases** and **scheduled intelligence tasks**:
+
+- **Cycle phases** (conceptual): `assessment` → `prioritization` → `deep_processing` → `quality_review` → `synthesis`. The coordinator’s loop implements assessment/plan (CollectionGovernor, ProcessingGovernor) and execute (RSS, finance refresh, processing phase); learning and pattern analysis run periodically.
+
+- **Event chronicle updates (Phase 2 T2.3):** When `event_tracking.enabled` and `event_tracking.update_interval_seconds` have elapsed since `last_event_chronicle_update`, the coordinator runs `_run_scheduled_chronicle_updates(max_events_per_cycle)`: fetches tracked event IDs, builds `event_chronicles` (developments, momentum_score) for each. State key: `last_event_chronicle_update`.
+
+- **Dossier compilation (Phase 5):** When `entity_tracking.enabled` and `entity_tracking.dossier_compile_interval_seconds` have elapsed since `last_dossier_compile_run`, the coordinator runs `_run_scheduled_dossier_compiles(max_dossiers_per_cycle)`: selects entity_profiles with no or stale dossier (compilation_date &lt; 7 days), compiles up to N dossiers via `dossier_compiler_service.compile_dossier()`. State key: `last_dossier_compile_run`.
+
+- **Quality thresholds:** `quality_thresholds.min_quality_score`, `min_importance_for_processing` inform prioritization (ProcessingGovernor, future use).
+
+See [V6_QUALITY_FIRST_TODO.md](V6_QUALITY_FIRST_TODO.md) and [DOMAIN_4_INTELLIGENCE_HUB.md](DOMAIN_4_INTELLIGENCE_HUB.md) for Phase 1–5 summary.
+
 ### 2.5 Overlap and Redundancy
 
 - **RSS collection** runs from: AutomationManager (1h), cron (2x daily), pipeline route, news_aggregation `collect_now` / `fetch_articles`

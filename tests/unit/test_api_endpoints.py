@@ -12,7 +12,7 @@ class TestAPIEndpoints:
     
     def test_health_endpoint(self, api_client):
         """Test system health endpoint"""
-        response = api_client.get(f"{TestConfig.API_BASE_URL}/api/v4/system-monitoring/status")
+        response = api_client.get(f"{TestConfig.API_BASE_URL}/api/system_monitoring/status")
         TestUtils.assert_response_success(response)
         
         data = response.json()
@@ -22,7 +22,7 @@ class TestAPIEndpoints:
     
     def test_articles_endpoint(self, api_client):
         """Test articles endpoint"""
-        response = api_client.get(f"{TestConfig.API_BASE_URL}/api/v4/content-analysis/articles")
+        response = api_client.get(f"{TestConfig.API_BASE_URL}/api/articles")
         TestUtils.assert_response_success(response)
         
         data = response.json()
@@ -35,7 +35,7 @@ class TestAPIEndpoints:
     
     def test_storylines_endpoint(self, api_client):
         """Test storylines endpoint"""
-        response = api_client.get(f"{TestConfig.API_BASE_URL}/api/v4/storyline-management/storylines")
+        response = api_client.get(f"{TestConfig.API_BASE_URL}/api/politics/storylines")
         TestUtils.assert_response_success(response)
         
         data = response.json()
@@ -48,7 +48,7 @@ class TestAPIEndpoints:
     
     def test_topics_endpoint(self, api_client):
         """Test topics endpoint"""
-        response = api_client.get(f"{TestConfig.API_BASE_URL}/api/v4/content-analysis/topics")
+        response = api_client.get(f"{TestConfig.API_BASE_URL}/api/politics/content_analysis/topics")
         TestUtils.assert_response_success(response)
         
         data = response.json()
@@ -56,7 +56,7 @@ class TestAPIEndpoints:
     
     def test_word_cloud_endpoint(self, api_client):
         """Test word cloud endpoint"""
-        response = api_client.get(f"{TestConfig.API_BASE_URL}/api/v4/content-analysis/topics/word-cloud")
+        response = api_client.get(f"{TestConfig.API_BASE_URL}/api/politics/content_analysis/topics/word_cloud")
         TestUtils.assert_response_success(response)
         
         data = response.json()
@@ -67,7 +67,7 @@ class TestAPIEndpoints:
     
     def test_rss_feeds_endpoint(self, api_client):
         """Test RSS feeds endpoint"""
-        response = api_client.get(f"{TestConfig.API_BASE_URL}/api/v4/news-aggregation/rss-feeds")
+        response = api_client.get(f"{TestConfig.API_BASE_URL}/api/politics/rss_feeds")
         TestUtils.assert_response_success(response)
         
         data = response.json()

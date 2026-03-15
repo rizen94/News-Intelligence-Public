@@ -36,7 +36,7 @@ Context for AI assistants. Use project terminology consistently.
 | Frontend | `web/src/App.tsx` |
 | API client | `web/src/services/api/` + `apiService.ts` |
 | DB (single source) | `api/shared/database/connection.py` |
-| Domain routing | `web/src/components/shared/DomainLayout/DomainLayout.tsx` |
+| Domain layout / shell | `web/src/layout/MainLayout.tsx` (routes in `App.tsx`: `/:domain` with MainLayout) |
 
 ---
 
@@ -111,6 +111,17 @@ Context for AI assistants. Use project terminology consistently.
 2. Extend existing services instead of creating new ones.
 3. Use `Logger` (frontend) or `logger` (backend) for logging.
 4. Follow naming in this file and `docs/CODING_STYLE_GUIDE.md`.
+
+---
+
+## Keeping Documentation Aligned
+
+When you change the **API** (routes, path segments, response shape) or **core behaviour** (entry points, DB config, domain layout):
+
+1. **Update docs in the same change** (or the next commit): `AGENTS.md`, `docs/CODING_STYLE_GUIDE.md`, `docs/ARCHITECTURE_AND_OPERATIONS.md`, and any domain or feature doc that references the change.
+2. **Paths:** Use flat `/api` (no version in path). Route path segments: `snake_case` (e.g. `system_monitoring`, `rss_feeds`). Domain-scoped: `/api/{domain}/...` with domain `politics` | `finance` | `science-tech`.
+3. **Code and tests:** Keep test URLs and frontend API calls in sync with the real routes (no `/api/v4/`, no kebab-case route segments).
+4. **Single source:** Entry points and file layout in `AGENTS.md` and the “Project structure” in `CODING_STYLE_GUIDE.md` must match the repo (e.g. `main_v4.py`, `api/domains/*/routes/`, `MainLayout.tsx`).
 
 ---
 

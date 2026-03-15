@@ -15,9 +15,9 @@ class TestErrorHandling:
         print("🚫 Testing invalid endpoint handling...")
         
         invalid_endpoints = [
-            "/api/v4/nonexistent/endpoint",
-            "/api/v4/content-analysis/invalid",
-            "/api/v4/storyline-management/invalid"
+            "/api/nonexistent/endpoint",
+            "/api/politics/content_analysis/invalid",
+            "/api/politics/invalid"
         ]
         
         for endpoint in invalid_endpoints:
@@ -32,7 +32,7 @@ class TestErrorHandling:
         
         # Test invalid JSON
         response = api_client.post(
-            f"{TestConfig.API_BASE_URL}/api/v4/storyline-management/storylines",
+            f"{TestConfig.API_BASE_URL}/api/politics/storylines",
             data="invalid json",
             headers={"Content-Type": "application/json"}
         )
@@ -40,14 +40,14 @@ class TestErrorHandling:
         
         # Test missing required fields
         response = api_client.post(
-            f"{TestConfig.API_BASE_URL}/api/v4/storyline-management/storylines",
+            f"{TestConfig.API_BASE_URL}/api/politics/storylines",
             json={"invalid": "data"}
         )
         assert response.status_code in [400, 422], f"Expected 400/422 for missing fields, got {response.status_code}"
         
         # Test invalid data types
         response = api_client.post(
-            f"{TestConfig.API_BASE_URL}/api/v4/storyline-management/storylines",
+            f"{TestConfig.API_BASE_URL}/api/politics/storylines",
             json={"title": 123, "description": None}
         )
         assert response.status_code in [400, 422], f"Expected 400/422 for invalid types, got {response.status_code}"
@@ -59,15 +59,15 @@ class TestErrorHandling:
         print("🚫 Testing resource not found handling...")
         
         # Test non-existent article
-        response = api_client.get(f"{TestConfig.API_BASE_URL}/api/v4/content-analysis/articles/99999")
+        response = api_client.get(f"{TestConfig.API_BASE_URL}/api/articles/99999")
         assert response.status_code == 404, f"Expected 404 for non-existent article, got {response.status_code}"
         
         # Test non-existent storyline
-        response = api_client.get(f"{TestConfig.API_BASE_URL}/api/v4/storyline-management/storylines/99999")
+        response = api_client.get(f"{TestConfig.API_BASE_URL}/api/politics/storylines/99999")
         assert response.status_code == 404, f"Expected 404 for non-existent storyline, got {response.status_code}"
         
         # Test non-existent topic
-        response = api_client.get(f"{TestConfig.API_BASE_URL}/api/v4/content-analysis/topics/nonexistent-topic/articles")
+        response = api_client.get(f"{TestConfig.API_BASE_URL}/api/politics/content_analysis/topics/nonexistent-topic/articles")
         assert response.status_code == 404, f"Expected 404 for non-existent topic, got {response.status_code}"
         
         print("✅ Resource not found handling test passed!")
@@ -80,7 +80,7 @@ class TestErrorHandling:
         # (This would require more sophisticated mocking in a real test environment)
         
         # For now, test that the system handles database connection issues gracefully
-        response = api_client.get(f"{TestConfig.API_BASE_URL}/api/v4/system-monitoring/status")
+        response = api_client.get(f"{TestConfig.API_BASE_URL}/api/system_monitoring/status")
         
         # Should either succeed or fail gracefully
         assert response.status_code in [200, 500], f"Unexpected status code: {response.status_code}"
@@ -98,7 +98,7 @@ class TestErrorHandling:
         # Make rapid requests to test rate limiting
         responses = []
         for i in range(20):
-            response = api_client.get(f"{TestConfig.API_BASE_URL}/api/v4/content-analysis/articles")
+            response = api_client.get(f"{TestConfig.API_BASE_URL}/api/articles")
             responses.append(response.status_code)
         
         # Most requests should succeed (no rate limiting implemented yet)

@@ -48,7 +48,7 @@ class TestNewsIntelligenceFunctionality:
         print("🧪 Testing article creation and retrieval...")
         
         # Test 1: Create article via API
-        response = requests.post(f"{self.api_base}/api/v4/content-analysis/articles", 
+        response = requests.post(f"{self.api_base}/api/articles", 
                                json=self.test_data["test_article"])
         
         if response.status_code == 200:
@@ -56,7 +56,7 @@ class TestNewsIntelligenceFunctionality:
             article_id = article_data.get("data", {}).get("id")
             
             # Test 2: Retrieve the article
-            get_response = requests.get(f"{self.api_base}/api/v4/content-analysis/articles/{article_id}")
+            get_response = requests.get(f"{self.api_base}/api/articles/{article_id}")
             
             if get_response.status_code == 200:
                 retrieved_article = get_response.json()["data"]
@@ -80,7 +80,7 @@ class TestNewsIntelligenceFunctionality:
         print("🧪 Testing storyline management functionality...")
         
         # Test 1: Create storyline
-        response = requests.post(f"{self.api_base}/api/v4/storyline-management/storylines",
+        response = requests.post(f"{self.api_base}/api/politics/storylines",
                                json=self.test_data["test_storyline"])
         
         if response.status_code == 200:
@@ -88,7 +88,7 @@ class TestNewsIntelligenceFunctionality:
             storyline_id = storyline_data["data"]["storyline_id"]
             
             # Test 2: Get available articles
-            articles_response = requests.get(f"{self.api_base}/api/v4/content-analysis/articles")
+            articles_response = requests.get(f"{self.api_base}/api/articles")
             
             if articles_response.status_code == 200:
                 articles = articles_response.json()["data"]["articles"]
@@ -97,13 +97,13 @@ class TestNewsIntelligenceFunctionality:
                     # Test 3: Add article to storyline
                     article_id = articles[0]["id"]
                     add_response = requests.post(
-                        f"{self.api_base}/api/v4/storyline-management/storylines/{storyline_id}/articles/{article_id}",
+                        f"{self.api_base}/api/politics/storylines/{storyline_id}/articles/{article_id}",
                         json={"relevance_score": 0.8}
                     )
                     
                     if add_response.status_code == 200:
                         # Test 4: Verify article is in storyline
-                        storyline_response = requests.get(f"{self.api_base}/api/v4/storyline-management/storylines/{storyline_id}")
+                        storyline_response = requests.get(f"{self.api_base}/api/politics/storylines/{storyline_id}")
                         
                         if storyline_response.status_code == 200:
                             storyline = storyline_response.json()["data"]
@@ -136,7 +136,7 @@ class TestNewsIntelligenceFunctionality:
         print("🧪 Testing topic clustering functionality...")
         
         # Test 1: Get word cloud data
-        response = requests.get(f"{self.api_base}/api/v4/content-analysis/topics/word-cloud")
+        response = requests.get(f"{self.api_base}/api/politics/content_analysis/topics/word_cloud")
         
         if response.status_code == 200:
             data = response.json()
@@ -171,7 +171,7 @@ class TestNewsIntelligenceFunctionality:
         print("🧪 Testing data integrity and consistency...")
         
         # Test 1: Get system monitoring data
-        monitoring_response = requests.get(f"{self.api_base}/api/v4/system-monitoring/status")
+        monitoring_response = requests.get(f"{self.api_base}/api/system_monitoring/status")
         
         if monitoring_response.status_code == 200:
             monitoring_data = monitoring_response.json()
@@ -183,8 +183,8 @@ class TestNewsIntelligenceFunctionality:
                 total_storylines = db_data["total_storylines"]
                 
                 # Test 3: Cross-reference with individual endpoints
-                articles_response = requests.get(f"{self.api_base}/api/v4/content-analysis/articles")
-                storylines_response = requests.get(f"{self.api_base}/api/v4/storyline-management/storylines")
+                articles_response = requests.get(f"{self.api_base}/api/articles")
+                storylines_response = requests.get(f"{self.api_base}/api/politics/storylines")
                 
                 if articles_response.status_code == 200 and storylines_response.status_code == 200:
                     articles_data = articles_response.json()
@@ -215,7 +215,7 @@ class TestNewsIntelligenceFunctionality:
         print("🧪 Testing error handling and edge cases...")
         
         # Test 1: Invalid storyline ID
-        response = requests.get(f"{self.api_base}/api/v4/storyline-management/storylines/99999")
+        response = requests.get(f"{self.api_base}/api/politics/storylines/99999")
         
         if response.status_code == 404:
             print("✅ Proper 404 handling for invalid storyline ID")
@@ -224,7 +224,7 @@ class TestNewsIntelligenceFunctionality:
             return False
         
         # Test 2: Invalid article ID
-        response = requests.get(f"{self.api_base}/api/v4/content-analysis/articles/99999")
+        response = requests.get(f"{self.api_base}/api/articles/99999")
         
         if response.status_code == 404:
             print("✅ Proper 404 handling for invalid article ID")
@@ -233,7 +233,7 @@ class TestNewsIntelligenceFunctionality:
             return False
         
         # Test 3: Invalid JSON in POST request
-        response = requests.post(f"{self.api_base}/api/v4/storyline-management/storylines",
+        response = requests.post(f"{self.api_base}/api/politics/storylines",
                               data="invalid json",
                               headers={"Content-Type": "application/json"})
         

@@ -168,59 +168,59 @@ Cross-domain monitoring tab: database size/tables/records, device disk and proce
 ```python
 # System Health
 GET    /api/system_monitoring/health                # Get system health status (flat /api)
-GET    /api/v4/monitoring/health/services           # Get service health status
-GET    /api/v4/monitoring/health/dependencies       # Get dependency health
-POST   /api/v4/monitoring/health/check              # Perform health check
+GET    /api/monitoring/health/services           # Get service health status
+GET    /api/monitoring/health/dependencies       # Get dependency health
+POST   /api/monitoring/health/check              # Perform health check
 
 # Service Monitoring
-GET    /api/v4/monitoring/services                  # Get all services status
-GET    /api/v4/monitoring/services/{service_id}     # Get specific service status
-POST   /api/v4/monitoring/services/register         # Register new service
-PUT    /api/v4/monitoring/services/{service_id}      # Update service status
+GET    /api/monitoring/services                  # Get all services status
+GET    /api/monitoring/services/{service_id}     # Get specific service status
+POST   /api/monitoring/services/register         # Register new service
+PUT    /api/monitoring/services/{service_id}      # Update service status
 ```
 
 ### **Performance Monitoring**
 ```python
 # Performance Metrics
-GET    /api/v4/monitoring/performance               # Get performance metrics
-GET    /api/v4/monitoring/performance/response-time # Get response time metrics
-GET    /api/v4/monitoring/performance/throughput    # Get throughput metrics
-GET    /api/v4/monitoring/performance/resources     # Get resource utilization
+GET    /api/monitoring/performance               # Get performance metrics
+GET    /api/monitoring/performance/response-time # Get response time metrics
+GET    /api/monitoring/performance/throughput    # Get throughput metrics
+GET    /api/monitoring/performance/resources     # Get resource utilization
 
 # Performance Analysis
-POST   /api/v4/monitoring/performance/analyze       # Analyze performance data
-GET    /api/v4/monitoring/performance/bottlenecks   # Get bottleneck analysis
-POST   /api/v4/monitoring/performance/optimize      # Get optimization recommendations
+POST   /api/monitoring/performance/analyze       # Analyze performance data
+GET    /api/monitoring/performance/bottlenecks   # Get bottleneck analysis
+POST   /api/monitoring/performance/optimize      # Get optimization recommendations
 ```
 
 ### **Log Management**
 ```python
 # Log Operations
-GET    /api/v4/monitoring/logs                      # Get system logs
-POST   /api/v4/monitoring/logs/search               # Search logs
-GET    /api/v4/monitoring/logs/errors               # Get error logs
-POST   /api/v4/monitoring/logs/analyze              # Analyze logs
+GET    /api/monitoring/logs                      # Get system logs
+POST   /api/monitoring/logs/search               # Search logs
+GET    /api/monitoring/logs/errors               # Get error logs
+POST   /api/monitoring/logs/analyze              # Analyze logs
 
 # Error Tracking
-GET    /api/v4/monitoring/errors                    # Get error summary
-GET    /api/v4/monitoring/errors/{error_id}         # Get specific error details
-POST   /api/v4/monitoring/errors/track              # Track new error
-GET    /api/v4/monitoring/errors/trends             # Get error trends
+GET    /api/monitoring/errors                    # Get error summary
+GET    /api/monitoring/errors/{error_id}         # Get specific error details
+POST   /api/monitoring/errors/track              # Track new error
+GET    /api/monitoring/errors/trends             # Get error trends
 ```
 
 ### **Alerting & Notifications**
 ```python
 # Alert Management
-GET    /api/v4/monitoring/alerts                    # Get active alerts
-POST   /api/v4/monitoring/alerts/create              # Create new alert
-PUT    /api/v4/monitoring/alerts/{alert_id}         # Update alert
-DELETE /api/v4/monitoring/alerts/{alert_id}         # Delete alert
+GET    /api/monitoring/alerts                    # Get active alerts
+POST   /api/monitoring/alerts/create              # Create new alert
+PUT    /api/monitoring/alerts/{alert_id}         # Update alert
+DELETE /api/monitoring/alerts/{alert_id}         # Delete alert
 
 # Intelligent Alerting
-POST   /api/v4/monitoring/alerts/prioritize         # Prioritize alerts
-POST   /api/v4/monitoring/alerts/correlate          # Correlate alerts
-GET    /api/v4/monitoring/alerts/summary            # Get alert summary
-POST   /api/v4/monitoring/alerts/analyze            # Analyze alert patterns
+POST   /api/monitoring/alerts/prioritize         # Prioritize alerts
+POST   /api/monitoring/alerts/correlate          # Correlate alerts
+GET    /api/monitoring/alerts/summary            # Get alert summary
+POST   /api/monitoring/alerts/analyze            # Analyze alert patterns
 ```
 
 ## 📊 **Data Models**

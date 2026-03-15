@@ -100,7 +100,7 @@ await supervisor.start_monitoring()  # Runs continuously
 
 #### **Get Health Summary**
 ```bash
-GET /api/v4/system-monitoring/route-supervisor/health
+GET /api/system_monitoring/route_supervisor/health
 ```
 
 Returns:
@@ -128,7 +128,7 @@ Returns:
 
 #### **Get Comprehensive Report**
 ```bash
-GET /api/v4/system-monitoring/route-supervisor/report
+GET /api/system_monitoring/route_supervisor/report
 ```
 
 Returns detailed report with:
@@ -139,21 +139,21 @@ Returns detailed report with:
 
 #### **Get Recent Issues**
 ```bash
-GET /api/v4/system-monitoring/route-supervisor/issues?hours=24&limit=100
+GET /api/system_monitoring/route_supervisor/issues?hours=24&limit=100
 ```
 
 Returns recent issues from the log.
 
 #### **Check Specific Route**
 ```bash
-GET /api/v4/system-monitoring/route-supervisor/routes/{route_path}?method=GET&domain=politics
+GET /api/system_monitoring/route_supervisor/routes/{route_path}?method=GET&domain=politics
 ```
 
 Returns health status for a specific route.
 
 #### **Trigger Immediate Check**
 ```bash
-POST /api/v4/system-monitoring/route-supervisor/check-now
+POST /api/system_monitoring/route_supervisor/check_now
 ```
 
 Triggers an immediate health check.

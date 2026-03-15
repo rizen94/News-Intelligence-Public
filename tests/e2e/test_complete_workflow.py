@@ -20,14 +20,14 @@ class TestCompleteWorkflow:
         assert rss_feed_id is not None, "Failed to create RSS feed"
         
         # Step 2: Fetch articles from RSS feed
-        response = api_client.post(f"{TestConfig.API_BASE_URL}/api/v4/news-aggregation/fetch-articles")
+        response = api_client.post(f"{TestConfig.API_BASE_URL}/api/fetch_articles")
         TestUtils.assert_response_success(response)
         
         # Step 3: Wait for articles to be processed
         time.sleep(3)
         
         # Step 4: Get articles
-        response = api_client.get(f"{TestConfig.API_BASE_URL}/api/v4/content-analysis/articles")
+        response = api_client.get(f"{TestConfig.API_BASE_URL}/api/articles")
         TestUtils.assert_response_success(response)
         
         articles = response.json()["data"]["articles"]
@@ -40,31 +40,31 @@ class TestCompleteWorkflow:
         # Step 6: Add articles to storyline
         for article in articles[:3]:  # Add first 3 articles
             response = api_client.post(
-                f"{TestConfig.API_BASE_URL}/api/v4/storyline-management/storylines/{storyline_id}/articles/{article['id']}",
+                f"{TestConfig.API_BASE_URL}/api/politics/storylines/{storyline_id}/articles/{article['id']}",
                 json={"relevance_score": 0.8}
             )
             TestUtils.assert_response_success(response)
         
         # Step 7: Generate timeline
-        response = api_client.get(f"{TestConfig.API_BASE_URL}/api/v4/storyline-management/storylines/{storyline_id}/timeline")
+        response = api_client.get(f"{TestConfig.API_BASE_URL}/api/politics/storylines/{storyline_id}/timeline")
         TestUtils.assert_response_success(response)
         
         timeline_data = response.json()["data"]
         assert len(timeline_data["timeline_events"]) > 0, "Should have timeline events"
         
         # Step 8: Trigger topic clustering
-        response = api_client.post(f"{TestConfig.API_BASE_URL}/api/v4/content-analysis/topics/cluster")
+        response = api_client.post(f"{TestConfig.API_BASE_URL}/api/politics/content_analysis/topics/cluster")
         TestUtils.assert_response_success(response)
         
         # Step 9: Get topic analysis
-        response = api_client.get(f"{TestConfig.API_BASE_URL}/api/v4/content-analysis/topics/word-cloud")
+        response = api_client.get(f"{TestConfig.API_BASE_URL}/api/politics/content_analysis/topics/word_cloud")
         TestUtils.assert_response_success(response)
         
         word_cloud_data = response.json()["data"]
         assert len(word_cloud_data["word_cloud"]) > 0, "Should have word cloud data"
         
         # Step 10: Verify system monitoring
-        response = api_client.get(f"{TestConfig.API_BASE_URL}/api/v4/system-monitoring/status")
+        response = api_client.get(f"{TestConfig.API_BASE_URL}/api/system_monitoring/status")
         TestUtils.assert_response_success(response)
         
         monitoring_data = response.json()["data"]
@@ -85,16 +85,16 @@ class TestCompleteWorkflow:
         
         # Add article to storyline
         response = api_client.post(
-            f"{TestConfig.API_BASE_URL}/api/v4/storyline-management/storylines/{storyline_id}/articles/{article_id}",
+            f"{TestConfig.API_BASE_URL}/api/politics/storylines/{storyline_id}/articles/{article_id}",
             json={"relevance_score": 0.9}
         )
         TestUtils.assert_response_success(response)
         
         # Verify consistency across endpoints
         endpoints_to_check = [
-            f"/api/v4/content-analysis/articles/{article_id}",
-            f"/api/v4/storyline-management/storylines/{storyline_id}",
-            f"/api/v4/system-monitoring/status"
+            f"/api/articles/{article_id}",
+            f"/api/politics/storylines/{storyline_id}",
+            f"/api/system_monitoring/status"
         ]
         
         for endpoint in endpoints_to_check:
@@ -113,23 +113,23 @@ class TestCompleteWorkflow:
         
         # Test invalid requests
         invalid_requests = [
-            ("GET", "/api/v4/storyline-management/storylines/99999"),
-            ("GET", "/api/v4/content-analysis/articles/99999"),
-            ("POST", "/api/v4/storyline-management/storylines", {"invalid": "data"}),
-            ("POST", "/api/v4/content-analysis/articles", {"invalid": "data"})
+            ("GET", "/api/politics/storylines/99999", None),
+            ("GET", "/api/articles/99999", None),
+            ("POST", "/api/politics/storylines", {"invalid": "data"}),
+            ("POST", "/api/articles", {"invalid": "data"})
         ]
         
         for method, endpoint, data in invalid_requests:
             if method == "GET":
                 response = api_client.get(f"{TestConfig.API_BASE_URL}{endpoint}")
             else:
-                response = api_client.post(f"{TestConfig.API_BASE_URL}{endpoint}", json=data)
+                response = api_client.post(f"{TestConfig.API_BASE_URL}{endpoint}", json=data or {})
             
             # Should handle errors gracefully
             assert response.status_code in [400, 404, 422, 500], f"Unexpected status code for {endpoint}: {response.status_code}"
         
         # Test system recovery
-        response = api_client.get(f"{TestConfig.API_BASE_URL}/api/v4/system-monitoring/status")
+        response = api_client.get(f"{TestConfig.API_BASE_URL}/api/system_monitoring/status")
         TestUtils.assert_response_success(response)
         
         print("✅ Error recovery test passed!")

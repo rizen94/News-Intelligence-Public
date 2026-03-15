@@ -10,11 +10,10 @@ export const storylinesApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const apiParams: any = {};
-      if (params.page !== undefined && params.limit !== undefined) {
-        apiParams.offset = (params.page - 1) * params.limit;
-        apiParams.limit = params.limit;
-      } else if (params.page_size) apiParams.limit = params.page_size;
-      else if (params.limit) apiParams.limit = params.limit;
+      // Backend expects page + page_size (storyline_crud)
+      if (params.page !== undefined) apiParams.page = params.page;
+      if (params.page_size !== undefined) apiParams.page_size = params.page_size;
+      else if (params.limit !== undefined) apiParams.page_size = params.limit;
       if (params.status) apiParams.status = params.status;
 
       const response = await getApi().get(

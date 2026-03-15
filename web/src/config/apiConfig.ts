@@ -6,10 +6,10 @@
  * - Default (no VITE_API_URL, no localStorage): base URL is ''. Requests are relative
  *   (e.g. /api/politics/articles). In dev, Vite proxies /api to http://localhost:8000,
  *   so the API must be running on port 8000 for data to load.
- * - If you set an API URL (e.g. http://host:8000 or http://host:8000/api/v4): it is
+ * - If you set an API URL (e.g. http://host:8000 or with a path): it is
  *   stored in localStorage. Domain-prefixed routes use that full base; context-centric
  *   (flat /api/...) routes use origin only (getApiOrigin()) so paths stay /api/...
- *   and do not become /api/v4/api/...
+ *   and do not double-prefix (e.g. /api/... stays /api/...).
  */
 
 // Get API base URL from environment or use default
