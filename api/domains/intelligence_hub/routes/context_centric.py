@@ -1595,9 +1595,13 @@ def ingest_processed_documents_from_config() -> dict:
 @router.post("/processed_documents/{document_id}/process", response_model=dict)
 def process_processed_document(
     document_id: int,
-    body: dict = Body(None, example={"storyline_connections": [{"domain_key": "politics", "storyline_id": 1}]}),
+    body: dict = Body(None, example={"storyline_connections": [{"domain_key": "politics", "storyline_id": 1}], "force_reprocess": False}),
 ) -> dict:
-    """T3.2: Run document processing stub — link to storylines, optionally set placeholder extracted_sections/key_findings."""
+    """
+    Process a document: download PDF from source_url, extract text/sections/entities/findings.
+    If the document has already been processed, pass force_reprocess=true to re-extract.
+    Optionally pass extracted_sections/key_findings/entities_mentioned to override auto-extraction.
+    """
     from services.document_processing_service import process_document
     body = body or {}
     result = process_document(
@@ -1606,10 +1610,20 @@ def process_processed_document(
         extracted_sections=body.get("extracted_sections"),
         key_findings=body.get("key_findings"),
         entities_mentioned=body.get("entities_mentioned"),
+        force_reprocess=body.get("force_reprocess", False),
     )
     if not result.get("success"):
         raise HTTPException(status_code=400, detail=result.get("error", "Processing failed"))
     return result
+
+
+@router.post("/processed_documents/batch_process", response_model=dict)
+def batch_process_documents(
+    limit: int = Query(10, ge=1, le=50),
+) -> dict:
+    """Process all documents that have a source_url but haven't been parsed yet."""
+    from services.document_processing_service import process_unprocessed_documents
+    return process_unprocessed_documents(limit=limit)
 
 
 # ---------------------------------------------------------------------------
@@ -2266,3 +2280,95 @@ def get_entity_synthesis(
     """
     from services.content_synthesis_service import synthesize_entity_context
     return synthesize_entity_context(domain_key, entity_id)
+
+
+# ---------------------------------------------------------------------------
+# Fact verification endpoints (T3.3)
+# ---------------------------------------------------------------------------
+
+@router.post("/verification/claim/{claim_id}", response_model=dict)
+def verify_single_claim(
+    claim_id: int,
+    domain_key: str = Query(...),
+    hours: int = Query(72, ge=1, le=720),
+) -> dict:
+    """
+    Full verification pipeline for a single claim: corroboration, contradiction check,
+    source reliability scoring. Returns verification_status and confidence.
+    """
+    from services.fact_verification_service import verify_claim
+    return verify_claim(claim_id, domain_key, hours=hours)
+
+
+@router.post("/verification/corroborate", response_model=dict)
+def corroborate_claim_text(
+    body: dict = Body(..., examples=[{"claim_text": "Federal Reserve raises interest rates", "domain_key": "finance"}]),
+) -> dict:
+    """
+    Check if a claim text is corroborated by multiple independent sources.
+    Returns status (corroborated/partially_corroborated/single_source/unverified),
+    source count, and confidence.
+    """
+    claim_text = body.get("claim_text", "")
+    domain_key = body.get("domain_key", "politics")
+    hours = body.get("hours", 72)
+    if not claim_text:
+        raise HTTPException(status_code=400, detail="claim_text required")
+
+    from services.fact_verification_service import corroborate_claim
+    return corroborate_claim(claim_text, domain_key, hours=hours)
+
+
+@router.get("/verification/contradictions", response_model=dict)
+def get_contradictions(
+    domain_key: str = Query(...),
+    hours: int = Query(48, ge=1, le=720),
+    limit: int = Query(20, ge=1, le=100),
+) -> dict:
+    """
+    Find contradicting claims within a domain's recent extracted claims.
+    Returns pairs of claims that appear to conflict.
+    """
+    from services.fact_verification_service import detect_contradictions
+    return detect_contradictions(domain_key, hours=hours, limit=limit)
+
+
+@router.get("/verification/completeness", response_model=dict)
+def get_completeness_assessment(
+    domain_key: str = Query(...),
+    topic: Optional[str] = Query(None),
+    storyline_id: Optional[int] = Query(None),
+    hours: int = Query(72, ge=1, le=720),
+) -> dict:
+    """
+    Assess coverage completeness for a topic or storyline: source diversity,
+    temporal coverage, sentiment spread, identified gaps.
+    """
+    if not topic and not storyline_id:
+        raise HTTPException(status_code=400, detail="Provide topic or storyline_id")
+
+    from services.fact_verification_service import assess_completeness
+    return assess_completeness(domain_key, topic=topic, storyline_id=storyline_id, hours=hours)
+
+
+@router.post("/verification/batch", response_model=dict)
+def verify_recent_claims_batch(
+    domain_key: str = Query(...),
+    hours: int = Query(24, ge=1, le=168),
+    limit: int = Query(20, ge=1, le=50),
+) -> dict:
+    """
+    Verify the most recent high-confidence claims in a domain.
+    Returns per-claim verification status and summary statistics.
+    """
+    from services.fact_verification_service import verify_recent_claims
+    return verify_recent_claims(domain_key, hours=hours, limit=limit)
+
+
+@router.get("/verification/source_reliability", response_model=dict)
+def get_source_reliability(
+    source: str = Query(..., description="Source domain name to check"),
+) -> dict:
+    """Check reliability tier and score for a news source."""
+    from services.fact_verification_service import score_source_reliability
+    return score_source_reliability(source)

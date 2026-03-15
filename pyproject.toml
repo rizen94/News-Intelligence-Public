@@ -29,6 +29,8 @@ dependencies = [
     "beautifulsoup4>=4.12.0",
     "lxml>=4.9.0",
     "chardet>=5.0.0",
+    # PDF document processing
+    "pdfplumber>=0.11.0",
     # Scheduling & monitoring
     "schedule>=1.2.0",
     "psutil>=5.9.0",

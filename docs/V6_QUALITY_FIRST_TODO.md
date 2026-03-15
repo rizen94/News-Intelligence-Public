@@ -56,14 +56,14 @@
 - [x] API: **GET** `/api/processed_documents`, **GET** `/api/processed_documents/{id}`, **POST** `/api/processed_documents`, **POST** `/api/processed_documents/ingest_from_config`.
 
 ### T3.2 Document processing engine ✅ (stub)
-- [ ] PDF parsing (GPU): deferred; full pipeline later.
+- [x] PDF parsing: `document_processing_service.py` downloads PDFs via URL, extracts text with pdfplumber, identifies sections, extracts entities (LLM + heuristic fallback), extracts key findings. Supports direct upload and batch processing. API: POST `/api/processed_documents/{id}/process`, POST `/api/processed_documents/batch_process`.
 - [x] Stub: `api/services/document_processing_service.py` — `process_document()` can set extracted_sections, key_findings, entities_mentioned (placeholder); upserts document_intelligence with storyline_connections.
 - [x] API: **POST** `/api/processed_documents/{document_id}/process` (body: storyline_connections, optional extracted_sections/key_findings/entities_mentioned).
 
 ### T3.3 Narrative construction ✅ (stub)
 - [x] Thread detection: `api/services/narrative_thread_service.py` — `ensure_narrative_thread()`, `build_threads_for_domain()`; populate narrative_threads from storylines (summary, linked_article_ids).
 - [x] Synthesis stub: `synthesize_threads(domain_key, thread_ids)` returns concatenated summary placeholder; full conflict resolution/uncertainty later.
-- [ ] Quality checks: fact verification, completeness scorer (optional follow-up).
+- [x] Fact verification: `fact_verification_service.py` with multi-source corroboration (full-text search across articles, source counting), contradiction detection (heuristic + negation pairs + numeric divergence), source reliability scoring (4-tier system), completeness assessment (source diversity, temporal coverage, sentiment spread, gap identification). API: POST `/api/verification/claim/{id}`, POST `/api/verification/corroborate`, GET `/api/verification/contradictions`, GET `/api/verification/completeness`, POST `/api/verification/batch`, GET `/api/verification/source_reliability`.
 - [x] API: **GET** `/api/narrative_threads`, **POST** `/api/narrative_threads/build`, **POST** `/api/narrative_threads/synthesize`.
 
 ---
