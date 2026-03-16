@@ -307,7 +307,7 @@ start_api() {
     log "Using SSH tunnel: DB_HOST=${DB_HOST} DB_PORT=${DB_PORT}"
     nohup env DB_HOST="${DB_HOST}" DB_PORT="${DB_PORT}" DB_NAME="${DB_NAME}" DB_USER="${DB_USER}" DB_PASSWORD="${DB_PASSWORD}" \
         NEWS_API_KEY="${NEWS_API_KEY:-}" FRED_API_KEY="${FRED_API_KEY:-}" \
-        "$PYTHON_BIN" -m uvicorn main_v4:app --host 0.0.0.0 --port 8000 --reload > "$API_LOG" 2>&1 &
+        "$PYTHON_BIN" -m uvicorn main_v4:app --host 0.0.0.0 --port 8000 > "$API_LOG" 2>&1 &
     API_PID=$!
     
     # Wait for API to be ready
@@ -400,7 +400,7 @@ verify_services() {
     fi
     
     # Check API
-    if curl -s http://localhost:8000/api/system_monitoring/health > /dev/null 2>&1; then
+    if curl -s --connect-timeout 5 --max-time 15 http://localhost:8000/api/system_monitoring/health > /dev/null 2>&1; then
         success "✅ API Server: Running (http://localhost:8000)"
         info "   - AutomationManager: Active (background tasks)"
         info "   - MLProcessingService: Active"
@@ -410,7 +410,7 @@ verify_services() {
     fi
     
     # Check Frontend
-    if curl -s http://localhost:3000 > /dev/null 2>&1; then
+    if curl -s --connect-timeout 5 --max-time 10 http://localhost:3000 > /dev/null 2>&1; then
         success "✅ Frontend: Running (http://localhost:3000)"
     else
         warning "⚠️  Frontend: Not responding yet (may still be starting)"

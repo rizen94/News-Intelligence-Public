@@ -428,6 +428,98 @@ async def get_articles():
 
 ---
 
+## ⚡ **THREADING & ASYNC RULES** (Critical for API Responsiveness)
+
+The API uses uvicorn with a single-threaded asyncio event loop for HTTP handling.
+Background services (automation, orchestration, finance, topic extraction) run in
+their own daemon threads with their own event loops.  Violating these rules will
+make the API unresponsive.
+
+### **Rule 1: Never block the main event loop**
+
+Background services must **not** use `asyncio.create_task()` on the main event
+loop.  Start them in a dedicated `threading.Thread` with `asyncio.new_event_loop()`:
+
+```python
+# ✅ CORRECT — own thread, own loop
+def _run_background():
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(_start())
+
+threading.Thread(target=_run_background, daemon=True).start()
+
+# ❌ WRONG — blocks the main uvicorn event loop
+asyncio.create_task(my_service.run_loop())
+```
+
+### **Rule 2: Sync route handlers for DB-heavy endpoints**
+
+If a route handler does synchronous work (psycopg2 queries, file I/O, subprocess),
+declare it as a plain `def` — FastAPI will run it in a thread pool automatically:
+
+```python
+# ✅ CORRECT — sync handler; FastAPI runs in thread pool, event loop stays free
+@router.get("/heavy_report")
+def get_heavy_report():
+    conn = get_db_connection()
+    ...
+
+# ❌ WRONG — async handler doing sync DB work blocks the event loop
+@router.get("/heavy_report")
+async def get_heavy_report():
+    conn = get_db_connection()  # blocks event loop!
+    ...
+```
+
+Use `async def` only when the handler truly `await`s async I/O (e.g. httpx, aiofiles).
+
+### **Rule 3: No import shadowing inside lifespan / long functions**
+
+Python treats `import X` anywhere in a function as making `X` a local variable
+for the **entire** function.  If `X` is already imported at module level, a later
+`import X` inside the same function shadows it and causes `UnboundLocalError`
+before that line is reached:
+
+```python
+import threading          # module-level
+
+async def lifespan(app):
+    threading.Thread(...)  # ❌ UnboundLocalError — shadowed by line below
+    ...
+    import threading       # shadows the module-level import for the WHOLE function
+```
+
+**Fix:** remove redundant inner imports; use the module-level import.
+
+### **Rule 4: Guard DB queries with statement timeouts**
+
+Any DB query callable from an API endpoint (directly or transitively) must have a
+local statement timeout so a slow query cannot block the thread indefinitely:
+
+```python
+cur.execute("SET LOCAL statement_timeout = '3s'")
+cur.execute("SELECT ...")
+```
+
+### **Rule 5: Limit background thread pools**
+
+Keep `ThreadPoolExecutor(max_workers=...)` small (2–4) in background services.
+Each worker thread competes for the GIL; too many workers starve the main thread.
+The automation manager caps at `max_concurrent_tasks = 3`.
+
+### **Debugging a hung API**
+
+```bash
+# Send SIGUSR1 to dump all thread tracebacks to api_server.log
+kill -SIGUSR1 $(pgrep -f "uvicorn.*main_v4")
+tail -100 logs/api_server.log
+```
+
+The main thread's stack trace will show exactly where it is blocked.
+
+---
+
 ## 📁 **FILE STRUCTURE STANDARDS**
 
 ### **Project Structure**

@@ -170,7 +170,7 @@ class AutomationManager:
         self.db_config = db_config
         self.is_running = False
         self.tasks: Dict[str, Task] = {}
-        self.executor = ThreadPoolExecutor(max_workers=10)
+        self.executor = ThreadPoolExecutor(max_workers=4)
         self.task_queue = asyncio.Queue()
         self.ollama_semaphore = asyncio.Semaphore(MAX_CONCURRENT_OLLAMA_TASKS)
         self.workers = []
@@ -180,7 +180,7 @@ class AutomationManager:
         self._get_finance_orchestrator = None
         self.health_check_interval = 30  # seconds
         self.task_timeout = 300  # 5 minutes
-        self.max_concurrent_tasks = 8  # More parallel work for full-time utilization
+        self.max_concurrent_tasks = 3  # Keep low to avoid GIL starvation of the API event loop
         
         # Dynamic resource allocation
         self.dynamic_resource_service = None
@@ -872,7 +872,7 @@ class AutomationManager:
                 elif await self._should_scale_up():
                     logger.info("Low system load detected - scaling up processing")
                     # Increase parallel processing
-                    self.max_concurrent_tasks = min(10, self.max_concurrent_tasks + 1)
+                    self.max_concurrent_tasks = min(4, self.max_concurrent_tasks + 1)
                 
                 # Process parallel groups first (phase order)
                 for phase in sorted(phase_groups.keys()):

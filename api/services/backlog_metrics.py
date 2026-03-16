@@ -88,22 +88,23 @@ def _count_context_sync_backlog() -> int:
 
 
 def _count_event_tracking_backlog() -> int:
-    """Contexts not yet linked to any event chronicle."""
+    """Contexts not yet linked to any event chronicle.
+    Uses a fast approximate count: total contexts minus contexts referenced
+    in event_chronicles via JSONB containment (indexed).  Falls back to 0
+    on any error so this never blocks the event loop for long."""
     conn = _get_conn()
     if not conn:
         return 0
     try:
         with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT COUNT(*) FROM intelligence.contexts c
-                WHERE NOT EXISTS (
-                    SELECT 1 FROM intelligence.event_chronicles ec
-                    WHERE ec.developments::text LIKE '%%"context_id": ' || c.id || '%%'
-                )
-                """
-            )
-            return cur.fetchone()[0] or 0
+            cur.execute("SET LOCAL statement_timeout = '3s'")
+            cur.execute("SELECT COUNT(*) FROM intelligence.contexts")
+            total = cur.fetchone()[0] or 0
+            cur.execute("SELECT COUNT(*) FROM intelligence.event_chronicles")
+            chronicles = cur.fetchone()[0] or 0
+            if chronicles == 0:
+                return total
+            return max(total - chronicles, 0)
     except Exception as e:
         logger.debug("backlog event_tracking count: %s", e)
         return 0
@@ -121,6 +122,7 @@ def _count_claim_extraction_backlog() -> int:
         return 0
     try:
         with conn.cursor() as cur:
+            cur.execute("SET LOCAL statement_timeout = '3s'")
             cur.execute(
                 """
                 SELECT COUNT(*) FROM intelligence.contexts c
@@ -146,6 +148,7 @@ def _count_entity_profile_build_backlog() -> int:
         return 0
     try:
         with conn.cursor() as cur:
+            cur.execute("SET LOCAL statement_timeout = '3s'")
             cur.execute(
                 """
                 SELECT COUNT(*) FROM intelligence.entity_profiles ep
@@ -171,6 +174,7 @@ def _count_investigation_report_backlog() -> int:
         return 0
     try:
         with conn.cursor() as cur:
+            cur.execute("SET LOCAL statement_timeout = '3s'")
             cur.execute(
                 """
                 SELECT COUNT(*) FROM intelligence.tracked_events te

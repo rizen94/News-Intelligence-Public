@@ -64,7 +64,7 @@ async def orchestrator_status(request: Request):
 
 
 @router.get("/health")
-@cached_response(ttl=30)  # Cache health checks for 30 seconds
+@cached_response(ttl=30)
 async def health_check():
     """Health check for System Monitoring domain"""
     try:
@@ -197,7 +197,7 @@ async def health_check():
 
 
 @router.get("/monitoring/overview")
-async def get_monitoring_overview():
+def get_monitoring_overview():
     """
     Enhanced monitoring: connection status (API, database, webserver) and live activity feed.
     Use for the monitoring UI that shows system health and "what the backend is doing".
@@ -293,7 +293,7 @@ def _get_last_run_from_db(phase_name: str) -> Optional[datetime]:
 
 
 @router.get("/automation/status")
-async def get_automation_status(request: Request) -> Dict[str, Any]:
+def get_automation_status(request: Request) -> Dict[str, Any]:
     """
     AutomationManager status for monitoring: is_running, queue_size, active_workers,
     and per-phase last_run + interval so the UI can show phase timeline and next-due.
@@ -1826,7 +1826,7 @@ async def get_log_statistics(days: int = 7):
 
 
 @router.get("/process_run_summary")
-async def get_process_run_summary(
+def get_process_run_summary(
     request: Request,
     hours: int = Query(24, ge=1, le=168, description="Look back window in hours"),
     activity_lines: int = Query(80, ge=0, le=200, description="Max lines from activity.jsonl (0 = skip)"),

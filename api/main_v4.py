@@ -3,6 +3,20 @@ News Intelligence System v5.0 - Domain-Driven FastAPI Application
 Uses Llama 3.1 8B (primary) and Mistral 7B (secondary) models
 """
 
+# Dump all thread tracebacks on SIGUSR1 for debugging hung processes
+import faulthandler
+import signal as _signal
+faulthandler.enable()
+try:
+    faulthandler.register(_signal.SIGUSR1)
+except (AttributeError, OSError):
+    pass
+
+# Reduce GIL switch interval so the main uvicorn thread gets more frequent
+# time slices among the many background worker threads
+import sys
+sys.setswitchinterval(0.001)  # 1ms (default 5ms)
+
 # Load .env before any config — override=False so shell/env take precedence
 # API often runs with CWD=api/, so load project-root .env (NEWS_API_KEY, FRED_API_KEY, etc.)
 import os
@@ -140,7 +154,8 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.debug("Finance embedding config not logged: %s", e)
 
-    # Initialize Finance Orchestrator
+    # Initialize Finance Orchestrator (runs in its own background thread to avoid
+    # blocking the main uvicorn event loop with sync DB/state operations)
     try:
         from domains.finance.orchestrator import FinanceOrchestrator
         from domains.finance import data_sources
@@ -160,14 +175,30 @@ async def lifespan(app: FastAPI):
         )
         logger.info("✅ Finance Orchestrator initialized")
         if app.state.finance_orchestrator:
-            app.state.finance_orchestrator.start_scheduler()
-            app.state.finance_orchestrator.start_queue_worker()
-            logger.info("✅ Finance scheduler and queue worker started")
+            def _run_finance_background():
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                fo = app.state.finance_orchestrator
+                fo._schedule_task = None
+                fo._queue_task = None
+                async def _start():
+                    fo._schedule_stop.clear()
+                    fo._schedule_task = asyncio.create_task(fo._schedule_loop())
+                    fo._queue_stop.clear()
+                    fo._queue_task = asyncio.create_task(fo._queue_loop())
+                    while True:
+                        await asyncio.sleep(60)
+                loop.run_until_complete(_start())
+            finance_bg_thread = threading.Thread(target=_run_finance_background, daemon=True, name="FinanceScheduler")
+            finance_bg_thread.start()
+            app.state.finance_bg_thread = finance_bg_thread
+            logger.info("✅ Finance scheduler and queue worker started (background thread)")
     except Exception as e:
         logger.error("❌ Failed to initialize Finance Orchestrator: %s", e)
         app.state.finance_orchestrator = None
 
     # Orchestrator coordinator (collection + processing governor, importance, loop: assess/plan/execute/learn)
+    # Runs in its own background thread to avoid blocking the main uvicorn event loop
     try:
         from services.orchestrator_coordinator import OrchestratorCoordinator
         from collectors.rss_collector import collect_rss_feeds
@@ -179,8 +210,20 @@ async def lifespan(app: FastAPI):
             collect_rss_feeds_fn=collect_rss_feeds,
         )
         app.state.orchestrator_coordinator = coordinator
-        coordinator.start_loop()
-        logger.info("✅ Orchestrator coordinator started (collection + processing governance)")
+        def _run_coordinator_background():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            coordinator._task = None
+            async def _start():
+                coordinator._stop.clear()
+                coordinator._task = asyncio.create_task(coordinator._run_loop())
+                while True:
+                    await asyncio.sleep(60)
+            loop.run_until_complete(_start())
+        coord_thread = threading.Thread(target=_run_coordinator_background, daemon=True, name="OrchestratorCoord")
+        coord_thread.start()
+        app.state.coordinator_thread = coord_thread
+        logger.info("✅ Orchestrator coordinator started (background thread)")
     except Exception as e:
         logger.error("❌ Failed to start Orchestrator coordinator: %s", e, exc_info=True)
         app.state.orchestrator_coordinator = None
@@ -189,14 +232,15 @@ async def lifespan(app: FastAPI):
     try:
         from services.automation_manager import AutomationManager
         from services.ml_processing_service import MLProcessingService
-        import threading
 
         automation = AutomationManager(db_config)
         
-        # Start automation in background thread
+        # Start automation in background thread with limited default executor
         def start_automation():
             import asyncio
+            from concurrent.futures import ThreadPoolExecutor
             loop = asyncio.new_event_loop()
+            loop.set_default_executor(ThreadPoolExecutor(max_workers=2))
             asyncio.set_event_loop(loop)
             loop.run_until_complete(automation.start())
         
@@ -268,7 +312,6 @@ async def lifespan(app: FastAPI):
     # Start Route Supervisor
     try:
         from shared.services.route_supervisor import get_route_supervisor
-        import asyncio
         
         supervisor = get_route_supervisor()
         
@@ -290,13 +333,27 @@ async def lifespan(app: FastAPI):
         app.state.route_supervisor_thread = None
 
     # Health Monitor Orchestrator — polls health feeds and creates alerts on failure
+    # Runs in its own thread to keep sync DB writes off the main event loop
     try:
         from services.health_monitor_orchestrator import get_health_monitor
         base_url = os.getenv("API_BASE_URL", "http://127.0.0.1:8000")
         health_monitor = get_health_monitor(base_url=base_url)
-        health_monitor.start()
+        def _run_health_monitor():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            health_monitor._stop = asyncio.Event()
+            health_monitor._task = None
+            async def _start():
+                health_monitor._stop.clear()
+                health_monitor._task = asyncio.create_task(health_monitor._loop())
+                while True:
+                    await asyncio.sleep(60)
+            loop.run_until_complete(_start())
+        health_thread = threading.Thread(target=_run_health_monitor, daemon=True, name="HealthMonitor")
+        health_thread.start()
         app.state.health_monitor = health_monitor
-        logger.info("✅ Health Monitor Orchestrator started — monitoring health feeds")
+        app.state.health_monitor_thread = health_thread
+        logger.info("✅ Health Monitor Orchestrator started (background thread)")
     except Exception as e:
         logger.error("❌ Failed to start Health Monitor Orchestrator: %s", e)
         app.state.health_monitor = None

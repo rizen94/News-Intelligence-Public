@@ -20,7 +20,44 @@ curl http://localhost:80
 
 ## 🔧 Service Issues
 
-### **API Not Responding**
+### **API Not Responding (current — v6, no Docker)**
+
+**Symptoms**: `curl` to `localhost:8000` times out; TCP connects but no HTTP response; frontend shows "Cannot connect to API".
+
+**Quick diagnostic:**
+```bash
+# 1. Is the process running?
+pgrep -fa "uvicorn.*main_v4"
+
+# 2. Is the port open?
+ss -tlnp | grep 8000
+
+# 3. Does the health check respond?
+curl -s --max-time 5 http://localhost:8000/api/system_monitoring/health
+
+# 4. Dump all thread stacks (output goes to logs/api_server.log)
+kill -SIGUSR1 $(pgrep -f "uvicorn.*main_v4")
+tail -80 logs/api_server.log
+```
+
+**Root cause checklist (most common first):**
+
+| Cause | How to spot | Fix |
+|-------|-------------|-----|
+| Slow sync query on main event loop | SIGUSR1 dump shows main thread in a DB query inside an `async def` route handler | Change handler to plain `def` (FastAPI runs it in a thread pool) or add `SET LOCAL statement_timeout` |
+| `asyncio.create_task` for background service on main loop | SIGUSR1 dump shows main thread in a background service's loop | Move service to its own `threading.Thread` with `asyncio.new_event_loop()` |
+| Import shadowing (`import threading` / `import asyncio` inside `lifespan`) | API log shows `cannot access local variable 'threading'` | Remove redundant imports inside the function; use the module-level import |
+| Too many ThreadPoolExecutor workers (GIL starvation) | API responds intermittently; many threads at low CPU each | Reduce `max_workers` in executors; keep automation `max_concurrent_tasks` ≤ 4 |
+| `uvicorn --reload` with background threads | API accepts TCP but never responds; removing `--reload` fixes it | Never use `--reload` in production; it conflicts with multiprocessing + threads |
+
+**Restart:**
+```bash
+./stop_system.sh && ./start_system.sh
+```
+
+---
+
+### **API Not Responding (legacy Docker — v3)**
 **Symptoms**: 500 errors, connection refused, timeout
 **Solutions**:
 ```bash
@@ -59,6 +96,16 @@ docker logs news-intelligence-postgres --tail 50
 
 # Test database connection
 docker exec news-intelligence-postgres psql -U newsapp -d news_intelligence -c "SELECT 1;"
+```
+
+### **Web page slow or failing to load (API logs: assignment_context does not exist)**
+**Symptoms**: Frontend hangs or shows errors; API logs show repeated `column "assignment_context" of relation "article_topic_assignments" does not exist` and Route Supervisor reports "Cannot connect to API server".
+**Cause**: Topic clustering writes to `article_topic_assignments`; the table in one or more domain schemas was missing `assignment_context` and `model_version` columns.
+**Fix**: Run migration 166 to add the columns, then restart the API so the server is less overloaded by repeated errors:
+```bash
+# From project root (uses .env or .db_password_widow for DB)
+PYTHONPATH=api .venv/bin/python3 api/scripts/run_migration_166.py
+./stop_system.sh && ./start_system.sh
 ```
 
 ### **Frontend Not Loading**
