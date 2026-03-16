@@ -53,7 +53,7 @@ function App() {
   useEffect(() => {
     errorHandler.initialize();
     loggingService.info('News Intelligence (Dashboard) initialized', {
-      version: '5.0',
+      version: '6.0',
       environment: import.meta.env.MODE || 'development',
     });
     const connectionManager = getAPIConnectionManager();

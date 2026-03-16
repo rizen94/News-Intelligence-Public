@@ -638,37 +638,51 @@ class ArticleProcessingService:
             return 'en'
 
     def process_single_article(self, article_id: int) -> Dict[str, Any]:
-        """Process a single article by ID"""
+        """Process a single article by ID: fetch content from URL and update DB."""
         try:
             conn = get_db_connection()
             cursor = conn.cursor(cursor_factory=RealDictCursor)
-            
-            # Get article details
+            # Support per-domain schemas: use search_path or schema-qualified query in caller
             cursor.execute("""
                 SELECT id, title, content, url, source_domain, published_at, created_at
-                FROM articles 
-                WHERE id = %s AND processing_status = 'pending'
+                FROM articles
+                WHERE id = %s
             """, (article_id,))
-            
             article = cursor.fetchone()
-            if not article:
-                return {"success": False, "message": "Article not found or already processed"}
-            
-            # Process the article
-            article_dict = dict(article)
-            processed_articles = asyncio.run(self._process_articles([article_dict]))
-            
-            if processed_articles:
-                return {"success": True, "message": f"Processed article {article_id}"}
-            else:
-                return {"success": False, "message": f"Failed to process article {article_id}"}
-                
+            if not article or not article.get("url"):
+                cursor.close()
+                conn.close()
+                return {"success": False, "message": "Article not found or no URL"}
+            url = article["url"]
+            cursor.close()
+            conn.close()
+            # Fetch content from URL and clean
+            content = asyncio.run(self._fetch_article_content(url))
+            if not content or len(content) < 50:
+                return {"success": False, "message": f"Could not fetch content from {url[:80]}"}
+            cleaned = self._clean_html_content(content)
+            if not cleaned:
+                cleaned = content[:10000]
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE articles
+                SET content = %s, updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s
+            """, (cleaned[:50000], article_id))
+            conn.commit()
+            cursor.close()
+            conn.close()
+            return {"success": True, "message": f"Processed article {article_id}"}
         except Exception as e:
             logger.error(f"Error processing article {article_id}: {e}")
             return {"success": False, "message": f"Error: {str(e)}"}
         finally:
-            if 'conn' in locals():
-                conn.close()
+            if "conn" in locals() and conn:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
 
     async def process_articles_with_topics(self, articles: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Process articles and add topic clustering (from enhanced_article_processing_service)"""

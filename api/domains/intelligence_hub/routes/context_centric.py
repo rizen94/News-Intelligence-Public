@@ -2234,6 +2234,7 @@ def get_domain_synthesis(
     domain_key: str = Query(...),
     hours: int = Query(24, ge=1, le=168),
     max_articles: int = Query(30, ge=1, le=100),
+    max_quality_tier: Optional[int] = Query(None, ge=1, le=4, description="Only include articles with quality_tier <= this (1=best, 4=worst)"),
 ) -> dict:
     """
     Synthesize all intelligence for a domain within a time window.
@@ -2242,7 +2243,7 @@ def get_domain_synthesis(
     """
     from services.content_synthesis_service import synthesize_domain_context
     return synthesize_domain_context(
-        domain_key, hours=hours, max_articles=max_articles,
+        domain_key, hours=hours, max_articles=max_articles, max_quality_tier=max_quality_tier,
     )
 
 

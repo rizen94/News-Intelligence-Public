@@ -39,7 +39,65 @@ class StorylineAutomationService(DomainAwareService):
             "exclude_duplicates": True,     # Skip duplicate content
             "use_rag_expansion": True,     # Use RAG query expansion
             "rerank_results": True,        # Re-rank with multiple signals
+            "min_quality_tier": 2,          # 1=best, 4=worst; filter out worse
+            "clickbait_threshold": 0.6,    # Reject if clickbait_probability > this
+            "min_fact_density": 0.15,      # Reject if fact_density < this (when present)
+            "require_named_sources": False,
         }
+    
+    def _apply_quality_gates(
+        self,
+        articles: List[Dict[str, Any]],
+        settings: Dict[str, Any],
+    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        """
+        Filter articles by quality gates and compute quality_score for scoring.
+        Returns (filtered_articles, filter_stats).
+        """
+        min_tier = settings.get("min_quality_tier", 2)
+        clickbait_threshold = settings.get("clickbait_threshold", 0.6)
+        min_fact_density = settings.get("min_fact_density", 0.15)
+        require_named_sources = settings.get("require_named_sources", False)
+        stats = {"filtered_tier": 0, "filtered_clickbait": 0, "filtered_fact_density": 0, "filtered_sources": 0, "passed": 0}
+        filtered = []
+        for a in articles:
+            # quality_tier: 1=best, 4=worst; reject if tier > min_quality_tier (worse)
+            tier = a.get("quality_tier")
+            if tier is not None and tier > min_tier:
+                stats["filtered_tier"] += 1
+                continue
+            clickbait = a.get("clickbait_probability")
+            if clickbait is not None and clickbait > clickbait_threshold:
+                stats["filtered_clickbait"] += 1
+                continue
+            fact_density = a.get("fact_density")
+            if fact_density is not None and fact_density < min_fact_density:
+                stats["filtered_fact_density"] += 1
+                continue
+            if require_named_sources and not a.get("has_named_sources", True):
+                stats["filtered_sources"] += 1
+                continue
+            # Compute 0-1 quality score for blending: tier 1=1.0, 2=0.75, 3=0.5, 4=0.25; blend with fact_density and (1-clickbait)
+            q = a.get("quality_score")
+            if q is None or q == 0.5:
+                if tier is not None:
+                    q = max(0.25, 1.0 - (tier - 1) * 0.25)
+                else:
+                    q = 0.5
+                if clickbait is not None:
+                    q = q * (1.0 - clickbait)
+                if fact_density is not None:
+                    q = (q + fact_density) / 2
+            a["quality_score"] = round(min(1.0, max(0.0, q)), 4)
+            filtered.append(a)
+            stats["passed"] += 1
+        return filtered, stats
+    
+    def _final_score(self, article: Dict[str, Any]) -> float:
+        """final_score = relevance*0.7 + quality*0.3"""
+        rel = article.get("relevance_score", 0.6)
+        qual = article.get("quality_score", 0.5)
+        return round(rel * 0.7 + qual * 0.3, 4)
     
     async def discover_articles_for_storyline(
         self,
@@ -84,17 +142,28 @@ class StorylineAutomationService(DomainAwareService):
                      search_exclude_keywords, article_count, last_automation_run, 
                      automation_frequency_hours) = storyline
                     
-                    # Fetch key_entities if column exists (for entity-first discovery)
+                    # Fetch key_entities and quality columns if they exist
                     key_entities = None
+                    min_quality_tier = 2
                     try:
                         cur.execute(f"""
-                            SELECT key_entities FROM {self.schema}.storylines WHERE id = %s
+                            SELECT key_entities, min_quality_tier FROM {self.schema}.storylines WHERE id = %s
                         """, (storyline_id,))
                         row = cur.fetchone()
                         if row and row[0]:
                             key_entities = row[0]
+                        if row and len(row) > 1 and row[1] is not None:
+                            min_quality_tier = int(row[1])
                     except Exception:
-                        pass
+                        try:
+                            cur.execute(f"""
+                                SELECT key_entities FROM {self.schema}.storylines WHERE id = %s
+                            """, (storyline_id,))
+                            row = cur.fetchone()
+                            if row and row[0]:
+                                key_entities = row[0]
+                        except Exception:
+                            pass
                     
                     # Parse automation settings
                     # Handle both dict (from psycopg2 JSONB) and string (legacy)
@@ -105,6 +174,8 @@ class StorylineAutomationService(DomainAwareService):
                     else:
                         automation_settings = {}
                     settings = {**self.default_settings, **automation_settings}
+                    if "min_quality_tier" not in automation_settings:
+                        settings["min_quality_tier"] = min_quality_tier
                     
                     # Check if we should run (frequency check)
                     if not force_refresh and last_automation_run:
@@ -168,39 +239,66 @@ class StorylineAutomationService(DomainAwareService):
                         )
                         discovered_articles = discovered_articles[:max_results]
                     
+                    # Quality gates: filter by min_quality_tier, clickbait, fact_density
+                    discovered_articles, filter_stats = self._apply_quality_gates(discovered_articles, settings)
+                    for a in discovered_articles:
+                        a["combined_score"] = self._final_score(a)
+                    
                     # Store suggestions or auto-add based on mode
                     if automation_mode == 'auto_approve':
                         added_count = await self._auto_add_articles(
                             conn, storyline_id, discovered_articles, settings
                         )
+                    else:
+                        suggestions_count = await self._store_suggestions(
+                            conn, storyline_id, discovered_articles, settings, search_query
+                        )
+                    
+                    # Update last automation run and quality_metrics (when column exists)
+                    now = datetime.now()
+                    quality_metrics = {
+                        "last_run": now.isoformat(),
+                        "filter_stats": filter_stats,
+                        "articles_passed": len(discovered_articles),
+                    }
+                    if discovered_articles:
+                        tiers = [a.get("quality_tier") for a in discovered_articles if a.get("quality_tier") is not None]
+                        fds = [a.get("fact_density") for a in discovered_articles if a.get("fact_density") is not None]
+                        if tiers:
+                            quality_metrics["avg_quality_tier"] = round(sum(tiers) / len(tiers), 2)
+                        if fds:
+                            quality_metrics["avg_fact_density"] = round(sum(fds) / len(fds), 4)
+                    try:
+                        cur.execute(f"""
+                            UPDATE {self.schema}.storylines 
+                            SET last_automation_run = %s, quality_metrics = quality_metrics || %s::jsonb
+                            WHERE id = %s
+                        """, (now, json.dumps(quality_metrics), storyline_id))
+                    except Exception:
+                        cur.execute(f"""
+                            UPDATE {self.schema}.storylines 
+                            SET last_automation_run = %s
+                            WHERE id = %s
+                        """, (now, storyline_id))
+                    conn.commit()
+                        
+                    if automation_mode == 'auto_approve':
                         return {
                             "success": True,
                             "mode": "auto_approve",
                             "articles_found": len(discovered_articles),
                             "articles_added": added_count,
-                            "articles": discovered_articles[:added_count]
+                            "articles": discovered_articles[:added_count],
+                            "quality_filter_stats": filter_stats,
                         }
-                    else:
-                        # Store in suggestions queue
-                        suggestions_count = await self._store_suggestions(
-                            conn, storyline_id, discovered_articles, settings, search_query
-                        )
-                        
-                        # Update last automation run in domain schema
-                        cur.execute(f"""
-                            UPDATE {self.schema}.storylines 
-                            SET last_automation_run = %s
-                            WHERE id = %s
-                        """, (datetime.now(), storyline_id))
-                        conn.commit()
-                        
-                        return {
-                            "success": True,
-                            "mode": automation_mode or "manual",
-                            "articles_found": len(discovered_articles),
-                            "articles_suggested": suggestions_count,
-                            "articles": discovered_articles
-                        }
+                    return {
+                        "success": True,
+                        "mode": automation_mode or "manual",
+                        "articles_found": len(discovered_articles),
+                        "articles_suggested": suggestions_count,
+                        "articles": discovered_articles,
+                        "quality_filter_stats": filter_stats,
+                    }
                     
             finally:
                 conn.close()
@@ -356,31 +454,44 @@ class StorylineAutomationService(DomainAwareService):
                 exclude_sql = f"AND a.id NOT IN ({','.join(['%s'] * len(exclude_ids))})" if exclude_ids else ""
                 params_with_exclude = params + exclude_ids
                 
-                query_sql = f"""
-                    SELECT a.id, a.title, a.summary, a.content, a.url, a.source_domain, a.published_at, a.quality_score
-                    FROM {self.schema}.articles a
-                    WHERE a.published_at >= %s
-                      {exclude_sql}
-                      AND ({entity_clause})
-                      {exclude_clause}
-                    ORDER BY a.published_at DESC, a.quality_score DESC
-                    LIMIT %s
-                """
-                params_with_exclude.append(max_results)
-                
-                cur.execute(query_sql, params_with_exclude)
+                # Include quality columns when present (migration 164)
+                try:
+                    cur.execute(f"""
+                        SELECT a.id, a.title, a.summary, a.content, a.url, a.source_domain, a.published_at,
+                               a.quality_score, a.quality_tier, a.clickbait_probability, a.fact_density
+                        FROM {self.schema}.articles a
+                        WHERE a.published_at >= %s
+                          {exclude_sql}
+                          AND ({entity_clause})
+                          {exclude_clause}
+                        ORDER BY a.published_at DESC, a.quality_score DESC
+                        LIMIT %s
+                    """, params_with_exclude + [max_results])
+                except Exception:
+                    cur.execute(f"""
+                        SELECT a.id, a.title, a.summary, a.content, a.url, a.source_domain, a.published_at, a.quality_score
+                        FROM {self.schema}.articles a
+                        WHERE a.published_at >= %s
+                          {exclude_sql}
+                          AND ({entity_clause})
+                          {exclude_clause}
+                        ORDER BY a.published_at DESC, a.quality_score DESC
+                        LIMIT %s
+                    """, params_with_exclude + [max_results])
                 rows = cur.fetchall()
                 
                 articles = []
                 for row in rows:
-                    art_id, art_title, summary, content, url, domain, pub_at, quality = row
-                    # Compute relevance and list matched entity names
+                    art_id, art_title, summary, content, url, domain, pub_at = row[0], row[1], row[2], row[3], row[4], row[5], row[6]
+                    quality = row[7] if len(row) > 7 else None
+                    quality_tier = row[8] if len(row) > 8 else None
+                    clickbait_probability = row[9] if len(row) > 9 else None
+                    fact_density = row[10] if len(row) > 10 else None
                     title_lower = (art_title or "").lower()
                     content_lower = (content or "")[:2000].lower() if content else ""
                     matched_names = [e for e in entities[:15] if e.lower() in title_lower or e.lower() in content_lower]
                     match_count = len(matched_names)
                     relevance = min(0.95, 0.7 + match_count * 0.05)
-                    
                     articles.append({
                         "id": art_id,
                         "title": art_title,
@@ -390,9 +501,12 @@ class StorylineAutomationService(DomainAwareService):
                         "source_domain": domain,
                         "published_at": pub_at.isoformat() if pub_at else None,
                         "quality_score": float(quality) if quality else 0.5,
+                        "quality_tier": int(quality_tier) if quality_tier is not None else None,
+                        "clickbait_probability": float(clickbait_probability) if clickbait_probability is not None else None,
+                        "fact_density": float(fact_density) if fact_density is not None else None,
                         "relevance_score": relevance,
                         "matched_entities": matched_names,
-                        "matched_keywords": matched_names,  # UI compatibility
+                        "matched_keywords": matched_names,
                     })
                 
                 return articles
@@ -508,22 +622,30 @@ class StorylineAutomationService(DomainAwareService):
                         params.extend([kw_pattern, kw_pattern])
                     where_parts.append(f"({' AND '.join(exclude_conditions)})")
                 
-                query_sql = f"""
-                    SELECT a.id, a.title, a.summary, a.content, a.url, 
-                           a.source_domain, a.published_at, a.quality_score
-                    FROM {self.schema}.articles a
-                    WHERE {' AND '.join(where_parts)}
-                    ORDER BY a.published_at DESC, a.quality_score DESC
-                    LIMIT %s
-                """
-                params.append(max_results)
-                
-                cur.execute(query_sql, params)
+                try:
+                    cur.execute(f"""
+                        SELECT a.id, a.title, a.summary, a.content, a.url,
+                               a.source_domain, a.published_at, a.quality_score,
+                               a.quality_tier, a.clickbait_probability, a.fact_density
+                        FROM {self.schema}.articles a
+                        WHERE {' AND '.join(where_parts)}
+                        ORDER BY a.published_at DESC, a.quality_score DESC
+                        LIMIT %s
+                    """, params + [max_results])
+                except Exception:
+                    cur.execute(f"""
+                        SELECT a.id, a.title, a.summary, a.content, a.url,
+                               a.source_domain, a.published_at, a.quality_score
+                        FROM {self.schema}.articles a
+                        WHERE {' AND '.join(where_parts)}
+                        ORDER BY a.published_at DESC, a.quality_score DESC
+                        LIMIT %s
+                    """, params + [max_results])
                 rows = cur.fetchall()
                 
                 articles = []
                 for row in rows:
-                    articles.append({
+                    a = {
                         "id": row[0],
                         "title": row[1],
                         "summary": row[2],
@@ -532,8 +654,15 @@ class StorylineAutomationService(DomainAwareService):
                         "source_domain": row[5],
                         "published_at": row[6].isoformat() if row[6] else None,
                         "quality_score": float(row[7]) if row[7] else 0.5,
-                        "relevance_score": 0.6,  # Default relevance for keyword match
-                    })
+                        "relevance_score": 0.6,
+                    }
+                    if len(row) > 8:
+                        a["quality_tier"] = int(row[8]) if row[8] is not None else None
+                    if len(row) > 9:
+                        a["clickbait_probability"] = float(row[9]) if row[9] is not None else None
+                    if len(row) > 10:
+                        a["fact_density"] = float(row[10]) if row[10] is not None else None
+                    articles.append(a)
                 
                 return articles
                 
@@ -559,12 +688,13 @@ class StorylineAutomationService(DomainAwareService):
                 logger.info(f"Storing suggestions with thresholds: min_score={min_score}, min_quality={min_quality}, min_semantic={min_semantic}")
                 
                 for article in articles:
-                    # Calculate combined score
                     relevance = article.get("relevance_score", 0.6)
                     quality = article.get("quality_score", 0.5)
                     semantic = article.get("semantic_score", 0.6)
-                    
-                    combined = (relevance * 0.4 + quality * 0.3 + semantic * 0.3)
+                    # Use quality-gate combined_score (relevance*0.7 + quality*0.3) when set
+                    combined = article.get("combined_score")
+                    if combined is None:
+                        combined = (relevance * 0.4 + quality * 0.3 + semantic * 0.3)
                     
                     # Log scores for debugging
                     logger.debug(f"Article {article.get('id')}: relevance={relevance:.2f}, quality={quality:.2f}, semantic={semantic:.2f}, combined={combined:.2f}")
@@ -668,10 +798,11 @@ class StorylineAutomationService(DomainAwareService):
             
             with conn.cursor() as cur:
                 for article in articles:
-                    relevance = article.get("relevance_score", 0.6)
-                    quality = article.get("quality_score", 0.5)
-                    combined = (relevance * 0.6 + quality * 0.4)
-                    
+                    combined = article.get("combined_score")
+                    if combined is None:
+                        relevance = article.get("relevance_score", 0.6)
+                        quality = article.get("quality_score", 0.5)
+                        combined = (relevance * 0.7 + quality * 0.3)
                     if combined >= min_score:
                         # Auto-add article to domain schema
                         try:

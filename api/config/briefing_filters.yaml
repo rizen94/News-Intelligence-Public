@@ -1,0 +1,36 @@
+# Briefing and list ranking: low-priority entities and keywords so sports/celebrity/entertainment
+# stay at the bottom of politics (and optionally finance/science-tech) briefings.
+# Used by DailyBriefingService and briefing_feed API to demote, not drop, content.
+# RSS ingest exclusion remains in api/collectors/rss_collector.py (is_excluded_content).
+
+# Entity names (e.g. athletes, celebrities) that should be deprioritized as lead in domain briefings.
+# Match is case-insensitive substring on title/lede/summary.
+low_priority_entities:
+  - "Kobe Bryant"
+  - "LeBron James"
+  - "Taylor Swift"
+  # Add more as needed; keep to unambiguous names to avoid false positives.
+
+# Keywords that indicate off-domain or low-priority-for-politics content.
+# When these appear in title/summary, item is demoted to end of list (not removed).
+low_priority_keywords:
+  - "super bowl"
+  - "world series"
+  - "nba finals"
+  - "nfl draft"
+  - "grammy"
+  - "oscar"
+  - "emmy"
+  - "red carpet"
+  - "celebrity gossip"
+  - "box office"
+  - "sports betting"
+  - "fantasy football"
+  - "injury report"   # often sports
+  - "starting lineup"
+  - "power rankings"
+
+# Optional: per-domain overrides (if you want finance to allow "box office" but politics to demote it).
+# domains:
+#   politics: { low_priority_keywords: [ ... ] }
+#   finance: { low_priority_keywords: [ ... ] }

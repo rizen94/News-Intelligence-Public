@@ -40,74 +40,18 @@ router = APIRouter(
 
 
 def _get_gpu_metrics() -> Dict[str, Any]:
-    """
-    Get GPU utilization and VRAM (percent). Tries nvidia-smi first (no extra deps), then GPUtil.
-    Returns dict with gpu_utilization_percent, gpu_vram_percent (0-100), and optionally
-    gpu_temperature_c, gpu_memory_used_mb, gpu_memory_total_mb. All keys may be None if unavailable.
-    """
-    import subprocess
-    result = {
-        "gpu_utilization_percent": None,
-        "gpu_vram_percent": None,
-        "gpu_temperature_c": None,
-        "gpu_memory_used_mb": None,
-        "gpu_memory_total_mb": None,
-    }
-    # Prefer nvidia-smi (works without GPUtil)
+    """Get GPU metrics (utilization, VRAM, temperature) from shared helper."""
     try:
-        proc = subprocess.run(
-            [
-                "nvidia-smi",
-                "--query-gpu=utilization.gpu,memory.used,memory.total,temperature.gpu",
-                "--format=csv,noheader,nounits",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        if proc.returncode == 0 and proc.stdout.strip():
-            parts = [p.strip() for p in proc.stdout.strip().split(",")]
-            if len(parts) >= 3:
-                util = parts[0].strip().replace(" %", "")
-                mem_used = parts[1].strip().replace(" MiB", "").replace(" ", "")
-                mem_total = parts[2].strip().replace(" MiB", "").replace(" ", "")
-                result["gpu_utilization_percent"] = float(util) if util.isdigit() else None
-                try:
-                    u_mb = int(mem_used)
-                    t_mb = int(mem_total)
-                    result["gpu_memory_used_mb"] = u_mb
-                    result["gpu_memory_total_mb"] = t_mb
-                    result["gpu_vram_percent"] = round(100.0 * u_mb / t_mb, 1) if t_mb else None
-                except (ValueError, TypeError):
-                    pass
-                if len(parts) >= 4:
-                    temp = parts[3].strip().replace(" C", "")
-                    try:
-                        result["gpu_temperature_c"] = int(temp)
-                    except (ValueError, TypeError):
-                        pass
-            return result
-    except (FileNotFoundError, subprocess.TimeoutExpired, Exception):
-        pass
-    # Fallback: GPUtil
-    try:
-        import GPUtil
-        gpus = GPUtil.getGPUs()
-        if gpus:
-            gpu = gpus[0]
-            result["gpu_utilization_percent"] = round((gpu.load or 0) * 100, 1)
-            result["gpu_vram_percent"] = round((gpu.memoryUtil or 0) * 100, 1)
-            if getattr(gpu, "memoryUsed", None) is not None:
-                result["gpu_memory_used_mb"] = int(gpu.memoryUsed)
-            if getattr(gpu, "memoryTotal", None) is not None:
-                result["gpu_memory_total_mb"] = int(gpu.memoryTotal)
-            if getattr(gpu, "temperature", None) is not None:
-                result["gpu_temperature_c"] = int(gpu.temperature)
+        from shared.gpu_metrics import get_gpu_metrics
+        return get_gpu_metrics()
     except ImportError:
-        pass
-    except Exception:
-        pass
-    return result
+        return {
+            "gpu_utilization_percent": None,
+            "gpu_vram_percent": None,
+            "gpu_temperature_c": None,
+            "gpu_memory_used_mb": None,
+            "gpu_memory_total_mb": None,
+        }
 
 
 @router.get("/orchestrator")

@@ -6,6 +6,7 @@ Populates intelligence.tracked_events and intelligence.event_chronicles.
 import json
 import logging
 import asyncio
+import re
 from datetime import date
 from typing import List, Dict, Any, Optional, TypedDict
 
@@ -52,6 +53,62 @@ VALID_EVENT_TYPES = {
     "economic", "disaster", "protest", "policy", "appointment", "other",
     "market_shift", "government_bond", "regulatory",
 }
+
+# Domain key as stored in article_to_context / contexts -> schema name for article_entities
+_DOMAIN_TO_SCHEMA = {"politics": "politics", "finance": "finance", "science-tech": "science_tech", "science_tech": "science_tech"}
+_MAX_KEY_PARTICIPANTS = 20
+
+
+def _resolve_context_ids_to_entity_profile_ids(conn, context_ids: List[int]) -> List[int]:
+    """
+    Resolve context IDs to up to _MAX_KEY_PARTICIPANTS unique entity_profile IDs.
+    Uses article_to_context -> domain article_entities -> entity_profiles.
+    """
+    if not context_ids:
+        return []
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT article_id, domain_key FROM intelligence.article_to_context WHERE context_id = ANY(%s)",
+                (context_ids,),
+            )
+            article_domain_pairs = cur.fetchall()
+        if not article_domain_pairs:
+            return []
+
+        # Group article_ids by domain_key so we can query each schema once
+        by_domain: Dict[str, List[int]] = {}
+        for article_id, dk in article_domain_pairs:
+            if dk not in by_domain:
+                by_domain[dk] = []
+            by_domain[dk].append(article_id)
+
+        canonical_pairs: set = set()
+        for domain_key, article_ids in by_domain.items():
+            schema = _DOMAIN_TO_SCHEMA.get(domain_key) or domain_key.replace("-", "_")
+            if schema not in ("politics", "finance", "science_tech"):
+                continue
+            with conn.cursor() as cur:
+                cur.execute(
+                    f'SELECT article_id, canonical_entity_id FROM {schema}.article_entities WHERE article_id = ANY(%s)',
+                    (list(set(article_ids)),),
+                )
+                for _aid, cid in cur.fetchall():
+                    canonical_pairs.add((domain_key, cid))
+
+        if not canonical_pairs:
+            return []
+        pairs = list(canonical_pairs)
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id FROM intelligence.entity_profiles WHERE (domain_key, canonical_entity_id) IN %s",
+                (tuple(pairs),),
+            )
+            profile_ids = [r[0] for r in cur.fetchall()]
+        return list(dict.fromkeys(profile_ids))[:_MAX_KEY_PARTICIPANTS]
+    except Exception as e:
+        logger.debug("_resolve_context_ids_to_entity_profile_ids: %s", e)
+        return []
 
 
 class DiscoverEventsResult(TypedDict, total=False):
@@ -236,6 +293,14 @@ async def discover_events_from_contexts(
                     min(1.0, len(valid_ids) * 0.15),
                 ))
 
+                # Auto-populate key_participant_entity_ids from contexts linked to this event
+                profile_ids = _resolve_context_ids_to_entity_profile_ids(conn, valid_ids)
+                if profile_ids:
+                    cur.execute(
+                        "UPDATE intelligence.tracked_events SET key_participant_entity_ids = %s WHERE id = %s",
+                        (json.dumps(profile_ids), event_id),
+                    )
+
                 created_events.append({
                     "event_id": event_id,
                     "event_name": event_name,
@@ -264,6 +329,84 @@ async def discover_events_from_contexts(
 EVENT_DISCOVERY_DOMAINS = ("politics", "finance", "science_tech")
 
 
+def _backfill_key_participants_for_event(conn, event_id: int) -> bool:
+    """
+    Populate key_participant_entity_ids for an existing event from its chronicle developments.
+    Returns True if updated.
+    """
+    context_ids: List[int] = []
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT developments FROM intelligence.event_chronicles WHERE event_id = %s",
+                (event_id,),
+            )
+            for (dev_json,) in cur.fetchall() or []:
+                if not dev_json:
+                    continue
+                try:
+                    devs = dev_json if isinstance(dev_json, list) else json.loads(dev_json)
+                    for d in devs:
+                        cid = d.get("context_id") if isinstance(d, dict) else None
+                        if cid is not None:
+                            context_ids.append(int(cid))
+                except (TypeError, ValueError, KeyError):
+                    pass
+        context_ids = list(dict.fromkeys(context_ids))
+        if not context_ids:
+            return False
+        profile_ids = _resolve_context_ids_to_entity_profile_ids(conn, context_ids)
+        if not profile_ids:
+            return False
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE intelligence.tracked_events SET key_participant_entity_ids = %s WHERE id = %s",
+                (json.dumps(profile_ids), event_id),
+            )
+        return True
+    except Exception as e:
+        logger.debug("_backfill_key_participants_for_event(%s): %s", event_id, e)
+        return False
+
+
+def backfill_key_participants_for_tracked_events(limit: int = 30) -> int:
+    """
+    Backfill key_participant_entity_ids for events that have none.
+    Call from automation after event_tracking batch. Returns number of events updated.
+    """
+    from shared.database.connection import get_db_connection
+
+    conn = get_db_connection()
+    if not conn:
+        return 0
+    updated = 0
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id FROM intelligence.tracked_events
+                WHERE key_participant_entity_ids IS NULL
+                   OR key_participant_entity_ids = '[]'
+                   OR key_participant_entity_ids = 'null'
+                ORDER BY id DESC
+                LIMIT %s
+            """, (limit,))
+            event_ids = [r[0] for r in cur.fetchall()]
+        for eid in event_ids:
+            if _backfill_key_participants_for_event(conn, eid):
+                updated += 1
+        if updated:
+            conn.commit()
+            logger.info("backfill_key_participants: %d events updated", updated)
+    except Exception as e:
+        logger.debug("backfill_key_participants_for_tracked_events: %s", e)
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    return updated
+
+
 async def run_event_tracking_batch(limit: int = 300) -> int:
     """
     Batch wrapper called by the automation manager.
@@ -284,9 +427,14 @@ async def run_event_tracking_batch(limit: int = 300) -> int:
                 break
 
     updated = await _update_existing_event_chronicles(limit=limit)
+    # Backfill key_participant_entity_ids for existing events that have none
+    backfilled = backfill_key_participants_for_tracked_events(limit=30)
     total = created_total + updated
-    if total > 0:
-        logger.info("run_event_tracking_batch: %d new events, %d chronicle updates", created_total, updated)
+    if total > 0 or backfilled > 0:
+        logger.info(
+            "run_event_tracking_batch: %d new events, %d chronicle updates, %d participant backfills",
+            created_total, updated, backfilled,
+        )
     return total
 
 
@@ -306,6 +454,7 @@ async def _update_existing_event_chronicles(limit: int = 20) -> int:
             cur.execute("""
                 SELECT te.id, te.event_name, te.event_type,
                        COALESCE(te.domain_keys, '{}') as domain_keys,
+                       COALESCE(te.key_participant_entity_ids, '[]'::jsonb) as key_participant_entity_ids,
                        (SELECT MAX(ec.update_date) FROM intelligence.event_chronicles ec WHERE ec.event_id = te.id) as last_update
                 FROM intelligence.tracked_events te
                 ORDER BY te.id DESC
@@ -318,20 +467,49 @@ async def _update_existing_event_chronicles(limit: int = 20) -> int:
             return 0
 
         updates = 0
-        for event_id, event_name, event_type, domain_keys, last_update in events:
+        for event_id, event_name, event_type, domain_keys, participant_ids_json, last_update in events:
+            # Build search terms: significant words (len >= 4) from event name, up to 3
+            words = [w for w in re.split(r"\W+", (event_name or "")) if len(w) >= 4][:3]
+            if not words:
+                words = [(event_name or "")[:50].strip() or " "]
+            # Match contexts that contain any of these terms in title or content, or that mention key participants
+            ilike_conditions = " OR ".join(
+                ["(c.title ILIKE %s OR c.content ILIKE %s)"] * len(words)
+            )
+            params: list = [last_update]
+            for w in words:
+                params.append(f"%{w}%")
+                params.append(f"%{w}%")
+            participant_ids: list = []
+            if participant_ids_json and isinstance(participant_ids_json, list):
+                participant_ids = [int(x) for x in participant_ids_json if isinstance(x, (int, float))]
+            elif isinstance(participant_ids_json, str):
+                try:
+                    participant_ids = json.loads(participant_ids_json)
+                    participant_ids = [int(x) for x in participant_ids if isinstance(x, (int, float))]
+                except Exception:
+                    pass
+            if participant_ids:
+                ilike_conditions += " OR c.id IN (SELECT context_id FROM intelligence.context_entity_mentions WHERE entity_profile_id = ANY(%s))"
+                params.append(participant_ids)
+            params.append(event_id)
+
             with conn.cursor() as cur:
-                cur.execute("""
+                cur.execute(
+                    f"""
                     SELECT c.id, c.title, LEFT(c.content, 400)
                     FROM intelligence.contexts c
                     WHERE c.created_at > COALESCE(%s, '2020-01-01'::date)
-                      AND (c.title ILIKE %s OR c.content ILIKE %s)
+                      AND ({ilike_conditions})
                       AND NOT EXISTS (
                           SELECT 1 FROM intelligence.event_chronicles ec
                           WHERE ec.event_id = %s
                             AND ec.developments::text LIKE '%%"context_id": ' || c.id || '%%'
                       )
                     LIMIT 10
-                """, (last_update, f'%{event_name[:30]}%', f'%{event_name[:30]}%', event_id))
+                    """,
+                    tuple(params),
+                )
                 new_contexts = cur.fetchall()
 
             if new_contexts:

@@ -399,7 +399,9 @@ async def get_domain_articles(
     search: Optional[str] = Query(None, description="Search in title and content"),
     source_domain: Optional[str] = Query(None, description="Filter by source domain"),
     processing_status: Optional[str] = Query(None, description="Filter by processing status"),
-    unlinked: Optional[bool] = Query(None, description="Only show articles not linked to any storyline")
+    unlinked: Optional[bool] = Query(None, description="Only show articles not linked to any storyline"),
+    quality_first: Optional[bool] = Query(False, description="Order by quality_tier then quality_score before recency"),
+    max_quality_tier: Optional[int] = Query(None, ge=1, le=4, description="Only articles with quality_tier <= this (1=best, 4=worst)")
 ):
     """
     Get articles for a specific domain with optional filtering and pagination.
@@ -425,7 +427,11 @@ async def get_domain_articles(
             filters['published_after'] = datetime.now() - timedelta(hours=hours)
         if unlinked:
             filters['unlinked'] = True
-        
+        if quality_first:
+            filters['quality_first'] = True
+        if max_quality_tier is not None:
+            filters['max_quality_tier'] = max_quality_tier
+
         # Get articles
         result = article_service.get_articles(limit=limit, offset=offset, filters=filters)
         

@@ -164,7 +164,7 @@ def sync_domain_entity_profiles(domain_key: str) -> int:
         # Backfill context_entity_mentions for existing contexts (article_entities now map to profiles)
         try:
             from services.context_processor_service import backfill_context_entity_mentions_for_domain
-            backfill_context_entity_mentions_for_domain(domain_key, limit=500)
+            backfill_context_entity_mentions_for_domain(domain_key, limit=1000)
         except Exception as e:
             logger.debug(f"Entity profile sync backfill mentions: {e}")
         return created

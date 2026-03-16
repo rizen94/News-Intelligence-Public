@@ -82,7 +82,7 @@ export const storylinesApi = {
   },
 
   async createStoryline(
-    storylineData: { title: string; description?: string; status?: string },
+    storylineData: { title: string; description?: string; status?: string; article_ids?: number[] },
     domain?: string,
   ) {
     try {

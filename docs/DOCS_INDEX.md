@@ -8,6 +8,7 @@
 | [PROJECT_CAPABILITIES_BRIEF.md](PROJECT_CAPABILITIES_BRIEF.md) | **Quick orientation** — tech stack, all capabilities, API structure, key files |
 | [ARCHITECTURE_AND_OPERATIONS.md](ARCHITECTURE_AND_OPERATIONS.md) | **Architecture, ops, troubleshooting** — primary reference |
 | [RELEASE_v5.0_STABLE.md](RELEASE_v5.0_STABLE.md) | v5.0 stable release notes (platform base) |
+| [RELEASE_DOSSIER_AND_WIRE_IN_FIXES.md](RELEASE_DOSSIER_AND_WIRE_IN_FIXES.md) | **Dossier + wire-in release** — position tracker, participant backfill, metadata enrichment, restart |
 | [../QUICK_START.md](../QUICK_START.md) | Start/stop/status |
 
 ## Architecture & Guardrails
@@ -18,6 +19,8 @@
 | [CORE_ARCHITECTURE_PRINCIPLES.md](CORE_ARCHITECTURE_PRINCIPLES.md) | **4 principles** — Content is King, Intelligence Accumulates, Narratives Over Metrics, Editorial Documents are Primary |
 | [IMPLEMENTATION_CONSTRAINTS.md](IMPLEMENTATION_CONSTRAINTS.md) | **Hard rules** — correct vs incorrect code patterns, verification checklists |
 | [DATA_FLOW_ARCHITECTURE.md](DATA_FLOW_ARCHITECTURE.md) | **Intelligence cascade** — ingestion → ML → entities → contexts → claims/events → storylines → editorial output; content loss warnings |
+| [STORY_ASSEMBLY_AND_DATA_QUALITY.md](STORY_ASSEMBLY_AND_DATA_QUALITY.md) | **Story assembly** — how contexts/entities feed Report, Briefing, synthesis, editorial; caps vs minimums; junk data risk |
+| [QUALITY_FIRST_IMPLEMENTATION.md](QUALITY_FIRST_IMPLEMENTATION.md) | **Quality-first selection** — activate quality_tier/quality_score in assembly; code map and rollout |
 | [API_DESIGN_PRINCIPLES.md](API_DESIGN_PRINCIPLES.md) | **API response standards** — narrative-first endpoints, editorial fields, example responses |
 | [DATABASE_DESIGN_PHILOSOPHY.md](DATABASE_DESIGN_PHILOSOPHY.md) | **Schema philosophy** — editorial_document / editorial_briefing / sections JSONB structures, design rules |
 | [ORCHESTRATION_REQUIREMENTS.md](ORCHESTRATION_REQUIREMENTS.md) | **Pipeline requirements** — phase-by-phase content checks, health queries, missing phases |
@@ -35,6 +38,9 @@
 | [API_ALIGNMENT.md](API_ALIGNMENT.md) | API–frontend routes and article fields alignment |
 | [DATABASE_SCHEMA_DOCUMENTATION.md](DATABASE_SCHEMA_DOCUMENTATION.md) | Schema |
 | [AUTOMATION_AND_LAST_24H_ACTIVITY.md](AUTOMATION_AND_LAST_24H_ACTIVITY.md) | **What ran / what was collected** — last-24h report script, automation sources, gaps to connect |
+| [CONTENT_COLLECTION_AND_INSIGHT_EXPECTATIONS.md](CONTENT_COLLECTION_AND_INSIGHT_EXPECTATIONS.md) | **What to expect** — collection/processing cadence, backlogs, when insights become useful |
+| [CONTENT_QUALITY_STANDARDS.md](CONTENT_QUALITY_STANDARDS.md) | **Clickbait & sensationalism** — 4-tier quality, indicators, content_quality_service, briefing prioritization |
+| [BRIEFING_FILTERS_AND_FEEDBACK.md](BRIEFING_FILTERS_AND_FEEDBACK.md) | **Briefing filters & feedback** — not interested, 1–5 usefulness, low-priority entities/keywords |
 | [CRON_LOGS_AND_REPORT_FOR_CLAUDE.md](CRON_LOGS_AND_REPORT_FOR_CLAUDE.md) | **Cron, logs, report + doc list for Claude** — what to pass (in order), paste areas, prompt |
 | [CLAUDE_ASSESSMENT_SYSTEM_AND_GAPS.md](CLAUDE_ASSESSMENT_SYSTEM_AND_GAPS.md) | **Claude assessment** — what's working, gaps, recommendations, P0–P4 action items |
 
@@ -64,6 +70,8 @@
 | [BATCH_PROCESSING_DESIGN.md](BATCH_PROCESSING_DESIGN.md) | **Production batch timings** — context sync, claim extraction, event tracking, story enhancement, entity enrichment |
 | [ORCHESTRATOR_ROADMAP_TO_INITIATIVE.md](ORCHESTRATOR_ROADMAP_TO_INITIATIVE.md) | Path to orchestrator-controlled, initiative-taking app |
 | [CONTEXT_CENTRIC_UPGRADE_PLAN.md](CONTEXT_CENTRIC_UPGRADE_PLAN.md) | **Context-centric model** — contexts, entity mapping, living profiles, claims, patterns |
+| [DOSSIER_PIPELINE_ORDERING_PLAN.md](DOSSIER_PIPELINE_ORDERING_PLAN.md) | **Dossier pipeline** — dependency order (entity_profile_build, pattern_recognition, entity_dossier_compile), checklist |
+| [DOSSIER_REMAINING_GAPS_PLAN.md](DOSSIER_REMAINING_GAPS_PLAN.md) | **Remaining gaps** — plan to automate entity position tracker and auto-populate key_participant_entity_ids on events |
 | [CONTEXTS_BY_DOMAIN.md](CONTEXTS_BY_DOMAIN.md) | **Contexts by domain** — why politics vs finance use the same pipeline; domain-specific context handling |
 | [V6_QUALITY_FIRST_UPGRADE_PLAN.md](V6_QUALITY_FIRST_UPGRADE_PLAN.md) | v6 quality-first upgrades (entity dossiers, event tracking, documents, narrative) |
 | [V6_QUALITY_FIRST_TODO.md](V6_QUALITY_FIRST_TODO.md) | Prioritized to-do list for v6 quality-first work |

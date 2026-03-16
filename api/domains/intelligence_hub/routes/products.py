@@ -1,6 +1,6 @@
 """
 Intelligence products API — daily brief, generate_brief, alert_digest (P2).
-Unifies DailyBriefingService and watchlist/event alerts behind /api/products/*.
+Content feedback (usefulness, not interested) and briefing_feed for Briefings UI.
 See docs/DATA_PIPELINE_ENHANCEMENTS_ROADMAP.md.
 """
 
@@ -343,6 +343,120 @@ def get_alert_digest(
         }
     except Exception as e:
         logger.warning("alert_digest failed: %s", e)
+        try:
+            conn.close()
+        except Exception:
+            pass
+        return {"success": False, "data": None, "message": str(e)}
+
+
+# -----------------------------------------------------------------------------
+# Content feedback and briefing feed (for Briefings UI)
+# -----------------------------------------------------------------------------
+
+@router.post("/{domain}/intelligence/feedback")
+def post_content_feedback(
+    domain: str = Path(..., description="Domain key (e.g. politics, finance, science-tech)"),
+    item_type: str = Body(..., embed=True, description="article | storyline | briefing"),
+    item_id: Optional[int] = Body(None, embed=True),
+    rating: Optional[int] = Body(None, embed=True, ge=1, le=5),
+    not_interested: bool = Body(False, embed=True),
+) -> Dict[str, Any]:
+    """Submit usefulness (1-5) or 'not interested' for an article, storyline, or whole briefing."""
+    from services.content_feedback_service import submit_feedback
+    result = submit_feedback(domain, item_type, item_id, rating=rating, not_interested=not_interested)
+    if result.get("success"):
+        return {"success": True, "data": None, "message": "Feedback recorded"}
+    return {"success": False, "data": None, "message": result.get("error", "Unknown error")}
+
+
+def _get_schema_for_domain(domain: str) -> Optional[str]:
+    from shared.database.connection import get_db_connection
+    conn = get_db_connection()
+    if not conn:
+        return None
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT schema_name FROM domains WHERE domain_key = %s", (domain,))
+            row = cur.fetchone()
+            return row[0] if row else None
+    except Exception as e:
+        logger.debug("schema for domain %s: %s", domain, e)
+        return None
+    finally:
+        conn.close()
+
+
+@router.get("/{domain}/intelligence/briefing_feed")
+def get_briefing_feed(
+    domain: str = Path(..., description="Domain key (e.g. politics, finance, science-tech)"),
+    articles_limit: int = Query(10, ge=1, le=50),
+    storylines_limit: int = Query(6, ge=1, le=30),
+) -> Dict[str, Any]:
+    """Return articles and storylines for Briefings page, reordered: not_interested excluded, sports/celebrity demoted."""
+    from shared.database.connection import get_db_connection
+    from psycopg2.extras import RealDictCursor
+    from services.content_feedback_service import get_not_interested_ids
+    from services.briefing_filter_helper import sort_briefing_items_by_priority
+
+    schema = _get_schema_for_domain(domain)
+    if not schema:
+        return {"success": False, "data": None, "message": "Domain not found"}
+
+    conn = get_db_connection()
+    if not conn:
+        return {"success": False, "data": None, "message": "Database unavailable"}
+
+    try:
+        not_art = get_not_interested_ids(domain, "article")
+        not_story = get_not_interested_ids(domain, "storyline")
+
+        articles = []
+        storylines = []
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                f"""
+                SELECT id, title, summary, url, published_at, source_domain, created_at
+                FROM {schema}.articles
+                WHERE title IS NOT NULL AND TRIM(title) != ''
+                ORDER BY COALESCE(quality_tier, 4) ASC, COALESCE(quality_score, 0) DESC, published_at DESC NULLS LAST, created_at DESC
+                LIMIT %s
+                """,
+                (articles_limit + len(not_art),),
+            )
+            for row in cur.fetchall():
+                if row["id"] in not_art:
+                    continue
+                d = dict(row)
+                d["source"] = d.get("source_domain")
+                d["published_date"] = d.get("published_at")
+                articles.append(d)
+            articles = sort_briefing_items_by_priority(articles, title_key="title", summary_key="summary")[:articles_limit]
+
+            cur.execute(
+                f"""
+                SELECT id, title, description, updated_at, article_count, status
+                FROM {schema}.storylines
+                WHERE title IS NOT NULL AND TRIM(title) != ''
+                ORDER BY updated_at DESC
+                LIMIT %s
+                """,
+                (storylines_limit + len(not_story),),
+            )
+            for row in cur.fetchall():
+                if row["id"] in not_story:
+                    continue
+                storylines.append(dict(row))
+            storylines = sort_briefing_items_by_priority(storylines, title_key="title", summary_key="description")[:storylines_limit]
+
+        conn.close()
+        return {
+            "success": True,
+            "data": {"articles": articles, "storylines": storylines},
+            "message": None,
+        }
+    except Exception as e:
+        logger.warning("briefing_feed failed: %s", e)
         try:
             conn.close()
         except Exception:

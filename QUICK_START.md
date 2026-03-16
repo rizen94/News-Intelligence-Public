@@ -36,7 +36,7 @@ cd "/home/pete/Documents/projects/Projects/News Intelligence"
 ./start_system.sh
 ```
 
-**Run from anywhere:** Create a symlink so you can start the system from any directory:
+**Terminal shortcut (run from anywhere):** Symlink the wrapper script so one command starts everything from any directory:
 
 ```bash
 mkdir -p ~/bin

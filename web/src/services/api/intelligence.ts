@@ -289,4 +289,37 @@ export const intelligenceApi = {
       return { success: false, error: (error as any).message };
     }
   },
+
+  /** Briefing feed: articles and storylines reordered (not interested excluded, sports/celebrity demoted). */
+  async getBriefingFeed(domain?: string, articlesLimit: number = 10, storylinesLimit: number = 6) {
+    try {
+      const domainKey = domain || getCurrentDomain();
+      const response = await getApi().get(
+        `/api/${domainKey}/intelligence/briefing_feed`,
+        { params: { articles_limit: articlesLimit, storylines_limit: storylinesLimit } },
+      );
+      return response.data;
+    } catch (error) {
+      Logger.apiError('Failed to get briefing feed', error as Error);
+      return { success: false, error: (error as any).message };
+    }
+  },
+
+  /** Submit usefulness (1-5) or not interested for an article, storyline, or whole briefing. */
+  async submitContentFeedback(
+    payload: { item_type: 'article' | 'storyline' | 'briefing'; item_id?: number; rating?: number; not_interested?: boolean },
+    domain?: string,
+  ) {
+    try {
+      const domainKey = domain || getCurrentDomain();
+      const response = await getApi().post(
+        `/api/${domainKey}/intelligence/feedback`,
+        payload,
+      );
+      return response.data;
+    } catch (error) {
+      Logger.apiError('Failed to submit content feedback', error as Error);
+      return { success: false, error: (error as any).message };
+    }
+  },
 };

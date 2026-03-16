@@ -45,6 +45,7 @@ def synthesize_domain_context(
     max_storylines: int = 10,
     max_events: int = 10,
     max_entities: int = 20,
+    max_quality_tier: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
     Gather all intelligence for a domain within the last `hours` window.
@@ -83,17 +84,24 @@ def synthesize_domain_context(
     try:
         with conn.cursor() as cur:
             # --- Articles with ML enrichments ---
+            # When max_quality_tier is set (e.g. 2), restrict to quality_tier <= N and order quality-first.
+            quality_clause = ""
+            order_clause = "ORDER BY a.published_at DESC NULLS LAST"
+            if max_quality_tier is not None:
+                quality_clause = " AND COALESCE(a.quality_tier, 4) <= %s"
+                order_clause = "ORDER BY COALESCE(a.quality_tier, 4) ASC, COALESCE(a.quality_score, 0) DESC, a.published_at DESC NULLS LAST"
+            article_params: tuple = (cutoff, cutoff, max_quality_tier, max_articles) if max_quality_tier is not None else (cutoff, cutoff, max_articles)
             cur.execute(
                 f"""
                 SELECT a.id, a.title, a.source_domain, a.published_at,
                        LEFT(a.content, 800) AS content_excerpt,
                        a.ml_data, a.entities, a.sentiment_score
                 FROM {schema}.articles a
-                WHERE a.published_at >= %s OR a.created_at >= %s
-                ORDER BY a.published_at DESC NULLS LAST
+                WHERE (a.published_at >= %s OR a.created_at >= %s){quality_clause}
+                {order_clause}
                 LIMIT %s
                 """,
-                (cutoff, cutoff, max_articles),
+                article_params,
             )
             articles = []
             article_ids = []
@@ -297,7 +305,7 @@ def synthesize_storyline_context(
                 "document_version": srow[5],
             }
 
-            # Articles in storyline with full enrichments
+            # Articles in storyline with full enrichments (quality-first, then recency)
             cur.execute(
                 f"""
                 SELECT a.id, a.title, a.source_domain, a.published_at,
@@ -306,7 +314,7 @@ def synthesize_storyline_context(
                 FROM {schema}.storyline_articles sa
                 JOIN {schema}.articles a ON a.id = sa.article_id
                 WHERE sa.storyline_id = %s
-                ORDER BY a.published_at DESC NULLS LAST
+                ORDER BY COALESCE(a.quality_tier, 4) ASC, COALESCE(a.quality_score, 0) DESC, a.published_at DESC NULLS LAST
                 """,
                 (storyline_id,),
             )

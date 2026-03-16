@@ -19,6 +19,15 @@ import {
   Collapse,
   Paper,
   Divider,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Select,
+  MenuItem,
+  FormControl,
+  InputLabel,
+  TextField,
 } from '@mui/material';
 import Refresh from '@mui/icons-material/Refresh';
 import ExpandMore from '@mui/icons-material/ExpandMore';
@@ -122,6 +131,12 @@ export default function ReportPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [whyLeadExpanded, setWhyLeadExpanded] = useState(false);
+  const [storylineDialogOpen, setStorylineDialogOpen] = useState(false);
+  const [storylineDialogArticle, setStorylineDialogArticle] = useState<ArticleItem | null>(null);
+  const [storylineDialogStorylineId, setStorylineDialogStorylineId] = useState<number | ''>('');
+  const [storylineDialogNewTitle, setStorylineDialogNewTitle] = useState('');
+  const [storylineDialogLoading, setStorylineDialogLoading] = useState(false);
+  const [storylineDialogError, setStorylineDialogError] = useState<string | null>(null);
 
   useEffect(() => {
     load();
@@ -132,7 +147,7 @@ export default function ReportPage() {
     setError(null);
     try {
       const [articlesRes, storylinesRes, eventsRes] = await Promise.all([
-        apiService.getArticles({ limit: 12 }).catch(() => ({ data: { articles: [] } })),
+        apiService.getArticles({ limit: 12, quality_first: true, max_quality_tier: 2 }).catch(() => ({ data: { articles: [] } })),
         apiService.getStorylines().catch(() => ({ data: { storylines: [] } })),
         contextCentricApi.getTrackedEvents({ domain_key: domain, limit: 8 }).catch(() => ({ items: [] as TrackedEvent[] })),
       ]);
@@ -167,6 +182,57 @@ export default function ReportPage() {
   const digestArticles = articles.slice(3, 10);
   const digestEvents = events.slice(2, 6);
   const e0 = secondaryEvents[0];
+
+  const openAddToStoryline = (article: ArticleItem) => {
+    setStorylineDialogArticle(article);
+    setStorylineDialogStorylineId('');
+    setStorylineDialogNewTitle('');
+    setStorylineDialogError(null);
+    setStorylineDialogOpen(true);
+  };
+
+  const closeAddToStoryline = () => {
+    setStorylineDialogOpen(false);
+    setStorylineDialogArticle(null);
+    setStorylineDialogStorylineId('');
+    setStorylineDialogNewTitle('');
+    setStorylineDialogError(null);
+  };
+
+  const confirmAddToStoryline = async () => {
+    const article = storylineDialogArticle;
+    if (!article?.id) return;
+    setStorylineDialogLoading(true);
+    setStorylineDialogError(null);
+    try {
+      const domainKey = domain === 'science-tech' ? 'science_tech' : domain;
+      if (storylineDialogStorylineId) {
+        const res = await apiService.addArticleToStoryline(
+          storylineDialogStorylineId,
+          article.id,
+          domainKey,
+        );
+        if (res?.success === false) throw new Error((res as { error?: string }).error || 'Failed to add');
+      } else if (storylineDialogNewTitle.trim()) {
+        const createRes = await apiService.createStoryline(
+          {
+            title: storylineDialogNewTitle.trim(),
+            description: `From report: ${article.title?.slice(0, 100) ?? ''}`,
+            article_ids: [article.id],
+          },
+          domainKey,
+        );
+        if ((createRes as { success?: boolean }).success === false) throw new Error((createRes as { error?: string }).error || 'Failed to create');
+        // Backend create_storyline_from_articles already adds article_ids; no need to add again
+      } else return;
+      closeAddToStoryline();
+      load();
+    } catch (e: unknown) {
+      setStorylineDialogError(e instanceof Error ? e.message : 'Failed to add to storyline');
+    } finally {
+      setStorylineDialogLoading(false);
+    }
+  };
 
   const leadTitle =
     leadEvent?.event_name ?? leadStoryline?.title ?? leadArticle?.title ?? 'No lead';
@@ -286,6 +352,7 @@ export default function ReportPage() {
                       const s = secondaryStorylines[0];
                       if (e?.id) navigate(`/${domain}/investigate/events/${e.id}`);
                       else if (s?.id) navigate(`/${domain}/storylines/${s.id}`);
+                      else if (secondaryArticles[0]?.id) navigate(`/${domain}/articles`);
                     }}
                     sx={{ p: 2, display: 'block', textAlign: 'left' }}
                   >
@@ -301,6 +368,15 @@ export default function ReportPage() {
                       {secondaryStorylines[0]?.description?.slice(0, 80) ?? secondaryArticles[0]?.source ?? (e0 ? 'Tracked event' : '')}
                       {(secondaryStorylines[0]?.article_count ?? 0) > 0 && ` · ${secondaryStorylines[0]?.article_count} articles`}
                     </Typography>
+                    {!e0 && !secondaryStorylines[0] && secondaryArticles[0]?.id && (
+                      <Button
+                        size="small"
+                        sx={{ mt: 1 }}
+                        onClick={(ev) => { ev.stopPropagation(); openAddToStoryline(secondaryArticles[0]); }}
+                      >
+                        → Storyline
+                      </Button>
+                    )}
                   </CardActionArea>
                 </Card>
               </Grid>
@@ -312,6 +388,7 @@ export default function ReportPage() {
                     onClick={() => {
                       const s = secondaryStorylines[1];
                       if (s?.id) navigate(`/${domain}/storylines/${s.id}`);
+                      else if (secondaryArticles[1]?.id) navigate(`/${domain}/articles`);
                     }}
                     sx={{ p: 2, display: 'block', textAlign: 'left' }}
                   >
@@ -327,6 +404,15 @@ export default function ReportPage() {
                       {secondaryStorylines[1]?.description?.slice(0, 80) ?? secondaryArticles[1]?.source ?? ''}
                       {(secondaryStorylines[1]?.article_count ?? 0) > 0 && ` · ${secondaryStorylines[1]?.article_count} articles`}
                     </Typography>
+                    {!secondaryStorylines[1] && secondaryArticles[1]?.id && (
+                      <Button
+                        size="small"
+                        sx={{ mt: 1 }}
+                        onClick={(ev) => { ev.stopPropagation(); openAddToStoryline(secondaryArticles[1]); }}
+                      >
+                        → Storyline
+                      </Button>
+                    )}
                   </CardActionArea>
                 </Card>
               </Grid>
@@ -348,13 +434,18 @@ export default function ReportPage() {
                     <ListItemButton
                       key={a.id ?? i}
                       dense
-                      onClick={() => a.id && navigate(`/${domain}/storylines`)}
+                      onClick={() => a.id && navigate(`/${domain}/articles`)}
                     >
                       <ListItemText
                         primary={a.title?.slice(0, 60)}
                         secondary={a.source ? `${a.source} · ${timeAgo(new Date(a.published_at ?? a.published_date ?? 0))}` : undefined}
                         primaryTypographyProps={{ variant: 'body2' }}
                       />
+                      {a.id && (
+                        <Button size="small" onClick={(ev) => { ev.stopPropagation(); openAddToStoryline(a); }}>
+                          → Storyline
+                        </Button>
+                      )}
                     </ListItemButton>
                   ))}
                 </List>
@@ -422,6 +513,66 @@ export default function ReportPage() {
           </Box>
         </Box>
       )}
+
+      <Dialog open={storylineDialogOpen} onClose={closeAddToStoryline} maxWidth="sm" fullWidth>
+        <DialogTitle>Add to Storyline</DialogTitle>
+        <DialogContent>
+          {storylineDialogArticle && (
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              Article: {storylineDialogArticle.title?.slice(0, 80)}
+            </Typography>
+          )}
+          <FormControl fullWidth sx={{ mb: 2 }}>
+            <InputLabel>Existing storyline</InputLabel>
+            <Select
+              value={storylineDialogStorylineId}
+              label="Existing storyline"
+              onChange={(e) => {
+                setStorylineDialogStorylineId(e.target.value as number | '');
+                setStorylineDialogNewTitle('');
+              }}
+            >
+              <MenuItem value="">—</MenuItem>
+              {storylines.map((s) => (
+                <MenuItem key={s.id} value={s.id ?? ''}>
+                  {s.title}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+            Or create new:
+          </Typography>
+          <TextField
+            fullWidth
+            label="New storyline title"
+            value={storylineDialogNewTitle}
+            onChange={(e) => {
+              setStorylineDialogNewTitle(e.target.value);
+              setStorylineDialogStorylineId('');
+            }}
+            placeholder="Enter title..."
+          />
+          {storylineDialogError && (
+            <Alert severity="error" sx={{ mt: 2 }} onClose={() => setStorylineDialogError(null)}>
+              {storylineDialogError}
+            </Alert>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={closeAddToStoryline}>Cancel</Button>
+          <Button
+            variant="contained"
+            onClick={confirmAddToStoryline}
+            disabled={
+              storylineDialogLoading ||
+              (!storylineDialogStorylineId && !storylineDialogNewTitle.trim())
+            }
+          >
+            {storylineDialogLoading ? 'Adding...' : 'Add to Storyline'}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 }

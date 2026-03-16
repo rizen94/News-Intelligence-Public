@@ -20,9 +20,11 @@ event_tracking:
   max_events_per_cycle: 3          # max events to update in one coordinator cycle
 
 # Phase 2 T2.3 / Phase 5: entity tracking + scheduled dossier compilation
+# Dossier compilation now runs in automation_manager (entity_dossier_compile task, hourly, 20/run).
+# Set enabled: true here only if you want the coordinator to also compile dossiers (e.g. 2/day).
 entity_tracking:
-  enabled: true
-  dossier_compile_interval_seconds: 86400   # 24h; compile dossiers for entities missing or stale
+  enabled: false
+  dossier_compile_interval_seconds: 86400   # 24h; used when enabled: true
   max_dossiers_per_cycle: 2
 
 # Phase 2 T2.3: quality thresholds for prioritization

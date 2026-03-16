@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# News Intelligence System v5.0 - Status Check Script
+# News Intelligence System v6.0 - Status Check Script
 # Shows the status of all system components
 
 # Colors for output
@@ -27,7 +27,7 @@ is_port_in_use() {
 }
 
 echo -e "${BLUE}=========================================="
-echo -e "News Intelligence System v5.0 - Status"
+echo -e "News Intelligence System v6.0 - Status"
 echo -e "==========================================${NC}"
 echo ""
 

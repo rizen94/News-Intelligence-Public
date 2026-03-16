@@ -82,6 +82,38 @@ class StorylineService(DomainAwareService):
                             SET article_count = %s, updated_at = %s
                             WHERE id = %s
                         """, (article_count, datetime.now(), storyline_id))
+                        
+                        # Living-by-default: enable automation (suggest_only), 6h frequency, min_quality_tier=2
+                        keywords, entities = self._extract_keywords_entities_from_articles(cur, article_ids)
+                        automation_settings = json.dumps({"min_quality_tier": 2})
+                        try:
+                            cur.execute(f"""
+                                UPDATE {self.schema}.storylines
+                                SET automation_enabled = true, automation_mode = 'suggest_only',
+                                    automation_frequency_hours = 6, automation_settings = %s::jsonb,
+                                    search_keywords = %s, search_entities = %s, updated_at = %s
+                                WHERE id = %s
+                            """, (
+                                automation_settings,
+                                keywords[:30] if keywords else [],
+                                entities[:30] if entities else [],
+                                datetime.now(),
+                                storyline_id,
+                            ))
+                        except Exception as e:
+                            logger.debug("Storyline automation defaults not applied (columns may be missing): %s", e)
+                    else:
+                        # No initial articles: still enable automation with defaults (user can add keywords later)
+                        try:
+                            cur.execute(f"""
+                                UPDATE {self.schema}.storylines
+                                SET automation_enabled = true, automation_mode = 'suggest_only',
+                                    automation_frequency_hours = 6, automation_settings = '{"min_quality_tier": 2}'::jsonb,
+                                    updated_at = %s
+                                WHERE id = %s
+                            """, (datetime.now(), storyline_id))
+                        except Exception as e:
+                            logger.debug("Storyline automation defaults not applied: %s", e)
                     
                     conn.commit()
                     
@@ -100,6 +132,41 @@ class StorylineService(DomainAwareService):
         except Exception as e:
             logger.error(f"Error creating storyline: {e}")
             return {"success": False, "error": str(e)}
+    
+    def _extract_keywords_entities_from_articles(
+        self, cur, article_ids: List[int]
+    ) -> tuple:
+        """Extract search_keywords and search_entities from initial articles for automation. Returns (keywords, entities)."""
+        import re
+        keywords = set()
+        entities = set()
+        if not article_ids:
+            return ([], [])
+        ids_placeholders = ",".join(["%s"] * len(article_ids))
+        try:
+            cur.execute(f"""
+                SELECT title FROM {self.schema}.articles WHERE id IN ({ids_placeholders})
+            """, article_ids)
+            for (t,) in cur.fetchall():
+                if not t:
+                    continue
+                words = re.findall(r"\b[A-Za-z][a-z]+|\b[A-Z]{2,}\b", t)
+                for w in words:
+                    if len(w) >= 3 and w.lower() not in {"the", "and", "for", "with", "from", "this", "that", "have", "has", "been", "said"}:
+                        keywords.add(w.strip())
+        except Exception:
+            pass
+        try:
+            cur.execute(f"""
+                SELECT DISTINCT entity_name FROM {self.schema}.article_entities
+                WHERE article_id IN ({ids_placeholders}) AND entity_name IS NOT NULL AND LENGTH(TRIM(entity_name)) >= 2
+            """, article_ids)
+            for (name,) in cur.fetchall():
+                if name:
+                    entities.add(name.strip()[:255])
+        except Exception:
+            pass
+        return (list(keywords)[:30], list(entities)[:30])
     
     async def evolve_storyline_with_new_content(
         self,

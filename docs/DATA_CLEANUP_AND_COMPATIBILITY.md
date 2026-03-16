@@ -1,6 +1,17 @@
 # Data Cleanup and Compatibility
 
-After major schema updates (v4 domain silos, v5 events, context-centric, etc.), you may have old records that either work fine with the new system or need pruning. This doc summarizes **what the system handles gracefully**, **what to check**, and **when cleanup is reasonable**.
+After major schema updates (v4 domain silos, v5 events, context-centric, v6 quality-first, etc.), you may have old records that either work fine with the new system or need pruning. This doc summarizes **what the system handles gracefully**, **what to check**, and **when cleanup is reasonable**.
+
+---
+
+## v6: Do you need to clear anything?
+
+**No.** You do **not** need to clear or truncate existing database content to “make room” for v6 or to avoid conflicts.
+
+- **v6 is additive:** New columns use `ADD COLUMN IF NOT EXISTS … DEFAULT …`, so existing rows get defaults (e.g. `editorial_document = '{}'`, `document_status = 'draft'`). New intelligence tables (`intelligence.contexts`, `tracked_events`, `entity_dossiers`, `processed_documents`, etc.) start empty and are filled by the pipeline.
+- **Existing articles and storylines** are used as-is; the pipeline will backfill `ml_data`, entity extraction, and (over time) `editorial_document` and event chronicles.
+- **entity_canonical** (per-domain) already exists; v6 adds alias population and resolution. Rows with NULL or empty `aliases` are fine and get populated by the entity organizer.
+- **Optional hygiene only:** Run the diagnostic below and, if you want, clean orphan join rows, prune very old pipeline/log data, and optionally reclaim space from legacy `public.*` tables. That is for health and space, not a v6 requirement.
 
 ## Run the diagnostic (read-only)
 

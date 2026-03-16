@@ -37,6 +37,13 @@ docker logs news-intelligence-api --tail 50
 netstat -tlnp | grep 8000
 ```
 
+### **Monitoring page down after CLI restart** (non-Docker)
+**Symptoms**: After running `./start_system.sh` or `start-news-intelligence`, the Monitoring page shows errors or "down"; startup log may say "API server already running" then "❌ API Server: Not responding".
+
+**Cause**: The script had previously skipped starting the API when it saw a leftover uvicorn process (e.g. still shutting down after `pkill`), so no healthy API was running.
+
+**Fix (in script)**: `start_system.sh` now (1) waits for the API process to exit after `pkill` (and uses SIGKILL if needed), and (2) if it thinks the API is already running, it checks `GET /api/system_monitoring/health`; if that fails, it force-kills and starts a new API. After updating the script, run `./start_system.sh` again. If the Monitoring page is still down, run: `curl -s http://localhost:8000/api/system_monitoring/health` to confirm the API is up.
+
 ### **Database Connection Issues**
 **Symptoms**: Database errors, connection timeouts
 **Solutions**:

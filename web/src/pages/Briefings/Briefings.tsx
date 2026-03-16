@@ -16,7 +16,7 @@ import {
   List,
   ListItemButton,
   ListItemText,
-  Divider,
+  ListItemSecondaryAction,
   Collapse,
   Paper,
   Tab,
@@ -27,6 +27,8 @@ import AutoAwesome from '@mui/icons-material/AutoAwesome';
 import ExpandMore from '@mui/icons-material/ExpandMore';
 import ExpandLess from '@mui/icons-material/ExpandLess';
 import OpenInNew from '@mui/icons-material/OpenInNew';
+import ThumbDownOffAlt from '@mui/icons-material/ThumbDownOffAlt';
+import { IconButton } from '@mui/material';
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import apiService from '../../services/apiService';
@@ -140,20 +142,44 @@ export default function Briefings() {
     setLoading(true);
     setError(null);
     try {
-      const [articlesRes, storylinesRes, eventsRes] = await Promise.all([
-        apiService.getArticles({ limit: 10 }).catch(() => ({ data: { articles: [] } })),
-        apiService.getStorylines().catch(() => ({ data: { storylines: [] } })),
+      const [feedRes, eventsRes] = await Promise.all([
+        apiService.getBriefingFeed(domain, 10, 6).catch(() => ({ success: false })),
         contextCentricApi.getTrackedEvents({ domain_key: domain, limit: 5 }).catch(() => ({ items: [] as TrackedEvent[] })),
       ]);
-      const rawArticles = (articlesRes as { data?: { articles?: ArticleItem[] } })?.data?.articles ?? (articlesRes as { articles?: ArticleItem[] })?.articles ?? [];
-      const rawStorylines = (storylinesRes as { data?: { storylines?: StorylineItem[] } })?.data?.storylines ?? (storylinesRes as { storylines?: StorylineItem[] })?.storylines ?? [];
-      setArticles(Array.isArray(rawArticles) ? rawArticles.slice(0, 8) : []);
-      setStorylines(Array.isArray(rawStorylines) ? rawStorylines.slice(0, 6) : []);
+      if (feedRes?.success && feedRes?.data?.articles != null) {
+        const rawArticles = feedRes.data.articles ?? [];
+        const rawStorylines = feedRes.data.storylines ?? [];
+        setArticles(Array.isArray(rawArticles) ? rawArticles.slice(0, 8) : []);
+        setStorylines(Array.isArray(rawStorylines) ? rawStorylines.slice(0, 6) : []);
+      } else {
+        const [articlesRes, storylinesRes] = await Promise.all([
+          apiService.getArticles({ limit: 10 }).catch(() => ({ data: { articles: [] } })),
+          apiService.getStorylines().catch(() => ({ data: { storylines: [] } })),
+        ]);
+        const rawArticles = (articlesRes as { data?: { articles?: ArticleItem[] } })?.data?.articles ?? (articlesRes as { articles?: ArticleItem[] })?.articles ?? [];
+        const rawStorylines = (storylinesRes as { data?: { storylines?: StorylineItem[] } })?.data?.storylines ?? (storylinesRes as { storylines?: StorylineItem[] })?.storylines ?? [];
+        setArticles(Array.isArray(rawArticles) ? rawArticles.slice(0, 8) : []);
+        setStorylines(Array.isArray(rawStorylines) ? rawStorylines.slice(0, 6) : []);
+      }
       setEvents(eventsRes?.items ?? []);
     } catch (e) {
       setError('Failed to load briefing data');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleFeedback = async (
+    itemType: 'article' | 'storyline' | 'briefing',
+    itemId: number | undefined,
+    opts: { not_interested?: boolean; rating?: number },
+  ) => {
+    const res = await apiService.submitContentFeedback(
+      { item_type: itemType, item_id: itemId, ...opts },
+      domain,
+    );
+    if (res?.success && opts.not_interested) {
+      load();
     }
   };
 
@@ -269,6 +295,16 @@ export default function Briefings() {
                     </Typography>
                   )}
                 </CardActionArea>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 1, flexWrap: 'wrap' }}>
+                  <Typography variant="caption" color="text.secondary">Feedback:</Typography>
+                  <IconButton size="small" title="Not interested" onClick={() => handleFeedback(leadStoryline ? 'storyline' : 'article', (leadStoryline?.id ?? leadArticle?.id) as number, { not_interested: true })}>
+                    <ThumbDownOffAlt fontSize="small" />
+                  </IconButton>
+                  <Typography variant="caption" color="text.secondary">Useful?</Typography>
+                  {[1, 2, 3, 4, 5].map((n) => (
+                    <Button key={n} size="small" variant="outlined" sx={{ minWidth: 28 }} onClick={() => handleFeedback(leadStoryline ? 'storyline' : 'article', (leadStoryline?.id ?? leadArticle?.id) as number, { rating: n })}>{n}</Button>
+                  ))}
+                </Box>
               </Paper>
             )}
 
@@ -291,6 +327,10 @@ export default function Briefings() {
                       <Typography variant="body2" color="text.secondary">
                         {secondaryStorylines[0]?.description?.slice(0, 100) || secondaryArticles[0]?.source || ''} · {secondaryStorylines[0]?.article_count ?? 0} articles
                       </Typography>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 1 }}>
+                        <IconButton size="small" title="Not interested" onClick={(e) => { e.stopPropagation(); handleFeedback(secondaryStorylines[0] ? 'storyline' : 'article', (secondaryStorylines[0]?.id ?? secondaryArticles[0]?.id) as number, { not_interested: true }); }}><ThumbDownOffAlt fontSize="small" /></IconButton>
+                        {[1, 2, 3, 4, 5].map((n) => <Button key={n} size="small" sx={{ minWidth: 24, p: 0.25 }} onClick={(e) => { e.stopPropagation(); handleFeedback(secondaryStorylines[0] ? 'storyline' : 'article', (secondaryStorylines[0]?.id ?? secondaryArticles[0]?.id) as number, { rating: n }); }}>{n}</Button>)}
+                      </Box>
                     </CardActionArea>
                   </Card>
                 </Grid>
@@ -312,6 +352,10 @@ export default function Briefings() {
                       <Typography variant="body2" color="text.secondary">
                         {secondaryStorylines[1]?.description?.slice(0, 100) || secondaryArticles[1]?.source || ''} · {secondaryStorylines[1]?.article_count ?? 0} articles
                       </Typography>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 1 }}>
+                        <IconButton size="small" title="Not interested" onClick={(e) => { e.stopPropagation(); handleFeedback(secondaryStorylines[1] ? 'storyline' : 'article', (secondaryStorylines[1]?.id ?? secondaryArticles[1]?.id) as number, { not_interested: true }); }}><ThumbDownOffAlt fontSize="small" /></IconButton>
+                        {[1, 2, 3, 4, 5].map((n) => <Button key={n} size="small" sx={{ minWidth: 24, p: 0.25 }} onClick={(e) => { e.stopPropagation(); handleFeedback(secondaryStorylines[1] ? 'storyline' : 'article', (secondaryStorylines[1]?.id ?? secondaryArticles[1]?.id) as number, { rating: n }); }}>{n}</Button>)}
+                      </Box>
                     </CardActionArea>
                   </Card>
                 </Grid>
@@ -333,6 +377,9 @@ export default function Briefings() {
                         secondary={a.source_domain || a.source}
                         secondaryTypographyProps={{ variant: 'caption' }}
                       />
+                      <ListItemSecondaryAction>
+                        <IconButton size="small" title="Not interested" onClick={(e) => { e.stopPropagation(); handleFeedback('article', a.id as number, { not_interested: true }); }}><ThumbDownOffAlt fontSize="small" /></IconButton>
+                      </ListItemSecondaryAction>
                     </ListItemButton>
                   ))}
                   {digestArticles.length === 0 && (
@@ -353,6 +400,9 @@ export default function Briefings() {
                         secondary={`${s.article_count ?? 0} articles`}
                         secondaryTypographyProps={{ variant: 'caption' }}
                       />
+                      <ListItemSecondaryAction>
+                        <IconButton size="small" title="Not interested" onClick={(e) => { e.stopPropagation(); handleFeedback('storyline', s.id as number, { not_interested: true }); }}><ThumbDownOffAlt fontSize="small" /></IconButton>
+                      </ListItemSecondaryAction>
                     </ListItemButton>
                   ))}
                   {digestStorylines.length === 0 && (
@@ -422,9 +472,15 @@ export default function Briefings() {
                       <Typography component="div" sx={{ whiteSpace: 'pre-wrap' }} variant="body1">
                         {generatedBriefing.content}
                       </Typography>
-                      <Button size="small" startIcon={<AutoAwesome />} onClick={handleGenerateBriefing} disabled={generating} sx={{ mt: 2 }}>
-                        Regenerate
-                      </Button>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 2, flexWrap: 'wrap' }}>
+                        <Button size="small" startIcon={<AutoAwesome />} onClick={handleGenerateBriefing} disabled={generating}>
+                          Regenerate
+                        </Button>
+                        <Typography variant="body2" color="text.secondary">How useful was this briefing?</Typography>
+                        {[1, 2, 3, 4, 5].map((n) => (
+                          <Button key={n} size="small" variant="outlined" sx={{ minWidth: 28 }} onClick={() => handleFeedback('briefing', undefined, { rating: n })}>{n}</Button>
+                        ))}
+                      </Box>
                     </Box>
                   )}
                   {generateError && (

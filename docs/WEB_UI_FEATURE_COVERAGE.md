@@ -1,6 +1,6 @@
 # Web UI vs Backend Feature Coverage
 
-Assessment of whether the current web interface exposes the features we built. **Short answer:** the new layout (Dashboard, Discover, Investigate, Monitor, Analyze) highlights **context-centric** and **orchestrator** well; **articles, storylines, topics, RSS, full system monitoring, watchlist, and several finance/intelligence pages** are built but not reachable from the current nav/routes.
+Assessment of whether the current web interface exposes the features we built (v6 quality-first). **Short answer:** The layout (Dashboard, Discover, Storylines, Briefings, Report, Investigate, Monitor, Analyze) **does** expose v6 intelligence: tracked events, entity resolution (canonical entities tab), processed documents, narrative threads, briefings, report, storylines, and monitor. **Gaps:** Articles/topics/RSS/watchlist and full pipeline/health are not in nav; content synthesis and fact verification are API-only (no dedicated UI).
 
 **Related:** [PROJECT_SCOPE_AND_DEVELOPMENT_STATUS.md](PROJECT_SCOPE_AND_DEVELOPMENT_STATUS.md), [WEB_PRODUCT_DISPLAY_PLAN.md](WEB_PRODUCT_DISPLAY_PLAN.md).
 
@@ -24,7 +24,9 @@ Assessment of whether the current web interface exposes the features we built. *
 | `/:domain/analysis/:taskId` | FinancialAnalysisResult | Finance task result. Not in sidebar; reachable via Analyze (finance) or direct URL. |
 | `/:domain/commodity/:commodity` | CommodityDashboard | Commodity (gold, etc.). Nav: “Commodity” (finance only). |
 
-**Sidebar (AppNav):** Dashboard, Discover, Investigate, Monitor, Analyze, Commodity (finance only).
+**Sidebar (AppNav):** Dashboard, Discover, Storylines, Briefings, Today's Report, Investigate, Monitor, Analyze, Commodity (finance only).
+
+**v6 routes also in App.tsx:** `storylines`, `storylines/:id`, `briefings`, `report`, `investigate/documents`, `investigate/narrative-threads`. EntitiesListPage has **Canonical entities** tab (resolve, merge, aliases, cross-domain link). MonitorPage includes pipeline status and realtime monitoring.
 
 ---
 

@@ -104,6 +104,10 @@ class ArticleService(DomainAwareService):
                                 WHERE article_id IS NOT NULL
                             )
                         """
+
+                    if filters.get('max_quality_tier') is not None:
+                        query += " AND COALESCE(quality_tier, 4) <= %s"
+                        params.append(filters['max_quality_tier'])
                 
                 # Get total count (before adding LIMIT/OFFSET)
                 count_query = f"""
@@ -143,12 +147,19 @@ class ArticleService(DomainAwareService):
                             )
                         """
 
+                    if filters.get('max_quality_tier') is not None:
+                        count_query += " AND COALESCE(quality_tier, 4) <= %s"
+                        count_params.append(filters['max_quality_tier'])
+
                 cur.execute(count_query, count_params)
                 total_result = cur.fetchone()
                 total = total_result['count'] if isinstance(total_result, dict) else total_result[0]
                 
-                # Add ordering and pagination
-                query += " ORDER BY published_at DESC NULLS LAST, created_at DESC"
+                # Add ordering and pagination (quality-first when requested)
+                if filters and filters.get('quality_first'):
+                    query += " ORDER BY COALESCE(quality_tier, 4) ASC, COALESCE(quality_score, 0) DESC, published_at DESC NULLS LAST, created_at DESC"
+                else:
+                    query += " ORDER BY published_at DESC NULLS LAST, created_at DESC"
                 query += " LIMIT %s OFFSET %s"
                 params.extend([limit, offset])
                 

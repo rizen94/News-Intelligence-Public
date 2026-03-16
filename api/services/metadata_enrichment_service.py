@@ -574,6 +574,100 @@ class MetadataEnrichmentService:
         except Exception as e:
             self.logger.error(f"Error updating article metadata: {e}")
 
+    async def enrich_article_for_schema(
+        self, article_id: int, schema: str, title: str, content: str
+    ) -> bool:
+        """
+        Enrich one article in a domain schema (politics, finance, science_tech).
+        Updates quality_score, sentiment_score, categories, metadata only.
+        Used by automation batch; uses get_db_connection() for schema-qualified writes.
+        """
+        try:
+            text = (content or "")[:15000] or (title or "")
+            if not text.strip():
+                return False
+            detected_language = await self._detect_language(text)
+            categories = await self._extract_categories(text)
+            sentiment_score = await self._calculate_sentiment(text)
+            article_placeholder = {"content": text, "language": detected_language}
+            quality_score = await self._calculate_quality_score(article_placeholder, text)
+            from shared.database.connection import get_db_connection
+            conn = get_db_connection()
+            if not conn:
+                return False
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        f"""
+                        UPDATE {schema}.articles
+                        SET quality_score = %s, sentiment_score = %s,
+                            categories = %s::jsonb,
+                            metadata = COALESCE(metadata, '{{}}'::jsonb) || '{{"enrichment_done": true}}'::jsonb
+                        WHERE id = %s
+                        """,
+                        (
+                            quality_score,
+                            sentiment_score,
+                            json.dumps(categories),
+                            article_id,
+                        ),
+                    )
+                conn.commit()
+                return True
+            finally:
+                conn.close()
+        except Exception as e:
+            self.logger.debug("enrich_article_for_schema %s/%s: %s", schema, article_id, e)
+            return False
+
+
+async def run_metadata_enrichment_batch_for_domains(limit_per_domain: int = 5) -> int:
+    """
+    Batch-enrich articles that have content but no enrichment_done in metadata.
+    Runs per domain schema (politics, finance, science_tech). Returns total enriched count.
+    Call from automation (metadata_enrichment task).
+    """
+    from shared.database.connection import get_db_connection
+
+    service = await get_enrichment_service()
+    conn = get_db_connection()
+    if not conn:
+        return 0
+    total = 0
+    schemas = ("politics", "finance", "science_tech")
+    try:
+        for schema in schemas:
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        f"""
+                        SELECT id, title, LEFT(content, 20000) as content
+                        FROM {schema}.articles
+                        WHERE content IS NOT NULL AND LENGTH(content) > 50
+                          AND (metadata IS NULL OR (metadata->>'enrichment_done') IS NULL)
+                        ORDER BY id DESC
+                        LIMIT %s
+                        """,
+                        (limit_per_domain,),
+                    )
+                    rows = cur.fetchall()
+            except Exception as e:
+                logger.debug("metadata_enrichment batch %s: %s", schema, e)
+                continue
+            for article_id, art_title, art_content in rows or []:
+                ok = await service.enrich_article_for_schema(
+                    article_id, schema, art_title or "", art_content or ""
+                )
+                if ok:
+                    total += 1
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    return total
+
+
 # Global enrichment service instance
 _enrichment_service = None
 

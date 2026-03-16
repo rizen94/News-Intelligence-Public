@@ -155,6 +155,9 @@ PHASE_ESTIMATED_DURATION_SECONDS = {
     "cross_domain_synthesis": 120,
     "relationship_extraction": 90,
     "entity_organizer": 180,  # cleanup + relationship extraction
+    "entity_dossier_compile": 90,  # compile entity dossiers (no LLM), ~2-5s per dossier
+    "entity_position_tracker": 300,  # LLM position extraction per entity, ~30-60s per entity
+    "metadata_enrichment": 90,  # language/categories/sentiment/quality per domain batch
     "research_topic_refinement": 60,  # pick one topic, submit to finance orchestrator (idle-only)
     "editorial_document_generation": 300,  # LLM-generate/refine editorial_document on storylines
     "editorial_briefing_generation": 300,  # LLM-generate/refine editorial_briefing on tracked_events
@@ -273,7 +276,7 @@ class AutomationManager:
                 'enabled': True,
                 'priority': TaskPriority.NORMAL,
                 'phase': 1,
-                'depends_on': ['context_sync'],
+                'depends_on': ['context_sync', 'entity_profile_sync'],
                 'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['entity_profile_build'],
             },
             # PHASE 2.2: Pattern recognition (network, temporal, behavioral, event)
@@ -283,8 +286,38 @@ class AutomationManager:
                 'enabled': True,
                 'priority': TaskPriority.NORMAL,
                 'phase': 2,
-                'depends_on': [],
+                'depends_on': ['context_sync', 'entity_profile_sync'],
                 'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['pattern_recognition'],
+            },
+            # PHASE 2.6: Entity dossier compile (articles + storylines + relationships -> entity_dossiers)
+            'entity_dossier_compile': {
+                'interval': 3600,  # 1 hour - compile dossiers for entities missing or stale
+                'last_run': None,
+                'enabled': True,
+                'priority': TaskPriority.NORMAL,
+                'phase': 2,
+                'depends_on': ['entity_profile_sync'],
+                'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['entity_dossier_compile'],
+            },
+            # PHASE 2: Entity position tracker (stances, votes, policy from articles -> entity_positions)
+            'entity_position_tracker': {
+                'interval': 7200,  # 2 hours
+                'last_run': None,
+                'enabled': True,
+                'priority': TaskPriority.NORMAL,
+                'phase': 2,
+                'depends_on': ['entity_profile_sync'],
+                'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['entity_position_tracker'],
+            },
+            # Metadata enrichment (language, categories, sentiment, quality) for domain articles
+            'metadata_enrichment': {
+                'interval': 900,  # 15 minutes
+                'last_run': None,
+                'enabled': True,
+                'priority': TaskPriority.NORMAL,
+                'phase': 2,
+                'depends_on': ['article_processing'],
+                'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['metadata_enrichment'],
             },
             # P2: Relationship extraction (co-mentions -> entity_relationships)
             'relationship_extraction': {
@@ -1183,6 +1216,8 @@ class AutomationManager:
             'article_processing', 'storyline_processing', 'rag_enhancement', 'basic_summary_generation',
             'event_extraction', 'event_deduplication', 'story_continuation', 'watchlist_alerts',
             'quality_scoring', 'timeline_generation',
+            'claim_extraction', 'event_tracking', 'entity_profile_build', 'entity_position_tracker',
+            'editorial_document_generation', 'editorial_briefing_generation', 'story_enhancement',
         }
         if task.name in _OLLAMA_TASKS:
             try:
@@ -1193,6 +1228,24 @@ class AutomationManager:
                     await self.task_queue.put(task)  # Re-queue for next cycle when API is idle
                     await asyncio.sleep(5)  # Avoid tight loop — wait before worker picks next task
                     return
+            except ImportError:
+                pass
+            # GPU temperature throttle: pause Ollama work if GPU is too hot
+            try:
+                from shared.gpu_metrics import should_throttle_ollama, get_gpu_metrics, GPU_THROTTLE_SLEEP_SECONDS
+                if should_throttle_ollama():
+                    metrics = get_gpu_metrics()
+                    temp = metrics.get("gpu_temperature_c")
+                    logger.warning(
+                        "GPU temp %s C >= 82 C — pausing Ollama task %s for %ss to cool",
+                        temp, task.name, GPU_THROTTLE_SLEEP_SECONDS,
+                    )
+                    await asyncio.sleep(GPU_THROTTLE_SLEEP_SECONDS)
+                    if should_throttle_ollama():
+                        logger.warning("GPU still hot after pause — deferring %s", task.name)
+                        task.status = TaskStatus.PENDING
+                        await self.task_queue.put(task)
+                        return
             except ImportError:
                 pass
             await self.ollama_semaphore.acquire()
@@ -1238,6 +1291,12 @@ class AutomationManager:
                 await self._execute_entity_profile_build(task)
             elif task.name == 'pattern_recognition':
                 await self._execute_pattern_recognition(task)
+            elif task.name == 'entity_dossier_compile':
+                await self._execute_entity_dossier_compile(task)
+            elif task.name == 'entity_position_tracker':
+                await self._execute_entity_position_tracker(task)
+            elif task.name == 'metadata_enrichment':
+                await self._execute_metadata_enrichment(task)
             elif task.name == 'relationship_extraction':
                 await self._execute_relationship_extraction(task)
             elif task.name == 'entity_organizer':
@@ -1388,6 +1447,12 @@ class AutomationManager:
             return f"Syncing entity profiles ({domain or 'all domains'})"
         if name == "entity_profile_build":
             return "Building entity profiles from contexts"
+        if name == "entity_dossier_compile":
+            return "Compiling entity dossiers (people/orgs)"
+        if name == "entity_position_tracker":
+            return "Extracting entity positions (stances/votes)"
+        if name == "metadata_enrichment":
+            return "Metadata enrichment (language, categories, quality)"
         if name == "claim_extraction":
             return "Extracting claims from contexts"
         if name == "event_tracking":
@@ -1595,6 +1660,69 @@ class AutomationManager:
                 logger.info(f"Entity profile build: {updated} profiles updated")
         except Exception as e:
             logger.warning(f"Entity profile build failed: {e}")
+
+    async def _execute_entity_dossier_compile(self, task: Task):
+        """Compile entity dossiers (chronicle_data, relationships, positions) for entities missing or stale (Phase 2.6)."""
+        try:
+            from config.context_centric_config import is_context_centric_task_enabled
+            if not is_context_centric_task_enabled("entity_dossier_compile"):
+                return
+        except Exception:
+            pass
+        from services.dossier_compiler_service import _run_scheduled_dossier_compiles
+        import asyncio
+        try:
+            loop = asyncio.get_event_loop()
+            compiled = await loop.run_in_executor(
+                self._executor,
+                _run_scheduled_dossier_compiles,
+                20,   # max_dossiers_per_run
+                None, # get_db_connection_fn -> use default
+                7,    # stale_days
+            )
+            if compiled > 0:
+                logger.info(f"Entity dossier compile: {compiled} dossiers compiled")
+        except Exception as e:
+            logger.warning(f"Entity dossier compile failed: {e}")
+
+    async def _execute_entity_position_tracker(self, task: Task):
+        """Extract entity positions (stances, votes, policy) from articles; populate intelligence.entity_positions."""
+        try:
+            from config.context_centric_config import is_context_centric_task_enabled
+            if not is_context_centric_task_enabled("entity_position_tracker"):
+                return
+        except Exception:
+            pass
+        from services.entity_position_tracker_service import run_position_tracker_batch
+        try:
+            loop = asyncio.get_event_loop()
+            results = await loop.run_in_executor(
+                self._executor,
+                run_position_tracker_batch,
+                None,   # domain_key -> all domains
+                5,     # min_mentions
+                8,     # max_entities
+                10,    # max_articles_per_entity
+            )
+            total = sum(
+                r.get("total_positions", 0)
+                for r in (results or {}).values()
+                if isinstance(r, dict)
+            )
+            if total > 0:
+                logger.info("Entity position tracker: %s positions extracted", total)
+        except Exception as e:
+            logger.warning("Entity position tracker failed: %s", e)
+
+    async def _execute_metadata_enrichment(self, task: Task):
+        """Run metadata enrichment batch for domain articles (language, categories, sentiment, quality)."""
+        try:
+            from services.metadata_enrichment_service import run_metadata_enrichment_batch_for_domains
+            total = await run_metadata_enrichment_batch_for_domains(limit_per_domain=5)
+            if total > 0:
+                logger.info("Metadata enrichment: %d articles enriched", total)
+        except Exception as e:
+            logger.warning("Metadata enrichment failed: %s", e)
 
     async def _execute_story_enhancement(self, task: Task):
         """Phase 3 RAG: Run full enhancement cycle (triggers + entity enrichment + profile build)."""
@@ -2011,8 +2139,8 @@ class AutomationManager:
     async def _execute_ml_processing(self, task: Task):
         """Execute ML processing task"""
         from modules.ml.background_processor import BackgroundMLProcessor
-        
-        ml_processor = BackgroundMLProcessor()
+
+        ml_processor = BackgroundMLProcessor(self.db_config)
         
         # Process articles that need ML analysis
         conn = await self._get_db_connection()

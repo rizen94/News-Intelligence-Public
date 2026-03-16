@@ -101,7 +101,7 @@ async def generate_storyline_editorial(domain: str, limit: int = 10) -> Dict[str
                     JOIN {schema}.articles a ON a.id = sa.article_id
                     WHERE sa.storyline_id = %s
                       AND a.title IS NOT NULL
-                    ORDER BY a.published_at DESC NULLS LAST
+                    ORDER BY COALESCE(a.quality_tier, 4) ASC, COALESCE(a.quality_score, 0) DESC, a.published_at DESC NULLS LAST
                     LIMIT 12
                 """, (sid,))
                 articles = cursor.fetchall()

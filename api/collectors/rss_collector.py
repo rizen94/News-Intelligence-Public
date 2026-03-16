@@ -13,8 +13,17 @@ import hashlib
 import feedparser
 import psycopg2
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional
+
+
+def _utc_aware(dt):
+    """Return a timezone-aware datetime in UTC. Feed and DB datetimes may be naive or aware."""
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 
 # Add parent directory to path for service imports
@@ -621,6 +630,7 @@ def collect_rss_feeds() -> int:
                     
                     for entry in feed.entries[:50]:
                         try:
+                            feed_cur.execute("SAVEPOINT sp_article")
                             title = entry.get('title', '')[:500]
                             url = entry.get('link', '')[:500]
                             # Prefer full article body (content:encoded) over excerpt
@@ -670,17 +680,17 @@ def collect_rss_feeds() -> int:
                                 logger.debug(f"Article excluded (impact score {impact_score:.2f} < 0.25): {title[:60]}...")
                                 continue
                             
-                            # Parse published date
+                            # Parse published date (normalize to UTC-aware for comparison with DB timestamps)
                             published_date = None
                             if hasattr(entry, 'published_parsed') and entry.published_parsed:
-                                published_date = datetime(*entry.published_parsed[:6])
+                                published_date = _utc_aware(datetime(*entry.published_parsed[:6]))
                             elif hasattr(entry, 'updated_parsed') and entry.updated_parsed:
-                                published_date = datetime(*entry.updated_parsed[:6])
+                                published_date = _utc_aware(datetime(*entry.updated_parsed[:6]))
                             else:
-                                published_date = datetime.now()
+                                published_date = datetime.now(timezone.utc)
                             feed_updated_dt = None
                             if hasattr(entry, 'updated_parsed') and entry.updated_parsed:
-                                feed_updated_dt = datetime(*entry.updated_parsed[:6])
+                                feed_updated_dt = _utc_aware(datetime(*entry.updated_parsed[:6]))
                             
                             # Check for existing article by URL (update-aware)
                             feed_cur.execute(f"""
@@ -692,7 +702,7 @@ def collect_rss_feeds() -> int:
                                 existing_id, existing_content, existing_pub, existing_updated = existing_by_url
                                 new_content_hash = hashlib.md5((content or '').encode()).hexdigest()
                                 existing_content_hash = hashlib.md5((existing_content or '').encode()).hexdigest() if existing_content else ''
-                                existing_ts = existing_updated or existing_pub
+                                existing_ts = _utc_aware(existing_updated or existing_pub)
                                 content_changed = new_content_hash != existing_content_hash
                                 feed_says_newer = feed_updated_dt and existing_ts and feed_updated_dt > existing_ts
                                 should_update = content_changed or feed_says_newer or not (existing_content or '').strip()
@@ -748,7 +758,7 @@ def collect_rss_feeds() -> int:
                                 (title, url, content, summary, published_at, created_at, source_domain, quality_score, bias_score)
                                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                                 RETURNING id
-                            """, (title, url, content, None, published_date, datetime.now(), feed_name, quality_score, bias_score))
+                            """, (title, url, content, None, published_date, datetime.now(timezone.utc), feed_name, quality_score, bias_score))
                             
                             result = feed_cur.fetchone()
                             if result and feed_cur.rowcount > 0:
@@ -779,8 +789,12 @@ def collect_rss_feeds() -> int:
                             logger.warning(f"Error processing article from {feed_name}: {e}")
                             try:
                                 feed_cur.execute("ROLLBACK TO SAVEPOINT sp_article")
-                            except:
-                                pass
+                            except Exception:
+                                try:
+                                    feed_conn.rollback()
+                                except Exception:
+                                    pass
+                                break
                             continue
                     
                     # Update feed timestamp
@@ -930,6 +944,7 @@ def collect_rss_feed(feed_url: str, feed_name: str = "Unknown") -> int:
         
         for entry in feed.entries:
             try:
+                cur.execute("SAVEPOINT sp_article")
                 title = entry.get('title', '')[:500]
                 url = entry.get('link', '')[:500]
                 content = entry.get('summary', '') or entry.get('description', '')
@@ -962,11 +977,11 @@ def collect_rss_feed(feed_url: str, feed_name: str = "Unknown") -> int:
                 
                 published_date = None
                 if hasattr(entry, 'published_parsed') and entry.published_parsed:
-                    published_date = datetime(*entry.published_parsed[:6])
+                    published_date = _utc_aware(datetime(*entry.published_parsed[:6]))
                 elif hasattr(entry, 'updated_parsed') and entry.updated_parsed:
-                    published_date = datetime(*entry.updated_parsed[:6])
+                    published_date = _utc_aware(datetime(*entry.updated_parsed[:6]))
                 else:
-                    published_date = datetime.now()
+                    published_date = datetime.now(timezone.utc)
                 
                 # Determine domain for single feed collection (default to politics)
                 # Note: For single feed, we need to determine domain from feed_name or query all schemas
@@ -1014,7 +1029,7 @@ def collect_rss_feed(feed_url: str, feed_name: str = "Unknown") -> int:
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                     RETURNING id
                 """, (
-                    title, url, content, None, published_date, datetime.now(), feed_name, quality_score, bias_score
+                    title, url, content, None, published_date, datetime.now(timezone.utc), feed_name, quality_score, bias_score
                 ))
                 
                 result = cur.fetchone()
@@ -1044,6 +1059,14 @@ def collect_rss_feed(feed_url: str, feed_name: str = "Unknown") -> int:
                     
             except Exception as e:
                 logger.warning(f"Error processing article: {e}")
+                try:
+                    cur.execute("ROLLBACK TO SAVEPOINT sp_article")
+                except Exception:
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        pass
+                    break
                 continue
         
         conn.commit()

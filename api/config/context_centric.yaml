@@ -1,14 +1,18 @@
 # Context-centric pipeline — Phase 3.3 gradual migration
 # Set any task to false to disable it (fallback to old system for that part).
-# See docs/CONTEXT_CENTRIC_UPGRADE_PLAN.md
+# See docs/CONTEXT_CENTRIC_UPGRADE_PLAN.md, docs/DOSSIER_PIPELINE_ORDERING_PLAN.md
 
 tasks:
   context_sync: true
   entity_profile_sync: true
   claim_extraction: true
   event_tracking: true
+  event_coherence_review: true
+  investigation_report_refresh: true
   entity_profile_build: true
   pattern_recognition: true
+  entity_dossier_compile: true
+  entity_position_tracker: true
 
 # Optional: limit context pipeline to a fraction of sources (0.0–1.0). 1.0 = all.
 # Not yet enforced; future: skip ensure_context_for_article for (1 - fraction) of inserts.

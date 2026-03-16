@@ -6,6 +6,7 @@ Uses local processing only - no external AI services
 
 import logging
 import json
+import os
 from typing import Dict, List, Optional
 from datetime import datetime, timedelta
 import psycopg2
@@ -126,8 +127,9 @@ class DailyBriefingService:
 
             # Editorial layer: key developments (headlines + storylines) for narrative, not just metrics
             if schema:
+                require_quality = os.environ.get("BRIEFING_REQUIRE_QUALITY_TIER_1_2", "").lower() in ("1", "true", "yes")
                 briefing["sections"]["key_developments"] = self._extract_key_developments(
-                    start_date, articles_table, schema
+                    start_date, articles_table, schema, domain=domain, require_quality_tier_1_2=require_quality
                 )
 
             # Generate recommendations
@@ -401,8 +403,15 @@ class DailyBriefingService:
             logger.error(f"Error generating quality metrics: {e}")
             return {"error": str(e)}
 
-    def _extract_key_developments(self, start_date: datetime, articles_table: str, schema: str) -> Dict[str, any]:
-        """Extract editorial narratives, headlines, and storyline titles for briefings. Uses editorial_document when available."""
+    def _extract_key_developments(
+        self,
+        start_date: datetime,
+        articles_table: str,
+        schema: str,
+        domain: Optional[str] = None,
+        require_quality_tier_1_2: bool = False,
+    ) -> Dict[str, any]:
+        """Extract editorial narratives, headlines, and storyline titles for briefings. Uses editorial_document when available. Applies user feedback and low-priority (sports/celebrity) demotion. When require_quality_tier_1_2 is True, only tier 1–2 articles are used for headlines (fewer items OK)."""
         try:
             conn = get_db_connection()
             if not conn:
@@ -413,23 +422,28 @@ class DailyBriefingService:
             editorial_ledes = []
             event_briefings = []
 
-            # Top headlines by quality — include summary for richer briefing context
+            # Top headlines: prefer quality_tier 1–2 (intelligence-grade/standard), then quality_score; optionally require tier <= 2
+            headline_where = "created_at >= %s AND title IS NOT NULL AND TRIM(title) != ''"
+            headline_params: list = [start_date]
+            if require_quality_tier_1_2:
+                headline_where += " AND COALESCE(quality_tier, 4) <= 2"
             try:
                 cursor.execute(
                     f"""
-                    SELECT title, source, summary
+                    SELECT id, title, source_domain, summary
                     FROM {articles_table}
-                    WHERE created_at >= %s AND title IS NOT NULL AND TRIM(title) != ''
-                    ORDER BY COALESCE(quality_score, 0) DESC, created_at DESC
-                    LIMIT 10
+                    WHERE {headline_where}
+                    ORDER BY COALESCE(quality_tier, 4) ASC, COALESCE(quality_score, 0) DESC, created_at DESC
+                    LIMIT 15
                     """,
-                    (start_date,),
+                    tuple(headline_params),
                 )
                 for row in cursor.fetchall():
                     top_headlines.append({
-                        "title": (row[0] or "").strip(),
-                        "source": row[1] or "",
-                        "summary": (row[2] or "").strip(),
+                        "id": row[0],
+                        "title": (row[1] or "").strip(),
+                        "source": (row[2] or "").strip(),
+                        "summary": (row[3] or "").strip() if len(row) > 3 else "",
                     })
             except Exception as e:
                 logger.debug("key_developments headlines: %s", e)
@@ -495,9 +509,26 @@ class DailyBriefingService:
                 logger.debug("key_developments events: %s", e)
 
             conn.close()
+
+            # Apply user feedback (exclude not_interested) and low-priority demotion (sports/celebrity)
+            if domain:
+                try:
+                    from services.content_feedback_service import get_not_interested_ids
+                    from services.briefing_filter_helper import sort_briefing_items_by_priority
+                    not_art = get_not_interested_ids(domain, "article")
+                    not_story = get_not_interested_ids(domain, "storyline")
+                    top_headlines = [h for h in top_headlines if h.get("id") not in not_art]
+                    top_storylines = [s for s in top_storylines if s.get("id") not in not_story]
+                    editorial_ledes = [e for e in editorial_ledes if e.get("storyline_id") not in not_story]
+                    top_headlines = sort_briefing_items_by_priority(top_headlines, title_key="title", summary_key="summary")
+                    top_storylines = sort_briefing_items_by_priority(top_storylines, title_key="title")
+                    editorial_ledes = sort_briefing_items_by_priority(editorial_ledes, title_key="title", lede_key="lede")
+                except Exception as e:
+                    logger.debug("Briefing filter/feedback apply: %s", e)
+
             has_content = len(top_headlines) > 0 or len(top_storylines) > 0 or len(editorial_ledes) > 0 or len(event_briefings) > 0
             return {
-                "top_headlines": top_headlines,
+                "top_headlines": top_headlines[:10],
                 "top_storylines": top_storylines,
                 "editorial_ledes": editorial_ledes,
                 "event_briefings": event_briefings,

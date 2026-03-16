@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# News Intelligence System v5.0 - Comprehensive Startup Script
+# News Intelligence System v6.0 - Comprehensive Startup Script
 # Starts: SSH Tunnel, API Server, Frontend, and all background services (Redis removed)
 
 set -e
@@ -123,11 +123,20 @@ is_port_in_use() {
 stop_existing() {
     log "Stopping existing processes..."
     
-    # Stop API server
+    # Stop API server: pkill then wait for process and port to clear (avoids "already running" + health fail)
     if is_running "uvicorn.*main_v4"; then
         log "Stopping existing API server..."
         pkill -f "uvicorn.*main_v4" || true
-        sleep 2
+        local wait_count=0
+        while is_running "uvicorn.*main_v4" && [ $wait_count -lt 10 ]; do
+            sleep 1
+            wait_count=$((wait_count + 1))
+        done
+        if is_running "uvicorn.*main_v4"; then
+            warning "API process still present, sending SIGKILL..."
+            pkill -9 -f "uvicorn.*main_v4" || true
+            sleep 2
+        fi
     fi
     
     # Stop frontend
@@ -258,9 +267,15 @@ conn.close()
 start_api() {
     log "Starting API server..."
     
+    # If we think API is already running, verify it responds; otherwise force-kill and start
     if is_running "uvicorn.*main_v4"; then
-        warning "API server already running"
-        return 0
+        if curl -sf http://localhost:8000/api/system_monitoring/health > /dev/null 2>&1; then
+            success "API server already running and healthy"
+            return 0
+        fi
+        warning "API process present but not responding to health check; restarting..."
+        pkill -9 -f "uvicorn.*main_v4" || true
+        sleep 3
     fi
     
     # Check if port 8000 is in use
@@ -436,7 +451,7 @@ verify_services() {
 # Main execution
 main() {
     log "=========================================="
-    log "News Intelligence System v5.0 - Startup"
+    log "News Intelligence System v6.0 - Startup"
     log "=========================================="
     log "Started at: $(date)"
     echo ""

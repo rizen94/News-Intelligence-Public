@@ -124,6 +124,8 @@ class APIService {
   getRecentDigests = intelligenceApi.getRecentDigests;
   generateWeeklyDigest = intelligenceApi.generateWeeklyDigest;
   generateDailyBriefing = intelligenceApi.generateDailyBriefing;
+  getBriefingFeed = intelligenceApi.getBriefingFeed;
+  submitContentFeedback = intelligenceApi.submitContentFeedback;
   getTopicCloud = intelligenceApi.getTopicCloud;
   getStoryDossier = intelligenceApi.getStoryDossier;
 

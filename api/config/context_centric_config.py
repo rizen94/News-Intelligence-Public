@@ -18,6 +18,8 @@ DEFAULT_TASKS = {
     "investigation_report_refresh": True,
     "entity_profile_build": True,
     "pattern_recognition": True,
+    "entity_dossier_compile": True,
+    "entity_position_tracker": True,
 }
 
 
