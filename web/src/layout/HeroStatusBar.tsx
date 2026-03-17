@@ -89,7 +89,7 @@ export const HeroStatusBar: React.FC = () => {
               Contexts: <strong>{ctxStatus.contexts.toLocaleString()}</strong>
             </Typography>
             <Typography variant="body2" color="text.secondary">
-              Entities: <strong>{ctxStatus.entity_profiles.toLocaleString()}</strong>
+              Entity Profiles: <strong>{ctxStatus.entity_profiles.toLocaleString()}</strong>
             </Typography>
             <Typography variant="body2" color="text.secondary">
               Events: <strong>{ctxStatus.tracked_events.toLocaleString()}</strong>

@@ -1043,7 +1043,16 @@ Do you want to proceed with running AI sentiment analysis?`,
       {error && (
         <Alert severity='error' sx={{ mb: 3 }}>
           {error}
+          <Typography variant='body2' sx={{ mt: 1 }} component='span' display='block'>
+            Status and data here use the same API as the rest of the app. If other pages load but this one does not, try refreshing or check the connection chip in the header.
+          </Typography>
         </Alert>
+      )}
+
+      {!error && (
+        <Typography variant='caption' color='text.secondary' display='block' sx={{ mb: 1 }}>
+          Status and data on this page use the same API connection as the rest of the app (see connection chip in header).
+        </Typography>
       )}
 
       {loading && <LinearProgress sx={{ mb: 3 }} />}

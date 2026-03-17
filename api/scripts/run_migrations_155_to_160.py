@@ -60,6 +60,8 @@ def main():
         sys.exit(1)
 
     applied = 0
+    with conn.cursor() as cur:
+        cur.execute("SET statement_timeout = 0")
     for _num, name in MIGRATIONS_155_160:
         path = os.path.join(migrations_dir, name)
         if not os.path.exists(path):

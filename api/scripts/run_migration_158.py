@@ -44,6 +44,7 @@ def main():
 
     try:
         with conn.cursor() as cur:
+            cur.execute("SET statement_timeout = 0")
             cur.execute(sql)
         conn.commit()
         print("✅ 158_claim_merges.sql applied successfully")

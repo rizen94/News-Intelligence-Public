@@ -2,6 +2,7 @@
 Dossier compiler: build entity_dossiers chronicle from articles and storylines.
 Given (domain_key, entity_id) where entity_id = entity_canonical.id in that domain,
 gathers articles that mention the entity and optionally storylines; writes to intelligence.entity_dossiers.
+Includes LLM-generated narrative_summary for reporter-quality output.
 Phase 1: T1.3 entity dossier basic compilation. See docs/V6_QUALITY_FIRST_UPGRADE_PLAN.md.
 """
 
@@ -13,6 +14,79 @@ from typing import Any, Dict, List, Optional
 from shared.database.connection import get_db_connection
 
 logger = logging.getLogger(__name__)
+
+
+def _generate_dossier_narrative(entity_name: str, entity_type: str, chronicle_data: list,
+                                 positions: list, relationships: list,
+                                 storyline_refs: list, patterns: dict) -> Optional[str]:
+    """Generate a readable narrative summary for the entity dossier using LLM."""
+    parts = [f"Entity: {entity_name} ({entity_type})"]
+
+    if chronicle_data:
+        recent = chronicle_data[:8]
+        parts.append(f"\nRecent mentions ({len(chronicle_data)} total):")
+        for c in recent:
+            parts.append(f"- {c.get('title', 'Untitled')} ({c.get('source_domain', '')}, {c.get('published_at', '?')})")
+
+    if positions:
+        parts.append(f"\nKnown positions ({len(positions)}):")
+        for p in positions[:6]:
+            parts.append(f"- On {p.get('topic', '?')}: {p.get('position', '?')}")
+
+    if relationships:
+        parts.append(f"\nRelationships ({len(relationships)}):")
+        for r in relationships[:5]:
+            parts.append(f"- {r.get('relationship_type', '?')} with entity {r.get('target_entity_id', '?')} in {r.get('target_domain', '?')}")
+
+    if storyline_refs:
+        parts.append(f"\nConnected storylines ({len(storyline_refs)}):")
+        for s in storyline_refs[:5]:
+            parts.append(f"- {s.get('title', 'Untitled')}")
+
+    if patterns and patterns.get("discoveries"):
+        parts.append(f"\nDetected patterns:")
+        for pat in patterns["discoveries"][:3]:
+            data = pat.get("data", {})
+            desc = data.get("description", "") or data.get("summary", "") or str(pat.get("pattern_type", ""))
+            parts.append(f"- [{pat.get('pattern_type', '')}] {desc[:150]}")
+
+    context = "\n".join(parts)
+
+    prompt = (
+        f"You are an intelligence analyst writing a dossier summary for {entity_name}.\n\n"
+        f"Data:\n{context[:3000]}\n\n"
+        "Write a 150-300 word narrative dossier summary that:\n"
+        "1. Opens with who/what this entity is and why they matter\n"
+        "2. Summarizes their recent activity based on the mentions\n"
+        "3. Notes their known positions or stances on key topics\n"
+        "4. Highlights notable relationships or cross-domain connections\n"
+        "5. Flags any patterns detected\n"
+        "Write in a professional intelligence briefing tone. No JSON, no bullet points — flowing prose."
+    )
+
+    try:
+        import asyncio
+        from shared.services.llm_service import llm_service, TaskType
+
+        async def _gen():
+            result = await llm_service.generate_summary(prompt[:3500], task_type=TaskType.QUICK_SUMMARY)
+            if result.get("success"):
+                return (result.get("summary") or "").strip() or None
+            return None
+
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as pool:
+                    return pool.submit(lambda: asyncio.run(_gen())).result(timeout=60)
+            else:
+                return loop.run_until_complete(_gen())
+        except Exception:
+            return asyncio.run(_gen())
+    except Exception as e:
+        logger.debug("Dossier narrative LLM failed: %s", e)
+        return None
 
 # domain_key -> schema_name (per domains table / 122)
 DOMAIN_TO_SCHEMA = {
@@ -183,11 +257,23 @@ def compile_dossier(domain_key: str, entity_id: int) -> Dict[str, Any]:
             except Exception as pat_err:
                 logger.debug("Pattern linking: %s", pat_err)
 
+            # Generate narrative summary from all collected data
+            narrative = _generate_dossier_narrative(
+                entity_name=entity_row[1],
+                entity_type=entity_row[2],
+                chronicle_data=chronicle_data,
+                positions=positions,
+                relationships=relationships,
+                storyline_refs=storyline_refs,
+                patterns=patterns,
+            )
+
             metadata = {
                 "article_count": len(chronicle_data),
                 "storyline_count": len(storyline_refs),
                 "storyline_refs": storyline_refs,
                 "relationship_count": len(relationships),
+                "narrative_summary": narrative,
             }
 
             cur.execute(

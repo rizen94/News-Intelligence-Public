@@ -171,6 +171,7 @@ class APIService {
   getSourcesCollected = monitoringApi.getSourcesCollected;
   getProcessRunSummary = monitoringApi.getProcessRunSummary;
   getAutomationStatus = monitoringApi.getAutomationStatus;
+  getBacklogStatus = monitoringApi.getBacklogStatus;
   triggerPhase = monitoringApi.triggerPhase;
   triggerPipeline = monitoringApi.triggerPipeline;
   getSystemHealth = monitoringApi.getSystemHealth;

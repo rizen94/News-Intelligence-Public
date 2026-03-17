@@ -217,6 +217,7 @@ class TopicExtractionQueueWorker:
                             SELECT id, title, content, summary, published_at, sentiment_score, source_domain
                             FROM {self.schema}.articles
                             WHERE id = %s
+                              AND (enrichment_status IS NULL OR enrichment_status != 'removed')
                         """, (article_id,))
 
                         article = cur.fetchone()

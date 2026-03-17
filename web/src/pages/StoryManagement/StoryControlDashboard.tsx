@@ -197,17 +197,17 @@ const StoryControlDashboard: React.FC = () => {
   const handleCreateStory = async () => {
     try {
       setButtonLoading(prev => ({ ...prev, create: true }));
-      showLoading('Creating story...');
+      showLoading('Creating storyline...');
 
       await apiService.createStoryExpectation(storyForm);
 
-      showSuccess('Story created successfully!');
+      showSuccess('Storyline created successfully!');
       setShowCreateDialog(false);
       resetStoryForm();
       await fetchStories();
     } catch (err: any) {
       console.error('Error creating story:', err);
-      showError(`Failed to create story: ${err.message}`);
+      showError(`Failed to create storyline: ${err.message}`);
     } finally {
       setButtonLoading(prev => ({ ...prev, create: false }));
     }
@@ -216,16 +216,16 @@ const StoryControlDashboard: React.FC = () => {
   const handleCreateUkraineStory = async () => {
     try {
       setButtonLoading(prev => ({ ...prev, ukraine: true }));
-      showLoading('Creating Ukraine-Russia conflict story...');
+      showLoading('Creating Ukraine-Russia conflict storyline...');
 
       await apiService.createStoryExpectation(UKRAINE_STORY_DATA);
 
-      showSuccess('Ukraine-Russia conflict story created successfully!');
+      showSuccess('Ukraine-Russia conflict storyline created successfully!');
       setShowUkraineDialog(false);
       await fetchStories();
     } catch (err: any) {
       console.error('Error creating Ukraine story:', err);
-      showError(`Failed to create Ukraine story: ${err.message}`);
+      showError(`Failed to create Ukraine storyline: ${err.message}`);
     } finally {
       setButtonLoading(prev => ({ ...prev, ukraine: false }));
     }
@@ -384,7 +384,7 @@ const StoryControlDashboard: React.FC = () => {
           </Button>
         }
       >
-        Error loading story control dashboard: {error}
+        Error loading storyline control dashboard: {error}
       </Alert>
     );
   }
@@ -399,7 +399,7 @@ const StoryControlDashboard: React.FC = () => {
         mb={3}
       >
         <Typography variant='h4' component='h1'>
-          Story Control Dashboard
+          Storyline Control Dashboard
         </Typography>
         <Box display='flex' gap={2}>
           <Button
@@ -415,7 +415,7 @@ const StoryControlDashboard: React.FC = () => {
             startIcon={<Add />}
             onClick={() => setShowCreateDialog(true)}
           >
-            Create Story
+            Create Storyline
           </Button>
           <Button
             variant='contained'
@@ -552,7 +552,7 @@ const StoryControlDashboard: React.FC = () => {
                   {weeklyDigest.story_suggestions.length}
                 </Typography>
                 <Typography variant='body2' color='textSecondary'>
-                  Story Suggestions
+                  Storyline Suggestions
                 </Typography>
               </Grid>
             </Grid>
@@ -567,10 +567,10 @@ const StoryControlDashboard: React.FC = () => {
           {stories.length === 0 ? (
             <Box textAlign='center' py={4}>
               <Typography variant='h6' color='textSecondary'>
-                No stories configured yet
+                No storylines configured yet
               </Typography>
               <Typography variant='body2' color='textSecondary' sx={{ mt: 1 }}>
-                Create your first story to start tracking
+                Create your first storyline to start tracking
               </Typography>
             </Box>
           ) : (
@@ -660,12 +660,12 @@ const StoryControlDashboard: React.FC = () => {
                       </TableCell>
                       <TableCell>
                         <Box display='flex' gap={1}>
-                          <Tooltip title='Edit Story'>
+                          <Tooltip title='Edit Storyline'>
                             <IconButton size='small'>
                               <Edit />
                             </IconButton>
                           </Tooltip>
-                          <Tooltip title='Delete Story'>
+                          <Tooltip title='Delete Storyline'>
                             <IconButton size='small' color='error'>
                               <Delete />
                             </IconButton>
@@ -681,21 +681,21 @@ const StoryControlDashboard: React.FC = () => {
         </CardContent>
       </Card>
 
-      {/* Create Story Dialog */}
+      {/* Create Storyline Dialog */}
       <Dialog
         open={showCreateDialog}
         onClose={() => setShowCreateDialog(false)}
         maxWidth='md'
         fullWidth
       >
-        <DialogTitle>Create New Story</DialogTitle>
+        <DialogTitle>Create New Storyline</DialogTitle>
         <DialogContent>
           <Box sx={{ pt: 2 }}>
             <Grid container spacing={2}>
               <Grid item xs={12}>
                 <TextField
                   fullWidth
-                  label='Story Name'
+                  label='Storyline Name'
                   value={storyForm.name}
                   onChange={e =>
                     setStoryForm(prev => ({ ...prev, name: e.target.value }))
@@ -885,7 +885,7 @@ const StoryControlDashboard: React.FC = () => {
             {buttonLoading.create ? (
               <CircularProgress size={20} />
             ) : (
-              'Create Story'
+              'Create Storyline'
             )}
           </Button>
         </DialogActions>
@@ -902,7 +902,7 @@ const StoryControlDashboard: React.FC = () => {
         <DialogContent>
           <Box sx={{ pt: 2 }}>
             <Alert severity='info' sx={{ mb: 2 }}>
-              This will create a pre-configured story for tracking the
+              This will create a pre-configured storyline for tracking the
               Ukraine-Russia conflict with:
             </Alert>
             <List>
@@ -950,7 +950,7 @@ const StoryControlDashboard: React.FC = () => {
             {buttonLoading.ukraine ? (
               <CircularProgress size={20} />
             ) : (
-              'Create Story'
+              'Create Storyline'
             )}
           </Button>
         </DialogActions>

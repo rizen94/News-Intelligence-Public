@@ -364,9 +364,8 @@ class AdvancedTopicExtractor:
         
         for article_id, title, content, summary, published_at, sentiment_score, source_domain in articles:
             # Use title and summary primarily (they contain the most relevant phrases)
-            # Include MORE content from body for better topic extraction (increased from 500 to 2000 chars)
-            # This helps capture topics mentioned deeper in articles
-            content_preview = (content or '')[:2000] if content else ''  # First 2000 chars (was 500)
+            # v7: full-text articles — use first 5000 chars for topic extraction
+            content_preview = (content or '')[:5000] if content else ''
             raw_text = f"{title} {summary or ''} {content_preview}"
             
             # Clean text to remove HTML, URLs, and web artifacts

@@ -276,3 +276,106 @@ def run_pattern_discovery_batch() -> int:
         total += run_pattern_discovery(domain_key=domain_key, limit_per_type=15)
     total += run_pattern_discovery(domain_key=None, limit_per_type=10)
     return total
+
+
+def generate_pattern_report(domain_key: Optional[str] = None, limit: int = 20) -> Dict[str, Any]:
+    """
+    Generate a readable narrative report from recent pattern discoveries.
+    Returns { success, report_text, pattern_count, patterns }.
+    """
+    conn = get_db_connection()
+    if not conn:
+        return {"success": False, "error": "Database unavailable"}
+
+    try:
+        with conn.cursor() as cur:
+            if domain_key:
+                cur.execute(
+                    """
+                    SELECT pattern_type, confidence, data, context_ids, entity_profile_ids, created_at
+                    FROM intelligence.pattern_discoveries
+                    WHERE domain_key = %s
+                    ORDER BY created_at DESC
+                    LIMIT %s
+                    """,
+                    (domain_key, limit),
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT pattern_type, confidence, data, context_ids, entity_profile_ids, created_at
+                    FROM intelligence.pattern_discoveries
+                    ORDER BY created_at DESC
+                    LIMIT %s
+                    """,
+                    (limit,),
+                )
+            rows = cur.fetchall()
+        conn.close()
+
+        if not rows:
+            return {"success": True, "report_text": "No patterns discovered yet.", "pattern_count": 0, "patterns": []}
+
+        patterns_list = []
+        context_parts = []
+        for ptype, conf, data, ctx_ids, ent_ids, created in rows:
+            data = data if isinstance(data, dict) else {}
+            desc = data.get("description", "") or data.get("summary", "") or ""
+            patterns_list.append({
+                "type": ptype,
+                "confidence": float(conf) if conf is not None else None,
+                "data": data,
+                "context_count": len(ctx_ids) if ctx_ids else 0,
+                "entity_count": len(ent_ids) if ent_ids else 0,
+            })
+            conf_str = f" (confidence: {float(conf):.0%})" if conf is not None else ""
+            context_parts.append(f"- [{ptype}]{conf_str}: {desc[:200]}" if desc else f"- [{ptype}]{conf_str}: {json.dumps(data)[:200]}")
+
+        # LLM narrative
+        prompt = (
+            f"You are an intelligence analyst reviewing detected patterns{' in ' + domain_key if domain_key else ' across all domains'}.\n\n"
+            f"Patterns detected:\n" + "\n".join(context_parts[:15]) + "\n\n"
+            "Write a concise pattern analysis report (200-400 words) that:\n"
+            "1. Groups patterns by type (network, temporal, behavioral, event)\n"
+            "2. Highlights the most significant findings\n"
+            "3. Notes potential implications for ongoing storylines\n"
+            "4. Identifies any concerning trends\n"
+            "Write in a professional intelligence briefing tone."
+        )
+
+        report_text = None
+        try:
+            import asyncio
+            from shared.services.llm_service import llm_service, TaskType
+
+            async def _gen():
+                result = await llm_service.generate_summary(prompt[:3500], task_type=TaskType.QUICK_SUMMARY)
+                if result.get("success"):
+                    return (result.get("summary") or "").strip() or None
+                return None
+
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    import concurrent.futures
+                    with concurrent.futures.ThreadPoolExecutor() as pool:
+                        report_text = pool.submit(lambda: asyncio.run(_gen())).result(timeout=60)
+                else:
+                    report_text = loop.run_until_complete(_gen())
+            except Exception:
+                report_text = asyncio.run(_gen())
+        except Exception as e:
+            logger.debug("Pattern report LLM failed: %s", e)
+
+        if not report_text:
+            report_text = "## Pattern Analysis\n\n" + "\n".join(context_parts)
+
+        return {
+            "success": True,
+            "report_text": report_text,
+            "pattern_count": len(patterns_list),
+            "patterns": patterns_list,
+        }
+    except Exception as e:
+        logger.warning("generate_pattern_report: %s", e)
+        return {"success": False, "error": str(e)}

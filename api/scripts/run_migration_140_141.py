@@ -42,6 +42,7 @@ def main():
 
         try:
             with conn.cursor() as cur:
+                cur.execute("SET statement_timeout = 0")
                 cur.execute(sql)
             conn.commit()
             print(f"✅ {name} applied successfully")

@@ -72,9 +72,10 @@ class ArticleService(DomainAwareService):
                     SELECT {select_fields}
                     FROM {self.schema}.articles
                     WHERE 1=1
+                      AND (enrichment_status IS NULL OR enrichment_status != 'removed')
                 """
                 params = []
-                
+
                 # Add filters
                 if filters:
                     if filters.get('source_domain'):
@@ -114,9 +115,10 @@ class ArticleService(DomainAwareService):
                     SELECT COUNT(*) 
                     FROM {self.schema}.articles
                     WHERE 1=1
+                      AND (enrichment_status IS NULL OR enrichment_status != 'removed')
                 """
                 count_params = []
-                
+
                 # Add same filters to count query
                 if filters:
                     if filters.get('source_domain'):
@@ -213,6 +215,7 @@ class ArticleService(DomainAwareService):
                         summary, quality_score, sentiment_label, sentiment_score
                     FROM {self.schema}.articles
                     WHERE id = %s
+                      AND (enrichment_status IS NULL OR enrichment_status != 'removed')
                 """, (article_id,))
                 
                 row = cur.fetchone()

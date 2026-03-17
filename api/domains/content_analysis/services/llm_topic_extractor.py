@@ -275,7 +275,7 @@ class LLMTopicExtractor:
             )
             
             # Combine text for analysis
-            text = f"{title} {summary or ''} {content[:2000] if content else ''}"
+            text = f"{title} {summary or ''} {content[:5000] if content else ''}"  # v7: full-text
             
             # Extract entities using NER (structured, fast)
             entities_result = self.entity_extractor.extract_entities(text, use_cache=True)
@@ -291,7 +291,7 @@ class LLMTopicExtractor:
                 
                 article_dict = {
                     'title': title,
-                    'content': content[:2000] if content else '',
+                    'content': content[:5000] if content else '',  # v7: full-text
                     'excerpt': summary or ''
                 }
                 

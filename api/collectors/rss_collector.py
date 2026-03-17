@@ -751,14 +751,31 @@ def collect_rss_feeds() -> int:
                             bias_score = max(0.0, min(1.0, bias_score))
                             quality_score = max(0.0, min(1.0, quality_score))
 
+                            # Inline enrichment: if RSS content >= 500 chars treat as enriched; else try trafilatura once
+                            insert_content = content or ""
+                            enrichment_status = "enriched"
+                            enrichment_attempts = 0
+                            if len(insert_content) < 500 and url and url.strip():
+                                try:
+                                    from services.article_content_enrichment_service import enrich_article_content
+                                    full_text, ok = enrich_article_content(url)
+                                    if ok and full_text:
+                                        insert_content = full_text
+                                    else:
+                                        enrichment_status = "failed"
+                                        enrichment_attempts = 1
+                                except Exception:
+                                    enrichment_status = "failed"
+                                    enrichment_attempts = 1
+
                             # Insert article (scores already calculated above)
                             feed_cur.execute("SAVEPOINT sp_article")
                             feed_cur.execute(f"""
                                 INSERT INTO {schema_name}.articles
-                                (title, url, content, summary, published_at, created_at, source_domain, quality_score, bias_score)
-                                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                (title, url, content, summary, published_at, created_at, source_domain, quality_score, bias_score, enrichment_status, enrichment_attempts)
+                                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                                 RETURNING id
-                            """, (title, url, content, None, published_date, datetime.now(timezone.utc), feed_name, quality_score, bias_score))
+                            """, (title, url, insert_content, None, published_date, datetime.now(timezone.utc), feed_name, quality_score, bias_score, enrichment_status, enrichment_attempts))
                             
                             result = feed_cur.fetchone()
                             if result and feed_cur.rowcount > 0:
@@ -1022,14 +1039,31 @@ def collect_rss_feed(feed_url: str, feed_name: str = "Unknown") -> int:
                 # Ensure quality_score stays in [0, 1] (impact_score already clamped)
                 quality_score = max(0.0, min(1.0, quality_score))
 
+                # Inline enrichment: if RSS content >= 500 chars treat as enriched; else try trafilatura once
+                insert_content = content or ""
+                enrichment_status = "enriched"
+                enrichment_attempts = 0
+                if len(insert_content) < 500 and url and url.strip():
+                    try:
+                        from services.article_content_enrichment_service import enrich_article_content
+                        full_text, ok = enrich_article_content(url)
+                        if ok and full_text:
+                            insert_content = full_text
+                        else:
+                            enrichment_status = "failed"
+                            enrichment_attempts = 1
+                    except Exception:
+                        enrichment_status = "failed"
+                        enrichment_attempts = 1
+
                 # Insert article into domain schema (v5.0) with quality score and bias score
                 cur.execute(f"""
                     INSERT INTO {schema_name}.articles
-                    (title, url, content, summary, published_at, created_at, source_domain, quality_score, bias_score)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    (title, url, content, summary, published_at, created_at, source_domain, quality_score, bias_score, enrichment_status, enrichment_attempts)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     RETURNING id
                 """, (
-                    title, url, content, None, published_date, datetime.now(timezone.utc), feed_name, quality_score, bias_score
+                    title, url, insert_content, None, published_date, datetime.now(timezone.utc), feed_name, quality_score, bias_score, enrichment_status, enrichment_attempts
                 ))
                 
                 result = cur.fetchone()

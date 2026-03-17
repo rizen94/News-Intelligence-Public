@@ -116,33 +116,59 @@ class StorylineService:
             db_gen = get_db()
             db = next(db_gen)
             try:
-                # Get all storylines with article count and RAG status
-                storylines_result = db.execute(text("""
-                    SELECT s.id, s.title, s.description, s.status, s.created_at, s.updated_at,
-                           s.rag_enhanced_at, s.rag_context_summary,
-                           COALESCE(COUNT(sa.article_id), 0) as article_count
-                    FROM storylines s
-                    LEFT JOIN storyline_articles sa ON s.id = sa.storyline_id
-                    WHERE s.status = 'active'
-                    GROUP BY s.id, s.title, s.description, s.status, s.created_at, s.updated_at, s.rag_enhanced_at, s.rag_context_summary
-                    ORDER BY s.updated_at DESC
-                """)).fetchall()
-                
+                # Prefer query with RAG columns; fallback if schema not migrated
+                try:
+                    storylines_result = db.execute(text("""
+                        SELECT s.id, s.title, s.description, s.status, s.created_at, s.updated_at,
+                               s.rag_enhanced_at, s.rag_context_summary,
+                               COALESCE(COUNT(sa.article_id), 0) as article_count
+                        FROM storylines s
+                        LEFT JOIN storyline_articles sa ON s.id = sa.storyline_id
+                        WHERE s.status = 'active'
+                        GROUP BY s.id, s.title, s.description, s.status, s.created_at, s.updated_at, s.rag_enhanced_at, s.rag_context_summary
+                        ORDER BY s.updated_at DESC
+                    """)).fetchall()
+                    has_rag = True
+                except Exception:
+                    storylines_result = db.execute(text("""
+                        SELECT s.id, s.title, s.description, s.status, s.created_at, s.updated_at,
+                               COALESCE(COUNT(sa.article_id), 0) as article_count
+                        FROM storylines s
+                        LEFT JOIN storyline_articles sa ON s.id = sa.storyline_id
+                        WHERE s.status = 'active'
+                        GROUP BY s.id, s.title, s.description, s.status, s.created_at, s.updated_at
+                        ORDER BY s.updated_at DESC
+                    """)).fetchall()
+                    has_rag = False
+
                 storylines = []
                 for row in storylines_result:
-                    storylines.append({
-                        "id": row[0],
-                        "title": row[1],
-                        "description": row[2],
-                        "status": row[3],
-                        "created_at": row[4].isoformat() if row[4] else None,
-                        "updated_at": row[5].isoformat() if row[5] else None,
-                        "rag_enhanced_at": row[6].isoformat() if row[6] else None,
-                        "rag_context_summary": row[7],
-                        "article_count": row[8],
-                        "articles": []  # Will be populated if needed
-                    })
-                
+                    if has_rag:
+                        storylines.append({
+                            "id": row[0],
+                            "title": row[1],
+                            "description": row[2],
+                            "status": row[3],
+                            "created_at": row[4].isoformat() if row[4] else None,
+                            "updated_at": row[5].isoformat() if row[5] else None,
+                            "rag_enhanced_at": row[6].isoformat() if row[6] else None,
+                            "rag_context_summary": row[7],
+                            "article_count": row[8],
+                            "articles": [],
+                        })
+                    else:
+                        storylines.append({
+                            "id": row[0],
+                            "title": row[1],
+                            "description": row[2],
+                            "status": row[3],
+                            "created_at": row[4].isoformat() if row[4] else None,
+                            "updated_at": row[5].isoformat() if row[5] else None,
+                            "rag_enhanced_at": None,
+                            "rag_context_summary": None,
+                            "article_count": row[6],
+                            "articles": [],
+                        })
                 return storylines
             finally:
                 db.close()

@@ -187,7 +187,7 @@ export default function Dashboard() {
                   {status && (
                     <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mb: 2 }}>
                       <Chip size="small" label={`Contexts: ${status.contexts}`} />
-                      <Chip size="small" label={`Entities: ${status.entity_profiles}`} />
+                      <Chip size="small" label={`Entity Profiles: ${status.entity_profiles}`} />
                       <Chip size="small" label={`Events: ${status.tracked_events}`} />
                     </Box>
                   )}

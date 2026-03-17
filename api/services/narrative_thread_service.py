@@ -1,7 +1,8 @@
 """
 Narrative thread detection and synthesis — T3.3.
-Build/update intelligence.narrative_threads from storylines (summary, linked_article_ids).
-Stub for causal-chain detection and synthesis engine; quality checks placeholder.
+Build/update intelligence.narrative_threads from storylines.
+Synthesize threads into coherent narratives using LLM with full intelligence context
+(articles, entities, claims, entity positions, processed documents).
 See docs/V6_QUALITY_FIRST_UPGRADE_PLAN.md, V6_QUALITY_FIRST_TODO.md Tier 3.
 """
 
@@ -17,6 +18,18 @@ DOMAIN_TO_SCHEMA = {
     "finance": "finance",
     "science-tech": "science_tech",
 }
+
+
+async def _llm_synthesize(prompt: str) -> Optional[str]:
+    """Call LLM for narrative synthesis; returns text or None."""
+    try:
+        from shared.services.llm_service import llm_service, TaskType
+        result = await llm_service.generate_summary(prompt[:4000], task_type=TaskType.QUICK_SUMMARY)
+        if result.get("success"):
+            return (result.get("summary") or "").strip() or None
+    except Exception as e:
+        logger.debug("LLM narrative synthesis failed: %s", e)
+    return None
 
 
 def ensure_narrative_thread(domain_key: str, storyline_id: int) -> Dict[str, Any]:
@@ -140,9 +153,12 @@ def build_threads_for_domain(domain_key: str, limit: int = 50) -> Dict[str, Any]
 
 def synthesize_threads(domain_key: Optional[str] = None, thread_ids: Optional[List[int]] = None) -> Dict[str, Any]:
     """
-    T3.3 stub: Multi-source synthesis. Returns placeholder synthesis text and thread refs.
-    Full implementation: conflict resolution, uncertainty quantification later.
+    T3.3: Multi-source narrative synthesis. Gathers thread summaries and uses
+    content_synthesis_service to build full context, then produces an LLM-synthesized
+    narrative that weaves storylines together with entity positions, claims, and documents.
     """
+    import asyncio
+
     conn = get_db_connection()
     if not conn:
         return {"success": False, "synthesis": None, "error": "Database unavailable"}
@@ -183,14 +199,62 @@ def synthesize_threads(domain_key: Optional[str] = None, thread_ids: Optional[Li
             {"id": r[0], "domain_key": r[1], "storyline_id": r[2], "summary_snippet": (r[3] or "")[:300] if r[3] else None}
             for r in rows
         ]
-        # Placeholder synthesis: concatenate snippet of summaries
-        parts = [t["summary_snippet"] for t in threads if t["summary_snippet"]]
-        synthesis = "\n\n".join(parts)[:4000] if parts else "(No thread summaries yet; run narrative thread build first.)"
+
+        if not threads:
+            return {"success": True, "synthesis": "(No narrative threads yet; run narrative thread build first.)", "thread_count": 0, "threads": []}
+
+        # Build rich context from content_synthesis_service for each domain represented
+        from services.content_synthesis_service import synthesize_domain_context, render_synthesis_for_llm
+        domains_represented = list({t["domain_key"] for t in threads if t.get("domain_key")})
+        context_parts = []
+        for dk in domains_represented[:3]:
+            synthesis_ctx = synthesize_domain_context(dk, hours=48, max_articles=15, max_storylines=8, max_events=5, max_entities=15)
+            if synthesis_ctx.get("success"):
+                rendered = render_synthesis_for_llm(synthesis_ctx, max_chars=2500)
+                context_parts.append(f"### Domain: {dk}\n{rendered}")
+
+        thread_summaries = "\n".join(
+            f"- {t.get('summary_snippet', '(no summary)')}" for t in threads if t.get("summary_snippet")
+        )
+
+        prompt = (
+            "You are an intelligence analyst synthesizing multiple narrative threads into a coherent briefing.\n\n"
+            f"Narrative threads:\n{thread_summaries}\n\n"
+        )
+        if context_parts:
+            prompt += "Supporting intelligence:\n" + "\n\n".join(context_parts) + "\n\n"
+        prompt += (
+            "Write a unified narrative synthesis (300-500 words) that:\n"
+            "1. Identifies the overarching story across these threads\n"
+            "2. Highlights where entity positions or stances create tension or alignment\n"
+            "3. Notes any government/research document findings that support or contradict the narrative\n"
+            "4. Identifies cross-domain connections if present\n"
+            "5. Concludes with what to watch next\n"
+            "Write in a professional journalistic tone suitable for an intelligence briefing."
+        )
+
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as pool:
+                    synthesis_text = pool.submit(lambda: asyncio.run(_llm_synthesize(prompt))).result(timeout=60)
+            else:
+                synthesis_text = loop.run_until_complete(_llm_synthesize(prompt))
+        except Exception:
+            synthesis_text = None
+
+        if not synthesis_text:
+            # Fallback: structured summary without LLM
+            parts = [t["summary_snippet"] for t in threads if t["summary_snippet"]]
+            synthesis_text = "\n\n".join(parts)[:4000] if parts else "(Synthesis unavailable; thread summaries collected.)"
+
         return {
             "success": True,
-            "synthesis": synthesis,
+            "synthesis": synthesis_text,
             "thread_count": len(threads),
             "threads": threads,
+            "domains": domains_represented,
         }
     except Exception as e:
         logger.exception("synthesize_threads: %s", e)

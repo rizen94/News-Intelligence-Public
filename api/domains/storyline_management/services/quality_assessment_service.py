@@ -63,6 +63,7 @@ class QualityAssessmentService(DomainAwareService):
                         FROM {self.schema}.articles a
                         JOIN {self.schema}.storyline_articles sa ON a.id = sa.article_id
                         WHERE sa.storyline_id = %s
+                          AND (a.enrichment_status IS NULL OR a.enrichment_status != 'removed')
                         ORDER BY a.published_at ASC
                     """, (storyline_id,))
                     
@@ -367,6 +368,7 @@ class QualityAssessmentService(DomainAwareService):
                         FROM {self.schema}.articles a
                         JOIN {self.schema}.storyline_articles sa ON a.id = sa.article_id
                         WHERE sa.storyline_id = %s
+                          AND (a.enrichment_status IS NULL OR a.enrichment_status != 'removed')
                     """, (storyline_id,))
                     
                     articles = cur.fetchall()

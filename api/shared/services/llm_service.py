@@ -1,6 +1,7 @@
 """
-Shared LLM Service for News Intelligence System v5.0
-Uses Ollama-hosted Llama 3.1 8B (primary) and Mistral 7B (secondary)
+Shared LLM Service for News Intelligence System v7
+Uses Ollama-hosted Llama 3.1 8B (primary) and Mistral 7B (secondary).
+v7: Global concurrency limit so async Ollama callers share one cap.
 """
 
 import asyncio
@@ -12,6 +13,17 @@ import httpx
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
+
+# v7: Global cap. Burst (48h catch-up): 6; revert to 5 after
+OLLAMA_CONCURRENCY = 6
+_ollama_semaphore: Optional[asyncio.Semaphore] = None
+
+
+def _get_ollama_semaphore() -> asyncio.Semaphore:
+    global _ollama_semaphore
+    if _ollama_semaphore is None:
+        _ollama_semaphore = asyncio.Semaphore(OLLAMA_CONCURRENCY)
+    return _ollama_semaphore
 
 class ModelType(Enum):
     """Available LLM models"""
@@ -291,7 +303,13 @@ class LLMService:
             return {"success": False, "error": str(e)}
 
     async def _call_ollama(self, model: ModelType, prompt: str) -> str:
-        """Make API call to Ollama with circuit breaker protection."""
+        """Make API call to Ollama with circuit breaker protection. v7: acquires global semaphore."""
+        sem = _get_ollama_semaphore()
+        async with sem:
+            return await self._call_ollama_impl(model, prompt)
+
+    async def _call_ollama_impl(self, model: ModelType, prompt: str) -> str:
+        """Inner Ollama call (no semaphore)."""
         from services.circuit_breaker_service import get_circuit_breaker_service, CircuitBreakerOpenException
         cb_service = get_circuit_breaker_service()
         cb = cb_service.get_circuit_breaker("ollama")

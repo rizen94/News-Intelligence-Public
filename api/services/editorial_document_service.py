@@ -93,77 +93,32 @@ async def generate_storyline_editorial(domain: str, limit: int = 10) -> Dict[str
         for row in storylines:
             sid, title, description, analysis_summary, existing_doc, doc_version, last_refined, updated_at = row
             try:
-                # Gather article intelligence for this storyline
-                cursor.execute(f"""
-                    SELECT a.id, a.title, a.content, a.summary, a.sentiment_label,
-                           a.source_domain, a.published_at, a.ml_data, a.entities
-                    FROM {schema}.storyline_articles sa
-                    JOIN {schema}.articles a ON a.id = sa.article_id
-                    WHERE sa.storyline_id = %s
-                      AND a.title IS NOT NULL
-                    ORDER BY COALESCE(a.quality_tier, 4) ASC, COALESCE(a.quality_score, 0) DESC, a.published_at DESC NULLS LAST
-                    LIMIT 12
-                """, (sid,))
-                articles = cursor.fetchall()
+                # Use content_synthesis_service to gather ALL intelligence for this storyline
+                from services.content_synthesis_service import synthesize_storyline_context, render_synthesis_for_llm
+                synthesis = synthesize_storyline_context(domain, sid)
+                articles_synth = synthesis.get("articles", [])
 
-                if len(articles) < 1:
+                if len(articles_synth) < 1:
                     skipped += 1
                     continue
 
-                # Build rich context for LLM from content + accumulated intelligence
-                article_context = []
-                article_ids = []
-                sources = set()
-                key_points_all = []
-                entities_all = []
-                for a in articles:
-                    aid, atitle, acontent, asummary, asentiment, asource, apub, aml_data, aentities = a
-                    article_ids.append(aid)
-                    if asource:
-                        sources.add(asource)
+                article_ids = [a["id"] for a in articles_synth]
+                sources = list({a.get("source", "") for a in articles_synth if a.get("source")})
 
-                    # Prefer ML-generated summary > raw summary > content excerpt
-                    ml_summary = ""
-                    if aml_data and isinstance(aml_data, dict):
-                        ml_summary = aml_data.get("summary", "")
-                        for kp in (aml_data.get("key_points") or [])[:3]:
-                            if isinstance(kp, str) and kp.strip():
-                                key_points_all.append(kp.strip())
+                # Build rich context from the full synthesis (articles + entities + claims + positions + documents)
+                context_text = render_synthesis_for_llm(synthesis, max_chars=3500)
 
-                    best_summary = ml_summary or asummary or ""
-                    if not best_summary and acontent:
-                        best_summary = acontent[:600]
-
-                    line = f"- {atitle}"
-                    if best_summary:
-                        line += f": {best_summary[:400]}"
-                    if asentiment:
-                        line += f" [sentiment: {asentiment}]"
-                    article_context.append(line)
-
-                    if aentities and isinstance(aentities, (list, dict)):
-                        ent_list = aentities if isinstance(aentities, list) else aentities.get("entities", [])
-                        for ent in ent_list[:5]:
-                            name = ent.get("name", "") if isinstance(ent, dict) else str(ent)
-                            if name and name not in entities_all:
-                                entities_all.append(name)
-
-                context_text = "\n".join(article_context[:10])
-                if key_points_all:
-                    context_text += "\n\nKey facts extracted from articles:\n" + "\n".join(f"- {kp}" for kp in key_points_all[:8])
-                if entities_all:
-                    context_text += "\n\nKey entities: " + ", ".join(entities_all[:10])
                 is_new = not existing_doc or existing_doc == {}
 
                 if is_new:
                     prompt = (
                         f"You are writing an editorial document for a news storyline titled \"{title}\".\n"
                         f"Description: {description or 'N/A'}\n\n"
-                        f"Based on these articles:\n{context_text}\n\n"
+                        f"Intelligence gathered:\n{context_text}\n\n"
                         "Write a JSON object with these fields:\n"
                         '- "lede": one-sentence summary of the most important development\n'
                         '- "developments": array of 2-4 short bullet points on what happened\n'
-                        '- "analysis": 1-2 sentences on why this matters\n'
+                        '- "analysis": 1-2 sentences on why this matters (reference entity stances or document findings if relevant)\n'
                         '- "outlook": 1 sentence on what to watch next\n'
                         "Respond with ONLY the JSON object, no markdown."
                     )
@@ -172,11 +127,11 @@ async def generate_storyline_editorial(domain: str, limit: int = 10) -> Dict[str
                     prompt = (
                         f"You are refining an editorial document for the storyline \"{title}\".\n"
                         f"Current lede: {existing_lede}\n\n"
-                        f"New articles since last update:\n{context_text}\n\n"
+                        f"Updated intelligence:\n{context_text}\n\n"
                         "Update the editorial document. Write a JSON object with:\n"
                         '- "lede": updated one-sentence summary\n'
                         '- "developments": array of 2-4 updated bullet points\n'
-                        '- "analysis": 1-2 sentences on current significance\n'
+                        '- "analysis": 1-2 sentences on current significance (incorporate entity positions, document findings, and cross-domain connections if present)\n'
                         '- "outlook": 1 sentence on what to watch\n'
                         "Respond with ONLY the JSON object, no markdown."
                     )
@@ -186,8 +141,7 @@ async def generate_storyline_editorial(domain: str, limit: int = 10) -> Dict[str
                     skipped += 1
                     continue
 
-                # Parse LLM response as JSON; fall back to plain text
-                editorial = _parse_editorial_json(llm_text, title, article_ids, list(sources))
+                editorial = _parse_editorial_json(llm_text, title, article_ids, sources)
 
                 new_version = (doc_version or 0) + 1
                 cursor.execute(f"""

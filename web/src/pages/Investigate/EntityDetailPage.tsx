@@ -1,10 +1,11 @@
 /**
- * Entity profile detail — single entity with sections and metadata.
+ * Entity profile detail — single entity with sections, metadata, and link to full dossier.
  */
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Card, CardHeader, CardContent, Typography, Button, Box, Skeleton } from '@mui/material';
+import { Card, CardHeader, CardContent, Typography, Button, Box, Skeleton, Stack } from '@mui/material';
 import ArrowBack from '@mui/icons-material/ArrowBack';
+import AutoAwesome from '@mui/icons-material/AutoAwesome';
 import { contextCentricApi, type EntityProfile } from '@/services/api/contextCentric';
 import OrchestratorTagsEditor from '@/components/shared/OrchestratorTagsEditor/OrchestratorTagsEditor';
 
@@ -36,11 +37,24 @@ export default function EntityDetailPage() {
 
   if (!domain) return null;
 
+  const canonicalId = profile?.canonical_entity_id;
+
   return (
     <Box>
-      <Button startIcon={<ArrowBack />} onClick={() => navigate(`/${domain}/investigate/entities`)} sx={{ mb: 2 }}>
-        Back
-      </Button>
+      <Stack direction="row" spacing={1} sx={{ mb: 2 }}>
+        <Button startIcon={<ArrowBack />} onClick={() => navigate(`/${domain}/investigate/entities`)}>
+          Back
+        </Button>
+        {canonicalId != null && (
+          <Button
+            startIcon={<AutoAwesome />}
+            variant="contained"
+            onClick={() => navigate(`/${domain}/investigate/entities/${canonicalId}/dossier`)}
+          >
+            View Full Dossier
+          </Button>
+        )}
+      </Stack>
       {loading ? (
         <Skeleton variant="rectangular" height={200} />
       ) : !profile ? (

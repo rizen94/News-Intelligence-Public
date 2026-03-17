@@ -54,7 +54,8 @@ def ensure_context_for_article(domain_key: str, article_id: int) -> Optional[int
             cur.execute(
                 f"""
                 SELECT title, content, url, published_at, created_at
-                FROM {schema_name}.articles WHERE id = %s
+                FROM {schema_name}.articles
+                WHERE id = %s AND (enrichment_status IS NULL OR enrichment_status != 'removed')
                 """,
                 (article_id,),
             )
@@ -116,6 +117,74 @@ def ensure_context_for_article(domain_key: str, article_id: int) -> Optional[int
         except Exception:
             pass
         return None
+
+
+def update_context_content_for_article(domain_key: str, article_id: int) -> bool:
+    """
+    Update the content of the context linked to this article (e.g. after full-text enrichment).
+    Returns True if a context was found and updated, False otherwise.
+    """
+    from shared.database.connection import get_db_connection
+
+    conn = get_db_connection()
+    if not conn:
+        return False
+
+    schema_name = _schema_for_domain(domain_key)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT context_id FROM intelligence.article_to_context
+                WHERE domain_key = %s AND article_id = %s
+                """,
+                (domain_key, article_id),
+            )
+            row = cur.fetchone()
+            if not row:
+                conn.close()
+                return False
+
+            context_id = row[0]
+            cur.execute(
+                f"""
+                SELECT title, content FROM {schema_name}.articles
+                WHERE id = %s AND (enrichment_status IS NULL OR enrichment_status != 'removed')
+                """,
+                (article_id,),
+            )
+            art = cur.fetchone()
+            if not art:
+                conn.close()
+                return False
+
+            title, content = art
+            title = (title or "")[:2000]
+            content = (content or "")[:500000]
+
+            cur.execute(
+                """
+                UPDATE intelligence.contexts
+                SET title = %s, content = %s, raw_content = %s, updated_at = NOW()
+                WHERE id = %s
+                """,
+                (title, content, content, context_id),
+            )
+            conn.commit()
+            conn.close()
+            logger.debug(f"Context {context_id} content updated for {domain_key}.articles.{article_id}")
+            return True
+    except Exception as e:
+        logger.warning(f"Context processor: update_context_content_for_article failed: {e}")
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        try:
+            conn.close()
+        except Exception:
+            pass
+        return False
 
 
 def link_context_to_article_entities(context_id: int, domain_key: str, article_id: int) -> int:
@@ -218,6 +287,7 @@ def sync_domain_articles_to_contexts(domain_key: str, limit: int = 100) -> int:
                 LEFT JOIN intelligence.article_to_context atc
                   ON atc.domain_key = %s AND atc.article_id = a.id
                 WHERE atc.context_id IS NULL
+                  AND (a.enrichment_status IS NULL OR a.enrichment_status != 'removed')
                 ORDER BY a.created_at DESC
                 LIMIT %s
                 """,

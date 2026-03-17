@@ -528,6 +528,112 @@ function CanonicalEntitiesTab() {
 }
 
 // ---------------------------------------------------------------------------
+// Top Entities Tab — ranked by mention count, with dossier links
+// ---------------------------------------------------------------------------
+
+function TopEntitiesTab() {
+  const { domain } = useDomain();
+  const navigate = useNavigate();
+  const [entities, setEntities] = useState<CanonicalEntity[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [typeFilter, setTypeFilter] = useState('');
+
+  const loadTopEntities = useCallback(() => {
+    setLoading(true);
+    const params: Parameters<typeof contextCentricApi.getCanonicalEntities>[0] = {
+      domain_key: domain,
+      limit: 50,
+      min_mentions: 3,
+    };
+    if (typeFilter) params.entity_type = typeFilter;
+    contextCentricApi.getCanonicalEntities(params)
+      .then((res) => {
+        const sorted = [...(res?.entities ?? [])].sort(
+          (a, b) => (b.mention_count ?? 0) - (a.mention_count ?? 0),
+        );
+        setEntities(sorted);
+      })
+      .catch(() => setEntities([]))
+      .finally(() => setLoading(false));
+  }, [domain, typeFilter]);
+
+  useEffect(() => { loadTopEntities(); }, [loadTopEntities]);
+
+  return (
+    <Box>
+      <Stack direction="row" spacing={1} sx={{ mb: 2, alignItems: 'center' }}>
+        <Typography variant="body2" color="text.secondary">Filter:</Typography>
+        {['', 'person', 'organization', 'subject'].map((t) => (
+          <Chip
+            key={t || 'all'}
+            label={t || 'All'}
+            size="small"
+            variant={typeFilter === t ? 'filled' : 'outlined'}
+            color={typeFilter === t ? 'primary' : 'default'}
+            onClick={() => setTypeFilter(t)}
+          />
+        ))}
+      </Stack>
+      {loading ? (
+        <Skeleton variant="rectangular" height={300} />
+      ) : entities.length === 0 ? (
+        <Typography color="text.secondary">No entities with 3+ mentions found.</Typography>
+      ) : (
+        <TableContainer component={Paper} variant="outlined">
+          <Table size="small">
+            <TableHead>
+              <TableRow>
+                <TableCell sx={{ fontWeight: 600 }}>Entity</TableCell>
+                <TableCell sx={{ fontWeight: 600 }}>Type</TableCell>
+                <TableCell align="right" sx={{ fontWeight: 600 }}>Mentions</TableCell>
+                <TableCell sx={{ fontWeight: 600 }}>Aliases</TableCell>
+                <TableCell align="center" sx={{ fontWeight: 600 }}>Dossier</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {entities.map((e) => (
+                <TableRow
+                  key={e.canonical_entity_id}
+                  hover
+                  sx={{ cursor: 'pointer' }}
+                  onClick={() => navigate(`/${domain}/investigate/entities/${e.canonical_entity_id}/dossier`)}
+                >
+                  <TableCell>
+                    <Typography variant="body2" sx={{ fontWeight: 600 }}>{e.canonical_name}</Typography>
+                  </TableCell>
+                  <TableCell>
+                    <Chip label={e.entity_type} size="small" color={entityTypeColor(e.entity_type)} variant="outlined" />
+                  </TableCell>
+                  <TableCell align="right">
+                    <Typography variant="body2" sx={{ fontWeight: 700 }}>{e.mention_count ?? 0}</Typography>
+                  </TableCell>
+                  <TableCell>
+                    {(e.aliases || []).slice(0, 2).map((a, i) => (
+                      <Chip key={i} label={a} size="small" variant="outlined" sx={{ mr: 0.5, fontSize: '0.7rem' }} />
+                    ))}
+                    {(e.aliases?.length ?? 0) > 2 && (
+                      <Typography variant="caption" color="text.secondary">+{(e.aliases?.length ?? 0) - 2}</Typography>
+                    )}
+                  </TableCell>
+                  <TableCell align="center">
+                    <Button size="small" variant="outlined" onClick={(ev) => {
+                      ev.stopPropagation();
+                      navigate(`/${domain}/investigate/entities/${e.canonical_entity_id}/dossier`);
+                    }}>
+                      View
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </TableContainer>
+      )}
+    </Box>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Main page with tabs
 // ---------------------------------------------------------------------------
 
@@ -540,12 +646,14 @@ export default function EntitiesListPage() {
       <CardHeader title="Entity management" subheader={domain} />
       <CardContent>
         <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{ mb: 2 }}>
+          <Tab label="Top entities" />
           <Tab label="Entity profiles" />
           <Tab label="Canonical entities" />
         </Tabs>
         <Divider sx={{ mb: 2 }} />
-        {tab === 0 && <EntityProfilesTab />}
-        {tab === 1 && <CanonicalEntitiesTab />}
+        {tab === 0 && <TopEntitiesTab />}
+        {tab === 1 && <EntityProfilesTab />}
+        {tab === 2 && <CanonicalEntitiesTab />}
       </CardContent>
     </Card>
   );

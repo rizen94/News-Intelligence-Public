@@ -124,6 +124,17 @@ export const monitoringApi = {
     }
   },
 
+  /** Backlog progression: articles/documents/storylines remaining and catch-up ETA. */
+  async getBacklogStatus() {
+    try {
+      const response = await getApi().get('/api/system_monitoring/backlog_status');
+      return response.data;
+    } catch (error) {
+      Logger.apiError('Failed to fetch backlog status', error as Error);
+      return { success: false, data: null, error: (error as any).message };
+    }
+  },
+
   /** Request that a phase run now (e.g. rss_processing, digest_generation). */
   async triggerPhase(phase: string, options?: { domain?: string; storyline_id?: number }) {
     try {

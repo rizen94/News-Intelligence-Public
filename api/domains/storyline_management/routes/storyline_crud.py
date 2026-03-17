@@ -234,6 +234,7 @@ async def get_domain_storyline(
                     FROM {schema}.articles a
                     JOIN {schema}.storyline_articles sa ON a.id = sa.article_id
                     WHERE sa.storyline_id = %s
+                      AND (a.enrichment_status IS NULL OR a.enrichment_status != 'removed')
                     ORDER BY a.published_at DESC
                 """, (storyline_id,))
                 

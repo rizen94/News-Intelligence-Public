@@ -20,7 +20,7 @@ curl http://localhost:80
 
 ## 🔧 Service Issues
 
-### **API Not Responding (current — v6, no Docker)**
+### **API Not Responding (current — v7, no Docker)**
 
 **Symptoms**: `curl` to `localhost:8000` times out; TCP connects but no HTTP response; frontend shows "Cannot connect to API".
 
@@ -54,6 +54,48 @@ tail -80 logs/api_server.log
 ```bash
 ./stop_system.sh && ./start_system.sh
 ```
+
+---
+
+### **Statement timeouts killing planned work**
+
+**Symptoms**: Migrations or batch jobs fail with `canceling statement due to statement timeout`; ALTER TABLE or long UPDATE never finishes.
+
+**Policy**: The DB connection pool uses a **statement timeout** so one stuck query doesn’t hang the app. Default is **2 minutes** (`DB_STATEMENT_TIMEOUT_MS=120000`). That’s fine for normal API and automation. **Planned long-running work** (migrations, backfills, big reports) must run with no timeout so they aren’t cut off early.
+
+| Context | Timeout | Notes |
+|--------|---------|--------|
+| Pool (API, automation) | 2 min default | Override with `DB_STATEMENT_TIMEOUT_MS` (e.g. `300000` = 5 min, `0` = off). |
+| Migration scripts | Off | All `run_migration_*.py` scripts set `SET statement_timeout = 0` before running SQL. |
+| Content enrichment batch | 5 min | Service sets 300s for the batch, then restores pool default. |
+| Backlog metrics (dashboard) | 3 s | Short `SET LOCAL statement_timeout = '3s'` for quick counts. |
+
+**If a migration still times out**: Another process may be holding a lock (e.g. API or cron). Stop the API/workers, run the migration, then restart. Or run the migration during a quiet window.
+
+---
+
+### **Article content enrichment: fallbacks and bad-datapoint removal**
+
+Full-text enrichment tries up to four sources in order; if all fail, the article is treated as a bad datapoint and soft-removed.
+
+**Pipeline order**
+
+1. **Live** — trafilatura fetch from the article URL (current behaviour). If usable text and not paywalled, done.
+2. **Browser** (optional) — headless browser (Playwright) for fully rendered HTML. Only if live failed. Requires `ENABLE_BROWSER_ENRICHMENT=1` and Playwright installed.
+3. **Wayback** (optional) — Archive.org snapshot. Only if browser failed or is disabled. Requires `ENABLE_WAYBACK_ENRICHMENT=1`.
+4. **archive.today** (optional) — Memento snapshot. Only if Wayback failed or is disabled. Requires `ENABLE_ARCHIVETODAY_ENRICHMENT=1`.
+
+If all enabled steps return no usable text (or paywalled), the **batch** enrichment path **removes** the article: sets `enrichment_status = 'removed'` and deletes its row from `topic_extraction_queue`. Removed articles are excluded from article lists, backlog counts, storylines, and context sync. No removal at RSS ingest; only the batch cleanup removes after trying all fallbacks.
+
+**Environment flags (all optional; off if unset)**
+
+| Variable | Effect |
+|----------|--------|
+| `ENABLE_BROWSER_ENRICHMENT=1` | Enable step 2 (headless browser). |
+| `ENABLE_WAYBACK_ENRICHMENT=1` | Enable step 3 (Archive.org). |
+| `ENABLE_ARCHIVETODAY_ENRICHMENT=1` | Enable step 4 (archive.today). |
+
+Rate limits and timeouts apply to browser and archive fetches so we do not overload external services. Logs indicate which path succeeded (live / browser / wayback / archivetoday) and when an article is removed.
 
 ---
 
@@ -215,8 +257,9 @@ Interpret `status`, `degraded_reasons`, and `services.database` to see why it’
    - **Mitigation**: Increase `DB_STATEMENT_TIMEOUT_MS` as above. Longer term, consider an index or a junction table (e.g. `context_id` → `event_id`) so "context linked to event" does not require a full scan of `event_chronicles`.
 
 3. **Ollama / LLM congestion**  
-   Phases that call Ollama (event_extraction, story_continuation, claim_extraction, ml_processing, etc.) share a semaphore (`MAX_CONCURRENT_OLLAMA_TASKS = 3`). If Ollama is slow or busy, tasks wait; the **HTTP client** has a 180s timeout, so very long calls can fail.  
-   - **Fix**: Ensure Ollama is running and not overloaded; reduce concurrent load (e.g. fewer phases enabled) or increase Ollama resources if many phases run at once.
+   Phases that call Ollama share a semaphore (`MAX_CONCURRENT_OLLAMA_TASKS` in `api/services/automation_manager.py`, `OLLAMA_CONCURRENCY` in `api/shared/services/llm_service.py`). If Ollama is slow or busy, tasks wait; the HTTP client has a 180s timeout.
+   - **Fix**: Ensure Ollama is running; reduce concurrency if the GPU is saturated, or run `uv run python scripts/full_system_status_check.py` to assess headroom and tune (see scripts/SCRIPTS_INDEX.md).
+   - **Burst (48h catch-up)**: Settings may be raised temporarily (e.g. concurrency 6, content_enrichment interval 300s, batch 60, `RATE_LIMIT_SLEEP` 0.4). Revert to normal (5, 600, 40, 0.6) after catch-up.
 
 4. **Retries and backoff**  
    The automation manager retries failed tasks (up to `max_retries`) with backoff. If the **root cause** is statement timeout, increase `DB_STATEMENT_TIMEOUT_MS` so the first run succeeds instead of relying on retries.
@@ -228,7 +271,42 @@ Interpret `status`, `degraded_reasons`, and `services.database` to see why it’
 grep DB_STATEMENT_TIMEOUT_MS .env || echo "Not set (using default 60000 ms)"
 
 # Logs: look for timeout or cancel
-grep -E "canceling|statement timeout|Task .* failed|event_tracking failed|story_continuation failed" api/logs/*.log 2>/dev/null | tail -20
+grep -E "canceling|statement timeout|Task .* failed|event_tracking failed|story_continuation failed" logs/api_server.log 2>/dev/null | tail -20
+```
+
+### **Enrichment backlog not decreasing / “700 per hour” but backlog grows**
+
+**Symptoms**: Monitor shows ~700/hr (or another high rate) and an ETA for the article enrichment queue, but after hours the “articles remaining” count does not drop, or even increases.
+
+**What the logs show (typical)**:
+
+- **Content enrichment (v7)** is the only phase that actually reduces the “short/missing content” backlog (trafilatura full-text fetch).
+- Successful runs log: `Content enrichment (v7): N articles enriched` (N often 55–58 per run when batch=60).
+- Failed runs log: `Content enrichment failed: canceling statement due to statement timeout` and complete **0** articles for that run.
+
+**Why the backlog doesn’t drop**:
+
+1. **Actual throughput is much lower than 700/hr**  
+   Example from a single day’s logs: 4 successful runs (58+57+58+55 = 228 articles) and 2 runs lost to statement timeout (0 each) over ~2 hours → **~114 articles/hour actual**. The “700” was a theoretical burst rate (batch 60 every 5 min); real rate is lower because (a) some runs are killed by timeout and (b) trafilatura often fails on many URLs (empty content), so not every attempted article becomes “enriched”.
+
+2. **Statement timeout (60s default)**  
+   The content_enrichment batch runs in one thread and can hold a DB connection for several minutes (many fetches + UPDATEs + context refresh). If any single statement exceeds 60s (e.g. a slow `UPDATE intelligence.contexts` or a heavy scan), PostgreSQL cancels it and the **entire** run commits 0. So you can have 2–3 runs per hour that do 0.
+
+3. **Inflow vs outflow**  
+   New RSS articles with short content arrive continuously. If inflow (e.g. 150–200/hr) is above actual enrichment outflow (~100–120/hr when timeouts occur), the backlog grows even though the system is “processing.”
+
+**What we did**:
+
+- **Dashboard**: Backlog status now uses a **measured** rate when possible (articles updated to full content in last 1h/24h), with fallback 300/hr and a “(measured 1h)”, “(measured 24h)”, or “(no recent data)” label. Restart the API so the new backlog endpoint is used; the displayed rate may still be inflated by other phases that update articles (entity/topic), so treat it as an upper bound.
+- **Content enrichment batch**: The enrichment service sets a **5-minute** statement timeout for the duration of its batch only, then resets it, so long runs are no longer killed by the default 60s. This should reduce “Content enrichment failed: statement timeout” and increase actual enriched count per hour.
+
+**Check actual enrichment rate from logs**:
+```bash
+# Successful enrichment counts (each run; duplicate lines are from service + automation_manager)
+grep "Content enrichment (v7):" logs/api_server.log | tail -50
+
+# Failures (0 articles that run)
+grep "Content enrichment failed" logs/api_server.log | tail -20
 ```
 
 ## 🐛 Error Messages

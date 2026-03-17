@@ -81,6 +81,8 @@ def main():
         print("ERROR: Could not connect to database (check DB_HOST, DB_NAME, DB_USER, DB_PASSWORD)")
         sys.exit(1)
 
+    with conn.cursor() as cur:
+        cur.execute("SET statement_timeout = 0")
     applied = 0
     for num, name in run_list:
         path = os.path.join(migrations_dir, name)

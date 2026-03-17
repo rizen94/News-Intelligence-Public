@@ -38,6 +38,9 @@
 
 | Script | Purpose |
 |--------|---------|
+| `full_system_status_check.py` | **Full status:** resource usage (CPU, RAM, disk, GPU) + data quality (articles, phases, storylines, contexts). Run: `uv run python scripts/full_system_status_check.py` |
+| `backlog_eta.py` | **Backlog ETA:** estimate time to clear article enrichment, document processing, and storyline synthesis backlogs. Run: `uv run python scripts/backlog_eta.py` |
+| `check_v7_data_collection.py` | Data quality only: articles, v7 phases, documents, storylines, contexts. Run: `uv run python scripts/check_v7_data_collection.py` |
 | `verify_gpu.py` | GPU/ML verification |
 | `verify_connections.py` | DB, Ollama, Redis check |
 | `rss_collection_with_health_check.sh` | RSS + health check (used by cron) |

@@ -33,6 +33,7 @@ quality_thresholds:
   min_importance_for_processing: 0.3
 
 # Phase 3 T3.1: document acquisition — sources and types for pipeline
+# v7: automated_sources list enables document_collection phase (CRS, GAO, CBO, arXiv)
 document_sources:
   source_priorities:
     - government
@@ -42,6 +43,12 @@ document_sources:
     - report
     - analysis
     - briefing
+  # v7: which automated collectors to run (crs, gao, cbo, arxiv)
+  automated_sources:
+    - crs
+    - gao
+    - cbo
+    - arxiv
   # Optional: list of URLs or {url, title, source_type} to ingest (manual or crawl)
   ingest_urls: []
 
@@ -87,9 +94,6 @@ processing:
     topic_clustering:
       interval_seconds: 300
       scope: domain
-    article_processing:
-      interval_seconds: 300
-      scope: null
     entity_extraction:
       interval_seconds: 300
       scope: null

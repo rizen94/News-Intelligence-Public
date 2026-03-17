@@ -475,6 +475,30 @@ def process_document(
                     )
                     di_id = cur.fetchone()[0]
 
+                # v7: Create intelligence.contexts for each section so they join extraction/synthesis pipeline
+                sections_list = extracted_sections or []
+                doc_title = (title or "Document")[:500]
+                for idx, sec in enumerate(sections_list):
+                    if not isinstance(sec, dict):
+                        continue
+                    sec_title = (sec.get("title") or f"Section {idx + 1}")[:2000]
+                    sec_content = (sec.get("content") or "")[:500000]
+                    if not sec_content.strip():
+                        continue
+                    cur.execute(
+                        """
+                        INSERT INTO intelligence.contexts
+                        (source_type, domain_key, title, content, raw_content, metadata)
+                        VALUES ('pdf_section', 'documents', %s, %s, %s, %s)
+                        """,
+                        (
+                            f"{doc_title}: {sec_title}",
+                            sec_content,
+                            sec_content,
+                            json.dumps({"document_id": document_id, "section_index": idx}),
+                        ),
+                    )
+
             conn.commit()
             conn.close()
 

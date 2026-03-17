@@ -1,7 +1,11 @@
 /**
  * Frontend Health Service
- * Provides health check endpoints and status for the frontend
+ * Provides health check endpoints and status for the frontend.
+ * Uses the same API base URL as the rest of the app (apiConfig) so monitoring
+ * and data loading always reflect the same connection.
  */
+
+import { getCurrentApiUrl } from '../config/apiConfig';
 
 interface HealthStatus {
   status: 'healthy' | 'degraded' | 'unhealthy' | 'unknown';
@@ -11,28 +15,31 @@ interface HealthStatus {
   errors?: string[];
 }
 
+function getHealthCheckUrl(): string {
+  const base = getCurrentApiUrl();
+  if (!base || base === '') {
+    return '/api/system_monitoring/health';
+  }
+  return `${base.replace(/\/$/, '')}/api/system_monitoring/health`;
+}
+
 class FrontendHealthService {
   private healthStatus: HealthStatus | null = null;
   private checkInterval: ReturnType<typeof setInterval> | null = null;
-  private apiBaseUrl: string;
-
-  constructor() {
-    // Get API base URL from config or environment
-    this.apiBaseUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-  }
 
   /**
-   * Check frontend health by testing API connection
+   * Check frontend health by testing API connection.
+   * Uses same base URL as app (localStorage + env) so status matches data loading.
    */
   async checkHealth(): Promise<HealthStatus> {
     const startTime = performance.now();
     const errors: string[] = [];
     let api_connected = false;
     let api_response_time_ms: number | undefined;
+    const healthUrl = getHealthCheckUrl();
 
     try {
-      // Test API connection
-      const response = await fetch(`${this.apiBaseUrl}/api/system_monitoring/health`, {
+      const response = await fetch(healthUrl, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
@@ -119,7 +126,7 @@ class FrontendHealthService {
   }
 
   /**
-   * Report health status to API
+   * Report health status to API (same base URL as app).
    */
   async reportHealthToAPI(): Promise<void> {
     try {
@@ -128,8 +135,11 @@ class FrontendHealthService {
         return;
       }
 
-      // Report to route supervisor
-      await fetch(`${this.apiBaseUrl}/api/system_monitoring/route_supervisor/check_now`, {
+      const base = getCurrentApiUrl();
+      const url = !base || base === ''
+        ? '/api/system_monitoring/route_supervisor/check_now'
+        : `${base.replace(/\/$/, '')}/api/system_monitoring/route_supervisor/check_now`;
+      await fetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

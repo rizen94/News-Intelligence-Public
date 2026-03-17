@@ -62,6 +62,7 @@ class RAGAnalysisService(DomainAwareService):
                         FROM {self.schema}.articles a
                         JOIN {self.schema}.storyline_articles sa ON a.id = sa.article_id
                         WHERE sa.storyline_id = %s
+                          AND (a.enrichment_status IS NULL OR a.enrichment_status != 'removed')
                         ORDER BY a.published_at ASC
                     """, (storyline_id,))
                     
@@ -298,6 +299,7 @@ Format your response as a well-structured analysis suitable for professional jou
                     FROM {self.schema}.articles a
                     JOIN {self.schema}.storyline_articles sa ON a.id = sa.article_id
                     WHERE sa.storyline_id = %s
+                      AND (a.enrichment_status IS NULL OR a.enrichment_status != 'removed')
                 """, (storyline_id,))
                 
                 source_result = cur.fetchone()

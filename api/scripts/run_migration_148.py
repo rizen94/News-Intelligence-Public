@@ -47,6 +47,7 @@ def main():
 
     try:
         with conn.cursor() as cur:
+            cur.execute("SET statement_timeout = 0")
             cur.execute(sql)
         conn.commit()
         print("✅ 148_add_finance_rss_feeds.sql applied successfully")

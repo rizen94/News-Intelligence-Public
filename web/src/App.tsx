@@ -26,7 +26,9 @@ import EntityDetailPage from './pages/Investigate/EntityDetailPage';
 import EntitiesListPage from './pages/Investigate/EntitiesListPage';
 import SearchPage from './pages/Investigate/SearchPage';
 import ProcessedDocumentsPage from './pages/Investigate/ProcessedDocumentsPage';
+import ProcessedDocumentDetailPage from './pages/Investigate/ProcessedDocumentDetailPage';
 import NarrativeThreadsPage from './pages/Investigate/NarrativeThreadsPage';
+import EntityDossierPage from './pages/Investigate/EntityDossierPage';
 import MonitorPage from './pages/Monitor/MonitorPage';
 import AnalyzePage from './pages/Analyze/AnalyzePage';
 import CommodityDashboard from './pages/Finance/CommodityDashboard';
@@ -53,7 +55,7 @@ function App() {
   useEffect(() => {
     errorHandler.initialize();
     loggingService.info('News Intelligence (Dashboard) initialized', {
-      version: '6.0',
+      version: '7.0',
       environment: import.meta.env.MODE || 'development',
     });
     const connectionManager = getAPIConnectionManager();
@@ -86,8 +88,10 @@ function App() {
                   <Route path="investigate/events/:id" element={<EventDetailPage />} />
                   <Route path="investigate/entities" element={<EntitiesListPage />} />
                   <Route path="investigate/entities/:id" element={<EntityDetailPage />} />
+                  <Route path="investigate/entities/:entityId/dossier" element={<EntityDossierPage />} />
                   <Route path="investigate/search" element={<SearchPage />} />
                   <Route path="investigate/documents" element={<ProcessedDocumentsPage />} />
+                  <Route path="investigate/documents/:documentId" element={<ProcessedDocumentDetailPage />} />
                   <Route path="investigate/narrative-threads" element={<NarrativeThreadsPage />} />
                   <Route path="monitor" element={<MonitorPage />} />
                   <Route path="analyze" element={<AnalyzePage />} />

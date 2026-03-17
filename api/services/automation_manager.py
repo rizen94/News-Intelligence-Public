@@ -27,15 +27,19 @@ logger = logging.getLogger(__name__)
 try:
     from services.backlog_metrics import (
         get_all_backlog_counts,
+        get_all_pending_counts,
         SKIP_WHEN_EMPTY,
         BACKLOG_HIGH_THRESHOLD,
         BACKLOG_MODE_INTERVAL,
+        BACKLOG_ANY_INTERVAL,
     )
 except ImportError:
     get_all_backlog_counts = None
+    get_all_pending_counts = None
     SKIP_WHEN_EMPTY = frozenset()
     BACKLOG_HIGH_THRESHOLD = 200
     BACKLOG_MODE_INTERVAL = 300
+    BACKLOG_ANY_INTERVAL = 30
 
 # Persist each automation run to DB so "last 24h" is based on wall-clock time, not API restart
 def _persist_automation_run(phase_name: str, started_at: datetime, finished_at: datetime, success: bool, error_message: Optional[str] = None) -> None:
@@ -61,15 +65,25 @@ def _persist_automation_run(phase_name: str, started_at: datetime, finished_at: 
         logger.debug("persist automation_run_history: %s", e)
 
 
+# Enrichment backlog first: when True and content_enrichment backlog > 0, only whitelist phases run.
+# Set to False to restore normal sequential processing (all phases run on their intervals).
+ENRICHMENT_BACKLOG_FIRST_ENABLED = False
+ENRICHMENT_BACKLOG_FIRST_WHITELIST = frozenset({
+    "rss_processing",
+    "content_enrichment",
+    "document_collection",
+    "document_processing",
+    "health_check",
+})
+
 # Phases that process batches; re-enqueue when pending work remains (continuous until empty)
 BATCH_PHASES_CONTINUOUS = {
+    "content_enrichment",  # v7: full-text scraping until backlog drained (replaces article_processing)
     "ml_processing",
-    "article_processing",
     "entity_extraction",
     "sentiment_analysis",
     "quality_scoring",
     "storyline_processing",
-    "basic_summary_generation",
     "rag_enhancement",
     "storyline_automation",
     "entity_profile_build",
@@ -80,13 +94,13 @@ BATCH_PHASES_CONTINUOUS = {
 _SCHEMAS = ("politics", "finance", "science_tech")
 
 # Phases that constitute "data load"; when none have run recently, downtime loop runs entity organizer
-DATA_LOAD_PHASES = ("rss_processing", "article_processing", "entity_extraction")
+DATA_LOAD_PHASES = ("rss_processing", "content_enrichment", "entity_extraction")
 DOWNTIME_IDLE_SECONDS = 300   # Consider "downtime" if no data-load phase ran in last 5 min
 DOWNTIME_ORGANIZER_SLEEP = 45  # Seconds between organizer cycles during downtime
 DOWNTIME_POLL_SLEEP = 30       # Seconds to sleep when data load is active (before rechecking)
 
-# Cap concurrent Ollama/GPU tasks so I/O and DB-bound work are not starved
-MAX_CONCURRENT_OLLAMA_TASKS = 3
+# Cap concurrent Ollama/GPU tasks. Burst (48h): 6; revert to 5 after catch-up
+MAX_CONCURRENT_OLLAMA_TASKS = 6
 
 class TaskStatus(Enum):
     """Task execution status"""
@@ -121,14 +135,12 @@ class Task:
 # Estimated duration in seconds per phase (single place to tune)
 PHASE_ESTIMATED_DURATION_SECONDS = {
     "rss_processing": 120,
-    "article_processing": 180,
     "ml_processing": 240,
     "topic_clustering": 180,
     "entity_extraction": 120,
     "quality_scoring": 90,
     "sentiment_analysis": 120,
     "storyline_processing": 300,
-    "basic_summary_generation": 120,
     "rag_enhancement": 600,
     "event_extraction": 300,
     "event_deduplication": 120,
@@ -150,10 +162,8 @@ PHASE_ESTIMATED_DURATION_SECONDS = {
     "storyline_automation": 180,
     "story_enhancement": 300,
     "entity_enrichment": 180,
-    "story_state_triggers": 120,
     "pattern_matching": 90,
     "cross_domain_synthesis": 120,
-    "relationship_extraction": 90,
     "entity_organizer": 180,  # cleanup + relationship extraction
     "entity_dossier_compile": 90,  # compile entity dossiers (no LLM), ~2-5s per dossier
     "entity_position_tracker": 300,  # LLM position extraction per entity, ~30-60s per entity
@@ -161,6 +171,13 @@ PHASE_ESTIMATED_DURATION_SECONDS = {
     "research_topic_refinement": 60,  # pick one topic, submit to finance orchestrator (idle-only)
     "editorial_document_generation": 300,  # LLM-generate/refine editorial_document on storylines
     "editorial_briefing_generation": 300,  # LLM-generate/refine editorial_briefing on tracked_events
+    # v7: full-text enrichment, document pipeline, auto synthesis
+    "content_enrichment": 120,   # trafilatura fetch per article, rate-limited
+    "document_collection": 300,   # government + academic PDF discovery
+    "document_processing": 600,   # pdfplumber + LLM per document
+    "storyline_synthesis": 600,   # deep content synthesis per storyline
+    "daily_briefing_synthesis": 300,  # breaking news synthesis per domain
+    "storyline_discovery": 600,  # AI clustering + LLM title generation per domain
 }
 
 class AutomationManager:
@@ -170,7 +187,7 @@ class AutomationManager:
         self.db_config = db_config
         self.is_running = False
         self.tasks: Dict[str, Task] = {}
-        self.executor = ThreadPoolExecutor(max_workers=4)
+        self.executor = ThreadPoolExecutor(max_workers=6)
         self.task_queue = asyncio.Queue()
         self.ollama_semaphore = asyncio.Semaphore(MAX_CONCURRENT_OLLAMA_TASKS)
         self.workers = []
@@ -180,7 +197,7 @@ class AutomationManager:
         self._get_finance_orchestrator = None
         self.health_check_interval = 30  # seconds
         self.task_timeout = 300  # 5 minutes
-        self.max_concurrent_tasks = 3  # Keep low to avoid GIL starvation of the API event loop
+        self.max_concurrent_tasks = 4  # Allow more parallel phase work (CPU/RAM headroom)
         
         # Dynamic resource allocation
         self.dynamic_resource_service = None
@@ -192,13 +209,45 @@ class AutomationManager:
             'rss_processing': {
                 'interval': 1800,  # 30 minutes - more frequent for all-day runs
                 'last_run': None,
-                'enabled': True,
+                'enabled': True,  # Set False to pause new RSS downloads (e.g. while catching up backlog)
                 'priority': TaskPriority.CRITICAL,
                 'phase': 1,
                 'depends_on': [],
                 'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['rss_processing'],
             },
-            
+            # v7: Full-text article enrichment (trafilatura) before extraction
+            # Burst (48h catch-up): 300s so phase is offered every 5 min; revert to 600 after
+            'content_enrichment': {
+                'interval': 300,  # 5 minutes (burst); normal 600
+                'last_run': None,
+                'enabled': True,
+                'priority': TaskPriority.HIGH,
+                'phase': 1,
+                'depends_on': ['rss_processing'],
+                'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['content_enrichment'],
+            },
+            # v7: Government + academic PDF discovery
+            'document_collection': {
+                'interval': 21600,  # 6 hours
+                'last_run': None,
+                'enabled': True,
+                'priority': TaskPriority.NORMAL,
+                'phase': 1,
+                'depends_on': [],
+                'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['document_collection'],
+            },
+            # v7: PDF processing (download, extract text, sections, entities)
+            # No dependency on document_collection — manually submitted docs should process
+            # immediately regardless of whether automatic discovery has run.
+            'document_processing': {
+                'interval': 1800,  # 30 minutes
+                'last_run': None,
+                'enabled': True,
+                'priority': TaskPriority.NORMAL,
+                'phase': 2,
+                'depends_on': [],
+                'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['document_processing'],
+            },
             # PHASE 1b: Context-centric sync (incremental: articles -> intelligence.contexts)
             'context_sync': {
                 'interval': 900,  # 15 minutes - incremental sync, 100 contexts/batch, ~30-60s
@@ -206,7 +255,7 @@ class AutomationManager:
                 'enabled': True,
                 'priority': TaskPriority.NORMAL,
                 'phase': 1,
-                'depends_on': [],
+                'depends_on': ['content_enrichment'],  # v7: prefer enriched content
                 'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['context_sync'],
             },
             # PHASE 1c: Entity profile sync (entity_canonical -> entity_profiles, old_entity_to_new)
@@ -316,18 +365,8 @@ class AutomationManager:
                 'enabled': True,
                 'priority': TaskPriority.NORMAL,
                 'phase': 2,
-                'depends_on': ['article_processing'],
+                'depends_on': ['content_enrichment'],
                 'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['metadata_enrichment'],
-            },
-            # P2: Relationship extraction (co-mentions -> entity_relationships)
-            'relationship_extraction': {
-                'interval': 900,  # 15 minutes
-                'last_run': None,
-                'enabled': True,
-                'priority': TaskPriority.NORMAL,
-                'phase': 2,
-                'depends_on': [],
-                'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['relationship_extraction'],
             },
             # Entity organizer: cleanup (merge/prune/cap) + relationship extraction; also runs in downtime loop
             'entity_organizer': {
@@ -339,17 +378,6 @@ class AutomationManager:
                 'depends_on': ['entity_profile_sync'],
                 'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['entity_organizer'],
             },
-            # PHASE 2: Article Processing (Runs frequently, processes existing articles)
-            'article_processing': {
-                'interval': 300,  # 5 minutes - run often, re-enqueue until empty
-                'last_run': None,
-                'enabled': True,
-                'priority': TaskPriority.HIGH,
-                'phase': 2,
-                'depends_on': [],  # Can process articles already in database, no RSS dependency
-                'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['article_processing'],
-            },
-            
             # PHASE 3: ML Processing (Runs frequently on processed articles)
             'ml_processing': {
                 'interval': 300,  # 5 minutes - run often, re-enqueue until empty
@@ -357,7 +385,7 @@ class AutomationManager:
                 'enabled': True,
                 'priority': TaskPriority.HIGH,
                 'phase': 3,
-                'depends_on': ['article_processing'],
+                'depends_on': ['content_enrichment'],
                 'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['ml_processing'],
             },
             
@@ -368,7 +396,7 @@ class AutomationManager:
                 'enabled': True,
                 'priority': TaskPriority.HIGH,
                 'phase': 5,
-                'depends_on': ['article_processing'],  # Only needs articles, not full ML processing
+                'depends_on': ['content_enrichment'],
                 'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['topic_clustering'],
             },
             
@@ -379,7 +407,7 @@ class AutomationManager:
                 'enabled': True,
                 'priority': TaskPriority.NORMAL,
                 'phase': 4,
-                'depends_on': ['article_processing'],
+                'depends_on': ['content_enrichment'],
                 'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['entity_extraction'],
                 'parallel_group': 'ml_entity_processing'  # Can run in parallel with ML
             },
@@ -391,7 +419,7 @@ class AutomationManager:
                 'enabled': True,
                 'priority': TaskPriority.NORMAL,
                 'phase': 4,
-                'depends_on': ['article_processing'],
+                'depends_on': ['content_enrichment'],
                 'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['quality_scoring'],
                 'parallel_group': 'ml_entity_processing'  # Can run in parallel with ML
             },
@@ -403,11 +431,21 @@ class AutomationManager:
                 'enabled': True,
                 'priority': TaskPriority.NORMAL,
                 'phase': 4,
-                'depends_on': ['article_processing'],
+                'depends_on': ['content_enrichment'],
                 'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['sentiment_analysis'],
                 'parallel_group': 'ml_entity_processing'  # Can run in parallel with ML
             },
             
+            # PHASE 6: Storyline Discovery (AI auto-creates storylines from article clusters)
+            'storyline_discovery': {
+                'interval': 14400,  # 4 hours — discover new storylines from recent articles
+                'last_run': None,
+                'enabled': True,
+                'priority': TaskPriority.NORMAL,
+                'phase': 6,
+                'depends_on': ['content_enrichment'],
+                'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['storyline_discovery'],
+            },
             # PHASE 7: Storyline Processing (summaries; continuous until empty)
             'storyline_processing': {
                 'interval': 300,  # 5 minutes - run often, re-enqueue until empty
@@ -429,24 +467,13 @@ class AutomationManager:
                 'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['storyline_automation'],
             },
             # PHASE 8: RAG Enhancement (Every 30 minutes)
-            # PHASE 6: Basic Summary Generation
-            'basic_summary_generation': {
-                'interval': 300,  # 5 minutes - run often, re-enqueue until empty
-                'last_run': None,
-                'enabled': True,
-                'priority': TaskPriority.HIGH,
-                'phase': 6,
-                'depends_on': ['storyline_processing'],
-                'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['basic_summary_generation'],
-            },
-            
             'rag_enhancement': {
                 'interval': 300,  # 5 minutes - run often, re-enqueue until storylines enhanced
                 'last_run': None,
                 'enabled': True,
                 'priority': TaskPriority.HIGH,
                 'phase': 8,
-                'depends_on': ['basic_summary_generation'],
+                'depends_on': ['storyline_processing'],
                 'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['rag_enhancement'],
             },
             
@@ -496,16 +523,6 @@ class AutomationManager:
                 'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['timeline_generation'],
             },
 
-            # Phase 3 RAG: Story state triggers (fact_change_log -> story_update_queue)
-            'story_state_triggers': {
-                'interval': 300,  # 5 minutes - 100-change batches, ~2s each; if behind >10k alert
-                'last_run': None,
-                'enabled': True,
-                'priority': TaskPriority.NORMAL,
-                'phase': 9,
-                'depends_on': [],
-                'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['story_state_triggers'],
-            },
             # Phase 3 RAG: Entity enrichment (Wikipedia -> entity_profiles; LLM limits)
             'entity_enrichment': {
                 'interval': 1800,  # 30 minutes - max 20 entities/run, 10s timeout/entity; skip if queue >1000
@@ -568,7 +585,28 @@ class AutomationManager:
                 'depends_on': ['editorial_document_generation'],
                 'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['digest_generation'],
             },
-            
+
+            # v7: Auto storyline synthesis (Wikipedia-style articles)
+            'storyline_synthesis': {
+                'interval': 3600,  # 60 minutes
+                'last_run': None,
+                'enabled': True,
+                'priority': TaskPriority.NORMAL,
+                'phase': 10,
+                'depends_on': ['storyline_processing'],
+                'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['storyline_synthesis'],
+            },
+            # v7: Auto daily briefing synthesis (breaking news)
+            'daily_briefing_synthesis': {
+                'interval': 14400,  # 4 hours
+                'last_run': None,
+                'enabled': True,
+                'priority': TaskPriority.LOW,
+                'phase': 11,
+                'depends_on': ['storyline_synthesis'],
+                'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['daily_briefing_synthesis'],
+            },
+
             # PHASE 12: Watchlist Alert Generation (v5.0)
             'watchlist_alerts': {
                 'interval': 1200,  # 20 minutes - Relaxed from 15 min
@@ -600,6 +638,17 @@ class AutomationManager:
                 'depends_on': [],
                 'idle_only': True,
                 'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['research_topic_refinement'],
+            },
+
+            # PHASE 11: Narrative thread build + synthesis (cross-storyline narrative arcs)
+            'narrative_thread_build': {
+                'interval': 7200,  # 2 hours
+                'last_run': None,
+                'enabled': True,
+                'priority': TaskPriority.LOW,
+                'phase': 11,
+                'depends_on': ['storyline_processing', 'editorial_document_generation'],
+                'estimated_duration': 120,
             },
 
             # MAINTENANCE: Data Cleanup (Daily)
@@ -792,7 +841,21 @@ class AutomationManager:
 
         while self.is_running:
             try:
-                # Drain coordinator-driven phase requests (thread-safe)
+                current_time = datetime.now(timezone.utc)
+                backlog_counts: Dict[str, int] = {}
+                self._pending_counts: Dict[str, int] = {}
+                if get_all_backlog_counts:
+                    try:
+                        backlog_counts = get_all_backlog_counts()
+                    except Exception as e:
+                        logger.debug("Backlog counts unavailable: %s", e)
+                if get_all_pending_counts:
+                    try:
+                        self._pending_counts = get_all_pending_counts()
+                    except Exception as e:
+                        logger.debug("Pending counts unavailable: %s", e)
+
+                # Drain coordinator-driven phase requests (thread-safe); respect enrichment-backlog-first
                 try:
                     while True:
                         item = self._phase_request_queue.get_nowait()
@@ -806,6 +869,12 @@ class AutomationManager:
                             logger.debug("request_phase: unknown phase %s, skipping", phase_name)
                             continue
                         schedule = self.schedules[phase_name]
+                        if not schedule.get("enabled", True):
+                            logger.debug("request_phase: phase %s is disabled, skipping", phase_name)
+                            continue
+                        if ENRICHMENT_BACKLOG_FIRST_ENABLED and backlog_counts.get("content_enrichment", 0) > 0 and phase_name not in ENRICHMENT_BACKLOG_FIRST_WHITELIST:
+                            logger.info("request_phase: skipping %s (enrichment backlog first, %s articles pending)", phase_name, backlog_counts.get("content_enrichment", 0))
+                            continue
                         task = Task(
                             id=f"{phase_name}_{int(datetime.now(timezone.utc).timestamp())}",
                             name=phase_name,
@@ -823,14 +892,6 @@ class AutomationManager:
                 except queue.Empty:
                     pass
 
-                current_time = datetime.now(timezone.utc)
-                backlog_counts: Dict[str, int] = {}
-                if get_all_backlog_counts:
-                    try:
-                        backlog_counts = get_all_backlog_counts()
-                    except Exception as e:
-                        logger.debug("Backlog counts unavailable: %s", e)
-                
                 # Sort tasks by phase for proper sequencing
                 sorted_tasks = sorted(self.schedules.items(), key=lambda x: x[1].get('phase', 0))
                 
@@ -881,7 +942,8 @@ class AutomationManager:
                         if self._should_run_parallel_group(parallel_group, tasks, current_time, backlog_counts):
                             await self._execute_parallel_phase(parallel_group)
 
-                # Sequential tasks: collect all runnable across phases, then queue by priority then phase then backlog
+                # Sequential tasks: collect all runnable across phases, then queue by work-driven priority.
+                # Select processes intelligently: effective priority (boost when backlog high), then most work first, then phase order.
                 all_runnable: List[Tuple[str, Dict[str, Any]]] = []
                 for phase in sorted(phase_groups.keys()):
                     phase_data = phase_groups[phase]
@@ -891,14 +953,20 @@ class AutomationManager:
                         if self._should_run_task(task_name, schedule, current_time, backlog_counts)
                     ]
                     all_runnable.extend(runnable)
-                for task_name, schedule in sorted(
-                    all_runnable,
-                    key=lambda x: (
-                        schedule.get('priority', TaskPriority.NORMAL).value,
-                        schedule.get('phase', 0),
-                        -backlog_counts.get(x[0], 0),
-                    ),
-                ):
+                def _work_driven_sort_key(item):
+                    task_name, schedule = item
+                    p = schedule.get("priority", TaskPriority.NORMAL).value  # lower = higher priority
+                    backlog = backlog_counts.get(task_name, 0)
+                    if ENRICHMENT_BACKLOG_FIRST_ENABLED and task_name == "content_enrichment" and backlog > 0:
+                        p = TaskPriority.CRITICAL.value
+                    elif backlog > BACKLOG_HIGH_THRESHOLD:
+                        # Boost priority by one level when this task has a lot of work (prioritize work that needs doing)
+                        p = max(TaskPriority.CRITICAL.value, p - 1)
+                    phase = schedule.get("phase", 0)
+                    # Sort: higher priority first (lower p), then more backlog first (-backlog), then earlier phase
+                    return (p, -backlog, phase)
+
+                for task_name, schedule in sorted(all_runnable, key=_work_driven_sort_key):
                     await self._create_and_queue_task(task_name, schedule, current_time)
                 
                 await asyncio.sleep(5)  # Check every 5 seconds for more continuous iteration
@@ -932,26 +1000,42 @@ class AutomationManager:
         current_time: datetime,
         backlog_counts: Optional[Dict[str, int]] = None,
     ) -> bool:
-        """Check if individual task should run. Uses backlog: skip when empty, shorten interval when backlog high."""
+        """Check if individual task should run.
+
+        Two separate concepts:
+        - **pending**: raw count of items waiting (even 1).  Used for SKIP_WHEN_EMPTY
+          so tasks with any work still run on their normal interval.
+        - **backlog**: pending minus one batch size.  Only positive when there is more
+          work than a single run can handle.  Used to shorten the interval so the
+          scheduler drains the excess faster.
+        """
         if not self._check_dependencies(task_name, schedule):
             return False
 
-        # Idle-only phases (e.g. research_topic_refinement) run only when no data load is active
         if schedule.get("idle_only") and not self._is_system_idle():
             return False
 
         backlog_counts = backlog_counts or {}
+        if ENRICHMENT_BACKLOG_FIRST_ENABLED and backlog_counts.get("content_enrichment", 0) > 0 and task_name not in ENRICHMENT_BACKLOG_FIRST_WHITELIST:
+            return False
+
         backlog = backlog_counts.get(task_name, 0)
 
-        # Skip phases that have no work (avoid empty cycles)
-        if task_name in SKIP_WHEN_EMPTY and backlog == 0:
+        # SKIP_WHEN_EMPTY uses raw pending counts (any work at all).
+        # get_all_pending_counts provides raw counts; backlog_counts already has
+        # batch-adjusted values.  To decide "any work?", check if backlog > 0 OR
+        # the raw pending count is > 0 (pending_counts retrieved once per tick).
+        pending = self._pending_counts.get(task_name, 0) if hasattr(self, '_pending_counts') else backlog
+        if task_name in SKIP_WHEN_EMPTY and pending == 0:
             return False
 
         base_interval = schedule['interval']
         adaptive_interval = self._calculate_adaptive_interval(task_name, base_interval)
-        # Backlog mode: run more often when there is a lot of pending work
+        # True backlog (more work than one batch) triggers shorter intervals
         if backlog > BACKLOG_HIGH_THRESHOLD:
             effective_interval = min(adaptive_interval, BACKLOG_MODE_INTERVAL)
+        elif backlog > 0:
+            effective_interval = min(adaptive_interval, BACKLOG_ANY_INTERVAL)
         else:
             effective_interval = adaptive_interval
 
@@ -1213,11 +1297,12 @@ class AutomationManager:
         # Priority hierarchy: yield to web page loads — skip Ollama tasks when API is active
         _OLLAMA_TASKS = {
             'topic_clustering', 'ml_processing', 'entity_extraction', 'sentiment_analysis',
-            'article_processing', 'storyline_processing', 'rag_enhancement', 'basic_summary_generation',
+            'storyline_processing', 'rag_enhancement',
             'event_extraction', 'event_deduplication', 'story_continuation', 'watchlist_alerts',
             'quality_scoring', 'timeline_generation',
             'claim_extraction', 'event_tracking', 'entity_profile_build', 'entity_position_tracker',
             'editorial_document_generation', 'editorial_briefing_generation', 'story_enhancement',
+            'storyline_synthesis', 'daily_briefing_synthesis', 'document_processing',  # v7
         }
         if task.name in _OLLAMA_TASKS:
             try:
@@ -1273,6 +1358,16 @@ class AutomationManager:
             # Execute task based on type
             if task.name == 'rss_processing':
                 await self._execute_rss_processing(task)
+            elif task.name == 'content_enrichment':
+                await self._execute_content_enrichment(task)
+            elif task.name == 'document_collection':
+                await self._execute_document_collection(task)
+            elif task.name == 'document_processing':
+                await self._execute_document_processing(task)
+            elif task.name == 'storyline_synthesis':
+                await self._execute_storyline_synthesis(task)
+            elif task.name == 'daily_briefing_synthesis':
+                await self._execute_daily_briefing_synthesis(task)
             elif task.name == 'context_sync':
                 await self._execute_context_sync(task)
             elif task.name == 'entity_profile_sync':
@@ -1297,8 +1392,6 @@ class AutomationManager:
                 await self._execute_entity_position_tracker(task)
             elif task.name == 'metadata_enrichment':
                 await self._execute_metadata_enrichment(task)
-            elif task.name == 'relationship_extraction':
-                await self._execute_relationship_extraction(task)
             elif task.name == 'entity_organizer':
                 await self._execute_entity_organizer(task)
             elif task.name == 'digest_generation':
@@ -1307,8 +1400,6 @@ class AutomationManager:
                 await self._execute_data_cleanup(task)
             elif task.name == 'health_check':
                 await self._execute_health_check(task)
-            elif task.name == 'basic_summary_generation':
-                await self._execute_basic_summary_generation(task)
             elif task.name == 'rag_enhancement':
                 await self._execute_rag_enhancement(task)
             elif task.name == 'cache_cleanup':
@@ -1321,8 +1412,6 @@ class AutomationManager:
                 await self._execute_storyline_processing(task)
             elif task.name == 'storyline_automation':
                 await self._execute_storyline_automation(task)
-            elif task.name == 'article_processing':
-                await self._execute_article_processing(task)
             elif task.name == 'entity_extraction':
                 await self._execute_entity_extraction(task)
             elif task.name == 'quality_scoring':
@@ -1343,8 +1432,6 @@ class AutomationManager:
                 await self._execute_story_enhancement(task)
             elif task.name == 'entity_enrichment':
                 await self._execute_entity_enrichment(task)
-            elif task.name == 'story_state_triggers':
-                await self._execute_story_state_triggers(task)
             elif task.name == 'pattern_matching':
                 await self._execute_pattern_matching(task)
             elif task.name == 'research_topic_refinement':
@@ -1353,6 +1440,10 @@ class AutomationManager:
                 await self._execute_editorial_document_generation(task)
             elif task.name == 'editorial_briefing_generation':
                 await self._execute_editorial_briefing_generation(task)
+            elif task.name == 'narrative_thread_build':
+                await self._execute_narrative_thread_build(task)
+            elif task.name == 'storyline_discovery':
+                await self._execute_storyline_discovery(task)
             else:
                 raise ValueError(f"Unknown task type: {task.name}")
             
@@ -1373,21 +1464,45 @@ class AutomationManager:
 
             logger.info(f"Task {task.name} completed in {processing_time:.2f}s (Phase {task.metadata.get('phase', 0)})")
 
-            # Continuous iteration: re-enqueue same phase when work remains so we run until empty
+            # Continuous iteration: when work remains, queue next run immediately so a worker picks it up without waiting for scheduler
             if task.name in BATCH_PHASES_CONTINUOUS:
                 try:
                     if await self._has_pending_work(task.name):
-                        self.request_phase(task.name)
-                        logger.debug("Re-enqueued %s (pending work remains)", task.name)
+                        next_task = Task(
+                            id=f"{task.name}_{int(task.completed_at.timestamp())}_next",
+                            name=task.name,
+                            priority=self.schedules[task.name].get("priority", TaskPriority.NORMAL),
+                            status=TaskStatus.PENDING,
+                            created_at=task.completed_at,
+                            metadata={
+                                "scheduled": True,
+                                "phase": self.schedules[task.name].get("phase", 0),
+                                "estimated_duration": self.schedules[task.name].get("estimated_duration", 60),
+                                "continuous": True,
+                            },
+                        )
+                        await self.task_queue.put(next_task)
+                        logger.debug("Queued next %s immediately (pending work remains)", task.name)
                 except Exception as e:
                     logger.debug("Re-enqueue check for %s: %s", task.name, e)
 
             # Chain: request any phase that depends on this one so the pipeline keeps moving
+            # When enrichment-backlog-first is enabled and backlog non-empty, do not chain-request phases outside the whitelist
+            enrichment_backlog = 0
+            if ENRICHMENT_BACKLOG_FIRST_ENABLED and get_all_backlog_counts and task.name == "content_enrichment":
+                try:
+                    counts = get_all_backlog_counts()
+                    enrichment_backlog = counts.get("content_enrichment", 0) or 0
+                except Exception:
+                    pass
             for other_name, other_sched in self.schedules.items():
                 if not other_sched.get("enabled", True):
                     continue
                 deps = other_sched.get("depends_on") or []
                 if task.name in deps:
+                    if enrichment_backlog > 0 and other_name not in ENRICHMENT_BACKLOG_FIRST_WHITELIST:
+                        logger.info("Chained: skipping %s (enrichment backlog first, %s articles pending)", other_name, enrichment_backlog)
+                        continue
                     try:
                         self.request_phase(other_name)
                         logger.info("Chained: requested %s (depends on %s)", other_name, task.name)
@@ -1437,8 +1552,20 @@ class AutomationManager:
         name = task.name
         if name == "rss_processing":
             return "Running RSS collection (all domains)"
+        if name == "content_enrichment":
+            return "Full-text article enrichment (trafilatura)"
+        if name == "document_collection":
+            return "Collecting documents (government, academic)"
+        if name == "document_processing":
+            return "Processing PDF documents"
+        if name == "storyline_synthesis":
+            return "Storyline synthesis (Wikipedia-style)"
+        if name == "daily_briefing_synthesis":
+            return "Daily briefing synthesis"
         if name == "context_sync":
             return f"Syncing articles to contexts ({domain or 'all domains'})"
+        if name == "storyline_discovery":
+            return "Discovering new storylines from article clusters"
         if name == "storyline_automation":
             if storyline_id and domain:
                 return f"Storyline automation (storyline {storyline_id}, {domain})"
@@ -1459,12 +1586,10 @@ class AutomationManager:
             return f"Tracking events ({domain or 'all'})"
         if name == "cross_domain_synthesis":
             return "Cross-domain synthesis"
-        if name == "relationship_extraction":
-            return "Relationship extraction"
+        if name == "narrative_thread_build":
+            return "Building narrative threads (cross-storyline arcs)"
         if name == "entity_organizer":
             return "Entity organizer (cleanup + relationships)"
-        if name == "story_state_triggers":
-            return "Processing story state triggers"
         if name == "entity_enrichment":
             return "Running entity enrichment"
         if name == "pattern_matching":
@@ -1475,8 +1600,6 @@ class AutomationManager:
             return "Topic clustering"
         if name == "ml_processing":
             return "ML processing (summaries, features)"
-        if name == "article_processing":
-            return "Article processing"
         if name == "entity_extraction":
             return "Entity extraction"
         if name == "event_extraction":
@@ -1509,7 +1632,130 @@ class AutomationManager:
                 logger.info(f"RSS processing: {added} articles collected from domain feeds")
         except Exception as e:
             logger.warning(f"RSS processing failed: {e}")
-    
+
+    async def _execute_content_enrichment(self, task: Task):
+        """v7: Fetch full article text with trafilatura for articles with short content."""
+        import asyncio
+        from services.article_content_enrichment_service import enrich_articles_batch
+        try:
+            loop = asyncio.get_event_loop()
+            # Burst (48h catch-up): batch 60; revert to 40 after
+            await loop.run_in_executor(None, lambda: enrich_articles_batch(batch_size=60))
+        except Exception as e:
+            logger.warning(f"Content enrichment failed: {e}")
+
+    async def _execute_document_collection(self, task: Task):
+        """v7: Discover government and academic PDF documents."""
+        import asyncio
+        try:
+            from services.document_collector_service import collect_documents
+            loop = asyncio.get_event_loop()
+            count = await loop.run_in_executor(None, lambda: collect_documents(max_per_source=15))
+            if count > 0:
+                logger.info(f"Document collection (v7): {count} new documents")
+        except Exception as e:
+            logger.warning(f"Document collection failed: {e}")
+
+    async def _execute_document_processing(self, task: Task):
+        """v7: Process pending PDFs (download, extract text, sections, entities)."""
+        import asyncio
+        try:
+            from services.document_processing_service import process_unprocessed_documents
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(None, lambda: process_unprocessed_documents(limit=10))
+            count = result.get("processed", 0) if isinstance(result, dict) else 0
+            if count > 0:
+                logger.info(f"Document processing (v7): {count} documents processed")
+        except Exception as e:
+            logger.warning(f"Document processing failed: {e}")
+
+    async def _execute_storyline_synthesis(self, task: Task):
+        """v7: Auto-synthesize storylines (Wikipedia-style) that have 3+ articles."""
+        import asyncio
+        try:
+            from services.deep_content_synthesis import DeepContentSynthesisService
+            svc = DeepContentSynthesisService()
+            loop = asyncio.get_event_loop()
+
+            for domain_key, schema in (("politics", "politics"), ("finance", "finance"), ("science-tech", "science_tech")):
+                conn = await self._get_db_connection()
+                if not conn:
+                    continue
+                try:
+                    cur = conn.cursor()
+                    # Storylines with 3+ articles: no synthesis yet, or stale (newest article newer than synthesized_at)
+                    try:
+                        cur.execute(
+                            f"""
+                            SELECT s.id FROM {schema}.storylines s
+                            JOIN (SELECT storyline_id, COUNT(*) AS c FROM {schema}.storyline_articles GROUP BY storyline_id) sa
+                              ON sa.storyline_id = s.id AND sa.c >= 3
+                            WHERE s.synthesized_content IS NULL
+                               OR EXISTS (
+                                 SELECT 1 FROM {schema}.storyline_articles sa2
+                                 JOIN {schema}.articles a ON a.id = sa2.article_id
+                                 WHERE sa2.storyline_id = s.id
+                                 AND a.created_at > COALESCE(s.synthesized_at, '1970-01-01'::timestamptz)
+                               )
+                            ORDER BY s.synthesized_at NULLS FIRST,
+                                     (SELECT MAX(a2.created_at) FROM {schema}.storyline_articles sa3
+                                      JOIN {schema}.articles a2 ON a2.id = sa3.article_id
+                                      WHERE sa3.storyline_id = s.id) DESC NULLS LAST
+                            LIMIT 4
+                            """
+                        )
+                    except Exception:
+                        # Fallback if synthesized_at column missing
+                        cur.execute(
+                            f"""
+                            SELECT s.id FROM {schema}.storylines s
+                            JOIN (SELECT storyline_id, COUNT(*) AS c FROM {schema}.storyline_articles GROUP BY storyline_id) sa
+                              ON sa.storyline_id = s.id AND sa.c >= 3
+                            WHERE s.synthesized_content IS NULL
+                            ORDER BY s.updated_at DESC
+                            LIMIT 4
+                            """
+                        )
+                    rows = cur.fetchall()
+                    cur.close()
+                    conn.close()
+                except Exception:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+                    continue
+                for (storyline_id,) in rows:
+                    try:
+                        await loop.run_in_executor(
+                            None,
+                            lambda d=domain_key, sid=storyline_id: svc.synthesize_storyline_content(d, sid, depth="standard", save_to_db=True),
+                        )
+                        logger.info(f"Storyline synthesis (v7): {domain_key} storyline {storyline_id}")
+                    except Exception as e:
+                        logger.warning(f"Storyline synthesis {storyline_id} failed: {e}")
+        except Exception as e:
+            logger.warning(f"Storyline synthesis phase failed: {e}")
+
+    async def _execute_daily_briefing_synthesis(self, task: Task):
+        """v7: Generate breaking-news synthesis per domain for briefing page."""
+        import asyncio
+        try:
+            from services.deep_content_synthesis import DeepContentSynthesisService
+            svc = DeepContentSynthesisService()
+            loop = asyncio.get_event_loop()
+            for domain_key in ("politics", "finance", "science-tech"):
+                try:
+                    await loop.run_in_executor(
+                        None,
+                        lambda d=domain_key: svc.synthesize_breaking_news(d, hours=24, min_articles=3),
+                    )
+                    logger.info(f"Daily briefing synthesis (v7): {domain_key}")
+                except Exception as e:
+                    logger.warning(f"Daily briefing synthesis {domain_key} failed: {e}")
+        except Exception as e:
+            logger.warning(f"Daily briefing synthesis phase failed: {e}")
+
     async def _execute_context_sync(self, task: Task):
         """Backfill: sync domain articles to intelligence.contexts (Phase 1.2 context-centric)."""
         try:
@@ -1760,19 +2006,6 @@ class AutomationManager:
         except Exception as e:
             logger.warning(f"Entity enrichment failed: {e}")
 
-    async def _execute_story_state_triggers(self, task: Task):
-        """Phase 3 RAG: Process fact_change_log and story_update_queue (story state refresh)."""
-        from services.story_state_trigger_service import process_fact_change_log, process_story_update_queue
-        try:
-            loop = asyncio.get_event_loop()
-            # Production: 100-change batches, ~2s each; alert if behind >10k
-            fact_processed = await loop.run_in_executor(None, lambda: process_fact_change_log(batch_size=100))
-            queue_processed = await loop.run_in_executor(None, lambda: process_story_update_queue(batch_size=20))
-            if fact_processed > 0 or queue_processed > 0:
-                logger.info("Story state triggers: fact_log=%s queue=%s", fact_processed, queue_processed)
-        except Exception as e:
-            logger.warning(f"Story state triggers failed: {e}")
-
     async def _execute_pattern_matching(self, task: Task):
         """Phase 4 RAG: Run watch pattern matching for all domains; record pattern_matches and create watchlist alerts."""
         from services.watch_pattern_service import run_pattern_matching_all_domains
@@ -1855,16 +2088,6 @@ class AutomationManager:
             except Exception:
                 pass
 
-    async def _execute_relationship_extraction(self, task: Task):
-        """Extract entity relationships from context co-mentions -> entity_relationships (P2)."""
-        try:
-            from services.relationship_extraction_service import extract_relationships_from_contexts
-            result = extract_relationships_from_contexts(domain_key=None, limit=50)
-            if result.get("extracted", 0) > 0:
-                logger.info("Relationship extraction: %d relationship(s) inserted", result["extracted"])
-        except Exception as e:
-            logger.warning("Relationship extraction failed: %s", e)
-
     async def _execute_entity_organizer(self, task: Task):
         """Run entity organizer: cleanup + relationship extraction + resolution (alias population + auto-merge + cross-domain linking)."""
         try:
@@ -1914,7 +2137,7 @@ class AutomationManager:
             logger.warning("Entity resolution batch failed: %s", e)
 
     def _is_data_load_active(self) -> bool:
-        """True if any data-load phase (rss, article_processing, entity_extraction) ran recently."""
+        """True if any data-load phase (rss, content_enrichment, entity_extraction) ran recently."""
         now = datetime.now(timezone.utc)
         for phase in DATA_LOAD_PHASES:
             s = self.schedules.get(phase)
@@ -1991,6 +2214,20 @@ class AutomationManager:
             logger.info("Editorial briefing generation: %s", result)
         except Exception as e:
             logger.warning("editorial_briefing_generation: %s", e)
+
+    async def _execute_narrative_thread_build(self, task: Task):
+        """Build narrative threads from storylines across all domains, then synthesize."""
+        import asyncio
+        from services.narrative_thread_service import build_threads_for_domain
+        loop = asyncio.get_event_loop()
+        for domain in ("politics", "finance", "science-tech"):
+            try:
+                result = await loop.run_in_executor(None, lambda d=domain: build_threads_for_domain(d, limit=30))
+                built = result.get("built", 0)
+                if built > 0:
+                    logger.info("Narrative thread build (%s): %s threads", domain, built)
+            except Exception as e:
+                logger.warning("narrative_thread_build (%s): %s", domain, e)
 
     async def _execute_digest_generation(self, task: Task):
         """Execute digest generation task"""
@@ -2137,39 +2374,42 @@ class AutomationManager:
         logger.info(f"RAG enhancement completed: {enhanced_count} storylines enhanced")
         
     async def _execute_ml_processing(self, task: Task):
-        """Execute ML processing task"""
-        from modules.ml.background_processor import BackgroundMLProcessor
+        """Execute ML processing task. Skips cleanly if column ml_processed is missing."""
+        try:
+            from modules.ml.background_processor import BackgroundMLProcessor
 
-        ml_processor = BackgroundMLProcessor(self.db_config)
-        
-        # Process articles that need ML analysis
-        conn = await self._get_db_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute("""
-            SELECT id FROM articles 
-            WHERE ml_processed = FALSE 
-            AND content IS NOT NULL 
-            AND LENGTH(content) > 100
-            ORDER BY created_at DESC 
-            LIMIT 50
-        """)
-        
-        articles = cursor.fetchall()
-        processed_count = 0
-        
-        for article_id, in articles:
+            ml_processor = BackgroundMLProcessor(self.db_config)
+
+            conn = await self._get_db_connection()
+            cursor = conn.cursor()
             try:
-                # Process article with ML
-                ml_processor.queue_article_for_processing(article_id, 'full_analysis')
-                processed_count += 1
-            except Exception as e:
-                logger.error(f"Error processing article {article_id}: {e}")
-        
-        cursor.close()
-        conn.close()
-        
-        logger.info(f"ML processing completed: {processed_count} articles queued")
+                cursor.execute("""
+                    SELECT id FROM articles
+                    WHERE ml_processed = FALSE
+                    AND content IS NOT NULL
+                    AND LENGTH(content) > 100
+                    ORDER BY created_at DESC
+                    LIMIT 50
+                """)
+                articles = cursor.fetchall()
+            finally:
+                cursor.close()
+                conn.close()
+
+            processed_count = 0
+            for article_id, in articles:
+                try:
+                    ml_processor.queue_article_for_processing(article_id, 'full_analysis')
+                    processed_count += 1
+                except Exception as e:
+                    logger.error(f"Error processing article {article_id}: {e}")
+
+            logger.info(f"ML processing completed: {processed_count} articles queued")
+        except Exception as e:
+            if "ml_processed" in str(e) and ("does not exist" in str(e) or "UndefinedColumn" in str(e)):
+                logger.debug("ML processing skipped (column ml_processed not in schema): %s", e)
+            else:
+                raise
         
     async def _execute_sentiment_analysis(self, task: Task):
         """Execute sentiment analysis task"""
@@ -2219,46 +2459,51 @@ class AutomationManager:
         logger.info(f"Sentiment analysis completed: {analyzed_count} articles analyzed")
         
     async def _execute_storyline_processing(self, task: Task):
-        """Execute storyline processing task — uses ML enrichments when generating summaries."""
+        """Execute storyline processing — generates master_summary, seeds editorial_document, saves version (merged basic_summary_generation)."""
         from services.storyline_service import get_storyline_service
         
         storyline_service = get_storyline_service()
-        
         storylines = await storyline_service.get_all_storylines()
         processed_count = 0
         
         for storyline in storylines:
             try:
                 if not storyline.get('master_summary') or len(storyline.get('master_summary', '')) < 100:
-                    summary = await storyline_service.generate_storyline_summary(storyline['id'])
-                    processed_count += 1
-
-                    # Also seed editorial_document from the summary if it's empty
-                    sid = storyline['id']
-                    if summary and not storyline.get('editorial_document'):
+                    result = await storyline_service.generate_storyline_summary(storyline['id'])
+                    summary_text = result.get('master_summary', '') if isinstance(result, dict) else ''
+                    if summary_text:
+                        processed_count += 1
+                        sid = storyline['id']
+                        if not storyline.get('editorial_document'):
+                            try:
+                                from shared.database.connection import get_db_connection
+                                conn = get_db_connection()
+                                if conn:
+                                    with conn.cursor() as cur:
+                                        cur.execute("""
+                                            UPDATE storylines
+                                            SET editorial_document = jsonb_build_object(
+                                                    'lede', LEFT(%s, 300),
+                                                    'developments', '[]'::jsonb,
+                                                    'analysis', %s,
+                                                    'outlook', '',
+                                                    'generated_at', NOW()::text
+                                                ),
+                                                document_version = COALESCE(document_version, 0) + 1,
+                                                document_status = 'auto_seeded'
+                                            WHERE id = %s AND (editorial_document IS NULL OR editorial_document = '{}'::jsonb)
+                                        """, (summary_text, summary_text, sid))
+                                    conn.commit()
+                                    conn.close()
+                            except Exception as ed_err:
+                                logger.debug("Seed editorial_document for %s: %s", sid, ed_err)
                         try:
-                            from shared.database.connection import get_db_connection
-                            conn = get_db_connection()
-                            if conn:
-                                with conn.cursor() as cur:
-                                    cur.execute("""
-                                        UPDATE storylines
-                                        SET editorial_document = jsonb_build_object(
-                                                'lede', LEFT(%s, 300),
-                                                'developments', '[]'::jsonb,
-                                                'analysis', %s,
-                                                'outlook', '',
-                                                'generated_at', NOW()::text
-                                            ),
-                                            document_version = COALESCE(document_version, 0) + 1,
-                                            document_status = 'auto_seeded'
-                                        WHERE id = %s AND (editorial_document IS NULL OR editorial_document = '{}'::jsonb)
-                                    """, (summary, summary, sid))
-                                conn.commit()
-                                conn.close()
-                        except Exception as ed_err:
-                            logger.debug("Seed editorial_document for %s: %s", sid, ed_err)
-                    
+                            from services.progressive_enhancement_service import get_progressive_service
+                            prog = get_progressive_service()
+                            await prog._save_summary_version(str(sid), 1, 'basic', summary_text)
+                            await prog._update_storyline_summary_info(str(sid), 'basic')
+                        except Exception as ver_err:
+                            logger.debug("Storyline summary versioning for %s: %s", sid, ver_err)
             except Exception as e:
                 logger.error(f"Error processing storyline {storyline['id']}: {e}")
         
@@ -2299,40 +2544,39 @@ class AutomationManager:
                 except Exception as e:
                     logger.debug("Storyline automation batch %s: %s", d, e)
             logger.info("Storyline automation: batch run across domains completed")
-        
-    async def _execute_article_processing(self, task: Task):
-        """Execute article processing task"""
-        from services.article_processing_service import get_article_processor
-        
-        article_processor = get_article_processor()
-        
-        # Process articles that need cleaning
-        conn = await self._get_db_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute("""
-            SELECT id, url FROM articles 
-            WHERE content IS NULL OR LENGTH(content) < 100
-            AND url IS NOT NULL
-            ORDER BY created_at DESC 
-            LIMIT 20
-        """)
-        
-        articles = cursor.fetchall()
-        processed_count = 0
-        
-        for article_id, url in articles:
-            try:
-                article_processor.process_single_article(article_id)
-                processed_count += 1
-            except Exception as e:
-                logger.error(f"Error processing article {article_id}: {e}")
-        
-        cursor.close()
-        conn.close()
-        
-        logger.info(f"Article processing completed: {processed_count} articles processed")
-        
+
+    async def _execute_storyline_discovery(self, task: Task):
+        """Auto-discover storylines from recent article clusters using AI similarity.
+        Runs AIStorylineDiscovery.discover_storylines() for each domain, creating new
+        storylines from high-similarity article clusters that aren't already tracked."""
+        import asyncio
+        try:
+            from services.ai_storyline_discovery import get_discovery_service
+            service = get_discovery_service()
+            total_created = 0
+            for domain in ("politics", "finance", "science-tech"):
+                try:
+                    loop = asyncio.get_event_loop()
+                    result = await loop.run_in_executor(
+                        None,
+                        lambda d=domain: service.discover_storylines(
+                            domain=d, hours=48, save_to_db=True
+                        ),
+                    )
+                    saved = len(result.get("saved_storylines", []))
+                    clusters = result.get("summary", {}).get("clusters_found", 0)
+                    total_created += saved
+                    if saved > 0:
+                        logger.info(
+                            "Storyline discovery [%s]: %d clusters → %d new storylines",
+                            domain, clusters, saved,
+                        )
+                except Exception as e:
+                    logger.warning("Storyline discovery failed for %s: %s", domain, e)
+            logger.info("Storyline discovery complete: %d new storylines created", total_created)
+        except Exception as e:
+            logger.warning("Storyline discovery task failed: %s", e)
+
     async def _execute_entity_extraction(self, task: Task):
         """Execute entity extraction task — stores entity list with contextual excerpts."""
         from services.ai_processing_service import get_ai_service
@@ -2342,11 +2586,13 @@ class AutomationManager:
         conn = await self._get_db_connection()
         cursor = conn.cursor()
         
+        # v7: prefer enriched content (>= 500 chars); still process old articles with only excerpt
         cursor.execute("""
             SELECT id, content, title FROM articles 
             WHERE (entities IS NULL OR entities = '{}')
             AND content IS NOT NULL 
             AND LENGTH(content) > 100
+            AND (LENGTH(content) >= 500 OR created_at < NOW() - INTERVAL '2 hours')
             ORDER BY created_at DESC 
             LIMIT 50
         """)
@@ -2386,71 +2632,83 @@ class AutomationManager:
         logger.info(f"Entity extraction completed: {extracted_count} articles processed")
 
     async def _execute_event_extraction_v5(self, task: Task):
-        """v5.0 -- Extract structured events with temporal grounding from articles."""
-        from services.event_extraction_service import EventExtractionService
-
-        svc = EventExtractionService()
-        conn = await self._get_db_connection()
-        cursor = conn.cursor()
-
+        """v5.0 -- Extract structured events with temporal grounding from articles. Skips if timeline_processed missing."""
         try:
-            cursor.execute("""
-                SELECT id, content, published_at
-                FROM articles
-                WHERE processing_status = 'completed'
-                  AND timeline_processed = false
-                  AND content IS NOT NULL
-                  AND LENGTH(content) > 100
-                ORDER BY published_at DESC
-                LIMIT 30
-            """)
-            articles = cursor.fetchall()
+            from services.event_extraction_service import EventExtractionService
 
-            total_events = 0
-            for article_id, content, pub_date in articles:
-                try:
-                    if pub_date is None:
-                        pub_date = datetime.now(timezone.utc)
-                    events = await svc.extract_events_from_article(
-                        article_id=article_id,
-                        content=content,
-                        pub_date=pub_date,
-                    )
-                    saved = await svc.save_events(events, conn)
-                    total_events += saved
+            svc = EventExtractionService()
+            conn = await self._get_db_connection()
+            cursor = conn.cursor()
 
-                    cursor.execute("""
-                        UPDATE articles
-                        SET timeline_processed = true,
-                            timeline_events_generated = %s,
-                            updated_at = CURRENT_TIMESTAMP
-                        WHERE id = %s
-                    """, (len(events), article_id))
-                    conn.commit()
-                except Exception as e:
-                    logger.error(f"Event extraction failed for article {article_id}: {e}")
-                    conn.rollback()
+            try:
+                cursor.execute("""
+                    SELECT id, content, published_at
+                    FROM articles
+                    WHERE processing_status = 'completed'
+                      AND timeline_processed = false
+                      AND content IS NOT NULL
+                      AND LENGTH(content) > 100
+                    ORDER BY published_at DESC
+                    LIMIT 30
+                """)
+                articles = cursor.fetchall()
 
-            logger.info(f"v5 event extraction completed: {total_events} events from {len(articles)} articles")
-        finally:
-            cursor.close()
-            conn.close()
-            await svc.close()
+                total_events = 0
+                for article_id, content, pub_date in articles:
+                    try:
+                        if pub_date is None:
+                            pub_date = datetime.now(timezone.utc)
+                        events = await svc.extract_events_from_article(
+                            article_id=article_id,
+                            content=content,
+                            pub_date=pub_date,
+                        )
+                        saved = await svc.save_events(events, conn)
+                        total_events += saved
+
+                        cursor.execute("""
+                            UPDATE articles
+                            SET timeline_processed = true,
+                                timeline_events_generated = %s,
+                                updated_at = CURRENT_TIMESTAMP
+                            WHERE id = %s
+                        """, (len(events), article_id))
+                        conn.commit()
+                    except Exception as e:
+                        logger.error(f"Event extraction failed for article {article_id}: {e}")
+                        conn.rollback()
+
+                logger.info(f"v5 event extraction completed: {total_events} events from {len(articles)} articles")
+            finally:
+                cursor.close()
+                conn.close()
+                await svc.close()
+        except Exception as e:
+            if ("timeline_processed" in str(e) or "chronological_events" in str(e)) and "does not exist" in str(e):
+                logger.debug("Event extraction skipped (schema not migrated): %s", e)
+            else:
+                raise
 
     async def _execute_event_deduplication_v5(self, task: Task):
-        """v5.0 -- Deduplicate events across sources using fingerprint, semantic, and entity matching."""
-        from services.event_deduplication_service import EventDeduplicationService
-
-        conn = await self._get_db_connection()
+        """v5.0 -- Deduplicate events across sources. Skips cleanly if chronological_events is missing."""
         try:
-            svc = EventDeduplicationService(conn)
-            stats = await svc.deduplicate_recent(limit=100)
-            logger.info(
-                f"v5 event deduplication completed: "
-                f"checked={stats['checked']}, merged={stats['merged']}"
-            )
-        finally:
-            conn.close()
+            from services.event_deduplication_service import EventDeduplicationService
+
+            conn = await self._get_db_connection()
+            try:
+                svc = EventDeduplicationService(conn)
+                stats = await svc.deduplicate_recent(limit=100)
+                logger.info(
+                    f"v5 event deduplication completed: "
+                    f"checked={stats['checked']}, merged={stats['merged']}"
+                )
+            finally:
+                conn.close()
+        except Exception as e:
+            if "chronological_events" in str(e) and "does not exist" in str(e):
+                logger.debug("Event deduplication skipped (chronological_events not migrated): %s", e)
+            else:
+                raise
 
     async def _execute_story_continuation_v5(self, task: Task):
         """v5.0 -- Match events to existing storylines and manage lifecycle states. Runs per domain (storylines/story_entity_index are per-schema)."""
@@ -2496,6 +2754,11 @@ class AutomationManager:
             logger.info(
                 f"v5 watchlist alerts: {reactivation} reactivation, {new_events} new-event"
             )
+        except Exception as e:
+            if "does not exist" in str(e) or "relation" in str(e).lower():
+                logger.debug("Watchlist alerts skipped (watchlist/chronological_events not migrated): %s", e)
+            else:
+                logger.warning("Watchlist alerts failed: %s", e)
         finally:
             conn.close()
 
@@ -2564,55 +2827,7 @@ class AutomationManager:
                 logger.error(f"Error generating timeline for storyline {storyline['id']}: {e}")
         
         logger.info(f"Timeline generation completed: {generated_count} timelines generated")
-    
-    async def _execute_basic_summary_generation(self, task: Task):
-        """Execute basic summary generation — also seeds editorial_document when empty."""
-        from services.progressive_enhancement_service import get_progressive_service
-        
-        progressive_service = get_progressive_service()
-        
-        storylines = await progressive_service.storyline_service.get_all_storylines()
-        generated_count = 0
-        
-        for storyline in storylines:
-            try:
-                if not storyline.get('master_summary') or len(storyline.get('master_summary', '')) < 100:
-                    result = await progressive_service.generate_basic_summary(storyline['id'])
-                    if result.get('success'):
-                        generated_count += 1
 
-                        # Seed editorial_document from the basic summary if empty
-                        summary_text = result.get('summary', '')
-                        sid = storyline['id']
-                        if summary_text and not storyline.get('editorial_document'):
-                            try:
-                                from shared.database.connection import get_db_connection
-                                conn = get_db_connection()
-                                if conn:
-                                    with conn.cursor() as cur:
-                                        cur.execute("""
-                                            UPDATE storylines
-                                            SET editorial_document = jsonb_build_object(
-                                                    'lede', LEFT(%s, 300),
-                                                    'developments', '[]'::jsonb,
-                                                    'analysis', %s,
-                                                    'outlook', '',
-                                                    'generated_at', NOW()::text
-                                                ),
-                                                document_version = COALESCE(document_version, 0) + 1,
-                                                document_status = 'auto_seeded'
-                                            WHERE id = %s AND (editorial_document IS NULL OR editorial_document = '{}'::jsonb)
-                                        """, (summary_text, summary_text, sid))
-                                    conn.commit()
-                                    conn.close()
-                            except Exception as ed_err:
-                                logger.debug("Seed editorial_document for %s: %s", sid, ed_err)
-                        
-            except Exception as e:
-                logger.error(f"Error generating basic summary for storyline {storyline['id']}: {e}")
-        
-        logger.info(f"Basic summary generation completed: {generated_count} summaries generated")
-    
     async def _execute_cache_cleanup(self, task: Task):
         """Execute cache cleanup task"""
         from services.smart_cache_service import get_cache_service
@@ -2869,20 +3084,22 @@ class AutomationManager:
                 return False
             cur = conn.cursor()
             try:
-                if phase_name == "ml_processing":
+                if phase_name == "content_enrichment":
                     for schema in _SCHEMAS:
                         cur.execute(
                             f"""SELECT 1 FROM {schema}.articles
-                                WHERE ml_processed = FALSE AND content IS NOT NULL AND LENGTH(content) > 100
+                                WHERE (enrichment_status IS NULL OR enrichment_status IN ('pending', 'failed'))
+                                  AND COALESCE(enrichment_attempts, 0) < 3
+                                  AND url IS NOT NULL AND url != ''
                                 LIMIT 1"""
                         )
                         if cur.fetchone():
                             return True
-                elif phase_name == "article_processing":
+                elif phase_name == "ml_processing":
                     for schema in _SCHEMAS:
                         cur.execute(
                             f"""SELECT 1 FROM {schema}.articles
-                                WHERE (content IS NULL OR LENGTH(content) < 100) AND url IS NOT NULL
+                                WHERE ml_processed = FALSE AND content IS NOT NULL AND LENGTH(content) > 100
                                 LIMIT 1"""
                         )
                         if cur.fetchone():
@@ -2905,7 +3122,7 @@ class AutomationManager:
                         )
                         if cur.fetchone():
                             return True
-                elif phase_name == "storyline_processing" or phase_name == "basic_summary_generation":
+                elif phase_name == "storyline_processing":
                     for schema in _SCHEMAS:
                         cur.execute(
                             f"""SELECT 1 FROM {schema}.storylines
@@ -3008,6 +3225,11 @@ class AutomationManager:
         if get_all_backlog_counts:
             try:
                 out['backlog_counts'] = get_all_backlog_counts()
+            except Exception:
+                pass
+        if get_all_pending_counts:
+            try:
+                out['pending_counts'] = get_all_pending_counts()
             except Exception:
                 pass
         return out

@@ -1,7 +1,7 @@
 # News Intelligence — Architecture & Operations
 
-**Version:** v5.0 (stable)  
-**Last updated:** 2026-03-01
+**Version:** v7.0 (stable)  
+**Last updated:** 2026-03-16
 
 ---
 

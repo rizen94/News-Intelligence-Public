@@ -398,8 +398,24 @@ class RSSFetchingModule:
             return False
     
     async def _save_article(self, article: ArticleData) -> bool:
-        """Save article to database"""
+        """Save article to database. Inline enrichment: if content < 500 chars, try trafilatura once."""
         try:
+            insert_content = article.content or ""
+            enrichment_status = "enriched"
+            enrichment_attempts = 0
+            if len(insert_content) < 500 and article.url and article.url.strip():
+                try:
+                    from services.article_content_enrichment_service import enrich_article_content
+                    full_text, ok = enrich_article_content(article.url)
+                    if ok and full_text:
+                        insert_content = full_text
+                    else:
+                        enrichment_status = "failed"
+                        enrichment_attempts = 1
+                except Exception:
+                    enrichment_status = "failed"
+                    enrichment_attempts = 1
+
             db_gen = get_db()
             db = next(db_gen)
             try:
@@ -407,16 +423,16 @@ class RSSFetchingModule:
                     INSERT INTO articles (
                         title, url, content, summary, published_date, created_at,
                         source, source_tier, source_priority, language, categories,
-                        enrichment_status
+                        enrichment_status, enrichment_attempts
                     ) VALUES (
                         :title, :url, :content, :summary, :published_date, :created_at,
                         :source, :source_tier, :source_priority, :language, :categories,
-                        'pending'
+                        :enrichment_status, :enrichment_attempts
                     ) ON CONFLICT (url) DO NOTHING
                 """), {
                     "title": article.title,
                     "url": article.url,
-                    "content": article.content,
+                    "content": insert_content,
                     "summary": article.summary,
                     "published_date": article.published_date,
                     "created_at": datetime.now(),
@@ -424,7 +440,9 @@ class RSSFetchingModule:
                     "source_tier": article.source_tier,
                     "source_priority": article.source_priority,
                     "language": article.language,
-                    "categories": json.dumps(article.categories)
+                    "categories": json.dumps(article.categories),
+                    "enrichment_status": enrichment_status,
+                    "enrichment_attempts": enrichment_attempts,
                 })
                 
                 db.commit()

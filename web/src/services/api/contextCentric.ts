@@ -156,6 +156,43 @@ export interface CanonicalEntity {
   updated_at?: string | null;
 }
 
+/** Entity position / stance on a topic. */
+export interface EntityPosition {
+  id: number;
+  topic: string;
+  position: string;
+  confidence: number | null;
+  evidence_refs: unknown[];
+  date_range?: string | null;
+  created_at: string | null;
+}
+
+/** Entity dossier — compiled from articles, storylines, relationships. */
+export interface EntityDossier {
+  id: number;
+  domain_key: string;
+  entity_id: number;
+  compilation_date: string | null;
+  chronicle_data: { article_id: number; title: string; url: string; published_at: string | null; source_domain: string; snippet: string }[];
+  relationships: { source_domain: string; source_entity_id: number; target_domain: string; target_entity_id: number; relationship_type: string; confidence: number | null }[];
+  positions: EntityPosition[];
+  patterns: { count?: number; discoveries?: { id: number; pattern_type: string; confidence: number | null; data: Record<string, unknown>; created_at: string | null }[] } | Record<string, never>;
+  metadata: Record<string, unknown>;
+  created_at: string | null;
+}
+
+/** Full entity synthesis context (from /api/synthesis/entity/{id}). */
+export interface EntitySynthesis {
+  success: boolean;
+  domain_key: string;
+  entity: { id: number; canonical_name: string; entity_type: string; aliases: string[] };
+  articles: { id: number; title: string; content_excerpt: string; published_at: string | null; summary: string }[];
+  dossier: EntityDossier | null;
+  positions: { topic: string; position: string; confidence: number | null; evidence_refs: unknown[] }[];
+  relationships: { source_domain: string; source_entity_id: number; target_domain: string; target_entity_id: number; relationship_type: string; confidence: number | null }[];
+  statistics: { article_count: number; position_count: number; relationship_count: number; has_dossier: boolean };
+}
+
 /** T1.2: Merge candidate — pair of canonical entities that likely refer to the same real-world entity. */
 export interface MergeCandidate {
   source_id: number;
@@ -578,6 +615,19 @@ export const contextCentricApi = {
     }
   },
 
+  async batchProcessDocuments(limit = 10): Promise<{ processed: number; errors?: string[] }> {
+    try {
+      const response = await getApi().post<{ processed: number; errors?: string[] }>(
+        apiPath('/api/processed_documents/batch_process'),
+        {},
+        { ...contextCentricConfig(), params: { limit } },
+      );
+      return response.data;
+    } catch (error) {
+      return handleError('Failed to process documents', error);
+    }
+  },
+
   async ingestProcessedDocumentsFromConfig(): Promise<{ inserted: number; errors: string[] }> {
     try {
       const response = await getApi().post<{ inserted: number; errors: string[] }>(
@@ -761,6 +811,56 @@ export const contextCentricApi = {
       return response.data;
     } catch (error) {
       return handleError('Failed to run resolution batch', error);
+    }
+  },
+
+  // Entity synthesis (full dossier context)
+  async getEntitySynthesis(entityId: number, domainKey: string): Promise<EntitySynthesis> {
+    try {
+      const response = await getApi().get<EntitySynthesis>(
+        apiPath(`/api/synthesis/entity/${entityId}`),
+        { ...contextCentricConfig(), params: { domain_key: domainKey } },
+      );
+      return response.data;
+    } catch (error) {
+      return handleError('Failed to fetch entity synthesis', error);
+    }
+  },
+
+  async getEntityDossier(domainKey: string, entityId: number): Promise<EntityDossier> {
+    try {
+      const response = await getApi().get<EntityDossier>(
+        apiPath('/api/entity_dossiers'),
+        { ...contextCentricConfig(), params: { domain_key: domainKey, entity_id: entityId } },
+      );
+      return response.data;
+    } catch (error) {
+      return handleError('Failed to fetch entity dossier', error);
+    }
+  },
+
+  async compileEntityDossier(domainKey: string, entityId: number): Promise<{ success: boolean; dossier?: EntityDossier; error?: string }> {
+    try {
+      const response = await getApi().post<{ success: boolean; dossier?: EntityDossier; error?: string }>(
+        apiPath('/api/entity_dossiers/compile'),
+        { domain_key: domainKey, entity_id: entityId },
+        contextCentricConfig(),
+      );
+      return response.data;
+    } catch (error) {
+      return handleError('Failed to compile entity dossier', error);
+    }
+  },
+
+  async getEntityPositions(domainKey: string, entityId: number, limit = 50): Promise<{ success: boolean; positions: EntityPosition[] }> {
+    try {
+      const response = await getApi().get<{ success: boolean; positions: EntityPosition[] }>(
+        apiPath('/api/entity_positions'),
+        { ...contextCentricConfig(), params: { domain_key: domainKey, entity_id: entityId, limit } },
+      );
+      return response.data;
+    } catch (error) {
+      return handleError('Failed to fetch entity positions', error);
     }
   },
 };

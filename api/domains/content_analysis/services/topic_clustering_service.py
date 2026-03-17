@@ -112,7 +112,7 @@ class TopicClusteringService:
             existing_topics = article.get('topics', []) or []
             
             # Limit content length for LLM
-            content_preview = content[:2000] if len(content) > 2000 else content
+            content_preview = content[:5000] if len(content) > 5000 else content  # v7: full-text
             
             system_prompt = """You are an expert news analyst specializing in topic extraction and categorization.
 Your task is to identify the main topics and themes in news articles.
@@ -292,15 +292,12 @@ JSON Response:"""
                     'confidence': blended_confidence
                 })
             
-            # Update article's topics JSONB field in domain schema
+            # Update article's updated_at in domain schema (topic names are in assignment_context on assignments)
             cur.execute(f"""
                 UPDATE {self.schema}.articles
                 SET updated_at = CURRENT_TIMESTAMP
                 WHERE id = %s
-            """, (
-                Json([t['topic_name'] for t in assigned_topics]),
-                article_id
-            ))
+            """, (article_id,))
             
             conn.commit()
             

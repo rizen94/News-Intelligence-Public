@@ -39,6 +39,38 @@ router = APIRouter(
 )
 
 
+def _check_frontend_once() -> Dict[str, Any]:
+    """One-off frontend health check (e.g. when Route Supervisor has not run yet after reboot)."""
+    import time
+    frontend_url = "http://localhost:3000"
+    start = time.perf_counter()
+    try:
+        import requests
+        r = requests.get(frontend_url, timeout=3, allow_redirects=False)
+        elapsed_ms = (time.perf_counter() - start) * 1000
+        status = "healthy" if r.status_code == 200 else "unhealthy"
+        return {
+            "status": status,
+            "response_time_ms": round(elapsed_ms, 1),
+            "url": frontend_url,
+            "last_check": datetime.now().isoformat(),
+        }
+    except requests.exceptions.ConnectionError:
+        return {
+            "status": "unhealthy",
+            "error": "Cannot connect to frontend (is it running on port 3000?)",
+            "url": frontend_url,
+            "last_check": datetime.now().isoformat(),
+        }
+    except Exception as e:
+        return {
+            "status": "unknown",
+            "error": str(e)[:80],
+            "url": frontend_url,
+            "last_check": datetime.now().isoformat(),
+        }
+
+
 def _get_gpu_metrics() -> Dict[str, Any]:
     """Get GPU metrics (utilization, VRAM, temperature) from shared helper."""
     try:
@@ -252,6 +284,9 @@ def get_monitoring_overview():
                 "url": getattr(f, "url", None),
                 "last_check": f.last_check.isoformat() if getattr(f, "last_check", None) else None,
             }
+        else:
+            # On-demand check so first load after reboot has a status (frontend may not have been checked yet)
+            webserver = _check_frontend_once()
     except Exception as e:
         webserver = {"status": "unknown", "error": str(e)[:80]}
     connections["webserver"] = webserver
@@ -292,13 +327,19 @@ def _get_last_run_from_db(phase_name: str) -> Optional[datetime]:
         return None
 
 
+# Max time to wait for automation status; keeps web/monitoring responsive (pipeline never blocks UI).
+AUTOMATION_STATUS_TIMEOUT_SECONDS = 2.0
+
+
 @router.get("/automation/status")
-def get_automation_status(request: Request) -> Dict[str, Any]:
+async def get_automation_status(request: Request) -> Dict[str, Any]:
     """
     AutomationManager status for monitoring: is_running, queue_size, active_workers,
     and per-phase last_run + interval so the UI can show phase timeline and next-due.
     last_run is augmented from automation_run_history when in-memory is missing (survives API restart).
+    Never blocks on pipeline: uses a short timeout so the web UI always loads with current data.
     """
+    import asyncio
     automation = getattr(request.app.state, "automation", None)
     if automation is None or not hasattr(automation, "get_status"):
         return {
@@ -312,17 +353,21 @@ def get_automation_status(request: Request) -> Dict[str, Any]:
             },
         }
     try:
-        status = automation.get_status()
+        status = await asyncio.wait_for(
+            asyncio.to_thread(automation.get_status),
+            timeout=AUTOMATION_STATUS_TIMEOUT_SECONDS,
+        )
         schedules = status.get("schedules") or {}
+        # Phase timeline groupings (aligned with current process names; deprecated phases removed)
         phase_group_labels = {
             0: "Monitoring",
-            1: "Data collection & context",
-            2: "Articles, context & events",
-            3: "Event review & ML",
-            4: "ML & entity (parallel)",
+            1: "Collection & enrichment",
+            2: "Context & events",
+            3: "ML processing",
+            4: "ML & entity extraction (parallel)",
             5: "Topic clustering",
             6: "Summaries",
-            7: "Storylines",
+            7: "Storylines & automation",
             8: "RAG enhancement",
             9: "Events, timelines & enrichment",
             10: "Maintenance",
@@ -351,6 +396,9 @@ def get_automation_status(request: Request) -> Dict[str, Any]:
                 "parallel_group": sched.get("parallel_group"),
             })
         phases.sort(key=lambda p: (p.get("phase") or 0, p.get("name") or ""))
+        backlog_counts = status.get("backlog_counts") or {}
+        content_enrichment_backlog = backlog_counts.get("content_enrichment") or 0
+        enrichment_backlog_first_active = content_enrichment_backlog > 0
         return {
             "success": True,
             "data": {
@@ -358,6 +406,23 @@ def get_automation_status(request: Request) -> Dict[str, Any]:
                 "queue_size": status.get("queue_size", 0),
                 "active_workers": status.get("active_workers", 0),
                 "phases": phases,
+                "enrichment_backlog_first_active": enrichment_backlog_first_active,
+                "content_enrichment_backlog": content_enrichment_backlog,
+                "backlog_counts": backlog_counts,
+            },
+        }
+    except asyncio.TimeoutError:
+        logger.debug("Automation status timed out (pipeline busy); returning minimal status")
+        return {
+            "success": True,
+            "data": {
+                "is_running": True,
+                "queue_size": 0,
+                "active_workers": 0,
+                "phases": [],
+                "message": "Status temporarily unavailable (pipeline busy); refresh in a moment.",
+                "enrichment_backlog_first_active": False,
+                "content_enrichment_backlog": 0,
             },
         }
     except Exception as e:
@@ -1888,20 +1953,33 @@ def get_process_run_summary(
             except Exception:
                 pass
 
-    # Build list of known phase names (from in-memory schedules if available, else from DB)
+    # Build list of known phase names (from in-memory schedules if available, else from DB).
+    # Use a short timeout so this endpoint never blocks on the pipeline (web/monitoring independent).
     schedule_names = set()
     schedule_info = {}  # name -> { interval, phase }
     automation = getattr(request.app.state, "automation", None)
     if automation and hasattr(automation, "get_status"):
-        try:
-            status = automation.get_status()
-            schedules = status.get("schedules") or {}
-            for name, sched in schedules.items():
-                if isinstance(sched, dict) and sched.get("enabled", True):
-                    schedule_names.add(name)
-                    schedule_info[name] = {"interval": sched.get("interval"), "phase": sched.get("phase")}
-        except Exception as e:
-            logger.debug("process_run_summary schedules: %s", e)
+        import threading
+        import queue
+        result_queue = queue.Queue()
+        def _get_status():
+            try:
+                result_queue.put(automation.get_status())
+            except Exception as e:
+                logger.debug("process_run_summary get_status: %s", e)
+        t = threading.Thread(target=_get_status, daemon=True)
+        t.start()
+        t.join(timeout=AUTOMATION_STATUS_TIMEOUT_SECONDS)
+        if not result_queue.empty():
+            try:
+                status = result_queue.get_nowait()
+                schedules = status.get("schedules") or {}
+                for name, sched in schedules.items():
+                    if isinstance(sched, dict) and sched.get("enabled", True):
+                        schedule_names.add(name)
+                        schedule_info[name] = {"interval": sched.get("interval"), "phase": sched.get("phase")}
+            except Exception as e:
+                logger.debug("process_run_summary schedules: %s", e)
     if not schedule_names and last_run_ever:
         schedule_names = set(last_run_ever.keys())
 

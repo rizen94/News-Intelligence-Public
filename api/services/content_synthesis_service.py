@@ -240,6 +240,94 @@ def synthesize_domain_context(
                 })
             result["patterns"] = patterns
 
+            # --- Processed documents (PDFs: CRS, GAO, CBO, arXiv) ---
+            try:
+                cur.execute(
+                    """
+                    SELECT pd.id, pd.title, pd.source_name, pd.source_url, pd.document_type,
+                           pd.publication_date, pd.key_findings, pd.extracted_sections
+                    FROM intelligence.processed_documents pd
+                    WHERE pd.extracted_sections IS NOT NULL
+                      AND pd.extracted_sections != '[]'
+                      AND (pd.created_at >= %s OR pd.publication_date >= %s)
+                    ORDER BY pd.publication_date DESC NULLS LAST
+                    LIMIT 10
+                    """,
+                    (cutoff, cutoff.date()),
+                )
+                documents = []
+                for drow in cur.fetchall():
+                    findings = drow[6] if isinstance(drow[6], list) else []
+                    sections = drow[7] if isinstance(drow[7], list) else []
+                    documents.append({
+                        "id": drow[0],
+                        "title": drow[1] or "",
+                        "source_name": drow[2] or "",
+                        "source_url": drow[3] or "",
+                        "document_type": drow[4] or "",
+                        "publication_date": str(drow[5]) if drow[5] else None,
+                        "key_findings": findings[:5],
+                        "section_count": len(sections),
+                    })
+                result["documents"] = documents
+            except Exception as doc_err:
+                logger.debug("synthesize_domain_context documents: %s", doc_err)
+                result["documents"] = []
+
+            # --- Entity positions (stance tracking) ---
+            try:
+                cur.execute(
+                    f"""
+                    SELECT ep.topic, ep.position, ep.confidence, ec.canonical_name, ec.entity_type
+                    FROM intelligence.entity_positions ep
+                    JOIN {schema}.entity_canonical ec ON ec.id = ep.entity_id
+                    WHERE ep.domain_key = %s
+                    ORDER BY ep.created_at DESC
+                    LIMIT 15
+                    """,
+                    (domain_key,),
+                )
+                entity_positions = []
+                for eprow in cur.fetchall():
+                    entity_positions.append({
+                        "topic": eprow[0] or "",
+                        "position": eprow[1] or "",
+                        "confidence": float(eprow[2]) if eprow[2] is not None else None,
+                        "entity_name": eprow[3] or "",
+                        "entity_type": eprow[4] or "",
+                    })
+                result["entity_positions"] = entity_positions
+            except Exception as pos_err:
+                logger.debug("synthesize_domain_context entity_positions: %s", pos_err)
+                result["entity_positions"] = []
+
+            # --- Cross-domain correlations ---
+            try:
+                cur.execute(
+                    """
+                    SELECT domain_1, domain_2, correlation_type, correlation_strength, event_ids, entity_profile_ids
+                    FROM intelligence.cross_domain_correlations
+                    WHERE domain_1 = %s OR domain_2 = %s
+                    ORDER BY discovered_at DESC
+                    LIMIT 10
+                    """,
+                    (domain_key, domain_key),
+                )
+                cross_domain = []
+                for cdrow in cur.fetchall():
+                    cross_domain.append({
+                        "domain_1": cdrow[0],
+                        "domain_2": cdrow[1],
+                        "correlation_type": cdrow[2] or "",
+                        "strength": float(cdrow[3]) if cdrow[3] is not None else None,
+                        "event_ids": cdrow[4] or [],
+                        "entity_profile_ids": cdrow[5] or [],
+                    })
+                result["cross_domain"] = cross_domain
+            except Exception as cd_err:
+                logger.debug("synthesize_domain_context cross_domain: %s", cd_err)
+                result["cross_domain"] = []
+
         conn.close()
 
         result["statistics"] = {
@@ -249,6 +337,9 @@ def synthesize_domain_context(
             "entity_count": len(result["entities"]),
             "claim_count": len(result["claims"]),
             "pattern_count": len(result["patterns"]),
+            "document_count": len(result.get("documents", [])),
+            "entity_position_count": len(result.get("entity_positions", [])),
+            "cross_domain_count": len(result.get("cross_domain", [])),
         }
 
         return result
@@ -383,6 +474,63 @@ def synthesize_storyline_context(
                         "confidence": float(crow[3]) if crow[3] is not None else None,
                     })
 
+            # Entity positions relevant to this storyline's entities
+            entity_positions = []
+            if entities:
+                entity_names = [e["name"] for e in entities[:10]]
+                try:
+                    cur.execute(
+                        f"""
+                        SELECT ep.topic, ep.position, ep.confidence, ec.canonical_name
+                        FROM intelligence.entity_positions ep
+                        JOIN {schema}.entity_canonical ec ON ec.id = ep.entity_id
+                        WHERE ep.domain_key = %s AND ec.canonical_name = ANY(%s)
+                        ORDER BY ep.created_at DESC
+                        LIMIT 15
+                        """,
+                        (domain_key, entity_names),
+                    )
+                    for eprow in cur.fetchall():
+                        entity_positions.append({
+                            "entity_name": eprow[3] or "",
+                            "topic": eprow[0] or "",
+                            "position": eprow[1] or "",
+                            "confidence": float(eprow[2]) if eprow[2] is not None else None,
+                        })
+                except Exception as pos_err:
+                    logger.debug("synthesize_storyline_context positions: %s", pos_err)
+
+            # Processed documents linked to this storyline via document_intelligence.storyline_connections JSONB
+            documents = []
+            try:
+                conn_obj = json.dumps({"domain_key": domain_key, "storyline_id": storyline_id})
+                cur.execute(
+                    """
+                    SELECT pd.id, pd.title, pd.source_name, pd.source_url, pd.document_type,
+                           pd.key_findings, di.impact_assessment, di.credibility_score
+                    FROM intelligence.document_intelligence di
+                    JOIN intelligence.processed_documents pd ON pd.id = di.document_id
+                    WHERE di.storyline_connections @> %s::jsonb
+                    ORDER BY pd.publication_date DESC NULLS LAST
+                    LIMIT 10
+                    """,
+                    (f"[{conn_obj}]",),
+                )
+                for drow in cur.fetchall():
+                    findings = drow[5] if isinstance(drow[5], list) else []
+                    documents.append({
+                        "id": drow[0],
+                        "title": drow[1] or "",
+                        "source_name": drow[2] or "",
+                        "source_url": drow[3] or "",
+                        "document_type": drow[4] or "",
+                        "key_findings": findings[:5],
+                        "impact_assessment": drow[6] or "",
+                        "credibility_score": float(drow[7]) if drow[7] is not None else None,
+                    })
+            except Exception as doc_err:
+                logger.debug("synthesize_storyline_context documents: %s", doc_err)
+
         conn.close()
         return {
             "success": True,
@@ -391,10 +539,14 @@ def synthesize_storyline_context(
             "articles": articles,
             "entities": entities,
             "claims": claims,
+            "entity_positions": entity_positions,
+            "documents": documents,
             "statistics": {
                 "article_count": len(articles),
                 "entity_count": len(entities),
                 "claim_count": len(claims),
+                "entity_position_count": len(entity_positions),
+                "document_count": len(documents),
             },
         }
     except Exception as e:
@@ -703,6 +855,41 @@ def render_synthesis_for_llm(synthesis: Dict[str, Any], max_chars: int = 8000) -
         parts.append("\n## Recent Claims")
         for c in claims[:10]:
             parts.append(f"- {c.get('subject', '')} {c.get('predicate', '')} {c.get('object', '')}")
+
+    # Entity positions / stances
+    positions = synthesis.get("entity_positions", [])
+    if positions:
+        parts.append("\n## Entity Positions & Stances")
+        for p in positions[:10]:
+            conf = f" (confidence: {p['confidence']:.0%})" if p.get("confidence") else ""
+            parts.append(f"- {p.get('entity_name', '')} on {p.get('topic', '')}: {p.get('position', '')}{conf}")
+
+    # Processed documents (government/research reports)
+    documents = synthesis.get("documents", [])
+    if documents:
+        parts.append("\n## Government & Research Documents")
+        for d in documents[:5]:
+            line = f"- [{d.get('document_type', 'document').upper()}] {d.get('title', 'Untitled')} ({d.get('source_name', '')})"
+            findings = d.get("key_findings", [])
+            if findings:
+                line += " — Findings: " + "; ".join(str(f) for f in findings[:3])
+            parts.append(line)
+
+    # Cross-domain connections
+    cross_domain = synthesis.get("cross_domain", [])
+    if cross_domain:
+        parts.append("\n## Cross-Domain Connections")
+        for cd in cross_domain[:5]:
+            parts.append(f"- {cd.get('domain_1', '')} ↔ {cd.get('domain_2', '')}: {cd.get('correlation_type', '')} (strength: {cd.get('strength', '?')})")
+
+    # Patterns
+    patterns = synthesis.get("patterns", [])
+    if patterns:
+        parts.append("\n## Detected Patterns")
+        for pat in patterns[:5]:
+            data = pat.get("data", {})
+            desc = data.get("description", "") or data.get("summary", "") or str(data)[:150]
+            parts.append(f"- [{pat.get('type', '')}] {desc}")
 
     text = "\n".join(parts)
     if len(text) > max_chars:

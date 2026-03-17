@@ -2,6 +2,11 @@
 Backlog metrics — pending work counts per automation phase for orchestrator priority.
 Used by the automation manager to: skip empty cycles, run backlog mode (shorter interval),
 and queue tasks by amount of work (most first).
+
+Backlog semantics: a task has a "backlog" only when the pending work exceeds what a
+single batch can handle.  One or two items waiting is normal operation, not a backlog.
+BATCH_SIZE_PER_TASK defines the batch size per task; the raw count is reduced by this
+amount so that values <= 0 mean "no backlog" and values > 0 mean "real backlog."
 """
 
 import logging
@@ -15,29 +20,77 @@ BACKLOG_CACHE_TTL = 30
 _backlog_cache: Dict[str, int] = {}
 _backlog_cache_time: float = 0
 
+# How many items each task processes per run.  Pending counts at or below this
+# are normal throughput, not a backlog.  Anything above triggers backlog mode.
+BATCH_SIZE_PER_TASK: Dict[str, int] = {
+    "content_enrichment": 60,
+    "context_sync": 100,
+    "event_tracking": 300,
+    "claim_extraction": 50,
+    "entity_profile_build": 15,
+    "investigation_report_refresh": 8,
+    "document_processing": 10,
+}
+
+
+def _get_raw_pending_counts() -> Dict[str, int]:
+    """Query all raw pending-work counts (not cached — called by the cached wrapper)."""
+    raw: Dict[str, int] = {}
+    try:
+        raw["content_enrichment"] = _count_content_enrichment_backlog()
+        raw["context_sync"] = _count_context_sync_backlog()
+        raw["event_tracking"] = _count_event_tracking_backlog()
+        raw["claim_extraction"] = _count_claim_extraction_backlog()
+        raw["entity_profile_build"] = _count_entity_profile_build_backlog()
+        raw["investigation_report_refresh"] = _count_investigation_report_backlog()
+        raw["document_processing"] = _count_document_processing_backlog()
+    except Exception as e:
+        logger.warning("backlog_metrics _get_raw_pending_counts: %s", e)
+    return raw
+
+
+# Two cached dicts: raw pending (for SKIP_WHEN_EMPTY) and true backlog (for priority/interval)
+_pending_cache: Dict[str, int] = {}
+_pending_cache_time: float = 0
+
+
+def _refresh_cache() -> None:
+    """Refresh both pending and backlog caches."""
+    global _backlog_cache, _backlog_cache_time, _pending_cache, _pending_cache_time
+    now = time.monotonic()
+    if now - _backlog_cache_time <= BACKLOG_CACHE_TTL and _backlog_cache:
+        return
+
+    raw = _get_raw_pending_counts()
+    _pending_cache = raw.copy()
+    _pending_cache_time = now
+
+    out: Dict[str, int] = {}
+    for task, pending in raw.items():
+        batch = BATCH_SIZE_PER_TASK.get(task, 0)
+        out[task] = max(pending - batch, 0)
+    _backlog_cache = out
+    _backlog_cache_time = now
+
 
 def get_all_backlog_counts() -> Dict[str, int]:
     """
-    Return current backlog (pending work) count per phase. Cached for BACKLOG_CACHE_TTL.
-    Phase names match automation_manager schedule keys. Missing/error => 0.
+    Return current **backlog** count per phase — pending work *exceeding* one batch.
+    Cached for BACKLOG_CACHE_TTL.  Values > 0 mean genuine backlog (more work than
+    one run can handle); 0 means the task is keeping up or idle.
+    Used for priority boosting and interval shortening.
     """
-    global _backlog_cache, _backlog_cache_time
-    now = time.monotonic()
-    if now - _backlog_cache_time <= BACKLOG_CACHE_TTL and _backlog_cache:
-        return _backlog_cache.copy()
+    _refresh_cache()
+    return _backlog_cache.copy()
 
-    out: Dict[str, int] = {}
-    try:
-        out["context_sync"] = _count_context_sync_backlog()
-        out["event_tracking"] = _count_event_tracking_backlog()
-        out["claim_extraction"] = _count_claim_extraction_backlog()
-        out["entity_profile_build"] = _count_entity_profile_build_backlog()
-        out["investigation_report_refresh"] = _count_investigation_report_backlog()
-    except Exception as e:
-        logger.warning("backlog_metrics get_all_backlog_counts: %s", e)
-    _backlog_cache = out
-    _backlog_cache_time = now
-    return out.copy()
+
+def get_all_pending_counts() -> Dict[str, int]:
+    """
+    Return raw pending-work counts per phase (items waiting, regardless of batch size).
+    Used by SKIP_WHEN_EMPTY — a task with *any* pending work (even 1 item) should still run.
+    """
+    _refresh_cache()
+    return _pending_cache.copy()
 
 
 def get_backlog_count(task_name: str) -> Optional[int]:
@@ -54,6 +107,36 @@ def _get_conn():
         return get_db_connection()
     except Exception:
         return None
+
+
+def _count_content_enrichment_backlog() -> int:
+    """Articles (across politics, finance, science_tech) pending full-text enrichment.
+    Matches content_enrichment batch query: enrichment_status NULL/pending/failed, attempts < 3, has URL."""
+    conn = _get_conn()
+    if not conn:
+        return 0
+    total = 0
+    try:
+        for schema in ("politics", "finance", "science_tech"):
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    SELECT COUNT(*) FROM {schema}.articles
+                    WHERE (enrichment_status IS NULL OR enrichment_status IN ('pending', 'failed'))
+                      AND COALESCE(enrichment_attempts, 0) < 3
+                      AND url IS NOT NULL AND url != ''
+                    """
+                )
+                total += cur.fetchone()[0] or 0
+        return total
+    except Exception as e:
+        logger.debug("backlog content_enrichment count: %s", e)
+        return 0
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 def _count_context_sync_backlog() -> int:
@@ -194,6 +277,32 @@ def _count_investigation_report_backlog() -> int:
             pass
 
 
+def _count_document_processing_backlog() -> int:
+    """Documents with source_url but not yet extracted (PDF download + section/entity extraction)."""
+    conn = _get_conn()
+    if not conn:
+        return 0
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SET LOCAL statement_timeout = '3s'")
+            cur.execute(
+                """
+                SELECT COUNT(*) FROM intelligence.processed_documents
+                WHERE source_url IS NOT NULL AND source_url != ''
+                  AND (extracted_sections IS NULL OR extracted_sections = '[]')
+                """
+            )
+            return cur.fetchone()[0] or 0
+    except Exception as e:
+        logger.debug("backlog document_processing count: %s", e)
+        return 0
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
 # Phases that should be skipped when backlog is 0 (avoid empty cycles)
 SKIP_WHEN_EMPTY = frozenset({
     "context_sync",
@@ -201,9 +310,12 @@ SKIP_WHEN_EMPTY = frozenset({
     "claim_extraction",
     "entity_profile_build",
     "investigation_report_refresh",
+    "document_processing",  # v7: skip when no unprocessed PDFs
 })
 
 # When backlog exceeds this, use backlog-mode interval so we run more often
 BACKLOG_HIGH_THRESHOLD = 200
-# Effective min interval (seconds) when in backlog mode
+# Effective min interval (seconds) when in backlog mode (high backlog)
 BACKLOG_MODE_INTERVAL = 300
+# When any backlog > 0, use this so we don't wait full interval between runs (run as soon as eligible)
+BACKLOG_ANY_INTERVAL = 30

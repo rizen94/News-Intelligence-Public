@@ -48,6 +48,7 @@ def main():
 
     try:
         with conn.cursor() as cur:
+            cur.execute("SET statement_timeout = 0")
             cur.execute(sql)
         conn.commit()
         print("✅ 155_quality_feedback_schema.sql applied successfully")

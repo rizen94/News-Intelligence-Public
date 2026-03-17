@@ -1,5 +1,5 @@
 """
-Shared Database Connection Module for News Intelligence System v5.0
+Shared Database Connection Module for News Intelligence System v7
 With connection pooling for improved performance over SSH tunnel.
 Single source of truth for all DB connections (psycopg2 + SQLAlchemy).
 """
@@ -121,9 +121,11 @@ def get_db_config() -> Dict[str, Any]:
         logger.info("Using direct connection to database: %s:%s", db_host, db_port)
     
     connect_timeout = int(os.getenv("DB_CONNECT_TIMEOUT", "5"))
-    # Default 60s so automation phases (event_tracking, story_continuation, etc.) don't get killed.
-    # For heavy processing set DB_STATEMENT_TIMEOUT_MS=120000 (2 min) or 300000 (5 min) in .env.
-    statement_timeout_ms = int(os.getenv("DB_STATEMENT_TIMEOUT_MS", "60000"))
+    # Statement timeout: applied to every pool connection. Planned long work (migrations, backfills)
+    # must run with a separate connection and SET statement_timeout = 0 at session start.
+    # Default 2 min so automation phases and batch jobs don't get killed early; use
+    # DB_STATEMENT_TIMEOUT_MS=300000 (5 min) or 0 (disable) in .env if needed.
+    statement_timeout_ms = int(os.getenv("DB_STATEMENT_TIMEOUT_MS", "120000"))
     return {
         "host": db_host,
         "port": str(db_port),
@@ -141,7 +143,7 @@ def get_db_connect_kwargs() -> Dict[str, Any]:
     Use for code that must open a one-off connection instead of the pool.
     """
     config = get_db_config()
-    timeout_ms = config.get("statement_timeout_ms", 60000)
+    timeout_ms = config.get("statement_timeout_ms", 120000)
     return {
         "host": config["host"],
         "port": config["port"],
@@ -165,7 +167,7 @@ def _init_pool() -> pool.ThreadedConnectionPool:
         minconn = int(os.getenv("DB_POOL_MIN", "2"))
         maxconn = int(os.getenv("DB_POOL_MAX", "20"))
         maxconn = max(minconn, min(maxconn, 50))
-        timeout_ms = config.get("statement_timeout_ms", 60000)
+        timeout_ms = config.get("statement_timeout_ms", 120000)
         options = f"-c statement_timeout={timeout_ms}"
         
         logger.info(
@@ -299,7 +301,7 @@ def _init_sqlalchemy():
         if _sqlalchemy_engine is not None:
             return
         config = get_db_config()
-        timeout_ms = config.get("statement_timeout_ms", 60000)
+        timeout_ms = config.get("statement_timeout_ms", 120000)
         url = (
             f"postgresql://{config['user']}:{config['password']}@{config['host']}:{config['port']}/{config['database']}"
             f"?connect_timeout={config.get('connect_timeout', 5)}"

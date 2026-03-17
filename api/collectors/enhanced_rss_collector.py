@@ -248,66 +248,11 @@ def collect_enhanced_rss() -> int:
 
 def enhance_existing_articles(limit: int = 100) -> int:
     """
-    Enhance content for existing articles that have minimal content
-    Args:
-        limit: Maximum number of articles to process
-    Returns:
-        Number of articles enhanced
+    Deprecated: content fetching merged into content_enrichment (trafilatura, domain schemas).
+    Use the content_enrichment automation phase or article_content_enrichment_service.enrich_articles_batch().
     """
-    logger.info(f"Enhancing content for up to {limit} existing articles...")
-    
-    conn = get_db_connection()
-    if not conn:
-        return 0
-    
-    try:
-        cur = conn.cursor()
-        
-        # Get articles with minimal content
-        cur.execute("""
-            SELECT id, url, title, content 
-            FROM articles 
-            WHERE (content IS NULL OR LENGTH(content) < 100)
-            AND url IS NOT NULL
-            ORDER BY created_at DESC
-            LIMIT %s
-        """, (limit,))
-        
-        articles = cur.fetchall()
-        enhanced_count = 0
-        
-        for article_id, url, title, content in articles:
-            try:
-                logger.debug(f"Enhancing article: {title}")
-                
-                enhanced_content = extract_article_content(url)
-                if enhanced_content and len(enhanced_content) > len(content or ""):
-                    cur.execute("""
-                        UPDATE articles 
-                        SET content = %s, updated_at = NOW()
-                        WHERE id = %s
-                    """, (enhanced_content, article_id))
-                    enhanced_count += 1
-                    logger.debug(f"Enhanced content for: {title}")
-                
-                # Small delay to be respectful to servers
-                time.sleep(0.2)
-                
-            except Exception as e:
-                logger.warning(f"Error enhancing article {title}: {e}")
-                continue
-        
-        conn.commit()
-        logger.info(f"Enhanced {enhanced_count} articles")
-        return enhanced_count
-        
-    except Exception as e:
-        logger.error(f"Error during article enhancement: {e}")
-        conn.rollback()
-        return 0
-    finally:
-        if conn:
-            conn.close()
+    logger.warning("enhance_existing_articles is deprecated (use content_enrichment); returning 0")
+    return 0
 
 if __name__ == "__main__":
     # Test enhanced RSS collection

@@ -1,6 +1,6 @@
 # News Intelligence System
 
-**Status**: Active development | **Version**: 6.0 | **Last Updated**: March 2026
+**Status**: Active development | **Version**: 7.0 | **Last Updated**: March 2026
 
 ## Overview
 
@@ -29,10 +29,16 @@ See [Setup and Deployment Guide](./docs/SETUP_AND_DEPLOYMENT.md) for detailed in
 
 ---
 
-## What's Built (v6 Quality-First)
+## What's Built (v7)
 
 ### Intelligence Pipeline
-- **RSS collection** with full content capture → ML enrichment (summarization, key points, sentiment, entities)
+- **RSS collection** with full content capture; **v7: full-text enrichment** (trafilatura) for articles with short excerpts
+- **v7: Document collection** — government (CRS, GAO, CBO) and academic (arXiv) PDF discovery; **document processing** (pdfplumber) → contexts
+- **v7: Auto synthesis** — storyline synthesis and daily briefing synthesis run on schedule
+- **v7: Storyline discovery** — AI clusters recent articles and auto-creates storylines (every 4 h)
+- **v7: Entity dossiers** — biographic view per entity (narrative, positions, articles, relationships); Top Entities tab by mention count
+- ML enrichment (summarization, key points, sentiment, entities); **v7: higher content limits** for entity/topic extraction
+- **v7: Backlog logic** — true backlog = work exceeding one batch; interval shortening only when backlog > 0
 - **Entity resolution:** disambiguation, alias management, cross-domain linking, auto-merge
 - **Context-centric processing:** contexts, claims extraction, pattern discovery, entity profiles/dossiers
 - **Event tracking:** tracked events with chronicle builder and editorial briefings
@@ -102,7 +108,7 @@ See `docs/CORE_ARCHITECTURE_PRINCIPLES.md` for the full principles and `docs/IMP
 ## Documentation
 
 - **[Documentation index](./docs/DOCS_INDEX.md)** — Start here for all docs
-- **[Project scope & status](./docs/PROJECT_SCOPE_AND_DEVELOPMENT_STATUS.md)** — Full scope view with v6 status
+- **[Project scope & status](./docs/PROJECT_SCOPE_AND_DEVELOPMENT_STATUS.md)** — Full scope view with v7 status
 - **[Capabilities brief](./docs/PROJECT_CAPABILITIES_BRIEF.md)** — Quick technical orientation
 - **[Setup and Deployment](./docs/SETUP_AND_DEPLOYMENT.md)** — Installation and deployment
 - **[Coding standards](./docs/CODING_STYLE_GUIDE.md)** — Code style and conventions
@@ -127,4 +133,4 @@ See `docs/CORE_ARCHITECTURE_PRINCIPLES.md` for the full principles and `docs/IMP
 
 ---
 
-**Version**: 6.0 — v6 Quality-First Upgrade complete (entity resolution, fact verification, editorial intelligence, PDF processing, content synthesis)
+**Version**: 7.0.0 — v7 complete (full-text enrichment, document pipeline, auto synthesis, storyline discovery, entity dossiers, batch-size-aware backlog)

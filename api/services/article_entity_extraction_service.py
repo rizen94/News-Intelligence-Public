@@ -51,7 +51,7 @@ class ArticleEntityExtractionService:
         Returns counts of stored entities.
         """
         content = content or ""
-        combined = f"{title}\n\n{content}"[:6000]  # Limit for LLM
+        combined = f"{title}\n\n{content}"[:12000]  # v7: increased for full-text articles
 
         if len(combined.strip()) < 50:
             logger.debug(f"Article {article_id}: text too short for entity extraction")
@@ -84,7 +84,7 @@ class ArticleEntityExtractionService:
 Headline: "{headline}"
 
 Full text:
-{text[:5000]}
+{text[:10000]}
 
 Return ONLY valid JSON (no markdown, no explanation):
 {{

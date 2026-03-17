@@ -10,6 +10,7 @@ import asyncio
 import os
 import logging
 import subprocess
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 import psutil
@@ -156,6 +157,175 @@ async def get_database_stats():
     except Exception as e:
         logger.exception("Database stats error: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# Backlog status: articles/documents/storylines remaining and catch-up ETA
+# ---------------------------------------------------------------------------
+
+@router.get("/backlog_status")
+def get_backlog_status() -> Dict[str, Any]:
+    """
+    Backlog progression: articles to enrich, documents to process, storylines to synthesize,
+    with estimated throughput and catch-up ETA. Used by the Monitor page.
+    """
+    conn = get_db_connection()
+    if not conn:
+        return {"success": False, "error": "Database connection failed", "data": None}
+
+    try:
+        cur = conn.cursor()
+        article_backlog = 0
+        articles_created_24h = 0
+        articles_short_created_24h = 0
+        enriched_last_1h = 0
+        enriched_last_24h = 0
+        for schema in ("politics", "finance", "science_tech"):
+            try:
+                cur.execute(
+                    f"""
+                    SELECT COUNT(*) FROM {schema}.articles
+                    WHERE (enrichment_status IS NULL OR enrichment_status IN ('pending', 'failed'))
+                      AND COALESCE(enrichment_attempts, 0) < 3
+                      AND url IS NOT NULL AND url != ''
+                    """
+                )
+                article_backlog += cur.fetchone()[0] or 0
+                cur.execute(
+                    f"""
+                    SELECT COUNT(*),
+                           COUNT(*) FILTER (WHERE (enrichment_status IS NULL OR enrichment_status IN ('pending', 'failed')) AND COALESCE(enrichment_attempts, 0) < 3 AND url IS NOT NULL AND url != '')
+                    FROM {schema}.articles
+                    WHERE created_at >= NOW() - INTERVAL '24 hours'
+                    """
+                )
+                row = cur.fetchone()
+                articles_created_24h += (row[0] or 0)
+                articles_short_created_24h += (row[1] or 0)
+                # Measured throughput: articles enriched in last 1h/24h (enrichment_status = 'enriched')
+                cur.execute(
+                    f"""
+                    SELECT
+                        COUNT(*) FILTER (WHERE updated_at >= NOW() - INTERVAL '1 hour'),
+                        COUNT(*) FILTER (WHERE updated_at >= NOW() - INTERVAL '24 hours')
+                    FROM {schema}.articles
+                    WHERE enrichment_status = 'enriched' AND url IS NOT NULL AND url != ''
+                      AND updated_at >= NOW() - INTERVAL '24 hours'
+                    """
+                )
+                r = cur.fetchone()
+                if r:
+                    enriched_last_1h += (r[0] or 0)
+                    enriched_last_24h += (r[1] or 0)
+            except Exception:
+                pass
+
+        doc_backlog = 0
+        try:
+            cur.execute(
+                """
+                SELECT COUNT(*) FROM intelligence.processed_documents
+                WHERE extracted_sections IS NULL OR extracted_sections = '[]'
+                """
+            )
+            doc_backlog = cur.fetchone()[0] or 0
+        except Exception:
+            pass
+
+        storyline_backlog = 0
+        for schema in ("politics", "finance", "science_tech"):
+            try:
+                cur.execute(
+                    f"""
+                    SELECT COUNT(*) FROM {schema}.storylines s
+                    JOIN (SELECT storyline_id, COUNT(*) AS c FROM {schema}.storyline_articles GROUP BY storyline_id) sa
+                      ON sa.storyline_id = s.id AND sa.c >= 3
+                    WHERE s.synthesized_content IS NULL
+                       OR EXISTS (
+                         SELECT 1 FROM {schema}.storyline_articles sa2
+                         JOIN {schema}.articles a ON a.id = sa2.article_id
+                         WHERE sa2.storyline_id = s.id
+                         AND a.created_at > COALESCE(s.synthesized_at, '1970-01-01'::timestamptz)
+                       )
+                    """
+                )
+                storyline_backlog += cur.fetchone()[0] or 0
+            except Exception:
+                pass
+        cur.close()
+        conn.close()
+    except Exception as e:
+        conn.close()
+        return {"success": False, "error": str(e)[:200], "data": None}
+
+    # Throughput: use measured enrichment when available (articles updated to full content in last 1h/24h)
+    # so ETA and trend reflect reality. Fallback 300/hr when no recent data; cap at 700 (burst max).
+    if enriched_last_1h >= 10:
+        articles_per_hour = min(enriched_last_1h, 700)
+        per_hour_source = "measured_1h"
+    elif enriched_last_24h > 0:
+        articles_per_hour = min(round(enriched_last_24h / 24.0), 700)
+        per_hour_source = "measured_24h"
+    else:
+        articles_per_hour = 300
+        per_hour_source = "estimated"
+    docs_per_hour = 20
+    storylines_per_hour = 12
+    articles_per_day = articles_per_hour * 24
+
+    def eta_hours(backlog: int, per_hour: float) -> float:
+        if per_hour <= 0:
+            return 0.0
+        return backlog / per_hour
+
+    now = datetime.now(timezone.utc)
+    h_articles = eta_hours(article_backlog, articles_per_hour)
+    h_docs = eta_hours(doc_backlog, docs_per_hour)
+    h_storylines = eta_hours(storyline_backlog, storylines_per_hour)
+
+    eta_articles = (now + timedelta(hours=h_articles)).isoformat() if article_backlog else None
+    eta_docs = (now + timedelta(hours=h_docs)).isoformat() if doc_backlog else None
+    eta_storylines = (now + timedelta(hours=h_storylines)).isoformat() if storyline_backlog else None
+    overall_h = max(h_articles, h_docs, h_storylines)
+    eta_overall = (now + timedelta(hours=overall_h)).isoformat() if (article_backlog or doc_backlog or storyline_backlog) else None
+
+    # Net rate: inflow (short created 24h) minus outflow (enriched per day); positive = backlog growing
+    net_articles_per_day = articles_short_created_24h - articles_per_day
+    backlog_trend = "growing" if net_articles_per_day > 0 else ("shrinking" if net_articles_per_day < 0 else "stable")
+
+    return {
+        "success": True,
+        "data": {
+            "articles": {
+                "backlog": article_backlog,
+                "per_hour": articles_per_hour,
+                "per_hour_source": per_hour_source,
+                "enriched_last_1h": enriched_last_1h,
+                "enriched_last_24h": enriched_last_24h,
+                "per_day": articles_per_day,
+                "eta_hours": round(h_articles, 1),
+                "eta_utc": eta_articles,
+                "created_last_24h": articles_created_24h,
+                "short_created_last_24h": articles_short_created_24h,
+                "net_per_day": net_articles_per_day,
+                "backlog_trend": backlog_trend,
+            },
+            "documents": {
+                "backlog": doc_backlog,
+                "per_hour": docs_per_hour,
+                "eta_hours": round(h_docs, 1),
+                "eta_utc": eta_docs,
+            },
+            "storylines": {
+                "backlog": storyline_backlog,
+                "per_hour": storylines_per_hour,
+                "eta_hours": round(h_storylines, 1),
+                "eta_utc": eta_storylines,
+            },
+            "overall_eta_hours": round(overall_h, 1),
+            "overall_eta_utc": eta_overall,
+        },
+    }
 
 
 # ---------------------------------------------------------------------------

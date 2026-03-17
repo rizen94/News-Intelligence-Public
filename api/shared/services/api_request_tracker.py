@@ -1,5 +1,12 @@
 """
 API Request Tracker — Priority Hierarchy for Web vs ML
+
+Web UI and monitoring are independent of the data pipeline:
+- The website and health/status endpoints always respond with currently available data;
+  they never wait for background processing (automation, enrichment, entity extraction).
+- Pipeline tasks run in their own workers; they may yield when the user loads a page
+  (non-polling request) so the UI stays responsive.
+
 When users are actively loading pages, ML/Ollama workers yield to keep responses fast.
 High-frequency polling (Monitor, health, status) does NOT count as "user active" so
 Ollama/GPU can run; only non-polling requests trigger the yield window.
@@ -15,15 +22,19 @@ _last_request_at: float = 0.0
 _lock = Lock()
 _YIELD_WINDOW_SECONDS = 15  # Workers skip ML when API was active within this window
 
-# Paths that are polled every few seconds (Monitor, health, status). We do NOT record these
-# so that having the Monitor open doesn't block ML/Ollama. Only "real" user actions trigger yield.
+# Paths that are polled frequently (Monitor, health, status, backlog). We do NOT record these
+# as "user active" so that having the Monitor open doesn't block the pipeline. Only "real"
+# user actions (e.g. opening a domain page, editing a storyline) trigger yield.
+# This keeps the web interface and monitoring independently tracked from pipeline work.
 _POLLING_PATH_SUBSTRINGS = (
-    "/api/system_monitoring/",  # All Monitor dashboard endpoints (overview, automation, pipeline, etc.)
+    "/api/system_monitoring/",  # All Monitor: overview, automation, pipeline, health, backlog, etc.
     "/automation/status",
     "/monitoring/overview",
     "/pipeline_status",
     "/sources_collected",
     "/process_run_summary",
+    "/backlog_status",
+    "/fast_stats",
     "/orchestrator/dashboard",
     "/orchestrator/status",
     "/health",

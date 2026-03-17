@@ -83,7 +83,17 @@ export default function MonitorPage() {
   } | null>(null);
   const [quality, setQuality] = useState<Record<string, unknown> | null>(null);
   const [pipeline, setPipeline] = useState<{ success?: boolean; data?: Record<string, unknown> } | null>(null);
-  const [automation, setAutomation] = useState<{ success?: boolean; data?: { phases?: PhaseRow[]; queue_size?: number; is_running?: boolean; active_workers?: number } } | null>(null);
+  const [automation, setAutomation] = useState<{
+    success?: boolean;
+    data?: {
+      phases?: PhaseRow[];
+      queue_size?: number;
+      is_running?: boolean;
+      active_workers?: number;
+      enrichment_backlog_first_active?: boolean;
+      content_enrichment_backlog?: number;
+    };
+  } | null>(null);
   const [sourcesCollected, setSourcesCollected] = useState<{
     success?: boolean;
     data?: {
@@ -103,6 +113,30 @@ export default function MonitorPage() {
       pipeline_checkpoints_recent?: Array<{ stage: string; status: string; timestamp: string }>;
       recent_activity?: Array<{ timestamp?: string; component?: string; event_type?: string; status?: string; message?: string }>;
     };
+  } | null>(null);
+  const [backlogStatus, setBacklogStatus] = useState<{
+    success?: boolean;
+    data?: {
+      articles?: {
+        backlog: number;
+        per_hour: number;
+        per_hour_source?: 'measured_1h' | 'measured_24h' | 'estimated';
+        enriched_last_1h?: number;
+        enriched_last_24h?: number;
+        per_day?: number;
+        eta_hours: number;
+        eta_utc: string | null;
+        created_last_24h?: number;
+        short_created_last_24h?: number;
+        net_per_day?: number;
+        backlog_trend?: string;
+      };
+      documents?: { backlog: number; per_hour: number; eta_hours: number; eta_utc: string | null };
+      storylines?: { backlog: number; per_hour: number; eta_hours: number; eta_utc: string | null };
+      overall_eta_hours?: number;
+      overall_eta_utc?: string | null;
+    };
+    error?: string;
   } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -127,13 +161,14 @@ export default function MonitorPage() {
       try {
         await loadOverview();
         if (cancelled) return;
-        const [o, q, pipe, auto, sources, summary] = await Promise.all([
+        const [o, q, pipe, auto, sources, summary, backlog] = await Promise.all([
           apiService.getOrchestratorDashboard?.({ decision_log_limit: 25 }).then((d: unknown) => d as { status?: Record<string, unknown>; decision_log?: { entries?: DecisionEntry[] } }).catch(() => null),
           contextCentricApi.getQuality().catch(() => null),
           apiService.getPipelineStatus?.().then((r: unknown) => r as { success?: boolean; data?: Record<string, unknown> }).catch(() => null),
           apiService.getAutomationStatus?.().then((r: unknown) => r as { success?: boolean; data?: { phases?: PhaseRow[] } }).catch(() => null),
           apiService.getSourcesCollected?.(30).then((r: unknown) => r as typeof sourcesCollected).catch(() => null),
           apiService.getProcessRunSummary?.(24, 60).then((r: unknown) => r as typeof runSummary).catch(() => null),
+          apiService.getBacklogStatus?.().then((r: unknown) => r as typeof backlogStatus).catch(() => null),
         ]);
         if (cancelled) return;
         setOrchDashboard(o ?? null);
@@ -142,6 +177,7 @@ export default function MonitorPage() {
         setAutomation(auto ?? null);
         setSourcesCollected(sources ?? null);
         setRunSummary(summary ?? null);
+        setBacklogStatus(backlog ?? null);
       } catch (e) {
         if (!cancelled) setError((e as Error).message);
       } finally {
@@ -156,6 +192,7 @@ export default function MonitorPage() {
       apiService.getOrchestratorDashboard?.({ decision_log_limit: 25 }).then((d: unknown) => setOrchDashboard(d as typeof orchDashboard)).catch(() => {});
       apiService.getSourcesCollected?.(30).then((r: unknown) => setSourcesCollected(r as typeof sourcesCollected)).catch(() => {});
       apiService.getProcessRunSummary?.(24, 60).then((r: unknown) => setRunSummary(r as typeof runSummary)).catch(() => {});
+      apiService.getBacklogStatus?.().then((r: unknown) => setBacklogStatus(r as typeof backlogStatus)).catch(() => {});
     }, POLL_INTERVAL_MS);
     return () => {
       cancelled = true;
@@ -210,15 +247,20 @@ export default function MonitorPage() {
   const phases: PhaseRow[] = automation?.data?.phases ?? [];
   const queueSize = automation?.data?.queue_size as number | undefined;
   const automationRunning = automation?.data?.is_running as boolean | undefined;
+  const enrichmentBacklogFirstActive = automation?.data?.enrichment_backlog_first_active === true;
+  const contentEnrichmentBacklog = (automation?.data?.content_enrichment_backlog as number) ?? 0;
 
   const statusChip = (status: string | undefined, label: string) => {
     const ok = status === 'ok' || status === 'healthy' || status === 'HEALTHY';
+    const unknown = !status || status === 'unknown';
+    const color = ok ? 'success' : unknown ? 'default' : 'error';
+    const icon = ok ? <CheckCircleOutlineIcon /> : (unknown ? undefined : <ErrorOutlineIcon />);
     return (
       <Chip
         size="small"
-        icon={ok ? <CheckCircleOutlineIcon /> : <ErrorOutlineIcon />}
-        label={label}
-        color={ok ? 'success' : 'error'}
+        icon={icon}
+        label={unknown ? `${label} (checking…)` : label}
+        color={color}
         variant="outlined"
         sx={{ mr: 1 }}
       />
@@ -235,6 +277,15 @@ export default function MonitorPage() {
       {error && (
         <Alert severity="warning" sx={{ mb: 2 }} onClose={() => setError(null)}>
           {error}
+        </Alert>
+      )}
+
+      {/* Enrichment backlog priority: pipeline is draining enrichment first */}
+      {enrichmentBacklogFirstActive && (
+        <Alert severity="info" sx={{ mb: 2 }} icon={<ScheduleIcon />}>
+          <Typography variant="body2" component="span">
+            <strong>Enrichment backlog priority:</strong> The pipeline is draining the article enrichment backlog first ({contentEnrichmentBacklog.toLocaleString()} articles). Entity extraction, pattern matching, and synthesis will run automatically when the backlog is clear.
+          </Typography>
         </Alert>
       )}
 
@@ -280,6 +331,11 @@ export default function MonitorPage() {
               )}
             </Box>
             <Typography variant="caption" color="text.secondary">Frontend / proxy</Typography>
+            {wsStatus !== 'ok' && wsStatus !== 'healthy' && (webserver?.error as string) && (
+              <Typography variant="caption" display="block" color="error.main" sx={{ mt: 0.5 }}>
+                {(webserver?.error as string).slice(0, 60)}
+              </Typography>
+            )}
           </CardContent>
         </Card>
       </Box>
@@ -495,6 +551,114 @@ export default function MonitorPage() {
         </CardContent>
       </Card>
 
+      {/* Backlog status progression */}
+      <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>
+        Backlog status progression
+      </Typography>
+      <Card variant="outlined" sx={{ mb: 3 }}>
+        <CardContent sx={{ py: 1.5 }}>
+          {backlogStatus?.success && backlogStatus.data ? (
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              <Table size="small">
+                <TableHead>
+                  <TableRow>
+                    <TableCell>Queue</TableCell>
+                    <TableCell align="right">Remaining</TableCell>
+                    <TableCell align="right">Throughput</TableCell>
+                    <TableCell>ETA</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  <TableRow>
+                    <TableCell>Articles (enrich)</TableCell>
+                    <TableCell align="right">{(backlogStatus.data.articles?.backlog ?? 0).toLocaleString()}</TableCell>
+                    <TableCell align="right">
+                      ~{(backlogStatus.data.articles?.per_hour ?? 0)}/hr
+                      {backlogStatus.data.articles?.per_hour_source && (
+                        <Typography component="span" variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+                          {backlogStatus.data.articles.per_hour_source === 'measured_1h' && '(measured 1h)'}
+                          {backlogStatus.data.articles.per_hour_source === 'measured_24h' && '(measured 24h)'}
+                          {backlogStatus.data.articles.per_hour_source === 'estimated' && '(no recent data)'}
+                        </Typography>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      {(backlogStatus.data.articles?.backlog ?? 0) > 0
+                        ? `~${backlogStatus.data.articles?.eta_hours ?? 0}h (${backlogStatus.data.articles?.eta_utc ? new Date(backlogStatus.data.articles.eta_utc).toLocaleString() : '—'})`
+                        : '—'}
+                    </TableCell>
+                  </TableRow>
+                  <TableRow>
+                    <TableCell>Documents (extract)</TableCell>
+                    <TableCell align="right">{(backlogStatus.data.documents?.backlog ?? 0).toLocaleString()}</TableCell>
+                    <TableCell align="right">~{(backlogStatus.data.documents?.per_hour ?? 0)}/hr</TableCell>
+                    <TableCell>
+                      {(backlogStatus.data.documents?.backlog ?? 0) > 0
+                        ? `~${backlogStatus.data.documents?.eta_hours ?? 0}h (${backlogStatus.data.documents?.eta_utc ? new Date(backlogStatus.data.documents.eta_utc).toLocaleString() : '—'})`
+                        : '—'}
+                    </TableCell>
+                  </TableRow>
+                  <TableRow>
+                    <TableCell>Storylines (synthesis)</TableCell>
+                    <TableCell align="right">{(backlogStatus.data.storylines?.backlog ?? 0).toLocaleString()}</TableCell>
+                    <TableCell align="right">~{(backlogStatus.data.storylines?.per_hour ?? 0)}/hr</TableCell>
+                    <TableCell>
+                      {(backlogStatus.data.storylines?.backlog ?? 0) > 0
+                        ? `~${backlogStatus.data.storylines?.eta_hours ?? 0}h (${backlogStatus.data.storylines?.eta_utc ? new Date(backlogStatus.data.storylines.eta_utc).toLocaleString() : '—'})`
+                        : '—'}
+                    </TableCell>
+                  </TableRow>
+                </TableBody>
+              </Table>
+              {(backlogStatus.data.overall_eta_utc != null && (backlogStatus.data.articles?.backlog ?? 0) + (backlogStatus.data.documents?.backlog ?? 0) + (backlogStatus.data.storylines?.backlog ?? 0) > 0) && (
+                <Typography variant="body2" color="text.secondary">
+                  Overall catch-up: ~{backlogStatus.data.overall_eta_hours ?? 0}h → {new Date(backlogStatus.data.overall_eta_utc!).toLocaleString()}
+                </Typography>
+              )}
+              {(backlogStatus.data.articles?.backlog ?? 0) + (backlogStatus.data.documents?.backlog ?? 0) + (backlogStatus.data.storylines?.backlog ?? 0) === 0 && (
+                <Typography variant="body2" color="success.main">
+                  No backlog — all queues current.
+                </Typography>
+              )}
+              {enrichmentBacklogFirstActive && (
+                <Typography variant="caption" color="info.main" sx={{ display: 'block' }}>
+                  Pipeline is prioritizing article enrichment until this backlog is clear; entity extraction and synthesis will resume automatically.
+                </Typography>
+              )}
+              {backlogStatus.data.articles && (backlogStatus.data.articles.created_last_24h != null || backlogStatus.data.articles.backlog_trend) && (
+                <Box sx={{ mt: 1.5, pt: 1.5, borderTop: 1, borderColor: 'divider' }}>
+                  <Typography variant="caption" color="text.secondary" display="block">
+                    Inflow vs outflow (articles)
+                  </Typography>
+                  <Typography variant="body2">
+                    In last 24h: {backlogStatus.data.articles.created_last_24h?.toLocaleString() ?? '—'} total,{' '}
+                    {(backlogStatus.data.articles.short_created_last_24h ?? 0).toLocaleString()} need enrichment ·{' '}
+                    Outflow: ~{(backlogStatus.data.articles.per_day ?? 12000).toLocaleString()}/day
+                    {(backlogStatus.data.articles.enriched_last_1h != null || backlogStatus.data.articles.enriched_last_24h != null) && (
+                      <> (enriched: {backlogStatus.data.articles.enriched_last_1h ?? 0} last 1h, {backlogStatus.data.articles.enriched_last_24h ?? 0} last 24h)</>
+                    )}
+                    {' · '}
+                    <Typography component="span" variant="body2" fontWeight={600} color={backlogStatus.data.articles.backlog_trend === 'growing' ? 'warning.main' : backlogStatus.data.articles.backlog_trend === 'shrinking' ? 'success.main' : 'text.secondary'}>
+                      Backlog {backlogStatus.data.articles.backlog_trend ?? '—'}
+                    </Typography>
+                  </Typography>
+                </Box>
+              )}
+            </Box>
+          ) : backlogStatus?.error ? (
+            <Typography color="text.secondary" variant="body2">
+              Backlog status unavailable: {backlogStatus.error}
+            </Typography>
+          ) : loading && backlogStatus === null ? (
+            <Skeleton variant="rectangular" height={100} sx={{ borderRadius: 1 }} />
+          ) : (
+            <Typography color="text.secondary" variant="body2">
+              Backlog status not available. Check API and database.
+            </Typography>
+          )}
+        </CardContent>
+      </Card>
+
       <Divider sx={{ my: 2 }} />
 
       {/* Pipeline status */}
@@ -660,7 +824,7 @@ export default function MonitorPage() {
                     onChange={(e) => setTriggerPhaseName(e.target.value)}
                   >
                     <MenuItem value="">Select…</MenuItem>
-                    {(phases.length > 0 ? phases.map((p) => p.name) : ['rss_processing', 'article_processing', 'digest_generation', 'context_sync', 'entity_extraction', 'event_tracking', 'topic_clustering']).map((name) => (
+                    {(phases.length > 0 ? phases.map((p) => p.name) : ['rss_processing', 'content_enrichment', 'digest_generation', 'context_sync', 'entity_extraction', 'event_tracking', 'topic_clustering']).map((name) => (
                       <MenuItem key={name} value={name}>{name}</MenuItem>
                     ))}
                   </Select>

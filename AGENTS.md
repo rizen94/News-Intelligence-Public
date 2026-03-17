@@ -66,6 +66,14 @@ Context for AI assistants. Use project terminology consistently.
 
 ---
 
+## Web UI and monitoring vs pipeline
+
+- **Web interface and monitoring are independent of the data pipeline.** The site and health/status endpoints always respond with currently available data; they do not wait for background processing (enrichment, entity extraction, synthesis).
+- **Health checks and statuses** (e.g. `/api/system_monitoring/health`, `/automation/status`) are ready at any time; automation status uses a short timeout so the UI never blocks on the pipeline.
+- **Pipeline work** (RSS, content enrichment, entity extraction, pattern matching, etc.) runs as background tasks; it may yield when the user loads a non-monitoring page so the UI stays responsive. Polling paths (Monitor, health, status, backlog) do not trigger that yield so the pipeline can keep running while the user views the dashboard.
+
+---
+
 ## File Layout
 
 | Area | Location |
