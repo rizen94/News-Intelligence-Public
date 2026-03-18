@@ -51,6 +51,7 @@ dependencies = [
 
 [project.optional-dependencies]
 finance = ["chromadb", "sentence-transformers"]
+documents = ["pymupdf>=1.23.0"]  # optional: faster/robust PDF text fallback when pdfplumber fails
 dev = ["pytest>=7.0.0"]
 
 [build-system]

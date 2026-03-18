@@ -27,7 +27,7 @@ BATCH_SIZE_PER_TASK: Dict[str, int] = {
     "context_sync": 100,
     "event_tracking": 300,
     "claim_extraction": 50,
-    "entity_profile_build": 15,
+    "entity_profile_build": 25,  # v8
     "investigation_report_refresh": 8,
     "document_processing": 10,
 }
@@ -289,7 +289,8 @@ def _count_document_processing_backlog() -> int:
                 """
                 SELECT COUNT(*) FROM intelligence.processed_documents
                 WHERE source_url IS NOT NULL AND source_url != ''
-                  AND (extracted_sections IS NULL OR extracted_sections = '[]')
+                  AND (extracted_sections IS NULL OR extracted_sections = '[]'::jsonb)
+                  AND (metadata IS NULL OR (metadata->'processing'->>'permanent_failure') IS DISTINCT FROM 'true')
                 """
             )
             return cur.fetchone()[0] or 0
@@ -304,13 +305,13 @@ def _count_document_processing_backlog() -> int:
 
 
 # Phases that should be skipped when backlog is 0 (avoid empty cycles)
+# document_processing omitted so it runs on interval even if backlog count is wrong (e.g. DB timeout)
 SKIP_WHEN_EMPTY = frozenset({
     "context_sync",
     "event_tracking",
     "claim_extraction",
     "entity_profile_build",
     "investigation_report_refresh",
-    "document_processing",  # v7: skip when no unprocessed PDFs
 })
 
 # When backlog exceeds this, use backlog-mode interval so we run more often

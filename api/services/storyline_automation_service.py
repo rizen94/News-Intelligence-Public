@@ -14,6 +14,7 @@ import asyncio
 from shared.services.llm_service import llm_service
 from shared.database.connection import get_db_connection
 from shared.services.domain_aware_service import DomainAwareService
+from services.domain_synthesis_config import get_domain_synthesis_config
 
 logger = logging.getLogger(__name__)
 
@@ -29,12 +30,13 @@ class StorylineAutomationService(DomainAwareService):
             domain: Domain key (e.g., 'politics', 'finance', 'science-tech')
         """
         super().__init__(domain)
+        self.domain_config = get_domain_synthesis_config(domain)
         self.default_settings = {
             "min_relevance_score": 0.6,  # Minimum relevance to suggest
             "min_quality_score": 0.5,      # Minimum article quality
             "min_semantic_score": 0.55,   # Minimum semantic similarity
             "max_articles_per_run": 20,    # Max articles to suggest per run
-            "date_range_days": 30,         # Look back this many days
+            "date_range_days": 90,         # v8: entity/search window
             "source_diversity": True,       # Prefer diverse sources
             "exclude_duplicates": True,     # Skip duplicate content
             "use_rag_expansion": True,     # Use RAG query expansion
@@ -103,15 +105,18 @@ class StorylineAutomationService(DomainAwareService):
         self,
         storyline_id: int,
         max_results: Optional[int] = None,
-        force_refresh: bool = False
+        force_refresh: bool = False,
+        enrichment_mode: bool = False,
     ) -> Dict[str, Any]:
         """
-        Discover relevant articles for a storyline using RAG-enhanced search
+        Discover relevant articles for a storyline using RAG-enhanced search.
+        v8: When enrichment_mode=True, RAG searches entire DB (full_history) to enrich with past data.
         
         Args:
             storyline_id: ID of the storyline
             max_results: Maximum number of articles to return
             force_refresh: Force new discovery even if recent run exists
+            enrichment_mode: If True, search full history (no date filter) to find related past articles/contexts
             
         Returns:
             Dictionary with discovered articles and metadata
@@ -176,9 +181,11 @@ class StorylineAutomationService(DomainAwareService):
                     settings = {**self.default_settings, **automation_settings}
                     if "min_quality_tier" not in automation_settings:
                         settings["min_quality_tier"] = min_quality_tier
+                    if enrichment_mode:
+                        settings["full_history"] = True
                     
-                    # Check if we should run (frequency check)
-                    if not force_refresh and last_automation_run:
+                    # Check if we should run (frequency check; skip for enrichment_mode so we can run both flows)
+                    if not force_refresh and not enrichment_mode and last_automation_run:
                         hours_since_run = (datetime.now() - last_automation_run).total_seconds() / 3600
                         if hours_since_run < (automation_frequency_hours or 24):
                             return {
@@ -195,14 +202,18 @@ class StorylineAutomationService(DomainAwareService):
                     existing_article_ids = {row[0] for row in cur.fetchall()}
                     
                     # Collect storyline objects (entities, keywords) for high-probability matching
+                    # v8: enriched with article_entities + entity_canonical from storyline's articles
                     storyline_entities = self._collect_storyline_entities(
                         conn, cur, storyline_id, title,
                         key_entities, search_entities, search_keywords
                     )
-                    
+                    search_query = self._build_search_query(
+                        title, description, analysis_summary,
+                        search_keywords, search_entities
+                    )
                     max_results = max_results or settings.get("max_articles_per_run", 20)
                     
-                    # Entity-first: articles that mention storyline entities = high probability
+                    # 1. Entity-first (ILIKE on title/content): articles mentioning storyline entity names
                     discovered_articles = []
                     if storyline_entities:
                         entity_articles = await self._entity_based_article_search(
@@ -213,12 +224,43 @@ class StorylineAutomationService(DomainAwareService):
                             discovered_articles = entity_articles
                             logger.info(f"Entity-first search found {len(entity_articles)} articles matching storyline objects")
                     
-                    # Fallback/supplement: RAG or keyword search if entity search yielded little
-                    if len(discovered_articles) < max_results // 2:
-                        search_query = self._build_search_query(
-                            title, description, analysis_summary,
-                            search_keywords, search_entities
+                    # 2. Article-entities-based: articles that share canonical_entity_id with storyline's articles (enhanced pipeline)
+                    canonical_ids = self._get_storyline_canonical_entity_ids(conn, cur, storyline_id)
+                    if canonical_ids:
+                        ae_articles = await self._article_entities_based_search(
+                            conn, canonical_ids, search_exclude_keywords or [],
+                            settings, list(existing_article_ids), max_results
                         )
+                        existing_ids = {a["id"] for a in discovered_articles}
+                        for a in ae_articles:
+                            if a["id"] not in existing_ids:
+                                discovered_articles.append(a)
+                                existing_ids.add(a["id"])
+                        if ae_articles:
+                            logger.info(f"Article-entities search found {len(ae_articles)} articles sharing canonical entities")
+                    
+                    # 3. Context/entity_profile-based: articles whose contexts mention same entity_profiles as storyline's contexts
+                    ctx_articles = await self._context_entity_based_search(
+                        conn, storyline_id, search_exclude_keywords or [],
+                        settings, list(existing_article_ids), max_results
+                    )
+                    existing_ids = {a["id"] for a in discovered_articles}
+                    for a in ctx_articles:
+                        if a["id"] not in existing_ids:
+                            discovered_articles.append(a)
+                            existing_ids.add(a["id"])
+                    if ctx_articles:
+                        logger.info(f"Context-entity search found {len(ctx_articles)} articles via shared entity profiles")
+                    
+                    # Re-sort merged list by relevance then recency; cap
+                    discovered_articles.sort(
+                        key=lambda x: (x.get("relevance_score", 0), x.get("published_at") or ""),
+                        reverse=True
+                    )
+                    discovered_articles = discovered_articles[:max_results]
+                    
+                    # 4. RAG/semantic supplement if we still have room for more
+                    if len(discovered_articles) < max_results // 2 and search_query:
                         rag_articles = await self._rag_discover_articles(
                             search_query,
                             search_exclude_keywords or [],
@@ -226,13 +268,11 @@ class StorylineAutomationService(DomainAwareService):
                             list(existing_article_ids),
                             max_results
                         )
-                        # Merge: prefer entity matches, add RAG results not already found
                         existing_ids = {a["id"] for a in discovered_articles}
                         for a in rag_articles:
                             if a["id"] not in existing_ids:
                                 discovered_articles.append(a)
                                 existing_ids.add(a["id"])
-                        # Re-sort by relevance, recency
                         discovered_articles.sort(
                             key=lambda x: (x.get("relevance_score", 0), x.get("published_at") or ""),
                             reverse=True
@@ -407,6 +447,36 @@ class StorylineAutomationService(DomainAwareService):
                 if len(w) >= 3:
                     entities.add(w.strip())
         
+        # 6. Enhanced: entity names and canonical names from storyline's articles (article_entities + entity_canonical)
+        try:
+            cur.execute(f"""
+                SELECT DISTINCT ae.entity_name, ae.canonical_entity_id
+                FROM {self.schema}.storyline_articles sa
+                JOIN {self.schema}.article_entities ae ON ae.article_id = sa.article_id
+                WHERE sa.storyline_id = %s AND (ae.entity_name IS NOT NULL AND LENGTH(TRIM(ae.entity_name)) >= 2)
+                LIMIT 50
+            """, (storyline_id,))
+            for (name, cid) in cur.fetchall():
+                if name and len(name) >= 2:
+                    entities.add(name.strip())
+            cur.execute(f"""
+                SELECT DISTINCT ec.canonical_name, ec.aliases
+                FROM {self.schema}.storyline_articles sa
+                JOIN {self.schema}.article_entities ae ON ae.article_id = sa.article_id
+                JOIN {self.schema}.entity_canonical ec ON ec.id = ae.canonical_entity_id
+                WHERE sa.storyline_id = %s AND ec.canonical_name IS NOT NULL
+                LIMIT 50
+            """, (storyline_id,))
+            for (canonical, aliases) in cur.fetchall():
+                if canonical and len(canonical) >= 2:
+                    entities.add(canonical.strip())
+                if aliases:
+                    for al in (aliases[:10] if isinstance(aliases, list) else []):
+                        if al and len(str(al)) >= 2:
+                            entities.add(str(al).strip())
+        except Exception as e:
+            logger.debug("Storyline entity enrichment (article_entities/entity_canonical) skipped: %s", e)
+        
         # Filter very short and common terms
         skip = {"the", "and", "for", "with", "from", "this", "that", "have", "has", "been", "said"}
         return [e for e in sorted(entities) if e.lower() not in skip and len(e) >= 2][:30]
@@ -430,7 +500,7 @@ class StorylineAutomationService(DomainAwareService):
         try:
             with conn.cursor() as cur:
                 cur.execute(f"SET search_path TO {self.schema}, public")
-                date_threshold = datetime.now() - timedelta(days=settings.get("date_range_days", 30))
+                date_threshold = datetime.now() - timedelta(days=settings.get("date_range_days", 90))
                 exclude_ids = list(existing_article_ids) if existing_article_ids else [-1]
                 
                 entity_conditions = []
@@ -515,6 +585,193 @@ class StorylineAutomationService(DomainAwareService):
             logger.error(f"Entity-based search failed: {e}")
             return []
     
+    def _get_storyline_canonical_entity_ids(self, conn, cur, storyline_id: int) -> List[int]:
+        """Return canonical_entity_ids that appear in any of the storyline's articles (article_entities)."""
+        try:
+            cur.execute(f"""
+                SELECT DISTINCT ae.canonical_entity_id
+                FROM {self.schema}.storyline_articles sa
+                JOIN {self.schema}.article_entities ae ON ae.article_id = sa.article_id
+                WHERE sa.storyline_id = %s AND ae.canonical_entity_id IS NOT NULL
+                LIMIT 50
+            """, (storyline_id,))
+            return [row[0] for row in cur.fetchall() if row[0]]
+        except Exception as e:
+            logger.debug("_get_storyline_canonical_entity_ids failed: %s", e)
+            return []
+    
+    async def _article_entities_based_search(
+        self,
+        conn,
+        canonical_entity_ids: List[int],
+        exclude_keywords: List[str],
+        settings: Dict[str, Any],
+        existing_article_ids: List[int],
+        max_results: int,
+    ) -> List[Dict[str, Any]]:
+        """
+        Find articles that share at least one canonical_entity_id with the storyline's articles.
+        Uses enhanced article_entities pipeline; ranks by number of shared entities then recency.
+        """
+        if not canonical_entity_ids:
+            return []
+        try:
+            with conn.cursor() as cur:
+                cur.execute(f"SET search_path TO {self.schema}, public")
+                date_threshold = datetime.now() - timedelta(days=settings.get("date_range_days", 90))
+                exclude_ids = list(existing_article_ids) if existing_article_ids else [-1]
+                placeholders = ",".join(["%s"] * len(canonical_entity_ids))
+                exclude_sql = f"AND a.id NOT IN ({','.join(['%s'] * len(exclude_ids))})"
+                params = [date_threshold] + canonical_entity_ids + exclude_ids
+                exclude_clause = ""
+                if exclude_keywords:
+                    for kw in exclude_keywords[:5]:
+                        kw_pattern = f"%{kw}%"
+                        exclude_clause += " AND (a.title NOT ILIKE %s AND COALESCE(a.content, '') NOT ILIKE %s)"
+                        params.extend([kw_pattern, kw_pattern])
+                # Quality columns when present
+                try:
+                    cur.execute(f"""
+                        SELECT a.id, a.title, a.summary, a.content, a.url, a.source_domain, a.published_at,
+                               a.quality_score, a.quality_tier, a.clickbait_probability, a.fact_density,
+                               COUNT(ae.canonical_entity_id) AS shared_entities
+                        FROM {self.schema}.articles a
+                        JOIN {self.schema}.article_entities ae ON ae.article_id = a.id AND ae.canonical_entity_id IN ({placeholders})
+                        WHERE a.published_at >= %s {exclude_sql} {exclude_clause}
+                        GROUP BY a.id, a.title, a.summary, a.content, a.url, a.source_domain, a.published_at,
+                                 a.quality_score, a.quality_tier, a.clickbait_probability, a.fact_density
+                        ORDER BY shared_entities DESC, a.published_at DESC
+                        LIMIT %s
+                    """, params + [max_results])
+                except Exception:
+                    cur.execute(f"""
+                        SELECT a.id, a.title, a.summary, a.content, a.url, a.source_domain, a.published_at,
+                               a.quality_score, COUNT(ae.canonical_entity_id) AS shared_entities
+                        FROM {self.schema}.articles a
+                        JOIN {self.schema}.article_entities ae ON ae.article_id = a.id AND ae.canonical_entity_id IN ({placeholders})
+                        WHERE a.published_at >= %s {exclude_sql} {exclude_clause}
+                        GROUP BY a.id, a.title, a.summary, a.content, a.url, a.source_domain, a.published_at, a.quality_score
+                        ORDER BY shared_entities DESC, a.published_at DESC
+                        LIMIT %s
+                    """, params + [max_results])
+                rows = cur.fetchall()
+                articles = []
+                for row in rows:
+                    shared = row[-1] if len(row) > 8 else 1
+                    relevance = min(0.95, 0.6 + shared * 0.05)
+                    art_id, art_title, summary, content, url, domain, pub_at = row[0], row[1], row[2], row[3], row[4], row[5], row[6]
+                    quality = row[7] if len(row) > 8 else None
+                    quality_tier = row[8] if len(row) > 9 else None
+                    clickbait_probability = row[9] if len(row) > 10 else None
+                    fact_density = row[10] if len(row) > 11 else None
+                    articles.append({
+                        "id": art_id,
+                        "title": art_title,
+                        "summary": summary,
+                        "content": (content or "")[:500] if content else None,
+                        "url": url,
+                        "source_domain": domain,
+                        "published_at": pub_at.isoformat() if pub_at else None,
+                        "quality_score": float(quality) if quality else 0.5,
+                        "quality_tier": int(quality_tier) if quality_tier is not None else None,
+                        "clickbait_probability": float(clickbait_probability) if clickbait_probability is not None else None,
+                        "fact_density": float(fact_density) if fact_density is not None else None,
+                        "relevance_score": relevance,
+                        "matched_entities": [],
+                        "matched_keywords": [],
+                    })
+                return articles
+        except Exception as e:
+            logger.error("Article-entities-based search failed: %s", e)
+            return []
+    
+    async def _context_entity_based_search(
+        self,
+        conn,
+        storyline_id: int,
+        exclude_keywords: List[str],
+        settings: Dict[str, Any],
+        existing_article_ids: List[int],
+        max_results: int,
+    ) -> List[Dict[str, Any]]:
+        """
+        Find articles whose contexts share entity_profile_ids with the storyline's contexts.
+        Uses intelligence.article_to_context and intelligence.context_entity_mentions.
+        """
+        try:
+            with conn.cursor() as cur:
+                # Storyline's article_ids (domain) -> context_ids -> entity_profile_ids
+                cur.execute(f"""
+                    SELECT sa.article_id FROM {self.schema}.storyline_articles sa WHERE sa.storyline_id = %s
+                """, (storyline_id,))
+                story_article_ids = [r[0] for r in cur.fetchall()]
+                if not story_article_ids:
+                    return []
+                domain_key = self.domain
+                cur.execute("""
+                    SELECT DISTINCT cem.entity_profile_id
+                    FROM intelligence.article_to_context atc
+                    JOIN intelligence.context_entity_mentions cem ON cem.context_id = atc.context_id
+                    WHERE atc.domain_key = %s AND atc.article_id = ANY(%s)
+                """, (domain_key, story_article_ids))
+                profile_ids = [r[0] for r in cur.fetchall() if r[0]]
+                if not profile_ids:
+                    return []
+                # Other context_ids that mention any of these entity_profiles
+                exclude_ids = list(existing_article_ids) if existing_article_ids else []
+                cur.execute("""
+                    SELECT DISTINCT atc.article_id
+                    FROM intelligence.context_entity_mentions cem
+                    JOIN intelligence.article_to_context atc ON atc.context_id = cem.context_id
+                    WHERE cem.entity_profile_id = ANY(%s)
+                      AND atc.domain_key = %s
+                      AND atc.article_id != ALL(%s)
+                    LIMIT %s
+                """, (profile_ids, domain_key, exclude_ids or [0], max_results))
+                other_article_ids = [r[0] for r in cur.fetchall()]
+                if not other_article_ids:
+                    return []
+                date_threshold = datetime.now() - timedelta(days=settings.get("date_range_days", 90))
+                placeholders = ",".join(["%s"] * len(other_article_ids))
+                cur.execute(f"""
+                    SELECT a.id, a.title, a.summary, a.content, a.url, a.source_domain, a.published_at,
+                           a.quality_score, a.quality_tier, a.clickbait_probability, a.fact_density
+                    FROM {self.schema}.articles a
+                    WHERE a.id IN ({placeholders}) AND a.published_at >= %s
+                    ORDER BY a.published_at DESC
+                """, other_article_ids + [date_threshold])
+                rows = cur.fetchall()
+                articles = []
+                for row in rows:
+                    art_id, art_title, summary, content, url, domain, pub_at = row[0], row[1], row[2], row[3], row[4], row[5], row[6]
+                    quality = row[7] if len(row) > 7 else None
+                    quality_tier = row[8] if len(row) > 8 else None
+                    clickbait_probability = row[9] if len(row) > 9 else None
+                    fact_density = row[10] if len(row) > 10 else None
+                    article_text = f"{art_title or ''} {content or ''}".lower()
+                    if exclude_keywords and any(kw.lower() in article_text for kw in exclude_keywords):
+                        continue
+                    articles.append({
+                        "id": art_id,
+                        "title": art_title,
+                        "summary": summary,
+                        "content": (content or "")[:500] if content else None,
+                        "url": url,
+                        "source_domain": domain,
+                        "published_at": pub_at.isoformat() if pub_at else None,
+                        "quality_score": float(quality) if quality else 0.5,
+                        "quality_tier": int(quality_tier) if quality_tier is not None else None,
+                        "clickbait_probability": float(clickbait_probability) if clickbait_probability is not None else None,
+                        "fact_density": float(fact_density) if fact_density is not None else None,
+                        "relevance_score": 0.75,
+                        "matched_entities": [],
+                        "matched_keywords": [],
+                    })
+                return articles[:max_results]
+        except Exception as e:
+            logger.debug("Context-entity-based search failed: %s", e)
+            return []
+    
     async def _rag_discover_articles(
         self,
         query: str,
@@ -532,22 +789,31 @@ class StorylineAutomationService(DomainAwareService):
                 # Use retrieval module for advanced retrieval
                 # Note: EnhancedRAGRetrieval functionality is now in RAGService.retrieval
                 
-                # Build filters
+                # v8: full_history = search entire DB for enrichment; otherwise date range for "recent incoming" mode
+                full_history = settings.get("full_history", False)
+                date_range_days = settings.get("date_range_days", 90)
+                from datetime import datetime, timezone, timedelta
+                now = datetime.now(timezone.utc)
                 filters = {
-                    "date_range_days": settings.get("date_range_days", 30),
                     "min_quality": settings.get("min_quality_score", 0.5),
                     "exclude_article_ids": existing_article_ids,
                 }
+                if full_history:
+                    filters["full_history"] = True
+                else:
+                    filters["date_from"] = now - timedelta(days=date_range_days)
+                    filters["date_to"] = now
                 
-                # Retrieve articles
-                articles = await rag_service.retrieve_relevant_articles(
+                # Retrieve articles (v8: domain scopes search to this schema)
+                articles = await rag_service.retrieval.retrieve_relevant_articles(
                     query=query,
-                    max_results=max_results * 2,  # Get more for filtering
+                    max_results=max_results * 2,
                     use_semantic=True,
                     use_hybrid=True,
                     expand_query=settings.get("use_rag_expansion", True),
                     rerank=settings.get("rerank_results", True),
-                    filters=filters
+                    filters=filters,
+                    domain=self.domain,
                 )
                 
                 # Filter out excluded keywords
@@ -594,7 +860,7 @@ class StorylineAutomationService(DomainAwareService):
                 query_terms = query.split()[:10]  # Limit terms
                 
                 # Build WHERE clause
-                date_threshold = datetime.now() - timedelta(days=settings.get("date_range_days", 30))
+                date_threshold = datetime.now() - timedelta(days=settings.get("date_range_days", 90))
                 exclude_ids = existing_article_ids or [-1]  # Use -1 if empty list
                 
                 where_parts = [

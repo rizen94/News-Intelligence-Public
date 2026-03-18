@@ -14,87 +14,96 @@ logger = logging.getLogger(__name__)
 
 
 def _build_llm_lead_prompt(key_developments: Dict[str, Any], domain: str) -> str:
-    """Build context string (editorial ledes, headlines, storylines, event briefings) for LLM briefing lead."""
+    """Build context string for LLM briefing lead. Marks recent vs older items so the LLM can prioritize today's developments."""
     parts = []
-    # Prefer editorial ledes (richer content from editorial_document)
     editorial_ledes = key_developments.get("editorial_ledes") or []
     if editorial_ledes:
-        ledes = [f"- {l.get('title', '')}: {l.get('lede', '')}" for l in editorial_ledes[:4] if l.get("lede")]
+        ledes = []
+        for l in editorial_ledes[:4]:
+            if l.get("lede"):
+                tag = " [recent]" if l.get("recent") else ""
+                ledes.append(f"- {l.get('title', '')}{tag}: {l.get('lede', '')}")
         if ledes:
-            parts.append("Storyline editorial ledes:\n" + "\n".join(ledes))
-    # Headlines with summaries when available
+            parts.append("Storyline editorial ledes (prefer [recent]):\n" + "\n".join(ledes))
     headlines = key_developments.get("top_headlines") or []
     if headlines:
-        head_lines = []
-        for h in headlines[:6]:
-            t = (h.get("title") or "").strip()
-            s = (h.get("summary") or "").strip()
-            if t:
-                head_lines.append(f"- {t}" + (f": {s[:200]}" if s else ""))
+        head_lines = [f"- {(h.get('title') or '').strip()}" + (f": {(h.get('summary') or '')[:150]}" if h.get("summary") else "") for h in headlines[:6] if (h.get("title") or "").strip()]
         if head_lines:
-            parts.append("Key headlines from the last few days:\n" + "\n".join(head_lines))
-    # Storyline titles
+            parts.append("Key headlines:\n" + "\n".join(head_lines))
     storylines_list = key_developments.get("top_storylines") or []
-    story_titles = [ (s.get("title") or "").strip() for s in storylines_list[:5] if (s.get("title") or "").strip() ]
-    if story_titles:
-        parts.append("Active storylines:\n" + "\n".join("- " + t for t in story_titles))
-    # Event briefings
+    if storylines_list:
+        story_lines = []
+        for s in storylines_list[:5]:
+            t = (s.get("title") or "").strip()
+            if t:
+                tag = " [recent activity]" if s.get("recent") else " [older]"
+                story_lines.append("- " + t + tag)
+        if story_lines:
+            parts.append("Storylines (prefer those with recent activity):\n" + "\n".join(story_lines))
     event_briefings = key_developments.get("event_briefings") or []
     if event_briefings:
-        ev_lines = [f"- {e.get('headline') or e.get('event_name', '')}" for e in event_briefings[:3] if e.get("headline") or e.get("event_name")]
+        ev_lines = [f"- {e.get('headline') or e.get('event_name', '')}" for e in event_briefings[:4] if e.get("headline") or e.get("event_name")]
         if ev_lines:
-            parts.append("Recent events:\n" + "\n".join(ev_lines))
+            parts.append("Events:\n" + "\n".join(ev_lines))
     return "\n\n".join(parts) if parts else ""
 
 router = APIRouter(prefix="/api", tags=["Intelligence products"])
 
 
 def _brief_to_content(brief: Dict[str, Any]) -> str:
-    """Turn briefing sections into a single narrative string for the UI. Leads with editorial (headlines/storylines), then metrics. Uses last 3 days of data."""
+    """Turn briefing sections into a single narrative for the UI. Clear sections: what's new (ledes/headlines), storylines (with recency), events, then metrics. Uses last 3 days of data."""
     sections = brief.get("sections") or {}
     parts = []
     days = brief.get("days_window", 3)
 
-    # Editorial layer first: editorial ledes (from editorial_document) > headlines > storylines > event briefings
     kd = sections.get("key_developments") or {}
     if kd.get("has_content"):
-        # Best: editorial ledes from storylines that have editorial_document populated
+        # --- What's new (editorial ledes or top headlines) ---
         editorial_ledes = kd.get("editorial_ledes") or []
+        headlines = kd.get("top_headlines") or []
         if editorial_ledes:
             ledes = [l.get("lede", "").strip() for l in editorial_ledes[:3] if l.get("lede", "").strip()]
             if ledes:
-                parts.append("Top stories: " + " ".join(ledes))
+                parts.append("What's new\n" + "\n".join("• " + lede for lede in ledes))
+        elif headlines:
+            lead_items = [(h.get("title") or "").strip() for h in headlines[:5] if (h.get("title") or "").strip()]
+            if lead_items:
+                parts.append("What's new\n" + "\n".join("• " + t for t in lead_items))
 
-        # Headlines from articles
-        headlines = kd.get("top_headlines") or []
-        if headlines and not editorial_ledes:
-            lead = " ".join((h.get("title") or "").strip() for h in headlines[:5] if (h.get("title") or "").strip())
-            if lead:
-                parts.append("Key developments: " + lead)
-
-        # Storyline titles
+        # --- Storylines (with recency when available) ---
         storylines_list = kd.get("top_storylines") or []
         if storylines_list:
-            titles = [ (s.get("title") or "").strip() for s in storylines_list[:5] if (s.get("title") or "").strip() ]
-            if titles:
-                parts.append("Leading storylines: " + "; ".join(titles))
+            story_lines = []
+            for s in storylines_list[:6]:
+                title = (s.get("title") or "").strip()
+                if not title:
+                    continue
+                recency = ""
+                if s.get("recent"):
+                    recency = " (recent)"
+                elif s.get("last_article_at"):
+                    recency = " (latest article in window)"
+                story_lines.append("• " + title + recency)
+            if story_lines:
+                parts.append("Storylines\n" + "\n".join(story_lines))
 
-        # Event briefings
+        # --- Events ---
         event_briefings = kd.get("event_briefings") or []
         if event_briefings:
             event_lines = []
-            for eb in event_briefings[:3]:
+            for eb in event_briefings[:4]:
                 headline = (eb.get("headline") or eb.get("event_name") or "").strip()
                 excerpt = (eb.get("briefing_excerpt") or "").strip()
                 if headline:
-                    event_lines.append(headline + (": " + excerpt[:100] if excerpt else ""))
+                    event_lines.append("• " + headline + (": " + excerpt[:120] if excerpt else ""))
             if event_lines:
-                parts.append("Events: " + " | ".join(event_lines))
+                parts.append("Events\n" + "\n".join(event_lines))
 
-    # Then supporting metrics
+    # --- Metrics ---
+    metric_parts = []
     so = sections.get("system_overview") or {}
     if so and "error" not in so:
-        parts.append(
+        metric_parts.append(
             "System overview (last {} days): {} new articles, {} updated.".format(
                 days, so.get("today_new_articles", 0), so.get("today_updated_articles", 0)
             )
@@ -102,7 +111,7 @@ def _brief_to_content(brief: Dict[str, Any]) -> str:
     ca = sections.get("content_analysis") or {}
     if ca and "error" not in ca:
         total = ca.get("total_articles_analyzed", sum(c.get("count", 0) for c in ca.get("category_distribution", [])))
-        parts.append(
+        metric_parts.append(
             "Content (last {} days): {} categories, {} articles analyzed.".format(
                 days, len(ca.get("category_distribution", [])), total
             )
@@ -111,12 +120,12 @@ def _brief_to_content(brief: Dict[str, Any]) -> str:
     if sa and "error" not in sa:
         daily_summary = (sa.get("daily_summary") or "").strip()
         if daily_summary:
-            parts.append("Summary: " + daily_summary[:500])
-        parts.append("Storyline analysis: {} articles in topic cloud.".format(sa.get("article_count", 0)))
+            metric_parts.append("Summary: " + daily_summary[:500])
+        metric_parts.append("Storyline analysis: {} articles in topic cloud.".format(sa.get("article_count", 0)))
     qm = sections.get("quality_metrics") or {}
     if qm and "error" not in qm:
         score = qm.get("overall_quality_score")
-        parts.append("Quality: {} avg score.".format(score if score is not None else "N/A"))
+        metric_parts.append("Quality: {} avg score.".format(score if score is not None else "N/A"))
     rec = sections.get("recommendations") or {}
     actions = (
         rec.get("priority_actions", [])
@@ -125,7 +134,9 @@ def _brief_to_content(brief: Dict[str, Any]) -> str:
         + rec.get("system_optimization", [])
     )
     if actions:
-        parts.append("Recommendations: " + " ".join(actions[:3]))
+        metric_parts.append("Recommendations: " + " ".join(actions[:3]))
+    if metric_parts:
+        parts.append("Metrics\n" + "\n".join(metric_parts))
     return "\n\n".join(parts) if parts else "Daily briefing generated (last {} days). No sections available.".format(days)
 
 
@@ -435,7 +446,7 @@ def get_briefing_feed(
 
             cur.execute(
                 f"""
-                SELECT id, title, description, updated_at, article_count, status
+                SELECT id, title, description, updated_at, article_count, status, editorial_document
                 FROM {schema}.storylines
                 WHERE title IS NOT NULL AND TRIM(title) != ''
                 ORDER BY updated_at DESC
@@ -443,11 +454,48 @@ def get_briefing_feed(
                 """,
                 (storylines_limit + len(not_story),),
             )
+            storyline_rows = []
             for row in cur.fetchall():
                 if row["id"] in not_story:
                     continue
-                storylines.append(dict(row))
-            storylines = sort_briefing_items_by_priority(storylines, title_key="title", summary_key="description")[:storylines_limit]
+                storyline_rows.append(dict(row))
+            storyline_rows = sort_briefing_items_by_priority(storyline_rows, title_key="title", summary_key="description")[:storylines_limit]
+            storyline_ids = [s["id"] for s in storyline_rows]
+            top_entities_by_storyline = {sid: [] for sid in storyline_ids}
+            if storyline_ids:
+                cur.execute(
+                    f"""
+                    WITH article_entities_agg AS (
+                        SELECT sa.storyline_id, ae.canonical_entity_id, COUNT(*) AS cnt
+                        FROM {schema}.storyline_articles sa
+                        JOIN {schema}.article_entities ae ON ae.article_id = sa.article_id
+                        WHERE sa.storyline_id = ANY(%s)
+                        GROUP BY sa.storyline_id, ae.canonical_entity_id
+                    ),
+                    ranked AS (
+                        SELECT storyline_id, canonical_entity_id,
+                               ROW_NUMBER() OVER (PARTITION BY storyline_id ORDER BY cnt DESC) AS rn
+                        FROM article_entities_agg
+                    )
+                    SELECT r.storyline_id, ec.canonical_name, ec.entity_type, ec.description
+                    FROM ranked r
+                    JOIN {schema}.entity_canonical ec ON ec.id = r.canonical_entity_id
+                    WHERE r.rn <= 3
+                    """,
+                    (storyline_ids,),
+                )
+                for r in cur.fetchall():
+                    desc = r[3]
+                    top_entities_by_storyline.setdefault(r[0], []).append({
+                        "name": r[1] or "",
+                        "type": r[2] or "subject",
+                        "description_short": (desc[:100] + "…") if desc and len(desc) > 100 else (desc or ""),
+                    })
+            for s in storyline_rows:
+                s["top_entities"] = top_entities_by_storyline.get(s["id"], [])
+                if "editorial_document" not in s or s["editorial_document"] is None:
+                    s["editorial_document"] = None
+            storylines = storyline_rows
 
         conn.close()
         return {

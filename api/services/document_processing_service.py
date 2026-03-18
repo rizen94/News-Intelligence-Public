@@ -16,6 +16,8 @@ import logging
 import os
 import re
 import tempfile
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, List, Optional, Tuple
 
 from shared.database.connection import get_db_connection
@@ -24,7 +26,15 @@ logger = logging.getLogger(__name__)
 
 MAX_PDF_SIZE_MB = 50
 MAX_PAGES = 200
-DOWNLOAD_TIMEOUT = 60
+DOWNLOAD_TIMEOUT = 45
+DOWNLOAD_RETRIES = 2
+RETRY_BACKOFF_SEC = 5
+# Don't retry these; mark document as permanently failed so we stop re-queuing
+PERMANENT_HTTP_CODES = (404, 403, 410)
+# After this many failed attempts (any error), mark as permanent to avoid infinite retry
+MAX_PROCESSING_ATTEMPTS = 5
+# Process this many documents in parallel per batch (throughput vs LLM/DB load)
+BATCH_PARALLEL_WORKERS = 3
 
 # Section heading heuristics: lines that are short, often bold/large, start sections
 HEADING_PATTERN = re.compile(
@@ -63,32 +73,85 @@ Text:
 # PDF download
 # ---------------------------------------------------------------------------
 
-def _download_pdf(url: str, max_mb: int = MAX_PDF_SIZE_MB) -> Tuple[Optional[bytes], Optional[str]]:
-    """Download PDF from URL. Returns (bytes, None) or (None, error)."""
+def _is_permanent_failure(error_message: str) -> bool:
+    """True if we should stop retrying this URL (404, 403, 410, or explicit 'permanent')."""
+    if not error_message:
+        return False
+    msg = error_message.lower()
+    if "permanent" in msg:
+        return True
+    for code in (404, 403, 410):
+        if str(code) in msg or ("not found" in msg and code == 404) or ("forbidden" in msg and code == 403):
+            return True
+    return False
+
+
+def _download_pdf(url: str, max_mb: int = MAX_PDF_SIZE_MB, head_first: bool = True) -> Tuple[Optional[bytes], Optional[str]]:
+    """
+    Download PDF from URL. Returns (bytes, None) or (None, error).
+    - Optional HEAD request first to fail fast on 404/403/410.
+    - Retries with backoff for timeouts and 5xx (not for 4xx except where we retry).
+    """
     import requests
 
-    try:
-        resp = requests.get(url, timeout=DOWNLOAD_TIMEOUT, stream=True, headers={
-            "User-Agent": "NewsIntelligence/1.0 DocumentProcessor",
-        })
-        resp.raise_for_status()
+    headers = {
+        "User-Agent": "Mozilla/5.0 (compatible; NewsIntelligence/1.0; +https://news-intel/document-bot)",
+        "Accept": "application/pdf,*/*",
+    }
 
-        content_type = resp.headers.get("Content-Type", "")
-        if "pdf" not in content_type.lower() and not url.lower().endswith(".pdf"):
-            # Try to detect PDF magic bytes
-            first_bytes = resp.content[:5]
-            if first_bytes != b"%PDF-":
-                return None, f"Not a PDF (Content-Type: {content_type})"
+    # Fail fast on permanent HTTP errors (saves bandwidth and time)
+    if head_first:
+        try:
+            head_resp = requests.head(
+                url,
+                timeout=10,
+                allow_redirects=True,
+                headers=headers,
+            )
+            if head_resp.status_code in PERMANENT_HTTP_CODES:
+                return None, f"HTTP {head_resp.status_code} (permanent)"
+            if head_resp.status_code >= 400 and head_resp.status_code < 500:
+                return None, f"HTTP {head_resp.status_code}"
+        except requests.exceptions.Timeout:
+            return None, f"HEAD timeout"
+        except requests.exceptions.RequestException as e:
+            # HEAD can fail (e.g. 405 Method Not Allowed); proceed to GET
+            logger.debug("HEAD request failed, trying GET: %s", e)
 
-        size = len(resp.content)
-        if size > max_mb * 1024 * 1024:
-            return None, f"PDF too large: {size / 1024 / 1024:.1f} MB (max {max_mb} MB)"
+    # GET with retries for timeout and 5xx only
+    last_error: Optional[str] = None
+    for attempt in range(DOWNLOAD_RETRIES + 1):
+        try:
+            resp = requests.get(url, timeout=DOWNLOAD_TIMEOUT, stream=True, headers=headers)
+            resp.raise_for_status()
 
-        return resp.content, None
-    except requests.exceptions.Timeout:
-        return None, f"Download timeout ({DOWNLOAD_TIMEOUT}s)"
-    except requests.exceptions.RequestException as e:
-        return None, f"Download failed: {e}"
+            content = resp.content
+            content_type = resp.headers.get("Content-Type", "")
+            if "pdf" not in content_type.lower() and not url.lower().endswith(".pdf"):
+                if len(content) >= 5 and content[:5] != b"%PDF-":
+                    return None, f"Not a PDF (Content-Type: {content_type})"
+
+            size = len(content)
+            if size > max_mb * 1024 * 1024:
+                return None, f"PDF too large: {size / 1024 / 1024:.1f} MB (max {max_mb} MB)"
+
+            return content, None
+        except requests.exceptions.HTTPError as e:
+            if e.response is not None and e.response.status_code in PERMANENT_HTTP_CODES:
+                return None, f"HTTP {e.response.status_code} (permanent)"
+            if e.response is not None and 400 <= e.response.status_code < 500:
+                return None, f"HTTP {e.response.status_code}"
+            # 5xx: retry
+            last_error = f"HTTP {e.response.status_code}" if e.response else str(e)
+        except requests.exceptions.Timeout:
+            last_error = f"Download timeout ({DOWNLOAD_TIMEOUT}s)"
+        except requests.exceptions.RequestException as e:
+            last_error = f"Download failed: {e}"
+
+        if attempt < DOWNLOAD_RETRIES:
+            time.sleep(RETRY_BACKOFF_SEC)
+
+    return None, last_error or "Download failed"
 
 
 # ---------------------------------------------------------------------------
@@ -151,17 +214,50 @@ def _extract_text_from_pdf(pdf_bytes: bytes, max_pages: int = MAX_PAGES) -> Dict
     return result
 
 
+def _extract_text_pymupdf(pdf_bytes: bytes, max_pages: int = MAX_PAGES) -> Optional[Dict[str, Any]]:
+    """Optional: extract text with PyMuPDF (fitz) — often faster and handles some PDFs better."""
+    try:
+        import fitz  # PyMuPDF
+    except ImportError:
+        return None
+    try:
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        pages = []
+        all_text = []
+        for i, page in enumerate(doc):
+            if i >= max_pages:
+                break
+            text = page.get_text() or ""
+            all_text.append(text)
+            pages.append({"page_num": i + 1, "text": text, "tables": []})
+        doc.close()
+        return {
+            "pages": pages,
+            "metadata": {"page_count": len(pages)},
+            "total_text": "\n\n".join(all_text),
+            "table_count": 0,
+        }
+    except Exception as e:
+        logger.debug("PyMuPDF extraction failed: %s", e)
+        return None
+
+
 def _extract_text_fallback(pdf_bytes: bytes, max_pages: int = MAX_PAGES) -> Dict[str, Any]:
-    """Fallback: try pdfminer or return minimal result."""
+    """Fallback: try PyMuPDF (if available), then pdfminer, or return minimal result."""
+    result = _extract_text_pymupdf(pdf_bytes, max_pages)
+    if result and (result.get("total_text") or "").strip():
+        return result
+
     try:
         from pdfminer.high_level import extract_text as pdfminer_extract
         text = pdfminer_extract(io.BytesIO(pdf_bytes), maxpages=max_pages)
-        return {
-            "pages": [{"page_num": 1, "text": text, "tables": []}],
-            "metadata": {},
-            "total_text": text,
-            "table_count": 0,
-        }
+        if text and text.strip():
+            return {
+                "pages": [{"page_num": 1, "text": text, "tables": []}],
+                "metadata": {},
+                "total_text": text,
+                "table_count": 0,
+            }
     except Exception:
         pass
 
@@ -170,7 +266,7 @@ def _extract_text_fallback(pdf_bytes: bytes, max_pages: int = MAX_PAGES) -> Dict
         "metadata": {},
         "total_text": "",
         "table_count": 0,
-        "error": "No PDF parser available (install pdfplumber or pdfminer.six)",
+        "error": "No PDF parser available (install pdfplumber, pymupdf, or pdfminer.six)",
     }
 
 
@@ -362,7 +458,7 @@ def process_document(
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT id, source_url, title, source_type, document_type, extracted_sections
+                SELECT id, source_url, title, source_type, document_type, extracted_sections, metadata
                 FROM intelligence.processed_documents
                 WHERE id = %s
                 """,
@@ -373,7 +469,7 @@ def process_document(
                 conn.close()
                 return {"success": False, "error": f"Document {document_id} not found"}
 
-            doc_id, source_url, title, source_type, doc_type, existing_sections = doc_row
+            doc_id, source_url, title, source_type, doc_type, existing_sections, existing_metadata = doc_row
 
             # Skip if already processed (unless forced)
             if existing_sections and not force_reprocess and not extracted_sections:
@@ -392,6 +488,14 @@ def process_document(
         # Automatic extraction if not provided
         auto_extracted = False
         processing_metadata: Dict[str, Any] = {"method": "manual"}
+        prev_attempts = 0
+        if existing_metadata and isinstance(existing_metadata, dict):
+            proc = existing_metadata.get("processing") or {}
+            if isinstance(proc, dict):
+                try:
+                    prev_attempts = int(proc.get("attempts") or 0)
+                except (TypeError, ValueError):
+                    pass
 
         if not extracted_sections and source_url:
             pdf_result = _process_from_url(source_url, title or "")
@@ -407,10 +511,22 @@ def process_document(
                     "text_length": pdf_result.get("text_length", 0),
                 }
             else:
+                error_msg = pdf_result.get("error", "unknown")
+                attempts = prev_attempts + 1
                 processing_metadata = {
                     "method": "pdf_failed",
-                    "error": pdf_result.get("error", "unknown"),
+                    "error": error_msg,
+                    "attempts": attempts,
                 }
+                if _is_permanent_failure(error_msg) or attempts >= MAX_PROCESSING_ATTEMPTS:
+                    processing_metadata["permanent_failure"] = True
+                    extracted_sections = []
+                    key_findings = key_findings or []
+                    entities_mentioned = entities_mentioned or []
+                    logger.info(
+                        "Document %s marked permanent failure (attempts=%s, error=%s)",
+                        document_id, attempts, error_msg[:80],
+                    )
 
         # Store results
         conn = get_db_connection()
@@ -476,6 +592,18 @@ def process_document(
                     di_id = cur.fetchone()[0]
 
                 # v7: Create intelligence.contexts for each section so they join extraction/synthesis pipeline
+                # v8: domain_key from document metadata (politics/finance/science-tech) for discovery/synthesis
+                cur.execute(
+                    """
+                    SELECT COALESCE(metadata->'processing'->>'domain_key', metadata->>'domain_key')
+                    FROM intelligence.processed_documents WHERE id = %s
+                    """,
+                    (document_id,),
+                )
+                row = cur.fetchone()
+                doc_domain = (row[0] if row and row[0] else None) or "documents"
+                if doc_domain and doc_domain not in ("politics", "finance", "science-tech"):
+                    doc_domain = "documents"
                 sections_list = extracted_sections or []
                 doc_title = (title or "Document")[:500]
                 for idx, sec in enumerate(sections_list):
@@ -489,9 +617,10 @@ def process_document(
                         """
                         INSERT INTO intelligence.contexts
                         (source_type, domain_key, title, content, raw_content, metadata)
-                        VALUES ('pdf_section', 'documents', %s, %s, %s, %s)
+                        VALUES ('pdf_section', %s, %s, %s, %s, %s)
                         """,
                         (
+                            doc_domain,
                             f"{doc_title}: {sec_title}",
                             sec_content,
                             sec_content,
@@ -698,7 +827,8 @@ def process_unprocessed_documents(limit: int = 10) -> Dict[str, Any]:
                 FROM intelligence.processed_documents
                 WHERE source_url IS NOT NULL
                   AND source_url != ''
-                  AND (extracted_sections IS NULL OR extracted_sections = '[]')
+                  AND (extracted_sections IS NULL OR extracted_sections = '[]'::jsonb)
+                  AND (metadata IS NULL OR (metadata->'processing'->>'permanent_failure') IS DISTINCT FROM 'true')
                 ORDER BY created_at DESC
                 LIMIT %s
                 """,
@@ -708,16 +838,36 @@ def process_unprocessed_documents(limit: int = 10) -> Dict[str, Any]:
         conn.close()
 
         results = []
-        for doc_id, url, title in docs:
-            r = process_document(doc_id)
-            results.append({
-                "document_id": doc_id,
-                "title": title,
-                "result": r.get("success", False),
-                "sections": r.get("section_count", 0),
-                "findings": r.get("finding_count", 0),
-                "error": r.get("error"),
-            })
+        workers = min(BATCH_PARALLEL_WORKERS, len(docs)) if docs else 1
+        if workers <= 1 or len(docs) <= 1:
+            for doc_id, url, title in docs:
+                r = process_document(doc_id)
+                results.append({
+                    "document_id": doc_id,
+                    "title": title,
+                    "result": r.get("success", False),
+                    "sections": r.get("section_count", 0),
+                    "findings": r.get("finding_count", 0),
+                    "error": r.get("error"),
+                })
+        else:
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                future_to_doc = {executor.submit(process_document, doc_id): (doc_id, title) for doc_id, _url, title in docs}
+                for future in as_completed(future_to_doc):
+                    doc_id, title = future_to_doc[future]
+                    try:
+                        r = future.result()
+                    except Exception as e:
+                        logger.warning("document_processing doc_id=%s: %s", doc_id, e)
+                        r = {"success": False, "error": str(e)}
+                    results.append({
+                        "document_id": doc_id,
+                        "title": title,
+                        "result": r.get("success", False),
+                        "sections": r.get("section_count", 0),
+                        "findings": r.get("finding_count", 0),
+                        "error": r.get("error"),
+                    })
 
         return {
             "success": True,

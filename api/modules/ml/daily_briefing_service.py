@@ -145,39 +145,119 @@ class DailyBriefingService:
             logger.error(f"Error generating daily briefing: {e}")
             return {"error": str(e)}
     
+    def _merge_daily_briefings(self, briefings: List[Dict]) -> Dict[str, any]:
+        """Merge multiple domain briefings (same day) into one. Sums counts, combines lists. Skips briefings with error."""
+        valid = [b for b in briefings if b and "error" not in b]
+        if not valid:
+            return {"error": "No valid domain briefings to merge", "sections": {}, "statistics": {}}
+        if len(valid) == 1:
+            return valid[0]
+
+        base = valid[0].copy()
+        so = base.get("sections", {}).get("system_overview", {})
+        if "error" in so:
+            so = {}
+        for b in valid[1:]:
+            o = b.get("sections", {}).get("system_overview", {})
+            if "error" in o:
+                continue
+            so["total_articles"] = so.get("total_articles", 0) + o.get("total_articles", 0)
+            so["today_new_articles"] = so.get("today_new_articles", 0) + o.get("today_new_articles", 0)
+            so["today_updated_articles"] = so.get("today_updated_articles", 0) + o.get("today_updated_articles", 0)
+            so["all_time_articles"] = so.get("all_time_articles", 0) + o.get("all_time_articles", 0)
+            so["total_sources"] = so.get("total_sources", 0) + o.get("total_sources", 0)
+        base.setdefault("sections", {})["system_overview"] = so
+
+        # content_analysis: merge category_distribution
+        cat_counts = {}
+        total_analyzed = 0
+        for b in valid:
+            ca = b.get("sections", {}).get("content_analysis", {})
+            if "error" in ca:
+                continue
+            total_analyzed += ca.get("total_articles_analyzed", 0)
+            for c in ca.get("category_distribution", []):
+                cat = c.get("category", "Other")
+                cat_counts[cat] = cat_counts.get(cat, 0) + c.get("count", 0)
+        if base.get("sections", {}).get("content_analysis", {}).get("error") != "error":
+            base["sections"]["content_analysis"] = base.get("sections", {}).get("content_analysis", {})
+            base["sections"]["content_analysis"]["total_articles_analyzed"] = total_analyzed
+            base["sections"]["content_analysis"]["category_distribution"] = [
+                {"category": k, "count": v, "avg_quality": 0.5} for k, v in sorted(cat_counts.items(), key=lambda x: -x[1])[:15]
+            ]
+
+        # key_developments: concatenate (dedupe by id)
+        seen_ids = set()
+        top_headlines = []
+        top_storylines = []
+        editorial_ledes = []
+        event_briefings = []
+        for b in valid:
+            kd = b.get("sections", {}).get("key_developments", {})
+            if "error" in kd:
+                continue
+            for h in kd.get("top_headlines", [])[:10]:
+                hid = h.get("id") or h.get("title", "")
+                if hid not in seen_ids:
+                    seen_ids.add(hid)
+                    top_headlines.append(h)
+            for s in kd.get("top_storylines", [])[:10]:
+                sid = s.get("id")
+                if sid not in seen_ids:
+                    seen_ids.add(sid)
+                    top_storylines.append(s)
+            editorial_ledes.extend(kd.get("editorial_ledes", [])[:5])
+            event_briefings.extend(kd.get("event_briefings", [])[:5])
+        if "sections" in base and "key_developments" in base["sections"]:
+            base["sections"]["key_developments"]["top_headlines"] = top_headlines[:20]
+            base["sections"]["key_developments"]["top_storylines"] = top_storylines[:20]
+            base["sections"]["key_developments"]["editorial_ledes"] = editorial_ledes[:15]
+            base["sections"]["key_developments"]["event_briefings"] = event_briefings[:15]
+            base["sections"]["key_developments"]["has_content"] = bool(top_headlines or top_storylines or editorial_ledes or event_briefings)
+
+        # storyline_analysis: merge breaking_topics
+        breaking = []
+        for b in valid:
+            sa = b.get("sections", {}).get("storyline_analysis", {})
+            if "error" not in sa:
+                breaking.extend(sa.get("breaking_topics", [])[:5])
+        if base.get("sections", {}).get("storyline_analysis", {}).get("error") != "error":
+            base.setdefault("sections", {})["storyline_analysis"] = base.get("sections", {}).get("storyline_analysis", {})
+            base["sections"]["storyline_analysis"]["breaking_topics"] = breaking[:15]
+
+        # statistics
+        base["statistics"] = {
+            "total_articles": sum(b.get("statistics", {}).get("total_articles", 0) for b in valid),
+            "today_articles": sum(b.get("statistics", {}).get("today_articles", 0) for b in valid),
+            "breaking_stories": sum(b.get("statistics", {}).get("breaking_stories", 0) for b in valid),
+            "categories_covered": sum(b.get("statistics", {}).get("categories_covered", 0) for b in valid),
+            "total_sections": base.get("statistics", {}).get("total_sections", 0),
+            "sections_with_errors": base.get("statistics", {}).get("sections_with_errors", 0),
+            "success_rate": base.get("statistics", {}).get("success_rate", 0),
+        }
+        base["domain"] = "all"
+        return base
+
     def generate_weekly_briefing(self, 
                                 week_start_date: Optional[datetime] = None) -> Dict[str, any]:
         """
-        Generate a weekly intelligence briefing
-        
-        Args:
-            week_start_date: Start of the week (defaults to Monday of current week)
-            
-        Returns:
-            Dictionary containing the weekly briefing
+        Generate a weekly intelligence briefing (single schema / legacy).
+        Prefer generate_weekly_briefing_aggregate() so the digest uses all domains.
         """
         try:
             if week_start_date is None:
-                # Get Monday of current week
                 today = datetime.now()
                 days_since_monday = today.weekday()
                 week_start_date = today - timedelta(days=days_since_monday)
-            
             week_end_date = week_start_date + timedelta(days=6)
-            
             logger.info(f"Generating weekly briefing for {week_start_date.strftime('%Y-%m-%d')} to {week_end_date.strftime('%Y-%m-%d')}")
-            
-            # Generate daily briefings for the week
             daily_briefings = []
             current_date = week_start_date
-            
             while current_date <= week_end_date:
                 daily_briefing = self.generate_daily_briefing(current_date, include_deduplication=False)
                 if "error" not in daily_briefing:
                     daily_briefings.append(daily_briefing)
                 current_date += timedelta(days=1)
-            
-            # Generate weekly summary
             weekly_briefing = {
                 "briefing_type": "weekly_intelligence",
                 "week_start": week_start_date.strftime('%Y-%m-%d'),
@@ -187,11 +267,48 @@ class DailyBriefingService:
                 "weekly_summary": self._generate_weekly_summary(daily_briefings),
                 "trend_analysis": self._generate_trend_analysis(daily_briefings)
             }
-            
             return weekly_briefing
-            
         except Exception as e:
             logger.error(f"Error generating weekly briefing: {e}")
+            return {"error": str(e)}
+
+    def generate_weekly_briefing_aggregate(self, 
+                                           week_start_date: Optional[datetime] = None) -> Dict[str, any]:
+        """
+        Generate a weekly briefing by aggregating daily briefings from all domains
+        (politics, finance, science-tech). Use this for digest so data is not limited to public schema.
+        """
+        try:
+            if week_start_date is None:
+                today = datetime.now()
+                days_since_monday = today.weekday()
+                week_start_date = today - timedelta(days=days_since_monday)
+            week_end_date = week_start_date + timedelta(days=6)
+            logger.info(f"Generating weekly briefing (all domains) for {week_start_date.strftime('%Y-%m-%d')} to {week_end_date.strftime('%Y-%m-%d')}")
+            daily_briefings = []
+            current_date = week_start_date
+            while current_date <= week_end_date:
+                per_domain = []
+                for domain in ("politics", "finance", "science-tech"):
+                    b = self.generate_daily_briefing(current_date, include_deduplication=False, domain=domain)
+                    if b and "error" not in b:
+                        per_domain.append(b)
+                merged = self._merge_daily_briefings(per_domain)
+                if "error" not in merged:
+                    daily_briefings.append(merged)
+                current_date += timedelta(days=1)
+            weekly_briefing = {
+                "briefing_type": "weekly_intelligence",
+                "week_start": week_start_date.strftime('%Y-%m-%d'),
+                "week_end": week_end_date.strftime('%Y-%m-%d'),
+                "generated_at": datetime.now().isoformat(),
+                "daily_briefings": daily_briefings,
+                "weekly_summary": self._generate_weekly_summary(daily_briefings),
+                "trend_analysis": self._generate_trend_analysis(daily_briefings)
+            }
+            return weekly_briefing
+        except Exception as e:
+            logger.error(f"Error generating weekly briefing (aggregate): {e}")
             return {"error": str(e)}
     
     def _generate_system_overview(self, briefing_date: datetime, start_date: datetime, articles_table: str = "articles") -> Dict[str, any]:
@@ -448,65 +565,138 @@ class DailyBriefingService:
             except Exception as e:
                 logger.debug("key_developments headlines: %s", e)
 
-            # Storylines with editorial_document ledes when available
+            # Storylines: prefer those with recent article activity (last article published in window)
+            # Order by last_article_at DESC so "what's happening now" appears first; fallback to updated_at
             storylines_table = f"{schema}.storylines"
+            articles_table_schema = f"{schema}.articles"
+            sa_table = f"{schema}.storyline_articles"
             try:
                 cursor.execute(
                     f"""
-                    SELECT id, title,
-                           COALESCE(total_articles, article_count, 0),
-                           updated_at,
-                           editorial_document, document_status
-                    FROM {storylines_table}
-                    WHERE updated_at >= %s AND title IS NOT NULL AND TRIM(title) != ''
-                    ORDER BY updated_at DESC
-                    LIMIT 8
+                    SELECT s.id, s.title,
+                           COALESCE(s.total_articles, s.article_count, 0),
+                           s.updated_at,
+                           s.editorial_document, s.document_status,
+                           (SELECT MAX(a.published_at) FROM {sa_table} sa2
+                            JOIN {articles_table_schema} a ON a.id = sa2.article_id
+                            WHERE sa2.storyline_id = s.id AND a.published_at >= %s) AS last_article_at
+                    FROM {storylines_table} s
+                    WHERE s.updated_at >= %s AND s.title IS NOT NULL AND TRIM(s.title) != ''
+                    ORDER BY last_article_at DESC NULLS LAST, s.updated_at DESC
+                    LIMIT 10
                     """,
-                    (start_date,),
+                    (start_date, start_date),
                 )
                 for row in cursor.fetchall():
                     sid = row[0]
                     stitle = (row[1] or "").strip()
                     ed = row[4] if len(row) > 4 else None
+                    last_article_at = row[6] if len(row) > 6 else None
+                    recency_24h = False
+                    if last_article_at:
+                        try:
+                            from datetime import timezone
+                            now = datetime.now(timezone.utc)
+                            dt = last_article_at.astimezone(timezone.utc) if getattr(last_article_at, "tzinfo", None) else last_article_at
+                            recency_24h = (now - dt).total_seconds() < 86400  # 24h
+                        except Exception:
+                            pass
                     top_storylines.append({
                         "id": sid,
                         "title": stitle,
                         "article_count": int(row[2]) if row[2] is not None else 0,
                         "updated_at": row[3].isoformat() if hasattr(row[3], "isoformat") else str(row[3]) if row[3] else None,
                         "document_status": row[5] if len(row) > 5 else None,
+                        "last_article_at": last_article_at.isoformat() if hasattr(last_article_at, "isoformat") else str(last_article_at) if last_article_at else None,
+                        "recent": bool(recency_24h),
                     })
                     # Extract lede from editorial_document if present
                     if ed and isinstance(ed, dict) and ed.get("lede"):
-                        editorial_ledes.append({"storyline_id": sid, "title": stitle, "lede": ed["lede"]})
+                        editorial_ledes.append({"storyline_id": sid, "title": stitle, "lede": ed["lede"], "recent": bool(recency_24h)})
             except Exception as e:
                 logger.debug("key_developments storylines: %s", e)
+                # Fallback without last_article_at
+                try:
+                    cursor.execute(
+                        f"""
+                        SELECT id, title,
+                               COALESCE(total_articles, article_count, 0),
+                               updated_at,
+                               editorial_document, document_status
+                        FROM {storylines_table}
+                        WHERE updated_at >= %s AND title IS NOT NULL AND TRIM(title) != ''
+                        ORDER BY updated_at DESC
+                        LIMIT 8
+                        """,
+                        (start_date,),
+                    )
+                    for row in cursor.fetchall():
+                        sid, stitle = row[0], (row[1] or "").strip()
+                        ed = row[4] if len(row) > 4 else None
+                        top_storylines.append({
+                            "id": sid,
+                            "title": stitle,
+                            "article_count": int(row[2]) if row[2] is not None else 0,
+                            "updated_at": row[3].isoformat() if hasattr(row[3], "isoformat") else str(row[3]) if row[3] else None,
+                            "document_status": row[5] if len(row) > 5 else None,
+                            "last_article_at": None,
+                            "recent": False,
+                        })
+                        if ed and isinstance(ed, dict) and ed.get("lede"):
+                            editorial_ledes.append({"storyline_id": sid, "title": stitle, "lede": ed["lede"], "recent": False})
+                except Exception as e2:
+                    logger.debug("key_developments storylines fallback: %s", e2)
 
-            # Event briefings from tracked_events
+            # Event briefings from tracked_events: prefer domain-scoped and recently updated
             try:
+                event_params = [start_date]
+                domain_filter = ""
+                if domain:
+                    domain_filter = " AND (domain_keys IS NULL OR domain_keys = '{}' OR %s = ANY(domain_keys))"
+                    event_params.append(domain)
                 cursor.execute(
                     """
-                    SELECT id, event_name, editorial_briefing, editorial_briefing_json
+                    SELECT id, event_name, editorial_briefing, editorial_briefing_json, updated_at
                     FROM intelligence.tracked_events
                     WHERE updated_at >= %s
                       AND editorial_briefing IS NOT NULL
+                    """ + domain_filter + """
                     ORDER BY updated_at DESC
-                    LIMIT 5
+                    LIMIT 8
                     """,
-                    (start_date,),
+                    tuple(event_params),
                 )
-                for row in cursor.fetchall():
-                    eid, ename, briefing_text, briefing_json = row
-                    headline = ""
-                    if briefing_json and isinstance(briefing_json, dict):
-                        headline = briefing_json.get("headline", "")
-                    event_briefings.append({
-                        "event_id": eid,
-                        "event_name": (ename or "").strip(),
-                        "headline": headline,
-                        "briefing_excerpt": (briefing_text or "")[:200],
-                    })
+                rows = cursor.fetchall()
             except Exception as e:
-                logger.debug("key_developments events: %s", e)
+                logger.debug("key_developments events (with domain filter): %s", e)
+                rows = []
+                try:
+                    cursor.execute(
+                        """
+                        SELECT id, event_name, editorial_briefing, editorial_briefing_json, updated_at
+                        FROM intelligence.tracked_events
+                        WHERE updated_at >= %s AND editorial_briefing IS NOT NULL
+                        ORDER BY updated_at DESC
+                        LIMIT 8
+                        """,
+                        (start_date,),
+                    )
+                    rows = cursor.fetchall()
+                except Exception as e2:
+                    logger.debug("key_developments events fallback: %s", e2)
+            for row in rows:
+                eid, ename, briefing_text, briefing_json = row[0], row[1], row[2], row[3]
+                ev_updated = row[4] if len(row) > 4 else None
+                headline = ""
+                if briefing_json and isinstance(briefing_json, dict):
+                    headline = briefing_json.get("headline", "")
+                event_briefings.append({
+                    "event_id": eid,
+                    "event_name": (ename or "").strip(),
+                    "headline": headline,
+                    "briefing_excerpt": (briefing_text or "")[:200],
+                    "updated_at": ev_updated.isoformat() if hasattr(ev_updated, "isoformat") else str(ev_updated) if ev_updated else None,
+                })
 
             conn.close()
 

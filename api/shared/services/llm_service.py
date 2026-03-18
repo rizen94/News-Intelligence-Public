@@ -288,10 +288,19 @@ class LLMService:
         """
         if not (context or "").strip():
             return {"success": False, "error": "Empty context"}
+        domain_instruction = ""
+        if domain:
+            try:
+                from services.domain_synthesis_config import get_domain_synthesis_config
+                cfg = get_domain_synthesis_config(domain)
+                if cfg.llm_context:
+                    domain_instruction = f" {cfg.llm_context}"
+            except ImportError:
+                domain_instruction = f" Domain: {domain}."
         prompt = (
             "You are writing the lead paragraph for a daily news briefing."
-            + (f" Domain: {domain}." if domain else "")
-            + " Based only on the following headlines and storylines, write 2–3 short sentences that tell the reader what matters most. Be factual and concise. No preamble.\n\n"
+            + domain_instruction
+            + " Focus on developments from the last 24 hours. Prefer items marked [recent] or [recent activity]; mention older storylines only briefly if they are still the main focus. Based only on the following headlines and storylines, write 2–3 short sentences that tell the reader what matters most today. Be factual and concise. No preamble.\n\n"
             + context[:2500]
         )
         try:
