@@ -51,7 +51,12 @@ interface TabPanelProps {
   index: number;
 }
 
-const TabPanel: React.FC<TabPanelProps> = ({ children, value, index, ...other }) => {
+const TabPanel: React.FC<TabPanelProps> = ({
+  children,
+  value,
+  index,
+  ...other
+}) => {
   return (
     <div
       role='tabpanel'
@@ -94,12 +99,13 @@ const MLProcessing: React.FC = () => {
       setLoading(true);
       setError(null);
 
-      const [queueData, processingData, timingData, eventStats] = await Promise.all([
-        apiService.getMLQueueStatus(),
-        apiService.getAllMLProcessingStatus(),
-        apiService.getMLTimingStats(),
-        apiService.getPipelineStatus().catch(() => null),
-      ]);
+      const [queueData, processingData, timingData, eventStats] =
+        await Promise.all([
+          apiService.getMLQueueStatus(),
+          apiService.getAllMLProcessingStatus(),
+          apiService.getMLTimingStats(),
+          apiService.getPipelineStatus().catch(() => null),
+        ]);
 
       setQueueStatus(queueData.queue_status);
       setProcessingStatus(processingData.status);
@@ -124,7 +130,7 @@ const MLProcessing: React.FC = () => {
         parseInt(selectedArticleId),
         operationType,
         priority,
-        modelName || null,
+        modelName || null
       );
 
       setQueueDialogOpen(false);
@@ -144,31 +150,31 @@ const MLProcessing: React.FC = () => {
 
   const getStatusColor = (status: string) => {
     switch (status) {
-    case 'completed':
-      return 'success';
-    case 'processing':
-      return 'warning';
-    case 'failed':
-      return 'error';
-    case 'queued':
-      return 'info';
-    default:
-      return 'default';
+      case 'completed':
+        return 'success';
+      case 'processing':
+        return 'warning';
+      case 'failed':
+        return 'error';
+      case 'queued':
+        return 'info';
+      default:
+        return 'default';
     }
   };
 
   const getStatusIcon = (status: string) => {
     switch (status) {
-    case 'completed':
-      return <CheckCircleIcon />;
-    case 'processing':
-      return <CircularProgress size={16} />;
-    case 'failed':
-      return <ErrorIcon />;
-    case 'queued':
-      return <Schedule />;
-    default:
-      return null;
+      case 'completed':
+        return <CheckCircleIcon />;
+      case 'processing':
+        return <CircularProgress size={16} />;
+      case 'failed':
+        return <ErrorIcon />;
+      case 'queued':
+        return <Schedule />;
+      default:
+        return null;
     }
   };
 
@@ -297,10 +303,10 @@ const MLProcessing: React.FC = () => {
                       <Typography>
                         {queueStatus.worker_stats.total_processed > 0
                           ? (
-                            (queueStatus.worker_stats.successful /
+                              (queueStatus.worker_stats.successful /
                                 queueStatus.worker_stats.total_processed) *
                               100
-                          ).toFixed(1)
+                            ).toFixed(1)
                           : 0}
                         %
                       </Typography>
@@ -311,7 +317,7 @@ const MLProcessing: React.FC = () => {
                       <Typography>Avg Processing Time:</Typography>
                       <Typography>
                         {formatDuration(
-                          queueStatus.worker_stats.avg_processing_time,
+                          queueStatus.worker_stats.avg_processing_time
                         )}
                       </Typography>
                     </Box>
@@ -340,23 +346,25 @@ const MLProcessing: React.FC = () => {
                         </TableRow>
                       </TableHead>
                       <TableBody>
-                        {queueStatus.queue_stats.map((stat: any, index: number) => (
-                          <TableRow key={index}>
-                            <TableCell>
-                              <Chip
-                                label={stat.status}
-                                color={getStatusColor(stat.status)}
-                                size='small'
-                                icon={getStatusIcon(stat.status)}
-                              />
-                            </TableCell>
-                            <TableCell>{stat.operation_type}</TableCell>
-                            <TableCell>{stat.count}</TableCell>
-                            <TableCell>
-                              {formatDuration(stat.avg_wait_time_seconds)}
-                            </TableCell>
-                          </TableRow>
-                        ))}
+                        {queueStatus.queue_stats.map(
+                          (stat: any, index: number) => (
+                            <TableRow key={index}>
+                              <TableCell>
+                                <Chip
+                                  label={stat.status}
+                                  color={getStatusColor(stat.status)}
+                                  size='small'
+                                  icon={getStatusIcon(stat.status)}
+                                />
+                              </TableCell>
+                              <TableCell>{stat.operation_type}</TableCell>
+                              <TableCell>{stat.count}</TableCell>
+                              <TableCell>
+                                {formatDuration(stat.avg_wait_time_seconds)}
+                              </TableCell>
+                            </TableRow>
+                          )
+                        )}
                       </TableBody>
                     </Table>
                   </TableContainer>
@@ -453,32 +461,34 @@ const MLProcessing: React.FC = () => {
                         </TableRow>
                       </TableHead>
                       <TableBody>
-                        {timingStats.timing_stats.map((stat: any, index: number) => (
-                          <TableRow key={index}>
-                            <TableCell>{stat.processing_date}</TableCell>
-                            <TableCell>{stat.model_used}</TableCell>
-                            <TableCell>{stat.total_processed}</TableCell>
-                            <TableCell>
-                              {formatDuration(stat.avg_duration_seconds)}
-                            </TableCell>
-                            <TableCell>
-                              {formatDuration(stat.min_duration_seconds)}
-                            </TableCell>
-                            <TableCell>
-                              {formatDuration(stat.max_duration_seconds)}
-                            </TableCell>
-                            <TableCell>
-                              {stat.total_processed > 0
-                                ? (
-                                  (stat.successful_count /
-                                      stat.total_processed) *
-                                    100
-                                ).toFixed(1)
-                                : 0}
-                              %
-                            </TableCell>
-                          </TableRow>
-                        ))}
+                        {timingStats.timing_stats.map(
+                          (stat: any, index: number) => (
+                            <TableRow key={index}>
+                              <TableCell>{stat.processing_date}</TableCell>
+                              <TableCell>{stat.model_used}</TableCell>
+                              <TableCell>{stat.total_processed}</TableCell>
+                              <TableCell>
+                                {formatDuration(stat.avg_duration_seconds)}
+                              </TableCell>
+                              <TableCell>
+                                {formatDuration(stat.min_duration_seconds)}
+                              </TableCell>
+                              <TableCell>
+                                {formatDuration(stat.max_duration_seconds)}
+                              </TableCell>
+                              <TableCell>
+                                {stat.total_processed > 0
+                                  ? (
+                                      (stat.successful_count /
+                                        stat.total_processed) *
+                                      100
+                                    ).toFixed(1)
+                                  : 0}
+                                %
+                              </TableCell>
+                            </TableRow>
+                          )
+                        )}
                       </TableBody>
                     </Table>
                   </TableContainer>
@@ -508,35 +518,37 @@ const MLProcessing: React.FC = () => {
                         </TableRow>
                       </TableHead>
                       <TableBody>
-                        {timingStats.recent_logs.map((log: any, index: number) => (
-                          <TableRow key={index}>
-                            <TableCell>{log.operation_type}</TableCell>
-                            <TableCell>{log.model_name}</TableCell>
-                            <TableCell>
-                              {formatDuration(log.duration_seconds)}
-                            </TableCell>
-                            <TableCell>
-                              <Chip
-                                label={log.status}
-                                color={getStatusColor(log.status)}
-                                size='small'
-                                icon={getStatusIcon(log.status)}
-                              />
-                            </TableCell>
-                            <TableCell>
-                              {formatDateTime(log.started_at)}
-                            </TableCell>
-                            <TableCell
-                              sx={{
-                                maxWidth: 200,
-                                overflow: 'hidden',
-                                textOverflow: 'ellipsis',
-                              }}
-                            >
-                              {log.article_title}
-                            </TableCell>
-                          </TableRow>
-                        ))}
+                        {timingStats.recent_logs.map(
+                          (log: any, index: number) => (
+                            <TableRow key={index}>
+                              <TableCell>{log.operation_type}</TableCell>
+                              <TableCell>{log.model_name}</TableCell>
+                              <TableCell>
+                                {formatDuration(log.duration_seconds)}
+                              </TableCell>
+                              <TableCell>
+                                <Chip
+                                  label={log.status}
+                                  color={getStatusColor(log.status)}
+                                  size='small'
+                                  icon={getStatusIcon(log.status)}
+                                />
+                              </TableCell>
+                              <TableCell>
+                                {formatDateTime(log.started_at)}
+                              </TableCell>
+                              <TableCell
+                                sx={{
+                                  maxWidth: 200,
+                                  overflow: 'hidden',
+                                  textOverflow: 'ellipsis',
+                                }}
+                              >
+                                {log.article_title}
+                              </TableCell>
+                            </TableRow>
+                          )
+                        )}
                       </TableBody>
                     </Table>
                   </TableContainer>
@@ -560,33 +572,44 @@ const MLProcessing: React.FC = () => {
                   <Grid container spacing={2}>
                     <Grid item xs={6} md={3}>
                       <Typography variant='h4' color='primary'>
-                        {eventPipelineStats.pipeline_status === 'running' ? 'RUNNING' : 'IDLE'}
+                        {eventPipelineStats.pipeline_status === 'running'
+                          ? 'RUNNING'
+                          : 'IDLE'}
                       </Typography>
-                      <Typography variant='body2' color='text.secondary'>Pipeline Status</Typography>
+                      <Typography variant='body2' color='text.secondary'>
+                        Pipeline Status
+                      </Typography>
                     </Grid>
                     <Grid item xs={6} md={3}>
                       <Typography variant='h4' color='primary'>
                         {eventPipelineStats.success_rate || 0}%
                       </Typography>
-                      <Typography variant='body2' color='text.secondary'>Success Rate</Typography>
+                      <Typography variant='body2' color='text.secondary'>
+                        Success Rate
+                      </Typography>
                     </Grid>
                     <Grid item xs={6} md={3}>
                       <Typography variant='h4' color='primary'>
                         {eventPipelineStats.active_traces || 0}
                       </Typography>
-                      <Typography variant='body2' color='text.secondary'>Active Traces</Typography>
+                      <Typography variant='body2' color='text.secondary'>
+                        Active Traces
+                      </Typography>
                     </Grid>
                     <Grid item xs={6} md={3}>
                       <Typography variant='h4' color='primary'>
                         {eventPipelineStats.total_traces || 0}
                       </Typography>
-                      <Typography variant='body2' color='text.secondary'>Total Traces</Typography>
+                      <Typography variant='body2' color='text.secondary'>
+                        Total Traces
+                      </Typography>
                     </Grid>
                   </Grid>
                 ) : (
                   <Typography variant='body2' color='text.secondary'>
-                    Event pipeline statistics unavailable. The event extraction, deduplication,
-                    and story continuation tasks run on a schedule via the automation manager.
+                    Event pipeline statistics unavailable. The event extraction,
+                    deduplication, and story continuation tasks run on a
+                    schedule via the automation manager.
                   </Typography>
                 )}
               </CardContent>
@@ -595,7 +618,9 @@ const MLProcessing: React.FC = () => {
           <Grid item xs={12} md={6}>
             <Card>
               <CardContent>
-                <Typography variant='h6' gutterBottom>v5.0 Automated Tasks</Typography>
+                <Typography variant='h6' gutterBottom>
+                  v5.0 Automated Tasks
+                </Typography>
                 <Table size='small'>
                   <TableHead>
                     <TableRow>
@@ -608,22 +633,30 @@ const MLProcessing: React.FC = () => {
                     <TableRow>
                       <TableCell>Event Extraction</TableCell>
                       <TableCell>10 min</TableCell>
-                      <TableCell>Extracts structured events from new articles</TableCell>
+                      <TableCell>
+                        Extracts structured events from new articles
+                      </TableCell>
                     </TableRow>
                     <TableRow>
                       <TableCell>Event Deduplication</TableCell>
                       <TableCell>15 min</TableCell>
-                      <TableCell>Cross-source dedup via fingerprint + semantic similarity</TableCell>
+                      <TableCell>
+                        Cross-source dedup via fingerprint + semantic similarity
+                      </TableCell>
                     </TableRow>
                     <TableRow>
                       <TableCell>Story Continuation</TableCell>
                       <TableCell>20 min</TableCell>
-                      <TableCell>Matches new events to existing storylines</TableCell>
+                      <TableCell>
+                        Matches new events to existing storylines
+                      </TableCell>
                     </TableRow>
                     <TableRow>
                       <TableCell>Watchlist Alerts</TableCell>
                       <TableCell>30 min</TableCell>
-                      <TableCell>Generates alerts for watched storyline changes</TableCell>
+                      <TableCell>
+                        Generates alerts for watched storyline changes
+                      </TableCell>
                     </TableRow>
                   </TableBody>
                 </Table>
@@ -633,10 +666,21 @@ const MLProcessing: React.FC = () => {
           <Grid item xs={12} md={6}>
             <Card>
               <CardContent>
-                <Typography variant='h6' gutterBottom>Pipeline Stages</Typography>
+                <Typography variant='h6' gutterBottom>
+                  Pipeline Stages
+                </Typography>
                 <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                  {['Event Extraction', 'Fingerprint Dedup', 'Semantic Dedup', 'Story Matching', 'Entity Indexing'].map((stage, i) => (
-                    <Box key={i} sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                  {[
+                    'Event Extraction',
+                    'Fingerprint Dedup',
+                    'Semantic Dedup',
+                    'Story Matching',
+                    'Entity Indexing',
+                  ].map((stage, i) => (
+                    <Box
+                      key={i}
+                      sx={{ display: 'flex', alignItems: 'center', gap: 2 }}
+                    >
                       <CheckCircleIcon color='success' fontSize='small' />
                       <Typography variant='body2'>{stage}</Typography>
                     </Box>

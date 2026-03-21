@@ -12,14 +12,15 @@ from typing import Any
 
 try:
     from config.logging_config import get_component_logger
+
     logger = get_component_logger("historic_context")
 except Exception:
     logger = logging.getLogger(__name__)
 
 from services.historic_context_sources import (
-    fetch_all_sources_parallel,
-    Finding,
     SOURCE_ADAPTERS,
+    Finding,
+    fetch_all_sources_parallel,
 )
 
 # Relevance: minimum term-match score (query + topic words in title/snippet) to keep a finding
@@ -53,7 +54,9 @@ def _relevance_score(finding: Finding, terms: set[str]) -> float:
     return min(1.0, hits / max(1, len(terms) * 0.5))
 
 
-def _filter_relevant(findings: list[Finding], query: str | None, topic: str | None) -> list[Finding]:
+def _filter_relevant(
+    findings: list[Finding], query: str | None, topic: str | None
+) -> list[Finding]:
     """Keep findings that meet minimum relevance; add relevance_score to each."""
     terms = _terms_from_query_and_topic(query, topic)
     out = []
@@ -82,7 +85,9 @@ def _event_key(date_str: str | None, snippet: str, source_id: str) -> str:
     return f"{date_str or 'nodate'}|{source_id}|{' '.join(words[:3])}"
 
 
-def _cluster_findings_by_agreement(findings_by_source: dict[str, list[Finding]]) -> list[dict[str, Any]]:
+def _cluster_findings_by_agreement(
+    findings_by_source: dict[str, list[Finding]],
+) -> list[dict[str, Any]]:
     """
     Group findings that refer to the same event (same date) across sources.
     One event per date bucket; agreement_count = number of distinct sources that had a finding on that date.
@@ -111,13 +116,15 @@ def _cluster_findings_by_agreement(findings_by_source: dict[str, list[Finding]])
                 date_approx = datetime.strptime(date_str, "%Y-%m-%d").date()
             except ValueError:
                 pass
-        events.append({
-            "event_summary": event_summary[:1000],
-            "date_approx": date_approx,
-            "source_ids": source_ids_in,
-            "agreement_count": len(source_ids_in),
-            "finding_ids": [g[2] for g in group],
-        })
+        events.append(
+            {
+                "event_summary": event_summary[:1000],
+                "date_approx": date_approx,
+                "source_ids": source_ids_in,
+                "agreement_count": len(source_ids_in),
+                "finding_ids": [g[2] for g in group],
+            }
+        )
     return events
 
 
@@ -142,14 +149,35 @@ def _detect_prior_significant_event(
     return None
 
 
-def _build_search_query(query: str | None, topic: str | None, start_date: str, end_date: str) -> str:
+def _build_search_query(
+    query: str | None, topic: str | None, start_date: str, end_date: str
+) -> str:
     """Build a short search-friendly query for external APIs (News API, Wikipedia) to improve relevance."""
     parts = []
     if topic and topic not in ("all", ""):
         parts.append(topic)
     # Add salient terms from user query (skip long question words)
     if query:
-        stop = {"what", "why", "how", "when", "where", "which", "the", "that", "this", "cause", "caused", "causes", "drop", "rise", "change", "trend", "analysis", "explain"}
+        stop = {
+            "what",
+            "why",
+            "how",
+            "when",
+            "where",
+            "which",
+            "the",
+            "that",
+            "this",
+            "cause",
+            "caused",
+            "causes",
+            "drop",
+            "rise",
+            "change",
+            "trend",
+            "analysis",
+            "explain",
+        }
         words = re.findall(r"[a-z0-9]+", query.lower())
         for w in words:
             if len(w) >= 2 and w not in stop and w not in parts:
@@ -170,13 +198,21 @@ def _build_search_query(query: str | None, topic: str | None, start_date: str, e
 def _get_db():
     try:
         from shared.database.connection import get_db_connection
+
         return get_db_connection()
     except Exception as e:
         logger.warning("DB not available for historic context: %s", e)
         return None
 
 
-def _create_request(query: str, topic: str | None, start_date: str, end_date: str, trigger_type: str, trigger_id: str | None) -> int | None:
+def _create_request(
+    query: str,
+    topic: str | None,
+    start_date: str,
+    end_date: str,
+    trigger_type: str,
+    trigger_id: str | None,
+) -> int | None:
     conn = _get_db()
     if not conn:
         return None
@@ -219,7 +255,9 @@ def _update_request_status(request_id: int, status: str, summary: str | None = N
         logger.warning("Update historic context request failed: %s", e)
 
 
-def _store_findings(request_id: int, findings_by_source: dict[str, list[Finding]]) -> dict[int, int]:
+def _store_findings(
+    request_id: int, findings_by_source: dict[str, list[Finding]]
+) -> dict[int, int]:
     """Insert findings; return mapping placeholder_id -> real finding id for event linking."""
     conn = _get_db()
     if not conn:
@@ -287,7 +325,9 @@ def _store_events(request_id: int, events: list[dict[str, Any]]) -> None:
         logger.warning("Store historic context events failed: %s", e)
 
 
-def _store_expansion(parent_request_id: int, child_request_id: int, trigger_reason: str, trigger_event_id: int | None) -> None:
+def _store_expansion(
+    parent_request_id: int, child_request_id: int, trigger_reason: str, trigger_event_id: int | None
+) -> None:
     conn = _get_db()
     if not conn:
         return
@@ -323,7 +363,9 @@ def run_historic_context(
     """
     request_id = _create_request(query, topic, start_date, end_date, trigger_type, trigger_id)
     if not request_id:
-        logger.warning("Historic context: DB request create failed (migration 149 may not be applied); running fetches in-memory only")
+        logger.warning(
+            "Historic context: DB request create failed (migration 149 may not be applied); running fetches in-memory only"
+        )
 
     try:
         # Build a search-friendly query for News API / Wikipedia (topic + key terms + year)
@@ -332,7 +374,9 @@ def run_historic_context(
 
         # Parallel fetch from all sources (no DB required)
         raw_by_source = fetch_all_sources_parallel(
-            search_query, start_date, end_date,
+            search_query,
+            start_date,
+            end_date,
             source_ids=source_ids,
             limit_per_source=20,
         )
@@ -357,26 +401,43 @@ def run_historic_context(
         if request_id:
             for e in events:
                 pids = e.get("finding_ids") or []
-                e["finding_ids"] = [placeholder_to_real.get(p) for p in pids if placeholder_to_real.get(p)]
+                e["finding_ids"] = [
+                    placeholder_to_real.get(p) for p in pids if placeholder_to_real.get(p)
+                ]
             _store_events(request_id, events)
 
         # Summary: concatenate top events by agreement
-        top_events = sorted(events, key=lambda x: (x.get("agreement_count") or 0, len(x.get("source_ids") or [])), reverse=True)[:10]
+        top_events = sorted(
+            events,
+            key=lambda x: (x.get("agreement_count") or 0, len(x.get("source_ids") or [])),
+            reverse=True,
+        )[:10]
         summary_parts = [e.get("event_summary", "") for e in top_events]
-        summary = "\n".join(summary_parts) if summary_parts else "No historic events found for the given range and query."
+        summary = (
+            "\n".join(summary_parts)
+            if summary_parts
+            else "No historic events found for the given range and query."
+        )
 
         # Expansion: prior significant event? (only when DB available)
         prior = _detect_prior_significant_event(events, start_date)
         if request_id and prior and max_expansions > 0:
-            exp_start = (prior["date_approx"] - timedelta(days=EXPANSION_PRIOR_DAYS)).strftime("%Y-%m-%d")
+            exp_start = (prior["date_approx"] - timedelta(days=EXPANSION_PRIOR_DAYS)).strftime(
+                "%Y-%m-%d"
+            )
             exp_end = (prior["date_approx"] + timedelta(days=90)).strftime("%Y-%m-%d")
             child_id = _create_request(query, topic, exp_start, exp_end, trigger_type, trigger_id)
             if child_id:
                 _store_expansion(request_id, child_id, "significant_prior_event", None)
                 run_historic_context(
-                    query, exp_start, exp_end,
-                    topic=topic, trigger_type=trigger_type, trigger_id=trigger_id,
-                    source_ids=source_ids, max_expansions=0,
+                    query,
+                    exp_start,
+                    exp_end,
+                    topic=topic,
+                    trigger_type=trigger_type,
+                    trigger_id=trigger_id,
+                    source_ids=source_ids,
+                    max_expansions=0,
                 )
 
         if request_id:
@@ -386,22 +447,42 @@ def run_historic_context(
             "success": True,
             "request_id": request_id,
             "summary": summary,
-            "events": [{"event_summary": e.get("event_summary"), "date_approx": str(e.get("date_approx")) if e.get("date_approx") else None, "agreement_count": e.get("agreement_count"), "source_ids": e.get("source_ids")} for e in top_events],
+            "events": [
+                {
+                    "event_summary": e.get("event_summary"),
+                    "date_approx": str(e.get("date_approx")) if e.get("date_approx") else None,
+                    "agreement_count": e.get("agreement_count"),
+                    "source_ids": e.get("source_ids"),
+                }
+                for e in top_events
+            ],
         }
     except Exception as e:
         logger.exception("Historic context run failed")
         if request_id:
             _update_request_status(request_id, "failed", None)
-        return {"success": False, "error": str(e), "request_id": request_id, "summary": "", "events": []}
+        return {
+            "success": False,
+            "error": str(e),
+            "request_id": request_id,
+            "summary": "",
+            "events": [],
+        }
 
 
-def get_historic_context_for_analysis(query: str, topic: str | None, start_date: str, end_date: str) -> str:
+def get_historic_context_for_analysis(
+    query: str, topic: str | None, start_date: str, end_date: str
+) -> str:
     """
     Convenience: run orchestrator and return only the summary string for inclusion in analysis prompt.
     """
     result = run_historic_context(
-        query, start_date, end_date,
-        topic=topic, trigger_type="analysis", trigger_id=None,
+        query,
+        start_date,
+        end_date,
+        topic=topic,
+        trigger_type="analysis",
+        trigger_id=None,
         max_expansions=1,
     )
     return result.get("summary") or ""

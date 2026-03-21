@@ -22,11 +22,17 @@ import {
   Checkbox,
 } from '@mui/material';
 import Add from '@mui/icons-material/Add';
-import { contextCentricApi, type TrackedEvent } from '@/services/api/contextCentric';
+import {
+  contextCentricApi,
+  type TrackedEvent,
+} from '@/services/api/contextCentric';
 import { useDomain } from '@/contexts/DomainContext';
 import { DOMAIN_KEYS_LIST } from '@/utils/domainHelper';
 
-const EVENT_TYPE_COLORS: Record<string, 'error' | 'warning' | 'info' | 'success' | 'default'> = {
+const EVENT_TYPE_COLORS: Record<
+  string,
+  'error' | 'warning' | 'info' | 'success' | 'default'
+> = {
   conflict: 'error',
   disaster: 'error',
   economic: 'warning',
@@ -39,7 +45,17 @@ const EVENT_TYPE_COLORS: Record<string, 'error' | 'warning' | 'info' | 'success'
 };
 
 const DOMAIN_KEYS = DOMAIN_KEYS_LIST;
-const EVENT_TYPES = ['election', 'legislation', 'investigation', 'policy', 'economic', 'diplomatic', 'conflict', 'disaster', 'market_event'];
+const EVENT_TYPES = [
+  'election',
+  'legislation',
+  'investigation',
+  'policy',
+  'economic',
+  'diplomatic',
+  'conflict',
+  'disaster',
+  'market_event',
+];
 
 const emptyForm = {
   event_type: 'election',
@@ -63,7 +79,9 @@ export default function InvestigatePage() {
   const loadEvents = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await contextCentricApi.getTrackedEvents({ domain_key: domain, limit: 50 }).catch(() => ({ items: [] as TrackedEvent[] }));
+      const res = await contextCentricApi
+        .getTrackedEvents({ domain_key: domain, limit: 50 })
+        .catch(() => ({ items: [] as TrackedEvent[] }));
       setEvents(res?.items ?? []);
     } finally {
       setLoading(false);
@@ -94,7 +112,9 @@ export default function InvestigatePage() {
         start_date: createForm.start_date || undefined,
         end_date: createForm.end_date || undefined,
         geographic_scope: createForm.geographic_scope.trim() || undefined,
-        domain_keys: createForm.domain_keys.length ? createForm.domain_keys : undefined,
+        domain_keys: createForm.domain_keys.length
+          ? createForm.domain_keys
+          : undefined,
       });
       setCreateOpen(false);
       setCreateForm(emptyForm);
@@ -109,92 +129,145 @@ export default function InvestigatePage() {
 
   return (
     <Box>
-      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
-        <Typography variant="h5" sx={{ fontWeight: 600 }}>
+      <Box
+        sx={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          mb: 2,
+        }}
+      >
+        <Typography variant='h5' sx={{ fontWeight: 600 }}>
           Investigate
         </Typography>
         <Box sx={{ display: 'flex', gap: 1 }}>
-          <Button variant="contained" size="small" startIcon={<Add />} onClick={handleCreateOpen}>
+          <Button
+            variant='contained'
+            size='small'
+            startIcon={<Add />}
+            onClick={handleCreateOpen}
+          >
             Create event
           </Button>
-          <Button variant="outlined" size="small" onClick={() => navigate(`/${domain}/investigate/entities`)}>
+          <Button
+            variant='outlined'
+            size='small'
+            onClick={() => navigate(`/${domain}/investigate/entities`)}
+          >
             Entities
           </Button>
-          <Button variant="outlined" size="small" onClick={() => navigate(`/${domain}/investigate/search`)}>
+          <Button
+            variant='outlined'
+            size='small'
+            onClick={() => navigate(`/${domain}/investigate/search`)}
+          >
             Search
           </Button>
-          <Button variant="outlined" size="small" onClick={() => navigate(`/${domain}/investigate/documents`)}>
+          <Button
+            variant='outlined'
+            size='small'
+            onClick={() => navigate(`/${domain}/investigate/documents`)}
+          >
             Documents
           </Button>
-          <Button variant="outlined" size="small" onClick={() => navigate(`/${domain}/investigate/narrative-threads`)}>
+          <Button
+            variant='outlined'
+            size='small'
+            onClick={() => navigate(`/${domain}/investigate/narrative-threads`)}
+          >
             Narrative threads
           </Button>
         </Box>
       </Box>
 
-      <Dialog open={createOpen} onClose={() => !createSubmitting && setCreateOpen(false)} maxWidth="sm" fullWidth>
+      <Dialog
+        open={createOpen}
+        onClose={() => !createSubmitting && setCreateOpen(false)}
+        maxWidth='sm'
+        fullWidth
+      >
         <DialogTitle>Create tracked event</DialogTitle>
         <DialogContent>
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 1 }}>
             <TextField
-              label="Event name"
+              label='Event name'
               value={createForm.event_name}
-              onChange={(e) => setCreateForm((f) => ({ ...f, event_name: e.target.value }))}
+              onChange={e =>
+                setCreateForm(f => ({ ...f, event_name: e.target.value }))
+              }
               required
               fullWidth
-              size="small"
+              size='small'
             />
             <TextField
               select
               SelectProps={{ native: true }}
-              label="Event type"
+              label='Event type'
               value={createForm.event_type}
-              onChange={(e) => setCreateForm((f) => ({ ...f, event_type: e.target.value }))}
+              onChange={e =>
+                setCreateForm(f => ({ ...f, event_type: e.target.value }))
+              }
               fullWidth
-              size="small"
+              size='small'
             >
-              {EVENT_TYPES.map((t) => (
-                <option key={t} value={t}>{t}</option>
+              {EVENT_TYPES.map(t => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
               ))}
             </TextField>
             <TextField
-              label="Start date"
-              type="date"
+              label='Start date'
+              type='date'
               value={createForm.start_date}
-              onChange={(e) => setCreateForm((f) => ({ ...f, start_date: e.target.value }))}
+              onChange={e =>
+                setCreateForm(f => ({ ...f, start_date: e.target.value }))
+              }
               InputLabelProps={{ shrink: true }}
               fullWidth
-              size="small"
+              size='small'
             />
             <TextField
-              label="End date"
-              type="date"
+              label='End date'
+              type='date'
               value={createForm.end_date}
-              onChange={(e) => setCreateForm((f) => ({ ...f, end_date: e.target.value }))}
+              onChange={e =>
+                setCreateForm(f => ({ ...f, end_date: e.target.value }))
+              }
               InputLabelProps={{ shrink: true }}
               fullWidth
-              size="small"
+              size='small'
             />
             <TextField
-              label="Geographic scope"
+              label='Geographic scope'
               value={createForm.geographic_scope}
-              onChange={(e) => setCreateForm((f) => ({ ...f, geographic_scope: e.target.value }))}
+              onChange={e =>
+                setCreateForm(f => ({ ...f, geographic_scope: e.target.value }))
+              }
               fullWidth
-              size="small"
-              placeholder="e.g. US, EU"
+              size='small'
+              placeholder='e.g. US, EU'
             />
             <Box>
-              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>Domains</Typography>
-              {DOMAIN_KEYS.map((d) => (
+              <Typography
+                variant='caption'
+                color='text.secondary'
+                sx={{ display: 'block', mb: 0.5 }}
+              >
+                Domains
+              </Typography>
+              {DOMAIN_KEYS.map(d => (
                 <FormControlLabel
                   key={d}
                   control={
                     <Checkbox
                       checked={createForm.domain_keys.includes(d)}
                       onChange={(_, checked) =>
-                        setCreateForm((f) => ({
+                        setCreateForm(f => ({
                           ...f,
-                          domain_keys: checked ? [...f.domain_keys, d] : f.domain_keys.filter((k) => k !== d),
+                          domain_keys: checked
+                            ? [...f.domain_keys, d]
+                            : f.domain_keys.filter(k => k !== d),
                         }))
                       }
                     />
@@ -203,54 +276,104 @@ export default function InvestigatePage() {
                 />
               ))}
             </Box>
-            {createError && <Typography color="error" variant="body2">{createError}</Typography>}
+            {createError && (
+              <Typography color='error' variant='body2'>
+                {createError}
+              </Typography>
+            )}
           </Box>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setCreateOpen(false)} disabled={createSubmitting}>Cancel</Button>
-          <Button variant="contained" onClick={handleCreateSubmit} disabled={createSubmitting}>
+          <Button
+            onClick={() => setCreateOpen(false)}
+            disabled={createSubmitting}
+          >
+            Cancel
+          </Button>
+          <Button
+            variant='contained'
+            onClick={handleCreateSubmit}
+            disabled={createSubmitting}
+          >
             {createSubmitting ? 'Creating…' : 'Create'}
           </Button>
         </DialogActions>
       </Dialog>
 
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
-        Events, entities, search, documents, and narrative threads. Create events to track; use Entities and Search for intelligence; Documents and Narrative threads for ingested docs and storyline synthesis.
+      <Typography variant='body2' color='text.secondary' sx={{ mb: 1.5 }}>
+        Events, entities, search, documents, and narrative threads. Create
+        events to track; use Entities and Search for intelligence; Documents and
+        Narrative threads for ingested docs and storyline synthesis.
       </Typography>
-      <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>
+      <Typography variant='subtitle2' color='text.secondary' sx={{ mb: 1 }}>
         Tracked events
       </Typography>
 
       {loading ? (
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-          {[0, 1, 2].map((i) => <Skeleton key={i} variant="rectangular" height={80} sx={{ borderRadius: 1 }} />)}
+          {[0, 1, 2].map(i => (
+            <Skeleton
+              key={i}
+              variant='rectangular'
+              height={80}
+              sx={{ borderRadius: 1 }}
+            />
+          ))}
         </Box>
       ) : events.length === 0 ? (
-        <Card variant="outlined"><CardContent><Typography color="text.secondary">No tracked events yet.</Typography></CardContent></Card>
+        <Card variant='outlined'>
+          <CardContent>
+            <Typography color='text.secondary'>
+              No tracked events yet.
+            </Typography>
+          </CardContent>
+        </Card>
       ) : (
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
-          {events.map((e) => (
-            <Card key={e.id} variant="outlined">
-              <CardActionArea onClick={() => navigate(`/${domain}/investigate/events/${e.id}`)}>
+          {events.map(e => (
+            <Card key={e.id} variant='outlined'>
+              <CardActionArea
+                onClick={() =>
+                  navigate(`/${domain}/investigate/events/${e.id}`)
+                }
+              >
                 <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 } }}>
-                  <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                  <Box
+                    sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}
+                  >
                     <Box sx={{ flex: 1 }}>
-                      <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
+                      <Typography variant='subtitle1' sx={{ fontWeight: 600 }}>
                         {e.event_name || `Event #${e.id}`}
                       </Typography>
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.5, flexWrap: 'wrap' }}>
+                      <Box
+                        sx={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 1,
+                          mt: 0.5,
+                          flexWrap: 'wrap',
+                        }}
+                      >
                         <Chip
                           label={e.event_type}
-                          size="small"
-                          color={EVENT_TYPE_COLORS[e.event_type ?? ''] ?? 'default'}
-                          variant="outlined"
+                          size='small'
+                          color={
+                            EVENT_TYPE_COLORS[e.event_type ?? ''] ?? 'default'
+                          }
+                          variant='outlined'
                         />
                         {e.geographic_scope && (
-                          <Typography variant="caption" color="text.secondary">{e.geographic_scope}</Typography>
+                          <Typography variant='caption' color='text.secondary'>
+                            {e.geographic_scope}
+                          </Typography>
                         )}
                         {e.start_date && (
-                          <Typography variant="caption" color="text.disabled">
-                            Since {new Date(e.start_date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                          <Typography variant='caption' color='text.disabled'>
+                            Since{' '}
+                            {new Date(e.start_date).toLocaleDateString(
+                              undefined,
+                              { month: 'short', day: 'numeric' }
+                            )}
                           </Typography>
                         )}
                       </Box>

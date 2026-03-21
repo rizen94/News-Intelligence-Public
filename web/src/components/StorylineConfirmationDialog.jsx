@@ -23,46 +23,46 @@ const StorylineConfirmationDialog = ({
 }) => {
   const getActionDetails = () => {
     switch (action) {
-    case 'create':
-      return {
-        title: 'Create New Storyline',
-        message: 'Are you sure you want to create this new storyline?',
-        icon: <Add color='primary' />,
-        confirmText: 'Create',
-        confirmColor: 'primary',
-      };
-    case 'delete':
-      return {
-        title: 'Delete Storyline',
-        message: `Are you sure you want to delete "${storyline?.title}"? This action cannot be undone.`,
-        icon: <Delete color='error' />,
-        confirmText: 'Delete',
-        confirmColor: 'error',
-      };
-    case 'edit':
-      return {
-        title: 'Edit Storyline',
-        message: 'Are you sure you want to save these changes?',
-        icon: <Edit color='primary' />,
-        confirmText: 'Save',
-        confirmColor: 'primary',
-      };
-    case 'add_article':
-      return {
-        title: 'Add Article to Storyline',
-        message: `Add this article to "${storyline?.title}"?`,
-        icon: <Add color='primary' />,
-        confirmText: 'Add',
-        confirmColor: 'primary',
-      };
-    default:
-      return {
-        title: 'Confirm Action',
-        message: 'Are you sure you want to proceed?',
-        icon: <WarningIcon color='warning' />,
-        confirmText: 'Confirm',
-        confirmColor: 'primary',
-      };
+      case 'create':
+        return {
+          title: 'Create New Storyline',
+          message: 'Are you sure you want to create this new storyline?',
+          icon: <Add color='primary' />,
+          confirmText: 'Create',
+          confirmColor: 'primary',
+        };
+      case 'delete':
+        return {
+          title: 'Delete Storyline',
+          message: `Are you sure you want to delete "${storyline?.title}"? This action cannot be undone.`,
+          icon: <Delete color='error' />,
+          confirmText: 'Delete',
+          confirmColor: 'error',
+        };
+      case 'edit':
+        return {
+          title: 'Edit Storyline',
+          message: 'Are you sure you want to save these changes?',
+          icon: <Edit color='primary' />,
+          confirmText: 'Save',
+          confirmColor: 'primary',
+        };
+      case 'add_article':
+        return {
+          title: 'Add Article to Storyline',
+          message: `Add this article to "${storyline?.title}"?`,
+          icon: <Add color='primary' />,
+          confirmText: 'Add',
+          confirmColor: 'primary',
+        };
+      default:
+        return {
+          title: 'Confirm Action',
+          message: 'Are you sure you want to proceed?',
+          icon: <WarningIcon color='warning' />,
+          confirmText: 'Confirm',
+          confirmColor: 'primary',
+        };
     }
   };
 

@@ -8,7 +8,6 @@ import pytest
 def test_get_source_fred_loads(monkeypatch, tmp_path):
     """Loader instantiates fred from sources.yaml."""
     # Use real sources.yaml if it exists; else skip
-    import yaml
     from config.paths import SOURCES_YAML
 
     if not SOURCES_YAML.exists():
@@ -32,8 +31,8 @@ def test_get_source_unknown_returns_none():
 def test_get_client_via_loader():
     """Registry get_source('fred') returns same type as get_client()."""
     from domains.finance.data_sources import get_source
-    from domains.finance.data_sources.fred import get_client
     from domains.finance.data_sources.base import DataSourceBase
+    from domains.finance.data_sources.fred import get_client
 
     src = get_source("fred")
     if src is None:

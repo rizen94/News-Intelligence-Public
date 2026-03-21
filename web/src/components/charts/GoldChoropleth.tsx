@@ -7,7 +7,8 @@ import * as d3 from 'd3';
 import * as topojson from 'topojson-client';
 import { Box, Typography } from '@mui/material';
 
-const WORLD_TOPOLOGY_URL = 'https://cdn.jsdelivr.net/npm/world-atlas@2.0.2/countries-110m.json';
+const WORLD_TOPOLOGY_URL =
+  'https://cdn.jsdelivr.net/npm/world-atlas@2.0.2/countries-110m.json';
 
 /** Map API geographic_scope / by_region keys to TopoJSON country properties.name */
 const REGION_TO_COUNTRY_NAME: Record<string, string> = {
@@ -55,11 +56,14 @@ export interface GoldChoroplethProps {
   height?: number;
 }
 
-function buildCountByCountry(byRegion: Record<string, number[]>): Record<string, number> {
+function buildCountByCountry(
+  byRegion: Record<string, number[]>
+): Record<string, number> {
   const countByCountry: Record<string, number> = {};
   for (const [region, eventIds] of Object.entries(byRegion)) {
     const name = REGION_TO_COUNTRY_NAME[region] ?? region;
-    countByCountry[name] = (countByCountry[name] ?? 0) + (eventIds?.length ?? 0);
+    countByCountry[name] =
+      (countByCountry[name] ?? 0) + (eventIds?.length ?? 0);
   }
   return countByCountry;
 }
@@ -85,15 +89,23 @@ export default function GoldChoropleth({
       .scaleSequential(d3.interpolateBlues)
       .domain([0, maxCount]);
 
-    const projection = d3.geoMercator().scale(140).translate([width / 2, height / 2]);
+    const projection = d3
+      .geoMercator()
+      .scale(140)
+      .translate([width / 2, height / 2]);
     const pathGenerator = d3.geoPath().projection(projection);
 
     fetch(WORLD_TOPOLOGY_URL)
-      .then((r) => r.json())
+      .then(r => r.json())
       .then((topology: unknown) => {
         const t = topology as { objects: { countries: unknown } };
         const raw = topojson.feature(t as never, t.objects.countries as never);
-        const geojson = raw as { features?: Array<{ properties?: { name?: string }; geometry?: unknown }> };
+        const geojson = raw as {
+          features?: Array<{
+            properties?: { name?: string };
+            geometry?: unknown;
+          }>;
+        };
         if (!geojson?.features) return;
 
         const g = svg.append('g');
@@ -101,15 +113,18 @@ export default function GoldChoropleth({
         g.selectAll('path')
           .data(geojson.features)
           .join('path')
-          .attr('d', pathGenerator as (d: (typeof geojson.features)[0]) => string)
-          .attr('fill', (d) => {
+          .attr(
+            'd',
+            pathGenerator as (d: (typeof geojson.features)[0]) => string
+          )
+          .attr('fill', d => {
             const name = (d.properties as { name?: string })?.name ?? '';
             const count = countByCountry[name] ?? 0;
             return colorScale(count);
           })
           .attr('stroke', '#333')
           .attr('stroke-width', 0.5)
-          .attr('title', (d) => {
+          .attr('title', d => {
             const name = (d.properties as { name?: string })?.name ?? '';
             const count = countByCountry[name] ?? 0;
             return `${name}: ${count} event(s)`;
@@ -125,12 +140,13 @@ export default function GoldChoropleth({
             const name = (d.properties as { name?: string })?.name ?? '';
             const eventIds: number[] = [];
             for (const [region, ids] of Object.entries(byRegion)) {
-              if (REGION_TO_COUNTRY_NAME[region] === name || region === name) eventIds.push(...(ids ?? []));
+              if (REGION_TO_COUNTRY_NAME[region] === name || region === name)
+                eventIds.push(...(ids ?? []));
             }
             onCountryClick?.(name, eventIds);
           });
       })
-      .catch((err) => {
+      .catch(err => {
         console.error('GoldChoropleth fetch topology failed:', err);
       });
   }, [byRegion, width, height, onCountryClick]);
@@ -145,13 +161,22 @@ export default function GoldChoropleth({
 
   return (
     <Box sx={{ width: '100%', overflow: 'hidden' }}>
-      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
+      <Typography
+        variant='caption'
+        color='text.secondary'
+        sx={{ display: 'block', mb: 0.5 }}
+      >
         Event density by region (click to filter)
       </Typography>
-      <svg ref={svgRef} width={width} height={height} style={{ maxWidth: '100%', height: 'auto' }} />
+      <svg
+        ref={svgRef}
+        width={width}
+        height={height}
+        style={{ maxWidth: '100%', height: 'auto' }}
+      />
       {hasData && (
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 1 }}>
-          <Typography variant="caption" color="text.secondary">
+          <Typography variant='caption' color='text.secondary'>
             Event count:
           </Typography>
           <Box
@@ -162,7 +187,7 @@ export default function GoldChoropleth({
               background: 'linear-gradient(to right, #deebf7 0%, #3182bd 100%)',
             }}
           />
-          <Typography variant="caption" color="text.secondary">
+          <Typography variant='caption' color='text.secondary'>
             0 — {maxCount}
           </Typography>
         </Box>

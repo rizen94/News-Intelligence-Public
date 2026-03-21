@@ -10,16 +10,16 @@ const Header: React.FC = () => {
   // Domain-specific styling
   const getDomainColor = () => {
     switch (domain) {
-    case 'politics':
-      return { bg: '#1976d2', text: '#fff' }; // Blue
-    case 'finance':
-      return { bg: '#2e7d32', text: '#fff' }; // Green
-    case 'science-tech':
-      return { bg: '#7b1fa2', text: '#fff' }; // Purple
-    case 'legal':
-      return { bg: '#455a64', text: '#fff' }; // Blue-grey
-    default:
-      return { bg: '#616161', text: '#fff' }; // Gray
+      case 'politics':
+        return { bg: '#1976d2', text: '#fff' }; // Blue
+      case 'finance':
+        return { bg: '#2e7d32', text: '#fff' }; // Green
+      case 'science-tech':
+        return { bg: '#7b1fa2', text: '#fff' }; // Purple
+      case 'legal':
+        return { bg: '#455a64', text: '#fff' }; // Blue-grey
+      default:
+        return { bg: '#616161', text: '#fff' }; // Gray
     }
   };
 

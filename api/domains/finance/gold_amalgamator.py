@@ -15,14 +15,16 @@ from datetime import datetime, timedelta, timezone
 
 try:
     from config.logging_config import get_component_logger
+
     logger = get_component_logger("finance")
 except Exception:
     logger = logging.getLogger(__name__)
 
-from domains.finance.data.market_data_store import upsert_observations, get_series
-from domains.finance.data.evidence_ledger import record as ledger_record
-from domains.finance.gold_sources import freegoldapi, fred_gold
 from shared.data_result import DataResult
+
+from domains.finance.data.evidence_ledger import record as ledger_record
+from domains.finance.data.market_data_store import get_series, upsert_observations
+from domains.finance.gold_sources import fred_gold, freegoldapi
 
 
 def _metals_dev_fetch(start: str | None = None, end: str | None = None) -> DataResult[list[dict]]:
@@ -32,7 +34,9 @@ def _metals_dev_fetch(start: str | None = None, end: str | None = None) -> DataR
     except ImportError:
         return DataResult.fail("metals_dev adapter not available", "config")
     end_dt = datetime.strptime(end, "%Y-%m-%d").date() if end else datetime.now(timezone.utc).date()
-    start_dt = datetime.strptime(start, "%Y-%m-%d").date() if start else (end_dt - timedelta(days=30))
+    start_dt = (
+        datetime.strptime(start, "%Y-%m-%d").date() if start else (end_dt - timedelta(days=30))
+    )
     return fetch_timeseries(start_dt.strftime("%Y-%m-%d"), end_dt.strftime("%Y-%m-%d"))
 
 
@@ -57,7 +61,9 @@ def _normalize_for_store(obs: dict) -> dict:
     }
 
 
-def fetch_all(start: str | None = None, end: str | None = None, store: bool = True) -> dict[str, list[dict]]:
+def fetch_all(
+    start: str | None = None, end: str | None = None, store: bool = True
+) -> dict[str, list[dict]]:
     """
     Fetch from all gold sources. Returns {source_id: [obs, ...]}.
     Optionally stores in market_data_store. Records provenance in evidence ledger (status=ok or error).
@@ -84,7 +90,10 @@ def fetch_all(start: str | None = None, end: str | None = None, store: bool = Tr
                 evidence_data={
                     "status": "ok",
                     "observations_count": len(obs),
-                    "date_range": {"start": min(dates) if dates else None, "end": max(dates) if dates else None},
+                    "date_range": {
+                        "start": min(dates) if dates else None,
+                        "end": max(dates) if dates else None,
+                    },
                     "unit": obs[0].get("unit", "") if obs else "",
                     "is_primary_usd_source": source_id == "freegoldapi",
                     "description": desc,
@@ -108,7 +117,9 @@ def fetch_all(start: str | None = None, end: str | None = None, store: bool = Tr
     return results
 
 
-def get_stored(source_id: str | None = None, start: str | None = None, end: str | None = None) -> dict:
+def get_stored(
+    source_id: str | None = None, start: str | None = None, end: str | None = None
+) -> dict:
     """
     Get stored gold data. If source_id is None, returns all sources.
     """
@@ -119,11 +130,13 @@ def get_stored(source_id: str | None = None, start: str | None = None, end: str 
     # List all gold symbols and fetch each
     try:
         import sqlite3
+
         from config.settings import FINANCE_MARKET_DB
+
         conn = sqlite3.connect(str(FINANCE_MARKET_DB))
         cur = conn.execute(
             "SELECT DISTINCT symbol FROM market_series WHERE source = ? ORDER BY symbol",
-            (AMALGAM_SOURCE,)
+            (AMALGAM_SOURCE,),
         )
         symbols = [r[0] for r in cur.fetchall()]
         conn.close()
@@ -165,12 +178,14 @@ def get_unified(
         formatted = []
         for o in obs_list:
             meta = o.get("metadata") or {}
-            formatted.append({
-                "date": o["date"],
-                "value": o["value"],
-                "unit": meta.get("unit", ""),
-                "source_id": meta.get("source_id", source_id),
-            })
+            formatted.append(
+                {
+                    "date": o["date"],
+                    "value": o["value"],
+                    "unit": meta.get("unit", ""),
+                    "source_id": meta.get("source_id", source_id),
+                }
+            )
         by_source[source_id] = (unit, formatted)
 
     for sid in PREFERRED_SOURCE_ORDER:
@@ -207,7 +222,4 @@ def get_history(days: int = 90, fetch_if_empty: bool = True) -> list[dict]:
 
 def list_sources() -> list[dict]:
     """List configured gold sources and their status."""
-    return [
-        {"id": sid, "description": desc}
-        for sid, _, desc in SOURCES
-    ]
+    return [{"id": sid, "description": desc} for sid, _, desc in SOURCES]

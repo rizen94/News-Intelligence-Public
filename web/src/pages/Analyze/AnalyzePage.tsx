@@ -24,17 +24,18 @@ export default function AnalyzePage() {
   // For non-finance domains, show the existing placeholder.
   if (domain === 'finance') {
     return null;
-    }
+  }
 
   return (
     <Box>
-      <Typography variant="h5" sx={{ mb: 2, fontWeight: 600 }}>
+      <Typography variant='h5' sx={{ mb: 2, fontWeight: 600 }}>
         Analyze
       </Typography>
       <Card>
         <CardContent>
-          <Typography color="text.secondary">
-            Trend analysis, network graphs, timeline builder, and report generator are planned for a future release.
+          <Typography color='text.secondary'>
+            Trend analysis, network graphs, timeline builder, and report
+            generator are planned for a future release.
           </Typography>
         </CardContent>
       </Card>

@@ -5,10 +5,9 @@ Allows users to mark storylines for long-term tracking, generates alerts
 when dormant stories reactivate, and produces weekly digests.
 """
 
-import json
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -26,14 +25,15 @@ class WatchlistService:
     def add_to_watchlist(
         self,
         storyline_id: int,
-        user_label: Optional[str] = None,
-        notes: Optional[str] = None,
+        user_label: str | None = None,
+        notes: str | None = None,
         alert_on_reactivation: bool = True,
         weekly_digest: bool = True,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         cursor = self.conn.cursor()
         try:
-            cursor.execute("""
+            cursor.execute(
+                """
                 INSERT INTO watchlist (storyline_id, user_label, notes,
                                       alert_on_reactivation, weekly_digest)
                 VALUES (%s, %s, %s, %s, %s)
@@ -44,15 +44,19 @@ class WatchlistService:
                     weekly_digest = EXCLUDED.weekly_digest,
                     updated_at = CURRENT_TIMESTAMP
                 RETURNING id
-            """, (storyline_id, user_label, notes,
-                  alert_on_reactivation, weekly_digest))
+            """,
+                (storyline_id, user_label, notes, alert_on_reactivation, weekly_digest),
+            )
             row = cursor.fetchone()
 
-            cursor.execute("""
+            cursor.execute(
+                """
                 UPDATE storylines
                 SET status = 'watching', updated_at = CURRENT_TIMESTAMP
                 WHERE id = %s AND status IN ('active', 'dormant')
-            """, (storyline_id,))
+            """,
+                (storyline_id,),
+            )
 
             self.conn.commit()
             return {"success": True, "watchlist_id": row[0]}
@@ -63,15 +67,18 @@ class WatchlistService:
         finally:
             cursor.close()
 
-    def remove_from_watchlist(self, storyline_id: int) -> Dict[str, Any]:
+    def remove_from_watchlist(self, storyline_id: int) -> dict[str, Any]:
         cursor = self.conn.cursor()
         try:
             cursor.execute("DELETE FROM watchlist WHERE storyline_id = %s", (storyline_id,))
-            cursor.execute("""
+            cursor.execute(
+                """
                 UPDATE storylines
                 SET status = 'active', updated_at = CURRENT_TIMESTAMP
                 WHERE id = %s AND status = 'watching'
-            """, (storyline_id,))
+            """,
+                (storyline_id,),
+            )
             self.conn.commit()
             return {"success": True}
         except Exception as e:
@@ -81,7 +88,7 @@ class WatchlistService:
         finally:
             cursor.close()
 
-    def get_watchlist(self) -> List[Dict[str, Any]]:
+    def get_watchlist(self) -> list[dict[str, Any]]:
         cursor = self.conn.cursor()
         try:
             cursor.execute("""
@@ -97,20 +104,22 @@ class WatchlistService:
             """)
             items = []
             for r in cursor.fetchall():
-                items.append({
-                    "watchlist_id": r[0],
-                    "storyline_id": r[1],
-                    "user_label": r[2],
-                    "notes": r[3],
-                    "alert_on_reactivation": r[4],
-                    "weekly_digest": r[5],
-                    "created_at": r[6].isoformat() if r[6] else None,
-                    "storyline_title": r[7],
-                    "storyline_status": r[8],
-                    "total_events": r[9] or 0,
-                    "last_event_at": r[10].isoformat() if r[10] else None,
-                    "unread_alerts": r[11],
-                })
+                items.append(
+                    {
+                        "watchlist_id": r[0],
+                        "storyline_id": r[1],
+                        "user_label": r[2],
+                        "notes": r[3],
+                        "alert_on_reactivation": r[4],
+                        "weekly_digest": r[5],
+                        "created_at": r[6].isoformat() if r[6] else None,
+                        "storyline_title": r[7],
+                        "storyline_status": r[8],
+                        "total_events": r[9] or 0,
+                        "last_event_at": r[10].isoformat() if r[10] else None,
+                        "unread_alerts": r[11],
+                    }
+                )
             return items
         finally:
             cursor.close()
@@ -119,11 +128,12 @@ class WatchlistService:
     # Alerts
     # ------------------------------------------------------------------
 
-    def get_alerts(self, unread_only: bool = False, limit: int = 50) -> List[Dict[str, Any]]:
+    def get_alerts(self, unread_only: bool = False, limit: int = 50) -> list[dict[str, Any]]:
         cursor = self.conn.cursor()
         try:
             where = "WHERE wa.is_read = FALSE" if unread_only else ""
-            cursor.execute(f"""
+            cursor.execute(
+                f"""
                 SELECT wa.id, wa.storyline_id, wa.event_id, wa.alert_type,
                        wa.title, wa.body, wa.is_read, wa.created_at,
                        s.title AS storyline_title
@@ -132,16 +142,24 @@ class WatchlistService:
                 {where}
                 ORDER BY wa.created_at DESC
                 LIMIT %s
-            """, (limit,))
+            """,
+                (limit,),
+            )
             alerts = []
             for r in cursor.fetchall():
-                alerts.append({
-                    "id": r[0], "storyline_id": r[1], "event_id": r[2],
-                    "alert_type": r[3], "title": r[4], "body": r[5],
-                    "is_read": r[6],
-                    "created_at": r[7].isoformat() if r[7] else None,
-                    "storyline_title": r[8],
-                })
+                alerts.append(
+                    {
+                        "id": r[0],
+                        "storyline_id": r[1],
+                        "event_id": r[2],
+                        "alert_type": r[3],
+                        "title": r[4],
+                        "body": r[5],
+                        "is_read": r[6],
+                        "created_at": r[7].isoformat() if r[7] else None,
+                        "storyline_title": r[8],
+                    }
+                )
             return alerts
         finally:
             cursor.close()
@@ -196,12 +214,18 @@ class WatchlistService:
                   )
             """)
             for wid, sid, title, react_count in cursor.fetchall():
-                cursor.execute("""
+                cursor.execute(
+                    """
                     INSERT INTO watchlist_alerts (watchlist_id, storyline_id, alert_type, title, body)
                     VALUES (%s, %s, 'reactivation', %s, %s)
-                """, (wid, sid,
-                      f"Storyline reactivated: {title}",
-                      f"This storyline was dormant but new events were found (reactivation #{react_count})."))
+                """,
+                    (
+                        wid,
+                        sid,
+                        f"Storyline reactivated: {title}",
+                        f"This storyline was dormant but new events were found (reactivation #{react_count}).",
+                    ),
+                )
                 generated += 1
 
             self.conn.commit()
@@ -229,13 +253,20 @@ class WatchlistService:
                   )
             """)
             for wid, sid, eid, etitle, etype in cursor.fetchall():
-                cursor.execute("""
+                cursor.execute(
+                    """
                     INSERT INTO watchlist_alerts (watchlist_id, storyline_id, event_id,
                                                  alert_type, title, body)
                     VALUES (%s, %s, %s, 'new_event', %s, %s)
-                """, (wid, sid, eid,
-                      f"New event: {etitle}",
-                      f"A new {etype.replace('_', ' ')} event was detected for this storyline."))
+                """,
+                    (
+                        wid,
+                        sid,
+                        eid,
+                        f"New event: {etitle}",
+                        f"A new {etype.replace('_', ' ')} event was detected for this storyline.",
+                    ),
+                )
                 generated += 1
 
             self.conn.commit()
@@ -250,11 +281,12 @@ class WatchlistService:
     # Dashboard helpers
     # ------------------------------------------------------------------
 
-    def get_story_activity_feed(self, limit: int = 30) -> List[Dict[str, Any]]:
+    def get_story_activity_feed(self, limit: int = 30) -> list[dict[str, Any]]:
         """Recent storyline activity across all watched storylines."""
         cursor = self.conn.cursor()
         try:
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT ce.id, ce.title, ce.event_type, ce.actual_event_date,
                        ce.storyline_id, s.title AS storyline_title,
                        ce.source_count, ce.extraction_timestamp
@@ -263,36 +295,47 @@ class WatchlistService:
                 WHERE ce.canonical_event_id IS NULL
                 ORDER BY ce.extraction_timestamp DESC
                 LIMIT %s
-            """, (limit,))
+            """,
+                (limit,),
+            )
             feed = []
             for r in cursor.fetchall():
-                feed.append({
-                    "event_id": r[0], "event_title": r[1], "event_type": r[2],
-                    "event_date": r[3].isoformat() if r[3] else None,
-                    "storyline_id": r[4], "storyline_title": r[5],
-                    "source_count": r[6],
-                    "detected_at": r[7].isoformat() if r[7] else None,
-                })
+                feed.append(
+                    {
+                        "event_id": r[0],
+                        "event_title": r[1],
+                        "event_type": r[2],
+                        "event_date": r[3].isoformat() if r[3] else None,
+                        "storyline_id": r[4],
+                        "storyline_title": r[5],
+                        "source_count": r[6],
+                        "detected_at": r[7].isoformat() if r[7] else None,
+                    }
+                )
             return feed
         finally:
             cursor.close()
 
-    def get_dormant_story_alerts(self, days: int = 30) -> List[Dict[str, Any]]:
+    def get_dormant_story_alerts(self, days: int = 30) -> list[dict[str, Any]]:
         """Watched storylines that have been dormant for N+ days."""
         cursor = self.conn.cursor()
         try:
             cutoff = datetime.now(timezone.utc) - timedelta(days=days)
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT s.id, s.title, s.dormant_since, s.total_events
                 FROM storylines s
                 JOIN watchlist w ON w.storyline_id = s.id
                 WHERE s.status = 'dormant'
                   AND s.dormant_since < %s
                 ORDER BY s.dormant_since ASC
-            """, (cutoff,))
+            """,
+                (cutoff,),
+            )
             return [
                 {
-                    "storyline_id": r[0], "title": r[1],
+                    "storyline_id": r[0],
+                    "title": r[1],
                     "dormant_since": r[2].isoformat() if r[2] else None,
                     "total_events": r[3] or 0,
                 }
@@ -301,22 +344,26 @@ class WatchlistService:
         finally:
             cursor.close()
 
-    def get_coverage_gaps(self, days: int = 7) -> List[Dict[str, Any]]:
+    def get_coverage_gaps(self, days: int = 7) -> list[dict[str, Any]]:
         """Active storylines that haven't had new sources recently."""
         cursor = self.conn.cursor()
         try:
             cutoff = datetime.now(timezone.utc) - timedelta(days=days)
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT s.id, s.title, s.last_event_at, s.total_events
                 FROM storylines s
                 WHERE s.status = 'active'
                   AND (s.last_event_at IS NULL OR s.last_event_at < %s)
                 ORDER BY s.last_event_at ASC NULLS FIRST
                 LIMIT 20
-            """, (cutoff,))
+            """,
+                (cutoff,),
+            )
             return [
                 {
-                    "storyline_id": r[0], "title": r[1],
+                    "storyline_id": r[0],
+                    "title": r[1],
                     "last_event_at": r[2].isoformat() if r[2] else None,
                     "total_events": r[3] or 0,
                 }
@@ -325,7 +372,7 @@ class WatchlistService:
         finally:
             cursor.close()
 
-    def get_cross_domain_connections(self) -> List[Dict[str, Any]]:
+    def get_cross_domain_connections(self) -> list[dict[str, Any]]:
         """Find storylines that share entities across different domains."""
         cursor = self.conn.cursor()
         try:

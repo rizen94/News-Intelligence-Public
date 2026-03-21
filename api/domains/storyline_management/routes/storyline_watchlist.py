@@ -3,11 +3,10 @@ Watchlist Routes for News Intelligence v5.0 (Phase 5)
 Manage watched storylines, alerts, and monitoring dashboard data.
 """
 
-from fastapi import APIRouter, HTTPException, Path, Query, Body
-from typing import Optional
 import logging
 
 from config.database import get_db_connection
+from fastapi import APIRouter, Body, HTTPException, Path, Query
 
 logger = logging.getLogger(__name__)
 
@@ -21,10 +20,12 @@ router = APIRouter(
 # Watchlist CRUD
 # ------------------------------------------------------------------
 
+
 @router.get("/watchlist")
 async def get_watchlist():
     """Get all watched storylines with unread alert counts."""
     from services.watchlist_service import WatchlistService
+
     conn = get_db_connection()
     if not conn:
         raise HTTPException(status_code=503, detail="Database unavailable")
@@ -38,21 +39,25 @@ async def get_watchlist():
 @router.post("/watchlist/{storyline_id}")
 async def add_to_watchlist(
     storyline_id: int = Path(...),
-    user_label: Optional[str] = Body(None),
-    notes: Optional[str] = Body(None),
+    user_label: str | None = Body(None),
+    notes: str | None = Body(None),
     alert_on_reactivation: bool = Body(True),
     weekly_digest: bool = Body(True),
 ):
     """Add a storyline to the watchlist."""
     from services.watchlist_service import WatchlistService
+
     conn = get_db_connection()
     if not conn:
         raise HTTPException(status_code=503, detail="Database unavailable")
     try:
         svc = WatchlistService(conn)
         result = svc.add_to_watchlist(
-            storyline_id, user_label, notes,
-            alert_on_reactivation, weekly_digest,
+            storyline_id,
+            user_label,
+            notes,
+            alert_on_reactivation,
+            weekly_digest,
         )
         if not result["success"]:
             raise HTTPException(status_code=400, detail=result.get("error"))
@@ -65,6 +70,7 @@ async def add_to_watchlist(
 async def remove_from_watchlist(storyline_id: int = Path(...)):
     """Remove a storyline from the watchlist."""
     from services.watchlist_service import WatchlistService
+
     conn = get_db_connection()
     if not conn:
         raise HTTPException(status_code=503, detail="Database unavailable")
@@ -82,6 +88,7 @@ async def remove_from_watchlist(storyline_id: int = Path(...)):
 # Alerts
 # ------------------------------------------------------------------
 
+
 @router.get("/watchlist/alerts")
 async def get_alerts(
     unread_only: bool = Query(False),
@@ -89,6 +96,7 @@ async def get_alerts(
 ):
     """Get watchlist alerts."""
     from services.watchlist_service import WatchlistService
+
     conn = get_db_connection()
     if not conn:
         raise HTTPException(status_code=503, detail="Database unavailable")
@@ -103,6 +111,7 @@ async def get_alerts(
 async def mark_alert_read(alert_id: int = Path(...)):
     """Mark a single alert as read."""
     from services.watchlist_service import WatchlistService
+
     conn = get_db_connection()
     if not conn:
         raise HTTPException(status_code=503, detail="Database unavailable")
@@ -118,6 +127,7 @@ async def mark_alert_read(alert_id: int = Path(...)):
 async def mark_all_alerts_read():
     """Mark all alerts as read."""
     from services.watchlist_service import WatchlistService
+
     conn = get_db_connection()
     if not conn:
         raise HTTPException(status_code=503, detail="Database unavailable")
@@ -133,10 +143,12 @@ async def mark_all_alerts_read():
 # Dashboard / monitoring data
 # ------------------------------------------------------------------
 
+
 @router.get("/monitoring/activity-feed")
 async def get_activity_feed(limit: int = Query(30, ge=1, le=100)):
     """Real-time feed of storyline event activity."""
     from services.watchlist_service import WatchlistService
+
     conn = get_db_connection()
     if not conn:
         raise HTTPException(status_code=503, detail="Database unavailable")
@@ -151,6 +163,7 @@ async def get_activity_feed(limit: int = Query(30, ge=1, le=100)):
 async def get_dormant_alerts(days: int = Query(30, ge=7, le=365)):
     """Watched storylines that have been dormant beyond threshold."""
     from services.watchlist_service import WatchlistService
+
     conn = get_db_connection()
     if not conn:
         raise HTTPException(status_code=503, detail="Database unavailable")
@@ -165,6 +178,7 @@ async def get_dormant_alerts(days: int = Query(30, ge=7, le=365)):
 async def get_coverage_gaps(days: int = Query(7, ge=1, le=90)):
     """Active storylines missing recent source coverage."""
     from services.watchlist_service import WatchlistService
+
     conn = get_db_connection()
     if not conn:
         raise HTTPException(status_code=503, detail="Database unavailable")
@@ -179,6 +193,7 @@ async def get_coverage_gaps(days: int = Query(7, ge=1, le=90)):
 async def get_cross_domain_connections():
     """Storylines sharing core entities across different topics."""
     from services.watchlist_service import WatchlistService
+
     conn = get_db_connection()
     if not conn:
         raise HTTPException(status_code=503, detail="Database unavailable")

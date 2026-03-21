@@ -15,6 +15,7 @@ NC='\033[0m' # No Color
 # Configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOG_DIR="$SCRIPT_DIR/logs"
+API_UVICORN_PGREP='uvicorn.*(main|main_v4):app'
 
 # Logging functions
 log() {
@@ -47,13 +48,13 @@ free_port() {
 
 # Stop API server
 stop_api() {
-    if is_running "uvicorn.*main_v4"; then
+    if is_running "$API_UVICORN_PGREP"; then
         log "Stopping API server..."
-        pkill -f "uvicorn.*main_v4" || true
+        pkill -f "$API_UVICORN_PGREP" || true
         sleep 2
-        if is_running "uvicorn.*main_v4"; then
+        if is_running "$API_UVICORN_PGREP"; then
             warning "API server did not stop gracefully, forcing..."
-            pkill -9 -f "uvicorn.*main_v4" || true
+            pkill -9 -f "$API_UVICORN_PGREP" || true
         fi
         success "API server stopped"
     else

@@ -7,15 +7,14 @@ import logging
 
 try:
     from config.logging_config import get_component_logger
+
     logger = get_component_logger("finance")
 except Exception:
     logger = logging.getLogger(__name__)
 
 from config.settings import FINANCE_MODELS, OLLAMA_HOST
-from shared.services.llm_service import LLMService
-from shared.services.llm_service import ModelType
+from shared.services.llm_service import LLMService, ModelType
 from shared.services.ollama_model_policy import InvocationKind, resolve_model_for_invocation
-
 
 _llm_service: LLMService | None = None
 
@@ -54,6 +53,7 @@ async def generate(
     model_key: classification | generation_fast | generation_high
     """
     import time
+
     llm = get_llm()
     model = _model_key_to_type(model_key)
     model_name = model.value if hasattr(model, "value") else str(model)
@@ -66,6 +66,7 @@ async def generate(
         latency_ms = (time.perf_counter() - t0) * 1000
         try:
             from shared.logging.llm_logger import log_llm_interaction
+
             log_llm_interaction(
                 task_id=task_id,
                 request_id=request_id,
@@ -87,6 +88,7 @@ async def generate(
         latency_ms = (time.perf_counter() - t0) * 1000
         try:
             from shared.logging.llm_logger import log_llm_interaction
+
             log_llm_interaction(
                 task_id=task_id,
                 request_id=request_id,

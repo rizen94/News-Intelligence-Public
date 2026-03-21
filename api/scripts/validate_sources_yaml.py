@@ -4,10 +4,10 @@ Validate config/sources.yaml — required fields, credentials, dataset structure
 Run: python scripts/validate_sources_yaml.py (from api/ directory)
 """
 
-import os
 import sys
-import yaml
 from pathlib import Path
+
+import yaml
 
 API_DIR = Path(__file__).resolve().parent.parent
 SOURCES_PATH = API_DIR / "config" / "sources.yaml"
@@ -37,7 +37,9 @@ def main():
         else:
             datasets = source_val.get("datasets") or {}
             creds = source_val.get("credentials") or []
-            print(f"  {source_val.get('name', source_key)}: {len(datasets)} datasets, creds={creds}")
+            print(
+                f"  {source_val.get('name', source_key)}: {len(datasets)} datasets, creds={creds}"
+            )
 
     if errors:
         print("Errors:", errors)

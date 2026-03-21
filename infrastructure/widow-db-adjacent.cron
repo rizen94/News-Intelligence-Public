@@ -1,0 +1,16 @@
+# Widow: DB-adjacent jobs (no FastAPI). Install:
+#   sudo cp infrastructure/widow-db-adjacent.cron /etc/cron.d/news-intelligence-widow-db
+#   sudo sed -i 's|/opt/news-intelligence|/opt/news-intelligence|g' /etc/cron.d/news-intelligence-widow-db
+#   sudo chmod 644 /etc/cron.d/news-intelligence-widow-db
+#
+# On the main GPU host .env set:
+#   AUTOMATION_SKIP_RSS_IN_COLLECTION_CYCLE=true
+#   AUTOMATION_DISABLED_SCHEDULES=context_sync,entity_profile_sync,pending_db_flush
+#
+# RSS: either keep systemd newsplatform-secondary.service OR add --rss below (not both).
+
+SHELL=/bin/bash
+PATH=/usr/local/bin:/usr/bin:/bin
+
+# Every 15 minutes: contexts + entity profile map + replay spill file (replace pete + path if needed)
+*/15 * * * * pete cd /opt/news-intelligence && PYTHONPATH=api /opt/news-intelligence/.venv/bin/python api/scripts/run_widow_db_adjacent.py --context-sync --entity-profile-sync --pending-db-flush >> /opt/news-intelligence/logs/widow_db_adjacent.log 2>&1

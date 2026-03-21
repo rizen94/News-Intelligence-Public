@@ -5,36 +5,39 @@
 
 import React, { useState, useEffect } from 'react';
 import { Box, Chip, IconButton, Tooltip, Alert } from '@mui/material';
-import {
-  CheckCircle,
-  Error,
-  Refresh,
-} from '@mui/icons-material';
+import { CheckCircle, Error, Refresh } from '@mui/icons-material';
 import { getAPIConnectionManager } from '../../services/apiConnectionManager';
 
 interface APIConnectionStatusProps {
   showDetails?: boolean;
 }
 
-const APIConnectionStatus: React.FC<APIConnectionStatusProps> = ({ showDetails = false }) => {
+const APIConnectionStatus: React.FC<APIConnectionStatusProps> = ({
+  showDetails = false,
+}) => {
   const [isConnected, setIsConnected] = useState(false);
   const [isChecking, setIsChecking] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const connectionManager = getAPIConnectionManager();
 
-  const checkConnection = async() => {
+  const checkConnection = async () => {
     setIsChecking(true);
     setError(null);
     try {
       const connected = await connectionManager.testConnection();
       setIsConnected(connected);
       if (!connected) {
-        setError('API not reachable. Ensure the API is running (e.g. port 8000). In dev, the frontend proxies /api to localhost:8000.');
+        setError(
+          'API not reachable. Ensure the API is running (e.g. port 8000). In dev, the frontend proxies /api to localhost:8000.'
+        );
       }
     } catch (err: unknown) {
       setIsConnected(false);
-      setError((err as Error)?.message || 'Connection check failed. Is the API running on port 8000?');
+      setError(
+        (err as Error)?.message ||
+          'Connection check failed. Is the API running on port 8000?'
+      );
     } finally {
       setIsChecking(false);
     }
@@ -58,9 +61,9 @@ const APIConnectionStatus: React.FC<APIConnectionStatusProps> = ({ showDetails =
       return <Refresh sx={{ animation: 'spin 1s linear infinite' }} />;
     }
     if (isConnected) {
-      return <CheckCircle color="success" />;
+      return <CheckCircle color='success' />;
     }
-    return <Error color="error" />;
+    return <Error color='error' />;
   };
 
   const getStatusColor = () => {
@@ -74,26 +77,37 @@ const APIConnectionStatus: React.FC<APIConnectionStatusProps> = ({ showDetails =
   };
 
   return (
-    <Box display="flex" alignItems="center" gap={1}>
-      <Tooltip title={error || (isConnected ? 'API connection is active' : 'API connection failed. Start the API (e.g. uvicorn on port 8000) and click to retry.')}>
+    <Box display='flex' alignItems='center' gap={1}>
+      <Tooltip
+        title={
+          error ||
+          (isConnected
+            ? 'API connection is active'
+            : 'API connection failed. Start the API (e.g. uvicorn on port 8000) and click to retry.')
+        }
+      >
         <Chip
           icon={getStatusIcon()}
           label={getStatusText()}
           color={getStatusColor()}
-          size="small"
+          size='small'
           onClick={checkConnection}
           sx={{ cursor: 'pointer' }}
         />
       </Tooltip>
-      <Tooltip title="Refresh connection">
+      <Tooltip title='Refresh connection'>
         <span>
-          <IconButton size="small" onClick={checkConnection} disabled={isChecking}>
+          <IconButton
+            size='small'
+            onClick={checkConnection}
+            disabled={isChecking}
+          >
             <Refresh />
           </IconButton>
         </span>
       </Tooltip>
       {showDetails && error && (
-        <Alert severity="error" sx={{ ml: 1 }}>
+        <Alert severity='error' sx={{ ml: 1 }}>
           {error}
         </Alert>
       )}
@@ -102,4 +116,3 @@ const APIConnectionStatus: React.FC<APIConnectionStatusProps> = ({ showDetails =
 };
 
 export default APIConnectionStatus;
-

@@ -11,7 +11,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from shared.domain_registry import get_active_domain_keys, domain_key_to_schema
+from shared.domain_registry import domain_key_to_schema, get_active_domain_keys
 
 logger = logging.getLogger(__name__)
 

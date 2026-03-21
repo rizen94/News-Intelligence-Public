@@ -1,18 +1,16 @@
 """Unit tests for refresh workflow with mocked sources."""
 
 from datetime import datetime, timezone
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
-
 from domains.finance.orchestrator import FinanceOrchestrator
 from domains.finance.orchestrator_types import (
-    TaskType,
-    TaskPriority,
     Task,
     TaskContext,
+    TaskPriority,
     TaskStatus,
-    RefreshSummary,
+    TaskType,
 )
 
 

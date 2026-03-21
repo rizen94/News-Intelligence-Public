@@ -3,8 +3,8 @@ Commodity registry — config-driven list and per-commodity rules for relevance 
 Loads api/config/commodity_registry.yaml; used by news_orchestrator, finance routes, and FRED.
 """
 
-import os
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +16,7 @@ except ImportError:
 try:
     from config.logging_config import get_component_logger
     from config.paths import CONFIG_DIR
+
     logger = get_component_logger("finance")
 except Exception:
     logger = logging.getLogger(__name__)
@@ -112,7 +113,11 @@ def get_non_financial_exclude(commodity_id: str) -> list[str]:
 def get_commodity_list_for_api() -> list[dict[str, Any]]:
     """Minimal list for GET /{domain}/finance/commodities: [{ id, label }, ...]."""
     reg = _load_registry()
-    return [{"id": c["id"], "label": c.get("label") or c["id"]} for c in reg["commodities"] if c.get("id")]
+    return [
+        {"id": c["id"], "label": c.get("label") or c["id"]}
+        for c in reg["commodities"]
+        if c.get("id")
+    ]
 
 
 def get_fred_series_id(commodity_id: str) -> str | None:

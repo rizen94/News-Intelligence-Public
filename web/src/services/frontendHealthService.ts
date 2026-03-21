@@ -59,7 +59,10 @@ class FrontendHealthService {
 
       if (error.name === 'TimeoutError') {
         errors.push('API connection timeout');
-      } else if (error.name === 'TypeError' && error.message.includes('fetch')) {
+      } else if (
+        error.name === 'TypeError' &&
+        error.message.includes('fetch')
+      ) {
         errors.push('Cannot connect to API server');
       } else {
         errors.push(error.message || 'Unknown error');
@@ -136,9 +139,13 @@ class FrontendHealthService {
       }
 
       const base = getCurrentApiUrl();
-      const url = !base || base === ''
-        ? '/api/system_monitoring/route_supervisor/check_now'
-        : `${base.replace(/\/$/, '')}/api/system_monitoring/route_supervisor/check_now`;
+      const url =
+        !base || base === ''
+          ? '/api/system_monitoring/route_supervisor/check_now'
+          : `${base.replace(
+              /\/$/,
+              ''
+            )}/api/system_monitoring/route_supervisor/check_now`;
       await fetch(url, {
         method: 'POST',
         headers: {
@@ -159,4 +166,3 @@ export const frontendHealthService = new FrontendHealthService();
 // if (typeof window !== 'undefined') {
 //   frontendHealthService.startMonitoring(30000); // Check every 30 seconds
 // }
-

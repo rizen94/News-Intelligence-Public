@@ -9,8 +9,13 @@ export const rssApi = {
   async getRSSFeeds(params: any = {}, domain?: string) {
     try {
       const domainKey = domain || getCurrentDomain();
-      Logger.debug('RSS Feeds API call', { url: `/api/${domainKey}/rss_feeds`, params });
-      const response = await getApi().get(`/api/${domainKey}/rss_feeds`, { params });
+      Logger.debug('RSS Feeds API call', {
+        url: `/api/${domainKey}/rss_feeds`,
+        params,
+      });
+      const response = await getApi().get(`/api/${domainKey}/rss_feeds`, {
+        params,
+      });
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to fetch RSS feeds', error as Error);
@@ -22,7 +27,7 @@ export const rssApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().post(
-        `/api/${domainKey}/rss_feeds/collect_now`,
+        `/api/${domainKey}/rss_feeds/collect_now`
       );
       return response.data;
     } catch (error) {
@@ -34,7 +39,10 @@ export const rssApi = {
   async createRSSFeed(feedData: any, domain?: string) {
     try {
       const domainKey = domain || getCurrentDomain();
-      const response = await getApi().post(`/api/${domainKey}/rss_feeds`, feedData);
+      const response = await getApi().post(
+        `/api/${domainKey}/rss_feeds`,
+        feedData
+      );
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to create RSS feed', error as Error);
@@ -45,7 +53,10 @@ export const rssApi = {
   async updateRSSFeed(feedId: number, feedData: any, domain?: string) {
     try {
       const domainKey = domain || getCurrentDomain();
-      const response = await getApi().put(`/api/${domainKey}/rss_feeds/${feedId}`, feedData);
+      const response = await getApi().put(
+        `/api/${domainKey}/rss_feeds/${feedId}`,
+        feedData
+      );
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to update RSS feed', error as Error);
@@ -56,7 +67,9 @@ export const rssApi = {
   async deleteRSSFeed(feedId: number, domain?: string) {
     try {
       const domainKey = domain || getCurrentDomain();
-      const response = await getApi().delete(`/api/${domainKey}/rss_feeds/${feedId}`);
+      const response = await getApi().delete(
+        `/api/${domainKey}/rss_feeds/${feedId}`
+      );
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to delete RSS feed', error as Error);
@@ -69,7 +82,7 @@ export const rssApi = {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().post(
         `/api/${domainKey}/rss_feeds/collect_now`,
-        { feed_id: feedId },
+        { feed_id: feedId }
       );
       return response.data;
     } catch (error) {
@@ -86,7 +99,7 @@ export const rssApi = {
       });
       const feeds = response.data?.data?.feeds || [];
       const categories = Array.from(
-        new Set(feeds.map((f: any) => f.category).filter(Boolean)),
+        new Set(feeds.map((f: any) => f.category).filter(Boolean))
       );
       return { success: true, data: { categories } };
     } catch (error) {

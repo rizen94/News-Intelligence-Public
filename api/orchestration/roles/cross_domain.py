@@ -5,17 +5,16 @@ Shared entity detection, temporal correlation. Phase 2.
 """
 
 import logging
-from typing import Any, Callable, Optional
+from collections.abc import Callable
 
 from orchestration.events.envelope import EventEnvelope
-from orchestration.events.types import EventType
 
 logger = logging.getLogger("orchestration")
 
 
 def handle_article_ingested(
     envelope: EventEnvelope,
-    get_db_connection: Optional[Callable] = None,
+    get_db_connection: Callable | None = None,
 ) -> None:
     """
     Optionally check if entity appears in another domain; record cross_domain_links.

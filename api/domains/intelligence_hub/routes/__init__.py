@@ -1,15 +1,16 @@
 # Intelligence Hub — consolidated router
 from fastapi import APIRouter
-from .intelligence_hub import router as hub_router
-from .intelligence_analysis import router as analysis_router
-from .rag_queries import router as rag_router
+
 from .content_synthesis import router as synthesis_router
 from .context_centric import router as context_centric_router
-from .quality import router as quality_router
 from .cross_domain import router as cross_domain_router
-from .products import router as products_router
-from .report import router as report_router
 from .enrichment import router as enrichment_router
+from .intelligence_analysis import router as analysis_router
+from .intelligence_hub import router as hub_router
+from .products import router as products_router
+from .quality import router as quality_router
+from .rag_queries import router as rag_router
+from .report import router as report_router
 
 router = APIRouter(tags=["Intelligence Hub"])
 router.include_router(hub_router)

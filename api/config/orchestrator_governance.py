@@ -9,6 +9,7 @@ from typing import Any
 
 try:
     from config.logging_config import get_component_logger
+
     logger = get_component_logger("orchestrator")
 except Exception:
     logger = logging.getLogger(__name__)
@@ -22,6 +23,7 @@ def get_orchestrator_governance_config() -> dict[str, Any]:
     """
     try:
         from config.paths import ORCHESTRATOR_GOVERNANCE_YAML
+
         yaml_path = Path(ORCHESTRATOR_GOVERNANCE_YAML)
     except Exception as e:
         logger.warning("Orchestrator config path unavailable: %s", e)
@@ -33,6 +35,7 @@ def get_orchestrator_governance_config() -> dict[str, Any]:
 
     try:
         import yaml
+
         with open(yaml_path) as f:
             cfg = yaml.safe_load(f) or {}
     except Exception as e:
@@ -65,9 +68,27 @@ def _default_config() -> dict[str, Any]:
             "breaking_news_threshold": 0.8,
             "sources": [
                 {"source_id": "rss", "handler": "rss"},
-                {"source_id": "gold", "handler": "finance", "topic": "gold", "min_fetch_interval_seconds": 3600, "off_hours_interval_seconds": 14400},
-                {"source_id": "silver", "handler": "finance", "topic": "silver", "min_fetch_interval_seconds": 3600, "off_hours_interval_seconds": 14400},
-                {"source_id": "platinum", "handler": "finance", "topic": "platinum", "min_fetch_interval_seconds": 3600, "off_hours_interval_seconds": 14400},
+                {
+                    "source_id": "gold",
+                    "handler": "finance",
+                    "topic": "gold",
+                    "min_fetch_interval_seconds": 3600,
+                    "off_hours_interval_seconds": 14400,
+                },
+                {
+                    "source_id": "silver",
+                    "handler": "finance",
+                    "topic": "silver",
+                    "min_fetch_interval_seconds": 3600,
+                    "off_hours_interval_seconds": 14400,
+                },
+                {
+                    "source_id": "platinum",
+                    "handler": "finance",
+                    "topic": "platinum",
+                    "min_fetch_interval_seconds": 3600,
+                    "off_hours_interval_seconds": 14400,
+                },
             ],
         },
         "processing": {

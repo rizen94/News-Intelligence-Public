@@ -17,8 +17,13 @@ DOMAIN_SCHEMA = {
 }
 
 GENERIC_FRAGMENTS = [
-    "no name", "mentioned", "unknown", "n/a", "not specified",
-    "unnamed", "unidentified",
+    "no name",
+    "mentioned",
+    "unknown",
+    "n/a",
+    "not specified",
+    "unnamed",
+    "unidentified",
 ]
 
 
@@ -31,13 +36,13 @@ def _is_noise(name: str, entity_type: str) -> bool:
     stripped = name.strip()
     if len(stripped) < 2:
         return True
-    if re.match(r'^[\d,.\s%$€£]+$', stripped):
+    if re.match(r"^[\d,.\s%$€£]+$", stripped):
         return True
     if len(stripped) > 80:
         return True
     if any(g in stripped.lower() for g in GENERIC_FRAGMENTS):
         return True
-    if entity_type == "person" and re.match(r'^\d', stripped):
+    if entity_type == "person" and re.match(r"^\d", stripped):
         return True
     if entity_type == "person" and len(stripped) > 60:
         return True
@@ -86,26 +91,38 @@ def cleanup_domain_entities(domain_key: str) -> dict:
 
             # --- Step 1: Remove noise ---
             if noise_ids:
-                cur.execute(f"""
+                cur.execute(
+                    f"""
                     UPDATE {schema}.article_entities
                     SET canonical_entity_id = NULL
                     WHERE canonical_entity_id = ANY(%s)
-                """, (noise_ids,))
+                """,
+                    (noise_ids,),
+                )
 
-                cur.execute("""
+                cur.execute(
+                    """
                     DELETE FROM intelligence.old_entity_to_new
                     WHERE domain_key = %s AND old_entity_id = ANY(%s)
-                """, (domain_key, noise_ids))
+                """,
+                    (domain_key, noise_ids),
+                )
 
-                cur.execute("""
+                cur.execute(
+                    """
                     DELETE FROM intelligence.entity_profiles
                     WHERE domain_key = %s AND canonical_entity_id = ANY(%s)
-                """, (domain_key, noise_ids))
+                """,
+                    (domain_key, noise_ids),
+                )
 
-                cur.execute(f"""
+                cur.execute(
+                    f"""
                     DELETE FROM {schema}.entity_canonical
                     WHERE id = ANY(%s)
-                """, (noise_ids,))
+                """,
+                    (noise_ids,),
+                )
                 stats["noise_removed"] = len(noise_ids)
 
             # --- Step 2: Merge case-duplicates ---
@@ -119,26 +136,38 @@ def cleanup_domain_entities(domain_key: str) -> dict:
                 keep_id = entries[0][0]
                 merge_ids = [e[0] for e in entries[1:]]
 
-                cur.execute(f"""
+                cur.execute(
+                    f"""
                     UPDATE {schema}.article_entities
                     SET canonical_entity_id = %s
                     WHERE canonical_entity_id = ANY(%s)
-                """, (keep_id, merge_ids))
+                """,
+                    (keep_id, merge_ids),
+                )
 
-                cur.execute("""
+                cur.execute(
+                    """
                     DELETE FROM intelligence.old_entity_to_new
                     WHERE domain_key = %s AND old_entity_id = ANY(%s)
-                """, (domain_key, merge_ids))
+                """,
+                    (domain_key, merge_ids),
+                )
 
-                cur.execute("""
+                cur.execute(
+                    """
                     DELETE FROM intelligence.entity_profiles
                     WHERE domain_key = %s AND canonical_entity_id = ANY(%s)
-                """, (domain_key, merge_ids))
+                """,
+                    (domain_key, merge_ids),
+                )
 
-                cur.execute(f"""
+                cur.execute(
+                    f"""
                     DELETE FROM {schema}.entity_canonical
                     WHERE id = ANY(%s)
-                """, (merge_ids,))
+                """,
+                    (merge_ids,),
+                )
 
                 stats["duplicates_merged"] += len(merge_ids)
 

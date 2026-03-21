@@ -6,9 +6,8 @@ Inserts metadata into intelligence.processed_documents for document_processing p
 
 import logging
 import re
+from typing import Any
 from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
-from datetime import date, datetime
-from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -33,9 +32,9 @@ def _normalize_url(url: str) -> str:
         return url.strip()
 
 
-def _extract_pdf_from_entry(entry: Any, base_url: Optional[str] = None) -> Optional[str]:
+def _extract_pdf_from_entry(entry: Any, base_url: str | None = None) -> str | None:
     """Best-effort PDF URL extraction from feed entry fields."""
-    candidates: List[str] = []
+    candidates: list[str] = []
     link = (entry.get("link") or "").strip()
     if link:
         candidates.append(link)
@@ -67,7 +66,7 @@ def _extract_pdf_from_entry(entry: Any, base_url: Optional[str] = None) -> Optio
     return None
 
 
-def _resolve_pdf_url_from_page(url: str, timeout: int = 20) -> Optional[str]:
+def _resolve_pdf_url_from_page(url: str, timeout: int = 20) -> str | None:
     """Resolve a direct PDF URL from a landing page when feed only has HTML links."""
     try:
         import requests
@@ -93,12 +92,16 @@ def _resolve_pdf_url_from_page(url: str, timeout: int = 20) -> Optional[str]:
     return None
 
 
-def _fetch_crs(max_items: int) -> List[Tuple[str, str, str, str]]:
+def _fetch_crs(max_items: int) -> list[tuple[str, str, str, str]]:
     """Congressional Research Service reports. Returns (url, title, source_name, document_type)."""
     import feedparser
-    out: List[Tuple[str, str, str, str]] = []
+
+    out: list[tuple[str, str, str, str]] = []
     try:
-        feed = feedparser.parse("https://crsreports.congress.gov/rss/reports", request_headers={"User-Agent": "NewsIntelligence/1.0"})
+        feed = feedparser.parse(
+            "https://crsreports.congress.gov/rss/reports",
+            request_headers={"User-Agent": "NewsIntelligence/1.0"},
+        )
         for i, entry in enumerate(feed.entries):
             if i >= max_items:
                 break
@@ -112,12 +115,16 @@ def _fetch_crs(max_items: int) -> List[Tuple[str, str, str, str]]:
     return out
 
 
-def _fetch_gao(max_items: int) -> List[Tuple[str, str, str, str]]:
+def _fetch_gao(max_items: int) -> list[tuple[str, str, str, str]]:
     """GAO reports RSS. Returns (url, title, source_name, document_type)."""
     import feedparser
-    out: List[Tuple[str, str, str, str]] = []
+
+    out: list[tuple[str, str, str, str]] = []
     try:
-        feed = feedparser.parse("https://www.gao.gov/rss/reports.xml", request_headers={"User-Agent": "NewsIntelligence/1.0"})
+        feed = feedparser.parse(
+            "https://www.gao.gov/rss/reports.xml",
+            request_headers={"User-Agent": "NewsIntelligence/1.0"},
+        )
         for i, entry in enumerate(feed.entries):
             if i >= max_items:
                 break
@@ -131,12 +138,16 @@ def _fetch_gao(max_items: int) -> List[Tuple[str, str, str, str]]:
     return out
 
 
-def _fetch_cbo(max_items: int) -> List[Tuple[str, str, str, str]]:
+def _fetch_cbo(max_items: int) -> list[tuple[str, str, str, str]]:
     """Congressional Budget Office publications. Returns (url, title, source_name, document_type)."""
     import feedparser
-    out: List[Tuple[str, str, str, str]] = []
+
+    out: list[tuple[str, str, str, str]] = []
     try:
-        feed = feedparser.parse("https://www.cbo.gov/publications/all/rss.xml", request_headers={"User-Agent": "NewsIntelligence/1.0"})
+        feed = feedparser.parse(
+            "https://www.cbo.gov/publications/all/rss.xml",
+            request_headers={"User-Agent": "NewsIntelligence/1.0"},
+        )
         for i, entry in enumerate(feed.entries):
             if i >= max_items:
                 break
@@ -150,14 +161,18 @@ def _fetch_cbo(max_items: int) -> List[Tuple[str, str, str, str]]:
     return out
 
 
-def _fetch_arxiv(max_items: int) -> List[Tuple[str, str, str, str]]:
+def _fetch_arxiv(max_items: int) -> list[tuple[str, str, str, str]]:
     """arXiv recent papers (cs.AI, cs.CL). Returns (pdf_url, title, source_name, document_type)."""
     import urllib.request
     import xml.etree.ElementTree as ET
-    out: List[Tuple[str, str, str, str]] = []
+
+    out: list[tuple[str, str, str, str]] = []
     try:
         # Query cs.AI, cs.CL - last 7 days
-        url = "http://export.arxiv.org/api/query?search_query=cat:cs.AI+OR+cat:cs.CL&sortBy=submittedDate&max_results=" + str(max_items)
+        url = (
+            "http://export.arxiv.org/api/query?search_query=cat:cs.AI+OR+cat:cs.CL&sortBy=submittedDate&max_results="
+            + str(max_items)
+        )
         req = urllib.request.Request(url, headers={"User-Agent": "NewsIntelligence/1.0"})
         with urllib.request.urlopen(req, timeout=30) as resp:
             tree = ET.parse(resp)
@@ -170,7 +185,11 @@ def _fetch_arxiv(max_items: int) -> List[Tuple[str, str, str, str]]:
                 continue
             arxiv_id = id_el.text.strip().split("/")[-1]
             pdf_url = f"http://arxiv.org/pdf/{arxiv_id}.pdf"
-            title = (title_el.text or "").strip().replace("\n", " ") if title_el is not None else arxiv_id
+            title = (
+                (title_el.text or "").strip().replace("\n", " ")
+                if title_el is not None
+                else arxiv_id
+            )
             out.append((_normalize_url(pdf_url), title or arxiv_id, "arXiv", "paper"))
     except Exception as e:
         logger.warning("arXiv fetch failed: %s", e)
@@ -187,7 +206,7 @@ SOURCES = {
 }
 
 
-def collect_documents(domain: Optional[str] = None, max_per_source: int = 10) -> int:
+def collect_documents(domain: str | None = None, max_per_source: int = 10) -> int:
     """
     Run enabled document sources; insert new URLs into intelligence.processed_documents.
     domain: if set, only run sources that match this domain (politics|finance|science-tech).
@@ -197,6 +216,7 @@ def collect_documents(domain: Optional[str] = None, max_per_source: int = 10) ->
 
     try:
         from config.orchestrator_governance import get_orchestrator_governance_config
+
         config = get_orchestrator_governance_config()
     except Exception:
         config = {}
@@ -226,7 +246,7 @@ def collect_documents(domain: Optional[str] = None, max_per_source: int = 10) ->
                     if not url or not url.strip():
                         continue
                     clean_url = _normalize_url(url)
-                    metadata: Dict[str, Any] = {}
+                    metadata: dict[str, Any] = {}
                     if ".pdf" not in clean_url.lower():
                         resolved = _resolve_pdf_url_from_page(clean_url)
                         if resolved:
@@ -235,7 +255,12 @@ def collect_documents(domain: Optional[str] = None, max_per_source: int = 10) ->
                             # Keep known landing-page sources so document_processing can use
                             # browser/html resolver fallback to discover the PDF URL later.
                             if source_key in {"gao", "cbo"}:
-                                metadata = {"collection": {"resolver_needed": True, "source_url_kind": "landing_page"}}
+                                metadata = {
+                                    "collection": {
+                                        "resolver_needed": True,
+                                        "source_url_kind": "landing_page",
+                                    }
+                                }
                             else:
                                 continue
                     # Dedupe by source_url
@@ -251,13 +276,22 @@ def collect_documents(domain: Optional[str] = None, max_per_source: int = 10) ->
                         (source_type, source_name, source_url, title, document_type, metadata)
                         VALUES (%s, %s, %s, %s, %s, %s)
                         """,
-                        (source_key, source_name, clean_url, (title or "")[:2000], document_type, metadata or None),
+                        (
+                            source_key,
+                            source_name,
+                            clean_url,
+                            (title or "")[:2000],
+                            document_type,
+                            metadata or None,
+                        ),
                     )
                     inserted += 1
         conn.commit()
         conn.close()
         if inserted > 0:
-            logger.info("Document collection (v8): %s new documents from %s", inserted, list(enabled))
+            logger.info(
+                "Document collection (v8): %s new documents from %s", inserted, list(enabled)
+            )
         return inserted
     except Exception as e:
         logger.warning("Document collection failed: %s", e)

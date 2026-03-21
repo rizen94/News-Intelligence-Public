@@ -3,16 +3,19 @@
 Pull latest from RSS feeds, then process all articles (entity extraction + topic extraction).
 """
 
+import asyncio
 import os
 import sys
-import asyncio
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+
 async def main():
     from collectors.rss_collector import collect_rss_feeds
+    from domains.content_analysis.services.topic_extraction_queue_worker import (
+        TopicExtractionQueueWorker,
+    )
     from shared.database.connection import get_db_connection
-    from domains.content_analysis.services.topic_extraction_queue_worker import TopicExtractionQueueWorker
 
     print("=" * 60)
     print("1. RSS Feed Collection")
@@ -44,7 +47,9 @@ async def main():
                     AND tq.id IS NULL
                 """)
                 unqueued = cur.fetchone()[0]
-                cur.execute(f"SELECT COUNT(*) FROM {schema}.topic_extraction_queue WHERE status IN ('pending', 'processing')")
+                cur.execute(
+                    f"SELECT COUNT(*) FROM {schema}.topic_extraction_queue WHERE status IN ('pending', 'processing')"
+                )
                 pending = cur.fetchone()[0]
             conn.close()
 
@@ -66,11 +71,14 @@ async def main():
                         ids = [r[0] for r in cur.fetchall()]
                         for aid in ids:
                             try:
-                                cur.execute(f"""
+                                cur.execute(
+                                    f"""
                                     INSERT INTO {schema}.topic_extraction_queue (article_id, status, priority, created_at)
                                     VALUES (%s, 'pending', 2, NOW())
                                     ON CONFLICT (article_id) DO NOTHING
-                                """, (aid,))
+                                """,
+                                    (aid,),
+                                )
                                 if cur.rowcount > 0:
                                     queued_count += 1
                             except Exception:

@@ -39,6 +39,7 @@ Context for AI assistants. Use project terminology consistently.
 | Domain layout / shell | `web/src/layout/MainLayout.tsx` (routes in `App.tsx`: `/:domain` with MainLayout) |
 | Background automation | `api/services/automation_manager.py` |
 | Human reviewer navigation | `docs/CODEBASE_MAP.md`, `docs/PIPELINE_AND_ORDER_OF_OPERATIONS.md`, `docs/CODE_REVIEW_AND_RUN_CAVEATS.md` |
+| Public HTTPS read-only demo | `docs/PUBLIC_DEPLOYMENT.md` (TLS, env, `NEWS_INTEL_DEMO_*`, `GET /api/public/demo_config`) |
 
 ---
 
@@ -67,8 +68,9 @@ Context for AI assistants. Use project terminology consistently.
 3. **Events (v5):** extract → deduplicate → story continuation → alerts.
 4. **Narrative bootstrap:** `proactive_detection` clusters unlinked articles → can promote to domain **`storylines`** + **`storyline_articles`** + **`story_entity_index`** (see `docs/NARRATIVE_BOOTSTRAP_AND_DB_OUTAGE.md`). DB down: **`AUTOMATION_PAUSE_WHEN_DB_DOWN`** pauses scheduling; failed **`automation_run_history`** writes spill to **`.local/db_pending_writes`** and **`pending_db_flush`** replays.
 5. **Ollama:** Model routing — `api/shared/services/ollama_model_caller.py` + `ollama_model_policy.py`; routine **`ollama pull`** — `api/scripts/refresh_ollama_models.py` (`docs/SETUP_ENV_AND_RUNTIME.md`). **Storyline finisher (~70B):** final narrative editor only — `InvocationKind.STORYLINE_NARRATIVE_FINISH` → `ModelType.LLAMA_70B` (`NARRATIVE_FINISHER_MODEL`); see `docs/STORYLINE_70B_NARRATIVE_FINISHER.md` and `api/services/storyline_narrative_finisher_service.py`.
-6. **Claims → facts:** `promote_claims_to_versioned_facts` resolves claim subjects to **`intelligence.entity_profiles`** (context mentions, article entities, canonicals, metadata) before inserting **`intelligence.versioned_facts`**; see `docs/CLAIMS_TO_FACTS_ENTITY_RESOLUTION.md`.
-7. **Source credibility:** **`api/config/orchestrator_governance.yaml`** section **`source_credibility`** drives tier multipliers at RSS ingest (`quality_score` + **`articles.metadata`**), copied to **`intelligence.contexts.metadata`**, and scales stored claim confidence; see `docs/SOURCE_CREDIBILITY.md`.
+6. **Widow vs main GPU:** **AutomationManager** runs on the **main** API host only. **Widow** can run **RSS** (`newsplatform-secondary` or `run_widow_db_adjacent.py --rss`) and **DB-adjacent cron** (`context_sync`, `entity_profile_sync`, `pending_db_flush`) per `docs/WIDOW_DB_ADJACENT_CRON.md`; main `.env` uses **`AUTOMATION_SKIP_RSS_IN_COLLECTION_CYCLE`** and **`AUTOMATION_DISABLED_SCHEDULES`** to avoid duplicate work.
+7. **Claims → facts:** `promote_claims_to_versioned_facts` resolves claim subjects to **`intelligence.entity_profiles`** (context mentions, article entities, canonicals, metadata) before inserting **`intelligence.versioned_facts`**; see `docs/CLAIMS_TO_FACTS_ENTITY_RESOLUTION.md`.
+8. **Source credibility:** **`api/config/orchestrator_governance.yaml`** section **`source_credibility`** drives tier multipliers at RSS ingest (`quality_score` + **`articles.metadata`**), copied to **`intelligence.contexts.metadata`**, and scales stored claim confidence; see `docs/SOURCE_CREDIBILITY.md`.
 
 ---
 

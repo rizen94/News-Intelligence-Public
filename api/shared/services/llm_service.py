@@ -5,20 +5,20 @@ v7: Global concurrency limit so async Ollama callers share one cap.
 """
 
 import asyncio
-import logging
 import json
-from typing import Dict, Any, Optional, List
-from enum import Enum
-import httpx
+import logging
 from datetime import datetime
+from enum import Enum
+from typing import Any
 
+import httpx
 from config.settings import NARRATIVE_FINISHER_MODEL, OLLAMA_HOST
 
 logger = logging.getLogger(__name__)
 
 # v7: Global cap. Burst (48h catch-up): 6; revert to 5 after
 OLLAMA_CONCURRENCY = 6
-_ollama_semaphore: Optional[asyncio.Semaphore] = None
+_ollama_semaphore: asyncio.Semaphore | None = None
 
 
 def _get_ollama_semaphore() -> asyncio.Semaphore:
@@ -27,6 +27,7 @@ def _get_ollama_semaphore() -> asyncio.Semaphore:
         _ollama_semaphore = asyncio.Semaphore(OLLAMA_CONCURRENCY)
     return _ollama_semaphore
 
+
 class ModelType(str, Enum):
     """Ollama text models. LLAMA_70B tag comes from settings.NARRATIVE_FINISHER_MODEL."""
 
@@ -34,37 +35,42 @@ class ModelType(str, Enum):
     MISTRAL_7B = "mistral:7b"
     LLAMA_70B = NARRATIVE_FINISHER_MODEL
 
+
 class TaskType(Enum):
     """Task types for model selection"""
+
     REAL_TIME = "real_time"
     BATCH_PROCESSING = "batch_processing"
     COMPREHENSIVE_ANALYSIS = "comprehensive_analysis"
     QUICK_SUMMARY = "quick_summary"
+
 
 class LLMService:
     """
     Centralized LLM service using Ollama-hosted models
     Optimized for Llama 3.1 8B (primary) and Mistral 7B (secondary)
     """
-    
-    def __init__(self, ollama_base_url: Optional[str] = None):
+
+    def __init__(self, ollama_base_url: str | None = None):
         self.ollama_base_url = (ollama_base_url or OLLAMA_HOST).rstrip("/")
-        self.client = httpx.AsyncClient(timeout=180.0)  # Increased timeout to 180s for comprehensive analysis
+        self.client = httpx.AsyncClient(
+            timeout=180.0
+        )  # Increased timeout to 180s for comprehensive analysis
         self.model_performance = {
             ModelType.LLAMA_8B: {
                 "speed": 2.93,  # seconds for 200 words
                 "quality": 73.0,  # MMLU score
                 "memory": 5.0,  # GB VRAM
-                "best_for": ["comprehensive_analysis", "real_time", "quick_summary"]
+                "best_for": ["comprehensive_analysis", "real_time", "quick_summary"],
             },
             ModelType.MISTRAL_7B: {
                 "speed": 4.17,  # seconds for 200 words
                 "quality": "very_good",  # competitive benchmarks
                 "memory": 4.4,  # GB VRAM
-                "best_for": ["batch_processing", "alternative_analysis"]
-            }
+                "best_for": ["batch_processing", "alternative_analysis"],
+            },
         }
-    
+
     def select_model(
         self,
         task_type: TaskType,
@@ -78,63 +84,65 @@ class LLMService:
         from shared.services.ollama_model_policy import resolve_model_for_llm_task
 
         return resolve_model_for_llm_task(task_type, urgency, approx_prompt_chars)
-    
-    async def generate_summary(self, content: str, task_type: TaskType = TaskType.QUICK_SUMMARY) -> Dict[str, Any]:
+
+    async def generate_summary(
+        self, content: str, task_type: TaskType = TaskType.QUICK_SUMMARY
+    ) -> dict[str, Any]:
         """
         Generate article summary using appropriate model
         """
         model = self.select_model(task_type, approx_prompt_chars=len(content or ""))
 
         prompt = f"""
-        Write a professional, journalistic summary of the following news article. 
-        Focus on the key facts, main points, and important context. 
+        Write a professional, journalistic summary of the following news article.
+        Focus on the key facts, main points, and important context.
         Keep it concise but comprehensive. Write in a clear, objective tone.
 
         Article content:
         {content[:2000]}  # Limit content to avoid token limits
         """
-        
+
         try:
             start_time = datetime.now()
             response = await self._call_ollama(model, prompt)
             end_time = datetime.now()
-            
+
             processing_time = (end_time - start_time).total_seconds()
-            
+
             return {
                 "success": True,
                 "summary": response,
                 "model_used": model.value,
                 "processing_time": processing_time,
                 "task_type": task_type.value,
-                "timestamp": end_time.isoformat()
+                "timestamp": end_time.isoformat(),
             }
-            
+
         except Exception as e:
             logger.error(f"Error generating summary: {e}")
             return {
                 "success": False,
                 "error": str(e),
                 "model_used": model.value,
-                "task_type": task_type.value
+                "task_type": task_type.value,
             }
-    
-    async def analyze_sentiment(self, content: str) -> Dict[str, Any]:
+
+    async def analyze_sentiment(self, content: str) -> dict[str, Any]:
         """
         Analyze sentiment using Llama 3.1 8B
         """
         model = ModelType.LLAMA_8B
-        
+
         prompt = f"""
         Analyze the sentiment of this news article. Provide:
         1. Overall sentiment (positive, negative, neutral)
         2. Confidence score (0-100)
         3. Key emotional indicators
         4. Political bias indicators (if any)
-        
+
         Article:
         {content[:1500]}
-        
+
         Respond in JSON format:
         {{
             "overall_sentiment": "positive/negative/neutral",
@@ -144,12 +152,12 @@ class LLMService:
             "reasoning": "brief explanation"
         }}
         """
-        
+
         try:
             start_time = datetime.now()
             response = await self._call_ollama(model, prompt)
             end_time = datetime.now()
-            
+
             # Try to parse JSON response
             try:
                 sentiment_data = json.loads(response)
@@ -161,31 +169,27 @@ class LLMService:
                     "emotional_indicators": ["unclear"],
                     "political_bias": "none",
                     "reasoning": "Could not parse structured response",
-                    "raw_response": response
+                    "raw_response": response,
                 }
-            
+
             return {
                 "success": True,
                 "sentiment": sentiment_data,
                 "model_used": model.value,
                 "processing_time": (end_time - start_time).total_seconds(),
-                "timestamp": end_time.isoformat()
+                "timestamp": end_time.isoformat(),
             }
-            
+
         except Exception as e:
             logger.error(f"Error analyzing sentiment: {e}")
-            return {
-                "success": False,
-                "error": str(e),
-                "model_used": model.value
-            }
-    
-    async def extract_entities(self, content: str) -> Dict[str, Any]:
+            return {"success": False, "error": str(e), "model_used": model.value}
+
+    async def extract_entities(self, content: str) -> dict[str, Any]:
         """
         Extract named entities using Llama 3.1 8B
         """
         model = ModelType.LLAMA_8B
-        
+
         prompt = f"""
         Extract named entities from this news article. Identify:
         1. People (PERSON)
@@ -193,10 +197,10 @@ class LLMService:
         3. Locations (LOC)
         4. Events (EVENT)
         5. Dates (DATE)
-        
+
         Article:
         {content[:1500]}
-        
+
         Respond in JSON format:
         {{
             "people": ["Name1", "Name2"],
@@ -209,12 +213,12 @@ class LLMService:
             ]
         }}
         """
-        
+
         try:
             start_time = datetime.now()
             response = await self._call_ollama(model, prompt)
             end_time = datetime.now()
-            
+
             # Try to parse JSON response
             try:
                 entities_data = json.loads(response)
@@ -227,31 +231,27 @@ class LLMService:
                     "events": [],
                     "dates": [],
                     "relationships": [],
-                    "raw_response": response
+                    "raw_response": response,
                 }
-            
+
             return {
                 "success": True,
                 "entities": entities_data,
                 "model_used": model.value,
                 "processing_time": (end_time - start_time).total_seconds(),
-                "timestamp": end_time.isoformat()
+                "timestamp": end_time.isoformat(),
             }
-            
+
         except Exception as e:
             logger.error(f"Error extracting entities: {e}")
-            return {
-                "success": False,
-                "error": str(e),
-                "model_used": model.value
-            }
-    
-    async def generate_storyline_analysis(self, storyline_context: str) -> Dict[str, Any]:
+            return {"success": False, "error": str(e), "model_used": model.value}
+
+    async def generate_storyline_analysis(self, storyline_context: str) -> dict[str, Any]:
         """
         Generate comprehensive storyline analysis using Llama 3.1 8B
         """
         model = ModelType.LLAMA_8B
-        
+
         prompt = f"""
         Analyze this storyline and provide a comprehensive report:
         1. Main narrative thread
@@ -260,35 +260,31 @@ class LLMService:
         4. Stakeholders involved
         5. Potential future developments
         6. Quality assessment
-        
+
         Storyline context:
         {storyline_context}
-        
+
         Write a professional, journalistic analysis that would be suitable for publication.
         """
-        
+
         try:
             start_time = datetime.now()
             response = await self._call_ollama(model, prompt)
             end_time = datetime.now()
-            
+
             return {
                 "success": True,
                 "analysis": response,
                 "model_used": model.value,
                 "processing_time": (end_time - start_time).total_seconds(),
-                "timestamp": end_time.isoformat()
+                "timestamp": end_time.isoformat(),
             }
-            
+
         except Exception as e:
             logger.error(f"Error generating storyline analysis: {e}")
-            return {
-                "success": False,
-                "error": str(e),
-                "model_used": model.value
-            }
-    
-    async def generate_briefing_lead(self, context: str, domain: str = "") -> Dict[str, Any]:
+            return {"success": False, "error": str(e), "model_used": model.value}
+
+    async def generate_briefing_lead(self, context: str, domain: str = "") -> dict[str, Any]:
         """
         Generate a short editorial lead paragraph for a daily briefing from headline/storyline context.
         Uses a direct prompt (no article-summary wrapper). Returns {"success", "summary" or "error"}.
@@ -299,6 +295,7 @@ class LLMService:
         if domain:
             try:
                 from services.domain_synthesis_config import get_domain_synthesis_config
+
                 cfg = get_domain_synthesis_config(domain)
                 if cfg.llm_context:
                     domain_instruction = f" {cfg.llm_context}"
@@ -311,7 +308,9 @@ class LLMService:
             + context[:2500]
         )
         try:
-            model = self.select_model(TaskType.QUICK_SUMMARY, approx_prompt_chars=len(context or ""))
+            model = self.select_model(
+                TaskType.QUICK_SUMMARY, approx_prompt_chars=len(context or "")
+            )
             response = await self._call_ollama(model, prompt)
             return {"success": True, "summary": (response or "").strip()}
         except Exception as e:
@@ -326,12 +325,15 @@ class LLMService:
 
     async def _call_ollama_impl(self, model: ModelType, prompt: str) -> str:
         """Inner Ollama call (no semaphore)."""
-        from services.circuit_breaker_service import get_circuit_breaker_service, CircuitBreakerOpenException
+        from services.circuit_breaker_service import get_circuit_breaker_service
+
         cb_service = get_circuit_breaker_service()
         cb = cb_service.get_circuit_breaker("ollama")
 
         if cb.state.value == "open":
-            raise Exception("Ollama circuit breaker is OPEN — skipping call to avoid cascading timeouts")
+            raise Exception(
+                "Ollama circuit breaker is OPEN — skipping call to avoid cascading timeouts"
+            )
 
         try:
             response = await self.client.post(
@@ -344,8 +346,8 @@ class LLMService:
                         "temperature": 0.7,
                         "top_p": 0.9,
                         "num_predict": 2000,
-                    }
-                }
+                    },
+                },
             )
 
             if response.status_code == 200:
@@ -366,8 +368,8 @@ class LLMService:
             if "circuit breaker" not in str(e).lower():
                 await cb._record_failure()
             raise Exception(f"Ollama API error: {str(e)}")
-    
-    async def get_model_status(self, timeout_seconds: Optional[float] = None) -> Dict[str, Any]:
+
+    async def get_model_status(self, timeout_seconds: float | None = None) -> dict[str, Any]:
         """
         Get status of available models.
         Use timeout_seconds (e.g. 1.0) for health checks to avoid blocking when Ollama is busy.
@@ -375,16 +377,15 @@ class LLMService:
         try:
             if timeout_seconds is not None:
                 response = await asyncio.wait_for(
-                    self.client.get(f"{self.ollama_base_url}/api/tags"),
-                    timeout=timeout_seconds
+                    self.client.get(f"{self.ollama_base_url}/api/tags"), timeout=timeout_seconds
                 )
             else:
                 response = await self.client.get(f"{self.ollama_base_url}/api/tags")
-            
+
             if response.status_code == 200:
                 models = response.json().get("models", [])
                 available_models = [model["name"] for model in models]
-                
+
                 finisher = ModelType.LLAMA_70B.value
                 return {
                     "success": True,
@@ -395,31 +396,26 @@ class LLMService:
                     "primary_available": ModelType.LLAMA_8B.value in available_models,
                     "secondary_available": ModelType.MISTRAL_7B.value in available_models,
                     "narrative_finisher_available": finisher in available_models,
-                    "timestamp": datetime.now().isoformat()
+                    "timestamp": datetime.now().isoformat(),
                 }
             else:
-                return {
-                    "success": False,
-                    "error": f"Ollama API error: {response.status_code}"
-                }
-                
+                return {"success": False, "error": f"Ollama API error: {response.status_code}"}
+
         except asyncio.TimeoutError:
             return {
                 "success": False,
                 "error": "Ollama busy (timeout) — web requests take priority",
                 "primary_available": None,
                 "secondary_available": None,
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.now().isoformat(),
             }
         except Exception as e:
-            return {
-                "success": False,
-                "error": f"Cannot connect to Ollama: {str(e)}"
-            }
-    
+            return {"success": False, "error": f"Cannot connect to Ollama: {str(e)}"}
+
     async def close(self):
         """Close HTTP client"""
         await self.client.aclose()
+
 
 # Global LLM service instance
 llm_service = LLMService()

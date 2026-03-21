@@ -12,8 +12,8 @@ High-frequency polling (Monitor, health, status) does NOT count as "user active"
 Ollama/GPU can run; only non-polling requests trigger the yield window.
 """
 
-import time
 import logging
+import time
 from threading import Lock
 
 logger = logging.getLogger(__name__)

@@ -14,8 +14,8 @@ Configurable retention policies control what gets cleaned and when.
 """
 
 import logging
-from datetime import datetime, timezone, timedelta
-from typing import Any, Dict, Optional
+from datetime import datetime, timedelta, timezone
+from typing import Any
 
 from shared.database.connection import get_db_connection
 
@@ -59,19 +59,19 @@ class IntelligenceCleanupController:
     Each method is idempotent and safe to call repeatedly.
     """
 
-    def __init__(self, policy: Optional[Dict[str, Any]] = None):
+    def __init__(self, policy: dict[str, Any] | None = None):
         self.policy = {**DEFAULT_POLICY, **(policy or {})}
 
-    def run(self, domain_key: Optional[str] = None) -> Dict[str, Any]:
+    def run(self, domain_key: str | None = None) -> dict[str, Any]:
         """
         Execute a full cleanup cycle for one domain or all domains.
         Returns a summary of actions taken.
         """
         domains = [domain_key] if domain_key else ALL_DOMAINS
-        results: Dict[str, Any] = {}
+        results: dict[str, Any] = {}
 
         for d in domains:
-            domain_result: Dict[str, Any] = {}
+            domain_result: dict[str, Any] = {}
             try:
                 if self.policy["entity_noise_removal"]:
                     domain_result["noise_removed"] = self._remove_noise_entities(d)
@@ -127,23 +127,32 @@ class IntelligenceCleanupController:
         removed = 0
 
         generic_fragments = [
-            "no name", "mentioned", "unknown", "n/a", "not specified",
-            "unnamed", "unidentified",
+            "no name",
+            "mentioned",
+            "unknown",
+            "n/a",
+            "not specified",
+            "unnamed",
+            "unidentified",
         ]
 
         try:
             with conn.cursor() as cur:
-                cur.execute(f"SELECT id, canonical_name, entity_type FROM {schema}.entity_canonical")
+                cur.execute(
+                    f"SELECT id, canonical_name, entity_type FROM {schema}.entity_canonical"
+                )
                 rows = cur.fetchall()
 
                 noise_ids = []
                 for row_id, name, etype in rows:
                     s = name.strip()
-                    if (len(s) < 2
-                            or re.match(r'^[\d,.\s%$€£]+$', s)
-                            or len(s) > 80
-                            or any(g in s.lower() for g in generic_fragments)
-                            or (etype == "person" and (re.match(r'^\d', s) or len(s) > 60))):
+                    if (
+                        len(s) < 2
+                        or re.match(r"^[\d,.\s%$€£]+$", s)
+                        or len(s) > 80
+                        or any(g in s.lower() for g in generic_fragments)
+                        or (etype == "person" and (re.match(r"^\d", s) or len(s) > 60))
+                    ):
                         noise_ids.append(row_id)
 
                 if noise_ids:
@@ -171,7 +180,9 @@ class IntelligenceCleanupController:
 
         try:
             with conn.cursor() as cur:
-                cur.execute(f"SELECT id, canonical_name, entity_type FROM {schema}.entity_canonical ORDER BY id")
+                cur.execute(
+                    f"SELECT id, canonical_name, entity_type FROM {schema}.entity_canonical ORDER BY id"
+                )
                 rows = cur.fetchall()
 
                 by_lower = defaultdict(list)
@@ -183,11 +194,14 @@ class IntelligenceCleanupController:
                         continue
                     keep_id = ids[0]
                     merge_ids = ids[1:]
-                    cur.execute(f"""
+                    cur.execute(
+                        f"""
                         UPDATE {schema}.article_entities
                         SET canonical_entity_id = %s
                         WHERE canonical_entity_id = ANY(%s)
-                    """, (keep_id, merge_ids))
+                    """,
+                        (keep_id, merge_ids),
+                    )
                     self._delete_canonical_ids(cur, schema, domain_key, merge_ids)
                     merged += len(merge_ids)
 
@@ -217,7 +231,8 @@ class IntelligenceCleanupController:
 
         try:
             with conn.cursor() as cur:
-                cur.execute(f"""
+                cur.execute(
+                    f"""
                     SELECT ec.id
                     FROM {schema}.entity_canonical ec
                     WHERE ec.created_at < %s
@@ -225,7 +240,9 @@ class IntelligenceCleanupController:
                           SELECT COUNT(*) FROM {schema}.article_entities ae
                           WHERE ae.canonical_entity_id = ec.id
                       ) <= %s
-                """, (cutoff, max_mentions))
+                """,
+                    (cutoff, max_mentions),
+                )
                 prune_ids = [r[0] for r in cur.fetchall()]
 
                 if prune_ids:
@@ -253,23 +270,33 @@ class IntelligenceCleanupController:
 
         try:
             with conn.cursor() as cur:
-                cur.execute("""
+                cur.execute(
+                    """
                     DELETE FROM intelligence.entity_profiles ep
                     WHERE ep.domain_key = %s
                       AND NOT EXISTS (
-                          SELECT 1 FROM """ + schema + """.entity_canonical ec
+                          SELECT 1 FROM """
+                    + schema
+                    + """.entity_canonical ec
                           WHERE ec.id = ep.canonical_entity_id
                       )
-                """, (domain_key,))
+                """,
+                    (domain_key,),
+                )
                 removed = cur.rowcount
 
-                cur.execute("""
+                cur.execute(
+                    """
                     DELETE FROM intelligence.old_entity_to_new
                     WHERE domain_key = %s
                       AND old_entity_id NOT IN (
-                          SELECT id FROM """ + schema + """.entity_canonical
+                          SELECT id FROM """
+                    + schema
+                    + """.entity_canonical
                       )
-                """, (domain_key,))
+                """,
+                    (domain_key,),
+                )
 
             conn.commit()
             conn.close()
@@ -301,7 +328,8 @@ class IntelligenceCleanupController:
                     return 0
 
                 excess = total - max_count
-                cur.execute(f"""
+                cur.execute(
+                    f"""
                     SELECT ec.id FROM {schema}.entity_canonical ec
                     LEFT JOIN (
                         SELECT canonical_entity_id, COUNT(*) AS cnt
@@ -311,7 +339,9 @@ class IntelligenceCleanupController:
                     ) ae ON ae.canonical_entity_id = ec.id
                     ORDER BY COALESCE(ae.cnt, 0) ASC, ec.created_at ASC
                     LIMIT %s
-                """, (excess,))
+                """,
+                    (excess,),
+                )
                 cap_ids = [r[0] for r in cur.fetchall()]
 
                 if cap_ids:
@@ -333,6 +363,7 @@ class IntelligenceCleanupController:
         """
         try:
             from services.entity_resolution_service import run_entity_decouple_pipeline
+
             max_splits = self.policy.get("entity_decouple_max_splits_per_domain") or None
             if max_splits == 0:
                 max_splits = None
@@ -345,7 +376,12 @@ class IntelligenceCleanupController:
             domain_result = by_domain.get(domain_key) or {}
             count = domain_result.get("split_count", 0)
             if count:
-                logger.info("Entity decouple %s: %s splits (canonicals_processed=%s)", domain_key, count, domain_result.get("canonicals_processed", 0))
+                logger.info(
+                    "Entity decouple %s: %s splits (canonicals_processed=%s)",
+                    domain_key,
+                    count,
+                    domain_result.get("canonicals_processed", 0),
+                )
             return count
         except Exception as e:
             logger.warning("Entity decouple %s: %s", domain_key, e)
@@ -368,7 +404,8 @@ class IntelligenceCleanupController:
 
         try:
             with conn.cursor() as cur:
-                cur.execute("""
+                cur.execute(
+                    """
                     UPDATE intelligence.tracked_events te
                     SET end_date = CURRENT_DATE, updated_at = NOW()
                     WHERE te.end_date IS NULL
@@ -377,7 +414,9 @@ class IntelligenceCleanupController:
                           SELECT 1 FROM intelligence.event_chronicles ec
                           WHERE ec.event_id = te.id AND ec.created_at >= %s
                       )
-                """, (cutoff, cutoff))
+                """,
+                    (cutoff, cutoff),
+                )
                 archived = cur.rowcount
 
             conn.commit()
@@ -389,12 +428,12 @@ class IntelligenceCleanupController:
 
     # -- Intelligence table retention (keep under ~1 TB) -----------------------
 
-    def _apply_intelligence_retention(self) -> Optional[Dict[str, int]]:
+    def _apply_intelligence_retention(self) -> dict[str, int] | None:
         """
         Delete old processed/obsolete rows from fact_change_log, story_update_queue,
         pattern_matches, and storyline_states. Only runs when policy retention_*_days > 0.
         """
-        out: Dict[str, int] = {}
+        out: dict[str, int] = {}
         conn = get_db_connection()
         if not conn:
             return out
@@ -402,7 +441,9 @@ class IntelligenceCleanupController:
         try:
             with conn.cursor() as cur:
                 if self.policy.get("retention_fact_log_days"):
-                    cutoff = datetime.now(timezone.utc) - timedelta(days=self.policy["retention_fact_log_days"])
+                    cutoff = datetime.now(timezone.utc) - timedelta(
+                        days=self.policy["retention_fact_log_days"]
+                    )
                     cur.execute(
                         """
                         DELETE FROM intelligence.fact_change_log
@@ -413,7 +454,9 @@ class IntelligenceCleanupController:
                     out["fact_change_log_deleted"] = cur.rowcount
 
                 if self.policy.get("retention_queue_days"):
-                    cutoff = datetime.now(timezone.utc) - timedelta(days=self.policy["retention_queue_days"])
+                    cutoff = datetime.now(timezone.utc) - timedelta(
+                        days=self.policy["retention_queue_days"]
+                    )
                     cur.execute(
                         """
                         DELETE FROM intelligence.story_update_queue
@@ -424,7 +467,9 @@ class IntelligenceCleanupController:
                     out["story_update_queue_deleted"] = cur.rowcount
 
                 if self.policy.get("retention_pattern_matches_days"):
-                    cutoff = datetime.now(timezone.utc) - timedelta(days=self.policy["retention_pattern_matches_days"])
+                    cutoff = datetime.now(timezone.utc) - timedelta(
+                        days=self.policy["retention_pattern_matches_days"]
+                    )
                     cur.execute(
                         "DELETE FROM intelligence.pattern_matches WHERE created_at < %s",
                         (cutoff,),
@@ -432,7 +477,9 @@ class IntelligenceCleanupController:
                     out["pattern_matches_deleted"] = cur.rowcount
 
                 if self.policy.get("retention_storyline_states_days"):
-                    cutoff = datetime.now(timezone.utc) - timedelta(days=self.policy["retention_storyline_states_days"])
+                    cutoff = datetime.now(timezone.utc) - timedelta(
+                        days=self.policy["retention_storyline_states_days"]
+                    )
                     cur.execute(
                         "DELETE FROM intelligence.storyline_states WHERE created_at < %s",
                         (cutoff,),
@@ -466,25 +513,37 @@ class IntelligenceCleanupController:
         if not ids:
             return 0
 
-        cur.execute(f"""
+        cur.execute(
+            f"""
             UPDATE {schema}.article_entities
             SET canonical_entity_id = NULL
             WHERE canonical_entity_id = ANY(%s)
-        """, (ids,))
+        """,
+            (ids,),
+        )
 
-        cur.execute("""
+        cur.execute(
+            """
             DELETE FROM intelligence.old_entity_to_new
             WHERE domain_key = %s AND old_entity_id = ANY(%s)
-        """, (domain_key, ids))
+        """,
+            (domain_key, ids),
+        )
 
-        cur.execute("""
+        cur.execute(
+            """
             DELETE FROM intelligence.entity_profiles
             WHERE domain_key = %s AND canonical_entity_id = ANY(%s)
-        """, (domain_key, ids))
+        """,
+            (domain_key, ids),
+        )
 
-        cur.execute(f"""
+        cur.execute(
+            f"""
             DELETE FROM {schema}.entity_canonical WHERE id = ANY(%s)
-        """, (ids,))
+        """,
+            (ids,),
+        )
         return len(ids)
 
 
@@ -499,7 +558,7 @@ def _safe_rollback_close(conn) -> None:
         pass
 
 
-def _sum_results(results: Dict[str, Any]) -> int:
+def _sum_results(results: dict[str, Any]) -> int:
     total = 0
     for val in results.values():
         if isinstance(val, dict):
@@ -513,15 +572,17 @@ def _sum_results(results: Dict[str, Any]) -> int:
 
 # -- Convenience function for orchestrator integration -------------------------
 
+
 async def run_intelligence_cleanup(
-    domain_key: Optional[str] = None,
-    policy: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
+    domain_key: str | None = None,
+    policy: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """
     Async wrapper for use by automation_manager or newsroom orchestrator.
     Runs the full cleanup cycle in the default executor.
     """
     import asyncio
+
     loop = asyncio.get_event_loop()
     controller = IntelligenceCleanupController(policy=policy)
     return await loop.run_in_executor(None, controller.run, domain_key)

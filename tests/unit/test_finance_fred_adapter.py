@@ -14,17 +14,29 @@ def _fred_test_env(monkeypatch, tmp_path):
     monkeypatch.setattr("config.settings.FINANCE_CACHE_DB", tmp_path / "cache.db")
     monkeypatch.setattr("config.settings.FINANCE_MARKET_DB", tmp_path / "market.db")
     monkeypatch.setattr("domains.finance.data.api_cache.FINANCE_CACHE_DB", tmp_path / "cache.db")
-    monkeypatch.setattr("domains.finance.data.market_data_store.FINANCE_MARKET_DB", tmp_path / "market.db")
+    monkeypatch.setattr(
+        "domains.finance.data.market_data_store.FINANCE_MARKET_DB", tmp_path / "market.db"
+    )
 
 
 def test_fetch_observations_mocked_http(monkeypatch):
     """FRED fetch_observations returns parsed observations when HTTP returns valid data."""
-    from domains.finance.data_sources.fred import FREDDataSource, get_client
+    from domains.finance.data_sources.fred import get_client
 
     mock_response = {
         "observations": [
-            {"date": "2024-01-15", "value": "100.5", "realtime_start": "2024-01-01", "realtime_end": "2024-01-15"},
-            {"date": "2024-01-16", "value": "101.0", "realtime_start": "2024-01-01", "realtime_end": "2024-01-16"},
+            {
+                "date": "2024-01-15",
+                "value": "100.5",
+                "realtime_start": "2024-01-01",
+                "realtime_end": "2024-01-15",
+            },
+            {
+                "date": "2024-01-16",
+                "value": "101.0",
+                "realtime_start": "2024-01-01",
+                "realtime_end": "2024-01-16",
+            },
             {"date": "2024-01-17", "value": ".", "realtime_start": "", "realtime_end": ""},  # skip
         ]
     }

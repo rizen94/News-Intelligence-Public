@@ -13,7 +13,7 @@ RED='\033[0;31m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-# Configuration (matches connection.py and main_v4.py)
+# Configuration (matches connection.py and main.py)
 NAS_HOST="${NAS_HOST:-192.168.93.100}"
 NAS_SSH_PORT="${NAS_SSH_PORT:-9222}"
 NAS_USER="${NAS_USER:-Admin}"

@@ -38,12 +38,17 @@ interface Props {
   loading?: boolean;
 }
 
-export default function StorylineAuditCard({ domain, audit, error, loading }: Props) {
+export default function StorylineAuditCard({
+  domain,
+  audit,
+  error,
+  loading,
+}: Props) {
   if (loading) {
     return (
-      <Card variant="outlined" sx={{ mb: 2 }}>
+      <Card variant='outlined' sx={{ mb: 2 }}>
         <CardContent>
-          <Typography variant="body2" color="text.secondary">
+          <Typography variant='body2' color='text.secondary'>
             Loading storyline audit…
           </Typography>
         </CardContent>
@@ -52,7 +57,7 @@ export default function StorylineAuditCard({ domain, audit, error, loading }: Pr
   }
   if (error) {
     return (
-      <Alert severity="warning" sx={{ mb: 2 }}>
+      <Alert severity='warning' sx={{ mb: 2 }}>
         Audit unavailable: {error}
       </Alert>
     );
@@ -65,57 +70,69 @@ export default function StorylineAuditCard({ domain, audit, error, loading }: Pr
   const empty = audit.timeline_status === 'empty' || evCount === 0;
 
   return (
-    <Card variant="outlined" sx={{ mb: 2 }}>
+    <Card variant='outlined' sx={{ mb: 2 }}>
       <CardHeader
-        title="Storyline & timeline audit"
-        subheader="Compare linked articles to public.chronological_events"
+        title='Storyline & timeline audit'
+        subheader='Compare linked articles to public.chronological_events'
         titleTypographyProps={{ variant: 'subtitle1', fontWeight: 600 }}
       />
       <Divider />
       <CardContent sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
-        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center' }}>
+        <Box
+          sx={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: 1,
+            alignItems: 'center',
+          }}
+        >
           <Chip
             label={empty ? 'Timeline empty' : `${evCount} timeline events`}
             color={empty ? 'warning' : 'success'}
-            size="small"
+            size='small'
             variant={empty ? 'filled' : 'outlined'}
           />
-          <Chip label={`${linked} articles linked`} size="small" variant="outlined" />
+          <Chip
+            label={`${linked} articles linked`}
+            size='small'
+            variant='outlined'
+          />
           {merged > 0 && (
             <Chip
               label={`${merged} merged duplicate event rows (hidden from primary timeline)`}
-              size="small"
-              color="info"
-              variant="outlined"
+              size='small'
+              color='info'
+              variant='outlined'
             />
           )}
         </Box>
-        <Typography variant="body2" color="text.secondary">
-          Storyline <code>article_count</code> column: {audit.storyline_article_count_column ?? '—'} · Linked rows in{' '}
+        <Typography variant='body2' color='text.secondary'>
+          Storyline <code>article_count</code> column:{' '}
+          {audit.storyline_article_count_column ?? '—'} · Linked rows in{' '}
           <code>storyline_articles</code>: {linked}
         </Typography>
         <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2 }}>
-          <Typography variant="caption" color="text.secondary">
+          <Typography variant='caption' color='text.secondary'>
             Updated: {audit.updated_at ?? '—'}
           </Typography>
-          <Typography variant="caption" color="text.secondary">
+          <Typography variant='caption' color='text.secondary'>
             Last refinement: {audit.last_refinement ?? '—'}
           </Typography>
-          <Typography variant="caption" color="text.secondary">
+          <Typography variant='caption' color='text.secondary'>
             Document version: {audit.document_version ?? '—'}
           </Typography>
-          <Typography variant="caption" color="text.secondary">
+          <Typography variant='caption' color='text.secondary'>
             ML status: {audit.ml_processing_status ?? '—'}
           </Typography>
-          <Typography variant="caption" color="text.secondary">
+          <Typography variant='caption' color='text.secondary'>
             Context updated: {audit.context_last_updated ?? '—'}
           </Typography>
         </Box>
         <Button
           component={RouterLink}
           to={`/${domain}/storylines/${audit.storyline_id}/timeline`}
-          variant="outlined"
-          size="small"
+          variant='outlined'
+          size='small'
           endIcon={<OpenInNew sx={{ fontSize: 16 }} />}
           sx={{ alignSelf: 'flex-start' }}
         >

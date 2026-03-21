@@ -85,6 +85,9 @@ FRONTEND_LOG="$LOG_DIR/frontend.log"
 # Create logs directory
 mkdir -p "$LOG_DIR"
 
+# Uvicorn command line: `main:app` (api/main.py) or legacy `main_v4:app` — both must match for stop/restart
+API_UVICORN_PGREP='uvicorn.*(main|main_v4):app'
+
 # Logging functions
 log() {
     echo -e "${BLUE}[$(date '+%Y-%m-%d %H:%M:%S')]${NC} $1" | tee -a "$LOG_DIR/startup.log"
@@ -119,24 +122,39 @@ is_port_in_use() {
     return 1
 }
 
+# Free a TCP port when pgrep missed the process (e.g. odd uvicorn argv)
+free_port() {
+    local port=$1
+    if command -v fuser &>/dev/null; then
+        fuser -k "${port}/tcp" 2>/dev/null || true
+    elif command -v lsof &>/dev/null; then
+        lsof -ti ":${port}" 2>/dev/null | xargs -r kill 2>/dev/null || true
+    fi
+    sleep 1
+}
+
 # Stop existing processes
 stop_existing() {
     log "Stopping existing processes..."
     
     # Stop API server: pkill then wait for process and port to clear (avoids "already running" + health fail)
-    if is_running "uvicorn.*main_v4"; then
+    if is_running "$API_UVICORN_PGREP"; then
         log "Stopping existing API server..."
-        pkill -f "uvicorn.*main_v4" || true
+        pkill -f "$API_UVICORN_PGREP" || true
         local wait_count=0
-        while is_running "uvicorn.*main_v4" && [ $wait_count -lt 10 ]; do
+        while is_running "$API_UVICORN_PGREP" && [ $wait_count -lt 10 ]; do
             sleep 1
             wait_count=$((wait_count + 1))
         done
-        if is_running "uvicorn.*main_v4"; then
+        if is_running "$API_UVICORN_PGREP"; then
             warning "API process still present, sending SIGKILL..."
-            pkill -9 -f "uvicorn.*main_v4" || true
+            pkill -9 -f "$API_UVICORN_PGREP" || true
             sleep 2
         fi
+    fi
+    if is_port_in_use 8000; then
+        log "Freeing port 8000..."
+        free_port 8000
     fi
     
     # Stop frontend
@@ -268,13 +286,13 @@ start_api() {
     log "Starting API server..."
     
     # If we think API is already running, verify it responds; otherwise force-kill and start
-    if is_running "uvicorn.*main_v4"; then
+    if is_running "$API_UVICORN_PGREP"; then
         if curl -sf http://localhost:8000/api/system_monitoring/health > /dev/null 2>&1; then
             success "API server already running and healthy"
             return 0
         fi
         warning "API process present but not responding to health check; restarting..."
-        pkill -9 -f "uvicorn.*main_v4" || true
+        pkill -9 -f "$API_UVICORN_PGREP" || true
         sleep 3
     fi
     
@@ -307,7 +325,7 @@ start_api() {
     log "Using SSH tunnel: DB_HOST=${DB_HOST} DB_PORT=${DB_PORT}"
     nohup env DB_HOST="${DB_HOST}" DB_PORT="${DB_PORT}" DB_NAME="${DB_NAME}" DB_USER="${DB_USER}" DB_PASSWORD="${DB_PASSWORD}" \
         NEWS_API_KEY="${NEWS_API_KEY:-}" FRED_API_KEY="${FRED_API_KEY:-}" \
-        "$PYTHON_BIN" -m uvicorn main_v4:app --host 0.0.0.0 --port 8000 > "$API_LOG" 2>&1 &
+        "$PYTHON_BIN" -m uvicorn main:app --host 0.0.0.0 --port 8000 > "$API_LOG" 2>&1 &
     API_PID=$!
     
     # Wait for API to be ready

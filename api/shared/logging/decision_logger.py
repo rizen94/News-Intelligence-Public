@@ -10,12 +10,12 @@ import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 _LOG_DIR: Path | None = None
 _INITIALIZED = False
 _LOCK = threading.Lock()
-_PENDING: Dict[str, dict] = {}
+_PENDING: dict[str, dict] = {}
 
 
 def _ensure_init() -> Path:
@@ -27,6 +27,7 @@ def _ensure_init() -> Path:
             return _LOG_DIR
         try:
             from config.paths import LOG_DIR
+
             _LOG_DIR = Path(LOG_DIR)
         except Exception:
             _LOG_DIR = Path(__file__).resolve().parents[3] / "logs"
@@ -41,9 +42,9 @@ def log_decision(
     current_phase: str,
     chosen_option: str,
     rationale: str,
-    available_options: Optional[List[str]] = None,
-    elapsed_ms: Optional[float] = None,
-    iterations_so_far: Optional[int] = None,
+    available_options: list[str] | None = None,
+    elapsed_ms: float | None = None,
+    iterations_so_far: int | None = None,
     **decision_inputs: Any,
 ) -> str:
     """
@@ -76,6 +77,7 @@ def log_decision(
 
     try:
         from shared.logging.activity_logger import log_activity
+
         log_activity(
             component="orchestrator",
             event_type="orchestrator_decision",
@@ -96,7 +98,7 @@ def log_decision(
 def log_decision_outcome(
     decision_id: str,
     outcome_status: str,
-    outcome_duration_ms: Optional[float] = None,
+    outcome_duration_ms: float | None = None,
 ) -> None:
     """
     Backfill outcome for a previously logged decision.

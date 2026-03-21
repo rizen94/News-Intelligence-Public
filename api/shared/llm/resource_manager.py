@@ -7,12 +7,11 @@ and prevents out-of-memory conditions by checking before loading models.
 Adapted for News Intelligence: Ollama models (llama3.1:8b, mistral:7b, nomic-embed-text).
 """
 
+import logging
 import subprocess
 import time
-import logging
 from dataclasses import dataclass
 from enum import Enum
-from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +24,7 @@ except ImportError:
 
 class WorkloadProfile(Enum):
     """Workload types for resource budgeting."""
+
     BATCH_PROCESSING = "batch_processing"
     REAL_TIME = "real_time"
     REPORT_GENERATION_HIGH = "report_generation_high"
@@ -35,6 +35,7 @@ class WorkloadProfile(Enum):
 @dataclass
 class ResourceBudget:
     """Defines the resource limits for a workload."""
+
     max_vram_gb: float
     max_ram_gb: float
     models: list[dict]
@@ -44,6 +45,7 @@ class ResourceBudget:
 @dataclass
 class ResourceState:
     """Current snapshot of system resource usage."""
+
     total_vram_gb: float
     used_vram_gb: float
     free_vram_gb: float
@@ -65,7 +67,7 @@ WORKLOAD_BUDGETS: dict[WorkloadProfile, ResourceBudget] = {
             {"name": "mistral:7b", "vram_gb": 4.4, "ram_gb": 0.5, "role": "batch"},
             {"name": "llama3.1:8b", "vram_gb": 5.0, "ram_gb": 0.5, "role": "alternative"},
         ],
-        description="RSS processing, entity extraction, topic clustering"
+        description="RSS processing, entity extraction, topic clustering",
     ),
     WorkloadProfile.REAL_TIME: ResourceBudget(
         max_vram_gb=8.0,
@@ -73,30 +75,37 @@ WORKLOAD_BUDGETS: dict[WorkloadProfile, ResourceBudget] = {
         models=[
             {"name": "llama3.1:8b", "vram_gb": 5.0, "ram_gb": 0.5, "role": "realtime"},
         ],
-        description="Quick summaries, real-time API responses"
+        description="Quick summaries, real-time API responses",
     ),
     WorkloadProfile.REPORT_GENERATION_HIGH: ResourceBudget(
         max_vram_gb=32.0,
         max_ram_gb=30.0,
         models=[
-            {"name": "qwen2.5:72b-instruct-q4_K_M", "vram_gb": 32.0, "ram_gb": 12.0, "role": "generation"},
+            {
+                "name": "qwen2.5:72b-instruct-q4_K_M",
+                "vram_gb": 32.0,
+                "ram_gb": 12.0,
+                "role": "generation",
+            },
         ],
-        description="Future: high-quality report generation"
+        description="Future: high-quality report generation",
     ),
     WorkloadProfile.REPORT_GENERATION_FAST: ResourceBudget(
         max_vram_gb=28.0,
         max_ram_gb=15.0,
         models=[
-            {"name": "qwen2.5:32b-instruct-q5_K_M", "vram_gb": 24.0, "ram_gb": 1.0, "role": "generation"},
+            {
+                "name": "qwen2.5:32b-instruct-q5_K_M",
+                "vram_gb": 24.0,
+                "ram_gb": 1.0,
+                "role": "generation",
+            },
             {"name": "nomic-embed-text", "vram_gb": 0.5, "ram_gb": 0.2, "role": "embedding"},
         ],
-        description="Future: fast report generation with retrieval"
+        description="Future: fast report generation with retrieval",
     ),
     WorkloadProfile.IDLE: ResourceBudget(
-        max_vram_gb=0.0,
-        max_ram_gb=5.0,
-        models=[],
-        description="No models loaded"
+        max_vram_gb=0.0, max_ram_gb=5.0, models=[], description="No models loaded"
     ),
 }
 
@@ -124,9 +133,14 @@ class ResourceManager:
         """Verify NVIDIA GPU is accessible and get baseline specs."""
         try:
             result = subprocess.run(
-                ["nvidia-smi", "--query-gpu=name,memory.total,driver_version,compute_cap",
-                 "--format=csv,noheader,nounits"],
-                capture_output=True, text=True, check=True
+                [
+                    "nvidia-smi",
+                    "--query-gpu=name,memory.total,driver_version,compute_cap",
+                    "--format=csv,noheader,nounits",
+                ],
+                capture_output=True,
+                text=True,
+                check=True,
             )
             parts = [p.strip() for p in result.stdout.strip().split(",")]
             self.gpu_name = parts[0] if len(parts) > 0 else "Unknown"
@@ -145,18 +159,22 @@ class ResourceManager:
     def get_current_state(self) -> ResourceState:
         """Get current resource utilization snapshot."""
         result = subprocess.run(
-            ["nvidia-smi",
-             "--query-gpu=memory.total,memory.used,memory.free,utilization.gpu,temperature.gpu",
-             "--format=csv,noheader,nounits"],
-            capture_output=True, text=True, check=True
+            [
+                "nvidia-smi",
+                "--query-gpu=memory.total,memory.used,memory.free,utilization.gpu,temperature.gpu",
+                "--format=csv,noheader,nounits",
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
         )
         parts = [p.strip() for p in result.stdout.strip().split(",")]
 
         if psutil:
             ram = psutil.virtual_memory()
-            total_ram_gb = ram.total / (1024 ** 3)
-            used_ram_gb = ram.used / (1024 ** 3)
-            free_ram_gb = ram.available / (1024 ** 3)
+            total_ram_gb = ram.total / (1024**3)
+            used_ram_gb = ram.used / (1024**3)
+            free_ram_gb = ram.available / (1024**3)
         else:
             total_ram_gb = used_ram_gb = free_ram_gb = 0.0
 
@@ -169,13 +187,14 @@ class ResourceManager:
             free_ram_gb=free_ram_gb,
             gpu_utilization_pct=float(parts[3]) if len(parts) > 3 else 0.0,
             gpu_temperature_c=float(parts[4]) if len(parts) > 4 else 0.0,
-            loaded_models=self._get_loaded_models()
+            loaded_models=self._get_loaded_models(),
         )
 
     def _get_loaded_models(self) -> list[str]:
         """Query Ollama for currently loaded models."""
         try:
             import requests
+
             resp = requests.get(f"{self.ollama_host}/api/ps", timeout=5)
             if resp.status_code == 200:
                 data = resp.json()
@@ -191,12 +210,13 @@ class ResourceManager:
             return
 
         import requests
+
         for model_name in loaded:
             try:
                 requests.post(
                     f"{self.ollama_host}/api/generate",
                     json={"model": model_name, "keep_alive": 0},
-                    timeout=30
+                    timeout=30,
                 )
                 logger.info("Unloaded model: %s", model_name)
             except Exception as e:
@@ -211,7 +231,9 @@ class ResourceManager:
         state = self.get_current_state()
 
         available_vram = state.total_vram_gb - VRAM_SAFETY_MARGIN_GB
-        available_ram = state.total_ram_gb - RAM_SAFETY_MARGIN_GB if state.total_ram_gb > 0 else 64.0
+        available_ram = (
+            state.total_ram_gb - RAM_SAFETY_MARGIN_GB if state.total_ram_gb > 0 else 64.0
+        )
 
         if budget.max_vram_gb > available_vram:
             return False, (
@@ -239,6 +261,7 @@ class ResourceManager:
 
         try:
             import torch
+
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
                 torch.cuda.synchronize()
@@ -251,7 +274,8 @@ class ResourceManager:
         new_state = self.get_current_state()
         logger.info(
             "Workload switched. VRAM free: %.1f GB, RAM free: %.1f GB",
-            new_state.free_vram_gb, new_state.free_ram_gb
+            new_state.free_vram_gb,
+            new_state.free_ram_gb,
         )
         return new_state
 

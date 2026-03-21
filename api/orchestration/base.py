@@ -7,10 +7,11 @@ Retry with backoff, dead letter on max retries. Runs Reporter poll on interval.
 
 import json
 import logging
-import time
 import threading
+import time
+from collections.abc import Callable
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
 from orchestration.config import load_newsroom_config
 from orchestration.events.envelope import EventEnvelope
@@ -31,16 +32,16 @@ class NewsroomOrchestrator:
     def __init__(
         self,
         get_db_connection: Callable[[], Any],
-        config: Optional[Dict[str, Any]] = None,
+        config: dict[str, Any] | None = None,
     ):
         self.get_db_connection = get_db_connection
         self.config = config or load_newsroom_config()
         self._queue = InProcessEventQueue()
-        self._handlers: Dict[EventType, List[Callable[..., None]]] = {}
+        self._handlers: dict[EventType, list[Callable[..., None]]] = {}
         self._processed_keys: set = set()
         self._processed_max = 10000
         self.is_running = False
-        self._last_event_at: Optional[float] = None
+        self._last_event_at: float | None = None
         self._lock = threading.Lock()
 
         eh = self.config.get("event_handling") or {}
@@ -60,7 +61,7 @@ class NewsroomOrchestrator:
             self._handlers[event_type] = []
         self._handlers[event_type].append(handler)
 
-    def _already_processed(self, key: Optional[str]) -> bool:
+    def _already_processed(self, key: str | None) -> bool:
         if not key:
             return False
         with self._lock:
@@ -68,7 +69,7 @@ class NewsroomOrchestrator:
                 return True
             return False
 
-    def _mark_processed(self, key: Optional[str]) -> None:
+    def _mark_processed(self, key: str | None) -> None:
         if not key:
             return
         with self._lock:
@@ -160,7 +161,7 @@ class NewsroomOrchestrator:
                             self._persist_failed(envelope, str(e), self._max_retries)
                         logger.error("Event failed after %s retries: %s", self._max_retries, e)
                         break
-                    delay = self._backoff_base ** attempt
+                    delay = self._backoff_base**attempt
                     logger.warning("Retry %s/%s in %ss: %s", attempt, self._max_retries, delay, e)
                     time.sleep(delay)
 
@@ -174,12 +175,14 @@ class NewsroomOrchestrator:
             self.is_running = False
             logger.info("Newsroom orchestrator loop stopped")
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         with self._lock:
             last = self._last_event_at
         return {
             "enabled": True,
             "running": self.is_running,
-            "last_event_at": None if last is None else datetime.utcfromtimestamp(last).isoformat() + "Z",
+            "last_event_at": None
+            if last is None
+            else datetime.utcfromtimestamp(last).isoformat() + "Z",
             "queue_depth": self._queue.qsize(),
         }

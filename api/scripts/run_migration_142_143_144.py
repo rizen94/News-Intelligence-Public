@@ -10,6 +10,7 @@ import sys
 
 try:
     from dotenv import load_dotenv
+
     api_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     load_dotenv(os.path.join(api_dir, ".env"), override=False)
     load_dotenv(os.path.join(api_dir, "..", ".env"), override=False)
@@ -50,7 +51,9 @@ def main():
 
         conn = get_db_connection()
         if not conn:
-            print("ERROR: Could not connect to database (check DB_HOST, DB_NAME, DB_USER, DB_PASSWORD)")
+            print(
+                "ERROR: Could not connect to database (check DB_HOST, DB_NAME, DB_USER, DB_PASSWORD)"
+            )
             sys.exit(1)
 
         try:

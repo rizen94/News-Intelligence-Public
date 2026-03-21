@@ -80,7 +80,11 @@ import {
 
 import ArticleReader from '../../components/ArticleReader';
 import apiService from '../../services/apiService';
-import { calculateReadingTime, formatReadingTime, getArticleReadingTime } from '../../utils/articleUtils';
+import {
+  calculateReadingTime,
+  formatReadingTime,
+  getArticleReadingTime,
+} from '../../utils/articleUtils';
 import { useDomainRoute } from '../../hooks/useDomainRoute';
 import { useNotification } from '../../hooks/useNotification';
 import { getUserFriendlyError } from '../../utils/errorHandler';
@@ -138,7 +142,9 @@ const Articles: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [filterSource, setFilterSource] = useState('');
   const [sortBy, setSortBy] = useState('date');
-  const [bookmarkedArticles, setBookmarkedArticles] = useState<Set<number>>(new Set());
+  const [bookmarkedArticles, setBookmarkedArticles] = useState<Set<number>>(
+    new Set()
+  );
 
   // Quick filters
   const [quickFilters, setQuickFilters] = useState({
@@ -156,7 +162,9 @@ const Articles: React.FC = () => {
   const [showTopicClustering, setShowTopicClustering] = useState(false);
 
   // Article reader state
-  const [selectedArticle, setSelectedArticle] = useState<ArticleItem | null>(null);
+  const [selectedArticle, setSelectedArticle] = useState<ArticleItem | null>(
+    null
+  );
   const [readerOpen, setReaderOpen] = useState(false);
 
   // Storyline selection state
@@ -166,7 +174,13 @@ const Articles: React.FC = () => {
   const [articleToAdd, setArticleToAdd] = useState<ArticleItem | null>(null);
 
   // Standardized notifications
-  const { showSuccess, showError, showInfo, showWarning, NotificationComponent } = useNotification();
+  const {
+    showSuccess,
+    showError,
+    showInfo,
+    showWarning,
+    NotificationComponent,
+  } = useNotification();
 
   // Duplicate detection
   const [duplicateDialogOpen, setDuplicateDialogOpen] = useState(false);
@@ -175,21 +189,22 @@ const Articles: React.FC = () => {
     storyline: Storyline | null;
   }>({ article: null, storyline: null });
 
-  const loadStorylines = useCallback(async() => {
+  const loadStorylines = useCallback(async () => {
     try {
       const response = await apiService.getStorylines({}, domain);
       // Backend returns { data: StorylineListItem[], pagination, domain } (no .success); or { success: false, error }
       if ('error' in response && response.error) return;
       const storylinesList = Array.isArray(response.data)
         ? response.data
-        : (response as { data?: { storylines?: unknown[] } }).data?.storylines || [];
+        : (response as { data?: { storylines?: unknown[] } }).data
+            ?.storylines || [];
       setStorylines(storylinesList);
     } catch (error) {
       console.error('Failed to load storylines:', error);
     }
   }, [domain]);
 
-  const loadArticles = useCallback(async() => {
+  const loadArticles = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -204,12 +219,16 @@ const Articles: React.FC = () => {
       const response = await apiService.getArticles(params, domain);
 
       if (response.success) {
-        const articlesData = response.data?.articles ||
-                            response.data?.data?.articles ||
-                            response.articles || [];
-        const totalData = response.data?.total ||
-                         response.data?.data?.total ||
-                         response.total || 0;
+        const articlesData =
+          response.data?.articles ||
+          response.data?.data?.articles ||
+          response.articles ||
+          [];
+        const totalData =
+          response.data?.total ||
+          response.data?.data?.total ||
+          response.total ||
+          0;
         setArticles(articlesData);
         setTotalPages(Math.ceil(totalData / 12));
         setTotalArticles(totalData);
@@ -230,7 +249,7 @@ const Articles: React.FC = () => {
   }, [page, searchQuery, filterSource, sortBy, showUnlinkedOnly, domain]);
 
   // Load existing topics from database
-  const loadTopics = useCallback(async() => {
+  const loadTopics = useCallback(async () => {
     try {
       const response = await apiService.getTopics({ limit: 50 }, domain);
       if (response.success && response.data?.topics) {
@@ -244,26 +263,35 @@ const Articles: React.FC = () => {
           // Use article_ids from API if available (most reliable)
           let topicArticles: ArticleItem[] = [];
 
-          if (topic.article_ids && Array.isArray(topic.article_ids) && topic.article_ids.length > 0) {
+          if (
+            topic.article_ids &&
+            Array.isArray(topic.article_ids) &&
+            topic.article_ids.length > 0
+          ) {
             // Match by article IDs from database
             topicArticles = articles.filter((a: ArticleItem) =>
-              topic.article_ids.includes(a.id),
+              topic.article_ids.includes(a.id)
             );
           }
 
           // If no matches found, try keyword matching as fallback
-          if (topicArticles.length === 0 && topic.keywords && Array.isArray(topic.keywords)) {
+          if (
+            topicArticles.length === 0 &&
+            topic.keywords &&
+            Array.isArray(topic.keywords)
+          ) {
             topicArticles = articles.filter((a: ArticleItem) =>
               topic.keywords.some((kw: string) =>
-                (a.title || '').toLowerCase().includes(kw.toLowerCase()),
-              ),
+                (a.title || '').toLowerCase().includes(kw.toLowerCase())
+              )
             );
           }
 
           return {
             name: topicName,
             articles: topicArticles,
-            count: topic.article_count || topic.count || topicArticles.length || 0,
+            count:
+              topic.article_count || topic.count || topicArticles.length || 0,
           };
         });
 
@@ -286,26 +314,31 @@ const Articles: React.FC = () => {
   }, [page, searchQuery, filterSource, sortBy, showUnlinkedOnly, domain]);
 
   // Trigger NEW topic clustering (creates new topics in database)
-  const clusterArticles = useCallback(async() => {
+  const clusterArticles = useCallback(async () => {
     try {
       setClustering(true);
       setError(null);
 
       const timePeriodHours = 24; // Can be made configurable
-      const response = await apiService.clusterArticles({
-        limit: articles.length,
-        time_period_hours: timePeriodHours,
-      }, domain);
+      const response = await apiService.clusterArticles(
+        {
+          limit: articles.length,
+          time_period_hours: timePeriodHours,
+        },
+        domain
+      );
 
       if (response.success) {
-        showSuccess('Topic clustering started in background. Results will appear shortly...');
+        showSuccess(
+          'Topic clustering started in background. Results will appear shortly...'
+        );
 
         // Poll for new results with exponential backoff
         let attempts = 0;
         const maxAttempts = 10;
         const initialDelay = 3000; // Start with 3 seconds (clustering takes time)
 
-        const pollForResults = async(): Promise<boolean> => {
+        const pollForResults = async (): Promise<boolean> => {
           while (attempts < maxAttempts) {
             attempts++;
             const delay = initialDelay * Math.pow(1.5, attempts - 1); // Exponential backoff
@@ -318,7 +351,9 @@ const Articles: React.FC = () => {
 
               // Check if we have topics now
               if (topics.length > 0) {
-                showSuccess(`Clustering complete! Found ${topics.length} topics.`);
+                showSuccess(
+                  `Clustering complete! Found ${topics.length} topics.`
+                );
                 return true;
               }
             } catch (pollError) {
@@ -332,7 +367,9 @@ const Articles: React.FC = () => {
         const foundResults = await pollForResults();
 
         if (!foundResults) {
-          showWarning('Clustering may still be processing. Topics will appear when ready.');
+          showWarning(
+            'Clustering may still be processing. Topics will appear when ready.'
+          );
         }
       } else {
         showError('Failed to start topic clustering');
@@ -345,17 +382,37 @@ const Articles: React.FC = () => {
         const title = (article.title || '').toLowerCase();
         let topicName = 'General News';
 
-        if (title.includes('election') || title.includes('vote') || title.includes('president')) {
+        if (
+          title.includes('election') ||
+          title.includes('vote') ||
+          title.includes('president')
+        ) {
           topicName = 'Election 2024';
         } else if (title.includes('climate') || title.includes('environment')) {
           topicName = 'Climate Change';
-        } else if (title.includes('tech') || title.includes('ai') || title.includes('software')) {
+        } else if (
+          title.includes('tech') ||
+          title.includes('ai') ||
+          title.includes('software')
+        ) {
           topicName = 'Technology';
-        } else if (title.includes('economy') || title.includes('market') || title.includes('inflation')) {
+        } else if (
+          title.includes('economy') ||
+          title.includes('market') ||
+          title.includes('inflation')
+        ) {
           topicName = 'Economy';
-        } else if (title.includes('health') || title.includes('medical') || title.includes('covid')) {
+        } else if (
+          title.includes('health') ||
+          title.includes('medical') ||
+          title.includes('covid')
+        ) {
           topicName = 'Health';
-        } else if (title.includes('war') || title.includes('conflict') || title.includes('military')) {
+        } else if (
+          title.includes('war') ||
+          title.includes('conflict') ||
+          title.includes('military')
+        ) {
           topicName = 'Conflict';
         }
 
@@ -390,20 +447,23 @@ const Articles: React.FC = () => {
 
   const handleFilterChange = (filterType: string, value: string) => {
     switch (filterType) {
-    case 'source_domain':
-      setFilterSource(value);
-      break;
-    case 'sort':
-      setSortBy(value);
-      break;
-    default:
-      console.warn('Unknown filter type:', filterType);
-      break;
+      case 'source_domain':
+        setFilterSource(value);
+        break;
+      case 'sort':
+        setSortBy(value);
+        break;
+      default:
+        console.warn('Unknown filter type:', filterType);
+        break;
     }
     setPage(1);
   };
 
-  const handleQuickFilter = (filterType: keyof typeof quickFilters, value: string | null) => {
+  const handleQuickFilter = (
+    filterType: keyof typeof quickFilters,
+    value: string | null
+  ) => {
     setQuickFilters(prev => ({
       ...prev,
       [filterType]: prev[filterType] === value ? null : value,
@@ -413,13 +473,23 @@ const Articles: React.FC = () => {
 
   const handleExportCSV = () => {
     try {
-      const headers = ['Title', 'Source', 'Published Date', 'Reading Time', 'Quality Score', 'Sentiment', 'URL'];
+      const headers = [
+        'Title',
+        'Source',
+        'Published Date',
+        'Reading Time',
+        'Quality Score',
+        'Sentiment',
+        'URL',
+      ];
       const rows = articles.map(article => [
         `"${(article.title || '').replace(/"/g, '""')}"`,
         article.source_domain || article.source || '',
         article.published_at || article.created_at || '',
         formatReadingTime(getArticleReadingTime(article)),
-        article.quality_score ? (article.quality_score * 100).toFixed(1) + '%' : '',
+        article.quality_score
+          ? (article.quality_score * 100).toFixed(1) + '%'
+          : '',
         article.sentiment || '',
         article.url || '',
       ]);
@@ -433,7 +503,10 @@ const Articles: React.FC = () => {
       const link = document.createElement('a');
       const url = URL.createObjectURL(blob);
       link.setAttribute('href', url);
-      link.setAttribute('download', `articles_export_${new Date().toISOString().split('T')[0]}.csv`);
+      link.setAttribute(
+        'download',
+        `articles_export_${new Date().toISOString().split('T')[0]}.csv`
+      );
       link.style.visibility = 'hidden';
       document.body.appendChild(link);
       link.click();
@@ -456,17 +529,31 @@ const Articles: React.FC = () => {
     // Quick filters
     if (quickFilters.readingTime) {
       const readingTime = getArticleReadingTime(article);
-      if (quickFilters.readingTime === 'short' && readingTime >= 3) return false;
-      if (quickFilters.readingTime === 'medium' && (readingTime < 3 || readingTime > 5)) return false;
+      if (quickFilters.readingTime === 'short' && readingTime >= 3)
+        return false;
+      if (
+        quickFilters.readingTime === 'medium' &&
+        (readingTime < 3 || readingTime > 5)
+      )
+        return false;
       if (quickFilters.readingTime === 'long' && readingTime <= 5) return false;
     }
     if (quickFilters.quality && article.quality_score !== undefined) {
-      if (quickFilters.quality === 'high' && article.quality_score < 0.7) return false;
-      if (quickFilters.quality === 'medium' && (article.quality_score < 0.5 || article.quality_score >= 0.7)) return false;
-      if (quickFilters.quality === 'low' && article.quality_score >= 0.5) return false;
+      if (quickFilters.quality === 'high' && article.quality_score < 0.7)
+        return false;
+      if (
+        quickFilters.quality === 'medium' &&
+        (article.quality_score < 0.5 || article.quality_score >= 0.7)
+      )
+        return false;
+      if (quickFilters.quality === 'low' && article.quality_score >= 0.5)
+        return false;
     }
     if (quickFilters.sentiment && article.sentiment) {
-      if (article.sentiment.toLowerCase() !== quickFilters.sentiment.toLowerCase()) return false;
+      if (
+        article.sentiment.toLowerCase() !== quickFilters.sentiment.toLowerCase()
+      )
+        return false;
     }
     return true;
   });
@@ -487,14 +574,14 @@ const Articles: React.FC = () => {
 
   const getSentimentColor = (sentiment?: string) => {
     switch (sentiment?.toLowerCase()) {
-    case 'positive':
-      return 'success';
-    case 'negative':
-      return 'error';
-    case 'neutral':
-      return 'default';
-    default:
-      return 'default';
+      case 'positive':
+        return 'success';
+      case 'negative':
+        return 'error';
+      case 'neutral':
+        return 'default';
+      default:
+        return 'default';
     }
   };
 
@@ -537,7 +624,10 @@ const Articles: React.FC = () => {
     setStorylineDialogOpen(true);
   };
 
-  const checkForDuplicate = async(storylineId: string, articleId: number): Promise<boolean> => {
+  const checkForDuplicate = async (
+    storylineId: string,
+    articleId: number
+  ): Promise<boolean> => {
     try {
       const storyline = storylines.find(s => s.id.toString() === storylineId);
       if (storyline && storyline.article_count && storyline.article_count > 0) {
@@ -551,17 +641,22 @@ const Articles: React.FC = () => {
     }
   };
 
-  const handleAddToStorylineConfirm = async() => {
+  const handleAddToStorylineConfirm = async () => {
     if (!articleToAdd || !selectedStorylineId) {
       showError('Please select a storyline');
       return;
     }
 
     try {
-      const isDuplicate = await checkForDuplicate(selectedStorylineId, articleToAdd.id);
+      const isDuplicate = await checkForDuplicate(
+        selectedStorylineId,
+        articleToAdd.id
+      );
 
       if (isDuplicate) {
-        const storyline = storylines.find(s => s.id.toString() === selectedStorylineId);
+        const storyline = storylines.find(
+          s => s.id.toString() === selectedStorylineId
+        );
         if (storyline) {
           setDuplicateInfo({ article: articleToAdd, storyline });
           setDuplicateDialogOpen(true);
@@ -569,8 +664,14 @@ const Articles: React.FC = () => {
         return;
       }
 
-      const storyline = storylines.find(s => s.id.toString() === selectedStorylineId);
-      showSuccess(`Article "${articleToAdd.title}" added to storyline "${storyline?.title || 'Unknown'}"`);
+      const storyline = storylines.find(
+        s => s.id.toString() === selectedStorylineId
+      );
+      showSuccess(
+        `Article "${articleToAdd.title}" added to storyline "${
+          storyline?.title || 'Unknown'
+        }"`
+      );
 
       setStorylineDialogOpen(false);
       setArticleToAdd(null);
@@ -581,12 +682,14 @@ const Articles: React.FC = () => {
     }
   };
 
-  const handleDuplicateConfirm = async() => {
+  const handleDuplicateConfirm = async () => {
     const storyline = duplicateInfo.storyline;
     const article = duplicateInfo.article;
 
     if (storyline && article) {
-      showWarning(`Article "${article.title}" added to storyline "${storyline.title}" (duplicate allowed)`);
+      showWarning(
+        `Article "${article.title}" added to storyline "${storyline.title}" (duplicate allowed)`
+      );
     }
 
     setDuplicateDialogOpen(false);
@@ -659,7 +762,7 @@ const Articles: React.FC = () => {
           </Typography>
           <IconButton
             size='small'
-            onClick={(e) => {
+            onClick={e => {
               e.stopPropagation();
               toggleBookmark(article.id);
             }}
@@ -724,7 +827,10 @@ const Articles: React.FC = () => {
               const readingTime = getArticleReadingTime(article);
               return readingTime > 0 ? (
                 <Box display='flex' alignItems='center' gap={0.5}>
-                  <AccessTime fontSize='inherit' sx={{ fontSize: '0.875rem' }} />
+                  <AccessTime
+                    fontSize='inherit'
+                    sx={{ fontSize: '0.875rem' }}
+                  />
                   <Typography variant='caption' color='text.secondary'>
                     {formatReadingTime(readingTime)}
                   </Typography>
@@ -756,7 +862,7 @@ const Articles: React.FC = () => {
         <Button
           size='small'
           startIcon={<Visibility />}
-          onClick={(e) => {
+          onClick={e => {
             e.stopPropagation();
             handleOpenArticle(article);
           }}
@@ -766,7 +872,7 @@ const Articles: React.FC = () => {
         <Button
           size='small'
           startIcon={<TimelineIcon />}
-          onClick={(e) => {
+          onClick={e => {
             e.stopPropagation();
             handleAddToStoryline(article);
           }}
@@ -836,7 +942,10 @@ const Articles: React.FC = () => {
                 const readingTime = getArticleReadingTime(article);
                 return readingTime > 0 ? (
                   <Box display='flex' alignItems='center' gap={0.5}>
-                    <AccessTime fontSize='inherit' sx={{ fontSize: '0.75rem' }} />
+                    <AccessTime
+                      fontSize='inherit'
+                      sx={{ fontSize: '0.75rem' }}
+                    />
                     <Typography variant='caption' color='text.secondary'>
                       {formatReadingTime(readingTime)}
                     </Typography>
@@ -867,7 +976,7 @@ const Articles: React.FC = () => {
           <Button
             size='small'
             startIcon={<Visibility />}
-            onClick={(e) => {
+            onClick={e => {
               e.stopPropagation();
               handleOpenArticle(article);
             }}
@@ -950,7 +1059,9 @@ const Articles: React.FC = () => {
                 onClick={clusterArticles}
                 disabled={clustering || articles.length === 0}
               >
-                {clustering ? 'Creating Topics...' : 'Create New Topics from Articles'}
+                {clustering
+                  ? 'Creating Topics...'
+                  : 'Create New Topics from Articles'}
               </Button>
 
               <Button
@@ -1012,8 +1123,9 @@ const Articles: React.FC = () => {
             {/* Topic Filter Status */}
             {selectedTopic && (
               <Alert severity='info' sx={{ mt: 2 }}>
-                Showing articles for topic: <strong>{selectedTopic.name}</strong>{' '}
-                ({selectedTopic.count} articles)
+                Showing articles for topic:{' '}
+                <strong>{selectedTopic.name}</strong> ({selectedTopic.count}{' '}
+                articles)
               </Alert>
             )}
           </CardContent>
@@ -1094,7 +1206,11 @@ const Articles: React.FC = () => {
                 setSortBy('date');
                 setShowUnlinkedOnly(true);
                 setFilterTopic('');
-                setQuickFilters({ readingTime: null, quality: null, sentiment: null });
+                setQuickFilters({
+                  readingTime: null,
+                  quality: null,
+                  sentiment: null,
+                });
                 setSelectedTopic(null);
                 setPage(1);
               }}
@@ -1108,7 +1224,10 @@ const Articles: React.FC = () => {
                 control={
                   <Switch
                     checked={showUnlinkedOnly}
-                    onChange={e => { setShowUnlinkedOnly(e.target.checked); setPage(1); }}
+                    onChange={e => {
+                      setShowUnlinkedOnly(e.target.checked);
+                      setPage(1);
+                    }}
                   />
                 }
                 label='Unlinked articles only'
@@ -1122,7 +1241,9 @@ const Articles: React.FC = () => {
                     onChange={e => {
                       setFilterTopic(e.target.value);
                       if (e.target.value) {
-                        const topic = topics.find(t => t.name === e.target.value);
+                        const topic = topics.find(
+                          t => t.name === e.target.value
+                        );
                         setSelectedTopic(topic || null);
                       } else {
                         setSelectedTopic(null);
@@ -1131,7 +1252,9 @@ const Articles: React.FC = () => {
                   >
                     <MenuItem value=''>All Topics</MenuItem>
                     {topics.map(t => (
-                      <MenuItem key={t.name} value={t.name}>{t.name} ({t.count})</MenuItem>
+                      <MenuItem key={t.name} value={t.name}>
+                        {t.name} ({t.count})
+                      </MenuItem>
                     ))}
                   </Select>
                 </FormControl>
@@ -1162,21 +1285,29 @@ const Articles: React.FC = () => {
             label='Short Read (< 3 min)'
             onClick={() => handleQuickFilter('readingTime', 'short')}
             color={quickFilters.readingTime === 'short' ? 'primary' : 'default'}
-            variant={quickFilters.readingTime === 'short' ? 'filled' : 'outlined'}
+            variant={
+              quickFilters.readingTime === 'short' ? 'filled' : 'outlined'
+            }
             size='small'
           />
           <Chip
             label='Medium Read (3-5 min)'
             onClick={() => handleQuickFilter('readingTime', 'medium')}
-            color={quickFilters.readingTime === 'medium' ? 'primary' : 'default'}
-            variant={quickFilters.readingTime === 'medium' ? 'filled' : 'outlined'}
+            color={
+              quickFilters.readingTime === 'medium' ? 'primary' : 'default'
+            }
+            variant={
+              quickFilters.readingTime === 'medium' ? 'filled' : 'outlined'
+            }
             size='small'
           />
           <Chip
             label='Long Read (> 5 min)'
             onClick={() => handleQuickFilter('readingTime', 'long')}
             color={quickFilters.readingTime === 'long' ? 'primary' : 'default'}
-            variant={quickFilters.readingTime === 'long' ? 'filled' : 'outlined'}
+            variant={
+              quickFilters.readingTime === 'long' ? 'filled' : 'outlined'
+            }
             size='small'
           />
 
@@ -1207,22 +1338,30 @@ const Articles: React.FC = () => {
           <Chip
             label='Positive'
             onClick={() => handleQuickFilter('sentiment', 'positive')}
-            color={quickFilters.sentiment === 'positive' ? 'success' : 'default'}
-            variant={quickFilters.sentiment === 'positive' ? 'filled' : 'outlined'}
+            color={
+              quickFilters.sentiment === 'positive' ? 'success' : 'default'
+            }
+            variant={
+              quickFilters.sentiment === 'positive' ? 'filled' : 'outlined'
+            }
             size='small'
           />
           <Chip
             label='Neutral'
             onClick={() => handleQuickFilter('sentiment', 'neutral')}
             color={quickFilters.sentiment === 'neutral' ? 'default' : 'default'}
-            variant={quickFilters.sentiment === 'neutral' ? 'filled' : 'outlined'}
+            variant={
+              quickFilters.sentiment === 'neutral' ? 'filled' : 'outlined'
+            }
             size='small'
           />
           <Chip
             label='Negative'
             onClick={() => handleQuickFilter('sentiment', 'negative')}
             color={quickFilters.sentiment === 'negative' ? 'error' : 'default'}
-            variant={quickFilters.sentiment === 'negative' ? 'filled' : 'outlined'}
+            variant={
+              quickFilters.sentiment === 'negative' ? 'filled' : 'outlined'
+            }
             size='small'
           />
         </Box>
@@ -1269,7 +1408,8 @@ const Articles: React.FC = () => {
 
           {filteredArticles.length === 0 && articles.length > 0 && (
             <Alert severity='info' sx={{ mt: 2 }}>
-              No articles match the selected quick filters. Try adjusting your filters.
+              No articles match the selected quick filters. Try adjusting your
+              filters.
             </Alert>
           )}
 
@@ -1331,6 +1471,7 @@ const Articles: React.FC = () => {
         open={readerOpen}
         onClose={handleCloseReader}
         onAddToStoryline={handleAddToStoryline}
+        domain={domain}
       />
 
       {/* Storyline Selection Dialog */}
@@ -1463,9 +1604,13 @@ const Articles: React.FC = () => {
                   {duplicateInfo.article.title}
                 </Typography>
                 <Typography variant='body2' color='text.secondary'>
-                  {duplicateInfo.article.source_domain || duplicateInfo.article.source} •{' '}
+                  {duplicateInfo.article.source_domain ||
+                    duplicateInfo.article.source}{' '}
+                  •{' '}
                   {duplicateInfo.article.published_at
-                    ? new Date(duplicateInfo.article.published_at).toLocaleDateString()
+                    ? new Date(
+                        duplicateInfo.article.published_at
+                      ).toLocaleDateString()
                     : 'No date'}
                 </Typography>
               </Paper>

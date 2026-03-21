@@ -11,24 +11,17 @@ Background service that automatically:
 Runs periodically via the AutomationManager.
 """
 
-import logging
-import numpy as np
-from typing import Dict, List, Any, Optional, Tuple, Set
-from datetime import datetime, timedelta
-from dataclasses import dataclass, field
 import json
-import psycopg2
-from psycopg2.extras import RealDictCursor
-import os
-from concurrent.futures import ThreadPoolExecutor
+import logging
 from collections import defaultdict
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Any
 
-from services.ai_storyline_discovery import (
-    get_discovery_service,
-    AIStorylineDiscovery,
-    StorylineCluster,
-    ArticleEmbedding
-)
+import numpy as np
+from psycopg2.extras import RealDictCursor
+
+from services.ai_storyline_discovery import get_discovery_service
 
 logger = logging.getLogger(__name__)
 
@@ -43,22 +36,23 @@ CONSOLIDATION_INTERVAL_MINUTES = 30  # How often to run
 @dataclass
 class StorylineInfo:
     """Lightweight storyline representation for consolidation"""
+
     id: int
     title: str
     description: str
     article_count: int
     created_at: datetime
     updated_at: datetime
-    parent_id: Optional[int] = None
-    centroid: Optional[np.ndarray] = None
-    entities: Set[str] = field(default_factory=set)
-    article_ids: List[int] = field(default_factory=list)
+    parent_id: int | None = None
+    centroid: np.ndarray | None = None
+    entities: set[str] = field(default_factory=set)
+    article_ids: list[int] = field(default_factory=list)
 
 
 class StorylineConsolidationService:
     """
     Background service for consolidating and organizing storylines.
-    
+
     Features:
     - Automatic merging of similar storylines
     - Creation of parent/mega storylines
@@ -66,8 +60,8 @@ class StorylineConsolidationService:
     - Evolution tracking
     - Cleanup of orphaned storylines
     """
-    
-    def __init__(self, db_config: Dict[str, Any]):
+
+    def __init__(self, db_config: dict[str, Any]):
         self.db_config = db_config
         self.discovery_service = get_discovery_service(db_config)
         self._running = False
@@ -77,14 +71,15 @@ class StorylineConsolidationService:
             "total_merges": 0,
             "total_parents_created": 0,
             "last_run_at": None,
-            "last_run_duration_ms": 0
+            "last_run_duration_ms": 0,
         }
-    
+
     def get_db_connection(self):
         """Get database connection from shared pool."""
         from shared.database.connection import get_db_connection as _get_conn
+
         return _get_conn()
-    
+
     def ensure_schema_columns(self, schema: str):
         """Ensure required columns exist for consolidation"""
         conn = self.get_db_connection()
@@ -92,7 +87,7 @@ class StorylineConsolidationService:
             with conn.cursor() as cur:
                 # Add parent_storyline_id for hierarchy
                 cur.execute(f"""
-                    ALTER TABLE {schema}.storylines 
+                    ALTER TABLE {schema}.storylines
                     ADD COLUMN IF NOT EXISTS parent_storyline_id INTEGER REFERENCES {schema}.storylines(id),
                     ADD COLUMN IF NOT EXISTS merged_into_id INTEGER REFERENCES {schema}.storylines(id),
                     ADD COLUMN IF NOT EXISTS merge_count INTEGER DEFAULT 0,
@@ -107,24 +102,24 @@ class StorylineConsolidationService:
             conn.rollback()
         finally:
             conn.close()
-    
-    def fetch_storylines(self, domain: str, hours: int = 168) -> List[StorylineInfo]:
+
+    def fetch_storylines(self, domain: str, hours: int = 168) -> list[StorylineInfo]:
         """Fetch storylines with their embeddings for comparison"""
-        schema = domain.replace('-', '_')
-        
+        schema = domain.replace("-", "_")
+
         logger.debug(f"[{domain}] Ensuring schema columns exist...")
         self.ensure_schema_columns(schema)
-        
+
         logger.debug(f"[{domain}] Getting database connection...")
         conn = self.get_db_connection()
         storylines = []
-        
+
         try:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 # Get active storylines - basic columns only
                 logger.debug(f"[{domain}] Executing storylines query (hours={hours})...")
                 cur.execute(f"""
-                    SELECT s.id, s.title, s.description, 
+                    SELECT s.id, s.title, s.description,
                            COALESCE(s.article_count, 0) as article_count,
                            s.created_at, s.updated_at
                     FROM {schema}.storylines s
@@ -133,50 +128,56 @@ class StorylineConsolidationService:
                     ORDER BY s.article_count DESC NULLS LAST
                     LIMIT 200
                 """)
-                
+
                 rows = cur.fetchall()
                 logger.debug(f"[{domain}] Query returned {len(rows)} rows")
-                
+
                 for row in rows:
                     storyline = StorylineInfo(
-                        id=row['id'],
-                        title=row['title'] or '',
-                        description=row['description'] or '',
-                        article_count=row['article_count'] or 0,
-                        created_at=row['created_at'],
-                        updated_at=row['updated_at'],
-                        parent_id=row.get('parent_storyline_id')  # May be None if column doesn't exist
+                        id=row["id"],
+                        title=row["title"] or "",
+                        description=row["description"] or "",
+                        article_count=row["article_count"] or 0,
+                        created_at=row["created_at"],
+                        updated_at=row["updated_at"],
+                        parent_id=row.get(
+                            "parent_storyline_id"
+                        ),  # May be None if column doesn't exist
                     )
-                    
+
                     # Get article IDs for this storyline
-                    cur.execute(f"""
+                    cur.execute(
+                        f"""
                         SELECT article_id FROM {schema}.storyline_articles
                         WHERE storyline_id = %s
-                    """, (storyline.id,))
-                    storyline.article_ids = [r['article_id'] for r in cur.fetchall()]
-                    
+                    """,
+                        (storyline.id,),
+                    )
+                    storyline.article_ids = [r["article_id"] for r in cur.fetchall()]
+
                     storylines.append(storyline)
-                
+
                 logger.info(f"Fetched {len(storylines)} storylines from {domain}")
-                
+
         finally:
             conn.close()
-        
+
         return storylines
-    
-    def compute_storyline_embeddings(self, domain: str, 
-                                      storylines: List[StorylineInfo]) -> List[StorylineInfo]:
+
+    def compute_storyline_embeddings(
+        self, domain: str, storylines: list[StorylineInfo]
+    ) -> list[StorylineInfo]:
         """
         Compute embeddings for storylines by averaging article embeddings.
-        
+
         Falls back to entity-based similarity if no embeddings exist.
         """
-        schema = domain.replace('-', '_')
+        schema = domain.replace("-", "_")
         conn = self.get_db_connection()
-        
+
         embedding_count = 0
         entity_count = 0
-        
+
         try:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 for storyline in storylines:
@@ -187,42 +188,43 @@ class StorylineConsolidationService:
                         )
                         entity_count += len(storyline.entities)
                         continue
-                    
+
                     # Get article embeddings AND titles (for fallback)
-                    placeholders = ','.join(['%s'] * len(storyline.article_ids))
-                    cur.execute(f"""
+                    placeholders = ",".join(["%s"] * len(storyline.article_ids))
+                    cur.execute(
+                        f"""
                         SELECT embedding_vector, title
                         FROM {schema}.articles
                         WHERE id IN ({placeholders})
-                    """, storyline.article_ids)
-                    
+                    """,
+                        storyline.article_ids,
+                    )
+
                     embeddings = []
                     entities = set()
                     titles = []
-                    
+
                     for row in cur.fetchall():
                         # Collect embeddings if available
-                        if row.get('embedding_vector'):
+                        if row.get("embedding_vector"):
                             try:
-                                emb = np.array(json.loads(row['embedding_vector']))
+                                emb = np.array(json.loads(row["embedding_vector"]))
                                 embeddings.append(emb)
                             except Exception:
                                 pass
-                        
+
                         # Always extract entities from titles
-                        if row.get('title'):
-                            titles.append(row['title'])
-                            entities.update(
-                                self.discovery_service.extract_entities(row['title'])
-                            )
-                    
+                        if row.get("title"):
+                            titles.append(row["title"])
+                            entities.update(self.discovery_service.extract_entities(row["title"]))
+
                     # Also extract entities from storyline title/description
                     entities.update(
                         self.discovery_service.extract_entities(
                             f"{storyline.title} {storyline.description}"
                         )
                     )
-                    
+
                     if embeddings:
                         # Compute centroid from existing embeddings
                         storyline.centroid = np.mean(embeddings, axis=0)
@@ -230,49 +232,52 @@ class StorylineConsolidationService:
                         if norm > 0:
                             storyline.centroid = storyline.centroid / norm
                         embedding_count += 1
-                    
+
                     storyline.entities = entities
                     entity_count += len(entities)
-                    
-                logger.info(f"[{domain}] Computed embeddings: {embedding_count} storylines "
-                           f"have vector embeddings, {entity_count} total entities extracted")
-                    
+
+                logger.info(
+                    f"[{domain}] Computed embeddings: {embedding_count} storylines "
+                    f"have vector embeddings, {entity_count} total entities extracted"
+                )
+
         except Exception as e:
             logger.error(f"[{domain}] Error computing storyline embeddings: {e}")
         finally:
             conn.close()
-        
+
         return storylines
-    
-    def calculate_storyline_similarity(self, s1: StorylineInfo, 
-                                        s2: StorylineInfo) -> Dict[str, float]:
+
+    def calculate_storyline_similarity(
+        self, s1: StorylineInfo, s2: StorylineInfo
+    ) -> dict[str, float]:
         """
         Calculate similarity between two storylines.
-        
+
         Uses a dynamic weighting scheme:
         - If both have embeddings: 60% semantic, 25% entity, 15% article
         - If no embeddings: 70% entity, 30% article
         """
         result = {
-            "semantic": 0.0, 
-            "entity": 0.0, 
-            "article": 0.0, 
+            "semantic": 0.0,
+            "entity": 0.0,
+            "article": 0.0,
             "title": 0.0,
             "overall": 0.0,
-            "has_embeddings": False
+            "has_embeddings": False,
         }
-        
+
         # Semantic similarity (centroids)
         if s1.centroid is not None and s2.centroid is not None:
             result["semantic"] = float(np.dot(s1.centroid, s2.centroid))
             result["has_embeddings"] = True
-        
+
         # Entity overlap (Jaccard similarity)
         if s1.entities and s2.entities:
             intersection = len(s1.entities & s2.entities)
             union = len(s1.entities | s2.entities)
             result["entity"] = intersection / union if union > 0 else 0.0
-        
+
         # Article overlap (Jaccard similarity)
         if s1.article_ids and s2.article_ids:
             set1 = set(s1.article_ids)
@@ -280,111 +285,133 @@ class StorylineConsolidationService:
             intersection = len(set1 & set2)
             union = len(set1 | set2)
             result["article"] = intersection / union if union > 0 else 0.0
-        
+
         # Title similarity (simple word overlap)
         if s1.title and s2.title:
             words1 = set(s1.title.lower().split())
             words2 = set(s2.title.lower().split())
             # Remove common words
-            stop_words = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'is', 'are'}
+            stop_words = {
+                "the",
+                "a",
+                "an",
+                "and",
+                "or",
+                "but",
+                "in",
+                "on",
+                "at",
+                "to",
+                "for",
+                "of",
+                "is",
+                "are",
+            }
             words1 = words1 - stop_words
             words2 = words2 - stop_words
             if words1 and words2:
                 intersection = len(words1 & words2)
                 union = len(words1 | words2)
                 result["title"] = intersection / union if union > 0 else 0.0
-        
+
         # Dynamic weighting based on available data
         if result["has_embeddings"]:
             # Full weighting with semantic
             result["overall"] = (
-                0.50 * result["semantic"] +
-                0.25 * result["entity"] +
-                0.15 * result["article"] +
-                0.10 * result["title"]
+                0.50 * result["semantic"]
+                + 0.25 * result["entity"]
+                + 0.15 * result["article"]
+                + 0.10 * result["title"]
             )
         else:
             # No embeddings - rely more on entity and title overlap
             result["overall"] = (
-                0.50 * result["entity"] +
-                0.20 * result["article"] +
-                0.30 * result["title"]
+                0.50 * result["entity"] + 0.20 * result["article"] + 0.30 * result["title"]
             )
-        
+
         return result
-    
-    def find_merge_candidates(self, storylines: List[StorylineInfo],
-                               threshold: float = MERGE_SIMILARITY_THRESHOLD
-                              ) -> List[Tuple[StorylineInfo, StorylineInfo, Dict]]:
+
+    def find_merge_candidates(
+        self, storylines: list[StorylineInfo], threshold: float = MERGE_SIMILARITY_THRESHOLD
+    ) -> list[tuple[StorylineInfo, StorylineInfo, dict]]:
         """
         Find pairs of storylines that should be merged.
-        
+
         Works with or without embeddings, using entity/title similarity as fallback.
         """
         candidates = []
         n = len(storylines)
-        
+
         logger.debug(f"Comparing {n} storylines for merge candidates (threshold: {threshold:.0%})")
-        
+
         for i in range(n):
             for j in range(i + 1, n):
                 s1, s2 = storylines[i], storylines[j]
-                
+
                 # Skip if one is already a parent of the other
                 if s1.parent_id == s2.id or s2.parent_id == s1.id:
                     continue
-                
+
                 # Skip if either has no entities and no centroid (can't compare)
                 if not s1.entities and s1.centroid is None:
                     continue
                 if not s2.entities and s2.centroid is None:
                     continue
-                
+
                 similarity = self.calculate_storyline_similarity(s1, s2)
-                
+
                 if similarity["overall"] >= threshold:
                     candidates.append((s1, s2, similarity))
-                    logger.debug(f"Merge candidate: '{s1.title[:30]}' + '{s2.title[:30]}' "
-                                f"(sim: {similarity['overall']:.0%})")
-        
+                    logger.debug(
+                        f"Merge candidate: '{s1.title[:30]}' + '{s2.title[:30]}' "
+                        f"(sim: {similarity['overall']:.0%})"
+                    )
+
         # Sort by similarity descending
         candidates.sort(key=lambda x: x[2]["overall"], reverse=True)
-        
+
         logger.info(f"Found {len(candidates)} merge candidates above {threshold:.0%} threshold")
-        
+
         return candidates[:MAX_MERGES_PER_RUN]
-    
-    def merge_storylines(self, domain: str, 
-                          primary: StorylineInfo, 
-                          secondary: StorylineInfo,
-                          similarity: Dict[str, float]) -> Optional[int]:
+
+    def merge_storylines(
+        self,
+        domain: str,
+        primary: StorylineInfo,
+        secondary: StorylineInfo,
+        similarity: dict[str, float],
+    ) -> int | None:
         """
         Merge secondary storyline into primary.
-        
+
         - Moves all articles from secondary to primary
         - Updates article counts
         - Marks secondary as merged
         - Creates merge history entry
         """
-        schema = domain.replace('-', '_')
+        schema = domain.replace("-", "_")
         conn = self.get_db_connection()
-        
+
         try:
             with conn.cursor() as cur:
                 # Move articles from secondary to primary
-                cur.execute(f"""
-                    INSERT INTO {schema}.storyline_articles 
+                cur.execute(
+                    f"""
+                    INSERT INTO {schema}.storyline_articles
                     (storyline_id, article_id, relevance_score, created_at)
                     SELECT %s, article_id, relevance_score, NOW()
                     FROM {schema}.storyline_articles
                     WHERE storyline_id = %s
                     ON CONFLICT (storyline_id, article_id) DO NOTHING
-                """, (primary.id, secondary.id))
-                
+                """,
+                    (primary.id, secondary.id),
+                )
+
                 moved_count = cur.rowcount
-                
+
                 # Update primary article count
-                cur.execute(f"""
+                cur.execute(
+                    f"""
                     UPDATE {schema}.storylines
                     SET article_count = (
                         SELECT COUNT(*) FROM {schema}.storyline_articles
@@ -395,109 +422,121 @@ class StorylineConsolidationService:
                     last_consolidated_at = NOW(),
                     updated_at = NOW()
                     WHERE id = %s
-                """, (primary.id, similarity["overall"], primary.id))
-                
+                """,
+                    (primary.id, similarity["overall"], primary.id),
+                )
+
                 # Mark secondary as merged
-                cur.execute(f"""
+                cur.execute(
+                    f"""
                     UPDATE {schema}.storylines
                     SET merged_into_id = %s,
                         status = 'merged',
                         updated_at = NOW()
                     WHERE id = %s
-                """, (primary.id, secondary.id))
-                
+                """,
+                    (primary.id, secondary.id),
+                )
+
                 # Update description to mention merge
                 new_desc = f"{primary.description or ''} [Merged with: {secondary.title[:50]}]"
-                cur.execute(f"""
+                cur.execute(
+                    f"""
                     UPDATE {schema}.storylines
                     SET description = %s
                     WHERE id = %s
-                """, (new_desc[:500], primary.id))
-                
+                """,
+                    (new_desc[:500], primary.id),
+                )
+
                 conn.commit()
-                
-                logger.info(f"Merged storyline {secondary.id} into {primary.id} "
-                           f"(sim: {similarity['overall']:.0%}, moved {moved_count} articles)")
-                
+
+                logger.info(
+                    f"Merged storyline {secondary.id} into {primary.id} "
+                    f"(sim: {similarity['overall']:.0%}, moved {moved_count} articles)"
+                )
+
                 return primary.id
-                
+
         except Exception as e:
             logger.error(f"Error merging storylines: {e}")
             conn.rollback()
             return None
         finally:
             conn.close()
-    
-    def find_mega_storyline_candidates(self, storylines: List[StorylineInfo],
-                                        threshold: float = PARENT_SIMILARITY_THRESHOLD
-                                       ) -> List[List[StorylineInfo]]:
+
+    def find_mega_storyline_candidates(
+        self, storylines: list[StorylineInfo], threshold: float = PARENT_SIMILARITY_THRESHOLD
+    ) -> list[list[StorylineInfo]]:
         """
         Find groups of storylines that should have a common parent (mega-storyline).
-        
+
         Works with or without embeddings.
         """
         groups = []
         used = set()
         n = len(storylines)
-        
-        logger.debug(f"Finding mega-storyline groups from {n} storylines (threshold: {threshold:.0%})")
-        
+
+        logger.debug(
+            f"Finding mega-storyline groups from {n} storylines (threshold: {threshold:.0%})"
+        )
+
         # Build adjacency based on similarity
         adjacency = defaultdict(list)
-        
+
         for i in range(n):
             for j in range(i + 1, n):
                 s1, s2 = storylines[i], storylines[j]
-                
+
                 # Skip if neither has entities nor centroid
-                if (not s1.entities and s1.centroid is None) or \
-                   (not s2.entities and s2.centroid is None):
+                if (not s1.entities and s1.centroid is None) or (
+                    not s2.entities and s2.centroid is None
+                ):
                     continue
-                
+
                 similarity = self.calculate_storyline_similarity(s1, s2)
-                
+
                 if similarity["overall"] >= threshold:
                     adjacency[i].append(j)
                     adjacency[j].append(i)
-        
+
         # Find connected components
         for i in range(n):
             if i in used:
                 continue
-            
+
             if storylines[i].parent_id is not None:
                 continue  # Already has a parent
-            
+
             # BFS to find connected component
             component = []
             queue = [i]
-            
+
             while queue:
                 node = queue.pop(0)
                 if node in used:
                     continue
-                
+
                 used.add(node)
                 component.append(storylines[node])
-                
+
                 for neighbor in adjacency[node]:
                     if neighbor not in used:
                         queue.append(neighbor)
-            
+
             # Only create mega-storyline if group has multiple members
             # and enough total articles
             total_articles = sum(s.article_count for s in component)
-            
+
             if len(component) >= 2 and total_articles >= MIN_ARTICLES_FOR_MEGA:
                 groups.append(component)
-        
+
         return groups
-    
-    def create_mega_storyline(self, domain: str, 
-                               children: List[StorylineInfo]) -> Optional[int]:
+
+    def create_mega_storyline(self, domain: str, children: list[StorylineInfo]) -> int | None:
         """
         Create a parent mega-storyline for a group of related storylines.
-        
+
         The mega-storyline:
         - Has a generated title based on common themes
         - Links all child storylines as sub-stories
@@ -506,36 +545,37 @@ class StorylineConsolidationService:
         """
         if not children:
             return None
-        
-        schema = domain.replace('-', '_')
+
+        schema = domain.replace("-", "_")
         conn = self.get_db_connection()
-        
+
         try:
             with conn.cursor() as cur:
                 # Generate mega-storyline title from common entities
                 all_entities = set()
                 for child in children:
                     all_entities.update(child.entities)
-                
+
                 # Find most common entity for title
                 entity_counts = defaultdict(int)
                 for child in children:
                     for entity in child.entities:
                         entity_counts[entity] += 1
-                
+
                 if entity_counts:
                     top_entity = max(entity_counts, key=entity_counts.get)
                     mega_title = f"Ongoing: {top_entity.title()}"
                 else:
                     # Use first child's title as base
                     mega_title = f"Related Stories: {children[0].title[:40]}..."
-                
+
                 # Calculate total articles
                 total_articles = sum(c.article_count for c in children)
-                
+
                 # Create mega-storyline
-                cur.execute(f"""
-                    INSERT INTO {schema}.storylines 
+                cur.execute(
+                    f"""
+                    INSERT INTO {schema}.storylines
                     (storyline_uuid, title, description, status, processing_status,
                      article_count, total_articles, is_mega_storyline,
                      consolidation_score, created_at, updated_at)
@@ -544,59 +584,69 @@ class StorylineConsolidationService:
                         %s, %s, TRUE, %s, NOW(), NOW()
                     )
                     RETURNING id
-                """, (
-                    mega_title,
-                    f"Mega-storyline covering {len(children)} related sub-stories with {total_articles} total articles",
-                    total_articles,
-                    total_articles,
-                    0.8
-                ))
-                
+                """,
+                    (
+                        mega_title,
+                        f"Mega-storyline covering {len(children)} related sub-stories with {total_articles} total articles",
+                        total_articles,
+                        total_articles,
+                        0.8,
+                    ),
+                )
+
                 result = cur.fetchone()
                 if not result:
                     conn.rollback()
                     return None
-                
+
                 mega_id = result[0]
-                
+
                 # Update children to point to parent
                 child_ids = [c.id for c in children]
-                cur.execute(f"""
+                cur.execute(
+                    f"""
                     UPDATE {schema}.storylines
                     SET parent_storyline_id = %s,
                         last_consolidated_at = NOW()
                     WHERE id = ANY(%s)
-                """, (mega_id, child_ids))
-                
+                """,
+                    (mega_id, child_ids),
+                )
+
                 # Copy all articles to mega-storyline
                 for child in children:
-                    cur.execute(f"""
-                        INSERT INTO {schema}.storyline_articles 
+                    cur.execute(
+                        f"""
+                        INSERT INTO {schema}.storyline_articles
                         (storyline_id, article_id, relevance_score, created_at)
                         SELECT %s, article_id, relevance_score * 0.9, NOW()
                         FROM {schema}.storyline_articles
                         WHERE storyline_id = %s
                         ON CONFLICT (storyline_id, article_id) DO NOTHING
-                    """, (mega_id, child.id))
-                
+                    """,
+                        (mega_id, child.id),
+                    )
+
                 conn.commit()
-                
-                logger.info(f"Created mega-storyline {mega_id}: '{mega_title}' "
-                           f"with {len(children)} children, {total_articles} articles")
-                
+
+                logger.info(
+                    f"Created mega-storyline {mega_id}: '{mega_title}' "
+                    f"with {len(children)} children, {total_articles} articles"
+                )
+
                 return mega_id
-                
+
         except Exception as e:
             logger.error(f"Error creating mega-storyline: {e}")
             conn.rollback()
             return None
         finally:
             conn.close()
-    
-    def run_consolidation(self, domain: str) -> Dict[str, Any]:
+
+    def run_consolidation(self, domain: str) -> dict[str, Any]:
         """
         Main consolidation run for a domain.
-        
+
         Steps:
         1. Fetch all active storylines
         2. Compute embeddings
@@ -606,16 +656,16 @@ class StorylineConsolidationService:
         6. Create mega-storylines
         """
         start_time = datetime.now()
-        
+
         result = {
             "domain": domain,
             "started_at": start_time.isoformat(),
             "storylines_analyzed": 0,
             "merges_performed": 0,
             "mega_storylines_created": 0,
-            "errors": []
+            "errors": [],
         }
-        
+
         try:
             # Step 1: Fetch storylines
             logger.info(f"[{domain}] Fetching storylines...")
@@ -625,109 +675,114 @@ class StorylineConsolidationService:
                 logger.error(f"[{domain}] Error fetching storylines: {fetch_error}", exc_info=True)
                 result["errors"].append(f"Fetch error: {fetch_error}")
                 storylines = []
-            
+
             result["storylines_analyzed"] = len(storylines)
             logger.info(f"[{domain}] Found {len(storylines)} storylines")
-            
+
             if len(storylines) < 2:
-                result["message"] = f"Not enough storylines to consolidate (found {len(storylines)})"
+                result["message"] = (
+                    f"Not enough storylines to consolidate (found {len(storylines)})"
+                )
                 logger.info(f"[{domain}] {result['message']}")
                 return result
-            
+
             # Step 2: Compute embeddings (and extract entities as fallback)
-            logger.info(f"[{domain}] Computing embeddings/entities for {len(storylines)} storylines...")
+            logger.info(
+                f"[{domain}] Computing embeddings/entities for {len(storylines)} storylines..."
+            )
             storylines = self.compute_storyline_embeddings(domain, storylines)
-            
+
             # Filter to those with either embeddings OR entities (can be compared)
             comparable_storylines = [
-                s for s in storylines 
-                if s.centroid is not None or len(s.entities) > 0
+                s for s in storylines if s.centroid is not None or len(s.entities) > 0
             ]
-            
-            result["storylines_with_embeddings"] = len([s for s in storylines if s.centroid is not None])
+
+            result["storylines_with_embeddings"] = len(
+                [s for s in storylines if s.centroid is not None]
+            )
             result["storylines_with_entities"] = len([s for s in storylines if len(s.entities) > 0])
             result["storylines_comparable"] = len(comparable_storylines)
-            
+
             if len(comparable_storylines) < 2:
-                result["message"] = f"Not enough comparable storylines (need 2+, have {len(comparable_storylines)})"
+                result["message"] = (
+                    f"Not enough comparable storylines (need 2+, have {len(comparable_storylines)})"
+                )
                 logger.info(f"[{domain}] {result['message']}")
                 return result
-            
+
             storylines = comparable_storylines
-            
+
             # Step 3: Find merge candidates
             logger.info(f"[{domain}] Finding merge candidates from {len(storylines)} storylines...")
             merge_candidates = self.find_merge_candidates(storylines)
             result["merge_candidates_found"] = len(merge_candidates)
-            
+
             # Step 4: Perform merges
             merged_ids = set()
             for primary, secondary, similarity in merge_candidates:
                 # Skip if either was already merged in this run
                 if primary.id in merged_ids or secondary.id in merged_ids:
                     continue
-                
+
                 merge_result = self.merge_storylines(domain, primary, secondary, similarity)
                 if merge_result:
                     merged_ids.add(secondary.id)
                     result["merges_performed"] += 1
-            
+
             # Step 5: Re-fetch after merges (for accurate mega-storyline creation)
             if result["merges_performed"] > 0:
                 storylines = self.fetch_storylines(domain)
                 storylines = self.compute_storyline_embeddings(domain, storylines)
                 storylines = [s for s in storylines if s.centroid is not None]
-            
+
             # Step 6: Find and create mega-storylines
             logger.info(f"[{domain}] Finding mega-storyline candidates...")
             mega_groups = self.find_mega_storyline_candidates(storylines)
             result["mega_candidates_found"] = len(mega_groups)
-            
+
             for group in mega_groups[:5]:  # Limit to 5 mega-storylines per run
                 mega_id = self.create_mega_storyline(domain, group)
                 if mega_id:
                     result["mega_storylines_created"] += 1
-            
+
             # Update stats
             self._stats["total_runs"] += 1
             self._stats["total_merges"] += result["merges_performed"]
             self._stats["total_parents_created"] += result["mega_storylines_created"]
             self._stats["last_run_at"] = start_time.isoformat()
-            
+
         except Exception as e:
             logger.error(f"Consolidation error for {domain}: {e}")
             result["errors"].append(str(e))
-        
+
         # Final timing
         duration = (datetime.now() - start_time).total_seconds() * 1000
         result["duration_ms"] = duration
         result["completed_at"] = datetime.now().isoformat()
         self._stats["last_run_duration_ms"] = duration
-        
-        logger.info(f"[{domain}] Consolidation complete: "
-                   f"{result['merges_performed']} merges, "
-                   f"{result['mega_storylines_created']} mega-storylines in {duration:.0f}ms")
-        
+
+        logger.info(
+            f"[{domain}] Consolidation complete: "
+            f"{result['merges_performed']} merges, "
+            f"{result['mega_storylines_created']} mega-storylines in {duration:.0f}ms"
+        )
+
         return result
-    
-    def run_all_domains(self) -> Dict[str, Any]:
+
+    def run_all_domains(self) -> dict[str, Any]:
         """Run consolidation for all domains"""
-        domains = ['politics', 'finance', 'science-tech']
+        domains = ["politics", "finance", "science-tech"]
         results = {}
-        
+
         for domain in domains:
             try:
                 results[domain] = self.run_consolidation(domain)
             except Exception as e:
                 results[domain] = {"error": str(e)}
-        
-        return {
-            "timestamp": datetime.now().isoformat(),
-            "domains": results,
-            "stats": self._stats
-        }
-    
-    def get_stats(self) -> Dict[str, Any]:
+
+        return {"timestamp": datetime.now().isoformat(), "domains": results, "stats": self._stats}
+
+    def get_stats(self) -> dict[str, Any]:
         """Get consolidation service stats"""
         return {
             **self._stats,
@@ -736,8 +791,8 @@ class StorylineConsolidationService:
                 "parent_threshold": PARENT_SIMILARITY_THRESHOLD,
                 "min_articles_for_mega": MIN_ARTICLES_FOR_MEGA,
                 "max_merges_per_run": MAX_MERGES_PER_RUN,
-                "interval_minutes": CONSOLIDATION_INTERVAL_MINUTES
-            }
+                "interval_minutes": CONSOLIDATION_INTERVAL_MINUTES,
+            },
         }
 
 
@@ -745,25 +800,25 @@ class StorylineConsolidationService:
 _consolidation_service = None
 
 
-def get_consolidation_service(db_config: Dict[str, Any] = None) -> StorylineConsolidationService:
+def get_consolidation_service(db_config: dict[str, Any] = None) -> StorylineConsolidationService:
     """Get or create the consolidation service singleton"""
     global _consolidation_service
-    
+
     if _consolidation_service is None:
         if db_config is None:
             from shared.database.connection import get_db_config
+
             db_config = get_db_config()
         _consolidation_service = StorylineConsolidationService(db_config)
-    
+
     return _consolidation_service
 
 
 # Task function for AutomationManager
-def consolidation_task() -> Dict[str, Any]:
+def consolidation_task() -> dict[str, Any]:
     """
     Background task function for the AutomationManager.
     Call this periodically to consolidate storylines.
     """
     service = get_consolidation_service()
     return service.run_all_domains()
-

@@ -35,8 +35,10 @@ class ErrorBoundary extends Component<Props, State> {
 
   static getDerivedStateFromError(error: Error): Partial<State> {
     // Generate unique error ID
-    const errorId = `error_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    
+    const errorId = `error_${Date.now()}_${Math.random()
+      .toString(36)
+      .substr(2, 9)}`;
+
     return {
       hasError: true,
       error,
@@ -119,27 +121,28 @@ class ErrorBoundary extends Component<Props, State> {
           >
             <Box sx={{ textAlign: 'center', mb: 3 }}>
               <ErrorOutline sx={{ fontSize: 64, color: 'error.main', mb: 2 }} />
-              <Typography variant="h4" gutterBottom>
+              <Typography variant='h4' gutterBottom>
                 Something went wrong
               </Typography>
-              <Typography variant="body1" color="text.secondary" sx={{ mb: 2 }}>
-                We're sorry, but something unexpected happened. Our team has been notified.
+              <Typography variant='body1' color='text.secondary' sx={{ mb: 2 }}>
+                We're sorry, but something unexpected happened. Our team has
+                been notified.
               </Typography>
               {this.state.errorId && (
-                <Typography variant="caption" color="text.secondary">
+                <Typography variant='caption' color='text.secondary'>
                   Error ID: {this.state.errorId}
                 </Typography>
               )}
             </Box>
 
             {import.meta.env.DEV && this.state.error && (
-              <Alert severity="error" sx={{ mb: 2 }}>
-                <Typography variant="subtitle2" gutterBottom>
+              <Alert severity='error' sx={{ mb: 2 }}>
+                <Typography variant='subtitle2' gutterBottom>
                   {this.state.error.name}: {this.state.error.message}
                 </Typography>
                 {this.state.error.stack && (
                   <Box
-                    component="pre"
+                    component='pre'
                     sx={{
                       fontSize: '0.75rem',
                       overflow: 'auto',
@@ -155,14 +158,14 @@ class ErrorBoundary extends Component<Props, State> {
 
             <Box sx={{ display: 'flex', gap: 2, justifyContent: 'center' }}>
               <Button
-                variant="contained"
+                variant='contained'
                 startIcon={<Refresh />}
                 onClick={this.handleReset}
               >
                 Try Again
               </Button>
               <Button
-                variant="outlined"
+                variant='outlined'
                 startIcon={<Home />}
                 onClick={this.handleGoHome}
               >
@@ -172,11 +175,11 @@ class ErrorBoundary extends Component<Props, State> {
 
             {import.meta.env.DEV && this.state.errorInfo && (
               <Box sx={{ mt: 3 }}>
-                <Typography variant="subtitle2" gutterBottom>
+                <Typography variant='subtitle2' gutterBottom>
                   Component Stack:
                 </Typography>
                 <Box
-                  component="pre"
+                  component='pre'
                   sx={{
                     fontSize: '0.75rem',
                     overflow: 'auto',
@@ -200,4 +203,3 @@ class ErrorBoundary extends Component<Props, State> {
 }
 
 export default ErrorBoundary;
-

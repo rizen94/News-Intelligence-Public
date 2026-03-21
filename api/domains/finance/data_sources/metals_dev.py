@@ -4,22 +4,24 @@ Uses METALS_DEV_API_KEY; caches aggressively to stay within free-tier quota (100
 Returns DataResult for observations; spot/authority return structured dicts for UI.
 """
 
+import json
 import logging
 import os
-import json
 import time
 from datetime import datetime, timedelta, timezone
 
 try:
     from config.logging_config import get_component_logger
+
     logger = get_component_logger("finance")
 except Exception:
     logger = logging.getLogger(__name__)
 
-from config.settings import METALS_DEV_API_KEY
 from config.paths import FINANCE_DATA_DIR
-from domains.finance.data_sources.base import DataSourceBase
+from config.settings import METALS_DEV_API_KEY
 from shared.data_result import DataResult
+
+from domains.finance.data_sources.base import DataSourceBase
 
 BASE_URL = "https://api.metals.dev/v1"
 TIMESERIES_WINDOW_DAYS = 30
@@ -36,7 +38,7 @@ TRACKED_METALS = [m.strip().lower() for m in _tracked_metals_env.split(",") if m
 
 def _load_usage() -> dict:
     try:
-        with open(USAGE_FILE, "r", encoding="utf-8") as f:
+        with open(USAGE_FILE, encoding="utf-8") as f:
             return json.load(f)
     except Exception:
         return {}
@@ -94,11 +96,13 @@ def _can_call_metal(metal: str) -> bool:
 
 def _cache_get(service: str, params: dict):
     from domains.finance.data.api_cache import get as cache_get
+
     return cache_get(service, params)
 
 
 def _cache_set(service: str, params: dict, value: dict, ttl: int):
     from domains.finance.data.api_cache import set as cache_set
+
     return cache_set(service, params, value, ttl_seconds=ttl)
 
 
@@ -109,19 +113,19 @@ def _request(path: str, params: dict) -> DataResult[dict]:
     # Respect monthly budget per metal when possible
     metal = (params.get("metal") or params.get("authority") or "").lower()
     if metal and not _can_call_metal(metal):
-        return DataResult.fail(
-            f"Metals.dev monthly budget exhausted for {metal}", "rate_limit"
-        )
+        return DataResult.fail(f"Metals.dev monthly budget exhausted for {metal}", "rate_limit")
     params = dict(params)
     params["api_key"] = api_key
     url = f"{BASE_URL}{path}"
     t0 = time.perf_counter()
     try:
         import requests
+
         r = requests.get(url, params=params, timeout=30)
         duration_ms = (time.perf_counter() - t0) * 1000
         try:
             from shared.logging.activity_logger import log_external_call
+
             log_external_call(
                 url=url,
                 status="success" if r.status_code == 200 else "error",
@@ -152,7 +156,12 @@ def fetch_timeseries(start_date: str, end_date: str, metal: str = "gold") -> Dat
     metal: gold, silver, or platinum. Returns list of {"date": str, "value": float, "unit": str, ...}.
     """
     metal = (metal or "gold").lower()
-    cache_params = {"endpoint": "timeseries", "metal": metal, "start_date": start_date, "end_date": end_date}
+    cache_params = {
+        "endpoint": "timeseries",
+        "metal": metal,
+        "start_date": start_date,
+        "end_date": end_date,
+    }
     cached = _cache_get("metals_dev", cache_params)
     if cached is not None and isinstance(cached.get("observations"), list):
         return DataResult.ok(cached["observations"])
@@ -164,7 +173,9 @@ def fetch_timeseries(start_date: str, end_date: str, metal: str = "gold") -> Dat
         cur = start
         while cur <= end:
             window_end = min(cur + timedelta(days=TIMESERIES_WINDOW_DAYS - 1), end)
-            res = fetch_timeseries(cur.strftime("%Y-%m-%d"), window_end.strftime("%Y-%m-%d"), metal=metal)
+            res = fetch_timeseries(
+                cur.strftime("%Y-%m-%d"), window_end.strftime("%Y-%m-%d"), metal=metal
+            )
             if not res.success:
                 return res
             out.extend(res.data or [])
@@ -188,13 +199,15 @@ def fetch_timeseries(start_date: str, end_date: str, metal: str = "gold") -> Dat
             value = float(val)
         except (TypeError, ValueError):
             continue
-        observations.append({
-            "date": date_str,
-            "value": value,
-            "unit": "USD/toz",
-            "source_id": "metals_dev",
-            "metadata": {"currencies": day_data.get("currencies"), "metals": metals},
-        })
+        observations.append(
+            {
+                "date": date_str,
+                "value": value,
+                "unit": "USD/toz",
+                "source_id": "metals_dev",
+                "metadata": {"currencies": day_data.get("currencies"), "metals": metals},
+            }
+        )
     observations.sort(key=lambda o: o["date"])
     _cache_set("metals_dev", cache_params, {"observations": observations}, CACHE_TTL_TIMESERIES)
     return DataResult.ok(observations)
@@ -269,13 +282,17 @@ class MetalsDevDataSource(DataSourceBase):
                 return res
             r = res.data or {}
             date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-            return DataResult.ok([{
-                "date": date_str,
-                "value": r.get("price"),
-                "unit": "USD/toz",
-                "source_id": "metals_dev",
-                "metadata": r,
-            }])
+            return DataResult.ok(
+                [
+                    {
+                        "date": date_str,
+                        "value": r.get("price"),
+                        "unit": "USD/toz",
+                        "source_id": "metals_dev",
+                        "metadata": r,
+                    }
+                ]
+            )
         if series_id == "authority":
             authority = kwargs.get("authority", "lbma")
             res = fetch_authority(authority=authority)
@@ -286,13 +303,15 @@ class MetalsDevDataSource(DataSourceBase):
             observations = []
             for key, val in rates.items():
                 if isinstance(val, (int, float)):
-                    observations.append({
-                        "date": r.get("timestamp", "")[:10],
-                        "value": float(val),
-                        "unit": "USD/toz",
-                        "source_id": f"metals_dev_{authority}",
-                        "metadata": {"rate_key": key, "authority": authority},
-                    })
+                    observations.append(
+                        {
+                            "date": r.get("timestamp", "")[:10],
+                            "value": float(val),
+                            "unit": "USD/toz",
+                            "source_id": f"metals_dev_{authority}",
+                            "metadata": {"rate_key": key, "authority": authority},
+                        }
+                    )
             return DataResult.ok(observations)
         return DataResult.fail(f"Unknown series_id: {series_id}", "params")
 

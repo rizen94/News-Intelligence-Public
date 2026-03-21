@@ -35,6 +35,7 @@ def _ensure_init() -> None:
             return
         try:
             from config.paths import LOG_DIR
+
             _LOG_DIR = Path(LOG_DIR)
         except Exception:
             _LOG_DIR = Path(__file__).resolve().parents[3] / "logs"
@@ -117,7 +118,11 @@ def log_rss_pull(
     """
     Log an RSS feed pull. status: success | partial | error | no_entries
     """
-    detail = {"articles_fetched": articles_fetched, "articles_saved": articles_saved, **(extra or {})}
+    detail = {
+        "articles_fetched": articles_fetched,
+        "articles_saved": articles_saved,
+        **(extra or {}),
+    }
     if error:
         detail["error"] = error
     _write_entry(

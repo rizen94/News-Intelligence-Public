@@ -37,11 +37,23 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useDomainRoute } from '../../hooks/useDomainRoute';
 import apiService from '../../services/apiService';
-import type { FinancialAnalysisResult, EvidenceIndexEntry } from '../../types/finance';
+import type {
+  FinancialAnalysisResult as FinancialAnalysisResultPayload,
+  EvidenceIndexEntry,
+} from '../../types/finance';
 
-const PHASE_ORDER = ['planning', 'fetching', 'synthesizing', 'verifying', 'revising', 'complete'];
+const PHASE_ORDER = [
+  'planning',
+  'fetching',
+  'synthesizing',
+  'verifying',
+  'revising',
+  'complete',
+];
 
-function buildRefToIndex(provenance: EvidenceIndexEntry[]): Record<string, number> {
+function buildRefToIndex(
+  provenance: EvidenceIndexEntry[]
+): Record<string, number> {
   const map: Record<string, number> = {};
   provenance.forEach((e, i) => {
     if (e.ref_id && !(e.ref_id in map)) map[e.ref_id] = i + 1;
@@ -50,7 +62,9 @@ function buildRefToIndex(provenance: EvidenceIndexEntry[]): Record<string, numbe
 }
 
 function formatCitationText(entry: EvidenceIndexEntry): string {
-  return `${entry.source}: ${String(entry.value)}${entry.unit ? ' ' + entry.unit : ''} (${entry.date})`;
+  return `${entry.source}: ${String(entry.value)}${
+    entry.unit ? ' ' + entry.unit : ''
+  } (${entry.date})`;
 }
 
 const EVIDENCE_ID_PREFIX = 'evidence-';
@@ -70,7 +84,7 @@ function CitationMarker({
   onLeave?: () => void;
   children: React.ReactNode;
 }) {
-  const entry = provenance.find((e) => e.ref_id === refId);
+  const entry = provenance.find(e => e.ref_id === refId);
   const title = entry ? formatCitationText(entry) : refId;
   const handleClick = () => {
     if (onScrollToEvidence) {
@@ -81,10 +95,10 @@ function CitationMarker({
     }
   };
   return (
-    <Tooltip title={title} placement="top" arrow>
+    <Tooltip title={title} placement='top' arrow>
       <sup
         onClick={handleClick}
-        onKeyDown={(e) => e.key === 'Enter' && handleClick()}
+        onKeyDown={e => e.key === 'Enter' && handleClick()}
         onMouseEnter={() => onHover?.(refId)}
         onMouseLeave={() => onLeave?.()}
         onFocus={() => onHover?.(refId)}
@@ -95,7 +109,7 @@ function CitationMarker({
           fontWeight: 600,
           marginLeft: 2,
         }}
-        role="button"
+        role='button'
         tabIndex={0}
         aria-label={`Citation ${refId}, click to scroll to evidence`}
       >
@@ -127,7 +141,7 @@ function AnalysisWithCitations({
   onCitationLeave?: () => void;
 }) {
   const refToIndex = buildRefToIndex(provenance);
-  let processed = text.replace(/REF-(\d+)/gi, (m) => {
+  let processed = text.replace(/REF-(\d+)/gi, m => {
     const idx = refToIndex[m] ?? m;
     return `[${idx}](citation:${m})`;
   });
@@ -135,7 +149,10 @@ function AnalysisWithCitations({
     for (const c of claims) {
       const escaped = escapeRegex(c.claim_text);
       if (escaped) {
-        processed = processed.replace(new RegExp(escaped, 'g'), `[$&](claim:${c.verdict})`);
+        processed = processed.replace(
+          new RegExp(escaped, 'g'),
+          `[$&](claim:${c.verdict})`
+        );
       }
     }
   }
@@ -174,7 +191,8 @@ function AnalysisWithCitations({
                   padding: '0 2px',
                   borderRadius: 2,
                   textDecoration: verdict === 'verified' ? 'underline' : 'none',
-                  textDecorationColor: verdict === 'verified' ? 'rgb(46, 125, 50)' : 'inherit',
+                  textDecorationColor:
+                    verdict === 'verified' ? 'rgb(46, 125, 50)' : 'inherit',
                 }}
               >
                 {children}
@@ -196,13 +214,15 @@ function ConfidenceBadge({ score }: { score: number }) {
     <Chip
       label={`${(score * 100).toFixed(0)}% confidence`}
       color={color}
-      size="small"
+      size='small'
       sx={{ mr: 1 }}
     />
   );
 }
 
-function groupBySource(provenance: EvidenceIndexEntry[]): Record<string, EvidenceIndexEntry[]> {
+function groupBySource(
+  provenance: EvidenceIndexEntry[]
+): Record<string, EvidenceIndexEntry[]> {
   const out: Record<string, EvidenceIndexEntry[]> = {};
   for (const e of provenance) {
     const src = e.source || 'unknown';
@@ -220,18 +240,27 @@ export default function FinancialAnalysisResult() {
   const navigate = useNavigate();
   const theme = useTheme();
   const isDesktop = useMediaQuery(theme.breakpoints.up('md'));
-  const [data, setData] = useState<FinancialAnalysisResult | null>(null);
+  const [data, setData] = useState<FinancialAnalysisResultPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [hoveredRefId, setHoveredRefId] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [claimHighlight, setClaimHighlight] = useState(true);
-  const [ledgerEntries, setLedgerEntries] = useState<Array<{ source_id?: string; evidence_data?: { status?: string; error?: string }; created_at?: string }>>([]);
+  const [ledgerEntries, setLedgerEntries] = useState<
+    Array<{
+      source_id?: string;
+      evidence_data?: { status?: string; error?: string };
+      created_at?: string;
+    }>
+  >([]);
   const [saveTopicDialogOpen, setSaveTopicDialogOpen] = useState(false);
   const [saveTopicName, setSaveTopicName] = useState('');
   const [saveTopicSaving, setSaveTopicSaving] = useState(false);
   const [saveTopicError, setSaveTopicError] = useState<string | null>(null);
-  const [topicForUpdate, setTopicForUpdate] = useState<{ id: number; name: string } | null>(null);
+  const [topicForUpdate, setTopicForUpdate] = useState<{
+    id: number;
+    name: string;
+  } | null>(null);
   const [updateTopicSaving, setUpdateTopicSaving] = useState(false);
 
   useEffect(() => {
@@ -242,7 +271,9 @@ export default function FinancialAnalysisResult() {
       try {
         const [res, ledgerRes] = await Promise.all([
           apiService.getFinanceTaskResult(taskId, domain),
-          apiService.getFinanceTaskLedger(taskId, domain).catch(() => ({ data: { entries: [] } })),
+          apiService
+            .getFinanceTaskLedger(taskId, domain)
+            .catch(() => ({ data: { entries: [] } })),
         ]);
         if (cancelled) return;
         const d = res?.data;
@@ -268,9 +299,15 @@ export default function FinancialAnalysisResult() {
           if (status === 503 && detail) {
             setError(`Backend: ${detail}`);
           } else if (status != null && detail) {
-            setError(`Request failed (${status}): ${typeof detail === 'string' ? detail : JSON.stringify(detail)}`);
+            setError(
+              `Request failed (${status}): ${
+                typeof detail === 'string' ? detail : JSON.stringify(detail)
+              }`
+            );
           } else if (err?.message === 'Network Error' || !err?.response) {
-            setError('Cannot reach API. Check that the backend is running and the API URL (e.g. proxy or VITE_API_URL) is correct.');
+            setError(
+              'Cannot reach API. Check that the backend is running and the API URL (e.g. proxy or VITE_API_URL) is correct.'
+            );
           } else {
             setError(err?.message || 'Failed to fetch result');
           }
@@ -291,11 +328,14 @@ export default function FinancialAnalysisResult() {
     if (!taskId || !domain || data?.status !== 'complete') return;
     apiService
       .listFinanceResearchTopics({ last_refined_task_id: taskId }, domain)
-      .then((res: { data?: { topics?: Array<{ id: number; name: string }> } }) => {
-        const topics = res?.data?.topics ?? [];
-        if (topics.length === 1) setTopicForUpdate({ id: topics[0].id, name: topics[0].name });
-        else setTopicForUpdate(null);
-      })
+      .then(
+        (res: { data?: { topics?: Array<{ id: number; name: string }> } }) => {
+          const topics = res?.data?.topics ?? [];
+          if (topics.length === 1)
+            setTopicForUpdate({ id: topics[0].id, name: topics[0].name });
+          else setTopicForUpdate(null);
+        }
+      )
       .catch(() => setTopicForUpdate(null));
   }, [taskId, domain, data?.status]);
 
@@ -313,20 +353,27 @@ export default function FinancialAnalysisResult() {
 
   const handleScrollToEvidence = (refId: string) => {
     if (!isDesktop) setDrawerOpen(true);
-    setTimeout(() => {
-      const el = document.getElementById(`${EVIDENCE_ID_PREFIX}${refId}`);
-      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-    }, isDesktop ? 0 : 150);
+    setTimeout(
+      () => {
+        const el = document.getElementById(`${EVIDENCE_ID_PREFIX}${refId}`);
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      },
+      isDesktop ? 0 : 150
+    );
   };
 
-  const outputPayload = (data?.output || data) as Record<string, unknown> | undefined;
+  const outputPayload = (data?.output || data) as
+    | Record<string, unknown>
+    | undefined;
   const resultQuery = (outputPayload?.query ?? '') as string;
 
   const handleSaveAsTopic = async () => {
     if (!taskId || !domain || !saveTopicName.trim()) return;
     setSaveTopicError(null);
     setSaveTopicSaving(true);
-    const outputPayloadForTopic = (data?.output || data) as Record<string, unknown> | undefined;
+    const outputPayloadForTopic = (data?.output || data) as
+      | Record<string, unknown>
+      | undefined;
     const commodity = (outputPayloadForTopic?.topic as string) || 'gold';
     const startDate = outputPayloadForTopic?.start_date as string | undefined;
     const endDate = outputPayloadForTopic?.end_date as string | undefined;
@@ -337,22 +384,29 @@ export default function FinancialAnalysisResult() {
           name: saveTopicName.trim(),
           query: resultQuery || 'Analysis',
           topic: commodity,
-          ...(startDate || endDate ? { date_range: { start: startDate, end: endDate } } : {}),
+          ...(startDate || endDate
+            ? { date_range: { start: startDate, end: endDate } }
+            : {}),
         },
         domain
       );
       setSaveTopicDialogOpen(false);
       setSaveTopicName('');
     } catch (err: unknown) {
-      const ax = err as { response?: { data?: { detail?: string }; status?: number }; message?: string };
+      const ax = err as {
+        response?: { data?: { detail?: string }; status?: number };
+        message?: string;
+      };
       const message =
         typeof ax?.response?.data?.detail === 'string'
           ? ax.response.data.detail
-          : ax?.response?.data?.detail && typeof ax.response.data.detail === 'object' && 'msg' in ax.response.data.detail
-            ? String((ax.response.data.detail as { msg?: string }).msg)
-            : ax?.message && typeof ax.message === 'string'
-              ? ax.message
-              : 'Failed to save topic';
+          : ax?.response?.data?.detail &&
+            typeof ax.response.data.detail === 'object' &&
+            'msg' in ax.response.data.detail
+          ? String((ax.response.data.detail as { msg?: string }).msg)
+          : ax?.message && typeof ax.message === 'string'
+          ? ax.message
+          : 'Failed to save topic';
       setSaveTopicError(message);
     } finally {
       setSaveTopicSaving(false);
@@ -363,7 +417,11 @@ export default function FinancialAnalysisResult() {
     if (!taskId || !domain || !topicForUpdate) return;
     setUpdateTopicSaving(true);
     try {
-      await apiService.updateFinanceResearchTopicFromTask(topicForUpdate.id, { task_id: taskId }, domain);
+      await apiService.updateFinanceResearchTopicFromTask(
+        topicForUpdate.id,
+        { task_id: taskId },
+        domain
+      );
       setTopicForUpdate(null);
     } finally {
       setUpdateTopicSaving(false);
@@ -373,7 +431,7 @@ export default function FinancialAnalysisResult() {
   if (error) {
     return (
       <Box sx={{ p: 3 }}>
-        <Alert severity="error">{error}</Alert>
+        <Alert severity='error'>{error}</Alert>
       </Box>
     );
   }
@@ -383,7 +441,7 @@ export default function FinancialAnalysisResult() {
   const evidenceDrawer = provenance.length > 0 && (
     <Drawer
       variant={isDesktop ? 'permanent' : 'temporary'}
-      anchor="right"
+      anchor='right'
       open={isDesktop || drawerOpen}
       onClose={() => setDrawerOpen(false)}
       sx={{
@@ -396,13 +454,23 @@ export default function FinancialAnalysisResult() {
       }}
     >
       <Box sx={{ p: 2, overflow: 'auto', height: '100%' }}>
-        <Typography variant="subtitle1" fontWeight={600} gutterBottom>
+        <Typography variant='subtitle1' fontWeight={600} gutterBottom>
           Evidence ({provenance.length})
         </Typography>
         {Object.entries(evidenceBySource).map(([source, entries]) => (
-          <Accordion key={source} defaultExpanded disableGutters sx={{ boxShadow: 'none', '&:before': { display: 'none' } }}>
-            <AccordionSummary sx={{ minHeight: 40, '& .MuiAccordionSummary-content': { my: 0.5 } }}>
-              <Typography variant="body2" fontWeight={500}>
+          <Accordion
+            key={source}
+            defaultExpanded
+            disableGutters
+            sx={{ boxShadow: 'none', '&:before': { display: 'none' } }}
+          >
+            <AccordionSummary
+              sx={{
+                minHeight: 40,
+                '& .MuiAccordionSummary-content': { my: 0.5 },
+              }}
+            >
+              <Typography variant='body2' fontWeight={500}>
                 {source}
               </Typography>
             </AccordionSummary>
@@ -411,7 +479,7 @@ export default function FinancialAnalysisResult() {
                 <Typography
                   key={e.ref_id || i}
                   id={e.ref_id ? `${EVIDENCE_ID_PREFIX}${e.ref_id}` : undefined}
-                  variant="body2"
+                  variant='body2'
                   sx={{
                     mb: 0.75,
                     px: 0.5,
@@ -419,7 +487,10 @@ export default function FinancialAnalysisResult() {
                     borderRadius: 1,
                     scrollMarginTop: 8,
                     scrollMarginBottom: 8,
-                    bgcolor: hoveredRefId === e.ref_id ? 'action.hover' : 'transparent',
+                    bgcolor:
+                      hoveredRefId === e.ref_id
+                        ? 'action.hover'
+                        : 'transparent',
                     transition: 'background-color 0.15s',
                   }}
                 >
@@ -436,7 +507,7 @@ export default function FinancialAnalysisResult() {
   return (
     <Box sx={{ display: 'flex', minHeight: '100%' }}>
       <Box
-        component="main"
+        component='main'
         sx={{
           flexGrow: 1,
           p: 3,
@@ -447,27 +518,35 @@ export default function FinancialAnalysisResult() {
         }}
       >
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
-          <Typography variant="h5" gutterBottom sx={{ mb: 0 }}>
+          <Typography variant='h5' gutterBottom sx={{ mb: 0 }}>
             Analysis Result
           </Typography>
           {!isDesktop && provenance.length > 0 && (
             <IconButton
-              color="primary"
+              color='primary'
               onClick={() => setDrawerOpen(true)}
-              aria-label="Open evidence sidebar"
-              size="small"
+              aria-label='Open evidence sidebar'
+              size='small'
             >
               <MenuBookIcon />
             </IconButton>
           )}
         </Box>
         {taskId && (
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2, flexWrap: 'wrap' }}>
-            <Typography variant="body2" color="text.secondary">
+          <Box
+            sx={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 1,
+              mb: 2,
+              flexWrap: 'wrap',
+            }}
+          >
+            <Typography variant='body2' color='text.secondary'>
               Task: {taskId}
             </Typography>
             <Button
-              size="small"
+              size='small'
               startIcon={<TimelineIcon />}
               onClick={() => navigate(`/${domain}/trace/${taskId}`)}
             >
@@ -476,20 +555,26 @@ export default function FinancialAnalysisResult() {
             {data?.status === 'complete' && (
               <>
                 <Button
-                  size="small"
+                  size='small'
                   startIcon={<BookmarkAddIcon />}
-                  onClick={() => { setSaveTopicError(null); setSaveTopicName(''); setSaveTopicDialogOpen(true); }}
+                  onClick={() => {
+                    setSaveTopicError(null);
+                    setSaveTopicName('');
+                    setSaveTopicDialogOpen(true);
+                  }}
                 >
                   Save as topic
                 </Button>
                 {topicForUpdate && (
                   <Button
-                    size="small"
-                    variant="outlined"
+                    size='small'
+                    variant='outlined'
                     disabled={updateTopicSaving}
                     onClick={handleUpdateTopicFromResult}
                   >
-                    {updateTopicSaving ? 'Updating…' : `Update topic “${topicForUpdate.name}”`}
+                    {updateTopicSaving
+                      ? 'Updating…'
+                      : `Update topic “${topicForUpdate.name}”`}
                   </Button>
                 )}
               </>
@@ -497,38 +582,58 @@ export default function FinancialAnalysisResult() {
           </Box>
         )}
 
-        <Dialog open={saveTopicDialogOpen} onClose={() => !saveTopicSaving && setSaveTopicDialogOpen(false)} maxWidth="sm" fullWidth>
+        <Dialog
+          open={saveTopicDialogOpen}
+          onClose={() => !saveTopicSaving && setSaveTopicDialogOpen(false)}
+          maxWidth='sm'
+          fullWidth
+        >
           <DialogTitle>Save as research topic</DialogTitle>
           <DialogContent>
-            <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-              Save this analysis as a topic you can refine over time with new research.
+            <Typography variant='body2' color='text.secondary' sx={{ mb: 1 }}>
+              Save this analysis as a topic you can refine over time with new
+              research.
             </Typography>
             <TextField
               autoFocus
-              margin="dense"
-              label="Topic name"
+              margin='dense'
+              label='Topic name'
               value={saveTopicName}
-              onChange={(e) => setSaveTopicName(e.target.value)}
+              onChange={e => setSaveTopicName(e.target.value)}
               fullWidth
-              placeholder="e.g. Gold price drivers Q4"
+              placeholder='e.g. Gold price drivers Q4'
             />
             {saveTopicError && (
-              <Alert severity="error" sx={{ mt: 1 }}>
+              <Alert severity='error' sx={{ mt: 1 }}>
                 {saveTopicError}
-                <Typography variant="body2" sx={{ mt: 0.5 }}>
-                  In DevTools → Network, check the request to <code>research-topics</code> (method, status, response body). Check API server logs for <code>create_research_topic</code>.
+                <Typography variant='body2' sx={{ mt: 0.5 }}>
+                  In DevTools → Network, check the request to{' '}
+                  <code>research-topics</code> (method, status, response body).
+                  Check API server logs for <code>create_research_topic</code>.
                 </Typography>
-                {(saveTopicError.includes('503') || saveTopicError.toLowerCase().includes('unavailable')) && (
-                  <Typography variant="body2" sx={{ mt: 0.5 }}>
-                    Ensure the API backend is running and the database is reachable. If this is a new install, run migration 150 (finance.research_topics).
+                {(saveTopicError.includes('503') ||
+                  saveTopicError.toLowerCase().includes('unavailable')) && (
+                  <Typography variant='body2' sx={{ mt: 0.5 }}>
+                    Ensure the API backend is running and the database is
+                    reachable. If this is a new install, run migration 150
+                    (finance.research_topics).
                   </Typography>
                 )}
               </Alert>
             )}
           </DialogContent>
           <DialogActions>
-            <Button onClick={() => setSaveTopicDialogOpen(false)} disabled={saveTopicSaving}>Cancel</Button>
-            <Button variant="contained" onClick={handleSaveAsTopic} disabled={saveTopicSaving || !saveTopicName.trim()}>
+            <Button
+              onClick={() => setSaveTopicDialogOpen(false)}
+              disabled={saveTopicSaving}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant='contained'
+              onClick={handleSaveAsTopic}
+              disabled={saveTopicSaving || !saveTopicName.trim()}
+            >
               {saveTopicSaving ? 'Saving…' : 'Create topic'}
             </Button>
           </DialogActions>
@@ -536,18 +641,43 @@ export default function FinancialAnalysisResult() {
 
         {loading && (
           <Box sx={{ mb: 2 }}>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: ledgerEntries.length ? 2 : 0 }}>
+            <Box
+              sx={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 2,
+                mb: ledgerEntries.length ? 2 : 0,
+              }}
+            >
               <CircularProgress size={24} />
-              <Typography variant="body2">Processing…</Typography>
+              <Typography variant='body2'>Processing…</Typography>
             </Box>
             {ledgerEntries.length > 0 && (
-              <Paper variant="outlined" sx={{ p: 1.5, maxHeight: 120, overflow: 'auto' }}>
-                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
+              <Paper
+                variant='outlined'
+                sx={{ p: 1.5, maxHeight: 120, overflow: 'auto' }}
+              >
+                <Typography
+                  variant='caption'
+                  color='text.secondary'
+                  sx={{ display: 'block', mb: 0.5 }}
+                >
                   Activity
                 </Typography>
                 {ledgerEntries.slice(0, 10).map((e, i) => (
-                  <Typography key={i} variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.75rem', py: 0.25 }}>
-                    {e.source_id || '?'}: {e.evidence_data?.status || '—'} {e.created_at ? new Date(e.created_at).toLocaleTimeString() : ''}
+                  <Typography
+                    key={i}
+                    variant='body2'
+                    sx={{
+                      fontFamily: 'monospace',
+                      fontSize: '0.75rem',
+                      py: 0.25,
+                    }}
+                  >
+                    {e.source_id || '?'}: {e.evidence_data?.status || '—'}{' '}
+                    {e.created_at
+                      ? new Date(e.created_at).toLocaleTimeString()
+                      : ''}
                   </Typography>
                 ))}
               </Paper>
@@ -556,7 +686,7 @@ export default function FinancialAnalysisResult() {
         )}
 
         <Stepper activeStep={phaseIndex} sx={{ mb: 3 }}>
-          {PHASE_ORDER.map((p) => (
+          {PHASE_ORDER.map(p => (
             <Step key={p}>
               <StepLabel>{p.charAt(0).toUpperCase() + p.slice(1)}</StepLabel>
             </Step>
@@ -568,17 +698,17 @@ export default function FinancialAnalysisResult() {
             <Box sx={{ mb: 2 }}>
               <ConfidenceBadge score={confidence} />
               {confidence >= 0.8 && (
-                <Alert severity="success" sx={{ mt: 1 }}>
+                <Alert severity='success' sx={{ mt: 1 }}>
                   Analysis complete. High confidence.
                 </Alert>
               )}
               {confidence >= 0.5 && confidence < 0.8 && (
-                <Alert severity="warning" sx={{ mt: 1 }}>
+                <Alert severity='warning' sx={{ mt: 1 }}>
                   Partial confidence. Some claims may need verification.
                 </Alert>
               )}
               {confidence < 0.5 && (
-                <Alert severity="error" sx={{ mt: 1 }}>
+                <Alert severity='error' sx={{ mt: 1 }}>
                   Low confidence. Review evidence carefully.
                 </Alert>
               )}
@@ -586,8 +716,15 @@ export default function FinancialAnalysisResult() {
 
             {text && (
               <Paper sx={{ p: 2, mb: 2 }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1 }}>
-                  <Typography variant="subtitle2" color="text.secondary">
+                <Box
+                  sx={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    mb: 1,
+                  }}
+                >
+                  <Typography variant='subtitle2' color='text.secondary'>
                     Analysis
                   </Typography>
                   {claims && claims.length > 0 && (
@@ -596,10 +733,10 @@ export default function FinancialAnalysisResult() {
                         <Switch
                           checked={claimHighlight}
                           onChange={(_, v) => setClaimHighlight(v)}
-                          size="small"
+                          size='small'
                         />
                       }
-                      label="Highlight claims"
+                      label='Highlight claims'
                     />
                   )}
                 </Box>
@@ -618,7 +755,7 @@ export default function FinancialAnalysisResult() {
         )}
 
         {!loading && data?.status === 'failed' && (
-          <Alert severity="error">
+          <Alert severity='error'>
             Analysis failed. {data?.warnings?.join(' ') || 'Unknown error.'}
           </Alert>
         )}

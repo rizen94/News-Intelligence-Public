@@ -8,7 +8,7 @@ Default: interval = 3 hours (8 runs per day, 4 types × 2 = 2x per type per day)
 """
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -22,14 +22,15 @@ CONSOLIDATION_STARTUP_DELAY_SECONDS = 60
 CONSOLIDATION_TYPES = ["storylines", "entities", "investigations", "events"]
 
 
-def run_consolidation_step(step_name: str) -> Dict[str, Any]:
+def run_consolidation_step(step_name: str) -> dict[str, Any]:
     """
     Run one consolidation step by name. Returns a result dict for logging.
     """
-    result: Dict[str, Any] = {"step": step_name, "success": False, "message": "", "details": {}}
+    result: dict[str, Any] = {"step": step_name, "success": False, "message": "", "details": {}}
     try:
         if step_name == "storylines":
             from services.storyline_consolidation_service import get_consolidation_service
+
             service = get_consolidation_service()
             out = service.run_all_domains()
             result["success"] = True
@@ -37,12 +38,16 @@ def run_consolidation_step(step_name: str) -> Dict[str, Any]:
             result["message"] = f"storylines: {out.get('stats', {})}"
         elif step_name == "entities":
             from services.entity_organizer_service import run_cycle
+
             out = run_cycle(domain_key=None)
             result["success"] = len(out.get("errors") or []) == 0
             result["details"] = out
-            result["message"] = f"entities: cleanup={out.get('cleanup', {})}, relationships={out.get('relationships_extracted', 0)}"
+            result["message"] = (
+                f"entities: cleanup={out.get('cleanup', {})}, relationships={out.get('relationships_extracted', 0)}"
+            )
         elif step_name in ("investigations", "events"):
             from services.investigation_consolidation_service import run_consolidation
+
             out = run_consolidation(limit_events=200)
             result["success"] = len(out.get("errors") or []) == 0
             result["details"] = out

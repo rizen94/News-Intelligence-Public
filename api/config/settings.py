@@ -7,29 +7,35 @@ import os
 from pathlib import Path
 
 from config.paths import (
-    PROJECT_ROOT,
-    DATA_DIR,
-    REPORTS_DIR,
-    LOG_DIR,
-    CACHE_DB_PATH,
     CHROMA_DIR,
-    REPORTS_OUTPUT_DIR,
-    MANIFESTS_DIR,
-    FINANCE_DATA_DIR,
+    DATA_DIR,
     FINANCE_CACHE_DB,
-    FINANCE_MARKET_DB,
     FINANCE_CHROMA_DIR,
+    FINANCE_DATA_DIR,
     FINANCE_MANIFESTS_DIR,
+    FINANCE_MARKET_DB,
     FINANCE_REPORTS_DIR,
+    LOG_DIR,
+    MANIFESTS_DIR,
+    REPORTS_OUTPUT_DIR,
 )
 
 # Archive storage — large files, raw downloads, model backups
-ARCHIVE_DIR = Path(os.environ.get("NEWS_INTEL_ARCHIVE_DIR", "/media/pete/Fortress2/news-intelligence-archive"))
+ARCHIVE_DIR = Path(
+    os.environ.get("NEWS_INTEL_ARCHIVE_DIR", "/media/pete/Fortress2/news-intelligence-archive")
+)
 
 # Ensure directories exist
 _ALL_DIRS = [
-    DATA_DIR, REPORTS_OUTPUT_DIR, MANIFESTS_DIR, CHROMA_DIR, LOG_DIR,
-    FINANCE_DATA_DIR, FINANCE_MANIFESTS_DIR, FINANCE_REPORTS_DIR, FINANCE_CHROMA_DIR,
+    DATA_DIR,
+    REPORTS_OUTPUT_DIR,
+    MANIFESTS_DIR,
+    CHROMA_DIR,
+    LOG_DIR,
+    FINANCE_DATA_DIR,
+    FINANCE_MANIFESTS_DIR,
+    FINANCE_REPORTS_DIR,
+    FINANCE_CHROMA_DIR,
 ]
 for d in _ALL_DIRS:
     d.mkdir(parents=True, exist_ok=True)
@@ -66,9 +72,7 @@ OLLAMA_USE_SECONDARY_FOR_EXTRACTION = os.environ.get(
 # Extra tags for `refresh_ollama_models.py` only (optional large models, not in MODELS routing).
 # Example: export OLLAMA_EXTRA_PULL_MODELS=llama3.1:70b
 OLLAMA_EXTRA_PULL_MODELS: tuple[str, ...] = tuple(
-    m.strip()
-    for m in os.environ.get("OLLAMA_EXTRA_PULL_MODELS", "").split(",")
-    if m.strip()
+    m.strip() for m in os.environ.get("OLLAMA_EXTRA_PULL_MODELS", "").split(",") if m.strip()
 )
 
 # Narrative finisher (~70B): final editorial pass on storylines (see docs/STORYLINE_70B_NARRATIVE_FINISHER.md).
@@ -97,6 +101,7 @@ def ollama_pull_model_names() -> tuple[str, ...]:
     if OLLAMA_PULL_NARRATIVE_FINISHER and NARRATIVE_FINISHER_MODEL:
         tags.add(NARRATIVE_FINISHER_MODEL)
     return tuple(sorted(tags))
+
 
 # Database (Widow secondary; rollback: localhost:5433 + NAS tunnel)
 DB_HOST = os.environ.get("DB_HOST", "192.168.93.101")

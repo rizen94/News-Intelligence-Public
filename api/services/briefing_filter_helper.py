@@ -3,16 +3,15 @@ Briefing filter helper — load low-priority entities/keywords from config and s
 so briefing and feed ordering can demote sports/celebrity/entertainment content.
 """
 
-import re
 import logging
+import re
 from pathlib import Path
-from typing import List, Tuple
 
 logger = logging.getLogger(__name__)
 
 _CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "briefing_filters.yaml"
-_entities: List[str] = []
-_keywords: List[str] = []
+_entities: list[str] = []
+_keywords: list[str] = []
 _loaded = False
 
 
@@ -23,11 +22,20 @@ def _load_config() -> None:
     _loaded = True
     try:
         import yaml
+
         if _CONFIG_PATH.exists():
             with open(_CONFIG_PATH) as f:
                 data = yaml.safe_load(f) or {}
-            _entities = [s.strip() for s in (data.get("low_priority_entities") or []) if s and isinstance(s, str)]
-            _keywords = [s.strip().lower() for s in (data.get("low_priority_keywords") or []) if s and isinstance(s, str)]
+            _entities = [
+                s.strip()
+                for s in (data.get("low_priority_entities") or [])
+                if s and isinstance(s, str)
+            ]
+            _keywords = [
+                s.strip().lower()
+                for s in (data.get("low_priority_keywords") or [])
+                if s and isinstance(s, str)
+            ]
         else:
             logger.debug("briefing_filters.yaml not found, using empty low-priority lists")
     except Exception as e:
@@ -53,15 +61,16 @@ def is_low_priority_for_briefing(text: str) -> bool:
 
 
 def sort_briefing_items_by_priority(
-    items: List[dict],
+    items: list[dict],
     title_key: str = "title",
     summary_key: str = "summary",
     lede_key: str = "lede",
-) -> List[dict]:
+) -> list[dict]:
     """
     Sort a list of briefing items (headlines, ledes, storylines) so low-priority
     (sports/celebrity/entertainment) appear at the end. Modifies order only.
     """
+
     def combined_text(item: dict) -> str:
         parts = [
             (item.get(title_key) or ""),

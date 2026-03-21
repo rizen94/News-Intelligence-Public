@@ -68,7 +68,12 @@ type PhaseRow = {
   running_tasks?: number;
   runs_last_60m?: number;
 };
-type DecisionEntry = { decision?: string; outcome?: string; factors?: Record<string, unknown>; timestamp?: string };
+type DecisionEntry = {
+  decision?: string;
+  outcome?: string;
+  factors?: Record<string, unknown>;
+  timestamp?: string;
+};
 type DbSession = {
   pid: number;
   user?: string;
@@ -88,7 +93,10 @@ export default function MonitorPage() {
   const [overview, setOverview] = useState<{
     success?: boolean;
     connections?: Record<string, unknown>;
-    activities?: { current?: Array<Record<string, unknown>>; recent?: Array<Record<string, unknown>> };
+    activities?: {
+      current?: Array<Record<string, unknown>>;
+      recent?: Array<Record<string, unknown>>;
+    };
     error?: string;
   } | null>(null);
   const [orchDashboard, setOrchDashboard] = useState<{
@@ -96,7 +104,10 @@ export default function MonitorPage() {
     decision_log?: { entries?: DecisionEntry[] };
   } | null>(null);
   const [quality, setQuality] = useState<Record<string, unknown> | null>(null);
-  const [pipeline, setPipeline] = useState<{ success?: boolean; data?: Record<string, unknown> } | null>(null);
+  const [pipeline, setPipeline] = useState<{
+    success?: boolean;
+    data?: Record<string, unknown>;
+  } | null>(null);
   const [automation, setAutomation] = useState<{
     success?: boolean;
     data?: {
@@ -115,8 +126,16 @@ export default function MonitorPage() {
     success?: boolean;
     data?: {
       window_minutes?: number;
-      rss_feeds?: Array<{ feed_name: string; feed_url: string; domain: string; last_fetched_at: string }>;
-      orchestrator_sources?: Array<{ source_id: string; last_collected_at: string }>;
+      rss_feeds?: Array<{
+        feed_name: string;
+        feed_url: string;
+        domain: string;
+        last_fetched_at: string;
+      }>;
+      orchestrator_sources?: Array<{
+        source_id: string;
+        last_collected_at: string;
+      }>;
       pipeline_stages?: Array<{ stage: string; last_run_at: string }>;
       summary?: string[];
     };
@@ -125,10 +144,28 @@ export default function MonitorPage() {
     success?: boolean;
     data?: {
       window_hours?: number;
-      phases_run_recently?: Array<{ name: string; last_run: string | null; interval_seconds?: number }>;
-      phases_not_run_recently?: Array<{ name: string; last_run: string | null; interval_seconds?: number }>;
-      pipeline_checkpoints_recent?: Array<{ stage: string; status: string; timestamp: string }>;
-      recent_activity?: Array<{ timestamp?: string; component?: string; event_type?: string; status?: string; message?: string }>;
+      phases_run_recently?: Array<{
+        name: string;
+        last_run: string | null;
+        interval_seconds?: number;
+      }>;
+      phases_not_run_recently?: Array<{
+        name: string;
+        last_run: string | null;
+        interval_seconds?: number;
+      }>;
+      pipeline_checkpoints_recent?: Array<{
+        stage: string;
+        status: string;
+        timestamp: string;
+      }>;
+      recent_activity?: Array<{
+        timestamp?: string;
+        component?: string;
+        event_type?: string;
+        status?: string;
+        message?: string;
+      }>;
     };
   } | null>(null);
   const [backlogStatus, setBacklogStatus] = useState<{
@@ -162,7 +199,12 @@ export default function MonitorPage() {
         permanent_failed_total?: number;
         top_failure_reasons_24h?: Array<{ reason: string; count: number }>;
       };
-      storylines?: { backlog: number; per_hour: number; eta_hours: number; eta_utc: string | null };
+      storylines?: {
+        backlog: number;
+        per_hour: number;
+        eta_hours: number;
+        eta_utc: string | null;
+      };
       overall_eta_hours?: number;
       overall_eta_utc?: string | null;
     };
@@ -183,7 +225,11 @@ export default function MonitorPage() {
   const [error, setError] = useState<string | null>(null);
   const [triggerPhaseName, setTriggerPhaseName] = useState<string>('');
   const [triggering, setTriggering] = useState(false);
-  const [triggerResult, setTriggerResult] = useState<{ success: boolean; message: string; warning?: string } | null>(null);
+  const [triggerResult, setTriggerResult] = useState<{
+    success: boolean;
+    message: string;
+    warning?: string;
+  } | null>(null);
 
   const loadOverview = useCallback(async () => {
     try {
@@ -204,22 +250,38 @@ export default function MonitorPage() {
       try {
         await loadOverview();
         if (cancelled) return;
-        const [o, q, pipe, auto, sources, summary, backlog, dbConns] = await Promise.all([
-          safeServiceCall<{ status?: Record<string, unknown>; decision_log?: { entries?: DecisionEntry[] } }>(
-            svc,
-            'getOrchestratorDashboard',
-            [{ decision_log_limit: 25 }],
-          ),
-          contextCentricApi.getQuality().catch(() => null),
-          safeServiceCall<{ success?: boolean; data?: Record<string, unknown> }>(svc, 'getPipelineStatus'),
-          safeServiceCall<{ success?: boolean; data?: { phases?: PhaseRow[] } }>(svc, 'getAutomationStatus'),
-          safeServiceCall<typeof sourcesCollected>(svc, 'getSourcesCollected', [30]),
-          safeServiceCall<typeof runSummary>(svc, 'getProcessRunSummary', [24, 60]),
-          safeServiceCall<typeof backlogStatus>(svc, 'getBacklogStatus'),
-          safeServiceCall<typeof dbConnections>(svc, 'getDatabaseConnections', [
-            { limit: 80, long_running_seconds: 60 },
-          ]),
-        ]);
+        const [o, q, pipe, auto, sources, summary, backlog, dbConns] =
+          await Promise.all([
+            safeServiceCall<{
+              status?: Record<string, unknown>;
+              decision_log?: { entries?: DecisionEntry[] };
+            }>(svc, 'getOrchestratorDashboard', [{ decision_log_limit: 25 }]),
+            contextCentricApi.getQuality().catch(() => null),
+            safeServiceCall<{
+              success?: boolean;
+              data?: Record<string, unknown>;
+            }>(svc, 'getPipelineStatus'),
+            safeServiceCall<{
+              success?: boolean;
+              data?: { phases?: PhaseRow[] };
+            }>(svc, 'getAutomationStatus'),
+            safeServiceCall<typeof sourcesCollected>(
+              svc,
+              'getSourcesCollected',
+              [30]
+            ),
+            safeServiceCall<typeof runSummary>(
+              svc,
+              'getProcessRunSummary',
+              [24, 60]
+            ),
+            safeServiceCall<typeof backlogStatus>(svc, 'getBacklogStatus'),
+            safeServiceCall<typeof dbConnections>(
+              svc,
+              'getDatabaseConnections',
+              [{ limit: 80, long_running_seconds: 60 }]
+            ),
+          ]);
         if (cancelled) return;
         setOrchDashboard(o ?? null);
         setQuality(q ?? null);
@@ -240,18 +302,28 @@ export default function MonitorPage() {
       pollTick += 1;
       const heavyPoll = pollTick % 3 === 0; // ~13.5s at 4.5s base interval
       loadOverview();
-      void safeServiceCall(svc, 'getAutomationStatus').then((r) => r && setAutomation(r as typeof automation));
-      void safeServiceCall(svc, 'getPipelineStatus').then((r) => r && setPipeline(r as typeof pipeline));
-      void safeServiceCall(svc, 'getOrchestratorDashboard', [{ decision_log_limit: 25 }]).then((d) =>
-        d && setOrchDashboard(d as typeof orchDashboard),
+      void safeServiceCall(svc, 'getAutomationStatus').then(
+        r => r && setAutomation(r as typeof automation)
       );
-      void safeServiceCall(svc, 'getSourcesCollected', [30]).then((r) => r && setSourcesCollected(r as typeof sourcesCollected));
-      void safeServiceCall(svc, 'getProcessRunSummary', [24, 60]).then((r) => r && setRunSummary(r as typeof runSummary));
+      void safeServiceCall(svc, 'getPipelineStatus').then(
+        r => r && setPipeline(r as typeof pipeline)
+      );
+      void safeServiceCall(svc, 'getOrchestratorDashboard', [
+        { decision_log_limit: 25 },
+      ]).then(d => d && setOrchDashboard(d as typeof orchDashboard));
+      void safeServiceCall(svc, 'getSourcesCollected', [30]).then(
+        r => r && setSourcesCollected(r as typeof sourcesCollected)
+      );
+      void safeServiceCall(svc, 'getProcessRunSummary', [24, 60]).then(
+        r => r && setRunSummary(r as typeof runSummary)
+      );
       if (heavyPoll) {
-        void safeServiceCall(svc, 'getBacklogStatus').then((r) => r && setBacklogStatus(r as typeof backlogStatus));
-        void safeServiceCall(svc, 'getDatabaseConnections', [{ limit: 80, long_running_seconds: 60 }]).then((r) =>
-          r && setDbConnections(r as typeof dbConnections),
+        void safeServiceCall(svc, 'getBacklogStatus').then(
+          r => r && setBacklogStatus(r as typeof backlogStatus)
         );
+        void safeServiceCall(svc, 'getDatabaseConnections', [
+          { limit: 80, long_running_seconds: 60 },
+        ]).then(r => r && setDbConnections(r as typeof dbConnections));
       }
     }, POLL_INTERVAL_MS);
     return () => {
@@ -268,11 +340,13 @@ export default function MonitorPage() {
     if (!incoming || incoming.length === 0) return;
 
     setLastNonEmptyPhases(incoming);
-    setPhaseTimelineOrder((prev) => {
-      const incomingNames = incoming.filter((p) => p.enabled !== false).map((p) => p.name);
+    setPhaseTimelineOrder(prev => {
+      const incomingNames = incoming
+        .filter(p => p.enabled !== false)
+        .map(p => p.name);
       if (prev.length === 0) return incomingNames;
       const prevSet = new Set(prev);
-      const appended = incomingNames.filter((n) => !prevSet.has(n));
+      const appended = incomingNames.filter(n => !prevSet.has(n));
       return [...prev, ...appended];
     });
   }, [automation?.data?.phases]);
@@ -282,11 +356,18 @@ export default function MonitorPage() {
     setTriggering(true);
     setTriggerResult(null);
     try {
-      const result = await apiService.triggerPhase(triggerPhaseName) as { success?: boolean; message?: string; error?: string; warning?: string };
+      const result = (await apiService.triggerPhase(triggerPhaseName)) as {
+        success?: boolean;
+        message?: string;
+        error?: string;
+        warning?: string;
+      };
       if (result?.success !== false) {
         setTriggerResult({
           success: true,
-          message: (result?.message as string) || `Phase "${triggerPhaseName}" requested.`,
+          message:
+            (result?.message as string) ||
+            `Phase "${triggerPhaseName}" requested.`,
           warning: result?.warning as string | undefined,
         });
         setTriggerPhaseName('');
@@ -295,7 +376,10 @@ export default function MonitorPage() {
         setTimeout(loadOverview, 2500);
         setTimeout(loadOverview, 6000);
       } else {
-        setTriggerResult({ success: false, message: (result?.error as string) || 'Request failed.' });
+        setTriggerResult({
+          success: false,
+          message: (result?.error as string) || 'Request failed.',
+        });
       }
       setTimeout(() => setTriggerResult(null), 6000);
     } catch (e) {
@@ -310,27 +394,45 @@ export default function MonitorPage() {
   const connections = (overview?.connections ?? {}) as Record<string, unknown>;
   const apiStatus = connections?.api as string | undefined;
   const dbStatus = connections?.database as string | undefined;
-  const webserver = connections?.webserver as Record<string, unknown> | undefined;
+  const webserver = connections?.webserver as
+    | Record<string, unknown>
+    | undefined;
   const wsStatus = webserver?.status as string | undefined;
-  const currentActivities = (overview?.activities as { current?: Array<Record<string, unknown>> })?.current ?? [];
-  const recentActivities = (overview?.activities as { recent?: Array<Record<string, unknown>> })?.recent ?? [];
+  const currentActivities =
+    (overview?.activities as { current?: Array<Record<string, unknown>> })
+      ?.current ?? [];
+  const recentActivities =
+    (overview?.activities as { recent?: Array<Record<string, unknown>> })
+      ?.recent ?? [];
 
-  const lastTimes = (orchStatus?.last_collection_times as Record<string, string> | undefined) ?? {};
-  const byDomain = quality?.by_domain as Record<string, { context_coverage_pct?: number; entity_coverage_pct?: number }> | undefined;
-  const decisionLog = orchDashboard?.decision_log as { entries?: DecisionEntry[] } | undefined;
+  const lastTimes =
+    (orchStatus?.last_collection_times as Record<string, string> | undefined) ??
+    {};
+  const byDomain = quality?.by_domain as
+    | Record<
+        string,
+        { context_coverage_pct?: number; entity_coverage_pct?: number }
+      >
+    | undefined;
+  const decisionLog = orchDashboard?.decision_log as
+    | { entries?: DecisionEntry[] }
+    | undefined;
   const decisionEntries = decisionLog?.entries ?? [];
   const dbSessions = dbConnections?.data?.sessions ?? [];
   const dbLongRunning = dbConnections?.data?.long_running_sessions ?? 0;
-  const dbTotalSessions = dbConnections?.data?.total_sessions ?? dbSessions.length;
-  const dbLongThreshold = dbConnections?.data?.long_running_threshold_seconds ?? 60;
+  const dbTotalSessions =
+    dbConnections?.data?.total_sessions ?? dbSessions.length;
+  const dbLongThreshold =
+    dbConnections?.data?.long_running_threshold_seconds ?? 60;
   const pipelineData = pipeline?.data ?? {};
   const pipelineStatus = pipelineData?.pipeline_status as string | undefined;
-  const phasesLatest: PhaseRow[] = (automation?.data?.phases && automation.data.phases.length > 0)
-    ? (automation.data.phases as PhaseRow[])
-    : lastNonEmptyPhases;
+  const phasesLatest: PhaseRow[] =
+    automation?.data?.phases && automation.data.phases.length > 0
+      ? (automation.data.phases as PhaseRow[])
+      : lastNonEmptyPhases;
   const phases: PhaseRow[] = phaseTimelineOrder.length
-    ? phaseTimelineOrder.map((name) => {
-        const found = phasesLatest.find((p) => p.name === name);
+    ? phaseTimelineOrder.map(name => {
+        const found = phasesLatest.find(p => p.name === name);
         return found ?? ({ name, last_run: null, enabled: true } as PhaseRow);
       })
     : phasesLatest;
@@ -341,57 +443,78 @@ export default function MonitorPage() {
     const ok = status === 'ok' || status === 'healthy' || status === 'HEALTHY';
     const unknown = !status || status === 'unknown';
     const color = ok ? 'success' : unknown ? 'default' : 'error';
-    const icon = ok ? <CheckCircleOutlineIcon /> : (unknown ? undefined : <ErrorOutlineIcon />);
+    const icon = ok ? (
+      <CheckCircleOutlineIcon />
+    ) : unknown ? undefined : (
+      <ErrorOutlineIcon />
+    );
     return (
       <Chip
-        size="small"
+        size='small'
         icon={icon}
         label={unknown ? `${label} (checking…)` : label}
         color={color}
-        variant="outlined"
+        variant='outlined'
         sx={{ mr: 1 }}
       />
     );
   };
 
-  const pipelineStatusColor = pipelineStatus === 'running' ? 'info' : pipelineStatus === 'error' ? 'error' : pipelineStatus === 'healthy' ? 'success' : 'default';
+  const pipelineStatusColor =
+    pipelineStatus === 'running'
+      ? 'info'
+      : pipelineStatus === 'error'
+      ? 'error'
+      : pipelineStatus === 'healthy'
+      ? 'success'
+      : 'default';
 
   return (
     <Box>
-      <Typography variant="h5" sx={{ mb: 2, fontWeight: 600 }}>
+      <Typography variant='h5' sx={{ mb: 2, fontWeight: 600 }}>
         Monitor
       </Typography>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-        <Link component={RouterLink} to={`/${navDomain}/monitor/sql-explorer`} underline="hover">
+      <Typography variant='body2' color='text.secondary' sx={{ mb: 2 }}>
+        <Link
+          component={RouterLink}
+          to={`/${navDomain}/monitor/sql-explorer`}
+          underline='hover'
+        >
           SQL explorer
         </Link>{' '}
-        (read-only; enable with <code>NEWS_INTEL_SQL_EXPLORER=true</code> on the API)
+        (read-only; enable with <code>NEWS_INTEL_SQL_EXPLORER=true</code> on the
+        API)
       </Typography>
       {error && (
-        <Alert severity="warning" sx={{ mb: 2 }} onClose={() => setError(null)}>
+        <Alert severity='warning' sx={{ mb: 2 }} onClose={() => setError(null)}>
           {error}
         </Alert>
       )}
 
       {/* Connection status */}
-      <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>
+      <Typography variant='subtitle1' sx={{ fontWeight: 600, mb: 1 }}>
         System health & connection status
       </Typography>
       <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, mb: 3 }}>
-        <Card variant="outlined" sx={{ minWidth: 160 }}>
+        <Card variant='outlined' sx={{ minWidth: 160 }}>
           <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 } }}>
             <Box sx={{ display: 'flex', alignItems: 'center' }}>
               <ApiIcon sx={{ mr: 1, color: 'text.secondary' }} />
               {loading && !overview ? (
                 <Skeleton width={80} height={24} />
               ) : (
-                statusChip(apiStatus ?? (overview?.success ? 'ok' : undefined), 'API')
+                statusChip(
+                  apiStatus ?? (overview?.success ? 'ok' : undefined),
+                  'API'
+                )
               )}
             </Box>
-            <Typography variant="caption" color="text.secondary">Backend API</Typography>
+            <Typography variant='caption' color='text.secondary'>
+              Backend API
+            </Typography>
           </CardContent>
         </Card>
-        <Card variant="outlined" sx={{ minWidth: 160 }}>
+        <Card variant='outlined' sx={{ minWidth: 160 }}>
           <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 } }}>
             <Box sx={{ display: 'flex', alignItems: 'center' }}>
               <StorageIcon sx={{ mr: 1, color: 'text.secondary' }} />
@@ -401,10 +524,12 @@ export default function MonitorPage() {
                 statusChip(dbStatus, 'Database')
               )}
             </Box>
-            <Typography variant="caption" color="text.secondary">PostgreSQL</Typography>
+            <Typography variant='caption' color='text.secondary'>
+              PostgreSQL
+            </Typography>
           </CardContent>
         </Card>
-        <Card variant="outlined" sx={{ minWidth: 160 }}>
+        <Card variant='outlined' sx={{ minWidth: 160 }}>
           <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 } }}>
             <Box sx={{ display: 'flex', alignItems: 'center' }}>
               <PublicIcon sx={{ mr: 1, color: 'text.secondary' }} />
@@ -414,38 +539,59 @@ export default function MonitorPage() {
                 statusChip(wsStatus, 'Web server')
               )}
             </Box>
-            <Typography variant="caption" color="text.secondary">Frontend / proxy</Typography>
-            {wsStatus !== 'ok' && wsStatus !== 'healthy' && (webserver?.error as string) && (
-              <Typography variant="caption" display="block" color="error.main" sx={{ mt: 0.5 }}>
-                {(webserver?.error as string).slice(0, 60)}
-              </Typography>
-            )}
+            <Typography variant='caption' color='text.secondary'>
+              Frontend / proxy
+            </Typography>
+            {wsStatus !== 'ok' &&
+              wsStatus !== 'healthy' &&
+              (webserver?.error as string) && (
+                <Typography
+                  variant='caption'
+                  display='block'
+                  color='error.main'
+                  sx={{ mt: 0.5 }}
+                >
+                  {(webserver?.error as string).slice(0, 60)}
+                </Typography>
+              )}
           </CardContent>
         </Card>
       </Box>
 
       {/* Current activities */}
-      <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>
+      <Typography variant='subtitle1' sx={{ fontWeight: 600, mb: 1 }}>
         Current activity
       </Typography>
-      <Card variant="outlined" sx={{ mb: 3 }}>
+      <Card variant='outlined' sx={{ mb: 3 }}>
         <CardContent sx={{ py: 1.5 }}>
           {loading && currentActivities.length === 0 ? (
-            <Skeleton variant="rectangular" height={60} sx={{ borderRadius: 1 }} />
+            <Skeleton
+              variant='rectangular'
+              height={60}
+              sx={{ borderRadius: 1 }}
+            />
           ) : currentActivities.length === 0 ? (
-            <Typography color="text.secondary" variant="body2">
-              No background tasks running right now. The system will show items like &quot;Running RSS collection&quot; or &quot;Processing storyline X&quot; when work is in progress.
+            <Typography color='text.secondary' variant='body2'>
+              No background tasks running right now. The system will show items
+              like &quot;Running RSS collection&quot; or &quot;Processing
+              storyline X&quot; when work is in progress.
             </Typography>
           ) : (
             <List dense disablePadding>
               {currentActivities.map((a, i) => (
-                <ListItem key={(a.id as string) || i} disablePadding sx={{ py: 0.5 }}>
+                <ListItem
+                  key={(a.id as string) || i}
+                  disablePadding
+                  sx={{ py: 0.5 }}
+                >
                   <ListItemIcon sx={{ minWidth: 36 }}>
                     <RefreshIcon sx={{ color: 'primary.main', fontSize: 20 }} />
                   </ListItemIcon>
                   <ListItemText
                     primary={(a.message as string) || 'Working…'}
-                    secondary={a.started_at ? timeAgo(a.started_at as string) : null}
+                    secondary={
+                      a.started_at ? timeAgo(a.started_at as string) : null
+                    }
                     primaryTypographyProps={{ variant: 'body2' }}
                     secondaryTypographyProps={{ variant: 'caption' }}
                   />
@@ -459,24 +605,36 @@ export default function MonitorPage() {
       {/* Recent activity */}
       {recentActivities.length > 0 && (
         <>
-          <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>
+          <Typography variant='subtitle1' sx={{ fontWeight: 600, mb: 1 }}>
             Recent activity
           </Typography>
-          <Card variant="outlined" sx={{ mb: 3 }}>
+          <Card variant='outlined' sx={{ mb: 3 }}>
             <CardContent sx={{ py: 1.5 }}>
               <List dense disablePadding>
                 {recentActivities.slice(0, 10).map((a, i) => (
-                  <ListItem key={(a.id as string) || i} disablePadding sx={{ py: 0.5 }}>
+                  <ListItem
+                    key={(a.id as string) || i}
+                    disablePadding
+                    sx={{ py: 0.5 }}
+                  >
                     <ListItemIcon sx={{ minWidth: 36 }}>
                       {(a.success as boolean) !== false ? (
-                        <CheckCircleOutlineIcon sx={{ color: 'success.main', fontSize: 20 }} />
+                        <CheckCircleOutlineIcon
+                          sx={{ color: 'success.main', fontSize: 20 }}
+                        />
                       ) : (
-                        <ErrorOutlineIcon sx={{ color: 'error.main', fontSize: 20 }} />
+                        <ErrorOutlineIcon
+                          sx={{ color: 'error.main', fontSize: 20 }}
+                        />
                       )}
                     </ListItemIcon>
                     <ListItemText
                       primary={(a.message as string) || '—'}
-                      secondary={a.completed_at ? timeAgo(a.completed_at as string) : null}
+                      secondary={
+                        a.completed_at
+                          ? timeAgo(a.completed_at as string)
+                          : null
+                      }
                       primaryTypographyProps={{ variant: 'body2' }}
                       secondaryTypographyProps={{ variant: 'caption' }}
                     />
@@ -489,199 +647,388 @@ export default function MonitorPage() {
       )}
 
       {/* Data sources collected (last 30m) */}
-      <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>
+      <Typography variant='subtitle1' sx={{ fontWeight: 600, mb: 1 }}>
         Sources collected (last 30 min)
       </Typography>
-      <Card variant="outlined" sx={{ mb: 3 }}>
+      <Card variant='outlined' sx={{ mb: 3 }}>
         <CardContent sx={{ py: 1.5 }}>
-          {sourcesCollected?.data && (sourcesCollected.data.rss_feeds?.length ?? 0) + (sourcesCollected.data.orchestrator_sources?.length ?? 0) + (sourcesCollected.data.pipeline_stages?.length ?? 0) > 0 ? (
+          {sourcesCollected?.data &&
+          (sourcesCollected.data.rss_feeds?.length ?? 0) +
+            (sourcesCollected.data.orchestrator_sources?.length ?? 0) +
+            (sourcesCollected.data.pipeline_stages?.length ?? 0) >
+            0 ? (
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
-              {sourcesCollected.data.rss_feeds && sourcesCollected.data.rss_feeds.length > 0 && (
-                <Box>
-                  <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
-                    RSS feeds
-                  </Typography>
-                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75, alignItems: 'center' }}>
-                    {sourcesCollected.data.rss_feeds.slice(0, 12).map((f, i) => (
-                      <Box key={i} sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5 }}>
+              {sourcesCollected.data.rss_feeds &&
+                sourcesCollected.data.rss_feeds.length > 0 && (
+                  <Box>
+                    <Typography
+                      variant='caption'
+                      color='text.secondary'
+                      sx={{ display: 'block', mb: 0.5 }}
+                    >
+                      RSS feeds
+                    </Typography>
+                    <Box
+                      sx={{
+                        display: 'flex',
+                        flexWrap: 'wrap',
+                        gap: 0.75,
+                        alignItems: 'center',
+                      }}
+                    >
+                      {sourcesCollected.data.rss_feeds
+                        .slice(0, 12)
+                        .map((f, i) => (
+                          <Box
+                            key={i}
+                            sx={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: 0.5,
+                            }}
+                          >
+                            <Chip
+                              size='small'
+                              variant='outlined'
+                              label={
+                                f.feed_name.length > 28
+                                  ? `${f.feed_name.slice(0, 26)}…`
+                                  : f.feed_name
+                              }
+                              title={f.feed_name}
+                              sx={{ maxWidth: 200 }}
+                            />
+                            <Typography
+                              component='span'
+                              variant='caption'
+                              color='text.secondary'
+                            >
+                              {f.last_fetched_at
+                                ? timeAgo(f.last_fetched_at)
+                                : '—'}
+                            </Typography>
+                          </Box>
+                        ))}
+                      {sourcesCollected.data.rss_feeds.length > 12 && (
                         <Chip
-                          size="small"
-                          variant="outlined"
-                          label={f.feed_name.length > 28 ? `${f.feed_name.slice(0, 26)}…` : f.feed_name}
-                          title={f.feed_name}
-                          sx={{ maxWidth: 200 }}
+                          size='small'
+                          variant='outlined'
+                          label={`+${
+                            sourcesCollected.data.rss_feeds.length - 12
+                          } more`}
                         />
-                        <Typography component="span" variant="caption" color="text.secondary">
-                          {f.last_fetched_at ? timeAgo(f.last_fetched_at) : '—'}
-                        </Typography>
-                      </Box>
-                    ))}
-                    {sourcesCollected.data.rss_feeds.length > 12 && (
-                      <Chip size="small" variant="outlined" label={`+${sourcesCollected.data.rss_feeds.length - 12} more`} />
-                    )}
+                      )}
+                    </Box>
                   </Box>
-                </Box>
-              )}
-              {sourcesCollected.data.orchestrator_sources && sourcesCollected.data.orchestrator_sources.length > 0 && (
-                <Box>
-                  <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
-                    Other sources
-                  </Typography>
-                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75, alignItems: 'center' }}>
-                    {sourcesCollected.data.orchestrator_sources.map((s, i) => (
-                      <Box key={i} sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5 }}>
-                        <Chip size="small" color="primary" variant="outlined" label={s.source_id} />
-                        <Typography component="span" variant="caption" color="text.secondary">
-                          {s.last_collected_at ? timeAgo(s.last_collected_at) : '—'}
-                        </Typography>
-                      </Box>
-                    ))}
+                )}
+              {sourcesCollected.data.orchestrator_sources &&
+                sourcesCollected.data.orchestrator_sources.length > 0 && (
+                  <Box>
+                    <Typography
+                      variant='caption'
+                      color='text.secondary'
+                      sx={{ display: 'block', mb: 0.5 }}
+                    >
+                      Other sources
+                    </Typography>
+                    <Box
+                      sx={{
+                        display: 'flex',
+                        flexWrap: 'wrap',
+                        gap: 0.75,
+                        alignItems: 'center',
+                      }}
+                    >
+                      {sourcesCollected.data.orchestrator_sources.map(
+                        (s, i) => (
+                          <Box
+                            key={i}
+                            sx={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: 0.5,
+                            }}
+                          >
+                            <Chip
+                              size='small'
+                              color='primary'
+                              variant='outlined'
+                              label={s.source_id}
+                            />
+                            <Typography
+                              component='span'
+                              variant='caption'
+                              color='text.secondary'
+                            >
+                              {s.last_collected_at
+                                ? timeAgo(s.last_collected_at)
+                                : '—'}
+                            </Typography>
+                          </Box>
+                        )
+                      )}
+                    </Box>
                   </Box>
-                </Box>
-              )}
-              {sourcesCollected.data.pipeline_stages && sourcesCollected.data.pipeline_stages.length > 0 && (
-                <Box>
-                  <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
-                    Pipeline stages
-                  </Typography>
-                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75, alignItems: 'center' }}>
-                    {sourcesCollected.data.pipeline_stages.map((s, i) => (
-                      <Box key={i} sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5 }}>
-                        <Chip size="small" variant="outlined" label={s.stage.replace(/_/g, ' ')} />
-                        <Typography component="span" variant="caption" color="text.secondary">
-                          {s.last_run_at ? timeAgo(s.last_run_at) : '—'}
-                        </Typography>
-                      </Box>
-                    ))}
+                )}
+              {sourcesCollected.data.pipeline_stages &&
+                sourcesCollected.data.pipeline_stages.length > 0 && (
+                  <Box>
+                    <Typography
+                      variant='caption'
+                      color='text.secondary'
+                      sx={{ display: 'block', mb: 0.5 }}
+                    >
+                      Pipeline stages
+                    </Typography>
+                    <Box
+                      sx={{
+                        display: 'flex',
+                        flexWrap: 'wrap',
+                        gap: 0.75,
+                        alignItems: 'center',
+                      }}
+                    >
+                      {sourcesCollected.data.pipeline_stages.map((s, i) => (
+                        <Box
+                          key={i}
+                          sx={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 0.5,
+                          }}
+                        >
+                          <Chip
+                            size='small'
+                            variant='outlined'
+                            label={s.stage.replace(/_/g, ' ')}
+                          />
+                          <Typography
+                            component='span'
+                            variant='caption'
+                            color='text.secondary'
+                          >
+                            {s.last_run_at ? timeAgo(s.last_run_at) : '—'}
+                          </Typography>
+                        </Box>
+                      ))}
+                    </Box>
                   </Box>
-                </Box>
-              )}
+                )}
             </Box>
           ) : (
-            <Typography color="text.secondary" variant="body2">
-              No sources in the last {sourcesCollected?.data?.window_minutes ?? 30} minutes.
+            <Typography color='text.secondary' variant='body2'>
+              No sources in the last{' '}
+              {sourcesCollected?.data?.window_minutes ?? 30} minutes.
             </Typography>
           )}
         </CardContent>
       </Card>
 
       {/* Process run summary: what has run vs not triggered recently */}
-      <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>
+      <Typography variant='subtitle1' sx={{ fontWeight: 600, mb: 1 }}>
         Process run summary (last 24h)
       </Typography>
-      <Card variant="outlined" sx={{ mb: 3 }}>
+      <Card variant='outlined' sx={{ mb: 3 }}>
         <CardContent sx={{ py: 1.5 }}>
           {runSummary?.data ? (
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
-              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, alignItems: 'center' }}>
-                <Typography variant="body2">
-                  <strong>Phases run:</strong> {runSummary.data.phases_run_recently?.length ?? 0}
+              <Box
+                sx={{
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  gap: 2,
+                  alignItems: 'center',
+                }}
+              >
+                <Typography variant='body2'>
+                  <strong>Phases run:</strong>{' '}
+                  {runSummary.data.phases_run_recently?.length ?? 0}
                 </Typography>
-                <Typography variant="body2" color="text.secondary">
-                  <strong>Not run / never:</strong> {runSummary.data.phases_not_run_recently?.length ?? 0}
+                <Typography variant='body2' color='text.secondary'>
+                  <strong>Not run / never:</strong>{' '}
+                  {runSummary.data.phases_not_run_recently?.length ?? 0}
                 </Typography>
-                {runSummary.data.pipeline_checkpoints_recent?.length != null && runSummary.data.pipeline_checkpoints_recent.length > 0 && (
-                  <Typography variant="body2" color="text.secondary">
-                    <strong>Pipeline checkpoints:</strong> {runSummary.data.pipeline_checkpoints_recent.length}
-                  </Typography>
-                )}
+                {runSummary.data.pipeline_checkpoints_recent?.length != null &&
+                  runSummary.data.pipeline_checkpoints_recent.length > 0 && (
+                    <Typography variant='body2' color='text.secondary'>
+                      <strong>Pipeline checkpoints:</strong>{' '}
+                      {runSummary.data.pipeline_checkpoints_recent.length}
+                    </Typography>
+                  )}
               </Box>
-              {runSummary.data.phases_not_run_recently && runSummary.data.phases_not_run_recently.length > 0 && (
-                <Box>
-                  <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
-                    Phases not run in last 24h (or never)
-                  </Typography>
-                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-                    {runSummary.data.phases_not_run_recently.slice(0, 20).map((p, i) => (
-                      <Chip
-                        key={i}
-                        size="small"
-                        variant="outlined"
-                        label={p.name}
-                        title={p.last_run ? `Last run: ${p.last_run}` : 'Never run'}
-                      />
-                    ))}
-                    {runSummary.data.phases_not_run_recently.length > 20 && (
-                      <Chip size="small" variant="outlined" label={`+${runSummary.data.phases_not_run_recently.length - 20} more`} />
-                    )}
-                  </Box>
-                </Box>
-              )}
-              {runSummary.data.recent_activity && runSummary.data.recent_activity.length > 0 && (
-                <Box>
-                  <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
-                    Recent activity (from logs)
-                  </Typography>
-                  <List dense disablePadding sx={{ maxHeight: 180, overflow: 'auto' }}>
-                    {runSummary.data.recent_activity.slice(-12).reverse().map((a, i) => (
-                      <ListItem key={i} disablePadding sx={{ py: 0.25 }}>
-                        <ListItemText
-                          primary={a.message || `${a.component || ''} ${a.event_type || ''} ${a.status || ''}`.trim() || '—'}
-                          secondary={a.timestamp ? timeAgo(a.timestamp) : null}
-                          primaryTypographyProps={{ variant: 'caption' }}
-                          secondaryTypographyProps={{ variant: 'caption' }}
+              {runSummary.data.phases_not_run_recently &&
+                runSummary.data.phases_not_run_recently.length > 0 && (
+                  <Box>
+                    <Typography
+                      variant='caption'
+                      color='text.secondary'
+                      sx={{ display: 'block', mb: 0.5 }}
+                    >
+                      Phases not run in last 24h (or never)
+                    </Typography>
+                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+                      {runSummary.data.phases_not_run_recently
+                        .slice(0, 20)
+                        .map((p, i) => (
+                          <Chip
+                            key={i}
+                            size='small'
+                            variant='outlined'
+                            label={p.name}
+                            title={
+                              p.last_run
+                                ? `Last run: ${p.last_run}`
+                                : 'Never run'
+                            }
+                          />
+                        ))}
+                      {runSummary.data.phases_not_run_recently.length > 20 && (
+                        <Chip
+                          size='small'
+                          variant='outlined'
+                          label={`+${
+                            runSummary.data.phases_not_run_recently.length - 20
+                          } more`}
                         />
-                      </ListItem>
-                    ))}
-                  </List>
-                </Box>
-              )}
+                      )}
+                    </Box>
+                  </Box>
+                )}
+              {runSummary.data.recent_activity &&
+                runSummary.data.recent_activity.length > 0 && (
+                  <Box>
+                    <Typography
+                      variant='caption'
+                      color='text.secondary'
+                      sx={{ display: 'block', mb: 0.5 }}
+                    >
+                      Recent activity (from logs)
+                    </Typography>
+                    <List
+                      dense
+                      disablePadding
+                      sx={{ maxHeight: 180, overflow: 'auto' }}
+                    >
+                      {runSummary.data.recent_activity
+                        .slice(-12)
+                        .reverse()
+                        .map((a, i) => (
+                          <ListItem key={i} disablePadding sx={{ py: 0.25 }}>
+                            <ListItemText
+                              primary={
+                                a.message ||
+                                `${a.component || ''} ${a.event_type || ''} ${
+                                  a.status || ''
+                                }`.trim() ||
+                                '—'
+                              }
+                              secondary={
+                                a.timestamp ? timeAgo(a.timestamp) : null
+                              }
+                              primaryTypographyProps={{ variant: 'caption' }}
+                              secondaryTypographyProps={{ variant: 'caption' }}
+                            />
+                          </ListItem>
+                        ))}
+                    </List>
+                  </Box>
+                )}
             </Box>
           ) : (
-            <Typography color="text.secondary" variant="body2">
-              Run summary not available. Check automation is running and logs exist.
+            <Typography color='text.secondary' variant='body2'>
+              Run summary not available. Check automation is running and logs
+              exist.
             </Typography>
           )}
         </CardContent>
       </Card>
 
       {/* Backlog status progression */}
-      <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>
+      <Typography variant='subtitle1' sx={{ fontWeight: 600, mb: 1 }}>
         Backlog status progression
       </Typography>
-      <Card variant="outlined" sx={{ mb: 3 }}>
+      <Card variant='outlined' sx={{ mb: 3 }}>
         <CardContent sx={{ py: 1.5 }}>
           {backlogStatus?.success && backlogStatus.data ? (
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-              <Table size="small">
+              <Table size='small'>
                 <TableHead>
                   <TableRow>
                     <TableCell>Queue</TableCell>
-                    <TableCell align="right">Remaining</TableCell>
-                    <TableCell align="right">Throughput</TableCell>
+                    <TableCell align='right'>Remaining</TableCell>
+                    <TableCell align='right'>Throughput</TableCell>
                     <TableCell>ETA</TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
                   <TableRow>
                     <TableCell>Articles (enrich)</TableCell>
-                    <TableCell align="right">{(backlogStatus.data.articles?.backlog ?? 0).toLocaleString()}</TableCell>
-                    <TableCell align="right">
-                      ~{(backlogStatus.data.articles?.per_hour ?? 0)}/hr
+                    <TableCell align='right'>
+                      {(
+                        backlogStatus.data.articles?.backlog ?? 0
+                      ).toLocaleString()}
+                    </TableCell>
+                    <TableCell align='right'>
+                      ~{backlogStatus.data.articles?.per_hour ?? 0}/hr
                       {backlogStatus.data.articles?.per_hour_source && (
-                        <Typography component="span" variant="caption" color="text.secondary" sx={{ display: 'block' }}>
-                          {backlogStatus.data.articles.per_hour_source === 'measured_1h' && '(measured 1h)'}
-                          {backlogStatus.data.articles.per_hour_source === 'measured_24h' && '(measured 24h)'}
-                          {backlogStatus.data.articles.per_hour_source === 'estimated' && '(no recent data)'}
+                        <Typography
+                          component='span'
+                          variant='caption'
+                          color='text.secondary'
+                          sx={{ display: 'block' }}
+                        >
+                          {backlogStatus.data.articles.per_hour_source ===
+                            'measured_1h' && '(measured 1h)'}
+                          {backlogStatus.data.articles.per_hour_source ===
+                            'measured_24h' && '(measured 24h)'}
+                          {backlogStatus.data.articles.per_hour_source ===
+                            'estimated' && '(no recent data)'}
                         </Typography>
                       )}
                     </TableCell>
                     <TableCell>
                       {(backlogStatus.data.articles?.backlog ?? 0) > 0
-                        ? `~${backlogStatus.data.articles?.eta_hours ?? 0}h (${backlogStatus.data.articles?.eta_utc ? new Date(backlogStatus.data.articles.eta_utc).toLocaleString() : '—'})`
+                        ? `~${backlogStatus.data.articles?.eta_hours ?? 0}h (${
+                            backlogStatus.data.articles?.eta_utc
+                              ? new Date(
+                                  backlogStatus.data.articles.eta_utc
+                                ).toLocaleString()
+                              : '—'
+                          })`
                         : '—'}
                     </TableCell>
                   </TableRow>
                   <TableRow>
                     <TableCell>Documents (extract)</TableCell>
-                    <TableCell align="right">{(backlogStatus.data.documents?.backlog ?? 0).toLocaleString()}</TableCell>
-                    <TableCell align="right">
-                      ~{(backlogStatus.data.documents?.per_hour ?? 0)}/hr
-                      {(backlogStatus.data.documents?.processed_last_1h ?? 0) >= 0 && (
-                        <Typography component="span" variant="caption" color="text.secondary" sx={{ display: 'block' }}>
-                          (success: {backlogStatus.data.documents?.processed_last_1h ?? 0} last 1h
-                          {((backlogStatus.data.documents?.attempted_last_1h ?? 0) > 0 || (backlogStatus.data.documents?.failed_last_1h ?? 0) > 0)
-                            ? ` · attempts: ${backlogStatus.data.documents?.attempted_last_1h ?? 0} · failed: ${backlogStatus.data.documents?.failed_last_1h ?? 0}`
+                    <TableCell align='right'>
+                      {(
+                        backlogStatus.data.documents?.backlog ?? 0
+                      ).toLocaleString()}
+                    </TableCell>
+                    <TableCell align='right'>
+                      ~{backlogStatus.data.documents?.per_hour ?? 0}/hr
+                      {(backlogStatus.data.documents?.processed_last_1h ?? 0) >=
+                        0 && (
+                        <Typography
+                          component='span'
+                          variant='caption'
+                          color='text.secondary'
+                          sx={{ display: 'block' }}
+                        >
+                          (success:{' '}
+                          {backlogStatus.data.documents?.processed_last_1h ?? 0}{' '}
+                          last 1h
+                          {(backlogStatus.data.documents?.attempted_last_1h ??
+                            0) > 0 ||
+                          (backlogStatus.data.documents?.failed_last_1h ?? 0) >
+                            0
+                            ? ` · attempts: ${
+                                backlogStatus.data.documents
+                                  ?.attempted_last_1h ?? 0
+                              } · failed: ${
+                                backlogStatus.data.documents?.failed_last_1h ??
+                                0
+                              }`
                             : ''}
                           )
                         </Typography>
@@ -689,25 +1036,66 @@ export default function MonitorPage() {
                     </TableCell>
                     <TableCell>
                       {(backlogStatus.data.documents?.backlog ?? 0) > 0
-                        ? `~${backlogStatus.data.documents?.eta_hours ?? 0}h (${backlogStatus.data.documents?.eta_utc ? new Date(backlogStatus.data.documents.eta_utc).toLocaleString() : '—'})${(backlogStatus.data.documents as { iterations_to_baseline?: number })?.iterations_to_baseline != null ? ` · ${(backlogStatus.data.documents as { iterations_to_baseline: number }).iterations_to_baseline} iters` : ''}`
+                        ? `~${backlogStatus.data.documents?.eta_hours ?? 0}h (${
+                            backlogStatus.data.documents?.eta_utc
+                              ? new Date(
+                                  backlogStatus.data.documents.eta_utc
+                                ).toLocaleString()
+                              : '—'
+                          })${
+                            (
+                              backlogStatus.data.documents as {
+                                iterations_to_baseline?: number;
+                              }
+                            )?.iterations_to_baseline != null
+                              ? ` · ${
+                                  (
+                                    backlogStatus.data.documents as {
+                                      iterations_to_baseline: number;
+                                    }
+                                  ).iterations_to_baseline
+                                } iters`
+                              : ''
+                          }`
                         : '—'}
                     </TableCell>
                   </TableRow>
                   {backlogStatus.data.contexts && (
                     <TableRow>
                       <TableCell>Contexts (claims)</TableCell>
-                      <TableCell align="right">{(backlogStatus.data.contexts.backlog ?? 0).toLocaleString()} / {(backlogStatus.data.contexts.total ?? 0).toLocaleString()}</TableCell>
-                      <TableCell align="right">
-                        ~{(backlogStatus.data.contexts.per_hour ?? 0)}/hr
-                        {(backlogStatus.data.contexts.processed_last_1h ?? 0) > 0 && (
-                          <Typography component="span" variant="caption" color="text.secondary" sx={{ display: 'block' }}>
-                            ({(backlogStatus.data.contexts.processed_last_1h ?? 0)} last 1h)
+                      <TableCell align='right'>
+                        {(
+                          backlogStatus.data.contexts.backlog ?? 0
+                        ).toLocaleString()}{' '}
+                        /{' '}
+                        {(
+                          backlogStatus.data.contexts.total ?? 0
+                        ).toLocaleString()}
+                      </TableCell>
+                      <TableCell align='right'>
+                        ~{backlogStatus.data.contexts.per_hour ?? 0}/hr
+                        {(backlogStatus.data.contexts.processed_last_1h ?? 0) >
+                          0 && (
+                          <Typography
+                            component='span'
+                            variant='caption'
+                            color='text.secondary'
+                            sx={{ display: 'block' }}
+                          >
+                            (
+                            {backlogStatus.data.contexts.processed_last_1h ?? 0}{' '}
+                            last 1h)
                           </Typography>
                         )}
                       </TableCell>
                       <TableCell>
                         {(backlogStatus.data.contexts.backlog ?? 0) > 0
-                          ? `~${backlogStatus.data.contexts.eta_hours ?? 0}h · ${backlogStatus.data.contexts.iterations_to_baseline ?? '—'} iters`
+                          ? `~${
+                              backlogStatus.data.contexts.eta_hours ?? 0
+                            }h · ${
+                              backlogStatus.data.contexts
+                                .iterations_to_baseline ?? '—'
+                            } iters`
                           : '—'}
                       </TableCell>
                     </TableRow>
@@ -715,123 +1103,297 @@ export default function MonitorPage() {
                   {backlogStatus.data.entity_profiles && (
                     <TableRow>
                       <TableCell>Entity profiles</TableCell>
-                      <TableCell align="right">{(backlogStatus.data.entity_profiles.backlog ?? 0).toLocaleString()} / {(backlogStatus.data.entity_profiles.total ?? 0).toLocaleString()}</TableCell>
-                      <TableCell align="right">
-                        ~{(backlogStatus.data.entity_profiles.per_hour ?? 0)}/hr
-                        {(backlogStatus.data.entity_profiles.processed_last_1h ?? 0) > 0 && (
-                          <Typography component="span" variant="caption" color="text.secondary" sx={{ display: 'block' }}>
-                            ({(backlogStatus.data.entity_profiles.processed_last_1h ?? 0)} last 1h)
+                      <TableCell align='right'>
+                        {(
+                          backlogStatus.data.entity_profiles.backlog ?? 0
+                        ).toLocaleString()}{' '}
+                        /{' '}
+                        {(
+                          backlogStatus.data.entity_profiles.total ?? 0
+                        ).toLocaleString()}
+                      </TableCell>
+                      <TableCell align='right'>
+                        ~{backlogStatus.data.entity_profiles.per_hour ?? 0}/hr
+                        {(backlogStatus.data.entity_profiles
+                          .processed_last_1h ?? 0) > 0 && (
+                          <Typography
+                            component='span'
+                            variant='caption'
+                            color='text.secondary'
+                            sx={{ display: 'block' }}
+                          >
+                            (
+                            {backlogStatus.data.entity_profiles
+                              .processed_last_1h ?? 0}{' '}
+                            last 1h)
                           </Typography>
                         )}
                       </TableCell>
                       <TableCell>
                         {(backlogStatus.data.entity_profiles.backlog ?? 0) > 0
-                          ? `~${backlogStatus.data.entity_profiles.eta_hours ?? 0}h · ${backlogStatus.data.entity_profiles.iterations_to_baseline ?? '—'} iters`
+                          ? `~${
+                              backlogStatus.data.entity_profiles.eta_hours ?? 0
+                            }h · ${
+                              backlogStatus.data.entity_profiles
+                                .iterations_to_baseline ?? '—'
+                            } iters`
                           : '—'}
                       </TableCell>
                     </TableRow>
                   )}
                   <TableRow>
                     <TableCell>Storylines (synthesis)</TableCell>
-                    <TableCell align="right">{(backlogStatus.data.storylines?.backlog ?? 0).toLocaleString()}</TableCell>
-                    <TableCell align="right">~{(backlogStatus.data.storylines?.per_hour ?? 0)}/hr</TableCell>
+                    <TableCell align='right'>
+                      {(
+                        backlogStatus.data.storylines?.backlog ?? 0
+                      ).toLocaleString()}
+                    </TableCell>
+                    <TableCell align='right'>
+                      ~{backlogStatus.data.storylines?.per_hour ?? 0}/hr
+                    </TableCell>
                     <TableCell>
                       {(backlogStatus.data.storylines?.backlog ?? 0) > 0
-                        ? `~${backlogStatus.data.storylines?.eta_hours ?? 0}h (${backlogStatus.data.storylines?.eta_utc ? new Date(backlogStatus.data.storylines.eta_utc).toLocaleString() : '—'})${(backlogStatus.data.storylines as { iterations_to_baseline?: number })?.iterations_to_baseline != null ? ` · ${(backlogStatus.data.storylines as { iterations_to_baseline: number }).iterations_to_baseline} iters` : ''}`
+                        ? `~${
+                            backlogStatus.data.storylines?.eta_hours ?? 0
+                          }h (${
+                            backlogStatus.data.storylines?.eta_utc
+                              ? new Date(
+                                  backlogStatus.data.storylines.eta_utc
+                                ).toLocaleString()
+                              : '—'
+                          })${
+                            (
+                              backlogStatus.data.storylines as {
+                                iterations_to_baseline?: number;
+                              }
+                            )?.iterations_to_baseline != null
+                              ? ` · ${
+                                  (
+                                    backlogStatus.data.storylines as {
+                                      iterations_to_baseline: number;
+                                    }
+                                  ).iterations_to_baseline
+                                } iters`
+                              : ''
+                          }`
                         : '—'}
                     </TableCell>
                   </TableRow>
                 </TableBody>
               </Table>
-              {(backlogStatus.data.storylines as { synthesis_per_domain_last_1h?: Record<string, number> })?.synthesis_per_domain_last_1h && (
-                <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5 }}>
-                  Synthesis last 1h by domain: {Object.entries((backlogStatus.data.storylines as { synthesis_per_domain_last_1h: Record<string, number> }).synthesis_per_domain_last_1h).map(([d, n]) => `${d}: ${n}`).join(', ')}
+              {(
+                backlogStatus.data.storylines as {
+                  synthesis_per_domain_last_1h?: Record<string, number>;
+                }
+              )?.synthesis_per_domain_last_1h && (
+                <Typography
+                  variant='caption'
+                  color='text.secondary'
+                  display='block'
+                  sx={{ mt: 0.5 }}
+                >
+                  Synthesis last 1h by domain:{' '}
+                  {Object.entries(
+                    (
+                      backlogStatus.data.storylines as {
+                        synthesis_per_domain_last_1h: Record<string, number>;
+                      }
+                    ).synthesis_per_domain_last_1h
+                  )
+                    .map(([d, n]) => `${d}: ${n}`)
+                    .join(', ')}
                 </Typography>
               )}
-              {(backlogStatus.data.documents?.permanent_failed_total ?? 0) > 0 && (
-                <Typography variant="caption" color="warning.main" display="block" sx={{ mt: 0.5 }}>
-                  Documents excluded from retries (permanent failure): {(backlogStatus.data.documents?.permanent_failed_total ?? 0).toLocaleString()}
+              {(backlogStatus.data.documents?.permanent_failed_total ?? 0) >
+                0 && (
+                <Typography
+                  variant='caption'
+                  color='warning.main'
+                  display='block'
+                  sx={{ mt: 0.5 }}
+                >
+                  Documents excluded from retries (permanent failure):{' '}
+                  {(
+                    backlogStatus.data.documents?.permanent_failed_total ?? 0
+                  ).toLocaleString()}
                 </Typography>
               )}
-              {(backlogStatus.data.documents?.top_failure_reasons_24h?.length ?? 0) > 0 && (
-                <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5 }}>
-                  Top document failures (24h): {(backlogStatus.data.documents?.top_failure_reasons_24h ?? [])
-                    .map((x) => `${x.reason}: ${x.count}`)
+              {(backlogStatus.data.documents?.top_failure_reasons_24h?.length ??
+                0) > 0 && (
+                <Typography
+                  variant='caption'
+                  color='text.secondary'
+                  display='block'
+                  sx={{ mt: 0.5 }}
+                >
+                  Top document failures (24h):{' '}
+                  {(backlogStatus.data.documents?.top_failure_reasons_24h ?? [])
+                    .map(x => `${x.reason}: ${x.count}`)
                     .join(' · ')}
                 </Typography>
               )}
-              {(backlogStatus.data.overall_eta_utc != null && ((backlogStatus.data.articles?.backlog ?? 0) + (backlogStatus.data.documents?.backlog ?? 0) + (backlogStatus.data.storylines?.backlog ?? 0) + (backlogStatus.data.contexts?.backlog ?? 0) + (backlogStatus.data.entity_profiles?.backlog ?? 0) > 0)) && (
-                <Typography variant="body2" color="text.secondary">
-                  Overall catch-up: ~{backlogStatus.data.overall_eta_hours ?? 0}h → {new Date(backlogStatus.data.overall_eta_utc!).toLocaleString()}
-                  {(backlogStatus.data as { overall_iterations_to_baseline?: number }).overall_iterations_to_baseline != null && (
-                    <> · {(backlogStatus.data as { overall_iterations_to_baseline: number }).overall_iterations_to_baseline} iterations (2h cycles)</>
-                  )}
-                </Typography>
-              )}
-              {((backlogStatus.data.articles?.backlog ?? 0) + (backlogStatus.data.documents?.backlog ?? 0) + (backlogStatus.data.storylines?.backlog ?? 0) + (backlogStatus.data.contexts?.backlog ?? 0) + (backlogStatus.data.entity_profiles?.backlog ?? 0)) === 0 && (
-                <Typography variant="body2" color="success.main">
+              {backlogStatus.data.overall_eta_utc != null &&
+                (backlogStatus.data.articles?.backlog ?? 0) +
+                  (backlogStatus.data.documents?.backlog ?? 0) +
+                  (backlogStatus.data.storylines?.backlog ?? 0) +
+                  (backlogStatus.data.contexts?.backlog ?? 0) +
+                  (backlogStatus.data.entity_profiles?.backlog ?? 0) >
+                  0 && (
+                  <Typography variant='body2' color='text.secondary'>
+                    Overall catch-up: ~
+                    {backlogStatus.data.overall_eta_hours ?? 0}h →{' '}
+                    {new Date(
+                      backlogStatus.data.overall_eta_utc!
+                    ).toLocaleString()}
+                    {(
+                      backlogStatus.data as {
+                        overall_iterations_to_baseline?: number;
+                      }
+                    ).overall_iterations_to_baseline != null && (
+                      <>
+                        {' '}
+                        ·{' '}
+                        {
+                          (
+                            backlogStatus.data as {
+                              overall_iterations_to_baseline: number;
+                            }
+                          ).overall_iterations_to_baseline
+                        }{' '}
+                        iterations (2h cycles)
+                      </>
+                    )}
+                  </Typography>
+                )}
+              {(backlogStatus.data.articles?.backlog ?? 0) +
+                (backlogStatus.data.documents?.backlog ?? 0) +
+                (backlogStatus.data.storylines?.backlog ?? 0) +
+                (backlogStatus.data.contexts?.backlog ?? 0) +
+                (backlogStatus.data.entity_profiles?.backlog ?? 0) ===
+                0 && (
+                <Typography variant='body2' color='success.main'>
                   No backlog — all queues current.
                 </Typography>
               )}
-              {backlogStatus.data.articles && (backlogStatus.data.articles.created_last_24h != null || backlogStatus.data.articles.backlog_trend) && (
-                <Box sx={{ mt: 1.5, pt: 1.5, borderTop: 1, borderColor: 'divider' }}>
-                  <Typography variant="caption" color="text.secondary" display="block">
-                    Inflow vs outflow (articles)
-                  </Typography>
-                  <Typography variant="body2">
-                    In last 24h: {backlogStatus.data.articles.created_last_24h?.toLocaleString() ?? '—'} total,{' '}
-                    {(backlogStatus.data.articles.short_created_last_24h ?? 0).toLocaleString()} need enrichment ·{' '}
-                    Outflow: ~{(backlogStatus.data.articles.per_day ?? 12000).toLocaleString()}/day
-                    {(backlogStatus.data.articles.enriched_last_1h != null || backlogStatus.data.articles.enriched_last_24h != null) && (
-                      <> (enriched: {backlogStatus.data.articles.enriched_last_1h ?? 0} last 1h, {backlogStatus.data.articles.enriched_last_24h ?? 0} last 24h)</>
-                    )}
-                    {' · '}
-                    <Typography component="span" variant="body2" fontWeight={600} color={backlogStatus.data.articles.backlog_trend === 'growing' ? 'warning.main' : backlogStatus.data.articles.backlog_trend === 'shrinking' ? 'success.main' : 'text.secondary'}>
-                      Backlog {backlogStatus.data.articles.backlog_trend ?? '—'}
+              {backlogStatus.data.articles &&
+                (backlogStatus.data.articles.created_last_24h != null ||
+                  backlogStatus.data.articles.backlog_trend) && (
+                  <Box
+                    sx={{
+                      mt: 1.5,
+                      pt: 1.5,
+                      borderTop: 1,
+                      borderColor: 'divider',
+                    }}
+                  >
+                    <Typography
+                      variant='caption'
+                      color='text.secondary'
+                      display='block'
+                    >
+                      Inflow vs outflow (articles)
                     </Typography>
-                  </Typography>
-                </Box>
-              )}
+                    <Typography variant='body2'>
+                      In last 24h:{' '}
+                      {backlogStatus.data.articles.created_last_24h?.toLocaleString() ??
+                        '—'}{' '}
+                      total,{' '}
+                      {(
+                        backlogStatus.data.articles.short_created_last_24h ?? 0
+                      ).toLocaleString()}{' '}
+                      need enrichment · Outflow: ~
+                      {(
+                        backlogStatus.data.articles.per_day ?? 12000
+                      ).toLocaleString()}
+                      /day
+                      {(backlogStatus.data.articles.enriched_last_1h != null ||
+                        backlogStatus.data.articles.enriched_last_24h !=
+                          null) && (
+                        <>
+                          {' '}
+                          (enriched:{' '}
+                          {backlogStatus.data.articles.enriched_last_1h ??
+                            0}{' '}
+                          last 1h,{' '}
+                          {backlogStatus.data.articles.enriched_last_24h ?? 0}{' '}
+                          last 24h)
+                        </>
+                      )}
+                      {' · '}
+                      <Typography
+                        component='span'
+                        variant='body2'
+                        fontWeight={600}
+                        color={
+                          backlogStatus.data.articles.backlog_trend ===
+                          'growing'
+                            ? 'warning.main'
+                            : backlogStatus.data.articles.backlog_trend ===
+                              'shrinking'
+                            ? 'success.main'
+                            : 'text.secondary'
+                        }
+                      >
+                        Backlog{' '}
+                        {backlogStatus.data.articles.backlog_trend ?? '—'}
+                      </Typography>
+                    </Typography>
+                  </Box>
+                )}
             </Box>
           ) : backlogStatus?.error ? (
-            <Typography color="text.secondary" variant="body2">
+            <Typography color='text.secondary' variant='body2'>
               Backlog status unavailable: {backlogStatus.error}
             </Typography>
           ) : loading && backlogStatus === null ? (
-            <Skeleton variant="rectangular" height={100} sx={{ borderRadius: 1 }} />
+            <Skeleton
+              variant='rectangular'
+              height={100}
+              sx={{ borderRadius: 1 }}
+            />
           ) : (
-            <Typography color="text.secondary" variant="body2">
+            <Typography color='text.secondary' variant='body2'>
               Backlog status not available. Check API and database.
             </Typography>
           )}
         </CardContent>
       </Card>
 
-      <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>
+      <Typography variant='subtitle1' sx={{ fontWeight: 600, mb: 1 }}>
         Database connections
       </Typography>
-      <Card variant="outlined" sx={{ mb: 3 }}>
+      <Card variant='outlined' sx={{ mb: 3 }}>
         <CardContent sx={{ py: 1.5, overflowX: 'auto' }}>
           {loading && dbConnections === null ? (
-            <Skeleton variant="rectangular" height={120} />
+            <Skeleton variant='rectangular' height={120} />
           ) : dbConnections?.success === false ? (
-            <Typography color="text.secondary" variant="body2">
-              Database connection view unavailable: {dbConnections?.error ?? 'Unknown error'}
+            <Typography color='text.secondary' variant='body2'>
+              Database connection view unavailable:{' '}
+              {dbConnections?.error ?? 'Unknown error'}
             </Typography>
           ) : (
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
-                <Chip size="small" label={`Sessions: ${dbTotalSessions}`} />
+              <Box
+                sx={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 1,
+                  flexWrap: 'wrap',
+                }}
+              >
+                <Chip size='small' label={`Sessions: ${dbTotalSessions}`} />
                 <Chip
-                  size="small"
+                  size='small'
                   color={dbLongRunning > 0 ? 'warning' : 'success'}
                   label={`Long-running (>${dbLongThreshold}s): ${dbLongRunning}`}
                 />
               </Box>
               {dbSessions.length === 0 ? (
-                <Typography color="text.secondary" variant="body2">No active DB sessions.</Typography>
+                <Typography color='text.secondary' variant='body2'>
+                  No active DB sessions.
+                </Typography>
               ) : (
-                <Table size="small">
+                <Table size='small'>
                   <TableHead>
                     <TableRow>
                       <TableCell>PID</TableCell>
@@ -843,23 +1405,51 @@ export default function MonitorPage() {
                     </TableRow>
                   </TableHead>
                   <TableBody>
-                    {dbSessions.slice(0, 50).map((s) => (
-                      <TableRow key={s.pid} sx={s.long_running ? { bgcolor: 'warning.50' } : undefined}>
-                        <TableCell sx={{ fontFamily: 'monospace' }}>{s.pid}</TableCell>
+                    {dbSessions.slice(0, 50).map(s => (
+                      <TableRow
+                        key={s.pid}
+                        sx={
+                          s.long_running ? { bgcolor: 'warning.50' } : undefined
+                        }
+                      >
+                        <TableCell sx={{ fontFamily: 'monospace' }}>
+                          {s.pid}
+                        </TableCell>
                         <TableCell>{s.state ?? '—'}</TableCell>
-                        <TableCell>{s.open_seconds != null ? `${s.open_seconds}s` : '—'}</TableCell>
                         <TableCell>
-                          <Typography variant="caption" sx={{ display: 'block' }}>{s.user ?? '—'}</Typography>
-                          <Typography variant="caption" color="text.secondary">{s.application_name || s.client_addr || '—'}</Typography>
+                          {s.open_seconds != null ? `${s.open_seconds}s` : '—'}
                         </TableCell>
                         <TableCell>
-                          {(s.wait_event_type || s.wait_event)
-                            ? `${s.wait_event_type ?? ''}${s.wait_event ? `/${s.wait_event}` : ''}`
+                          <Typography
+                            variant='caption'
+                            sx={{ display: 'block' }}
+                          >
+                            {s.user ?? '—'}
+                          </Typography>
+                          <Typography variant='caption' color='text.secondary'>
+                            {s.application_name || s.client_addr || '—'}
+                          </Typography>
+                        </TableCell>
+                        <TableCell>
+                          {s.wait_event_type || s.wait_event
+                            ? `${s.wait_event_type ?? ''}${
+                                s.wait_event ? `/${s.wait_event}` : ''
+                              }`
                             : '—'}
                         </TableCell>
                         <TableCell sx={{ maxWidth: 500 }}>
-                          <Typography variant="caption" sx={{ fontFamily: 'monospace', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'block' }}>
-                            {(s.query_text || '').replace(/\s+/g, ' ').trim() || '—'}
+                          <Typography
+                            variant='caption'
+                            sx={{
+                              fontFamily: 'monospace',
+                              whiteSpace: 'nowrap',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              display: 'block',
+                            }}
+                          >
+                            {(s.query_text || '').replace(/\s+/g, ' ').trim() ||
+                              '—'}
                           </Typography>
                         </TableCell>
                       </TableRow>
@@ -875,45 +1465,71 @@ export default function MonitorPage() {
       <Divider sx={{ my: 2 }} />
 
       {/* Pipeline status */}
-      <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>
+      <Typography variant='subtitle1' sx={{ fontWeight: 600, mb: 1 }}>
         Pipeline & automation
       </Typography>
       <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, mb: 2 }}>
         <Card sx={{ minWidth: 260 }}>
-          <CardHeader title="Pipeline status" subheader="Traces and processing" avatar={<ScheduleIcon />} />
+          <CardHeader
+            title='Pipeline status'
+            subheader='Traces and processing'
+            avatar={<ScheduleIcon />}
+          />
           <CardContent>
             {loading && !pipeline?.data ? (
-              <Skeleton variant="rectangular" height={80} />
+              <Skeleton variant='rectangular' height={80} />
             ) : (
               <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                  <Chip size="small" color={pipelineStatusColor} label={pipelineStatus ?? '—'} />
+                  <Chip
+                    size='small'
+                    color={pipelineStatusColor}
+                    label={pipelineStatus ?? '—'}
+                  />
                   {typeof pipelineData?.success_rate === 'number' && (
-                    <Typography variant="body2" color="text.secondary">Success rate: {pipelineData.success_rate}%</Typography>
+                    <Typography variant='body2' color='text.secondary'>
+                      Success rate: {pipelineData.success_rate}%
+                    </Typography>
                   )}
                 </Box>
-                <Typography variant="caption" color="text.secondary">
-                  Articles processed: {pipelineData?.articles_processed ?? '—'} · Analyzed: {pipelineData?.articles_analyzed ?? '—'} · Recent (1h): {pipelineData?.recent_articles ?? '—'}
+                <Typography variant='caption' color='text.secondary'>
+                  Articles processed: {pipelineData?.articles_processed ?? '—'}{' '}
+                  · Analyzed: {pipelineData?.articles_analyzed ?? '—'} · Recent
+                  (1h): {pipelineData?.recent_articles ?? '—'}
                 </Typography>
-                {pipelineData?.active_traces != null && Number(pipelineData.active_traces) > 0 && (
-                  <Typography variant="caption" color="info.main">Active traces: {pipelineData.active_traces}</Typography>
-                )}
+                {pipelineData?.active_traces != null &&
+                  Number(pipelineData.active_traces) > 0 && (
+                    <Typography variant='caption' color='info.main'>
+                      Active traces: {pipelineData.active_traces}
+                    </Typography>
+                  )}
               </Box>
             )}
           </CardContent>
         </Card>
         <Card sx={{ minWidth: 260 }}>
-          <CardHeader title="Automation manager" subheader="Queue and workers" />
+          <CardHeader
+            title='Automation manager'
+            subheader='Queue and workers'
+          />
           <CardContent>
             {loading && automation?.data === undefined ? (
-              <Skeleton variant="rectangular" height={60} />
+              <Skeleton variant='rectangular' height={60} />
             ) : (
               <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                  <Chip size="small" color={automationRunning ? 'success' : 'default'} label={automationRunning ? 'Running' : 'Stopped'} />
-                  <Typography variant="body2">Queue: {queueSize ?? 0}</Typography>
+                  <Chip
+                    size='small'
+                    color={automationRunning ? 'success' : 'default'}
+                    label={automationRunning ? 'Running' : 'Stopped'}
+                  />
+                  <Typography variant='body2'>
+                    Queue: {queueSize ?? 0}
+                  </Typography>
                   {automation?.data?.active_workers != null && (
-                    <Typography variant="caption" color="text.secondary">Workers: {automation.data.active_workers}</Typography>
+                    <Typography variant='caption' color='text.secondary'>
+                      Workers: {automation.data.active_workers}
+                    </Typography>
                   )}
                 </Box>
               </Box>
@@ -921,19 +1537,29 @@ export default function MonitorPage() {
           </CardContent>
         </Card>
         <Card sx={{ minWidth: 260 }}>
-          <CardHeader title="Domain synthesis & enrichment" subheader="Config and pipelines" />
+          <CardHeader
+            title='Domain synthesis & enrichment'
+            subheader='Config and pipelines'
+          />
           <CardContent>
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-              <Typography variant="body2">
+              <Typography variant='body2'>
                 <strong>Domain configs:</strong> politics, finance, science-tech
               </Typography>
-              <Typography variant="body2">
-                <strong>GDELT enrichment:</strong> <Chip size="small" color="success" label="Active" variant="outlined" sx={{ verticalAlign: 'middle' }} />
+              <Typography variant='body2'>
+                <strong>GDELT enrichment:</strong>{' '}
+                <Chip
+                  size='small'
+                  color='success'
+                  label='Active'
+                  variant='outlined'
+                  sx={{ verticalAlign: 'middle' }}
+                />
               </Typography>
-              <Typography variant="body2">
+              <Typography variant='body2'>
                 <strong>Claims→facts:</strong>{' '}
                 {(() => {
-                  const cf = phases.find((p) => p.name === 'claims_to_facts');
+                  const cf = phases.find(p => p.name === 'claims_to_facts');
                   return cf?.last_run ? timeAgo(cf.last_run) : 'scheduled';
                 })()}
               </Typography>
@@ -943,93 +1569,142 @@ export default function MonitorPage() {
       </Box>
 
       {/* Phase timeline — grouped by related processes, sequential order */}
-      <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>
+      <Typography variant='subtitle1' sx={{ fontWeight: 600, mb: 1 }}>
         Phase timeline (grouped by stage, last run / workload)
       </Typography>
-      <Card variant="outlined" sx={{ mb: 3 }}>
+      <Card variant='outlined' sx={{ mb: 3 }}>
         <CardContent sx={{ py: 1.5, overflowX: 'auto' }}>
           {loading && phases.length === 0 ? (
-            <Skeleton variant="rectangular" height={120} />
+            <Skeleton variant='rectangular' height={120} />
           ) : phases.length === 0 ? (
-            <Typography color="text.secondary" variant="body2">No phase data. Automation may not be running.</Typography>
-          ) : (() => {
-            const enabled = phases.filter(p => p.enabled !== false);
-            const byGroup = enabled.reduce<{ label: string; stageOrder: number; rows: PhaseRow[] }[]>((acc, p) => {
-              const label = p.phase_group_label ?? `Phase ${p.phase ?? 0}`;
-              const stageOrder = p.stage_order ?? 99;
-              const existing = acc.find(g => g.label === label);
-              if (existing) {
-                existing.rows.push(p);
-                existing.stageOrder = Math.min(existing.stageOrder, stageOrder);
-              } else {
-                acc.push({ label, stageOrder, rows: [p] });
-              }
-              return acc;
-            }, []);
-            byGroup.sort((a, b) => a.stageOrder - b.stageOrder);
-            return (
-              <Box>
-                {byGroup.map(({ label, rows }) => (
-                  <Box key={label} sx={{ mb: 2 }}>
-                    <Typography variant="caption" sx={{ fontWeight: 600, color: 'text.secondary', display: 'block', mb: 0.5 }}>
-                      {label}
-                    </Typography>
-                    <Table size="small">
-                      <TableHead>
-                        <TableRow>
-                          <TableCell sx={{ width: '40%' }}>Task</TableCell>
-                          <TableCell>Last run</TableCell>
-                          <TableCell>Running</TableCell>
-                          <TableCell>Queued</TableCell>
-                          <TableCell>Runs / 60m</TableCell>
-                        </TableRow>
-                      </TableHead>
-                      <TableBody>
-                        {rows.map((p) => (
-                          <TableRow key={p.name}>
-                            <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.8rem' }}>
-                              {p.name}
-                              {p.parallel_group && (
-                                <Typography component="span" variant="caption" color="text.secondary" sx={{ ml: 0.5 }}>
-                                  (parallel)
-                                </Typography>
-                              )}
-                            </TableCell>
-                            <TableCell>{p.last_run ? timeAgo(p.last_run) : 'never'}</TableCell>
-                            <TableCell>{p.running_tasks ?? 0}</TableCell>
-                            <TableCell>{p.queued_tasks ?? 0}</TableCell>
-                            <TableCell>{p.runs_last_60m ?? 0}</TableCell>
+            <Typography color='text.secondary' variant='body2'>
+              No phase data. Automation may not be running.
+            </Typography>
+          ) : (
+            (() => {
+              const enabled = phases.filter(p => p.enabled !== false);
+              const byGroup = enabled.reduce<
+                { label: string; stageOrder: number; rows: PhaseRow[] }[]
+              >((acc, p) => {
+                const label = p.phase_group_label ?? `Phase ${p.phase ?? 0}`;
+                const stageOrder = p.stage_order ?? 99;
+                const existing = acc.find(g => g.label === label);
+                if (existing) {
+                  existing.rows.push(p);
+                  existing.stageOrder = Math.min(
+                    existing.stageOrder,
+                    stageOrder
+                  );
+                } else {
+                  acc.push({ label, stageOrder, rows: [p] });
+                }
+                return acc;
+              }, []);
+              byGroup.sort((a, b) => a.stageOrder - b.stageOrder);
+              return (
+                <Box>
+                  {byGroup.map(({ label, rows }) => (
+                    <Box key={label} sx={{ mb: 2 }}>
+                      <Typography
+                        variant='caption'
+                        sx={{
+                          fontWeight: 600,
+                          color: 'text.secondary',
+                          display: 'block',
+                          mb: 0.5,
+                        }}
+                      >
+                        {label}
+                      </Typography>
+                      <Table size='small'>
+                        <TableHead>
+                          <TableRow>
+                            <TableCell sx={{ width: '40%' }}>Task</TableCell>
+                            <TableCell>Last run</TableCell>
+                            <TableCell>Running</TableCell>
+                            <TableCell>Queued</TableCell>
+                            <TableCell>Runs / 60m</TableCell>
                           </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </Box>
-                ))}
-              </Box>
-            );
-          })()}
+                        </TableHead>
+                        <TableBody>
+                          {rows.map(p => (
+                            <TableRow key={p.name}>
+                              <TableCell
+                                sx={{
+                                  fontFamily: 'monospace',
+                                  fontSize: '0.8rem',
+                                }}
+                              >
+                                {p.name}
+                                {p.parallel_group && (
+                                  <Typography
+                                    component='span'
+                                    variant='caption'
+                                    color='text.secondary'
+                                    sx={{ ml: 0.5 }}
+                                  >
+                                    (parallel)
+                                  </Typography>
+                                )}
+                              </TableCell>
+                              <TableCell>
+                                {p.last_run ? timeAgo(p.last_run) : 'never'}
+                              </TableCell>
+                              <TableCell>{p.running_tasks ?? 0}</TableCell>
+                              <TableCell>{p.queued_tasks ?? 0}</TableCell>
+                              <TableCell>{p.runs_last_60m ?? 0}</TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </Box>
+                  ))}
+                </Box>
+              );
+            })()
+          )}
         </CardContent>
       </Card>
 
       {/* Decision log */}
-      <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>
+      <Typography variant='subtitle1' sx={{ fontWeight: 600, mb: 1 }}>
         Coordinator decision log
       </Typography>
-      <Card variant="outlined" sx={{ mb: 3 }}>
+      <Card variant='outlined' sx={{ mb: 3 }}>
         <CardContent sx={{ py: 1.5 }}>
           {loading && decisionEntries.length === 0 ? (
-            <Skeleton variant="rectangular" height={80} />
+            <Skeleton variant='rectangular' height={80} />
           ) : decisionEntries.length === 0 ? (
-            <Typography color="text.secondary" variant="body2">No decisions yet. The coordinator logs collect_rss, process_phase, idle, etc.</Typography>
+            <Typography color='text.secondary' variant='body2'>
+              No decisions yet. The coordinator logs collect_rss, process_phase,
+              idle, etc.
+            </Typography>
           ) : (
             <List dense disablePadding>
               {decisionEntries.slice(0, 20).map((e, i) => (
                 <ListItem key={i} disablePadding sx={{ py: 0.3 }}>
                   <ListItemText
                     primary={
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
-                        <Typography component="span" variant="body2" sx={{ fontFamily: 'monospace' }}>{e.decision ?? '—'}</Typography>
-                        <Chip size="small" variant="outlined" label={e.outcome ?? '—'} />
+                      <Box
+                        sx={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 1,
+                          flexWrap: 'wrap',
+                        }}
+                      >
+                        <Typography
+                          component='span'
+                          variant='body2'
+                          sx={{ fontFamily: 'monospace' }}
+                        >
+                          {e.decision ?? '—'}
+                        </Typography>
+                        <Chip
+                          size='small'
+                          variant='outlined'
+                          label={e.outcome ?? '—'}
+                        />
                       </Box>
                     }
                     secondary={e.timestamp ? timeAgo(e.timestamp) : null}
@@ -1045,28 +1720,56 @@ export default function MonitorPage() {
       {/* Run phase (optional) */}
       {apiService.triggerPhase && (
         <Box sx={{ mb: 3 }}>
-          <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>
+          <Typography variant='subtitle1' sx={{ fontWeight: 600, mb: 1 }}>
             Run phase now
           </Typography>
-          <Card variant="outlined">
+          <Card variant='outlined'>
             <CardContent sx={{ py: 1.5 }}>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
-                <FormControl size="small" sx={{ minWidth: 220 }}>
+              <Box
+                sx={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 2,
+                  flexWrap: 'wrap',
+                }}
+              >
+                <FormControl size='small' sx={{ minWidth: 220 }}>
                   <InputLabel>Phase</InputLabel>
                   <Select
                     value={triggerPhaseName}
-                    label="Phase"
-                    onChange={(e) => setTriggerPhaseName(e.target.value)}
+                    label='Phase'
+                    onChange={e => setTriggerPhaseName(e.target.value)}
                   >
-                    <MenuItem value="">Select…</MenuItem>
-                    {(phases.length > 0 ? phases.map((p) => p.name) : ['collection_cycle', 'context_sync', 'entity_extraction', 'entity_profile_sync', 'claim_extraction', 'claims_to_facts', 'event_tracking', 'event_extraction', 'topic_clustering', 'storyline_discovery', 'storyline_processing', 'editorial_document_generation', 'editorial_briefing_generation', 'digest_generation', 'daily_briefing_synthesis']).map((name) => (
-                      <MenuItem key={name} value={name}>{name}</MenuItem>
+                    <MenuItem value=''>Select…</MenuItem>
+                    {(phases.length > 0
+                      ? phases.map(p => p.name)
+                      : [
+                          'collection_cycle',
+                          'context_sync',
+                          'entity_extraction',
+                          'entity_profile_sync',
+                          'claim_extraction',
+                          'claims_to_facts',
+                          'event_tracking',
+                          'event_extraction',
+                          'topic_clustering',
+                          'storyline_discovery',
+                          'storyline_processing',
+                          'editorial_document_generation',
+                          'editorial_briefing_generation',
+                          'digest_generation',
+                          'daily_briefing_synthesis',
+                        ]
+                    ).map(name => (
+                      <MenuItem key={name} value={name}>
+                        {name}
+                      </MenuItem>
                     ))}
                   </Select>
                 </FormControl>
                 <Button
-                  size="small"
-                  variant="contained"
+                  size='small'
+                  variant='contained'
                   startIcon={<PlayArrowIcon />}
                   onClick={handleTriggerPhase}
                   disabled={!triggerPhaseName || triggering}
@@ -1076,18 +1779,31 @@ export default function MonitorPage() {
               </Box>
               {triggerResult && (
                 <Box sx={{ mt: 1.5 }}>
-                  <Alert severity={triggerResult.success ? 'success' : 'error'} onClose={() => setTriggerResult(null)}>
+                  <Alert
+                    severity={triggerResult.success ? 'success' : 'error'}
+                    onClose={() => setTriggerResult(null)}
+                  >
                     {triggerResult.message}
                   </Alert>
                   {triggerResult.success && triggerResult.warning && (
-                    <Alert severity="warning" sx={{ mt: 1 }} onClose={() => setTriggerResult(null)}>
+                    <Alert
+                      severity='warning'
+                      sx={{ mt: 1 }}
+                      onClose={() => setTriggerResult(null)}
+                    >
                       {triggerResult.warning}
                     </Alert>
                   )}
                 </Box>
               )}
-              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
-                Enqueues the phase; it will appear under Current activity when it runs. Running phases out of order may process incomplete data (e.g. run collection_cycle before analysis phases).
+              <Typography
+                variant='caption'
+                color='text.secondary'
+                sx={{ display: 'block', mt: 1 }}
+              >
+                Enqueues the phase; it will appear under Current activity when
+                it runs. Running phases out of order may process incomplete data
+                (e.g. run collection_cycle before analysis phases).
               </Typography>
             </CardContent>
           </Card>
@@ -1097,53 +1813,73 @@ export default function MonitorPage() {
       <Divider sx={{ my: 2 }} />
 
       {/* Collection status & quality */}
-      <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>
+      <Typography variant='subtitle1' sx={{ fontWeight: 600, mb: 1 }}>
         Collection & quality
       </Typography>
       <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2 }}>
         <Card sx={{ minWidth: 280 }}>
-          <CardHeader title="Collection status" subheader="Orchestrator last run" />
+          <CardHeader
+            title='Collection status'
+            subheader='Orchestrator last run'
+          />
           <CardContent>
             {loading ? (
-              <Skeleton variant="rectangular" height={80} />
+              <Skeleton variant='rectangular' height={80} />
             ) : (
               <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
                 {Object.entries(lastTimes).map(([source, time]) => (
-                  <Box key={source} sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <Typography variant="body2">{source}</Typography>
-                    <Typography variant="caption" color="text.secondary">
+                  <Box
+                    key={source}
+                    sx={{ display: 'flex', justifyContent: 'space-between' }}
+                  >
+                    <Typography variant='body2'>{source}</Typography>
+                    <Typography variant='caption' color='text.secondary'>
                       {time ? new Date(time).toLocaleString() : '—'}
                     </Typography>
                   </Box>
                 ))}
                 {Object.keys(lastTimes).length === 0 && (
-                  <Typography color="text.secondary">No collection data yet.</Typography>
+                  <Typography color='text.secondary'>
+                    No collection data yet.
+                  </Typography>
                 )}
               </Box>
             )}
           </CardContent>
         </Card>
         <Card sx={{ minWidth: 280 }}>
-          <CardHeader title="Quality metrics" subheader="Context & entity coverage" />
+          <CardHeader
+            title='Quality metrics'
+            subheader='Context & entity coverage'
+          />
           <CardContent>
             {loading ? (
-              <Skeleton variant="rectangular" height={80} />
+              <Skeleton variant='rectangular' height={80} />
             ) : byDomain ? (
               <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
                 {Object.entries(byDomain).map(([d, row]) => (
-                  <Box key={d} sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
-                    <Typography variant="body2">{d}</Typography>
+                  <Box
+                    key={d}
+                    sx={{ display: 'flex', gap: 1, alignItems: 'center' }}
+                  >
+                    <Typography variant='body2'>{d}</Typography>
                     {row.context_coverage_pct != null && (
-                      <Chip size="small" label={`Context: ${row.context_coverage_pct}%`} />
+                      <Chip
+                        size='small'
+                        label={`Context: ${row.context_coverage_pct}%`}
+                      />
                     )}
                     {row.entity_coverage_pct != null && (
-                      <Chip size="small" label={`Entity: ${row.entity_coverage_pct}%`} />
+                      <Chip
+                        size='small'
+                        label={`Entity: ${row.entity_coverage_pct}%`}
+                      />
                     )}
                   </Box>
                 ))}
               </Box>
             ) : (
-              <Typography color="text.secondary">No quality data.</Typography>
+              <Typography color='text.secondary'>No quality data.</Typography>
             )}
           </CardContent>
         </Card>

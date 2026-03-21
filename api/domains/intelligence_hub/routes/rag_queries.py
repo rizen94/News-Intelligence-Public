@@ -10,14 +10,14 @@ Features:
 - Cross-domain insights
 """
 
-from fastapi import APIRouter, HTTPException, Path, Query, Body
-from typing import Dict, Any, List, Optional
-from shared.domain_registry import DOMAIN_PATH_PATTERN
-from pydantic import BaseModel, Field
 import logging
+from typing import Any
 
-from services.rag import get_enhanced_rag_service, RAGResult
+from fastapi import APIRouter, Body, HTTPException, Path, Query
+from pydantic import BaseModel, Field
 from services.domain_knowledge_service import get_domain_knowledge_service
+from services.rag import get_enhanced_rag_service
+from shared.domain_registry import DOMAIN_PATH_PATTERN
 
 logger = logging.getLogger(__name__)
 
@@ -28,47 +28,55 @@ router = APIRouter(prefix="/api", tags=["RAG Queries"])
 # REQUEST/RESPONSE MODELS
 # =============================================================================
 
+
 class RAGQueryRequest(BaseModel):
     """Request model for RAG query"""
-    query: str = Field(..., min_length=5, max_length=1000, description="The question or topic to analyze")
+
+    query: str = Field(
+        ..., min_length=5, max_length=1000, description="The question or topic to analyze"
+    )
     hours: int = Field(72, ge=1, le=720, description="Hours of article history to consider")
     max_chunks: int = Field(10, ge=1, le=25, description="Maximum context chunks to use")
 
 
 class RAGQueryResponse(BaseModel):
     """Response model for RAG query"""
+
     success: bool
     query: str
     domain: str
     answer: str
     confidence: float
-    sources_cited: List[str]
-    domain_entities: List[Dict[str, Any]]
-    key_terms: Dict[str, str]
-    related_topics: List[str]
+    sources_cited: list[str]
+    domain_entities: list[dict[str, Any]]
+    key_terms: dict[str, str]
+    related_topics: list[str]
     historical_context: str
     processing_time_ms: float
 
 
 class StorylineAnalysisRequest(BaseModel):
     """Request model for storyline analysis"""
+
     analysis_type: str = Field("summary", description="Type: summary, impact, context, or full")
 
 
 class TopicContextResponse(BaseModel):
     """Response model for topic context"""
+
     topic: str
     domain: str
-    entities: List[Dict[str, Any]]
-    terminology: Dict[str, str]
+    entities: list[dict[str, Any]]
+    terminology: dict[str, str]
     historical_context: str
-    related_topics: List[str]
-    external_sources: List[Dict[str, str]]
-    knowledge_base_matches: List[Dict[str, Any]]
+    related_topics: list[str]
+    external_sources: list[dict[str, str]]
+    knowledge_base_matches: list[dict[str, Any]]
 
 
 class KnowledgeSearchRequest(BaseModel):
     """Request model for knowledge base search"""
+
     query: str = Field(..., min_length=2, max_length=200)
     limit: int = Field(10, ge=1, le=50)
 
@@ -77,11 +85,9 @@ class KnowledgeSearchRequest(BaseModel):
 # RAG QUERY ENDPOINTS
 # =============================================================================
 
+
 @router.post("/{domain}/rag/query", response_model=RAGQueryResponse)
-async def rag_query(
-    request: RAGQueryRequest,
-    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN)
-):
+async def rag_query(request: RAGQueryRequest, domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN)):
     """
     Execute a domain-aware RAG query.
 
@@ -94,10 +100,7 @@ async def rag_query(
     try:
         rag_service = get_enhanced_rag_service()
         result = rag_service.query(
-            domain=domain,
-            query=request.query,
-            hours=request.hours,
-            max_chunks=request.max_chunks
+            domain=domain, query=request.query, hours=request.hours, max_chunks=request.max_chunks
         )
 
         # Extract domain context details
@@ -131,7 +134,7 @@ async def rag_query(
             key_terms=key_terms,
             related_topics=related_topics,
             historical_context=historical_context,
-            processing_time_ms=result.processing_time_ms
+            processing_time_ms=result.processing_time_ms,
         )
 
     except Exception as e:
@@ -139,11 +142,11 @@ async def rag_query(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/{domain}/rag/quick", response_model=Dict[str, Any])
+@router.get("/{domain}/rag/quick", response_model=dict[str, Any])
 async def rag_quick_query(
     domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     q: str = Query(..., min_length=5, max_length=500, description="Quick query"),
-    hours: int = Query(48, ge=1, le=168)
+    hours: int = Query(48, ge=1, le=168),
 ):
     """
     Quick RAG query using GET method for simple questions.
@@ -154,7 +157,7 @@ async def rag_quick_query(
             domain=domain,
             query=q,
             hours=hours,
-            max_chunks=5  # Smaller for quick queries
+            max_chunks=5,  # Smaller for quick queries
         )
 
         return {
@@ -174,11 +177,12 @@ async def rag_quick_query(
 # STORYLINE ANALYSIS ENDPOINTS
 # =============================================================================
 
-@router.post("/{domain}/rag/storyline/{storyline_id}/analyze", response_model=Dict[str, Any])
+
+@router.post("/{domain}/rag/storyline/{storyline_id}/analyze", response_model=dict[str, Any])
 async def analyze_storyline_with_rag(
     storyline_id: int = Path(..., gt=0),
     request: StorylineAnalysisRequest = Body(...),
-    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN)
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
 ):
     """
     Analyze a storyline using RAG with domain knowledge.
@@ -206,31 +210,29 @@ async def analyze_storyline_with_rag(
                 "impact": impact.get("analysis", ""),
                 "context": context.get("analysis", ""),
                 "domain_entities": summary.get("domain_entities", []),
-                "sources_cited": list(set(
-                    summary.get("sources_cited", []) +
-                    impact.get("sources_cited", []) +
-                    context.get("sources_cited", [])
-                )),
+                "sources_cited": list(
+                    set(
+                        summary.get("sources_cited", [])
+                        + impact.get("sources_cited", [])
+                        + context.get("sources_cited", [])
+                    )
+                ),
                 "confidence": (
-                    summary.get("confidence", 0) +
-                    impact.get("confidence", 0) +
-                    context.get("confidence", 0)
-                ) / 3,
+                    summary.get("confidence", 0)
+                    + impact.get("confidence", 0)
+                    + context.get("confidence", 0)
+                )
+                / 3,
             }
         else:
             result = rag_service.analyze_storyline(
-                domain=domain,
-                storyline_id=storyline_id,
-                analysis_type=request.analysis_type
+                domain=domain, storyline_id=storyline_id, analysis_type=request.analysis_type
             )
 
             if "error" in result:
                 raise HTTPException(status_code=404, detail=result["error"])
 
-            return {
-                "success": True,
-                **result
-            }
+            return {"success": True, **result}
 
     except HTTPException:
         raise
@@ -243,10 +245,10 @@ async def analyze_storyline_with_rag(
 # TOPIC CONTEXT ENDPOINTS
 # =============================================================================
 
+
 @router.get("/{domain}/rag/topic/{topic_name}", response_model=TopicContextResponse)
 async def get_topic_context(
-    topic_name: str = Path(..., min_length=2),
-    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN)
+    topic_name: str = Path(..., min_length=2), domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN)
 ):
     """
     Get enriched context for a topic.
@@ -273,10 +275,10 @@ async def get_topic_context(
 # KNOWLEDGE BASE ENDPOINTS
 # =============================================================================
 
-@router.post("/{domain}/rag/knowledge/search", response_model=Dict[str, Any])
+
+@router.post("/{domain}/rag/knowledge/search", response_model=dict[str, Any])
 async def search_knowledge_base(
-    request: KnowledgeSearchRequest,
-    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN)
+    request: KnowledgeSearchRequest, domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN)
 ):
     """
     Search the domain knowledge base.
@@ -286,9 +288,7 @@ async def search_knowledge_base(
     try:
         knowledge_service = get_domain_knowledge_service()
         results = knowledge_service.search_knowledge_base(
-            domain=domain,
-            query=request.query,
-            limit=request.limit
+            domain=domain, query=request.query, limit=request.limit
         )
 
         return {
@@ -304,34 +304,38 @@ async def search_knowledge_base(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/{domain}/rag/knowledge/entities", response_model=Dict[str, Any])
+@router.get("/{domain}/rag/knowledge/entities", response_model=dict[str, Any])
 async def list_domain_entities(
     domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
-    entity_type: Optional[str] = Query(None, description="Filter by entity type")
+    entity_type: str | None = Query(None, description="Filter by entity type"),
 ):
     """
     List all entities in the domain knowledge base.
     """
     try:
         knowledge_service = get_domain_knowledge_service()
-        schema = domain.replace('-', '_')
-        kb = knowledge_service.knowledge_bases.get(domain, knowledge_service.knowledge_bases.get(schema, {}))
-        entities = kb.get('entities', {})
+        schema = domain.replace("-", "_")
+        kb = knowledge_service.knowledge_bases.get(
+            domain, knowledge_service.knowledge_bases.get(schema, {})
+        )
+        entities = kb.get("entities", {})
 
         result = []
         for key, entity in entities.items():
             if entity_type and entity.entity_type != entity_type:
                 continue
-            result.append({
-                "name": entity.name,
-                "type": entity.entity_type,
-                "aliases": entity.aliases,
-                "description": entity.description,
-                "importance": entity.importance,
-            })
+            result.append(
+                {
+                    "name": entity.name,
+                    "type": entity.entity_type,
+                    "aliases": entity.aliases,
+                    "description": entity.description,
+                    "importance": entity.importance,
+                }
+            )
 
         # Sort by importance
-        result.sort(key=lambda e: e['importance'], reverse=True)
+        result.sort(key=lambda e: e["importance"], reverse=True)
 
         return {
             "success": True,
@@ -346,18 +350,18 @@ async def list_domain_entities(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/{domain}/rag/knowledge/terminology", response_model=Dict[str, Any])
-async def get_domain_terminology(
-    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN)
-):
+@router.get("/{domain}/rag/knowledge/terminology", response_model=dict[str, Any])
+async def get_domain_terminology(domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN)):
     """
     Get all terminology definitions for a domain.
     """
     try:
         knowledge_service = get_domain_knowledge_service()
-        schema = domain.replace('-', '_')
-        kb = knowledge_service.knowledge_bases.get(domain, knowledge_service.knowledge_bases.get(schema, {}))
-        terminology = kb.get('terminology', {})
+        schema = domain.replace("-", "_")
+        kb = knowledge_service.knowledge_bases.get(
+            domain, knowledge_service.knowledge_bases.get(schema, {})
+        )
+        terminology = kb.get("terminology", {})
 
         return {
             "success": True,
@@ -371,10 +375,10 @@ async def get_domain_terminology(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/{domain}/rag/knowledge/sources", response_model=Dict[str, Any])
+@router.get("/{domain}/rag/knowledge/sources", response_model=dict[str, Any])
 async def get_domain_sources(
     domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
-    source_type: Optional[str] = Query(None, description="Filter by source type")
+    source_type: str | None = Query(None, description="Filter by source type"),
 ):
     """
     Get external reference sources for a domain.
@@ -400,10 +404,9 @@ async def get_domain_sources(
 # CROSS-DOMAIN INSIGHTS
 # =============================================================================
 
-@router.post("/rag/cross-domain", response_model=Dict[str, Any])
-async def cross_domain_query(
-    request: RAGQueryRequest
-):
+
+@router.post("/rag/cross-domain", response_model=dict[str, Any])
+async def cross_domain_query(request: RAGQueryRequest):
     """
     Execute a query across all domains for cross-domain insights.
 
@@ -411,7 +414,7 @@ async def cross_domain_query(
     """
     try:
         rag_service = get_enhanced_rag_service()
-        domains = ['politics', 'finance', 'science-tech']
+        domains = ["politics", "finance", "science-tech"]
 
         results = {}
         all_entities = []
@@ -422,7 +425,7 @@ async def cross_domain_query(
                 domain=domain,
                 query=request.query,
                 hours=request.hours,
-                max_chunks=request.max_chunks // 2  # Split across domains
+                max_chunks=request.max_chunks // 2,  # Split across domains
             )
             results[domain] = {
                 "answer": result.answer,
@@ -430,18 +433,20 @@ async def cross_domain_query(
                 "sources": result.sources_cited,
             }
             if result.domain_context:
-                all_entities.extend([
-                    {"domain": domain, "name": e.name, "type": e.entity_type}
-                    for e in result.domain_context.entities_found[:3]
-                ])
+                all_entities.extend(
+                    [
+                        {"domain": domain, "name": e.name, "type": e.entity_type}
+                        for e in result.domain_context.entities_found[:3]
+                    ]
+                )
             all_sources.extend(result.sources_cited)
 
         # Generate combined insight
         combined_prompt = f"""Based on insights from multiple domains (politics, finance, technology), provide a synthesized answer to: {request.query}
 
-Politics perspective: {results['politics']['answer'][:300]}
-Finance perspective: {results['finance']['answer'][:300]}
-Technology perspective: {results['science-tech']['answer'][:300]}
+Politics perspective: {results["politics"]["answer"][:300]}
+Finance perspective: {results["finance"]["answer"][:300]}
+Technology perspective: {results["science-tech"]["answer"][:300]}
 
 Synthesize these perspectives into a cohesive cross-domain insight:"""
 
@@ -466,10 +471,10 @@ Synthesize these perspectives into a cohesive cross-domain insight:"""
 # ENTITY LOOKUP
 # =============================================================================
 
-@router.get("/{domain}/rag/entity/{entity_name}", response_model=Dict[str, Any])
+
+@router.get("/{domain}/rag/entity/{entity_name}", response_model=dict[str, Any])
 async def get_entity_details(
-    entity_name: str = Path(..., min_length=2),
-    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN)
+    entity_name: str = Path(..., min_length=2), domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN)
 ):
     """
     Get detailed information about a specific entity.
@@ -481,7 +486,7 @@ async def get_entity_details(
         if not entity:
             raise HTTPException(
                 status_code=404,
-                detail=f"Entity '{entity_name}' not found in {domain} knowledge base"
+                detail=f"Entity '{entity_name}' not found in {domain} knowledge base",
             )
 
         return {
@@ -495,7 +500,7 @@ async def get_entity_details(
                 "importance": entity.importance,
                 "related_entities": entity.related_entities,
                 "external_refs": entity.external_refs,
-            }
+            },
         }
 
     except HTTPException:
@@ -503,4 +508,3 @@ async def get_entity_details(
     except Exception as e:
         logger.error(f"Entity lookup error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-

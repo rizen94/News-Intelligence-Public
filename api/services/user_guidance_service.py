@@ -9,6 +9,7 @@ from typing import Any
 
 try:
     from config.logging_config import get_component_logger
+
     logger = get_component_logger("orchestrator")
 except Exception:
     logger = logging.getLogger(__name__)
@@ -54,15 +55,17 @@ def get_user_guidance(get_db_connection) -> dict[str, Any]:
                     ORDER BY last_automation_run ASC NULLS FIRST
                 """)
                 for row in cur.fetchall():
-                    out["automation_storylines"].append({
-                        "id": row[0],
-                        "title": row[1],
-                        "domain": domain,
-                        "automation_enabled": row[2],
-                        "automation_mode": row[3],
-                        "last_automation_run": row[4].isoformat() if row[4] else None,
-                        "automation_frequency_hours": row[5] or 24,
-                    })
+                    out["automation_storylines"].append(
+                        {
+                            "id": row[0],
+                            "title": row[1],
+                            "domain": domain,
+                            "automation_enabled": row[2],
+                            "automation_mode": row[3],
+                            "last_automation_run": row[4].isoformat() if row[4] else None,
+                            "automation_frequency_hours": row[5] or 24,
+                        }
+                    )
             except Exception as e:
                 logger.debug("user_guidance automation storylines %s: %s", domain, e)
         cur.close()

@@ -55,7 +55,7 @@ const TopicArticles = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const [limit] = useState(20);
 
-  const loadTopicArticles = async(page = 1) => {
+  const loadTopicArticles = async (page = 1) => {
     try {
       setLoading(true);
       setError(null);
@@ -65,7 +65,7 @@ const TopicArticles = () => {
         topicName,
         limit,
         offset,
-        domain,
+        domain
       );
       if (response.success) {
         setArticles(response.data.articles);
@@ -82,7 +82,7 @@ const TopicArticles = () => {
     }
   };
 
-  const loadTopicSummary = async() => {
+  const loadTopicSummary = async () => {
     try {
       const response = await apiService.getTopicSummary(topicName, domain);
       if (response.success) {
@@ -123,14 +123,14 @@ const TopicArticles = () => {
 
   const getSentimentColor = sentiment => {
     switch (sentiment?.toLowerCase()) {
-    case 'positive':
-      return 'success';
-    case 'negative':
-      return 'error';
-    case 'neutral':
-      return 'default';
-    default:
-      return 'default';
+      case 'positive':
+        return 'success';
+      case 'negative':
+        return 'error';
+      case 'neutral':
+        return 'default';
+      default:
+        return 'default';
     }
   };
 
@@ -159,7 +159,10 @@ const TopicArticles = () => {
         <Alert severity='error' sx={{ mb: 3 }}>
           {error}
         </Alert>
-        <Button onClick={() => navigateToDomain('/topics')} startIcon={<ArrowBack />}>
+        <Button
+          onClick={() => navigateToDomain('/topics')}
+          startIcon={<ArrowBack />}
+        >
           Back to Topics
         </Button>
       </Box>
@@ -176,7 +179,10 @@ const TopicArticles = () => {
         mb={3}
       >
         <Box display='flex' alignItems='center' gap={2}>
-          <IconButton onClick={() => navigateToDomain('/topics')} color='primary'>
+          <IconButton
+            onClick={() => navigateToDomain('/topics')}
+            color='primary'
+          >
             <ArrowBack />
           </IconButton>
           <Box>
@@ -222,7 +228,7 @@ const TopicArticles = () => {
               <Chip
                 icon={<TrendingUp />}
                 label={`${(topicSummary.avg_relevance * 100).toFixed(
-                  1,
+                  1
                 )}% avg relevance`}
                 color='secondary'
                 variant='outlined'
@@ -298,7 +304,7 @@ const TopicArticles = () => {
                 <Box display='flex' gap={1} flexWrap='wrap' alignItems='center'>
                   <Chip
                     label={`${(article.relevance_score * 100).toFixed(
-                      1,
+                      1
                     )}% relevance`}
                     color='primary'
                     size='small'
@@ -312,7 +318,7 @@ const TopicArticles = () => {
                   />
                   <Chip
                     label={`Quality: ${(article.quality_score * 100).toFixed(
-                      0,
+                      0
                     )}%`}
                     color={getQualityColor(article.quality_score)}
                     size='small'

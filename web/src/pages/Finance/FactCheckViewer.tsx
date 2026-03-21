@@ -17,7 +17,7 @@ export default function FactCheckViewer() {
     setLoading(true);
     apiService
       .getFinanceVerificationHistory({ limit: 50 }, domain)
-      .then((res) => {
+      .then(res => {
         setVerifications(res?.data?.verifications || []);
       })
       .catch(() => setVerifications([]))
@@ -47,10 +47,10 @@ export default function FactCheckViewer() {
 
   return (
     <Box sx={{ p: 3 }}>
-      <Typography variant="h5" gutterBottom>
+      <Typography variant='h5' gutterBottom>
         Fact Check History
       </Typography>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+      <Typography variant='body2' color='text.secondary' sx={{ mb: 2 }}>
         Verification results from completed analysis tasks.
       </Typography>
 

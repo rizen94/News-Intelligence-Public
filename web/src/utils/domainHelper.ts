@@ -19,10 +19,12 @@ export const AVAILABLE_DOMAINS: Domain[] = [
 ];
 
 /** Alternation for first path segment after `/` (domain keys). Keep in sync with AVAILABLE_DOMAINS. */
-export const DOMAIN_ROUTE_ALTERNATION = AVAILABLE_DOMAINS.map((d) => d.key).join('|');
+export const DOMAIN_ROUTE_ALTERNATION = AVAILABLE_DOMAINS.map(d => d.key).join(
+  '|'
+);
 
 /** Keys in nav/API order — use for forms and filters that list all domains. */
-export const DOMAIN_KEYS_LIST: DomainKey[] = AVAILABLE_DOMAINS.map((d) => d.key);
+export const DOMAIN_KEYS_LIST: DomainKey[] = AVAILABLE_DOMAINS.map(d => d.key);
 
 const DEFAULT_DOMAIN: DomainKey = 'politics';
 

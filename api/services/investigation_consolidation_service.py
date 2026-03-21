@@ -12,8 +12,7 @@ Uses existing schema: event_type='superset', sub_event_ids = [child_id, ...].
 import logging
 import re
 from collections import defaultdict
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any
 
 from shared.database.connection import get_db_connection
 
@@ -36,16 +35,31 @@ def _normalize_for_clustering(text: str) -> str:
     return " ".join(t.split())
 
 
-def _significant_tokens(event_name: str, geographic_scope: str) -> Set[str]:
+def _significant_tokens(event_name: str, geographic_scope: str) -> set[str]:
     """Tokens that can be used to cluster (skip very short and stopwords)."""
-    stop = {"the", "and", "for", "with", "into", "from", "new", "says", "amid", "as", "at", "in", "on", "to"}
+    stop = {
+        "the",
+        "and",
+        "for",
+        "with",
+        "into",
+        "from",
+        "new",
+        "says",
+        "amid",
+        "as",
+        "at",
+        "in",
+        "on",
+        "to",
+    }
     name_tokens = set(_normalize_for_clustering(event_name).split())
     scope_tokens = set(_normalize_for_clustering(geographic_scope or "").split())
     combined = (name_tokens | scope_tokens) - stop
     return {t for t in combined if len(t) >= 2}
 
 
-def run_consolidation(limit_events: int = 200) -> Dict[str, Any]:
+def run_consolidation(limit_events: int = 200) -> dict[str, Any]:
     """
     Cluster tracked_events by theme and create superset events where appropriate.
 
@@ -57,7 +71,7 @@ def run_consolidation(limit_events: int = 200) -> Dict[str, Any]:
 
     Returns summary: clusters_found, supersets_created, event_ids_consumed, errors.
     """
-    result: Dict[str, Any] = {
+    result: dict[str, Any] = {
         "clusters_found": 0,
         "supersets_created": 0,
         "event_ids_consumed": [],
@@ -83,9 +97,9 @@ def run_consolidation(limit_events: int = 200) -> Dict[str, Any]:
             rows = cur.fetchall()
 
         # Child IDs = any event whose id appears in some other event's sub_event_ids
-        child_ids: Set[int] = set()
-        superset_ids: Set[int] = set()
-        events_by_id: Dict[int, Dict[str, Any]] = {}
+        child_ids: set[int] = set()
+        superset_ids: set[int] = set()
+        events_by_id: dict[int, dict[str, Any]] = {}
         for r in rows:
             eid, etype, name, scope, sub_ids, domain_keys = r[0], r[1], r[2], r[3], r[4], r[5]
             events_by_id[eid] = {
@@ -104,18 +118,21 @@ def run_consolidation(limit_events: int = 200) -> Dict[str, Any]:
 
         # Leaf events = not a child, not a superset
         leaf_events = [
-            ev for ev in events_by_id.values()
+            ev
+            for ev in events_by_id.values()
             if ev["id"] not in child_ids and ev["event_type"] != SUPERSET_EVENT_TYPE
         ]
 
         if len(leaf_events) < MIN_CLUSTER_SIZE:
-            result["message"] = f"Not enough leaf events to cluster (need {MIN_CLUSTER_SIZE}+, have {len(leaf_events)})"
+            result["message"] = (
+                f"Not enough leaf events to cluster (need {MIN_CLUSTER_SIZE}+, have {len(leaf_events)})"
+            )
             conn.close()
             return result
 
         # Cluster by shared significant tokens (event_name + geographic_scope)
         # Each event gets a "signature" set of tokens; we group events that share at least 2 tokens.
-        token_to_events: Dict[str, Set[int]] = defaultdict(set)
+        token_to_events: dict[str, set[int]] = defaultdict(set)
         for ev in leaf_events:
             tokens = _significant_tokens(ev["event_name"], ev["geographic_scope"])
             for t in tokens:
@@ -123,8 +140,8 @@ def run_consolidation(limit_events: int = 200) -> Dict[str, Any]:
 
         # Build clusters: connected components of events that share tokens
         leaf_ids = {e["id"] for e in leaf_events}
-        assigned: Set[int] = set()
-        clusters: List[List[int]] = []
+        assigned: set[int] = set()
+        clusters: list[list[int]] = []
         for ev in leaf_events:
             eid = ev["id"]
             if eid in assigned:
@@ -133,7 +150,7 @@ def run_consolidation(limit_events: int = 200) -> Dict[str, Any]:
             if not tokens:
                 continue
             # Collect all leaf event IDs that share any token with this event (BFS)
-            cluster_ids: Set[int] = set()
+            cluster_ids: set[int] = set()
             stack = [eid]
             while stack:
                 cur_id = stack.pop()
@@ -176,13 +193,17 @@ def run_consolidation(limit_events: int = 200) -> Dict[str, Any]:
             # Geographic scope from first or combined
             scopes = {events_by_id.get(i, {}).get("geographic_scope") or "" for i in cluster_ids}
             scopes.discard("")
-            geographic_scope = ", ".join(sorted(scopes)) if scopes else (first.get("geographic_scope") or "")
+            geographic_scope = (
+                ", ".join(sorted(scopes)) if scopes else (first.get("geographic_scope") or "")
+            )
             # domain_keys: union of all in cluster
-            all_domains: Set[str] = set()
+            all_domains: set[str] = set()
             for i in cluster_ids:
                 for d in events_by_id.get(i, {}).get("domain_keys") or []:
                     all_domains.add(d)
-            domain_keys_list = list(all_domains) if all_domains else (first.get("domain_keys") or [])
+            domain_keys_list = (
+                list(all_domains) if all_domains else (first.get("domain_keys") or [])
+            )
 
             try:
                 with conn.cursor() as cur:
@@ -193,21 +214,34 @@ def run_consolidation(limit_events: int = 200) -> Dict[str, Any]:
                         VALUES (%s, %s, NULL, NULL, %s, '[]', '[]', %s, %s, NOW(), NOW())
                         RETURNING id
                         """,
-                        (SUPERSET_EVENT_TYPE, superset_name, geographic_scope, cluster_ids, domain_keys_list),
+                        (
+                            SUPERSET_EVENT_TYPE,
+                            superset_name,
+                            geographic_scope,
+                            cluster_ids,
+                            domain_keys_list,
+                        ),
                     )
                     new_id = cur.fetchone()[0]
                 conn.commit()
                 result["supersets_created"] += 1
                 result["event_ids_consumed"].extend(cluster_ids)
                 created += 1
-                logger.info("Created superset event id=%s name=%s with %s sub_events", new_id, superset_name, len(cluster_ids))
+                logger.info(
+                    "Created superset event id=%s name=%s with %s sub_events",
+                    new_id,
+                    superset_name,
+                    len(cluster_ids),
+                )
             except Exception as e:
                 logger.warning("Failed to create superset for cluster %s: %s", cluster_ids, e)
                 result["errors"].append(str(e))
                 conn.rollback()
 
         conn.close()
-        result["message"] = f"Created {result['supersets_created']} superset(s) from {result['clusters_found']} clusters."
+        result["message"] = (
+            f"Created {result['supersets_created']} superset(s) from {result['clusters_found']} clusters."
+        )
         return result
     except Exception as e:
         logger.exception("Investigation consolidation failed: %s", e)

@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from shared.database.connection import get_db_connection
 from shared.services.ollama_model_caller import get_ollama_model_caller
@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 _ALLOWED_DOMAIN_KEYS = frozenset({"politics", "finance", "science-tech"})
 
 
-def _schema_name(domain_key: str) -> Optional[str]:
+def _schema_name(domain_key: str) -> str | None:
     if domain_key not in _ALLOWED_DOMAIN_KEYS:
         return None
     return domain_key.replace("-", "_")
@@ -41,11 +41,11 @@ class StorylineFinisherBundle:
     storyline_title: str
     storyline_status: str = ""
     existing_narrative: str = ""
-    article_summaries: List[Dict[str, Any]] = field(default_factory=list)
+    article_summaries: list[dict[str, Any]] = field(default_factory=list)
     # e.g. [{"title": "...", "published_at": "...", "summary": "..."}]
-    entity_highlights: List[str] = field(default_factory=list)
-    context_labels: List[str] = field(default_factory=list)
-    timeline_bullets: List[str] = field(default_factory=list)
+    entity_highlights: list[str] = field(default_factory=list)
+    context_labels: list[str] = field(default_factory=list)
+    timeline_bullets: list[str] = field(default_factory=list)
 
 
 def _strip_json_code_fence(blob: str) -> str:
@@ -59,7 +59,7 @@ def _strip_json_code_fence(blob: str) -> str:
     return s.strip()
 
 
-def parse_finisher_response(raw_text: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+def parse_finisher_response(raw_text: str) -> tuple[dict[str, Any] | None, str | None]:
     """
     Extract JSON after the line ---JSON--- (see build_finisher_prompt).
 
@@ -89,7 +89,7 @@ def load_finisher_bundle_from_db(
     max_articles: int = 50,
     max_entities: int = 60,
     max_timeline: int = 80,
-) -> Optional[StorylineFinisherBundle]:
+) -> StorylineFinisherBundle | None:
     """
     Load storyline row, linked articles (summaries), top entities, and optional chrono bullets.
 
@@ -131,7 +131,7 @@ def load_finisher_bundle_from_db(
             parts = [description, analysis_summary, editorial_document]
             existing_narrative = "\n\n".join(p.strip() for p in parts if p and str(p).strip())
 
-            context_labels: List[str] = []
+            context_labels: list[str] = []
             if background_information:
                 try:
                     bg = (
@@ -181,8 +181,8 @@ def load_finisher_bundle_from_db(
             article_rows = list(cur.fetchall())
             article_rows.reverse()
 
-            article_summaries: List[Dict[str, Any]] = []
-            article_ids: List[int] = []
+            article_summaries: list[dict[str, Any]] = []
+            article_ids: list[int] = []
             for r in article_rows:
                 aid, atitle, url, source_domain, published_at, summary = r
                 article_ids.append(int(aid))
@@ -197,7 +197,7 @@ def load_finisher_bundle_from_db(
                     }
                 )
 
-            entity_highlights: List[str] = []
+            entity_highlights: list[str] = []
             if article_ids:
                 cur.execute(
                     f"""
@@ -217,7 +217,7 @@ def load_finisher_bundle_from_db(
                         continue
                     entity_highlights.append(f"{label} ({etype or 'subject'}), mentions={cnt}")
 
-            timeline_bullets: List[str] = []
+            timeline_bullets: list[str] = []
             try:
                 cur.execute(
                     """
@@ -317,12 +317,100 @@ Tasks:
 """
 
 
+def build_headline_refiner_prompt(
+    domain_key: str,
+    draft_title: str,
+    draft_description: str,
+    article_lines: list[str],
+) -> str:
+    """
+    Short ~70B editorial pass: one headline + optional description from draft + evidence lines.
+    """
+    lines = "\n".join(f"- {t[:600]}" for t in article_lines[:18] if t and str(t).strip())
+    return f"""You are a senior news desk editor. Given a draft storyline label and source material, produce ONE polished headline (max ~12 words) and a one-sentence description if helpful.
+
+Domain: {domain_key}
+Draft title (may be awkward): {draft_title}
+Draft description: {draft_description or "(none)"}
+
+Evidence (headlines / summaries):
+{lines or "(none)"}
+
+Rules: Use clear subject–verb–object news style; no clickbait; preserve factual scope implied by the sources.
+
+Reply with ONLY valid JSON after a line containing exactly ---JSON---
+{{
+  "title": "Polished headline here",
+  "description": "One sentence or empty string"
+}}
+"""
+
+
+def parse_headline_refiner_response(raw_text: str) -> tuple[dict[str, Any] | None, str | None]:
+    """Parse ---JSON--- block from headline refiner output."""
+    if not raw_text or not raw_text.strip():
+        return None, "empty_response"
+    marker = "---JSON---"
+    if marker not in raw_text:
+        return None, "no_json_marker"
+    _, rest = raw_text.rsplit(marker, 1)
+    rest = _strip_json_code_fence(rest)
+    try:
+        data = json.loads(rest)
+    except json.JSONDecodeError as e:
+        logger.warning("headline refiner JSON parse failed: %s", e)
+        return None, f"json_decode_error:{e}"
+    if not isinstance(data, dict):
+        return None, "json_not_object"
+    return data, None
+
+
+async def refine_storyline_headline_with_70b(
+    domain_key: str,
+    draft_title: str,
+    draft_description: str,
+    article_lines: list[str],
+) -> dict[str, Any]:
+    """
+    Editorial headline pass using the narrative finisher model (~70B per policy).
+
+    Returns dict with keys: success, title, description, model, parse_error, raw_text.
+    """
+    prompt = build_headline_refiner_prompt(
+        domain_key, draft_title, draft_description, article_lines
+    )
+    caller = get_ollama_model_caller()
+    result = await caller.generate(
+        prompt,
+        kind=InvocationKind.STORYLINE_NARRATIVE_FINISH,
+        urgency="standard",
+        approx_prompt_chars=len(prompt),
+    )
+    out: dict[str, Any] = {
+        "success": bool(result.text and result.text.strip()),
+        "title": "",
+        "description": "",
+        "model": result.model,
+        "raw_text": result.text,
+        "parse_error": None,
+    }
+    if not result.text:
+        return out
+    parsed, err = parse_headline_refiner_response(result.text)
+    out["parse_error"] = err
+    if isinstance(parsed, dict):
+        out["title"] = (parsed.get("title") or "").strip()
+        out["description"] = (parsed.get("description") or "").strip()
+        out["success"] = bool(out["title"])
+    return out
+
+
 async def run_narrative_finish(
     bundle: StorylineFinisherBundle,
     *,
-    approx_prompt_chars: Optional[int] = None,
+    approx_prompt_chars: int | None = None,
     parse_json: bool = True,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Run the finisher model. Returns raw result dict; caller persists when ready.
 
@@ -343,7 +431,7 @@ async def run_narrative_finish(
         result.model,
         len(prompt),
     )
-    out: Dict[str, Any] = {
+    out: dict[str, Any] = {
         "success": True,
         "storyline_id": bundle.storyline_id,
         "domain_key": bundle.domain_key,
@@ -363,13 +451,11 @@ async def run_narrative_finish_from_db(
     *,
     max_articles: int = 50,
     parse_json: bool = True,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Load bundle from DB, run finisher. On missing storyline returns success=False.
     """
-    bundle = load_finisher_bundle_from_db(
-        domain_key, storyline_id, max_articles=max_articles
-    )
+    bundle = load_finisher_bundle_from_db(domain_key, storyline_id, max_articles=max_articles)
     if not bundle:
         return {
             "success": False,
@@ -380,7 +466,9 @@ async def run_narrative_finish_from_db(
     return await run_narrative_finish(bundle, parse_json=parse_json)
 
 
-def persist_narrative_finish_to_db(domain_key: str, storyline_id: int, run_result: Dict[str, Any]) -> bool:
+def persist_narrative_finish_to_db(
+    domain_key: str, storyline_id: int, run_result: dict[str, Any]
+) -> bool:
     """
     Persist ~70B finisher output to `{schema}.storylines` (migration 181 columns).
     Empty canonical_narrative in parsed output leaves prior canonical text unchanged.
@@ -392,7 +480,7 @@ def persist_narrative_finish_to_db(domain_key: str, storyline_id: int, run_resul
     if not isinstance(parsed, dict):
         parsed = {}
     canonical = (parsed.get("canonical_narrative") or "").strip()
-    meta: Dict[str, Any] = {
+    meta: dict[str, Any] = {
         "suggested_new_entities": parsed.get("suggested_new_entities"),
         "suggested_new_context_hooks": parsed.get("suggested_new_context_hooks"),
         "sections_to_deprecate_or_trim": parsed.get("sections_to_deprecate_or_trim"),
@@ -436,7 +524,7 @@ async def run_narrative_finish_placeholder_from_db(
     storyline_id: int,
     schema_name: str,
     domain_key: str,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Backward-compatible entry: `schema_name` is ignored; loading uses `domain_key` only.
     Prefer `run_narrative_finish_from_db(domain_key, storyline_id)`.

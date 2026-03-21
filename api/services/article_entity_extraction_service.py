@@ -8,30 +8,47 @@ Stores: people, orgs, subjects, recurring events (article_entities)
 
 import json
 import logging
-import re
-from datetime import datetime
-from typing import Dict, List, Any, Optional, Union
+from typing import Any
 
-from config.settings import OLLAMA_HOST
 from shared.database.connection import get_db_connection
 from shared.services.llm_service import LLMService
-from shared.services.ollama_model_caller import OllamaModelCaller
 from shared.services.ollama_model_policy import InvocationKind
-from services.entity_resolution_service import resolve_to_canonical, _add_alias
-from services.wikipedia_knowledge_service import lookup_entity
+
 from services.entity_relational_expansion_service import expand_relational_entity_async
+from services.entity_resolution_service import _add_alias, resolve_to_canonical
+from services.wikipedia_knowledge_service import lookup_entity
 
 logger = logging.getLogger(__name__)
 
 # ISO country names to codes (common subset for normalization)
 COUNTRY_ALIASES = {
-    "united states": "US", "usa": "US", "u.s.": "US", "america": "US",
-    "united kingdom": "GB", "uk": "GB", "britain": "GB", "england": "GB",
-    "china": "CN", "russia": "RU", "russian federation": "RU",
-    "germany": "DE", "france": "FR", "japan": "JP", "canada": "CA",
-    "india": "IN", "australia": "AU", "brazil": "BR", "mexico": "MX",
-    "south korea": "KR", "north korea": "KP", "ukraine": "UA", "israel": "IL",
-    "iran": "IR", "saudi arabia": "SA", "uae": "AE", "united arab emirates": "AE",
+    "united states": "US",
+    "usa": "US",
+    "u.s.": "US",
+    "america": "US",
+    "united kingdom": "GB",
+    "uk": "GB",
+    "britain": "GB",
+    "england": "GB",
+    "china": "CN",
+    "russia": "RU",
+    "russian federation": "RU",
+    "germany": "DE",
+    "france": "FR",
+    "japan": "JP",
+    "canada": "CA",
+    "india": "IN",
+    "australia": "AU",
+    "brazil": "BR",
+    "mexico": "MX",
+    "south korea": "KR",
+    "north korea": "KP",
+    "ukraine": "UA",
+    "israel": "IL",
+    "iran": "IR",
+    "saudi arabia": "SA",
+    "uae": "AE",
+    "united arab emirates": "AE",
 }
 
 
@@ -48,9 +65,9 @@ class ArticleEntityExtractionService:
         self,
         article_id: int,
         title: str,
-        content: Optional[str],
+        content: str | None,
         schema: str = "politics",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Extract entities from headline + content and store in domain tables.
         Returns counts of stored entities.
@@ -127,11 +144,17 @@ Rules:
         )
         return r.text
 
-    def _parse_response(self, raw: str, headline: str) -> Dict[str, List[Dict]]:
+    def _parse_response(self, raw: str, headline: str) -> dict[str, list[dict]]:
         """Parse LLM JSON response with fallbacks."""
         defaults = {
-            "people": [], "organizations": [], "subjects": [], "recurring_events": [],
-            "dates": [], "times": [], "countries": [], "keywords": []
+            "people": [],
+            "organizations": [],
+            "subjects": [],
+            "recurring_events": [],
+            "dates": [],
+            "times": [],
+            "countries": [],
+            "keywords": [],
         }
         try:
             start = raw.find("{")
@@ -150,10 +173,10 @@ Rules:
         conn,
         article_id: int,
         schema: str,
-        parsed: Dict[str, List[Dict]],
+        parsed: dict[str, list[dict]],
         headline: str,
         content: str,
-    ) -> Dict[str, int]:
+    ) -> dict[str, int]:
         counts = {"entities": 0, "dates": 0, "times": 0, "countries": 0, "keywords": 0}
 
         with conn.cursor() as cur:
@@ -204,13 +227,16 @@ Rules:
                             logger.debug("Relational expansion skip for %s: %s", name, e)
                     mention = "headline" if _item_in_headline(item) else "body"
                     conf = _item_conf(item)
-                    canonical_id = resolve_to_canonical(schema, name_to_use, entity_type, create_if_missing=True)
+                    canonical_id = resolve_to_canonical(
+                        schema, name_to_use, entity_type, create_if_missing=True
+                    )
                     if canonical_id:
                         canonical_ids_used.add(canonical_id)
                         if original_phrase and original_phrase != name_to_use:
                             _add_alias(cur, schema, canonical_id, original_phrase)
                     try:
-                        cur.execute(f"""
+                        cur.execute(
+                            f"""
                             INSERT INTO {schema}.article_entities
                             (article_id, entity_name, entity_type, mention_source, confidence, source_text_snippet, canonical_entity_id)
                             VALUES (%s, %s, %s, %s, %s, %s, %s)
@@ -218,7 +244,17 @@ Rules:
                                 confidence = EXCLUDED.confidence,
                                 mention_source = EXCLUDED.mention_source,
                                 canonical_entity_id = COALESCE(EXCLUDED.canonical_entity_id, article_entities.canonical_entity_id)
-                        """, (article_id, name[:255], entity_type, mention, conf, name[:200], canonical_id))
+                        """,
+                            (
+                                article_id,
+                                name[:255],
+                                entity_type,
+                                mention,
+                                conf,
+                                name[:200],
+                                canonical_id,
+                            ),
+                        )
                         counts["entities"] += 1
                     except Exception as e:
                         logger.debug(f"article_entities insert skip: {e}")
@@ -232,7 +268,7 @@ Rules:
                     """,
                     (list(canonical_ids_used),),
                 )
-                for (eid, canonical_name) in cur.fetchall():
+                for eid, canonical_name in cur.fetchall():
                     if not canonical_name or len(canonical_name) < 2:
                         continue
                     try:
@@ -251,7 +287,7 @@ Rules:
                     except Exception as e:
                         logger.debug("Wikipedia description backfill for entity %s: %s", eid, e)
 
-            def _dict_val(item: Any, key: str, default: str = "") -> Optional[str]:
+            def _dict_val(item: Any, key: str, default: str = "") -> str | None:
                 if isinstance(item, dict):
                     v = item.get(key) or default
                     return str(v).strip() if v else None
@@ -259,52 +295,68 @@ Rules:
 
             # 2. article_extracted_dates
             for item in parsed.get("dates", [])[:15]:
-                raw_expr = (_dict_val(item, "raw") or (str(item).strip() if isinstance(item, str) else "")) or ""
+                raw_expr = (
+                    _dict_val(item, "raw") or (str(item).strip() if isinstance(item, str) else "")
+                ) or ""
                 if not raw_expr:
                     continue
                 norm = _dict_val(item, "normalized_iso") or None
                 expr_type = (_dict_val(item, "type") or "unknown")[:30]
                 conf = _item_conf(item, 0.7)
                 try:
-                    cur.execute(f"""
+                    cur.execute(
+                        f"""
                         INSERT INTO {schema}.article_extracted_dates
                         (article_id, raw_expression, normalized_date, expression_type, confidence)
                         VALUES (%s, %s, %s::date, %s, %s)
-                    """, (article_id, raw_expr[:500], norm if norm else None, expr_type, conf))
+                    """,
+                        (article_id, raw_expr[:500], norm if norm else None, expr_type, conf),
+                    )
                     counts["dates"] += 1
                 except Exception:
                     try:
-                        cur.execute(f"""
+                        cur.execute(
+                            f"""
                             INSERT INTO {schema}.article_extracted_dates
                             (article_id, raw_expression, expression_type, confidence)
                             VALUES (%s, %s, %s, %s)
-                        """, (article_id, raw_expr[:500], expr_type, conf))
+                        """,
+                            (article_id, raw_expr[:500], expr_type, conf),
+                        )
                         counts["dates"] += 1
                     except Exception as e:
                         logger.debug(f"article_extracted_dates insert skip: {e}")
 
             # 3. article_extracted_times
             for item in parsed.get("times", [])[:10]:
-                raw_expr = (_dict_val(item, "raw") or (str(item).strip() if isinstance(item, str) else "")) or ""
+                raw_expr = (
+                    _dict_val(item, "raw") or (str(item).strip() if isinstance(item, str) else "")
+                ) or ""
                 if not raw_expr:
                     continue
                 norm = _dict_val(item, "normalized") or None
                 tz = (_dict_val(item, "timezone") or "")[:50] or None
                 conf = _item_conf(item, 0.7)
                 try:
-                    cur.execute(f"""
+                    cur.execute(
+                        f"""
                         INSERT INTO {schema}.article_extracted_times
                         (article_id, raw_expression, normalized_time, timezone, confidence)
                         VALUES (%s, %s, %s::time, %s, %s)
-                    """, (article_id, raw_expr[:500], norm if norm else None, tz or None, conf))
+                    """,
+                        (article_id, raw_expr[:500], norm if norm else None, tz or None, conf),
+                    )
                     counts["times"] += 1
                 except Exception:
                     try:
-                        cur.execute(f"""
+                        cur.execute(
+                            f"""
                             INSERT INTO {schema}.article_extracted_times
                             (article_id, raw_expression, timezone, confidence)
                             VALUES (%s, %s, %s, %s)
-                        """, (article_id, raw_expr[:500], tz or None, conf))
+                        """,
+                            (article_id, raw_expr[:500], tz or None, conf),
+                        )
                         counts["times"] += 1
                     except Exception as e:
                         logger.debug(f"article_extracted_times insert skip: {e}")
@@ -314,25 +366,34 @@ Rules:
                 name = _item_name(item) or (str(item).strip() if isinstance(item, str) else "")
                 if not name:
                     continue
-                iso = (_dict_val(item, "iso_code") if isinstance(item, dict) else None) or COUNTRY_ALIASES.get(name.lower())
+                iso = (
+                    _dict_val(item, "iso_code") if isinstance(item, dict) else None
+                ) or COUNTRY_ALIASES.get(name.lower())
                 mention = "headline" if _item_in_headline(item) else "body"
                 conf = _item_conf(item, 0.8)
                 try:
-                    cur.execute(f"""
+                    cur.execute(
+                        f"""
                         INSERT INTO {schema}.article_extracted_countries
                         (article_id, country_name, iso_code, mention_context, confidence)
                         VALUES (%s, %s, %s, %s, %s)
                         ON CONFLICT (article_id, country_name) DO UPDATE SET
                             iso_code = COALESCE(EXCLUDED.iso_code, article_extracted_countries.iso_code),
                             confidence = EXCLUDED.confidence
-                    """, (article_id, name[:255], iso[:2] if iso else None, mention, conf))
+                    """,
+                        (article_id, name[:255], iso[:2] if iso else None, mention, conf),
+                    )
                     counts["countries"] += 1
                 except Exception as e:
                     logger.debug(f"article_extracted_countries insert skip: {e}")
 
             # 5. article_keywords (thematic only)
             for item in parsed.get("keywords", [])[:20]:
-                kw = (_dict_val(item, "keyword") or _item_name(item) or (str(item).strip() if isinstance(item, str) else "")).strip()
+                kw = (
+                    _dict_val(item, "keyword")
+                    or _item_name(item)
+                    or (str(item).strip() if isinstance(item, str) else "")
+                ).strip()
                 if not kw or len(kw) < 2:
                     continue
                 kw_type = _dict_val(item, "type") or "general"
@@ -341,13 +402,16 @@ Rules:
                 source = "headline" if _item_in_headline(item) else "body"
                 conf = _item_conf(item, 0.7)
                 try:
-                    cur.execute(f"""
+                    cur.execute(
+                        f"""
                         INSERT INTO {schema}.article_keywords
                         (article_id, keyword, keyword_type, source, confidence)
                         VALUES (%s, %s, %s, %s, %s)
                         ON CONFLICT (article_id, keyword) DO UPDATE SET
                             confidence = EXCLUDED.confidence
-                    """, (article_id, kw[:255], kw_type, source, conf))
+                    """,
+                        (article_id, kw[:255], kw_type, source, conf),
+                    )
                     counts["keywords"] += 1
                 except Exception as e:
                     logger.debug(f"article_keywords insert skip: {e}")
@@ -359,9 +423,12 @@ Rules:
         try:
             with conn.cursor() as cur:
                 cur.execute(f"SET search_path TO {schema}, public")
-                cur.execute(f"""
+                cur.execute(
+                    f"""
                     SELECT 1 FROM {schema}.article_entities WHERE article_id = %s LIMIT 1
-                """, (article_id,))
+                """,
+                    (article_id,),
+                )
                 return cur.fetchone() is not None
         except Exception as e:
             # Table may not exist (migration 138 not run) - skip extraction
@@ -371,7 +438,7 @@ Rules:
 
 
 # Singleton
-_article_entity_extraction_service: Optional[ArticleEntityExtractionService] = None
+_article_entity_extraction_service: ArticleEntityExtractionService | None = None
 
 
 def get_article_entity_extraction_service() -> ArticleEntityExtractionService:

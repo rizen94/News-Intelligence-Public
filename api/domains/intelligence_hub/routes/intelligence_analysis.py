@@ -8,21 +8,16 @@ Provides endpoints for:
 7. Impact Assessment - Consequence analysis
 """
 
-from fastapi import APIRouter, HTTPException, Path, Query, BackgroundTasks
-from typing import Dict, Any, List, Optional
-from shared.domain_registry import DOMAIN_PATH_PATTERN
-from datetime import datetime
 import logging
-from dataclasses import asdict
+from datetime import datetime
+from typing import Any
 
+from fastapi import APIRouter, HTTPException, Path, Query
 from services.intelligence_analysis_service import (
-    get_intelligence_service,
     IntelligenceAnalysisService,
-    RAGContext,
-    QualityAssessment,
-    AnomalyReport,
-    ImpactAssessment,
+    get_intelligence_service,
 )
+from shared.domain_registry import DOMAIN_PATH_PATTERN
 
 logger = logging.getLogger(__name__)
 
@@ -40,11 +35,12 @@ def service() -> IntelligenceAnalysisService:
 # RAG-ENHANCED ANALYSIS ENDPOINTS
 # =============================================================================
 
-@router.get("/{domain}/intelligence/rag/{storyline_id}", response_model=Dict[str, Any])
+
+@router.get("/{domain}/intelligence/rag/{storyline_id}", response_model=dict[str, Any])
 async def get_rag_context(
     domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     storyline_id: int = Path(..., ge=1),
-    query: Optional[str] = Query(None, description="Custom query for context retrieval"),
+    query: str | None = Query(None, description="Custom query for context retrieval"),
     max_articles: int = Query(20, ge=5, le=50),
 ):
     """
@@ -54,10 +50,7 @@ async def get_rag_context(
     try:
         svc = service()
         context = svc.retrieve_context_for_storyline(
-            domain=domain,
-            storyline_id=storyline_id,
-            query=query,
-            max_articles=max_articles
+            domain=domain, storyline_id=storyline_id, query=query, max_articles=max_articles
         )
 
         return {
@@ -72,10 +65,18 @@ async def get_rag_context(
                 "related_entities": context.related_entities,
                 "source_diversity": round(context.source_diversity, 3),
                 "temporal_span": {
-                    "start": context.temporal_span[0].isoformat() if context.temporal_span[0] else None,
-                    "end": context.temporal_span[1].isoformat() if context.temporal_span[1] else None,
+                    "start": context.temporal_span[0].isoformat()
+                    if context.temporal_span[0]
+                    else None,
+                    "end": context.temporal_span[1].isoformat()
+                    if context.temporal_span[1]
+                    else None,
                 },
-                "avg_relevance": round(sum(context.relevance_scores) / len(context.relevance_scores), 3) if context.relevance_scores else 0,
+                "avg_relevance": round(
+                    sum(context.relevance_scores) / len(context.relevance_scores), 3
+                )
+                if context.relevance_scores
+                else 0,
             },
             "retrieval_time_ms": round(context.retrieval_time_ms, 2),
         }
@@ -86,7 +87,7 @@ async def get_rag_context(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/{domain}/intelligence/rag/query", response_model=Dict[str, Any])
+@router.post("/{domain}/intelligence/rag/query", response_model=dict[str, Any])
 async def query_rag_context(
     domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     query: str = Query(..., min_length=3, description="Query for context retrieval"),
@@ -103,7 +104,7 @@ async def query_rag_context(
             domain=domain,
             storyline_id=0,  # Will need special handling
             query=query,
-            max_articles=max_articles
+            max_articles=max_articles,
         )
 
         return {
@@ -126,7 +127,8 @@ async def query_rag_context(
 # QUALITY ASSESSMENT ENDPOINTS
 # =============================================================================
 
-@router.get("/{domain}/intelligence/quality/{storyline_id}", response_model=Dict[str, Any])
+
+@router.get("/{domain}/intelligence/quality/{storyline_id}", response_model=dict[str, Any])
 async def assess_storyline_quality(
     domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     storyline_id: int = Path(..., ge=1),
@@ -165,7 +167,7 @@ async def assess_storyline_quality(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/{domain}/intelligence/quality/batch", response_model=Dict[str, Any])
+@router.get("/{domain}/intelligence/quality/batch", response_model=dict[str, Any])
 async def batch_quality_assessment(
     domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     limit: int = Query(10, ge=1, le=50),
@@ -177,18 +179,21 @@ async def batch_quality_assessment(
     """
     try:
         svc = service()
-        schema = domain.replace('-', '_')
+        schema = domain.replace("-", "_")
 
         # Get storylines to assess
         conn = svc.get_db_connection()
         try:
             with conn.cursor() as cur:
-                cur.execute(f"""
+                cur.execute(
+                    f"""
                     SELECT id FROM {schema}.storylines
                     WHERE status = 'active' AND article_count >= %s
                     ORDER BY updated_at DESC
                     LIMIT %s
-                """, (min_articles, limit))
+                """,
+                    (min_articles, limit),
+                )
                 storyline_ids = [r[0] for r in cur.fetchall()]
         finally:
             conn.close()
@@ -197,14 +202,16 @@ async def batch_quality_assessment(
         for sid in storyline_ids:
             try:
                 assessment = svc.assess_storyline_quality(domain, sid)
-                assessments.append({
-                    "storyline_id": sid,
-                    "overall_score": assessment.overall_score,
-                    "grade": _score_to_grade(assessment.overall_score),
-                    "issues_count": len(assessment.issues),
-                    "issues": [str(i) for i in assessment.issues[:5]],
-                    "recommendations": [str(r) for r in (assessment.recommendations or [])[:3]],
-                })
+                assessments.append(
+                    {
+                        "storyline_id": sid,
+                        "overall_score": assessment.overall_score,
+                        "grade": _score_to_grade(assessment.overall_score),
+                        "issues_count": len(assessment.issues),
+                        "issues": [str(i) for i in assessment.issues[:5]],
+                        "recommendations": [str(r) for r in (assessment.recommendations or [])[:3]],
+                    }
+                )
             except Exception as e:
                 logger.warning(f"Failed to assess storyline {sid}: {e}")
 
@@ -214,8 +221,12 @@ async def batch_quality_assessment(
             "assessments": assessments,
             "summary": {
                 "total_assessed": len(assessments),
-                "avg_score": round(sum(a['overall_score'] for a in assessments) / len(assessments), 3) if assessments else 0,
-                "needs_attention": len([a for a in assessments if a['overall_score'] < 0.5]),
+                "avg_score": round(
+                    sum(a["overall_score"] for a in assessments) / len(assessments), 3
+                )
+                if assessments
+                else 0,
+                "needs_attention": len([a for a in assessments if a["overall_score"] < 0.5]),
             },
         }
     except Exception as e:
@@ -241,7 +252,8 @@ def _score_to_grade(score: float) -> str:
 # ANOMALY DETECTION ENDPOINTS
 # =============================================================================
 
-@router.get("/{domain}/intelligence/anomalies", response_model=Dict[str, Any])
+
+@router.get("/{domain}/intelligence/anomalies", response_model=dict[str, Any])
 async def detect_anomalies(
     domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     hours: int = Query(24, ge=1, le=168, description="Time window to analyze"),
@@ -260,23 +272,25 @@ async def detect_anomalies(
         for a in anomalies:
             if a.anomaly_type not in by_type:
                 by_type[a.anomaly_type] = []
-            by_type[a.anomaly_type].append({
-                "entity_type": a.entity_type,
-                "entity_id": a.entity_id,
-                "severity": a.severity,
-                "description": a.description,
-                "detected_value": a.detected_value,
-                "expected_range": list(a.expected_range),
-                "evidence": a.supporting_evidence,
-                "detected_at": a.detected_at.isoformat(),
-            })
+            by_type[a.anomaly_type].append(
+                {
+                    "entity_type": a.entity_type,
+                    "entity_id": a.entity_id,
+                    "severity": a.severity,
+                    "description": a.description,
+                    "detected_value": a.detected_value,
+                    "expected_range": list(a.expected_range),
+                    "evidence": a.supporting_evidence,
+                    "detected_at": a.detected_at.isoformat(),
+                }
+            )
 
         # Count by severity
         severity_counts = {
-            "critical": len([a for a in anomalies if a.severity == 'critical']),
-            "high": len([a for a in anomalies if a.severity == 'high']),
-            "medium": len([a for a in anomalies if a.severity == 'medium']),
-            "low": len([a for a in anomalies if a.severity == 'low']),
+            "critical": len([a for a in anomalies if a.severity == "critical"]),
+            "high": len([a for a in anomalies if a.severity == "high"]),
+            "medium": len([a for a in anomalies if a.severity == "medium"]),
+            "low": len([a for a in anomalies if a.severity == "low"]),
         }
 
         return {
@@ -287,14 +301,14 @@ async def detect_anomalies(
             "total_anomalies": len(anomalies),
             "severity_breakdown": severity_counts,
             "anomalies_by_type": by_type,
-            "requires_attention": severity_counts['critical'] + severity_counts['high'] > 0,
+            "requires_attention": severity_counts["critical"] + severity_counts["high"] > 0,
         }
     except Exception as e:
         logger.error(f"Anomaly detection failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/{domain}/intelligence/anomalies/watch", response_model=Dict[str, Any])
+@router.get("/{domain}/intelligence/anomalies/watch", response_model=dict[str, Any])
 async def get_anomaly_watchlist(
     domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
 ):
@@ -307,19 +321,26 @@ async def get_anomaly_watchlist(
         # Run quick anomaly check
         anomalies = svc.detect_anomalies(domain, hours=6, sensitivity=2.5)
 
-        critical = [a for a in anomalies if a.severity in ['critical', 'high']]
+        critical = [a for a in anomalies if a.severity in ["critical", "high"]]
 
         return {
             "success": True,
             "domain": domain,
-            "alert_status": "critical" if any(a.severity == 'critical' for a in critical) else "warning" if critical else "normal",
+            "alert_status": "critical"
+            if any(a.severity == "critical" for a in critical)
+            else "warning"
+            if critical
+            else "normal",
             "active_alerts": len(critical),
-            "watchlist": [{
-                "type": a.entity_type,
-                "id": a.entity_id,
-                "severity": a.severity,
-                "description": a.description,
-            } for a in critical[:10]],
+            "watchlist": [
+                {
+                    "type": a.entity_type,
+                    "id": a.entity_id,
+                    "severity": a.severity,
+                    "description": a.description,
+                }
+                for a in critical[:10]
+            ],
         }
     except Exception as e:
         logger.error(f"Anomaly watchlist failed: {e}", exc_info=True)
@@ -330,7 +351,8 @@ async def get_anomaly_watchlist(
 # IMPACT ASSESSMENT ENDPOINTS
 # =============================================================================
 
-@router.get("/{domain}/intelligence/impact/{storyline_id}", response_model=Dict[str, Any])
+
+@router.get("/{domain}/intelligence/impact/{storyline_id}", response_model=dict[str, Any])
 async def assess_storyline_impact(
     domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     storyline_id: int = Path(..., ge=1),
@@ -370,7 +392,7 @@ async def assess_storyline_impact(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/{domain}/intelligence/impact/trending", response_model=Dict[str, Any])
+@router.get("/{domain}/intelligence/impact/trending", response_model=dict[str, Any])
 async def get_high_impact_storylines(
     domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     limit: int = Query(10, ge=1, le=50),
@@ -382,7 +404,7 @@ async def get_high_impact_storylines(
     """
     try:
         svc = service()
-        schema = domain.replace('-', '_')
+        schema = domain.replace("-", "_")
 
         # Get active storylines
         conn = svc.get_db_connection()
@@ -410,23 +432,25 @@ async def get_high_impact_storylines(
             try:
                 impact = svc.assess_storyline_impact(domain, sid)
                 if impact.overall_impact_score >= min_impact:
-                    impacts.append({
-                        "storyline_id": sid,
-                        "title": title,
-                        "article_count": count,
-                        "editorial_lede": editorial_lede,
-                        "document_status": doc_status,
-                        "impact_score": impact.overall_impact_score,
-                        "impact_level": _score_to_level(impact.overall_impact_score),
-                        "velocity": impact.velocity_score,
-                        "longevity": impact.longevity_prediction,
-                        "affected_domains": impact.affected_domains,
-                    })
+                    impacts.append(
+                        {
+                            "storyline_id": sid,
+                            "title": title,
+                            "article_count": count,
+                            "editorial_lede": editorial_lede,
+                            "document_status": doc_status,
+                            "impact_score": impact.overall_impact_score,
+                            "impact_level": _score_to_level(impact.overall_impact_score),
+                            "velocity": impact.velocity_score,
+                            "longevity": impact.longevity_prediction,
+                            "affected_domains": impact.affected_domains,
+                        }
+                    )
             except Exception as e:
                 logger.warning(f"Failed to assess impact for {sid}: {e}")
 
         # Sort by impact score
-        impacts.sort(key=lambda x: x['impact_score'], reverse=True)
+        impacts.sort(key=lambda x: x["impact_score"], reverse=True)
         impacts = impacts[:limit]
 
         return {
@@ -435,8 +459,10 @@ async def get_high_impact_storylines(
             "high_impact_storylines": impacts,
             "summary": {
                 "total_found": len(impacts),
-                "avg_impact": round(sum(i['impact_score'] for i in impacts) / len(impacts), 3) if impacts else 0,
-                "critical_count": len([i for i in impacts if i['impact_level'] == 'critical']),
+                "avg_impact": round(sum(i["impact_score"] for i in impacts) / len(impacts), 3)
+                if impacts
+                else 0,
+                "critical_count": len([i for i in impacts if i["impact_level"] == "critical"]),
             },
         }
     except Exception as e:
@@ -460,7 +486,8 @@ def _score_to_level(score: float) -> str:
 # COMBINED INTELLIGENCE DASHBOARD
 # =============================================================================
 
-@router.get("/{domain}/intelligence/dashboard", response_model=Dict[str, Any])
+
+@router.get("/{domain}/intelligence/dashboard", response_model=dict[str, Any])
 async def get_intelligence_dashboard(
     domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
 ):
@@ -470,7 +497,7 @@ async def get_intelligence_dashboard(
     """
     try:
         svc = service()
-        schema = domain.replace('-', '_')
+        schema = domain.replace("-", "_")
 
         # Get basic counts + editorial ledes from top storylines
         conn = svc.get_db_connection()
@@ -498,19 +525,21 @@ async def get_intelligence_dashboard(
                 """)
                 editorial_storylines = []
                 for row in cur.fetchall():
-                    editorial_storylines.append({
-                        "storyline_id": row[0],
-                        "title": row[1],
-                        "lede": row[2],
-                        "document_status": row[3],
-                        "article_count": row[4] or 0,
-                    })
+                    editorial_storylines.append(
+                        {
+                            "storyline_id": row[0],
+                            "title": row[1],
+                            "lede": row[2],
+                            "document_status": row[3],
+                            "article_count": row[4] or 0,
+                        }
+                    )
         finally:
             conn.close()
 
         # Get anomalies (quick check)
         anomalies = svc.detect_anomalies(domain, hours=12, sensitivity=2.5)
-        critical_anomalies = [a for a in anomalies if a.severity in ['critical', 'high']]
+        critical_anomalies = [a for a in anomalies if a.severity in ["critical", "high"]]
 
         return {
             "success": True,
@@ -523,7 +552,11 @@ async def get_intelligence_dashboard(
             },
             "editorial_highlights": editorial_storylines,
             "health": {
-                "status": "critical" if len(critical_anomalies) > 2 else "warning" if critical_anomalies else "healthy",
+                "status": "critical"
+                if len(critical_anomalies) > 2
+                else "warning"
+                if critical_anomalies
+                else "healthy",
                 "anomaly_count": len(anomalies),
                 "critical_alerts": len(critical_anomalies),
             },
@@ -549,7 +582,8 @@ async def get_intelligence_dashboard(
 # ACTIONABLE KNOWLEDGE ASSEMBLY ENDPOINTS
 # =============================================================================
 
-@router.get("/{domain}/intelligence/consistency", response_model=Dict[str, Any])
+
+@router.get("/{domain}/intelligence/consistency", response_model=dict[str, Any])
 async def get_event_storyline_claim_consistency(
     domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     limit_events: int = Query(25, ge=5, le=100),
@@ -574,7 +608,7 @@ async def get_event_storyline_claim_consistency(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/{domain}/intelligence/participant_deltas", response_model=Dict[str, Any])
+@router.get("/{domain}/intelligence/participant_deltas", response_model=dict[str, Any])
 async def get_participant_position_deltas(
     domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     days: int = Query(30, ge=1, le=180),
@@ -592,7 +626,7 @@ async def get_participant_position_deltas(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/intelligence/causal_chains", response_model=Dict[str, Any])
+@router.get("/intelligence/causal_chains", response_model=dict[str, Any])
 async def get_cross_domain_causal_chains(
     days: int = Query(30, ge=1, le=180),
     min_strength: float = Query(0.5, ge=0.0, le=1.0),
@@ -610,7 +644,7 @@ async def get_cross_domain_causal_chains(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/{domain}/intelligence/narrative_divergence/{event_id}", response_model=Dict[str, Any])
+@router.get("/{domain}/intelligence/narrative_divergence/{event_id}", response_model=dict[str, Any])
 async def get_narrative_divergence_map(
     domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     event_id: int = Path(..., ge=1),
@@ -635,7 +669,7 @@ async def get_narrative_divergence_map(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/{domain}/intelligence/watchlist_theme_bridge", response_model=Dict[str, Any])
+@router.post("/{domain}/intelligence/watchlist_theme_bridge", response_model=dict[str, Any])
 async def post_watchlist_theme_trigger_bridge(
     domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     create_alerts: bool = Query(False, description="Persist watchlist_alerts for matched triggers"),
@@ -658,11 +692,13 @@ async def post_watchlist_theme_trigger_bridge(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/{domain}/intelligence/document_integration", response_model=Dict[str, Any])
+@router.post("/{domain}/intelligence/document_integration", response_model=dict[str, Any])
 async def post_document_intelligence_integration(
     domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     days: int = Query(30, ge=1, le=180),
-    persist_links: bool = Query(False, description="Persist links into intelligence.document_intelligence"),
+    persist_links: bool = Query(
+        False, description="Persist links into intelligence.document_intelligence"
+    ),
     limit: int = Query(30, ge=1, le=100),
 ):
     """
@@ -680,4 +716,3 @@ async def post_document_intelligence_integration(
     except Exception as e:
         logger.error(f"Document intelligence integration failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
-

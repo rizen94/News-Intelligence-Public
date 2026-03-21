@@ -2,7 +2,8 @@ module.exports = {
   extends: [
     'react-app',
     'react-app/jest',
-    'eslint:recommended'
+    'eslint:recommended',
+    'prettier',
   ],
   rules: {
     // Function declaration preferences
@@ -10,8 +11,8 @@ module.exports = {
     'prefer-const': 'error',
     'no-var': 'error',
     
-    // Console logging rules
-    'no-console': 'off',
+    // Console logging — prefer Logger (see web/FRONTEND_STYLE_GUIDE.md); warn only
+    'no-console': 'warn',
     'no-debugger': 'warn',
     
     // Variable and function rules
@@ -26,21 +27,9 @@ module.exports = {
     
     // Import rules
     'import/order': 'off',
-    
-    // Code style rules
-    'indent': ['error', 2],
-    'quotes': ['error', 'single'],
-    'semi': ['error', 'always'],
-    'comma-dangle': ['error', 'always-multiline'],
-    'object-curly-spacing': ['error', 'always'],
-    'array-bracket-spacing': ['error', 'never'],
-    'space-before-function-paren': ['error', 'never'],
-    'keyword-spacing': 'error',
-    'space-infix-ops': 'error',
-    'eol-last': 'error',
-    'no-trailing-spaces': 'error',
-    'no-multiple-empty-lines': ['error', { 'max': 1 }],
-    
+
+    // Formatting is enforced by Prettier (`npm run format`); avoid conflicting ESLint style rules here.
+
     // Best practices
     'eqeqeq': 'error',
     'no-eval': 'error',

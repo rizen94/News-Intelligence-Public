@@ -4,6 +4,7 @@ Content refinement queue — durable jobs for storyline LLM work (not ad-hoc on 
 Job types:
   - comprehensive_rag: same pipeline as legacy POST .../analyze (process_storyline_rag_analysis)
   - narrative_finisher: ~70B canonical narrative pass + persist
+  - headline_refiner: ~70B editorial headline + optional description (from article evidence)
   - timeline_narrative_chronological | timeline_narrative_briefing: 8B narrative from timeline, stored on storylines
 
 Processed by automation task `content_refinement_queue` (see automation_manager).
@@ -15,7 +16,7 @@ import json
 import logging
 import os
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from shared.database.connection import get_db_connection
 
@@ -25,6 +26,7 @@ ALLOWED_DOMAIN_KEYS = frozenset({"politics", "finance", "science-tech"})
 
 JOB_COMPREHENSIVE_RAG = "comprehensive_rag"
 JOB_NARRATIVE_FINISHER = "narrative_finisher"
+JOB_HEADLINE_REFINER = "headline_refiner"
 JOB_TIMELINE_CHRONO = "timeline_narrative_chronological"
 JOB_TIMELINE_BRIEFING = "timeline_narrative_briefing"
 
@@ -32,11 +34,14 @@ VALID_JOB_TYPES = frozenset(
     {
         JOB_COMPREHENSIVE_RAG,
         JOB_NARRATIVE_FINISHER,
+        JOB_HEADLINE_REFINER,
         JOB_TIMELINE_CHRONO,
         JOB_TIMELINE_BRIEFING,
     }
 )
 
+# ~70B narrative finisher + headline refiner share one GPU-friendly cap per batch
+_HEAVY_70B_JOB_TYPES = frozenset({JOB_NARRATIVE_FINISHER, JOB_HEADLINE_REFINER})
 _MAX_FINISHER_PER_CYCLE = int(os.environ.get("CONTENT_REFINEMENT_MAX_FINISHER_JOBS_PER_CYCLE", "1"))
 _MAX_JOBS_PER_CYCLE = int(os.environ.get("CONTENT_REFINEMENT_MAX_JOBS_PER_CYCLE", "4"))
 
@@ -47,8 +52,8 @@ def enqueue_content_refinement(
     job_type: str,
     *,
     priority: str = "medium",
-    metadata: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """
     Insert a pending job if none exists for (domain, storyline, job_type).
     Returns { success, queue_id?, already_queued?, error? }.
@@ -110,7 +115,7 @@ def enqueue_content_refinement(
         conn.close()
 
 
-def list_pending_job_types(domain_key: str, storyline_id: int) -> List[str]:
+def list_pending_job_types(domain_key: str, storyline_id: int) -> list[str]:
     conn = get_db_connection()
     if not conn:
         return []
@@ -132,7 +137,7 @@ def list_pending_job_types(domain_key: str, storyline_id: int) -> List[str]:
         conn.close()
 
 
-def _claim_pending_batch(conn, limit: int) -> List[Tuple[Any, ...]]:
+def _claim_pending_batch(conn, limit: int) -> list[tuple[Any, ...]]:
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -158,7 +163,7 @@ def _claim_pending_batch(conn, limit: int) -> List[Tuple[Any, ...]]:
         return list(cur.fetchall())
 
 
-def _complete_job(job_id: int, ok: bool, err: Optional[str] = None) -> None:
+def _complete_job(job_id: int, ok: bool, err: str | None = None) -> None:
     conn = get_db_connection()
     if not conn:
         return
@@ -202,8 +207,8 @@ async def _run_comprehensive_rag(domain_key: str, storyline_id: int) -> None:
 
 async def _run_narrative_finisher(domain_key: str, storyline_id: int) -> None:
     from services.storyline_narrative_finisher_service import (
-        run_narrative_finish_from_db,
         persist_narrative_finish_to_db,
+        run_narrative_finish_from_db,
     )
 
     result = await run_narrative_finish_from_db(domain_key, storyline_id, parse_json=True)
@@ -212,14 +217,98 @@ async def _run_narrative_finisher(domain_key: str, storyline_id: int) -> None:
     persist_narrative_finish_to_db(domain_key, storyline_id, result)
 
 
+async def _run_headline_refiner(domain_key: str, storyline_id: int) -> None:
+    """~70B headline/description pass using linked articles as evidence."""
+    from services.storyline_narrative_finisher_service import refine_storyline_headline_with_70b
+
+    schema = domain_key.replace("-", "_")
+    conn = get_db_connection()
+    if not conn:
+        raise RuntimeError("no_db_connection")
+    draft_title = ""
+    draft_desc = ""
+    evidence_lines: list[str] = []
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT title, COALESCE(description, '')
+                FROM {schema}.storylines
+                WHERE id = %s
+                """,
+                (storyline_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                raise RuntimeError("storyline_not_found")
+            draft_title = row[0] or ""
+            draft_desc = row[1] or ""
+            cur.execute(
+                f"""
+                SELECT a.title, COALESCE(a.summary, '') AS summary
+                FROM {schema}.articles a
+                JOIN {schema}.storyline_articles sa ON sa.article_id = a.id
+                WHERE sa.storyline_id = %s
+                  AND (a.enrichment_status IS NULL OR a.enrichment_status != 'removed')
+                ORDER BY a.published_at DESC NULLS LAST
+                LIMIT 20
+                """,
+                (storyline_id,),
+            )
+            for r in cur.fetchall() or []:
+                bt = (r[0] or "").strip()
+                sm = (r[1] or "").strip()
+                line = f"{bt[:400]} — {sm[:400]}".strip(" —")
+                if line:
+                    evidence_lines.append(line)
+    finally:
+        conn.close()
+
+    if not evidence_lines:
+        raise RuntimeError("no_articles_for_headline_evidence")
+
+    refined = await refine_storyline_headline_with_70b(
+        domain_key,
+        draft_title,
+        draft_desc[:2000],
+        evidence_lines,
+    )
+    if not refined.get("success") or not (refined.get("title") or "").strip():
+        raise RuntimeError(
+            refined.get("parse_error") or "headline_refine_failed_or_empty_title"
+        )
+
+    new_t = refined["title"][:500]
+    new_d = (refined.get("description") or "").strip()[:5000]
+
+    conn = get_db_connection()
+    if not conn:
+        raise RuntimeError("no_db_connection")
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                UPDATE {schema}.storylines
+                SET title = %s,
+                    description = COALESCE(NULLIF(%s, ''), description),
+                    updated_at = NOW()
+                WHERE id = %s
+                """,
+                (new_t, new_d, storyline_id),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 async def _run_timeline_narrative(domain_key: str, storyline_id: int, mode: str) -> None:
     schema = domain_key.replace("-", "_")
     conn = get_db_connection()
     if not conn:
         raise RuntimeError("no_db_connection")
     try:
-        from services.timeline_builder_service import TimelineBuilderService
         from services.narrative_synthesis_service import NarrativeSynthesisService
+        from services.timeline_builder_service import TimelineBuilderService
 
         tb = TimelineBuilderService(conn, schema_name=schema)
         timeline = tb.build_timeline(storyline_id)
@@ -260,10 +349,10 @@ async def _run_timeline_narrative(domain_key: str, storyline_id: int, mode: str)
         conn.close()
 
 
-async def process_content_refinement_queue_batch() -> Dict[str, Any]:
+async def process_content_refinement_queue_batch() -> dict[str, Any]:
     """
     Claim and run up to CONTENT_REFINEMENT_MAX_JOBS_PER_CYCLE jobs.
-    Caps narrative_finisher jobs per cycle for GPU friendliness.
+    Caps ~70B jobs (narrative_finisher + headline_refiner) per cycle for GPU friendliness.
     """
     conn = get_db_connection()
     if not conn:
@@ -271,7 +360,7 @@ async def process_content_refinement_queue_batch() -> Dict[str, Any]:
 
     stats = {"processed": 0, "failed": 0, "by_type": {}}
     finisher_run = 0
-    to_process: List[Tuple[Any, ...]] = []
+    to_process: list[tuple[Any, ...]] = []
 
     try:
         rows = _claim_pending_batch(conn, _MAX_JOBS_PER_CYCLE * 2)
@@ -281,10 +370,10 @@ async def process_content_refinement_queue_batch() -> Dict[str, Any]:
 
         # Re-order: defer extra finisher jobs beyond cap (put back to pending)
         to_process = []
-        deferred_ids: List[int] = []
+        deferred_ids: list[int] = []
         for row in rows:
             _id, dkey, sid, jtype, _prio, _meta = row
-            if jtype == JOB_NARRATIVE_FINISHER:
+            if jtype in _HEAVY_70B_JOB_TYPES:
                 if finisher_run >= _MAX_FINISHER_PER_CYCLE:
                     deferred_ids.append(_id)
                     continue
@@ -321,6 +410,8 @@ async def process_content_refinement_queue_batch() -> Dict[str, Any]:
                 await _run_comprehensive_rag(domain_key, storyline_id)
             elif job_type == JOB_NARRATIVE_FINISHER:
                 await _run_narrative_finisher(domain_key, storyline_id)
+            elif job_type == JOB_HEADLINE_REFINER:
+                await _run_headline_refiner(domain_key, storyline_id)
             elif job_type == JOB_TIMELINE_CHRONO:
                 await _run_timeline_narrative(domain_key, storyline_id, "chronological")
             elif job_type == JOB_TIMELINE_BRIEFING:

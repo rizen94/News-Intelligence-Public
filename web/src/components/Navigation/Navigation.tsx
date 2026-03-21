@@ -16,8 +16,11 @@ const Navigation: React.FC = () => {
     const fetchAlerts = async () => {
       try {
         const res = await apiService.getWatchlistAlerts(true, 100);
-        if (res?.data) setUnreadAlerts(Array.isArray(res.data) ? res.data.length : 0);
-      } catch { /* non-critical */ }
+        if (res?.data)
+          setUnreadAlerts(Array.isArray(res.data) ? res.data.length : 0);
+      } catch {
+        /* non-critical */
+      }
     };
     fetchAlerts();
     const interval = setInterval(fetchAlerts, 60000);
@@ -51,13 +54,33 @@ const Navigation: React.FC = () => {
   // Intelligence sub-pages (only built-out features per docs)
   const intelligenceNavItems = [
     { path: '/intelligence/watchlist', label: 'Watchlist', icon: '👁️' },
-    { path: '/intelligence/entity-profiles', label: 'Entity Profiles', icon: '👤' },
-    { path: '/intelligence/entity-management', label: 'Entity Management', icon: '⚙️' },
+    {
+      path: '/intelligence/entity-profiles',
+      label: 'Entity Profiles',
+      icon: '👤',
+    },
+    {
+      path: '/intelligence/entity-management',
+      label: 'Entity Management',
+      icon: '⚙️',
+    },
     { path: '/intelligence/contexts', label: 'Context Browser', icon: '📄' },
-    { path: '/intelligence/tracked-events', label: 'Tracked Events', icon: '📅' },
+    {
+      path: '/intelligence/tracked-events',
+      label: 'Tracked Events',
+      icon: '📅',
+    },
     { path: '/intelligence/search', label: 'Intelligence Search', icon: '🔍' },
-    { path: '/intelligence/collection-watch', label: 'Collection & pipeline', icon: '▶️' },
-    { path: '/intelligence/context-centric-status', label: 'Context Pipeline', icon: '📊' },
+    {
+      path: '/intelligence/collection-watch',
+      label: 'Collection & pipeline',
+      icon: '▶️',
+    },
+    {
+      path: '/intelligence/context-centric-status',
+      label: 'Context Pipeline',
+      icon: '📊',
+    },
   ];
 
   // Admin/system navigation items
@@ -66,9 +89,7 @@ const Navigation: React.FC = () => {
   ];
 
   // Domain-agnostic navigation items (shared across all domains)
-  const sharedNavItems = [
-    { path: '/settings', label: 'Settings', icon: '⚙️' },
-  ];
+  const sharedNavItems = [{ path: '/settings', label: 'Settings', icon: '⚙️' }];
 
   let navItems = [...coreNavItems, ...intelligenceNavItems];
   if (isInDomain('finance')) {
@@ -80,11 +101,16 @@ const Navigation: React.FC = () => {
   const isActive = (path: string): boolean => {
     const sharedPaths = ['/settings', '/ml-processing'];
     if (sharedPaths.includes(path)) {
-      return location.pathname === path || location.pathname.startsWith(path + '/');
+      return (
+        location.pathname === path || location.pathname.startsWith(path + '/')
+      );
     }
     // For domain-specific routes, check if path matches with domain prefix
     const domainPath = getDomainPath(path);
-    return location.pathname === domainPath || location.pathname.startsWith(domainPath + '/');
+    return (
+      location.pathname === domainPath ||
+      location.pathname.startsWith(domainPath + '/')
+    );
   };
 
   return (
@@ -98,7 +124,11 @@ const Navigation: React.FC = () => {
         </div>
       </div>
       <div className='nav-domain-selector'>
-        <DomainSelector variant='tabs' orientation='vertical' showLabel={false} />
+        <DomainSelector
+          variant='tabs'
+          orientation='vertical'
+          showLabel={false}
+        />
       </div>
       <ul className='nav-list'>
         {navItems.map(item => {
@@ -115,9 +145,12 @@ const Navigation: React.FC = () => {
               >
                 <span className='nav-icon'>{item.icon}</span>
                 <span className='nav-label'>{item.label}</span>
-                {item.path === '/intelligence/watchlist' && unreadAlerts > 0 && (
-                  <span className='nav-badge'>{unreadAlerts > 9 ? '9+' : unreadAlerts}</span>
-                )}
+                {item.path === '/intelligence/watchlist' &&
+                  unreadAlerts > 0 && (
+                    <span className='nav-badge'>
+                      {unreadAlerts > 9 ? '9+' : unreadAlerts}
+                    </span>
+                  )}
               </Link>
             </li>
           );

@@ -4,7 +4,10 @@
  */
 
 import axios, { AxiosInstance, AxiosError } from 'axios';
-import API_CONFIG, { getCurrentApiUrl, getApiOrigin } from '../config/apiConfig';
+import API_CONFIG, {
+  getCurrentApiUrl,
+  getApiOrigin,
+} from '../config/apiConfig';
 import { getCurrentDomain } from '../utils/domainHelper';
 import errorHandler from './errorHandler';
 
@@ -28,16 +31,34 @@ class APIConnectionManager {
   private setupInterceptors(): void {
     // Request interceptor - use current API URL every time, then domain injection
     this.apiInstance.interceptors.request.use(
-      (config) => {
+      config => {
         // Always use current base URL (fixes stale value after settings change or late localStorage)
         // Add domain to request if needed; detect global (flat /api/...) routes
         if (config.url?.includes('/api/')) {
           const match = config.url.match(/\/api\/(.+)$/);
           const firstSegment = match ? match[1].split('/')[0] : '';
           const globalRoutes = [
-            'politics', 'finance', 'science-tech', 'legal', 'system_monitoring', 'route_supervisor', 'watchlist', 'monitoring',
-            'orchestrator', 'context_centric', 'entity_profiles', 'contexts', 'tracked_events', 'claims', 'pattern_discoveries',
-            'processed_documents', 'entity_dossiers', 'entity_positions', 'narrative_threads', 'synthesis', 'entities',
+            'politics',
+            'finance',
+            'science-tech',
+            'legal',
+            'system_monitoring',
+            'route_supervisor',
+            'watchlist',
+            'monitoring',
+            'orchestrator',
+            'context_centric',
+            'entity_profiles',
+            'contexts',
+            'tracked_events',
+            'claims',
+            'pattern_discoveries',
+            'processed_documents',
+            'entity_dossiers',
+            'entity_positions',
+            'narrative_threads',
+            'synthesis',
+            'entities',
           ];
           const isGlobalRoute = globalRoutes.includes(firstSegment);
           // Global routes (context_centric, entity_profiles, etc.) use origin-only base so path stays /api/...
@@ -57,15 +78,15 @@ class APIConnectionManager {
         }
         return config;
       },
-      (error) => {
+      error => {
         errorHandler.handleApiError(error, { type: 'request_error' });
         return Promise.reject(error);
-      },
+      }
     );
 
     // Response interceptor - only error handling
     this.apiInstance.interceptors.response.use(
-      (response) => response,
+      response => response,
       (error: AxiosError) => {
         // Simple error handling
         if (!error.response) {
@@ -74,7 +95,7 @@ class APIConnectionManager {
           errorHandler.handleApiError(error, { url: error.config?.url });
         }
         return Promise.reject(error);
-      },
+      }
     );
   }
 
@@ -88,7 +109,9 @@ class APIConnectionManager {
       const base = getCurrentApiUrl();
       const origin = getApiOrigin();
       const healthBase = origin !== '' ? origin : base;
-      const healthUrl = !healthBase ? '/api/system_monitoring/health' : `${healthBase.replace(/\/$/, '')}/api/system_monitoring/health`;
+      const healthUrl = !healthBase
+        ? '/api/system_monitoring/health'
+        : `${healthBase.replace(/\/$/, '')}/api/system_monitoring/health`;
       const response = await axios.get(healthUrl, { timeout: 5000 });
       return response.status === 200;
     } catch {

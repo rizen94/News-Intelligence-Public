@@ -17,9 +17,10 @@ See docs/DATA_FLOW_ARCHITECTURE.md, docs/CODE_AUDIT_REPORT.md (remaining item).
 import json
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from shared.database.connection import get_db_connection
+
 from services.domain_synthesis_config import get_domain_synthesis_config
 
 logger = logging.getLogger(__name__)
@@ -39,6 +40,7 @@ def _schema(domain_key: str) -> str:
 # Core synthesis: gather everything for a domain within a time window
 # ---------------------------------------------------------------------------
 
+
 def synthesize_domain_context(
     domain_key: str,
     hours: int = 168,  # v8: 7-day default
@@ -46,9 +48,9 @@ def synthesize_domain_context(
     max_storylines: int = 25,
     max_events: int = 25,
     max_entities: int = 50,
-    max_quality_tier: Optional[int] = None,
-    max_articles_per_source: Optional[int] = 5,  # v8: source diversity
-) -> Dict[str, Any]:
+    max_quality_tier: int | None = None,
+    max_articles_per_source: int | None = 5,  # v8: source diversity
+) -> dict[str, Any]:
     """
     Gather all intelligence for a domain within the last `hours` window.
     Returns a unified context block:
@@ -70,7 +72,7 @@ def synthesize_domain_context(
         return {"success": False, "error": "Database connection failed"}
 
     cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
-    result: Dict[str, Any] = {
+    result: dict[str, Any] = {
         "success": True,
         "domain_key": domain_key,
         "time_window_hours": hours,
@@ -101,7 +103,11 @@ def synthesize_domain_context(
                 quality_clause = " AND COALESCE(a.quality_tier, 4) <= %s"
                 order_clause = "ORDER BY COALESCE(a.quality_tier, 4) ASC, COALESCE(a.quality_score, 0) DESC, a.published_at DESC NULLS LAST"
             fetch_limit = max_articles * 20 if max_articles_per_source else max_articles
-            article_params: tuple = (cutoff, cutoff, max_quality_tier, fetch_limit) if max_quality_tier is not None else (cutoff, cutoff, fetch_limit)
+            article_params: tuple = (
+                (cutoff, cutoff, max_quality_tier, fetch_limit)
+                if max_quality_tier is not None
+                else (cutoff, cutoff, fetch_limit)
+            )
             cur.execute(
                 f"""
                 SELECT a.id, a.title, a.source_domain, a.published_at,
@@ -120,22 +126,26 @@ def synthesize_domain_context(
                 aid, title, source, pub_at, content_excerpt, meta, entities_json, sentiment = row
                 article_ids.append(aid)
                 meta = meta if isinstance(meta, dict) else {}
-                articles.append({
-                    "id": aid,
-                    "title": title or "",
-                    "source": source or "",
-                    "published_at": pub_at.isoformat() if pub_at else None,
-                    "content_excerpt": content_excerpt or "",
-                    "summary": meta.get("summary", ""),
-                    "key_points": meta.get("key_points", []),
-                    "entities_extracted": entities_json if isinstance(entities_json, dict) else {},
-                    "sentiment_score": float(sentiment) if sentiment is not None else None,
-                    "sentiment_label": meta.get("sentiment_label", ""),
-                })
+                articles.append(
+                    {
+                        "id": aid,
+                        "title": title or "",
+                        "source": source or "",
+                        "published_at": pub_at.isoformat() if pub_at else None,
+                        "content_excerpt": content_excerpt or "",
+                        "summary": meta.get("summary", ""),
+                        "key_points": meta.get("key_points", []),
+                        "entities_extracted": entities_json
+                        if isinstance(entities_json, dict)
+                        else {},
+                        "sentiment_score": float(sentiment) if sentiment is not None else None,
+                        "sentiment_label": meta.get("sentiment_label", ""),
+                    }
+                )
             # v8: source diversity — cap articles per source then trim to max_articles
             if max_articles_per_source and max_articles_per_source > 0:
-                source_count: Dict[str, int] = {}
-                capped: List[Dict[str, Any]] = []
+                source_count: dict[str, int] = {}
+                capped: list[dict[str, Any]] = []
                 for a in articles:
                     src = a.get("source") or ""
                     if source_count.get(src, 0) < max_articles_per_source:
@@ -165,14 +175,16 @@ def synthesize_domain_context(
                 articles_historical = []
                 for row in cur.fetchall():
                     ml = row[5] if isinstance(row[5], dict) else {}
-                    articles_historical.append({
-                        "id": row[0],
-                        "title": row[1] or "",
-                        "source": row[2] or "",
-                        "published_at": row[3].isoformat() if row[3] else None,
-                        "content_excerpt": (row[4] or "")[:500],
-                        "summary": ml.get("summary", "")[:200],
-                    })
+                    articles_historical.append(
+                        {
+                            "id": row[0],
+                            "title": row[1] or "",
+                            "source": row[2] or "",
+                            "published_at": row[3].isoformat() if row[3] else None,
+                            "content_excerpt": (row[4] or "")[:500],
+                            "summary": ml.get("summary", "")[:200],
+                        }
+                    )
                 result["articles_historical"] = articles_historical
             except Exception as hist_err:
                 logger.debug("synthesize_domain_context articles_historical: %s", hist_err)
@@ -194,11 +206,13 @@ def synthesize_domain_context(
                 )
                 entities = []
                 for erow in cur.fetchall():
-                    entities.append({
-                        "name": erow[0],
-                        "type": erow[1],
-                        "mention_count": erow[2],
-                    })
+                    entities.append(
+                        {
+                            "name": erow[0],
+                            "type": erow[1],
+                            "mention_count": erow[2],
+                        }
+                    )
                 result["entities"] = entities
 
             # --- Storylines with editorial content ---
@@ -217,14 +231,16 @@ def synthesize_domain_context(
             )
             storylines = []
             for srow in cur.fetchall():
-                storylines.append({
-                    "id": srow[0],
-                    "title": srow[1] or "",
-                    "summary": srow[2] or "",
-                    "editorial_lede": srow[3] or "",
-                    "document_status": srow[4],
-                    "article_count": srow[5],
-                })
+                storylines.append(
+                    {
+                        "id": srow[0],
+                        "title": srow[1] or "",
+                        "summary": srow[2] or "",
+                        "editorial_lede": srow[3] or "",
+                        "document_status": srow[4],
+                        "article_count": srow[5],
+                    }
+                )
             result["storylines"] = storylines
 
             # --- Tracked events with editorial briefings ---
@@ -243,14 +259,16 @@ def synthesize_domain_context(
             )
             events = []
             for erow in cur.fetchall():
-                events.append({
-                    "id": erow[0],
-                    "name": erow[1] or "",
-                    "type": erow[2] or "",
-                    "editorial_briefing": (erow[3] or "")[:500],
-                    "momentum": erow[4],
-                    "chronicle_count": erow[5],
-                })
+                events.append(
+                    {
+                        "id": erow[0],
+                        "name": erow[1] or "",
+                        "type": erow[2] or "",
+                        "editorial_briefing": (erow[3] or "")[:500],
+                        "momentum": erow[4],
+                        "chronicle_count": erow[5],
+                    }
+                )
             result["events"] = events
 
             # --- Recent claims ---
@@ -267,12 +285,14 @@ def synthesize_domain_context(
             )
             claims = []
             for crow in cur.fetchall():
-                claims.append({
-                    "subject": crow[0] or "",
-                    "predicate": crow[1] or "",
-                    "object": crow[2] or "",
-                    "confidence": float(crow[3]) if crow[3] is not None else None,
-                })
+                claims.append(
+                    {
+                        "subject": crow[0] or "",
+                        "predicate": crow[1] or "",
+                        "object": crow[2] or "",
+                        "confidence": float(crow[3]) if crow[3] is not None else None,
+                    }
+                )
             result["claims"] = claims
 
             # --- Pattern discoveries ---
@@ -288,11 +308,13 @@ def synthesize_domain_context(
             )
             patterns = []
             for prow in cur.fetchall():
-                patterns.append({
-                    "type": prow[0],
-                    "confidence": float(prow[1]) if prow[1] is not None else None,
-                    "data": prow[2] or {},
-                })
+                patterns.append(
+                    {
+                        "type": prow[0],
+                        "confidence": float(prow[1]) if prow[1] is not None else None,
+                        "data": prow[2] or {},
+                    }
+                )
             result["patterns"] = patterns
 
             # --- Processed documents (PDFs); v8: filter by domain_key from metadata when set ---
@@ -320,16 +342,18 @@ def synthesize_domain_context(
                 for drow in cur.fetchall():
                     findings = drow[6] if isinstance(drow[6], list) else []
                     sections = drow[7] if isinstance(drow[7], list) else []
-                    documents.append({
-                        "id": drow[0],
-                        "title": drow[1] or "",
-                        "source_name": drow[2] or "",
-                        "source_url": drow[3] or "",
-                        "document_type": drow[4] or "",
-                        "publication_date": str(drow[5]) if drow[5] else None,
-                        "key_findings": findings[:5],
-                        "section_count": len(sections),
-                    })
+                    documents.append(
+                        {
+                            "id": drow[0],
+                            "title": drow[1] or "",
+                            "source_name": drow[2] or "",
+                            "source_url": drow[3] or "",
+                            "document_type": drow[4] or "",
+                            "publication_date": str(drow[5]) if drow[5] else None,
+                            "key_findings": findings[:5],
+                            "section_count": len(sections),
+                        }
+                    )
                 result["documents"] = documents
             except Exception as doc_err:
                 logger.debug("synthesize_domain_context documents: %s", doc_err)
@@ -350,13 +374,15 @@ def synthesize_domain_context(
                 )
                 entity_positions = []
                 for eprow in cur.fetchall():
-                    entity_positions.append({
-                        "topic": eprow[0] or "",
-                        "position": eprow[1] or "",
-                        "confidence": float(eprow[2]) if eprow[2] is not None else None,
-                        "entity_name": eprow[3] or "",
-                        "entity_type": eprow[4] or "",
-                    })
+                    entity_positions.append(
+                        {
+                            "topic": eprow[0] or "",
+                            "position": eprow[1] or "",
+                            "confidence": float(eprow[2]) if eprow[2] is not None else None,
+                            "entity_name": eprow[3] or "",
+                            "entity_type": eprow[4] or "",
+                        }
+                    )
                 result["entity_positions"] = entity_positions
             except Exception as pos_err:
                 logger.debug("synthesize_domain_context entity_positions: %s", pos_err)
@@ -376,14 +402,16 @@ def synthesize_domain_context(
                 )
                 cross_domain = []
                 for cdrow in cur.fetchall():
-                    cross_domain.append({
-                        "domain_1": cdrow[0],
-                        "domain_2": cdrow[1],
-                        "correlation_type": cdrow[2] or "",
-                        "strength": float(cdrow[3]) if cdrow[3] is not None else None,
-                        "event_ids": cdrow[4] or [],
-                        "entity_profile_ids": cdrow[5] or [],
-                    })
+                    cross_domain.append(
+                        {
+                            "domain_1": cdrow[0],
+                            "domain_2": cdrow[1],
+                            "correlation_type": cdrow[2] or "",
+                            "strength": float(cdrow[3]) if cdrow[3] is not None else None,
+                            "event_ids": cdrow[4] or [],
+                            "entity_profile_ids": cdrow[5] or [],
+                        }
+                    )
                 result["cross_domain"] = cross_domain
             except Exception as cd_err:
                 logger.debug("synthesize_domain_context cross_domain: %s", cd_err)
@@ -395,7 +423,9 @@ def synthesize_domain_context(
                     """
                     SELECT ec.canonical_name, ed.chronicle_data, ed.metadata, ed.relationships
                     FROM intelligence.entity_dossiers ed
-                    JOIN """ + schema + """.entity_canonical ec ON ec.id = ed.entity_id
+                    JOIN """
+                    + schema
+                    + """.entity_canonical ec ON ec.id = ed.entity_id
                     WHERE ed.domain_key = %s
                     ORDER BY ed.compilation_date DESC NULLS LAST
                     LIMIT 20
@@ -414,7 +444,9 @@ def synthesize_domain_context(
                         summary = (first.get("summary") or first.get("text") or str(first))[:300]
                     if not summary and rels:
                         summary = f"Key relationships: {len(rels)}"
-                    key_actor_profiles.append({"entity_name": name, "summary": (summary or "—")[:250]})
+                    key_actor_profiles.append(
+                        {"entity_name": name, "summary": (summary or "—")[:250]}
+                    )
                 result["key_actor_profiles"] = key_actor_profiles
             except Exception as d_err:
                 logger.debug("synthesize_domain_context key_actor_profiles: %s", d_err)
@@ -448,10 +480,11 @@ def synthesize_domain_context(
 # Storyline-scoped synthesis
 # ---------------------------------------------------------------------------
 
+
 def synthesize_storyline_context(
     domain_key: str,
     storyline_id: int,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Gather all intelligence related to a specific storyline:
     articles with full metadata/analysis, entities, claims from those article contexts,
@@ -508,17 +541,19 @@ def synthesize_storyline_context(
                 aid = row[0]
                 article_ids.append(aid)
                 meta = row[5] if isinstance(row[5], dict) else {}
-                articles.append({
-                    "id": aid,
-                    "title": row[1] or "",
-                    "source": row[2] or "",
-                    "published_at": row[3].isoformat() if row[3] else None,
-                    "content_excerpt": row[4] or "",
-                    "summary": meta.get("summary", ""),
-                    "key_points": meta.get("key_points", []),
-                    "entities_extracted": row[6] if isinstance(row[6], dict) else {},
-                    "sentiment_score": float(row[7]) if row[7] is not None else None,
-                })
+                articles.append(
+                    {
+                        "id": aid,
+                        "title": row[1] or "",
+                        "source": row[2] or "",
+                        "published_at": row[3].isoformat() if row[3] else None,
+                        "content_excerpt": row[4] or "",
+                        "summary": meta.get("summary", ""),
+                        "key_points": meta.get("key_points", []),
+                        "entities_extracted": row[6] if isinstance(row[6], dict) else {},
+                        "sentiment_score": float(row[7]) if row[7] is not None else None,
+                    }
+                )
 
             # Entities across these articles (include description from entity_canonical when present)
             entities = []
@@ -542,14 +577,16 @@ def synthesize_storyline_context(
                 for erow in cur.fetchall():
                     canonical_id = erow[0]
                     entity_canonical_ids.append(canonical_id)
-                    entities.append({
-                        "canonical_entity_id": canonical_id,
-                        "name": erow[1],
-                        "type": erow[2],
-                        "mention_count": erow[3],
-                        "aliases": erow[4] or [],
-                        "description": (erow[5] or "").strip() or None,
-                    })
+                    entities.append(
+                        {
+                            "canonical_entity_id": canonical_id,
+                            "name": erow[1],
+                            "type": erow[2],
+                            "mention_count": erow[3],
+                            "aliases": erow[4] or [],
+                            "description": (erow[5] or "").strip() or None,
+                        }
+                    )
             # Entity profiles (Wikipedia sections, relationships) for top entities
             entity_profiles = []
             if entity_canonical_ids:
@@ -564,12 +601,14 @@ def synthesize_storyline_context(
                         (domain_key, top_canonical_ids),
                     )
                     for prow in cur.fetchall():
-                        entity_profiles.append({
-                            "canonical_entity_id": prow[0],
-                            "sections": prow[1] or [],
-                            "relationships_summary": prow[2] or [],
-                            "metadata": prow[3] or {},
-                        })
+                        entity_profiles.append(
+                            {
+                                "canonical_entity_id": prow[0],
+                                "sections": prow[1] or [],
+                                "relationships_summary": prow[2] or [],
+                                "metadata": prow[3] or {},
+                            }
+                        )
                 except Exception as ep_err:
                     logger.debug("synthesize_storyline_context entity_profiles: %s", ep_err)
             # Entity dossiers (chronicle, positions, patterns) for top 5
@@ -586,13 +625,15 @@ def synthesize_storyline_context(
                         (domain_key, top5_ids),
                     )
                     for drow in cur.fetchall():
-                        entity_dossiers.append({
-                            "canonical_entity_id": drow[0],
-                            "chronicle_data": drow[1] or [],
-                            "relationships": drow[2] or [],
-                            "positions": drow[3] or [],
-                            "metadata": drow[4] or {},
-                        })
+                        entity_dossiers.append(
+                            {
+                                "canonical_entity_id": drow[0],
+                                "chronicle_data": drow[1] or [],
+                                "relationships": drow[2] or [],
+                                "positions": drow[3] or [],
+                                "metadata": drow[4] or {},
+                            }
+                        )
                 except Exception as ed_err:
                     logger.debug("synthesize_storyline_context entity_dossiers: %s", ed_err)
 
@@ -612,12 +653,14 @@ def synthesize_storyline_context(
                     (article_ids,),
                 )
                 for crow in cur.fetchall():
-                    claims.append({
-                        "subject": crow[0] or "",
-                        "predicate": crow[1] or "",
-                        "object": crow[2] or "",
-                        "confidence": float(crow[3]) if crow[3] is not None else None,
-                    })
+                    claims.append(
+                        {
+                            "subject": crow[0] or "",
+                            "predicate": crow[1] or "",
+                            "object": crow[2] or "",
+                            "confidence": float(crow[3]) if crow[3] is not None else None,
+                        }
+                    )
 
             # Entity positions relevant to this storyline's entities
             entity_positions = []
@@ -636,12 +679,14 @@ def synthesize_storyline_context(
                         (domain_key, entity_names),
                     )
                     for eprow in cur.fetchall():
-                        entity_positions.append({
-                            "entity_name": eprow[3] or "",
-                            "topic": eprow[0] or "",
-                            "position": eprow[1] or "",
-                            "confidence": float(eprow[2]) if eprow[2] is not None else None,
-                        })
+                        entity_positions.append(
+                            {
+                                "entity_name": eprow[3] or "",
+                                "topic": eprow[0] or "",
+                                "position": eprow[1] or "",
+                                "confidence": float(eprow[2]) if eprow[2] is not None else None,
+                            }
+                        )
                 except Exception as pos_err:
                     logger.debug("synthesize_storyline_context positions: %s", pos_err)
 
@@ -663,16 +708,18 @@ def synthesize_storyline_context(
                 )
                 for drow in cur.fetchall():
                     findings = drow[5] if isinstance(drow[5], list) else []
-                    documents.append({
-                        "id": drow[0],
-                        "title": drow[1] or "",
-                        "source_name": drow[2] or "",
-                        "source_url": drow[3] or "",
-                        "document_type": drow[4] or "",
-                        "key_findings": findings[:5],
-                        "impact_assessment": drow[6] or "",
-                        "credibility_score": float(drow[7]) if drow[7] is not None else None,
-                    })
+                    documents.append(
+                        {
+                            "id": drow[0],
+                            "title": drow[1] or "",
+                            "source_name": drow[2] or "",
+                            "source_url": drow[3] or "",
+                            "document_type": drow[4] or "",
+                            "key_findings": findings[:5],
+                            "impact_assessment": drow[6] or "",
+                            "credibility_score": float(drow[7]) if drow[7] is not None else None,
+                        }
+                    )
             except Exception as doc_err:
                 logger.debug("synthesize_storyline_context documents: %s", doc_err)
 
@@ -699,20 +746,24 @@ def synthesize_storyline_context(
                             actors = json.loads(actors)
                         except (json.JSONDecodeError, TypeError):
                             actors = []
-                    chronological_events.append({
-                        "id": cerow[0],
-                        "title": cerow[1] or "",
-                        "description": cerow[2] or "",
-                        "event_type": cerow[3] or "other",
-                        "event_date": cerow[4].isoformat() if cerow[4] else None,
-                        "location": cerow[5] or "",
-                        "key_actors": actors or [],
-                        "outcome": cerow[7] or "",
-                        "is_ongoing": bool(cerow[8]),
-                        "importance_score": float(cerow[9]) if cerow[9] is not None else 0.0,
-                        "date_precision": cerow[10] or "unknown",
-                        "extraction_confidence": float(cerow[11]) if cerow[11] is not None else 0.0,
-                    })
+                    chronological_events.append(
+                        {
+                            "id": cerow[0],
+                            "title": cerow[1] or "",
+                            "description": cerow[2] or "",
+                            "event_type": cerow[3] or "other",
+                            "event_date": cerow[4].isoformat() if cerow[4] else None,
+                            "location": cerow[5] or "",
+                            "key_actors": actors or [],
+                            "outcome": cerow[7] or "",
+                            "is_ongoing": bool(cerow[8]),
+                            "importance_score": float(cerow[9]) if cerow[9] is not None else 0.0,
+                            "date_precision": cerow[10] or "unknown",
+                            "extraction_confidence": float(cerow[11])
+                            if cerow[11] is not None
+                            else 0.0,
+                        }
+                    )
             except Exception as ce_err:
                 logger.debug("synthesize_storyline_context chronological_events: %s", ce_err)
 
@@ -721,6 +772,7 @@ def synthesize_storyline_context(
             if chronological_events:
                 try:
                     from services.timeline_builder_service import TimelineBuilderService
+
                     tbs = TimelineBuilderService(conn, schema_name=schema)
                     timeline = tbs.build_timeline(storyline_id)
                 except Exception as tl_err:
@@ -770,9 +822,10 @@ def synthesize_storyline_context(
 # Event-scoped synthesis
 # ---------------------------------------------------------------------------
 
+
 def synthesize_event_context(
     event_id: int,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Gather all intelligence related to a tracked event:
     event metadata, chronicles, related storylines, entity participants.
@@ -828,15 +881,17 @@ def synthesize_event_context(
             )
             chronicles = []
             for crow in cur.fetchall():
-                chronicles.append({
-                    "id": crow[0],
-                    "update_date": crow[1].isoformat() if crow[1] else None,
-                    "developments": crow[2] or [],
-                    "analysis": crow[3] or {},
-                    "predictions": crow[4] or [],
-                    "momentum_score": float(crow[5]) if crow[5] is not None else None,
-                    "created_at": crow[6].isoformat() if crow[6] else None,
-                })
+                chronicles.append(
+                    {
+                        "id": crow[0],
+                        "update_date": crow[1].isoformat() if crow[1] else None,
+                        "developments": crow[2] or [],
+                        "analysis": crow[3] or {},
+                        "predictions": crow[4] or [],
+                        "momentum_score": float(crow[5]) if crow[5] is not None else None,
+                        "created_at": crow[6].isoformat() if crow[6] else None,
+                    }
+                )
 
         conn.close()
         return {
@@ -860,10 +915,11 @@ def synthesize_event_context(
 # Entity-scoped synthesis
 # ---------------------------------------------------------------------------
 
+
 def synthesize_entity_context(
     domain_key: str,
     entity_id: int,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Gather all intelligence about a canonical entity: dossier, positions,
     relationships, recent articles, storyline references.
@@ -910,13 +966,15 @@ def synthesize_entity_context(
                 meta = arow[4] if isinstance(arow[4], dict) else {}
                 direct_summary = arow[5] if len(arow) > 5 else None
                 summary = (direct_summary or "") or meta.get("summary", "")
-                articles.append({
-                    "id": arow[0],
-                    "title": arow[1] or "",
-                    "content_excerpt": arow[2] or "",
-                    "published_at": arow[3].isoformat() if arow[3] else None,
-                    "summary": summary or "",
-                })
+                articles.append(
+                    {
+                        "id": arow[0],
+                        "title": arow[1] or "",
+                        "content_excerpt": arow[2] or "",
+                        "published_at": arow[3].isoformat() if arow[3] else None,
+                        "summary": summary or "",
+                    }
+                )
 
             # Dossier
             cur.execute(
@@ -952,12 +1010,14 @@ def synthesize_entity_context(
             )
             positions = []
             for prow in cur.fetchall():
-                positions.append({
-                    "topic": prow[0],
-                    "position": prow[1],
-                    "confidence": float(prow[2]) if prow[2] is not None else None,
-                    "evidence_refs": prow[3] or [],
-                })
+                positions.append(
+                    {
+                        "topic": prow[0],
+                        "position": prow[1],
+                        "confidence": float(prow[2]) if prow[2] is not None else None,
+                        "evidence_refs": prow[3] or [],
+                    }
+                )
 
             # Cross-domain relationships
             cur.execute(
@@ -973,14 +1033,16 @@ def synthesize_entity_context(
             )
             relationships = []
             for rrow in cur.fetchall():
-                relationships.append({
-                    "source_domain": rrow[0],
-                    "source_entity_id": rrow[1],
-                    "target_domain": rrow[2],
-                    "target_entity_id": rrow[3],
-                    "relationship_type": rrow[4],
-                    "confidence": float(rrow[5]) if rrow[5] is not None else None,
-                })
+                relationships.append(
+                    {
+                        "source_domain": rrow[0],
+                        "source_entity_id": rrow[1],
+                        "target_domain": rrow[2],
+                        "target_entity_id": rrow[3],
+                        "relationship_type": rrow[4],
+                        "confidence": float(rrow[5]) if rrow[5] is not None else None,
+                    }
+                )
 
         conn.close()
         return {
@@ -1011,13 +1073,14 @@ def synthesize_entity_context(
 # Text rendering for LLM consumption
 # ---------------------------------------------------------------------------
 
-def render_synthesis_for_llm(synthesis: Dict[str, Any], max_chars: int = 8000) -> str:
+
+def render_synthesis_for_llm(synthesis: dict[str, Any], max_chars: int = 8000) -> str:
     """
     Convert a synthesis result into a structured text block suitable for LLM prompts.
     Used by editorial_document_service and daily_briefing_service to build context
     for narrative generation.
     """
-    parts: List[str] = []
+    parts: list[str] = []
 
     # Articles
     articles = synthesis.get("articles", [])
@@ -1114,7 +1177,9 @@ def render_synthesis_for_llm(synthesis: Dict[str, Any], max_chars: int = 8000) -
         parts.append("\n## Entity Positions & Stances")
         for p in positions[:10]:
             conf = f" (confidence: {p['confidence']:.0%})" if p.get("confidence") else ""
-            parts.append(f"- {p.get('entity_name', '')} on {p.get('topic', '')}: {p.get('position', '')}{conf}")
+            parts.append(
+                f"- {p.get('entity_name', '')} on {p.get('topic', '')}: {p.get('position', '')}{conf}"
+            )
 
     # Processed documents (government/research reports)
     documents = synthesis.get("documents", [])
@@ -1139,7 +1204,9 @@ def render_synthesis_for_llm(synthesis: Dict[str, Any], max_chars: int = 8000) -
     if cross_domain:
         parts.append("\n## Cross-Domain Connections")
         for cd in cross_domain[:20]:
-            parts.append(f"- {cd.get('domain_1', '')} ↔ {cd.get('domain_2', '')}: {cd.get('correlation_type', '')} (strength: {cd.get('strength', '?')})")
+            parts.append(
+                f"- {cd.get('domain_1', '')} ↔ {cd.get('domain_2', '')}: {cd.get('correlation_type', '')} (strength: {cd.get('strength', '?')})"
+            )
 
     # Patterns
     patterns = synthesis.get("patterns", [])

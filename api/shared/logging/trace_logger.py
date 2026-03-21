@@ -10,7 +10,7 @@ import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 _LOG_DIR: Path | None = None
 _INITIALIZED = False
@@ -26,6 +26,7 @@ def _ensure_init() -> Path:
             return _LOG_DIR
         try:
             from config.paths import LOG_DIR
+
             _LOG_DIR = Path(LOG_DIR)
         except Exception:
             _LOG_DIR = Path(__file__).resolve().parents[3] / "logs"
@@ -44,12 +45,17 @@ def _write_span(span: dict) -> None:
 
     try:
         from shared.logging.activity_logger import log_activity
+
         log_activity(
             component="trace",
             event_type="task_span",
             status=span.get("status", "success"),
             message=f"{span.get('span_type')} {span.get('name')} {span.get('duration_ms', 0):.0f}ms",
-            **{k: v for k, v in span.items() if k != "attributes" and isinstance(v, (str, int, float, bool, type(None)))},
+            **{
+                k: v
+                for k, v in span.items()
+                if k != "attributes" and isinstance(v, (str, int, float, bool, type(None)))
+            },
         )
     except Exception:
         pass
@@ -60,7 +66,7 @@ def span_context(
     task_id: str,
     name: str,
     span_type: str = "phase",
-    parent_span_id: Optional[str] = None,
+    parent_span_id: str | None = None,
     **attributes: Any,
 ):
     """

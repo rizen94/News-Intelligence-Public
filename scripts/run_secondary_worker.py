@@ -2,6 +2,9 @@
 """
 News Intelligence — Secondary worker (Widow).
 Runs RSS collection every 10 minutes. No API, no ML (handled on primary).
+
+On the main GPU host set AUTOMATION_SKIP_RSS_IN_COLLECTION_CYCLE=true so AutomationManager
+does not duplicate RSS inside collection_cycle (see docs/WIDOW_DB_ADJACENT_CRON.md).
 Usage: python scripts/run_secondary_worker.py
 """
 

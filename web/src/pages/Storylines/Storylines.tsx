@@ -123,14 +123,22 @@ function DiscoverStorylinesButton({
     try {
       const result = await apiService.discoverStorylines(
         { hours: 48, save: true },
-        domain,
+        domain
       );
-      if (result?.success && (result?.saved_storylines?.length || result?.summary?.storylines_saved)) {
-        const count = result?.saved_storylines?.length ?? result?.summary?.storylines_saved ?? 0;
+      if (
+        result?.success &&
+        (result?.saved_storylines?.length || result?.summary?.storylines_saved)
+      ) {
+        const count =
+          result?.saved_storylines?.length ??
+          result?.summary?.storylines_saved ??
+          0;
         showSuccess(`Discovery complete: ${count} new storyline(s) created.`);
         onDone();
       } else if (result?.success && result?.summary?.clusters_found === 0) {
-        showInfo('No article clusters found. Add more articles or try again later.');
+        showInfo(
+          'No article clusters found. Add more articles or try again later.'
+        );
       } else if (result?.error) {
         showError(result.error);
       } else {
@@ -147,7 +155,9 @@ function DiscoverStorylinesButton({
   return (
     <Button
       variant='contained'
-      startIcon={discovering ? <CircularProgress size={18} /> : <AutoAwesomeIcon />}
+      startIcon={
+        discovering ? <CircularProgress size={18} /> : <AutoAwesomeIcon />
+      }
       onClick={handleDiscover}
       disabled={discovering}
     >
@@ -160,7 +170,8 @@ const Storylines: React.FC = () => {
   const navigate = useNavigate();
   const { navigateToDomain } = useDomainNavigation();
   const { domain } = useDomainRoute();
-  const { showSuccess, showError, showInfo, NotificationComponent } = useNotification();
+  const { showSuccess, showError, showInfo, NotificationComponent } =
+    useNotification();
 
   const [storylines, setStorylines] = useState<Storyline[]>([]);
   const [loading, setLoading] = useState(true);
@@ -174,7 +185,9 @@ const Storylines: React.FC = () => {
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [totalStorylines, setTotalStorylines] = useState(0);
-  const [bookmarkedStorylines, setBookmarkedStorylines] = useState<Set<number>>(new Set());
+  const [bookmarkedStorylines, setBookmarkedStorylines] = useState<Set<number>>(
+    new Set()
+  );
   const [stats, setStats] = useState<Stats>({
     total: 0,
     active: 0,
@@ -185,14 +198,17 @@ const Storylines: React.FC = () => {
 
   // Timeline dialog state
   const [timelineDialogOpen, setTimelineDialogOpen] = useState(false);
-  const [selectedStoryline, setSelectedStoryline] = useState<Storyline | null>(null);
+  const [selectedStoryline, setSelectedStoryline] = useState<Storyline | null>(
+    null
+  );
   const [timelineData, setTimelineData] = useState<TimelineEvent[]>([]);
 
   // Management dialog state
   const [managementDialogOpen, setManagementDialogOpen] = useState(false);
-  const [selectedStorylineForEdit, setSelectedStorylineForEdit] = useState<Storyline | null>(null);
+  const [selectedStorylineForEdit, setSelectedStorylineForEdit] =
+    useState<Storyline | null>(null);
 
-  const loadStorylines = useCallback(async() => {
+  const loadStorylines = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -207,7 +223,8 @@ const Storylines: React.FC = () => {
         sort_by: sortBy,
       };
 
-      const response = await apiService.getStorylines(params, domain);
+      // Response shape varies by API path; normalize with a loose type here
+      const response: any = await apiService.getStorylines(params, domain);
 
       // Handle response formats: crud returns { data, pagination, domain }; legacy may return { success, data: { storylines, total } }
       let storylinesData: Storyline[] = [];
@@ -220,14 +237,24 @@ const Storylines: React.FC = () => {
       } else if (response.data?.data && Array.isArray(response.data.data)) {
         storylinesData = response.data.data;
         setTotalPages(response.data.pagination?.pages ?? 1);
-        setTotalStorylines(response.data.pagination?.total ?? storylinesData.length);
+        setTotalStorylines(
+          response.data.pagination?.total ?? storylinesData.length
+        );
       } else if (response.success && response.data?.storylines) {
         storylinesData = response.data.storylines || [];
-        setTotalPages(Math.ceil((response.data.total || 0) / (viewMode === 'grid' ? 12 : 20)));
+        setTotalPages(
+          Math.ceil(
+            (response.data.total || 0) / (viewMode === 'grid' ? 12 : 20)
+          )
+        );
         setTotalStorylines(response.data.total || 0);
-      } else if (response.data?.storylines) {
+      } else if (response.success && response.data?.storylines) {
         storylinesData = response.data.storylines || [];
-        setTotalPages(Math.ceil((response.data.total || 0) / (viewMode === 'grid' ? 12 : 20)));
+        setTotalPages(
+          Math.ceil(
+            (response.data.total || 0) / (viewMode === 'grid' ? 12 : 20)
+          )
+        );
         setTotalStorylines(response.data.total || 0);
       } else {
         storylinesData = [];
@@ -240,10 +267,18 @@ const Storylines: React.FC = () => {
       // Calculate statistics
       const calculatedStats: Stats = {
         total: storylinesData.length,
-        active: storylinesData.filter(s => s.status?.toLowerCase() === 'active').length,
-        completed: storylinesData.filter(s => s.status?.toLowerCase() === 'completed' || s.status?.toLowerCase() === 'resolved').length,
-        paused: storylinesData.filter(s => s.status?.toLowerCase() === 'paused').length,
-        highPriority: storylinesData.filter(s => s.priority?.toLowerCase() === 'high').length,
+        active: storylinesData.filter(s => s.status?.toLowerCase() === 'active')
+          .length,
+        completed: storylinesData.filter(
+          s =>
+            s.status?.toLowerCase() === 'completed' ||
+            s.status?.toLowerCase() === 'resolved'
+        ).length,
+        paused: storylinesData.filter(s => s.status?.toLowerCase() === 'paused')
+          .length,
+        highPriority: storylinesData.filter(
+          s => s.priority?.toLowerCase() === 'high'
+        ).length,
       };
       setStats(calculatedStats);
     } catch (err: any) {
@@ -255,15 +290,33 @@ const Storylines: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [page, searchQuery, filterStatus, filterCategory, filterPriority, sortBy, viewMode, domain]);
+  }, [
+    page,
+    searchQuery,
+    filterStatus,
+    filterCategory,
+    filterPriority,
+    sortBy,
+    viewMode,
+    domain,
+  ]);
 
   // Initial load - only run when dependencies actually change
   useEffect(() => {
     loadStorylines();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, searchQuery, filterStatus, filterCategory, filterPriority, sortBy, viewMode, domain]);
+  }, [
+    page,
+    searchQuery,
+    filterStatus,
+    filterCategory,
+    filterPriority,
+    sortBy,
+    viewMode,
+    domain,
+  ]);
 
-  const fetchTimelineData = useCallback(async(storylineId: number) => {
+  const fetchTimelineData = useCallback(async (storylineId: number) => {
     try {
       const response = await apiService.getStorylineTimeline(storylineId);
       if (response.success) {
@@ -273,9 +326,10 @@ const Storylines: React.FC = () => {
             title: event.title || event.event_title || 'Untitled Event',
             description: event.description || event.event_description || '',
             type: event.event_type || 'Event',
-            timestamp: event.event_date || event.created_at || new Date().toISOString(),
+            timestamp:
+              event.event_date || event.created_at || new Date().toISOString(),
             article_count: event.source_article_ids?.length || 0,
-          })),
+          }))
         );
       }
     } catch (error: any) {
@@ -293,21 +347,21 @@ const Storylines: React.FC = () => {
 
   const handleFilterChange = (filterType: string, value: string) => {
     switch (filterType) {
-    case 'status':
-      setFilterStatus(value);
-      break;
-    case 'category':
-      setFilterCategory(value);
-      break;
-    case 'priority':
-      setFilterPriority(value);
-      break;
-    case 'sort':
-      setSortBy(value);
-      break;
-    default:
-      console.warn('Unknown filter type:', filterType);
-      break;
+      case 'status':
+        setFilterStatus(value);
+        break;
+      case 'category':
+        setFilterCategory(value);
+        break;
+      case 'priority':
+        setFilterPriority(value);
+        break;
+      case 'sort':
+        setSortBy(value);
+        break;
+      default:
+        console.warn('Unknown filter type:', filterType);
+        break;
     }
     setPage(1);
   };
@@ -345,64 +399,68 @@ const Storylines: React.FC = () => {
     setBookmarkedStorylines(newBookmarked);
   };
 
-  const handleViewTimeline = async(storyline: Storyline) => {
+  const handleViewTimeline = async (storyline: Storyline) => {
     setSelectedStoryline(storyline);
     await fetchTimelineData(storyline.id);
     setTimelineDialogOpen(true);
   };
 
-  const getStatusColor = (status?: string): 'success' | 'warning' | 'info' | 'default' | 'error' => {
+  const getStatusColor = (
+    status?: string
+  ): 'success' | 'warning' | 'info' | 'default' | 'error' => {
     switch (status?.toLowerCase()) {
-    case 'active':
-      return 'success';
-    case 'developing':
-      return 'warning';
-    case 'dormant':
-      return 'warning';
-    case 'watching':
-      return 'info';
-    case 'completed':
-    case 'resolved':
-    case 'concluded':
-      return 'info';
-    case 'paused':
-      return 'warning';
-    case 'archived':
-      return 'default';
-    default:
-      return 'default';
+      case 'active':
+        return 'success';
+      case 'developing':
+        return 'warning';
+      case 'dormant':
+        return 'warning';
+      case 'watching':
+        return 'info';
+      case 'completed':
+      case 'resolved':
+      case 'concluded':
+        return 'info';
+      case 'paused':
+        return 'warning';
+      case 'archived':
+        return 'default';
+      default:
+        return 'default';
     }
   };
 
-  const getPriorityColor = (priority?: string): 'error' | 'warning' | 'success' | 'default' => {
+  const getPriorityColor = (
+    priority?: string
+  ): 'error' | 'warning' | 'success' | 'default' => {
     switch (priority?.toLowerCase()) {
-    case 'high':
-      return 'error';
-    case 'medium':
-      return 'warning';
-    case 'low':
-      return 'success';
-    default:
-      return 'default';
+      case 'high':
+        return 'error';
+      case 'medium':
+        return 'warning';
+      case 'low':
+        return 'success';
+      default:
+        return 'default';
     }
   };
 
   const getCategoryIcon = (category?: string) => {
     switch (category?.toLowerCase()) {
-    case 'politics':
-      return <PublicIcon />;
-    case 'business':
-      return <BusinessIcon />;
-    case 'technology':
-      return <ScienceIcon />;
-    case 'health':
-      return <PersonIcon />;
-    case 'education':
-      return <SchoolIcon />;
-    case 'employment':
-      return <WorkIcon />;
-    default:
-      return <Article />;
+      case 'politics':
+        return <PublicIcon />;
+      case 'business':
+        return <BusinessIcon />;
+      case 'technology':
+        return <ScienceIcon />;
+      case 'health':
+        return <PersonIcon />;
+      case 'education':
+        return <SchoolIcon />;
+      case 'employment':
+        return <WorkIcon />;
+      default:
+        return <Article />;
     }
   };
 
@@ -517,7 +575,8 @@ const Storylines: React.FC = () => {
             <Article fontSize='small' color='action' />
             <Typography variant='caption' color='text.secondary'>
               {storyline.article_count || 0} articles
-              {(storyline.total_events ?? 0) > 0 && ` · ${storyline.total_events} events`}
+              {(storyline.total_events ?? 0) > 0 &&
+                ` · ${storyline.total_events} events`}
             </Typography>
           </Box>
           <Typography variant='caption' color='text.secondary'>
@@ -572,7 +631,9 @@ const Storylines: React.FC = () => {
     </Card>
   );
 
-  const StorylineListItem: React.FC<{ storyline: Storyline }> = ({ storyline }) => (
+  const StorylineListItem: React.FC<{ storyline: Storyline }> = ({
+    storyline,
+  }) => (
     <ListItem
       sx={{
         border: 1,
@@ -643,14 +704,15 @@ const Storylines: React.FC = () => {
                   </Typography>
                 </Box>
                 <Typography variant='caption'>
-                  Updated: {formatDate(storyline.updated_at || storyline.created_at)}
+                  Updated:{' '}
+                  {formatDate(storyline.updated_at || storyline.created_at)}
                 </Typography>
                 {storyline.key_entities &&
                   storyline.key_entities.length > 0 && (
-                  <Typography variant='caption' color='text.secondary'>
+                    <Typography variant='caption' color='text.secondary'>
                       Entities: {storyline.key_entities.slice(0, 3).join(', ')}
-                  </Typography>
-                )}
+                    </Typography>
+                  )}
               </Box>
             </Box>
           }
@@ -700,7 +762,11 @@ const Storylines: React.FC = () => {
             Storylines
           </Typography>
           <Chip
-            label={domain === 'science-tech' ? 'Science & Tech' : domain?.charAt(0).toUpperCase() + domain?.slice(1) || 'Domain'}
+            label={
+              domain === 'science-tech'
+                ? 'Science & Tech'
+                : domain?.charAt(0).toUpperCase() + domain?.slice(1) || 'Domain'
+            }
             size='small'
             variant='outlined'
             color='primary'
@@ -844,7 +910,7 @@ const Storylines: React.FC = () => {
               <Select
                 value={filterStatus}
                 label='Status'
-                onChange={(e) => handleFilterChange('status', e.target.value)}
+                onChange={e => handleFilterChange('status', e.target.value)}
               >
                 <MenuItem value=''>All Statuses</MenuItem>
                 <MenuItem value='active'>Active</MenuItem>
@@ -865,7 +931,7 @@ const Storylines: React.FC = () => {
               <Select
                 value={filterCategory}
                 label='Category'
-                onChange={(e) => handleFilterChange('category', e.target.value)}
+                onChange={e => handleFilterChange('category', e.target.value)}
               >
                 <MenuItem value=''>All Categories</MenuItem>
                 <MenuItem value='politics'>Politics</MenuItem>
@@ -883,7 +949,7 @@ const Storylines: React.FC = () => {
               <Select
                 value={filterPriority}
                 label='Priority'
-                onChange={(e) => handleFilterChange('priority', e.target.value)}
+                onChange={e => handleFilterChange('priority', e.target.value)}
               >
                 <MenuItem value=''>All Priority</MenuItem>
                 <MenuItem value='high'>High</MenuItem>
@@ -898,7 +964,7 @@ const Storylines: React.FC = () => {
               <Select
                 value={sortBy}
                 label='Sort By'
-                onChange={(e) => handleFilterChange('sort', e.target.value)}
+                onChange={e => handleFilterChange('sort', e.target.value)}
               >
                 <MenuItem value='updated_at'>Last Updated</MenuItem>
                 <MenuItem value='created_at'>Created Date</MenuItem>
@@ -942,29 +1008,62 @@ const Storylines: React.FC = () => {
           <TimelineIcon sx={{ fontSize: 64, color: 'text.secondary', mb: 2 }} />
           <Typography variant='h6' color='text.secondary' gutterBottom>
             No storylines found
-            {domain ? ` for ${domain === 'science-tech' ? 'Science & Tech' : domain.charAt(0).toUpperCase() + domain.slice(1)}` : ''}
+            {domain
+              ? ` for ${
+                  domain === 'science-tech'
+                    ? 'Science & Tech'
+                    : domain.charAt(0).toUpperCase() + domain.slice(1)
+                }`
+              : ''}
           </Typography>
           <Typography variant='body2' color='text.secondary' sx={{ mb: 2 }}>
             {searchQuery || filterStatus || filterCategory || filterPriority
               ? 'Try adjusting your search criteria or filters'
               : 'Storylines are per domain. Get storylines in three ways:'}
           </Typography>
-          {!searchQuery && !filterStatus && !filterCategory && !filterPriority && (
-            <>
-              <Box component='ul' sx={{ textAlign: 'left', maxWidth: 480, mx: 'auto', mb: 2, pl: 2.5 }}>
-                <li><strong>Discover now</strong> — AI clusters recent articles in this domain into storylines (button below). Takes 2–5 minutes. Requires enough recent articles.</li>
-                <li><strong>Create one</strong> — Go to <strong>Story Management</strong> and add a storyline, then add articles or enable automation.</li>
-                <li><strong>Auto-discovery</strong> — The system runs discovery per domain on a schedule; storylines will appear after the next run for this domain.</li>
-              </Box>
-              <DiscoverStorylinesButton domain={domain} onDone={loadStorylines} />
-            </>
-          )}
+          {!searchQuery &&
+            !filterStatus &&
+            !filterCategory &&
+            !filterPriority && (
+              <>
+                <Box
+                  component='ul'
+                  sx={{
+                    textAlign: 'left',
+                    maxWidth: 480,
+                    mx: 'auto',
+                    mb: 2,
+                    pl: 2.5,
+                  }}
+                >
+                  <li>
+                    <strong>Discover now</strong> — AI clusters recent articles
+                    in this domain into storylines (button below). Takes 2–5
+                    minutes. Requires enough recent articles.
+                  </li>
+                  <li>
+                    <strong>Create one</strong> — Go to{' '}
+                    <strong>Story Management</strong> and add a storyline, then
+                    add articles or enable automation.
+                  </li>
+                  <li>
+                    <strong>Auto-discovery</strong> — The system runs discovery
+                    per domain on a schedule; storylines will appear after the
+                    next run for this domain.
+                  </li>
+                </Box>
+                <DiscoverStorylinesButton
+                  domain={domain}
+                  onDone={loadStorylines}
+                />
+              </>
+            )}
         </Paper>
       ) : (
         <>
           {viewMode === 'grid' ? (
             <Grid container spacing={3}>
-              {storylines.map((storyline) => (
+              {storylines.map(storyline => (
                 <Grid item xs={12} sm={6} md={4} key={storyline.id}>
                   <StorylineCard storyline={storyline} />
                 </Grid>
@@ -972,7 +1071,7 @@ const Storylines: React.FC = () => {
             </Grid>
           ) : (
             <List>
-              {storylines.map((storyline) => (
+              {storylines.map(storyline => (
                 <StorylineListItem key={storyline.id} storyline={storyline} />
               ))}
             </List>

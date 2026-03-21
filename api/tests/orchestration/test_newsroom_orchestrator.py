@@ -1,11 +1,11 @@
 """Unit and integration tests for Newsroom Orchestrator."""
 
-import pytest
 from unittest.mock import Mock
-from orchestration.events.envelope import EventEnvelope
-from orchestration.events.types import EventType
-from orchestration.events.queue import InProcessEventQueue
+
 from orchestration.base import NewsroomOrchestrator
+from orchestration.events.envelope import EventEnvelope
+from orchestration.events.queue import InProcessEventQueue
+from orchestration.events.types import EventType
 
 
 def test_queue_put_get():

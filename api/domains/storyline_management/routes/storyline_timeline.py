@@ -3,13 +3,14 @@ Storyline Timeline & Narrative Routes (v5.0 Phase 4)
 Endpoints for building timelines and generating narrative summaries.
 """
 
-from fastapi import APIRouter, HTTPException, Path, Query, Depends
-from shared.domain_registry import DOMAIN_PATH_PATTERN
 import logging
 
+from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query
 from shared.database.connection import get_db_connection
-from .storyline_crud import validate_domain_dependency
+from shared.domain_registry import DOMAIN_PATH_PATTERN
+
 from ..schemas.storyline_schemas import StorylineRefinementEnqueueRequest
+from .storyline_crud import validate_domain_dependency
 
 logger = logging.getLogger(__name__)
 
@@ -262,9 +263,7 @@ async def get_storyline_narrative(
             job_pending = JOB_TIMELINE_CHRONO in pending
 
         refinement_pending = [
-            j
-            for j in pending
-            if j in (JOB_TIMELINE_CHRONO, JOB_TIMELINE_BRIEFING)
+            j for j in pending if j in (JOB_TIMELINE_CHRONO, JOB_TIMELINE_BRIEFING)
         ]
 
         return {
@@ -292,7 +291,7 @@ async def get_storyline_narrative(
 async def enqueue_storyline_refinement_job(
     domain: str = Depends(validate_domain_dependency),
     storyline_id: int = Path(..., ge=1),
-    body: StorylineRefinementEnqueueRequest,
+    body: StorylineRefinementEnqueueRequest = Body(...),
 ):
     """Queue a refinement job (processed by automation `content_refinement_queue` phase)."""
     from services.content_refinement_queue_service import (
@@ -358,7 +357,9 @@ async def list_domain_events(
         cursor = conn.cursor()
         chrono_cols = _chronological_event_columns(cursor)
         if not chrono_cols:
-            logger.error("public.chronological_events not found or has no columns (run timeline migrations)")
+            logger.error(
+                "public.chronological_events not found or has no columns (run timeline migrations)"
+            )
             raise HTTPException(
                 status_code=503,
                 detail="chronological_events table is not available; apply database migrations (e.g. 060, 133).",
@@ -398,30 +399,41 @@ async def list_domain_events(
         where = " AND ".join(conditions)
         list_params = list(filter_params) + [limit, offset]
 
-        cursor.execute(f"""
+        cursor.execute(
+            f"""
             SELECT {select_list}
             FROM {ev} ce
             WHERE {where}
             ORDER BY ce.actual_event_date DESC NULLS LAST
             LIMIT %s OFFSET %s
-        """, list_params)
+        """,
+            list_params,
+        )
 
         events = []
         for r in cursor.fetchall():
             canon = r[12]
-            events.append({
-                "id": r[0], "title": r[1], "event_type": r[2],
-                "event_date": r[3].isoformat() if r[3] else None,
-                "date_precision": r[4], "location": r[5],
-                "source_count": r[6], "is_ongoing": r[7],
-                "storyline_id": r[8],
-                "importance": float(r[9]) if r[9] is not None else 0.0,
-                "extraction_method": r[10],
-                "extraction_confidence": float(r[11]) if r[11] is not None else None,
-                "canonical_event_id": canon,
-                "dedup_role": "merged_into_other" if canon is not None else "primary_or_unmerged",
-                "source_article_id": r[13],
-            })
+            events.append(
+                {
+                    "id": r[0],
+                    "title": r[1],
+                    "event_type": r[2],
+                    "event_date": r[3].isoformat() if r[3] else None,
+                    "date_precision": r[4],
+                    "location": r[5],
+                    "source_count": r[6],
+                    "is_ongoing": r[7],
+                    "storyline_id": r[8],
+                    "importance": float(r[9]) if r[9] is not None else 0.0,
+                    "extraction_method": r[10],
+                    "extraction_confidence": float(r[11]) if r[11] is not None else None,
+                    "canonical_event_id": canon,
+                    "dedup_role": "merged_into_other"
+                    if canon is not None
+                    else "primary_or_unmerged",
+                    "source_article_id": r[13],
+                }
+            )
 
         cursor.execute(
             f"SELECT COUNT(*) FROM {ev} ce WHERE {where}",

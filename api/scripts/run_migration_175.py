@@ -37,6 +37,7 @@ def main():
 
     try:
         from shared.migration_sql_paths import resolve_migration_sql_file
+
         path = resolve_migration_sql_file("175_public_chronological_events_domain_safe.sql")
     except FileNotFoundError as e:
         print(f"ERROR: {e}")

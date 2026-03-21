@@ -1,0 +1,10 @@
+# Install: uv tool install pre-commit && pre-commit install
+# Run manually: pre-commit run --all-files
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.7
+    hooks:
+      - id: ruff
+        files: ^(api|tests)/
+      - id: ruff-format
+        files: ^(api|tests)/

@@ -29,7 +29,7 @@ export default function RefreshSchedule() {
 
   useEffect(() => {
     if (!domain) return;
-    apiService.getFinanceRefreshSchedule(domain).then((res) => {
+    apiService.getFinanceRefreshSchedule(domain).then(res => {
       setSchedule(res?.data || { tasks: [] });
     });
   }, [domain]);
@@ -50,32 +50,32 @@ export default function RefreshSchedule() {
 
   return (
     <Box sx={{ p: 3 }}>
-      <Typography variant="h5" gutterBottom>
+      <Typography variant='h5' gutterBottom>
         Refresh Schedule
       </Typography>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+      <Typography variant='body2' color='text.secondary' sx={{ mb: 2 }}>
         Scheduled task runs and manual refresh triggers.
       </Typography>
 
       <Paper sx={{ p: 2, mb: 2 }}>
-        <Typography variant="subtitle2" gutterBottom>
+        <Typography variant='subtitle2' gutterBottom>
           Manual trigger
         </Typography>
         <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
-          <FormControl size="small" sx={{ minWidth: 140 }}>
+          <FormControl size='small' sx={{ minWidth: 140 }}>
             <InputLabel>Source</InputLabel>
             <Select
               value={triggerSource}
-              label="Source"
-              onChange={(e) => setTriggerSource(e.target.value)}
+              label='Source'
+              onChange={e => setTriggerSource(e.target.value)}
             >
-              <MenuItem value="gold">Gold</MenuItem>
-              <MenuItem value="edgar">EDGAR</MenuItem>
-              <MenuItem value="fred">FRED</MenuItem>
+              <MenuItem value='gold'>Gold</MenuItem>
+              <MenuItem value='edgar'>EDGAR</MenuItem>
+              <MenuItem value='fred'>FRED</MenuItem>
             </Select>
           </FormControl>
           <Button
-            variant="contained"
+            variant='contained'
             onClick={handleTrigger}
             disabled={triggering}
           >
@@ -85,7 +85,7 @@ export default function RefreshSchedule() {
       </Paper>
 
       <TableContainer component={Paper}>
-        <Table size="small">
+        <Table size='small'>
           <TableHead>
             <TableRow>
               <TableCell>Task</TableCell>

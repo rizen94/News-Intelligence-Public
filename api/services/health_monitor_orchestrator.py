@@ -6,9 +6,8 @@ when a feed fails its health check. Updates in-memory state for GET /api/system_
 import asyncio
 import logging
 import os
-import time
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any
 
 import yaml
 
@@ -19,7 +18,7 @@ _api_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _CONFIG_PATH = os.path.join(_api_root, "config", "monitoring_devices.yaml")
 
 
-def _load_config() -> Dict[str, Any]:
+def _load_config() -> dict[str, Any]:
     if not os.path.isfile(_CONFIG_PATH):
         return {"health_feeds": [], "health_check_interval_seconds": 60}
     try:
@@ -30,9 +29,10 @@ def _load_config() -> Dict[str, Any]:
         return {"health_feeds": [], "health_check_interval_seconds": 60}
 
 
-def _check_one_feed_sync(name: str, url: str, base_url: str) -> Dict[str, Any]:
+def _check_one_feed_sync(name: str, url: str, base_url: str) -> dict[str, Any]:
     """Synchronous check for one health feed (run in executor)."""
     import requests
+
     full_url = (base_url.rstrip("/") + url) if url.startswith("/") else url
     out = {
         "ok": False,
@@ -68,8 +68,10 @@ def _check_one_feed_sync(name: str, url: str, base_url: str) -> Dict[str, Any]:
 def _create_health_alert(feed_name: str, message: str) -> None:
     """Create a system_alert row for a failed health check (columns match existing create_system_alert)."""
     try:
-        from shared.database.connection import get_db_connection
         import json
+
+        from shared.database.connection import get_db_connection
+
         conn = get_db_connection()
         if not conn:
             return
@@ -77,19 +79,22 @@ def _create_health_alert(feed_name: str, message: str) -> None:
             now = datetime.utcnow()
             alert_data = json.dumps({"feed": feed_name})
             with conn.cursor() as cur:
-                cur.execute("""
+                cur.execute(
+                    """
                     INSERT INTO system_alerts
                     (alert_type, severity, title, description, alert_data, created_at, updated_at, is_active)
                     VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s, true)
-                """, (
-                    "health_check",
-                    "high",
-                    f"Health check failed: {feed_name}",
-                    message,
-                    alert_data,
-                    now,
-                    now,
-                ))
+                """,
+                    (
+                        "health_check",
+                        "high",
+                        f"Health check failed: {feed_name}",
+                        message,
+                        alert_data,
+                        now,
+                        now,
+                    ),
+                )
                 conn.commit()
         finally:
             conn.close()
@@ -104,10 +109,10 @@ class HealthMonitorOrchestrator:
         self.base_url = base_url
         self._stop = asyncio.Event()
         self._task: asyncio.Task | None = None
-        self._last_results: Dict[str, Dict[str, Any]] = {}
-        self._last_failed: Dict[str, bool] = {}  # track if we already alerted for this feed
+        self._last_results: dict[str, dict[str, Any]] = {}
+        self._last_failed: dict[str, bool] = {}  # track if we already alerted for this feed
 
-    def get_last_results(self) -> Dict[str, Dict[str, Any]]:
+    def get_last_results(self) -> dict[str, dict[str, Any]]:
         return dict(self._last_results)
 
     async def _run_cycle(self) -> None:
@@ -120,9 +125,7 @@ class HealthMonitorOrchestrator:
         for feed in feeds:
             name = feed.get("name") or feed.get("url") or "unknown"
             url = feed.get("url") or ""
-            r = await loop.run_in_executor(
-                None, _check_one_feed_sync, name, url, self.base_url
-            )
+            r = await loop.run_in_executor(None, _check_one_feed_sync, name, url, self.base_url)
             results[name] = r
             if not r["ok"]:
                 if not self._last_failed.get(name):
@@ -133,6 +136,7 @@ class HealthMonitorOrchestrator:
         self._last_results = results
         try:
             from domains.system_monitoring.routes.resource_dashboard import set_health_feed_results
+
             set_health_feed_results(results)
         except Exception as e:
             logger.debug("Could not set health feed results: %s", e)

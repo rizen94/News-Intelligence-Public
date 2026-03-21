@@ -5,22 +5,24 @@ and "Removing Prince Andrew Succession").
 """
 
 import re
-from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass
+from typing import Any
 
 
 @dataclass
 class TopicClusterInfo:
     """Lightweight topic cluster for similarity computation."""
+
     id: int
     cluster_name: str
     article_count: int
-    keywords: List[str]
+    keywords: list[str]
 
 
 @dataclass
 class MergeSuggestion:
     """A suggested merge of 2+ topics."""
+
     primary: TopicClusterInfo  # Keep this one
     secondary: TopicClusterInfo  # Merge into primary
     score: float
@@ -35,7 +37,7 @@ def _normalize_word(w: str) -> str:
     # Simple suffix strip for common variations (remove/removing, etc.)
     for suffix in ("ing", "ed", "tion", "sion", "s", "es"):
         if len(w) > len(suffix) + 2 and w.endswith(suffix):
-            return w[:-len(suffix)]
+            return w[: -len(suffix)]
     return w
 
 
@@ -48,13 +50,16 @@ def _get_words(text: str) -> set:
 def _get_bigrams(text: str) -> set:
     """Extract bigrams (2-word phrases) for stronger matching."""
     words = text.lower().split()
-    return {f"{words[i]} {words[i+1]}" for i in range(len(words) - 1) if len(words[i]) >= 2 and len(words[i+1]) >= 2}
+    return {
+        f"{words[i]} {words[i + 1]}"
+        for i in range(len(words) - 1)
+        if len(words[i]) >= 2 and len(words[i + 1]) >= 2
+    }
 
 
 def _compute_similarity(
-    name1: str, keywords1: List[str],
-    name2: str, keywords2: List[str]
-) -> Tuple[float, str]:
+    name1: str, keywords1: list[str], name2: str, keywords2: list[str]
+) -> tuple[float, str]:
     """
     Compute similarity score (0-1) and a human-readable reason.
     Uses word overlap, bigram overlap, and optional keyword overlap.
@@ -103,17 +108,17 @@ def _compute_similarity(
 
 
 def get_merge_suggestions(
-    topics: List[Dict[str, Any]],
+    topics: list[dict[str, Any]],
     min_score: float = 0.35,
     max_suggestions: int = 50,
     name_key: str = "name",
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Analyze a list of topics and return suggested merges.
     Topics can be dicts with id, name/cluster_name, article_count, keywords, etc.
     """
     # Normalize to TopicClusterInfo
-    infos: List[TopicClusterInfo] = []
+    infos: list[TopicClusterInfo] = []
     for t in topics:
         name = t.get(name_key) or t.get("cluster_name") or ""
         if not name or not isinstance(name, str) or len(name.strip()) < 2:
@@ -121,14 +126,16 @@ def get_merge_suggestions(
         kw = t.get("keywords") or t.get("cluster_keywords") or []
         if isinstance(kw, dict):
             kw = kw.get("keywords", []) or []
-        infos.append(TopicClusterInfo(
-            id=t.get("id", 0),
-            cluster_name=name.strip(),
-            article_count=t.get("article_count", 0) or t.get("recent_articles", 0),
-            keywords=kw if isinstance(kw, list) else []
-        ))
+        infos.append(
+            TopicClusterInfo(
+                id=t.get("id", 0),
+                cluster_name=name.strip(),
+                article_count=t.get("article_count", 0) or t.get("recent_articles", 0),
+                keywords=kw if isinstance(kw, list) else [],
+            )
+        )
 
-    suggestions: List[MergeSuggestion] = []
+    suggestions: list[MergeSuggestion] = []
     used = set()  # Track which topics we've already suggested (as secondary)
 
     for i, a in enumerate(infos):
@@ -138,8 +145,7 @@ def get_merge_suggestions(
             if (a.id, b.id) in used or (b.id, a.id) in used:
                 continue
             score, reason = _compute_similarity(
-                a.cluster_name, a.keywords,
-                b.cluster_name, b.keywords
+                a.cluster_name, a.keywords, b.cluster_name, b.keywords
             )
             if score < min_score:
                 continue
@@ -148,12 +154,11 @@ def get_merge_suggestions(
                 primary, secondary = a, b
             else:
                 primary, secondary = b, a
-            suggestions.append(MergeSuggestion(
-                primary=primary,
-                secondary=secondary,
-                score=round(score, 3),
-                reason=reason
-            ))
+            suggestions.append(
+                MergeSuggestion(
+                    primary=primary, secondary=secondary, score=round(score, 3), reason=reason
+                )
+            )
             used.add((primary.id, secondary.id))
 
     # Sort by score descending

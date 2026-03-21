@@ -6,28 +6,33 @@ See docs/DATA_PIPELINE_ENHANCEMENTS_ROADMAP.md.
 
 import logging
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any
 
-from fastapi import APIRouter, Query, Body, Path
+from fastapi import APIRouter, Body, Path, Query
 
 logger = logging.getLogger(__name__)
 
 
-def _build_llm_lead_prompt(key_developments: Dict[str, Any], domain: str) -> str:
+def _build_llm_lead_prompt(key_developments: dict[str, Any], domain: str) -> str:
     """Build context string for LLM briefing lead. Marks recent vs older items so the LLM can prioritize today's developments."""
     parts = []
     editorial_ledes = key_developments.get("editorial_ledes") or []
     if editorial_ledes:
         ledes = []
-        for l in editorial_ledes[:4]:
-            if l.get("lede"):
-                tag = " [recent]" if l.get("recent") else ""
-                ledes.append(f"- {l.get('title', '')}{tag}: {l.get('lede', '')}")
+        for lede_item in editorial_ledes[:4]:
+            if lede_item.get("lede"):
+                tag = " [recent]" if lede_item.get("recent") else ""
+                ledes.append(f"- {lede_item.get('title', '')}{tag}: {lede_item.get('lede', '')}")
         if ledes:
             parts.append("Storyline editorial ledes (prefer [recent]):\n" + "\n".join(ledes))
     headlines = key_developments.get("top_headlines") or []
     if headlines:
-        head_lines = [f"- {(h.get('title') or '').strip()}" + (f": {(h.get('summary') or '')[:150]}" if h.get("summary") else "") for h in headlines[:6] if (h.get("title") or "").strip()]
+        head_lines = [
+            f"- {(h.get('title') or '').strip()}"
+            + (f": {(h.get('summary') or '')[:150]}" if h.get("summary") else "")
+            for h in headlines[:6]
+            if (h.get("title") or "").strip()
+        ]
         if head_lines:
             parts.append("Key headlines:\n" + "\n".join(head_lines))
     storylines_list = key_developments.get("top_storylines") or []
@@ -39,18 +44,25 @@ def _build_llm_lead_prompt(key_developments: Dict[str, Any], domain: str) -> str
                 tag = " [recent activity]" if s.get("recent") else " [older]"
                 story_lines.append("- " + t + tag)
         if story_lines:
-            parts.append("Storylines (prefer those with recent activity):\n" + "\n".join(story_lines))
+            parts.append(
+                "Storylines (prefer those with recent activity):\n" + "\n".join(story_lines)
+            )
     event_briefings = key_developments.get("event_briefings") or []
     if event_briefings:
-        ev_lines = [f"- {e.get('headline') or e.get('event_name', '')}" for e in event_briefings[:4] if e.get("headline") or e.get("event_name")]
+        ev_lines = [
+            f"- {e.get('headline') or e.get('event_name', '')}"
+            for e in event_briefings[:4]
+            if e.get("headline") or e.get("event_name")
+        ]
         if ev_lines:
             parts.append("Events:\n" + "\n".join(ev_lines))
     return "\n\n".join(parts) if parts else ""
 
+
 router = APIRouter(prefix="/api", tags=["Intelligence products"])
 
 
-def _brief_to_content(brief: Dict[str, Any]) -> str:
+def _brief_to_content(brief: dict[str, Any]) -> str:
     """Turn briefing sections into a single narrative for the UI. Clear sections: what's new (ledes/headlines), storylines (with recency), events, then metrics. Uses last 3 days of data."""
     sections = brief.get("sections") or {}
     parts = []
@@ -62,11 +74,19 @@ def _brief_to_content(brief: Dict[str, Any]) -> str:
         editorial_ledes = kd.get("editorial_ledes") or []
         headlines = kd.get("top_headlines") or []
         if editorial_ledes:
-            ledes = [l.get("lede", "").strip() for l in editorial_ledes[:3] if l.get("lede", "").strip()]
+            ledes = [
+                item.get("lede", "").strip()
+                for item in editorial_ledes[:3]
+                if item.get("lede", "").strip()
+            ]
             if ledes:
                 parts.append("What's new\n" + "\n".join("• " + lede for lede in ledes))
         elif headlines:
-            lead_items = [(h.get("title") or "").strip() for h in headlines[:5] if (h.get("title") or "").strip()]
+            lead_items = [
+                (h.get("title") or "").strip()
+                for h in headlines[:5]
+                if (h.get("title") or "").strip()
+            ]
             if lead_items:
                 parts.append("What's new\n" + "\n".join("• " + t for t in lead_items))
 
@@ -110,7 +130,10 @@ def _brief_to_content(brief: Dict[str, Any]) -> str:
         )
     ca = sections.get("content_analysis") or {}
     if ca and "error" not in ca:
-        total = ca.get("total_articles_analyzed", sum(c.get("count", 0) for c in ca.get("category_distribution", [])))
+        total = ca.get(
+            "total_articles_analyzed",
+            sum(c.get("count", 0) for c in ca.get("category_distribution", [])),
+        )
         metric_parts.append(
             "Content (last {} days): {} categories, {} articles analyzed.".format(
                 days, len(ca.get("category_distribution", [])), total
@@ -121,7 +144,9 @@ def _brief_to_content(brief: Dict[str, Any]) -> str:
         daily_summary = (sa.get("daily_summary") or "").strip()
         if daily_summary:
             metric_parts.append("Summary: " + daily_summary[:500])
-        metric_parts.append("Storyline analysis: {} articles in topic cloud.".format(sa.get("article_count", 0)))
+        metric_parts.append(
+            "Storyline analysis: {} articles in topic cloud.".format(sa.get("article_count", 0))
+        )
     qm = sections.get("quality_metrics") or {}
     if qm and "error" not in qm:
         score = qm.get("overall_quality_score")
@@ -137,28 +162,35 @@ def _brief_to_content(brief: Dict[str, Any]) -> str:
         metric_parts.append("Recommendations: " + " ".join(actions[:3]))
     if metric_parts:
         parts.append("Metrics\n" + "\n".join(metric_parts))
-    return "\n\n".join(parts) if parts else "Daily briefing generated (last {} days). No sections available.".format(days)
+    return (
+        "\n\n".join(parts)
+        if parts
+        else f"Daily briefing generated (last {days} days). No sections available."
+    )
 
 
 def _get_daily_briefing_service():
     """Lazy init DailyBriefingService with shared db_config."""
-    from shared.database.connection import get_db_config
     from modules.ml.daily_briefing_service import DailyBriefingService
+    from shared.database.connection import get_db_config
+
     return DailyBriefingService(get_db_config())
 
 
 @router.post("/products/generate_brief")
 def post_generate_brief(
-    date: Optional[str] = Body(None, embed=True, description="YYYY-MM-DD; default today"),
-    domain: Optional[str] = Body(None, embed=True),
+    date: str | None = Body(None, embed=True, description="YYYY-MM-DD; default today"),
+    domain: str | None = Body(None, embed=True),
     include_anomalies: bool = Body(True, embed=True),
     include_storylines: bool = Body(True, embed=True),
     include_deduplication: bool = Body(True, embed=True),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Generate a daily brief on demand. Returns brief sections and generated_at."""
     try:
         svc = _get_daily_briefing_service()
-        briefing_date = datetime.strptime(date, "%Y-%m-%d").date() if date else datetime.now().date()
+        briefing_date = (
+            datetime.strptime(date, "%Y-%m-%d").date() if date else datetime.now().date()
+        )
         briefing_date_dt = datetime.combine(briefing_date, datetime.min.time())
         brief = svc.generate_daily_briefing(
             briefing_date_dt,
@@ -177,6 +209,7 @@ def post_generate_brief(
         if include_anomalies and domain:
             try:
                 from services.intelligence_analysis_service import get_intelligence_service
+
                 anomalies = get_intelligence_service().detect_anomalies(domain, hours=24)
                 out["anomalies"] = [
                     {
@@ -200,13 +233,19 @@ def post_generate_brief(
 @router.post("/{domain}/intelligence/briefings/daily")
 async def post_domain_daily_briefing(
     domain: str = Path(..., description="Domain key (e.g. politics, finance, science-tech)"),
-    date: Optional[str] = Body(None, embed=True, description="YYYY-MM-DD; default today"),
-    use_llm_lead: bool = Body(True, embed=True, description="If true and key developments exist, prepend an LLM-generated lead paragraph"),
-) -> Dict[str, Any]:
+    date: str | None = Body(None, embed=True, description="YYYY-MM-DD; default today"),
+    use_llm_lead: bool = Body(
+        True,
+        embed=True,
+        description="If true and key developments exist, prepend an LLM-generated lead paragraph",
+    ),
+) -> dict[str, Any]:
     """Generate an AI summary of today's developments for the given domain. Used by Briefings UI."""
     try:
         svc = _get_daily_briefing_service()
-        briefing_date = datetime.strptime(date, "%Y-%m-%d").date() if date else datetime.now().date()
+        briefing_date = (
+            datetime.strptime(date, "%Y-%m-%d").date() if date else datetime.now().date()
+        )
         briefing_date_dt = datetime.combine(briefing_date, datetime.min.time())
         brief = svc.generate_daily_briefing(
             briefing_date_dt,
@@ -215,7 +254,12 @@ async def post_domain_daily_briefing(
             domain=domain,
         )
         if "error" in brief:
-            return {"success": False, "error": brief["error"], "data": None, "message": brief["error"]}
+            return {
+                "success": False,
+                "error": brief["error"],
+                "data": None,
+                "message": brief["error"],
+            }
         content = _brief_to_content(brief)
         # Optional: prepend LLM-generated editorial lead when we have key developments
         kd = (brief.get("sections") or {}).get("key_developments") or {}
@@ -224,6 +268,7 @@ async def post_domain_daily_briefing(
             if context:
                 try:
                     from shared.services.llm_service import llm_service
+
                     result = await llm_service.generate_briefing_lead(context, domain=domain)
                     if result.get("success") and result.get("summary"):
                         lead = (result["summary"] or "").strip()
@@ -241,7 +286,13 @@ async def post_domain_daily_briefing(
             "sections": brief.get("sections", {}),
             "statistics": stats,
         }
-        return {"success": True, "data": data, "content": content, "article_count": article_count, "message": None}
+        return {
+            "success": True,
+            "data": data,
+            "content": content,
+            "article_count": article_count,
+            "message": None,
+        }
     except Exception as e:
         logger.warning("domain daily briefing failed: %s", e)
         return {"success": False, "error": str(e), "data": None, "message": str(e)}
@@ -249,12 +300,14 @@ async def post_domain_daily_briefing(
 
 @router.get("/products/daily_brief")
 def get_daily_brief(
-    date: Optional[str] = Query(None, description="YYYY-MM-DD; default today"),
-) -> Dict[str, Any]:
+    date: str | None = Query(None, description="YYYY-MM-DD; default today"),
+) -> dict[str, Any]:
     """Return daily brief for the given date (generated on demand)."""
     try:
         svc = _get_daily_briefing_service()
-        briefing_date = datetime.strptime(date, "%Y-%m-%d").date() if date else datetime.now().date()
+        briefing_date = (
+            datetime.strptime(date, "%Y-%m-%d").date() if date else datetime.now().date()
+        )
         briefing_date_dt = datetime.combine(briefing_date, datetime.min.time())
         brief = svc.generate_daily_briefing(
             briefing_date_dt,
@@ -282,35 +335,41 @@ def get_daily_brief(
 
 @router.get("/products/weekly_digest")
 def get_weekly_digest(
-    week_start: Optional[str] = Query(None, description="YYYY-MM-DD (Monday) for a specific week"),
+    week_start: str | None = Query(None, description="YYYY-MM-DD (Monday) for a specific week"),
     limit: int = Query(10, ge=1, le=52),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Return stored weekly digests. If week_start given, return that week's digest if present."""
     from services.digest_automation_service import get_digest_service
 
     svc = get_digest_service()
     if week_start:
         try:
-            ws = datetime.strptime(week_start, "%Y-%m-%d").date()
+            datetime.strptime(week_start, "%Y-%m-%d").date()
         except ValueError:
             return {"success": False, "data": None, "message": "Invalid week_start; use YYYY-MM-DD"}
-        digests = [d for d in svc.get_latest_weekly_digests(limit=52) if d.get("week_start") == week_start]
+        digests = [
+            d for d in svc.get_latest_weekly_digests(limit=52) if d.get("week_start") == week_start
+        ]
         if not digests:
             return {"success": True, "data": {"digests": [], "count": 0}, "message": None}
-        return {"success": True, "data": {"digests": digests, "count": len(digests)}, "message": None}
+        return {
+            "success": True,
+            "data": {"digests": digests, "count": len(digests)},
+            "message": None,
+        }
     digests = svc.get_latest_weekly_digests(limit=limit)
     return {"success": True, "data": {"digests": digests, "count": len(digests)}, "message": None}
 
 
 @router.get("/products/alert_digest")
 def get_alert_digest(
-    since: Optional[int] = Query(None, description="Only alerts from last N hours"),
+    since: int | None = Query(None, description="Only alerts from last N hours"),
     limit: int = Query(50, ge=1, le=200),
     unread_only: bool = Query(False),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Alert digest: watchlist alerts (and optionally event alerts) bundled."""
-    from shared.database.connection import get_db_connection
     from services.watchlist_service import WatchlistService
+    from shared.database.connection import get_db_connection
 
     conn = get_db_connection()
     if not conn:
@@ -320,6 +379,7 @@ def get_alert_digest(
         alerts = svc.get_alerts(unread_only=unread_only, limit=limit)
         if since is not None:
             cutoff = datetime.utcnow() - timedelta(hours=since)
+
             def _parsed(ts):
                 if not ts:
                     return None
@@ -327,7 +387,12 @@ def get_alert_digest(
                     return datetime.fromisoformat(ts.replace("Z", "+00:00"))
                 except (ValueError, TypeError):
                     return None
-            alerts = [a for a in alerts if _parsed(a.get("created_at")) and _parsed(a["created_at"]) >= cutoff]
+
+            alerts = [
+                a
+                for a in alerts
+                if _parsed(a.get("created_at")) and _parsed(a["created_at"]) >= cutoff
+            ]
         conn.close()
 
         # Build editorial digest summary from alert content
@@ -335,7 +400,8 @@ def get_alert_digest(
         if alerts:
             alert_descriptions = [
                 (a.get("description") or a.get("title") or a.get("alert_type", "")).strip()
-                for a in alerts[:5] if a.get("description") or a.get("title")
+                for a in alerts[:5]
+                if a.get("description") or a.get("title")
             ]
             if alert_descriptions:
                 digest_summary = f"{len(alerts)} alerts. Key: {'; '.join(alert_descriptions[:3])}."
@@ -365,24 +431,29 @@ def get_alert_digest(
 # Content feedback and briefing feed (for Briefings UI)
 # -----------------------------------------------------------------------------
 
+
 @router.post("/{domain}/intelligence/feedback")
 def post_content_feedback(
     domain: str = Path(..., description="Domain key (e.g. politics, finance, science-tech)"),
     item_type: str = Body(..., embed=True, description="article | storyline | briefing"),
-    item_id: Optional[int] = Body(None, embed=True),
-    rating: Optional[int] = Body(None, embed=True, ge=1, le=5),
+    item_id: int | None = Body(None, embed=True),
+    rating: int | None = Body(None, embed=True, ge=1, le=5),
     not_interested: bool = Body(False, embed=True),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Submit usefulness (1-5) or 'not interested' for an article, storyline, or whole briefing."""
     from services.content_feedback_service import submit_feedback
-    result = submit_feedback(domain, item_type, item_id, rating=rating, not_interested=not_interested)
+
+    result = submit_feedback(
+        domain, item_type, item_id, rating=rating, not_interested=not_interested
+    )
     if result.get("success"):
         return {"success": True, "data": None, "message": "Feedback recorded"}
     return {"success": False, "data": None, "message": result.get("error", "Unknown error")}
 
 
-def _get_schema_for_domain(domain: str) -> Optional[str]:
+def _get_schema_for_domain(domain: str) -> str | None:
     from shared.database.connection import get_db_connection
+
     conn = get_db_connection()
     if not conn:
         return None
@@ -403,12 +474,12 @@ def get_briefing_feed(
     domain: str = Path(..., description="Domain key (e.g. politics, finance, science-tech)"),
     articles_limit: int = Query(10, ge=1, le=50),
     storylines_limit: int = Query(6, ge=1, le=30),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Return articles and storylines for Briefings page, reordered: not_interested excluded, sports/celebrity demoted."""
-    from shared.database.connection import get_db_connection
     from psycopg2.extras import RealDictCursor
-    from services.content_feedback_service import get_not_interested_ids
     from services.briefing_filter_helper import sort_briefing_items_by_priority
+    from services.content_feedback_service import get_not_interested_ids
+    from shared.database.connection import get_db_connection
 
     schema = _get_schema_for_domain(domain)
     if not schema:
@@ -442,7 +513,9 @@ def get_briefing_feed(
                 d["source"] = d.get("source_domain")
                 d["published_date"] = d.get("published_at")
                 articles.append(d)
-            articles = sort_briefing_items_by_priority(articles, title_key="title", summary_key="summary")[:articles_limit]
+            articles = sort_briefing_items_by_priority(
+                articles, title_key="title", summary_key="summary"
+            )[:articles_limit]
 
             cur.execute(
                 f"""
@@ -459,7 +532,9 @@ def get_briefing_feed(
                 if row["id"] in not_story:
                     continue
                 storyline_rows.append(dict(row))
-            storyline_rows = sort_briefing_items_by_priority(storyline_rows, title_key="title", summary_key="description")[:storylines_limit]
+            storyline_rows = sort_briefing_items_by_priority(
+                storyline_rows, title_key="title", summary_key="description"
+            )[:storylines_limit]
             storyline_ids = [s["id"] for s in storyline_rows]
             top_entities_by_storyline = {sid: [] for sid in storyline_ids}
             if storyline_ids:
@@ -486,11 +561,15 @@ def get_briefing_feed(
                 )
                 for r in cur.fetchall():
                     desc = r[3]
-                    top_entities_by_storyline.setdefault(r[0], []).append({
-                        "name": r[1] or "",
-                        "type": r[2] or "subject",
-                        "description_short": (desc[:100] + "…") if desc and len(desc) > 100 else (desc or ""),
-                    })
+                    top_entities_by_storyline.setdefault(r[0], []).append(
+                        {
+                            "name": r[1] or "",
+                            "type": r[2] or "subject",
+                            "description_short": (desc[:100] + "…")
+                            if desc and len(desc) > 100
+                            else (desc or ""),
+                        }
+                    )
             for s in storyline_rows:
                 s["top_entities"] = top_entities_by_storyline.get(s["id"], [])
                 if "editorial_document" not in s or s["editorial_document"] is None:

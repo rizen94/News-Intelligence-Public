@@ -34,7 +34,15 @@ def handle_breaking_news(envelope: EventEnvelope, orchestrator: Any = None) -> N
                 VALUES ('chief_editor:last_breaking_news', %s::jsonb, NOW())
                 ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
                 """,
-                (json.dumps({"domain_key": domain_key, "article_id": article_id, "event_id": envelope.event_id}),),
+                (
+                    json.dumps(
+                        {
+                            "domain_key": domain_key,
+                            "article_id": article_id,
+                            "event_id": envelope.event_id,
+                        }
+                    ),
+                ),
             )
         conn.commit()
     except Exception as e:

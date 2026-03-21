@@ -11,28 +11,52 @@ import hashlib
 import json
 import logging
 import uuid
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from datetime import datetime
+from typing import Any
 
-from services.temporal_parser import extract_temporal_expressions, resolve_date
 from shared.services.llm_service import LLMService, ModelType
+
 from services.domain_synthesis_config import get_domain_synthesis_config
+from services.temporal_parser import extract_temporal_expressions, resolve_date
 
 logger = logging.getLogger(__name__)
 
 VALID_EVENT_TYPES = {
     # Core (all domains)
-    'legal_action', 'policy_decision', 'election', 'conflict',
-    'economic_event', 'scientific_discovery', 'natural_disaster',
-    'public_statement', 'investigation', 'legislation', 'court_ruling',
-    'arrest', 'protest', 'agreement', 'appointment', 'resignation',
-    'death', 'meeting', 'report_release', 'other',
+    "legal_action",
+    "policy_decision",
+    "election",
+    "conflict",
+    "economic_event",
+    "scientific_discovery",
+    "natural_disaster",
+    "public_statement",
+    "investigation",
+    "legislation",
+    "court_ruling",
+    "arrest",
+    "protest",
+    "agreement",
+    "appointment",
+    "resignation",
+    "death",
+    "meeting",
+    "report_release",
+    "other",
     # Finance
-    'market_shift', 'trade_policy', 'supply_disruption',
-    'commodity_price', 'tariff_change', 'sanctions',
+    "market_shift",
+    "trade_policy",
+    "supply_disruption",
+    "commodity_price",
+    "tariff_change",
+    "sanctions",
     # Science-tech
-    'clinical_trial', 'patent_filing', 'product_launch',
-    'research_publication', 'regulatory_approval', 'industry_partnership',
+    "clinical_trial",
+    "patent_filing",
+    "product_launch",
+    "research_publication",
+    "regulatory_approval",
+    "industry_partnership",
 }
 
 EVENT_EXTRACTION_PROMPT = """You are an expert news analyst. Given the following news article, extract ALL discrete real-world events described.
@@ -68,7 +92,7 @@ Science & technology domain addendum:
 """
 
 
-def _is_science_tech_domain(domain: Optional[str]) -> bool:
+def _is_science_tech_domain(domain: str | None) -> bool:
     if not domain:
         return False
     k = domain.lower().strip().replace("_", "-")
@@ -77,32 +101,30 @@ def _is_science_tech_domain(domain: Optional[str]) -> bool:
 
 def compute_event_fingerprint(
     event_type: str,
-    key_actors: List[Dict[str, str]],
+    key_actors: list[dict[str, str]],
     location: str,
-    event_date: Optional[str],
+    event_date: str | None,
 ) -> str:
     """
     Build a deterministic fingerprint from the normalised core fields
     so that the same real-world event reported by different sources
     produces the same hash.
     """
-    actor_names = sorted(
-        a.get('name', '').strip().lower() for a in (key_actors or [])
-    )
+    actor_names = sorted(a.get("name", "").strip().lower() for a in (key_actors or []))
     parts = [
-        (event_type or '').strip().lower(),
-        '|'.join(actor_names),
-        (location or 'unknown').strip().lower(),
-        (event_date or 'unknown').strip(),
+        (event_type or "").strip().lower(),
+        "|".join(actor_names),
+        (location or "unknown").strip().lower(),
+        (event_date or "unknown").strip(),
     ]
-    raw = '::'.join(parts)
-    return hashlib.sha256(raw.encode('utf-8')).hexdigest()[:64]
+    raw = "::".join(parts)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:64]
 
 
 class EventExtractionService:
     """Extracts structured events from processed articles via LLM."""
 
-    def __init__(self, llm_service: Optional[LLMService] = None):
+    def __init__(self, llm_service: LLMService | None = None):
         self.llm = llm_service or LLMService()
 
     async def extract_events_from_article(
@@ -110,9 +132,9 @@ class EventExtractionService:
         article_id: int,
         content: str,
         pub_date: datetime,
-        storyline_id: Optional[str] = None,
-        domain: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
+        storyline_id: str | None = None,
+        domain: str | None = None,
+    ) -> list[dict[str, Any]]:
         """
         Send article text through the event-extraction prompt, parse the
         LLM response, resolve temporal expressions, compute fingerprints,
@@ -123,7 +145,7 @@ class EventExtractionService:
             return []
 
         prompt = EVENT_EXTRACTION_PROMPT.format(
-            pub_date=pub_date.strftime('%Y-%m-%d'),
+            pub_date=pub_date.strftime("%Y-%m-%d"),
             content=content[:4000],
         )
         if domain:
@@ -146,7 +168,7 @@ class EventExtractionService:
             logger.info(f"Article {article_id}: no events extracted")
             return []
 
-        events: List[Dict[str, Any]] = []
+        events: list[dict[str, Any]] = []
         for idx, raw_evt in enumerate(events_raw):
             try:
                 evt = self._normalise_event(raw_evt, article_id, pub_date, storyline_id, idx)
@@ -158,46 +180,46 @@ class EventExtractionService:
         logger.info(f"Article {article_id}: extracted {len(events)} events")
         return events
 
-    def _parse_json_response(self, response: str) -> List[Dict]:
+    def _parse_json_response(self, response: str) -> list[dict]:
         """Extract a JSON array from the LLM response, tolerating markdown fences."""
         text = response.strip()
-        if text.startswith('```'):
-            text = text.split('\n', 1)[-1]
-        if text.endswith('```'):
-            text = text.rsplit('```', 1)[0]
+        if text.startswith("```"):
+            text = text.split("\n", 1)[-1]
+        if text.endswith("```"):
+            text = text.rsplit("```", 1)[0]
         text = text.strip()
 
-        start = text.find('[')
-        end = text.rfind(']')
+        start = text.find("[")
+        end = text.rfind("]")
         if start == -1 or end == -1:
             logger.warning("No JSON array found in LLM response")
             return []
 
         try:
-            return json.loads(text[start:end + 1])
+            return json.loads(text[start : end + 1])
         except json.JSONDecodeError as e:
             logger.warning(f"JSON parse error: {e}")
             return []
 
     def _normalise_event(
         self,
-        raw: Dict,
+        raw: dict,
         article_id: int,
         pub_date: datetime,
-        storyline_id: Optional[str],
+        storyline_id: str | None,
         sequence: int,
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Validate, resolve dates, compute fingerprint, return DB-ready dict."""
-        title = (raw.get('event_title') or '').strip()
+        title = (raw.get("event_title") or "").strip()
         if not title:
             return None
 
-        event_type = (raw.get('event_type') or 'other').strip().lower()
+        event_type = (raw.get("event_type") or "other").strip().lower()
         if event_type not in VALID_EVENT_TYPES:
-            event_type = 'other'
+            event_type = "other"
 
-        raw_date = raw.get('event_date') or ''
-        date_precision = (raw.get('date_precision') or 'unknown').strip().lower()
+        raw_date = raw.get("event_date") or ""
+        date_precision = (raw.get("date_precision") or "unknown").strip().lower()
         resolved_date, resolved_precision = resolve_date(str(raw_date), pub_date)
 
         if resolved_date is None and raw_date:
@@ -205,57 +227,59 @@ class EventExtractionService:
             if temporal_hits:
                 resolved_date, resolved_precision = resolve_date(temporal_hits[0], pub_date)
 
-        if resolved_precision != 'unknown':
+        if resolved_precision != "unknown":
             date_precision = resolved_precision
 
-        location = (raw.get('location') or 'unknown').strip()
-        key_actors = raw.get('key_actors') or []
+        location = (raw.get("location") or "unknown").strip()
+        key_actors = raw.get("key_actors") or []
         if isinstance(key_actors, list):
             key_actors = [
-                a if isinstance(a, dict) else {'name': str(a), 'role': 'unknown'}
+                a if isinstance(a, dict) else {"name": str(a), "role": "unknown"}
                 for a in key_actors
             ]
         else:
             key_actors = []
 
-        outcome = (raw.get('outcome') or '').strip()
-        is_ongoing = bool(raw.get('is_ongoing', False))
-        continuation_signals = raw.get('continuation_signals') or []
+        outcome = (raw.get("outcome") or "").strip()
+        is_ongoing = bool(raw.get("is_ongoing", False))
+        continuation_signals = raw.get("continuation_signals") or []
         if not isinstance(continuation_signals, list):
             continuation_signals = [str(continuation_signals)]
 
         fingerprint = compute_event_fingerprint(
-            event_type, key_actors, location,
+            event_type,
+            key_actors,
+            location,
             resolved_date.isoformat() if resolved_date else None,
         )
 
         return {
-            'event_id': str(uuid.uuid4()),
-            'storyline_id': storyline_id or '',
-            'title': title,
-            'description': outcome,
-            'event_type': event_type,
-            'actual_event_date': resolved_date,
-            'relative_temporal_expression': str(raw_date) if raw_date else None,
-            'temporal_confidence': 0.9 if date_precision == 'exact' else 0.5,
-            'source_article_id': article_id,
-            'extraction_method': 'ml',
-            'extraction_model': ModelType.LLAMA_8B.value,
-            'extraction_confidence': 0.8,
-            'importance_score': 0.5,
-            'location': location,
-            'entities': json.dumps(key_actors),
-            'event_fingerprint': fingerprint,
-            'source_count': 1,
-            'key_actors': json.dumps(key_actors),
-            'outcome': outcome,
-            'is_ongoing': is_ongoing,
-            'continuation_signals': json.dumps(continuation_signals),
-            'date_precision': date_precision,
-            'event_sequence_position': sequence,
+            "event_id": str(uuid.uuid4()),
+            "storyline_id": storyline_id or "",
+            "title": title,
+            "description": outcome,
+            "event_type": event_type,
+            "actual_event_date": resolved_date,
+            "relative_temporal_expression": str(raw_date) if raw_date else None,
+            "temporal_confidence": 0.9 if date_precision == "exact" else 0.5,
+            "source_article_id": article_id,
+            "extraction_method": "ml",
+            "extraction_model": ModelType.LLAMA_8B.value,
+            "extraction_confidence": 0.8,
+            "importance_score": 0.5,
+            "location": location,
+            "entities": json.dumps(key_actors),
+            "event_fingerprint": fingerprint,
+            "source_count": 1,
+            "key_actors": json.dumps(key_actors),
+            "outcome": outcome,
+            "is_ongoing": is_ongoing,
+            "continuation_signals": json.dumps(continuation_signals),
+            "date_precision": date_precision,
+            "event_sequence_position": sequence,
         }
 
-    async def save_events(self, events: List[Dict[str, Any]], conn) -> int:
+    async def save_events(self, events: list[dict[str, Any]], conn) -> int:
         """Persist extracted events into the chronological_events table."""
         if not events:
             return 0
@@ -264,7 +288,8 @@ class EventExtractionService:
         saved = 0
         for evt in events:
             try:
-                cursor.execute("""
+                cursor.execute(
+                    """
                     INSERT INTO public.chronological_events (
                         event_id, storyline_id, title, description, event_type,
                         actual_event_date, relative_temporal_expression,
@@ -286,7 +311,9 @@ class EventExtractionService:
                         %(event_sequence_position)s
                     )
                     ON CONFLICT (event_id) DO NOTHING
-                """, evt)
+                """,
+                    evt,
+                )
                 saved += 1
             except Exception as e:
                 # Do not rollback the whole batch — other events in this article can still persist

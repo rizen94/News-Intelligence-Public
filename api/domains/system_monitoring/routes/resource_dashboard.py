@@ -7,17 +7,16 @@ disk, project_usage_bytes, processes (same shape as SSH response).
 """
 
 import asyncio
-import os
 import logging
+import os
 import subprocess
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import psutil
 import requests
 import yaml
 from fastapi import APIRouter, HTTPException
-
 from shared.database.connection import get_ui_db_connection as get_db_connection
 from shared.services.response_cache import cached_response
 
@@ -48,7 +47,7 @@ _CONFIG_PATH = os.path.join(
 )
 
 
-def _load_monitoring_config() -> Dict[str, Any]:
+def _load_monitoring_config() -> dict[str, Any]:
     """Load monitoring_devices.yaml; return empty dict if missing."""
     if not os.path.isfile(_CONFIG_PATH):
         return {"devices": [], "health_feeds": [], "health_check_interval_seconds": 60}
@@ -63,6 +62,7 @@ def _load_monitoring_config() -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Database stats: size, table count, record counts
 # ---------------------------------------------------------------------------
+
 
 @router.get("/database/stats")
 @cached_response(ttl=120)
@@ -112,11 +112,12 @@ async def get_database_stats():
                 if not domain_schemas:
                     domain_schemas = ["politics", "finance", "science_tech"]
 
-                table_record_counts: List[Dict[str, Any]] = []
+                table_record_counts: list[dict[str, Any]] = []
                 for schema in domain_schemas:
                     for table in ("articles", "storylines", "rss_feeds"):
                         try:
                             from psycopg2 import sql
+
                             cur.execute(
                                 sql.SQL("SELECT COUNT(*) FROM {}.{}").format(
                                     sql.Identifier(schema), sql.Identifier(table)
@@ -172,9 +173,10 @@ async def get_database_stats():
 # Backlog status: articles/documents/storylines remaining and catch-up ETA
 # ---------------------------------------------------------------------------
 
+
 @router.get("/backlog_status")
 @cached_response(ttl=15)
-def get_backlog_status() -> Dict[str, Any]:
+def get_backlog_status() -> dict[str, Any]:
     """
     Backlog progression: articles to enrich, documents to process, storylines to synthesize,
     with estimated throughput and catch-up ETA. Used by the Monitor page.
@@ -218,8 +220,8 @@ def get_backlog_status() -> Dict[str, Any]:
                     """
                 )
                 row = cur.fetchone()
-                articles_created_24h += (row[0] or 0)
-                articles_short_created_24h += (row[1] or 0)
+                articles_created_24h += row[0] or 0
+                articles_short_created_24h += row[1] or 0
                 # Measured throughput: articles enriched in last 1h/24h (enrichment_status = 'enriched')
                 cur.execute(
                     f"""
@@ -233,8 +235,8 @@ def get_backlog_status() -> Dict[str, Any]:
                 )
                 r = cur.fetchone()
                 if r:
-                    enriched_last_1h += (r[0] or 0)
-                    enriched_last_24h += (r[1] or 0)
+                    enriched_last_1h += r[0] or 0
+                    enriched_last_24h += r[1] or 0
             except Exception:
                 _rollback_db_connection(conn)
 
@@ -357,7 +359,7 @@ def get_backlog_status() -> Dict[str, Any]:
         docs_failed_last_1h = 0
         docs_failed_last_24h = 0
         docs_permanent_failed_total = 0
-        docs_top_failure_reasons: List[Dict[str, Any]] = []
+        docs_top_failure_reasons: list[dict[str, Any]] = []
         try:
             cur.execute(
                 """
@@ -416,16 +418,19 @@ def get_backlog_status() -> Dict[str, Any]:
                 """
             )
             docs_top_failure_reasons = [
-                {"reason": row[0], "count": row[1] or 0}
-                for row in (cur.fetchall() or [])
+                {"reason": row[0], "count": row[1] or 0} for row in (cur.fetchall() or [])
             ]
         except Exception:
             pass
 
         # Synthesis results per domain (storylines synthesized in last 1h and 2h)
-        synthesis_last_1h: Dict[str, int] = {}
-        synthesis_last_2h: Dict[str, int] = {}
-        for schema, domain_key in [("politics", "politics"), ("finance", "finance"), ("science_tech", "science_tech")]:
+        synthesis_last_1h: dict[str, int] = {}
+        synthesis_last_2h: dict[str, int] = {}
+        for schema, domain_key in [
+            ("politics", "politics"),
+            ("finance", "finance"),
+            ("science_tech", "science_tech"),
+        ]:
             try:
                 cur.execute(
                     f"""
@@ -531,9 +536,21 @@ def get_backlog_status() -> Dict[str, Any]:
 
     eta_articles = (now + timedelta(hours=h_articles)).isoformat() if article_backlog else None
     eta_docs = (now + timedelta(hours=h_docs)).isoformat() if doc_backlog else None
-    eta_storylines = (now + timedelta(hours=h_storylines)).isoformat() if storyline_backlog else None
+    eta_storylines = (
+        (now + timedelta(hours=h_storylines)).isoformat() if storyline_backlog else None
+    )
     overall_h = max(h_articles, h_docs, h_storylines, h_contexts, h_entities)
-    eta_overall = (now + timedelta(hours=overall_h)).isoformat() if (article_backlog or doc_backlog or storyline_backlog or context_backlog or entity_profile_backlog) else None
+    eta_overall = (
+        (now + timedelta(hours=overall_h)).isoformat()
+        if (
+            article_backlog
+            or doc_backlog
+            or storyline_backlog
+            or context_backlog
+            or entity_profile_backlog
+        )
+        else None
+    )
 
     # Iterations to baseline: one "iteration" = one 2h collection/analysis cycle
     def iterations_2h(hours: float) -> int:
@@ -543,7 +560,11 @@ def get_backlog_status() -> Dict[str, Any]:
 
     # Net rate: inflow (short created 24h) minus outflow (enriched per day); positive = backlog growing
     net_articles_per_day = articles_short_created_24h - articles_per_day
-    backlog_trend = "growing" if net_articles_per_day > 0 else ("shrinking" if net_articles_per_day < 0 else "stable")
+    backlog_trend = (
+        "growing"
+        if net_articles_per_day > 0
+        else ("shrinking" if net_articles_per_day < 0 else "stable")
+    )
 
     return {
         "success": True,
@@ -627,14 +648,16 @@ def get_backlog_status() -> Dict[str, Any]:
 # Context-entity coverage diagnostic (Phase 3B)
 # ---------------------------------------------------------------------------
 
+
 @router.get("/context_entity_coverage")
-def get_context_entity_coverage() -> Dict[str, Any]:
+def get_context_entity_coverage() -> dict[str, Any]:
     """
     Diagnostic: contexts with vs without context_entity_mentions.
     Run entity_profile_sync + backfill to improve coverage.
     """
     try:
         from services.context_processor_service import get_context_entity_mentions_coverage
+
         data = get_context_entity_mentions_coverage()
         return {"success": "error" not in data, "data": data}
     except Exception as e:
@@ -645,7 +668,8 @@ def get_context_entity_coverage() -> Dict[str, Any]:
 # Devices: disk usage and processes (local now; remote via agent_url later)
 # ---------------------------------------------------------------------------
 
-def _get_local_disk_and_processes(project_path: Optional[str] = None) -> Dict[str, Any]:
+
+def _get_local_disk_and_processes(project_path: str | None = None) -> dict[str, Any]:
     """Get disk usage and top processes for the local machine."""
     disk_root = psutil.disk_usage("/")
     result = {
@@ -688,17 +712,17 @@ def _get_local_disk_and_processes(project_path: Optional[str] = None) -> Dict[st
             )
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             continue
-    procs.sort(key=lambda x: (x["memory_percent"] or 0), reverse=True)
+    procs.sort(key=lambda x: x["memory_percent"] or 0, reverse=True)
     result["processes"] = procs[:50]
     return result
 
 
 def _get_remote_disk_and_processes_via_ssh(
     host: str,
-    ssh_user: Optional[str] = None,
+    ssh_user: str | None = None,
     timeout_seconds: int = DEFAULT_SSH_TIMEOUT_SECONDS,
-    project_path_remote: Optional[str] = None,
-) -> Dict[str, Any]:
+    project_path_remote: str | None = None,
+) -> dict[str, Any]:
     """
     Run df and ps on remote host via SSH; return same shape as _get_local_disk_and_processes.
     Requires passwordless SSH (e.g. key-based) from API host to host. See docs/MONITORING_SSH_SETUP.md.
@@ -717,7 +741,7 @@ def _get_remote_disk_and_processes_via_ssh(
 
     # 1. Disk: df -B1 for bytes; use root "/" row
     try:
-        cmd = f'ssh {ssh_opts} {target} "df -B1 --output=size,used,avail,pcent,target 2>/dev/null | awk \'NR==2 || / \\/ $/ {{print; exit}}\'"'
+        cmd = f"ssh {ssh_opts} {target} \"df -B1 --output=size,used,avail,pcent,target 2>/dev/null | awk 'NR==2 || / \\/ $/ {{print; exit}}'\""
         out = subprocess.run(
             cmd,
             shell=True,
@@ -746,8 +770,10 @@ def _get_remote_disk_and_processes_via_ssh(
                 }
         else:
             # Fallback: df without GNU --output (e.g. BusyBox)
-            cmd2 = f'ssh {ssh_opts} {target} "df -B1 2>/dev/null | awk \'NR==2 {{print $2,$3,$4,$5,$6}}\'"'
-            out2 = subprocess.run(cmd2, shell=True, capture_output=True, text=True, timeout=timeout_seconds)
+            cmd2 = f"ssh {ssh_opts} {target} \"df -B1 2>/dev/null | awk 'NR==2 {{print $2,$3,$4,$5,$6}}'\""
+            out2 = subprocess.run(
+                cmd2, shell=True, capture_output=True, text=True, timeout=timeout_seconds
+            )
             if out2.returncode == 0 and out2.stdout.strip():
                 parts = out2.stdout.strip().split()
                 if len(parts) >= 4:
@@ -776,29 +802,37 @@ def _get_remote_disk_and_processes_via_ssh(
     # 2. Processes: ps -o pid,comm,%mem,%cpu (Linux)
     try:
         cmd = f'ssh {ssh_opts} {target} "ps -o pid,comm,%mem,%cpu --no-headers -e 2>/dev/null | head -51"'
-        out = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout_seconds)
+        out = subprocess.run(
+            cmd, shell=True, capture_output=True, text=True, timeout=timeout_seconds
+        )
         if out.returncode == 0 and out.stdout.strip():
             procs = []
             for line in out.stdout.strip().split("\n")[:50]:
-                parts = line.split(None, 3)  # pid, comm, %mem, %cpu (comm may contain spaces; last 2 are numbers)
+                parts = line.split(
+                    None, 3
+                )  # pid, comm, %mem, %cpu (comm may contain spaces; last 2 are numbers)
                 if len(parts) >= 4:
                     try:
-                        procs.append({
-                            "pid": int(parts[0]),
-                            "name": (parts[1] or "?")[:50],
-                            "memory_percent": round(float(parts[2].replace(",", ".")), 1),
-                            "cpu_percent": round(float(parts[3].replace(",", ".")), 1),
-                        })
+                        procs.append(
+                            {
+                                "pid": int(parts[0]),
+                                "name": (parts[1] or "?")[:50],
+                                "memory_percent": round(float(parts[2].replace(",", ".")), 1),
+                                "cpu_percent": round(float(parts[3].replace(",", ".")), 1),
+                            }
+                        )
                     except (ValueError, IndexError):
                         continue
                 elif len(parts) == 3:
                     try:
-                        procs.append({
-                            "pid": int(parts[0]),
-                            "name": (parts[1] or "?")[:50],
-                            "memory_percent": round(float(parts[2].replace(",", ".")), 1),
-                            "cpu_percent": 0.0,
-                        })
+                        procs.append(
+                            {
+                                "pid": int(parts[0]),
+                                "name": (parts[1] or "?")[:50],
+                                "memory_percent": round(float(parts[2].replace(",", ".")), 1),
+                                "cpu_percent": 0.0,
+                            }
+                        )
                     except (ValueError, IndexError):
                         continue
             procs.sort(key=lambda x: x["memory_percent"], reverse=True)
@@ -812,7 +846,9 @@ def _get_remote_disk_and_processes_via_ssh(
     if project_path_remote and result["error"] is None:
         try:
             cmd = f'ssh {ssh_opts} {target} "du -sb {project_path_remote} 2>/dev/null | cut -f1"'
-            out = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout_seconds)
+            out = subprocess.run(
+                cmd, shell=True, capture_output=True, text=True, timeout=timeout_seconds
+            )
             if out.returncode == 0 and out.stdout.strip():
                 result["project_usage_bytes"] = int(out.stdout.strip().split()[0])
         except Exception:
@@ -821,14 +857,19 @@ def _get_remote_disk_and_processes_via_ssh(
     return result
 
 
-def _fetch_remote_via_http(agent_url: str, timeout_seconds: int = 10) -> Dict[str, Any]:
+def _fetch_remote_via_http(agent_url: str, timeout_seconds: int = 10) -> dict[str, Any]:
     """
     Fetch device metrics from a remote HTTP agent. Expects GET {agent_url} to return JSON:
     disk (dict with total_gb, used_gb, free_gb, percent), project_usage_bytes (int or null),
     processes (list of {pid, name, memory_percent, cpu_percent}).
     Returns same shape as _get_remote_disk_and_processes_via_ssh for consistency.
     """
-    result: Dict[str, Any] = {"disk": None, "project_usage_bytes": None, "processes": [], "error": None}
+    result: dict[str, Any] = {
+        "disk": None,
+        "project_usage_bytes": None,
+        "processes": [],
+        "error": None,
+    }
     try:
         r = requests.get(agent_url, timeout=timeout_seconds)
         r.raise_for_status()
@@ -854,12 +895,14 @@ def _fetch_remote_via_http(agent_url: str, timeout_seconds: int = 10) -> Dict[st
     if isinstance(procs, list):
         for p in procs[:50]:
             if isinstance(p, dict):
-                result["processes"].append({
-                    "pid": int(p.get("pid", 0)),
-                    "name": (p.get("name") or "?")[:50],
-                    "memory_percent": round(float(p.get("memory_percent", 0) or 0), 1),
-                    "cpu_percent": round(float(p.get("cpu_percent", 0) or 0), 1),
-                })
+                result["processes"].append(
+                    {
+                        "pid": int(p.get("pid", 0)),
+                        "name": (p.get("name") or "?")[:50],
+                        "memory_percent": round(float(p.get("memory_percent", 0) or 0), 1),
+                        "cpu_percent": round(float(p.get("cpu_percent", 0) or 0), 1),
+                    }
+                )
     return result
 
 
@@ -877,7 +920,7 @@ async def get_devices():
     loop = asyncio.get_event_loop()
     timeout = config.get("ssh_timeout_seconds") or DEFAULT_SSH_TIMEOUT_SECONDS
 
-    result: List[Dict[str, Any]] = []
+    result: list[dict[str, Any]] = []
     for dev in devices_config:
         name = dev.get("name") or "unknown"
         dtype = (dev.get("type") or "remote").lower()
@@ -905,7 +948,12 @@ async def get_devices():
                     )
                 except Exception as e:
                     logger.warning("HTTP agent fetch for %s (%s) failed: %s", name, agent_url, e)
-                    data = {"disk": None, "project_usage_bytes": None, "processes": [], "error": str(e)[:200]}
+                    data = {
+                        "disk": None,
+                        "project_usage_bytes": None,
+                        "processes": [],
+                        "error": str(e)[:200],
+                    }
                 result.append(
                     {
                         "name": name,
@@ -926,11 +974,18 @@ async def get_devices():
                 try:
                     data = await loop.run_in_executor(
                         None,
-                        lambda h=host, u=ssh_user, t=timeout, p=project_path_remote: _get_remote_disk_and_processes_via_ssh(h, u, t, p),
+                        lambda h=host, u=ssh_user, t=timeout, p=project_path_remote: (
+                            _get_remote_disk_and_processes_via_ssh(h, u, t, p)
+                        ),
                     )
                 except Exception as e:
                     logger.warning("SSH fetch for %s (%s) failed: %s", name, host, e)
-                    data = {"disk": None, "project_usage_bytes": None, "processes": [], "error": str(e)[:200]}
+                    data = {
+                        "disk": None,
+                        "project_usage_bytes": None,
+                        "processes": [],
+                        "error": str(e)[:200],
+                    }
                 result.append(
                     {
                         "name": name,
@@ -979,14 +1034,15 @@ async def get_devices():
 # ---------------------------------------------------------------------------
 
 # In-memory state populated by health_monitor_orchestrator
-_health_feed_results: Dict[str, Dict[str, Any]] = {}
-_health_feed_results_ts: Optional[float] = None
+_health_feed_results: dict[str, dict[str, Any]] = {}
+_health_feed_results_ts: float | None = None
 
 
-def set_health_feed_results(results: Dict[str, Dict[str, Any]]) -> None:
+def set_health_feed_results(results: dict[str, dict[str, Any]]) -> None:
     """Called by health monitor orchestrator to store last poll results."""
     global _health_feed_results, _health_feed_results_ts
     import time
+
     _health_feed_results.clear()
     _health_feed_results.update(results)
     _health_feed_results_ts = time.time()
@@ -1015,7 +1071,6 @@ async def get_health_feeds():
                 "last_check_at": last.get("checked_at") if last else None,
             }
         )
-    import time
     return {
         "success": True,
         "data": {

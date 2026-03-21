@@ -16,8 +16,9 @@ See docs/DOMAIN_EXTENSION_TEMPLATE.md and api/config/domains/README.md.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 try:
     import yaml
@@ -161,9 +162,7 @@ def rss_feed_lookup_union_sql() -> str:
     """Build UNION ALL for resolving feed_url -> schema_name (single placeholder per branch)."""
     parts = []
     for _url_key, schema in iter_url_schema_pairs():
-        parts.append(
-            f"SELECT '{schema}' AS schema FROM {schema}.rss_feeds WHERE feed_url = %s"
-        )
+        parts.append(f"SELECT '{schema}' AS schema FROM {schema}.rss_feeds WHERE feed_url = %s")
     return " UNION ALL ".join(parts) + " LIMIT 1"
 
 

@@ -30,9 +30,10 @@ try:
 except ImportError:
     pass
 
-if not os.environ.get("DB_PASSWORD") and Path(
-    Path(__file__).resolve().parent.parent.parent / ".db_password_widow"
-).is_file():
+if (
+    not os.environ.get("DB_PASSWORD")
+    and Path(Path(__file__).resolve().parent.parent.parent / ".db_password_widow").is_file()
+):
     try:
         with open(Path(__file__).resolve().parent.parent.parent / ".db_password_widow") as f:
             os.environ["DB_PASSWORD"] = f.read().strip()
@@ -42,9 +43,7 @@ if not os.environ.get("DB_PASSWORD") and Path(
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import yaml  # noqa: E402
-
 from psycopg2 import sql as psql  # noqa: E402
-
 from shared.database.connection import get_db_connection  # noqa: E402
 from shared.domain_registry import RESERVED_SCHEMA_NAMES  # noqa: E402
 
@@ -91,10 +90,11 @@ def teardown_domain(cur, domain_key: str, schema_name: str) -> None:
         domain_id = row[0]
         cur.execute("DELETE FROM public.domain_metadata WHERE domain_id = %s", (domain_id,))
         cur.execute("DELETE FROM public.domains WHERE id = %s", (domain_id,))
-    cur.execute(
-        psql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(psql.Identifier(schema_name))
+    cur.execute(psql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(psql.Identifier(schema_name)))
+    print(
+        f"  [teardown] rolled back new domain only: domain_key={domain_key} schema={schema_name}",
+        file=sys.stderr,
     )
-    print(f"  [teardown] rolled back new domain only: domain_key={domain_key} schema={schema_name}", file=sys.stderr)
 
 
 def apply_sql_file(conn, sql_path: Path) -> None:
@@ -111,15 +111,31 @@ def run_verify(cmd: str) -> int:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Provision domain silo (ordered + teardown on failure)")
-    parser.add_argument("--config", required=True, type=Path, help="Path to api/config/domains/{key}.yaml")
+    parser = argparse.ArgumentParser(
+        description="Provision domain silo (ordered + teardown on failure)"
+    )
+    parser.add_argument(
+        "--config", required=True, type=Path, help="Path to api/config/domains/{key}.yaml"
+    )
     parser.add_argument("--sql", type=Path, help="SQL migration file to apply")
-    parser.add_argument("--verify-cmd", type=str, default="", help="Shell command; non-zero triggers teardown")
+    parser.add_argument(
+        "--verify-cmd", type=str, default="", help="Shell command; non-zero triggers teardown"
+    )
     parser.add_argument("--dry-run", action="store_true")
-    parser.add_argument("--ack-backup", action="store_true", help="Acknowledge backup was taken (required if --require-backup-ack)")
-    parser.add_argument("--require-backup-ack", action="store_true", help="Refuse unless --ack-backup")
-    parser.add_argument("--skip-verify", action="store_true", help="Skip verify (disables rollback guarantee)")
-    parser.add_argument("--teardown-only", action="store_true", help="Only run teardown for this domain")
+    parser.add_argument(
+        "--ack-backup",
+        action="store_true",
+        help="Acknowledge backup was taken (required if --require-backup-ack)",
+    )
+    parser.add_argument(
+        "--require-backup-ack", action="store_true", help="Refuse unless --ack-backup"
+    )
+    parser.add_argument(
+        "--skip-verify", action="store_true", help="Skip verify (disables rollback guarantee)"
+    )
+    parser.add_argument(
+        "--teardown-only", action="store_true", help="Only run teardown for this domain"
+    )
     args = parser.parse_args()
 
     if args.require_backup_ack and not args.ack_backup:
@@ -133,7 +149,11 @@ def main() -> None:
 
     if not schema_name.replace("_", "").isalnum() or not schema_name.islower():
         raise SystemExit("schema_name must be lowercase snake_case alphanumerics only")
-    if schema_name in RESERVED_SCHEMA_NAMES or domain_key in ("politics", "finance", "science-tech"):
+    if schema_name in RESERVED_SCHEMA_NAMES or domain_key in (
+        "politics",
+        "finance",
+        "science-tech",
+    ):
         raise SystemExit("Refusing: domain_key/schema_name is reserved or core silo")
 
     if args.dry_run:

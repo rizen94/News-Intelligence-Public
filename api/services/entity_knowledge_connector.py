@@ -15,7 +15,7 @@ Usage:
 """
 
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -26,9 +26,9 @@ SOURCE_KNOWLEDGE_GRAPH = "knowledge_graph"
 
 def resolve_entity_knowledge(
     name: str,
-    entity_type: Optional[str] = None,
-    sources: Optional[Tuple[str, ...]] = None,
-) -> Optional[Dict[str, Any]]:
+    entity_type: str | None = None,
+    sources: tuple[str, ...] | None = None,
+) -> dict[str, Any] | None:
     """
     Resolve an entity name to a description and link using configured sources.
 
@@ -62,6 +62,7 @@ def resolve_entity_knowledge(
             if out and (out.get("description") or out.get("extract")):
                 try:
                     from services.wikipedia_knowledge_service import cache_knowledge_graph_result
+
                     cache_knowledge_graph_result(name_clean, out)
                 except Exception:
                     pass
@@ -73,7 +74,7 @@ def resolve_entity_knowledge(
     return None
 
 
-def _normalize_result(raw_out: Dict[str, Any], source: str) -> Dict[str, Any]:
+def _normalize_result(raw_out: dict[str, Any], source: str) -> dict[str, Any]:
     """Map source-specific dict to a common shape."""
     description = raw_out.get("description") or raw_out.get("extract") or ""
     if isinstance(description, str) and len(description) > 5000:
@@ -88,10 +89,11 @@ def _normalize_result(raw_out: Dict[str, Any], source: str) -> Dict[str, Any]:
     }
 
 
-def _resolve_wikipedia(name: str) -> Optional[Dict[str, Any]]:
+def _resolve_wikipedia(name: str) -> dict[str, Any] | None:
     """Local wikipedia_knowledge first, then API search fallback."""
     try:
         from services.wikipedia_knowledge_service import lookup_entity_with_fallback
+
         summary = lookup_entity_with_fallback(name)
         if not summary or not (summary.get("extract") or summary.get("description")):
             return None
@@ -106,11 +108,13 @@ def _resolve_wikipedia(name: str) -> Optional[Dict[str, Any]]:
         return None
 
 
-def _resolve_knowledge_graph(name: str) -> Optional[Dict[str, Any]]:
+def _resolve_knowledge_graph(name: str) -> dict[str, Any] | None:
     """First hit from Google Knowledge Graph API (if key configured)."""
     try:
-        from modules.ml.rag_external_services import KnowledgeGraphService
         import os
+
+        from modules.ml.rag_external_services import KnowledgeGraphService
+
         api_key = os.environ.get("KG_API_KEY") or os.environ.get("GOOGLE_KNOWLEDGE_GRAPH_API_KEY")
         if not api_key or api_key in ("your_kg_api_key_here", ""):
             return None
@@ -133,9 +137,9 @@ def _resolve_knowledge_graph(name: str) -> Optional[Dict[str, Any]]:
 
 
 def resolve_entity_knowledge_batch(
-    names: List[str],
-    sources: Optional[Tuple[str, ...]] = None,
-) -> Dict[str, Dict[str, Any]]:
+    names: list[str],
+    sources: tuple[str, ...] | None = None,
+) -> dict[str, dict[str, Any]]:
     """
     Batch version: resolve multiple names. Returns dict name -> result (same shape
     as resolve_entity_knowledge). Only includes names that resolved; missing names
@@ -149,15 +153,19 @@ def resolve_entity_knowledge_batch(
     if use_sources and use_sources[0] == SOURCE_WIKIPEDIA:
         try:
             from services.wikipedia_knowledge_service import lookup_batch
+
             found = lookup_batch(names)
             for n, summary in found.items():
                 if summary and (summary.get("extract") or summary.get("description")):
-                    result[n] = _normalize_result({
-                        "title": summary.get("title", ""),
-                        "extract": summary.get("extract", ""),
-                        "url": summary.get("url", ""),
-                        "page_id": summary.get("page_id"),
-                    }, SOURCE_WIKIPEDIA)
+                    result[n] = _normalize_result(
+                        {
+                            "title": summary.get("title", ""),
+                            "extract": summary.get("extract", ""),
+                            "url": summary.get("url", ""),
+                            "page_id": summary.get("page_id"),
+                        },
+                        SOURCE_WIKIPEDIA,
+                    )
         except Exception as e:
             logger.debug("Wikipedia batch resolve: %s", e)
         names = [n for n in names if n.strip() and n not in result]

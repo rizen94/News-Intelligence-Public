@@ -13,16 +13,28 @@ import logging
 import os
 import re
 import time
+from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
-from urllib.error import URLError, HTTPError
 
 logger = logging.getLogger(__name__)
 
 # Env flags for fallback steps (each optional)
-_ENABLE_BROWSER = os.environ.get("ENABLE_BROWSER_ENRICHMENT", "").strip().lower() in ("1", "true", "yes")
-_ENABLE_WAYBACK = os.environ.get("ENABLE_WAYBACK_ENRICHMENT", "").strip().lower() in ("1", "true", "yes")
-_ENABLE_ARCHIVETODAY = os.environ.get("ENABLE_ARCHIVETODAY_ENRICHMENT", "").strip().lower() in ("1", "true", "yes")
+_ENABLE_BROWSER = os.environ.get("ENABLE_BROWSER_ENRICHMENT", "").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+)
+_ENABLE_WAYBACK = os.environ.get("ENABLE_WAYBACK_ENRICHMENT", "").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+)
+_ENABLE_ARCHIVETODAY = os.environ.get("ENABLE_ARCHIVETODAY_ENRICHMENT", "").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+)
 
 # Rate limit for external fallback requests (seconds)
 _WAYBACK_SLEEP = 1.5
@@ -45,6 +57,7 @@ def _make_fast_config():
     """Trafilatura config with 10s timeout so we move on quickly from slow/dead URLs."""
     try:
         from trafilatura.settings import DEFAULT_CONFIG
+
         cfg = configparser.ConfigParser()
         cfg.read_dict(DEFAULT_CONFIG)
         cfg.set("DEFAULT", "download_timeout", "10")
@@ -108,12 +121,17 @@ def _extract_from_html(html: str) -> str:
         return ""
     try:
         import trafilatura
-        text = trafilatura.extract(
-            html,
-            include_comments=False,
-            include_tables=False,
-            config=_FAST_CONFIG,
-        ) if _FAST_CONFIG else trafilatura.extract(html, include_comments=False, include_tables=False)
+
+        text = (
+            trafilatura.extract(
+                html,
+                include_comments=False,
+                include_tables=False,
+                config=_FAST_CONFIG,
+            )
+            if _FAST_CONFIG
+            else trafilatura.extract(html, include_comments=False, include_tables=False)
+        )
         text = (text or "").strip()
         if text and _is_paywall_content(text):
             return ""
@@ -136,7 +154,9 @@ def _fetch_via_wayback(url: str) -> str:
         snap = (data.get("archived_snapshots") or {}).get("closest")
         if not snap:
             return ""
-        snapshot_url = snap.get("url") or ("https://web.archive.org/web/%s/%s" % (snap.get("timestamp", ""), url))
+        snapshot_url = snap.get("url") or (
+            "https://web.archive.org/web/{}/{}".format(snap.get("timestamp", ""), url)
+        )
         req2 = Request(snapshot_url, headers={"User-Agent": "NewsIntelligence/1.0"})
         with urlopen(req2, timeout=_FETCH_TIMEOUT) as resp2:
             html = resp2.read().decode("utf-8", errors="replace")
@@ -234,7 +254,8 @@ def enrich_articles_batch(batch_size: int = 20) -> int:
         logger.warning("trafilatura not installed; skipping content enrichment")
         return 0
 
-    from shared.database.connection import get_db_connection, get_db_config
+    from shared.database.connection import get_db_config, get_db_connection
+
     from services.context_processor_service import update_context_content_for_article
 
     conn = get_db_connection()
@@ -287,7 +308,10 @@ def enrich_articles_batch(batch_size: int = 20) -> int:
                             f"""UPDATE {schema_name}.articles SET content = %s, enrichment_status = 'enriched', updated_at = NOW() WHERE id = %s""",
                             (text, article_id),
                         )
-                        cur.execute(f"""UPDATE {schema_name}.articles SET entities = NULL WHERE id = %s""", (article_id,))
+                        cur.execute(
+                            f"""UPDATE {schema_name}.articles SET entities = NULL WHERE id = %s""",
+                            (article_id,),
+                        )
                         cur.execute(
                             f"""
                             INSERT INTO {schema_name}.topic_extraction_queue (article_id, status, priority, created_at)
@@ -345,15 +369,20 @@ def _fetch_full_text(url: str, config=None) -> str:
     # 1. Live (trafilatura fetch_url + extract)
     try:
         import trafilatura
+
         cfg = config if config is not None else _FAST_CONFIG
         downloaded = trafilatura.fetch_url(url, config=cfg) if cfg else trafilatura.fetch_url(url)
         if downloaded:
-            text = trafilatura.extract(
-                downloaded,
-                include_comments=False,
-                include_tables=False,
-                config=cfg,
-            ) if cfg else trafilatura.extract(downloaded, include_comments=False, include_tables=False)
+            text = (
+                trafilatura.extract(
+                    downloaded,
+                    include_comments=False,
+                    include_tables=False,
+                    config=cfg,
+                )
+                if cfg
+                else trafilatura.extract(downloaded, include_comments=False, include_tables=False)
+            )
             text = (text or "").strip()
             if text and not _is_paywall_content(text):
                 return text

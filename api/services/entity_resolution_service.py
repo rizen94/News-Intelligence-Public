@@ -10,7 +10,7 @@ See docs/RAG_ENHANCEMENT_ROADMAP.md, docs/V6_QUALITY_FIRST_TODO.md T1.2.
 
 import logging
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from shared.database.connection import get_db_connection
 
@@ -57,15 +57,36 @@ def _normalize_name(name: str, entity_type: str) -> str:
 
 # Last-word "surname" matching only applies when the last word is not a role/title.
 # Otherwise "DXS International executives" and "Meta's executives" get merged incorrectly.
-LAST_WORD_ROLE_BLOCKLIST = frozenset({
-    "executives", "executive", "chair", "chairs", "board", "team", "teams",
-    "spokesperson", "spokesman", "spokeswoman", "office", "leadership",
-    "management", "staff", "officials", "representatives", "members",
-    "committee", "commission", "division", "department", "unit", "group",
-})
+LAST_WORD_ROLE_BLOCKLIST = frozenset(
+    {
+        "executives",
+        "executive",
+        "chair",
+        "chairs",
+        "board",
+        "team",
+        "teams",
+        "spokesperson",
+        "spokesman",
+        "spokeswoman",
+        "office",
+        "leadership",
+        "management",
+        "staff",
+        "officials",
+        "representatives",
+        "members",
+        "committee",
+        "commission",
+        "division",
+        "department",
+        "unit",
+        "group",
+    }
+)
 
 
-def _extract_last_name(name: str) -> Optional[str]:
+def _extract_last_name(name: str) -> str | None:
     """For person entities, extract the last word as surname (if not a role word)."""
     parts = name.strip().split()
     if len(parts) >= 2:
@@ -88,12 +109,13 @@ def _name_ends_with_role_word(name: str) -> bool:
 # Core resolution (enhanced with title stripping + last-name fallback)
 # ---------------------------------------------------------------------------
 
+
 def resolve_to_canonical(
     domain_key: str,
     entity_name: str,
     entity_type: str,
     create_if_missing: bool = True,
-) -> Optional[int]:
+) -> int | None:
     """
     Resolve a mention to entity_canonical.id.
 
@@ -244,12 +266,13 @@ def _add_alias(cur, schema: str, canonical_id: int, alias: str) -> None:
 # Resolve with candidates (API use — returns ranked matches, not just first)
 # ---------------------------------------------------------------------------
 
+
 def resolve_with_candidates(
     domain_key: str,
     entity_name: str,
     entity_type: str,
     limit: int = 10,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Find canonical entities matching the mention, ranked by confidence.
     Returns {match: {id, canonical_name, confidence} | None, candidates: [...]}.
@@ -269,7 +292,7 @@ def resolve_with_candidates(
         return {"match": None, "candidates": [], "error": "Database connection failed"}
 
     try:
-        candidates: List[Dict[str, Any]] = []
+        candidates: list[dict[str, Any]] = []
         with conn.cursor() as cur:
             cur.execute(
                 f"""
@@ -304,20 +327,20 @@ def resolve_with_candidates(
             elif last_name and any(a.endswith(f" {last_name.lower()}") for a in all_names):
                 confidence = 0.6
                 match_reason = "last_name"
-            elif stripped_lower and any(
-                _similarity(stripped_lower, a) > 0.7 for a in all_names
-            ):
+            elif stripped_lower and any(_similarity(stripped_lower, a) > 0.7 for a in all_names):
                 confidence = 0.5
                 match_reason = "fuzzy"
 
             if confidence > 0:
-                candidates.append({
-                    "canonical_entity_id": cid,
-                    "canonical_name": cname,
-                    "aliases": aliases or [],
-                    "confidence": round(confidence, 2),
-                    "match_reason": match_reason,
-                })
+                candidates.append(
+                    {
+                        "canonical_entity_id": cid,
+                        "canonical_name": cname,
+                        "aliases": aliases or [],
+                        "confidence": round(confidence, 2),
+                        "match_reason": match_reason,
+                    }
+                )
 
         candidates.sort(key=lambda c: c["confidence"], reverse=True)
         candidates = candidates[:limit]
@@ -340,8 +363,8 @@ def _similarity(a: str, b: str) -> float:
         return 0.0
     if a == b:
         return 1.0
-    bigrams_a = set(a[i:i+2] for i in range(len(a) - 1))
-    bigrams_b = set(b[i:i+2] for i in range(len(b) - 1))
+    bigrams_a = set(a[i : i + 2] for i in range(len(a) - 1))
+    bigrams_b = set(b[i : i + 2] for i in range(len(b) - 1))
     if not bigrams_a or not bigrams_b:
         return 0.0
     intersection = bigrams_a & bigrams_b
@@ -352,10 +375,11 @@ def _similarity(a: str, b: str) -> float:
 # Batch alias population — collect name variants from article_entities
 # ---------------------------------------------------------------------------
 
+
 def populate_aliases_from_mentions(
     domain_key: str,
     min_mentions: int = 2,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     For each canonical entity in a domain, collect all distinct entity_name values
     from article_entities that point to it and add missing variants to aliases.
@@ -366,7 +390,12 @@ def populate_aliases_from_mentions(
     schema = _schema_for_domain(domain_key)
     conn = get_db_connection()
     if not conn:
-        return {"success": False, "updated": 0, "new_aliases": 0, "error": "Database connection failed"}
+        return {
+            "success": False,
+            "updated": 0,
+            "new_aliases": 0,
+            "error": "Database connection failed",
+        }
 
     try:
         updated = 0
@@ -435,7 +464,9 @@ def populate_aliases_from_mentions(
         conn.close()
         logger.info(
             "populate_aliases %s: %d entities updated, %d new aliases added",
-            domain_key, updated, new_aliases,
+            domain_key,
+            updated,
+            new_aliases,
         )
         return {"success": True, "updated": updated, "new_aliases": new_aliases}
     except Exception as e:
@@ -455,11 +486,12 @@ def populate_aliases_from_mentions(
 # Disambiguation — find merge candidates (likely-duplicate canonical entities)
 # ---------------------------------------------------------------------------
 
+
 def find_merge_candidates(
     domain_key: str,
     min_confidence: float = 0.5,
     limit: int = 50,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Find pairs of canonical entities within a domain that likely refer to the same
     real-world entity (different names, same person/org).
@@ -493,15 +525,13 @@ def find_merge_candidates(
             entities = cur.fetchall()
         conn.close()
 
-        candidates: List[Dict[str, Any]] = []
+        candidates: list[dict[str, Any]] = []
         seen_pairs = set()
 
         for i, (id_a, name_a, type_a, aliases_a) in enumerate(entities):
             stripped_a = _normalize_name(name_a, type_a).lower()
             last_a = _extract_last_name(name_a)
-            all_a = {name_a.lower(), stripped_a} | {
-                a.lower() for a in (aliases_a or [])
-            }
+            all_a = {name_a.lower(), stripped_a} | {a.lower() for a in (aliases_a or [])}
 
             for j in range(i + 1, len(entities)):
                 id_b, name_b, type_b, aliases_b = entities[j]
@@ -512,9 +542,7 @@ def find_merge_candidates(
                     continue
 
                 stripped_b = _normalize_name(name_b, type_b).lower()
-                all_b = {name_b.lower(), stripped_b} | {
-                    a.lower() for a in (aliases_b or [])
-                }
+                all_b = {name_b.lower(), stripped_b} | {a.lower() for a in (aliases_b or [])}
 
                 confidence = 0.0
                 reason = ""
@@ -554,15 +582,17 @@ def find_merge_candidates(
 
                 if confidence >= min_confidence:
                     seen_pairs.add(pair)
-                    candidates.append({
-                        "source_id": id_a,
-                        "source_name": name_a,
-                        "target_id": id_b,
-                        "target_name": name_b,
-                        "entity_type": type_a,
-                        "confidence": round(confidence, 2),
-                        "reason": reason,
-                    })
+                    candidates.append(
+                        {
+                            "source_id": id_a,
+                            "source_name": name_a,
+                            "target_id": id_b,
+                            "target_name": name_b,
+                            "entity_type": type_a,
+                            "confidence": round(confidence, 2),
+                            "reason": reason,
+                        }
+                    )
 
         candidates.sort(key=lambda c: c["confidence"], reverse=True)
         return {"success": True, "candidates": candidates[:limit]}
@@ -578,7 +608,7 @@ def _choose_primary_entity(
     id_b: int,
     name_b: str,
     entity_type: str,
-) -> Tuple[int, int]:
+) -> tuple[int, int]:
     """
     Choose which of two same-entity canonicals to keep (primary) vs merge into it.
     Prefer: (1) longer/full name for persons (e.g. "Donald Trump" over "Trump"),
@@ -635,7 +665,7 @@ def merge_canonical_entities(
     domain_key: str,
     keep_id: int,
     merge_id: int,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Merge merge_id into keep_id within a domain:
       1. Add merge_id's canonical_name and aliases to keep_id's aliases
@@ -666,7 +696,7 @@ def merge_canonical_entities(
 
             merge_name, merge_aliases = merge_row
             new_aliases = [merge_name]
-            for a in (merge_aliases or []):
+            for a in merge_aliases or []:
                 if a not in new_aliases:
                     new_aliases.append(a)
 
@@ -738,7 +768,11 @@ def merge_canonical_entities(
         conn.close()
         logger.info(
             "merge_canonical_entities %s: %d → %d, %d articles reassigned, %d aliases added",
-            domain_key, merge_id, keep_id, articles_reassigned, len(aliases_to_add),
+            domain_key,
+            merge_id,
+            keep_id,
+            articles_reassigned,
+            len(aliases_to_add),
         )
         return {
             "success": True,
@@ -763,7 +797,7 @@ def merge_canonical_entities(
 def auto_merge_high_confidence(
     domain_key: str,
     min_confidence: float = 0.9,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Find merge candidates above min_confidence and automatically merge them.
     Always keeps the "primary" entity (full name, e.g. "Donald Trump") and merges
@@ -774,7 +808,7 @@ def auto_merge_high_confidence(
     if not result.get("success"):
         return {"success": False, "merges_performed": 0, "error": result.get("error")}
 
-    details: List[Dict[str, Any]] = []
+    details: list[dict[str, Any]] = []
     for candidate in result.get("candidates", []):
         if candidate["confidence"] >= min_confidence:
             keep_id, merge_id = _choose_primary_entity(
@@ -786,15 +820,25 @@ def auto_merge_high_confidence(
                 candidate.get("entity_type", "person"),
             )
             merge_result = merge_canonical_entities(domain_key, keep_id=keep_id, merge_id=merge_id)
-            kept_name = candidate["source_name"] if keep_id == candidate["source_id"] else candidate["target_name"]
-            merged_name = candidate["target_name"] if keep_id == candidate["source_id"] else candidate["source_name"]
-            details.append({
-                "kept": kept_name,
-                "merged": merged_name,
-                "confidence": candidate["confidence"],
-                "reason": candidate["reason"],
-                "result": merge_result,
-            })
+            kept_name = (
+                candidate["source_name"]
+                if keep_id == candidate["source_id"]
+                else candidate["target_name"]
+            )
+            merged_name = (
+                candidate["target_name"]
+                if keep_id == candidate["source_id"]
+                else candidate["source_name"]
+            )
+            details.append(
+                {
+                    "kept": kept_name,
+                    "merged": merged_name,
+                    "confidence": candidate["confidence"],
+                    "reason": candidate["reason"],
+                    "result": merge_result,
+                }
+            )
 
     return {
         "success": True,
@@ -807,11 +851,12 @@ def auto_merge_high_confidence(
 # Decouple role-word merges (split canonicals incorrectly merged by "same last name")
 # ---------------------------------------------------------------------------
 
+
 def split_role_merged_canonicals(
     domain_key: str,
     dry_run: bool = False,
-    max_splits: Optional[int] = None,
-) -> Dict[str, Any]:
+    max_splits: int | None = None,
+) -> dict[str, Any]:
     """
     Find entity_canonical rows that have multiple role-word names (e.g. "X executives",
     "Y executives") and split them: create a new canonical per distinct role name and
@@ -826,9 +871,14 @@ def split_role_merged_canonicals(
     schema = _schema_for_domain(domain_key)
     conn = get_db_connection()
     if not conn:
-        return {"success": False, "split_count": 0, "error": "Database connection failed", "dry_run": dry_run}
+        return {
+            "success": False,
+            "split_count": 0,
+            "error": "Database connection failed",
+            "dry_run": dry_run,
+        }
 
-    details: List[Dict[str, Any]] = []
+    details: list[dict[str, Any]] = []
     split_count = 0
     canonicals_processed = 0
     try:
@@ -838,7 +888,7 @@ def split_role_merged_canonicals(
             )
             rows = cur.fetchall()
 
-        for (canonical_id, canonical_name, entity_type, aliases) in rows:
+        for canonical_id, canonical_name, entity_type, aliases in rows:
             if max_splits is not None and split_count >= max_splits:
                 break
             all_names = [canonical_name] + list(aliases or [])
@@ -847,7 +897,7 @@ def split_role_merged_canonicals(
                 continue
             canonicals_processed += 1
             with conn.cursor() as cur:
-                for alias_name in (aliases or []):
+                for alias_name in aliases or []:
                     if max_splits is not None and split_count >= max_splits:
                         break
                     if not alias_name or not _name_ends_with_role_word(alias_name):
@@ -863,13 +913,15 @@ def split_role_merged_canonicals(
                     if cnt == 0:
                         continue
                     if dry_run:
-                        details.append({
-                            "canonical_id": canonical_id,
-                            "canonical_name": canonical_name,
-                            "split_off": alias_name,
-                            "new_canonical_id": None,
-                            "articles_reassigned": cnt,
-                        })
+                        details.append(
+                            {
+                                "canonical_id": canonical_id,
+                                "canonical_name": canonical_name,
+                                "split_off": alias_name,
+                                "new_canonical_id": None,
+                                "articles_reassigned": cnt,
+                            }
+                        )
                         split_count += 1
                         continue
                     cur.execute(
@@ -904,20 +956,29 @@ def split_role_merged_canonicals(
                     )
                     conn.commit()
                     split_count += 1
-                    details.append({
-                        "canonical_id": canonical_id,
-                        "canonical_name": canonical_name,
-                        "split_off": alias_name,
-                        "new_canonical_id": new_id,
-                        "articles_reassigned": reassigned,
-                    })
+                    details.append(
+                        {
+                            "canonical_id": canonical_id,
+                            "canonical_name": canonical_name,
+                            "split_off": alias_name,
+                            "new_canonical_id": new_id,
+                            "articles_reassigned": reassigned,
+                        }
+                    )
     except Exception as e:
         logger.warning("split_role_merged_canonicals %s: %s", domain_key, e)
         try:
             conn.rollback()
         except Exception:
             pass
-        return {"success": False, "split_count": split_count, "canonicals_processed": canonicals_processed, "error": str(e), "details": details, "dry_run": dry_run}
+        return {
+            "success": False,
+            "split_count": split_count,
+            "canonicals_processed": canonicals_processed,
+            "error": str(e),
+            "details": details,
+            "dry_run": dry_run,
+        }
     finally:
         try:
             conn.close()
@@ -942,11 +1003,11 @@ DEFAULT_DECOUPLE_STEPS = (DECOUPLE_STEP_ROLE_WORD,)
 
 
 def run_entity_decouple_pipeline(
-    domain_keys: Optional[List[str]] = None,
+    domain_keys: list[str] | None = None,
     dry_run: bool = False,
-    steps: Optional[List[str]] = None,
-    max_splits_per_domain: Optional[int] = None,
-) -> Dict[str, Any]:
+    steps: list[str] | None = None,
+    max_splits_per_domain: int | None = None,
+) -> dict[str, Any]:
     """
     Routine entity decouple: find bad merges and split them so each canonical
     represents a single real-world entity. Safe to run as part of data_cleanup.
@@ -960,13 +1021,13 @@ def run_entity_decouple_pipeline(
     """
     domains = list(domain_keys) if domain_keys else list(ALL_DOMAINS)
     steps_to_run = list(steps) if steps else list(DEFAULT_DECOUPLE_STEPS)
-    by_domain: Dict[str, Dict[str, Any]] = {}
+    by_domain: dict[str, dict[str, Any]] = {}
     total_splits = 0
 
     for domain_key in domains:
         if domain_key not in ALL_DOMAINS:
             continue
-        domain_result: Dict[str, Any] = {"split_count": 0, "canonicals_processed": 0}
+        domain_result: dict[str, Any] = {"split_count": 0, "canonicals_processed": 0}
         for step in steps_to_run:
             if step == DECOUPLE_STEP_ROLE_WORD:
                 out = split_role_merged_canonicals(
@@ -999,10 +1060,11 @@ def run_entity_decouple_pipeline(
 # Cross-domain entity linking
 # ---------------------------------------------------------------------------
 
+
 def link_cross_domain_entities(
     min_confidence: float = 0.8,
     limit: int = 100,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Find entities with the same canonical_name (or alias overlap) across different
     domain schemas and create cross_domain_same_entity relationships in
@@ -1015,7 +1077,7 @@ def link_cross_domain_entities(
         return {"success": False, "linked": 0, "error": "Database connection failed"}
 
     try:
-        domain_entities: Dict[str, List[Tuple[int, str, str, List[str]]]] = {}
+        domain_entities: dict[str, list[tuple[int, str, str, list[str]]]] = {}
         for domain_key in ALL_DOMAINS:
             schema = _schema_for_domain(domain_key)
             with conn.cursor() as cur:
@@ -1032,7 +1094,7 @@ def link_cross_domain_entities(
                     domain_entities[domain_key] = []
 
         # Find cross-domain matches
-        relationships: List[Tuple[str, int, str, int, float, str]] = []
+        relationships: list[tuple[str, int, str, int, float, str]] = []
         domains = list(domain_entities.keys())
 
         for i in range(len(domains)):
@@ -1058,7 +1120,9 @@ def link_cross_domain_entities(
                             confidence = 0.75
 
                         if confidence >= min_confidence:
-                            relationships.append((d1, id1, d2, id2, confidence, "cross_domain_same_entity"))
+                            relationships.append(
+                                (d1, id1, d2, id2, confidence, "cross_domain_same_entity")
+                            )
 
         created = 0
         with conn.cursor() as cur:
@@ -1078,9 +1142,7 @@ def link_cross_domain_entities(
                         AND relationship_type = %s
                         LIMIT 1
                         """,
-                        (src_d, src_id, tgt_d, tgt_id,
-                         tgt_d, tgt_id, src_d, src_id,
-                         rel_type),
+                        (src_d, src_id, tgt_d, tgt_id, tgt_d, tgt_id, src_d, src_id, rel_type),
                     )
                     if cur.fetchone():
                         continue
@@ -1124,10 +1186,11 @@ def link_cross_domain_entities(
 # Batch run — combine alias population + auto-merge + cross-domain linking
 # ---------------------------------------------------------------------------
 
+
 def run_resolution_batch(
     auto_merge_confidence: float = 0.9,
     cross_domain_confidence: float = 0.8,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Run a full resolution cycle across all domains:
       1. Populate aliases from article mentions
@@ -1136,10 +1199,10 @@ def run_resolution_batch(
 
     Suitable for orchestrator or cron scheduling.
     """
-    results: Dict[str, Any] = {"domains": {}, "cross_domain": {}}
+    results: dict[str, Any] = {"domains": {}, "cross_domain": {}}
 
     for domain_key in ALL_DOMAINS:
-        domain_result: Dict[str, Any] = {}
+        domain_result: dict[str, Any] = {}
 
         alias_result = populate_aliases_from_mentions(domain_key)
         domain_result["aliases"] = alias_result

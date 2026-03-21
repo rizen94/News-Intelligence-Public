@@ -14,7 +14,7 @@ const StorylineManagementTest = () => {
   const [success, setSuccess] = useState(null);
   const [storylines, setStorylines] = useState([]);
 
-  const loadStorylines = async() => {
+  const loadStorylines = async () => {
     try {
       setLoading(true);
       setError(null);
@@ -22,7 +22,7 @@ const StorylineManagementTest = () => {
       if (response.success) {
         setStorylines(response.data.storylines || []);
         setSuccess(
-          `Loaded ${response.data.storylines?.length || 0} storylines`,
+          `Loaded ${response.data.storylines?.length || 0} storylines`
         );
       } else {
         setError('Failed to load storylines');
@@ -35,7 +35,7 @@ const StorylineManagementTest = () => {
     }
   };
 
-  const createTestStoryline = async() => {
+  const createTestStoryline = async () => {
     try {
       setLoading(true);
       setError(null);

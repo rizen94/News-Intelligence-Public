@@ -8,7 +8,7 @@ import logging
 import threading
 from collections import deque
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +19,7 @@ class ActivityFeedService:
     """Thread-safe store of current and recent activities for monitoring UI."""
 
     def __init__(self, max_recent: int = _MAX_RECENT):
-        self._current: Dict[str, Dict[str, Any]] = {}
+        self._current: dict[str, dict[str, Any]] = {}
         self._recent: deque = deque(maxlen=max_recent)
         self._lock = threading.Lock()
 
@@ -33,7 +33,9 @@ class ActivityFeedService:
                 **{k: v for k, v in meta.items() if v is not None},
             }
 
-    def complete(self, activity_id: str, success: bool = True, error_message: Optional[str] = None) -> None:
+    def complete(
+        self, activity_id: str, success: bool = True, error_message: str | None = None
+    ) -> None:
         """Mark activity as done; move from current to recent."""
         with self._lock:
             entry = self._current.pop(activity_id, None)
@@ -45,7 +47,7 @@ class ActivityFeedService:
                 entry["error_message"] = error_message
             self._recent.appendleft(entry)
 
-    def get_snapshot(self, recent_limit: int = 50) -> Dict[str, Any]:
+    def get_snapshot(self, recent_limit: int = 50) -> dict[str, Any]:
         """Return current activities and recent completed (for API)."""
         with self._lock:
             current_list = list(self._current.values())
@@ -57,7 +59,7 @@ class ActivityFeedService:
 
 
 # Singleton for use by AutomationManager and API
-_feed: Optional[ActivityFeedService] = None
+_feed: ActivityFeedService | None = None
 _feed_lock = threading.Lock()
 
 

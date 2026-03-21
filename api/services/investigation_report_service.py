@@ -15,7 +15,7 @@ import json
 import logging
 import re
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from shared.database.connection import get_db_connection
 from shared.services.llm_service import LLMService, ModelType
@@ -66,7 +66,7 @@ def _strip_html(text: str, max_len: int = 2000) -> str:
     return s[:max_len] + ("..." if len(s) > max_len else "")
 
 
-def _gather_event_data(event_id: int) -> Optional[Dict[str, Any]]:
+def _gather_event_data(event_id: int) -> dict[str, Any] | None:
     """Load event, chronicles, and full context text for all developments. Returns None if event not found."""
     conn = get_db_connection()
     if not conn:
@@ -104,17 +104,27 @@ def _gather_event_data(event_id: int) -> Optional[Dict[str, Any]]:
             chronicles = []
             context_ids = set()
             for r in cur.fetchall():
-                devs = r[2] if isinstance(r[2], list) else (json.loads(r[2]) if isinstance(r[2], str) else [])
-                analysis = r[3] if isinstance(r[3], dict) else (json.loads(r[3]) if isinstance(r[3], str) else {})
+                devs = (
+                    r[2]
+                    if isinstance(r[2], list)
+                    else (json.loads(r[2]) if isinstance(r[2], str) else [])
+                )
+                analysis = (
+                    r[3]
+                    if isinstance(r[3], dict)
+                    else (json.loads(r[3]) if isinstance(r[3], str) else {})
+                )
                 for d in devs:
                     if isinstance(d, dict) and d.get("context_id") is not None:
                         context_ids.add(int(d["context_id"]))
-                chronicles.append({
-                    "id": r[0],
-                    "update_date": str(r[1]) if r[1] else None,
-                    "developments": devs,
-                    "analysis": analysis,
-                })
+                chronicles.append(
+                    {
+                        "id": r[0],
+                        "update_date": str(r[1]) if r[1] else None,
+                        "developments": devs,
+                        "analysis": analysis,
+                    }
+                )
             event["chronicles"] = chronicles
 
             if not context_ids:
@@ -133,7 +143,11 @@ def _gather_event_data(event_id: int) -> Optional[Dict[str, Any]]:
             )
             contexts_by_id = {}
             for r in cur.fetchall():
-                meta = r[3] if isinstance(r[3], dict) else (json.loads(r[3]) if isinstance(r[3], str) else {})
+                meta = (
+                    r[3]
+                    if isinstance(r[3], dict)
+                    else (json.loads(r[3]) if isinstance(r[3], str) else {})
+                )
                 contexts_by_id[r[0]] = {
                     "id": r[0],
                     "title": (r[1] or "")[:500],
@@ -154,7 +168,7 @@ def _gather_event_data(event_id: int) -> Optional[Dict[str, Any]]:
         return None
 
 
-def _build_chronicle_block(chronicles: List[Dict], contexts: Dict[int, Dict]) -> str:
+def _build_chronicle_block(chronicles: list[dict], contexts: dict[int, dict]) -> str:
     lines = []
     for i, ch in enumerate(chronicles, 1):
         date_str = ch.get("update_date") or "Date unknown"
@@ -171,7 +185,7 @@ def _build_chronicle_block(chronicles: List[Dict], contexts: Dict[int, Dict]) ->
     return "\n\n".join(lines) if lines else "No chronicles."
 
 
-def _build_context_block(contexts: Dict[int, Dict]) -> str:
+def _build_context_block(contexts: dict[int, dict]) -> str:
     lines = []
     for cid, ctx in sorted(contexts.items(), key=lambda x: x[1].get("created_at") or ""):
         title = ctx.get("title") or f"Context #{cid}"
@@ -181,7 +195,7 @@ def _build_context_block(contexts: Dict[int, Dict]) -> str:
     return "\n---\n".join(lines) if lines else "No context text."
 
 
-async def generate_investigation_report(event_id: int) -> Dict[str, Any]:
+async def generate_investigation_report(event_id: int) -> dict[str, Any]:
     """
     Build dossier for a tracked event. Returns markdown report and metadata.
     """
@@ -236,7 +250,7 @@ async def generate_investigation_report(event_id: int) -> Dict[str, Any]:
     }
 
 
-def _current_context_ids_for_event(event_id: int) -> Optional[List[int]]:
+def _current_context_ids_for_event(event_id: int) -> list[int] | None:
     """Return sorted list of context IDs currently linked to this event via chronicles. None if event not found."""
     conn = get_db_connection()
     if not conn:
@@ -304,7 +318,7 @@ async def refresh_stale_investigation_reports(limit: int = 3) -> int:
             pass
         return 0
 
-    stale: List[int] = []
+    stale: list[int] = []
     for event_id, included in rows:
         included_set = set(included) if included else set()
         current = _current_context_ids_for_event(event_id)

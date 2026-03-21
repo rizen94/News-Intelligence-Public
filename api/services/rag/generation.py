@@ -6,20 +6,20 @@ Extracted from enhanced_rag_service.py
 
 import logging
 import os
-import requests
-import numpy as np
-from typing import List, Dict, Any, Optional, Tuple
-from datetime import datetime, timedelta
 from dataclasses import dataclass, field
+from typing import Any
+
+import numpy as np
+import requests
 
 from .base import BaseRAGService
 
 logger = logging.getLogger(__name__)
 
 # Configuration
-OLLAMA_BASE_URL = os.getenv('OLLAMA_URL', 'http://localhost:11434')
-EMBEDDING_MODEL = os.getenv('RAG_EMBEDDING_MODEL', 'nomic-embed-text')
-LLM_MODEL = os.getenv('RAG_LLM_MODEL', 'llama3.1:8b')
+OLLAMA_BASE_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
+EMBEDDING_MODEL = os.getenv("RAG_EMBEDDING_MODEL", "nomic-embed-text")
+LLM_MODEL = os.getenv("RAG_LLM_MODEL", "llama3.1:8b")
 
 # RAG parameters
 TOP_K_ARTICLES = 10
@@ -31,58 +31,61 @@ MIN_RELEVANCE_SCORE = 0.3
 @dataclass
 class RAGChunk:
     """A chunk of content for RAG retrieval"""
+
     content: str
     source_type: str  # article, entity, terminology, external
-    source_id: Optional[str] = None
-    source_title: Optional[str] = None
-    source_url: Optional[str] = None
+    source_id: str | None = None
+    source_title: str | None = None
+    source_url: str | None = None
     relevance_score: float = 0.0
     domain: str = ""
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
 class RAGResult:
     """Result from RAG retrieval and generation"""
+
     query: str
     domain: str
     answer: str
-    chunks_used: List[RAGChunk]
-    domain_context: Optional[Any] = None  # DomainContext type
+    chunks_used: list[RAGChunk]
+    domain_context: Any | None = None  # DomainContext type
     confidence: float = 0.0
-    sources_cited: List[str] = field(default_factory=list)
+    sources_cited: list[str] = field(default_factory=list)
     processing_time_ms: float = 0.0
 
 
 class RAGGenerationModule:
     """
     RAG Generation Module - LLM generation and context building
-    
+
     Provides:
     - Embedding generation
     - Context prompt building
     - LLM answer generation
     - Confidence scoring
     """
-    
+
     def __init__(self, base_service: BaseRAGService):
         """
         Initialize generation module
-        
+
         Args:
             base_service: Base RAG service for database access
         """
         self.base_service = base_service
         self.db_config = base_service.db_config
-        self.embedding_cache: Dict[str, List[float]] = {}
+        self.embedding_cache: dict[str, list[float]] = {}
         self.logger = logging.getLogger(__name__)
-    
+
     def get_db_connection(self):
         """Get database connection from shared pool."""
         from shared.database.connection import get_db_connection as _get_conn
+
         return _get_conn()
-    
-    def generate_embedding(self, text: str) -> Optional[List[float]]:
+
+    def generate_embedding(self, text: str) -> list[float] | None:
         """Generate embedding for text using Ollama"""
         if not text:
             return None
@@ -97,12 +100,12 @@ class RAGGenerationModule:
                 f"{OLLAMA_BASE_URL}/api/embeddings",
                 json={
                     "model": EMBEDDING_MODEL,
-                    "prompt": text[:2000]  # Limit context
+                    "prompt": text[:2000],  # Limit context
                 },
-                timeout=30
+                timeout=30,
             )
             if response.status_code == 200:
-                embedding = response.json().get('embedding', [])
+                embedding = response.json().get("embedding", [])
                 if embedding:
                     self.embedding_cache[cache_key] = embedding
                     return embedding
@@ -111,7 +114,7 @@ class RAGGenerationModule:
 
         return None
 
-    def cosine_similarity(self, vec1: List[float], vec2: List[float]) -> float:
+    def cosine_similarity(self, vec1: list[float], vec2: list[float]) -> float:
         """Calculate cosine similarity between two vectors"""
         if not vec1 or not vec2:
             return 0.0
@@ -125,21 +128,18 @@ class RAGGenerationModule:
             return 0.0
 
         return float(np.dot(a, b) / (norm_a * norm_b))
-    
+
     def generate_context_prompt(
-        self,
-        query: str,
-        chunks: List[RAGChunk],
-        domain_context: Optional[Any] = None
+        self, query: str, chunks: list[RAGChunk], domain_context: Any | None = None
     ) -> str:
         """
         Generate a context-enriched prompt for the LLM.
-        
+
         Args:
             query: The query to answer
             chunks: Retrieved RAG chunks
             domain_context: Domain context (optional)
-        
+
         Returns:
             Formatted prompt string
         """
@@ -149,34 +149,37 @@ class RAGGenerationModule:
         # Domain context
         if domain_context:
             context_parts.append("=== DOMAIN CONTEXT ===")
-            if hasattr(domain_context, 'historical_context'):
+            if hasattr(domain_context, "historical_context"):
                 context_parts.append(domain_context.historical_context)
 
-            if hasattr(domain_context, 'timeline_context') and domain_context.timeline_context:
+            if hasattr(domain_context, "timeline_context") and domain_context.timeline_context:
                 context_parts.append(f"\nTimeline: {domain_context.timeline_context}")
 
-            if hasattr(domain_context, 'geopolitical_context') and domain_context.geopolitical_context:
+            if (
+                hasattr(domain_context, "geopolitical_context")
+                and domain_context.geopolitical_context
+            ):
                 context_parts.append(f"\nGeopolitical: {domain_context.geopolitical_context}")
 
-            if hasattr(domain_context, 'economic_context') and domain_context.economic_context:
+            if hasattr(domain_context, "economic_context") and domain_context.economic_context:
                 context_parts.append(f"\nEconomic: {domain_context.economic_context}")
 
         # Source chunks
-        article_chunks = [c for c in chunks if c.source_type == 'article']
+        article_chunks = [c for c in chunks if c.source_type == "article"]
         if article_chunks:
             context_parts.append("\n=== RELEVANT NEWS ARTICLES ===")
             for i, chunk in enumerate(article_chunks[:5], 1):
                 context_parts.append(f"\n[Source {i}]: {chunk.content[:800]}")
 
         # Entity knowledge
-        entity_chunks = [c for c in chunks if c.source_type == 'entity']
+        entity_chunks = [c for c in chunks if c.source_type == "entity"]
         if entity_chunks:
             context_parts.append("\n=== DOMAIN ENTITIES ===")
             for chunk in entity_chunks[:3]:
                 context_parts.append(f"\n{chunk.content}")
 
         # Terminology
-        term_chunks = [c for c in chunks if c.source_type == 'terminology']
+        term_chunks = [c for c in chunks if c.source_type == "terminology"]
         if term_chunks:
             context_parts.append("\n=== KEY TERMS ===")
             for chunk in term_chunks[:5]:
@@ -185,7 +188,11 @@ class RAGGenerationModule:
         context = "\n".join(context_parts)
 
         # Build final prompt
-        domain_name = domain_context.domain if domain_context and hasattr(domain_context, 'domain') else 'general'
+        domain_name = (
+            domain_context.domain
+            if domain_context and hasattr(domain_context, "domain")
+            else "general"
+        )
         prompt = f"""You are an expert analyst for the {domain_name} domain.
 Use the following context to answer the question accurately and comprehensively.
 Cite specific sources when possible.
@@ -205,18 +212,14 @@ Answer:"""
 
         return prompt
 
-    def generate_answer(
-        self,
-        prompt: str,
-        max_tokens: int = 500
-    ) -> Tuple[str, float]:
+    def generate_answer(self, prompt: str, max_tokens: int = 500) -> tuple[str, float]:
         """
         Generate an answer using the LLM.
-        
+
         Args:
             prompt: The prompt to send to the LLM
             max_tokens: Maximum tokens to generate
-        
+
         Returns:
             Tuple of (answer, confidence_score)
         """
@@ -230,22 +233,22 @@ Answer:"""
                     "options": {
                         "num_predict": max_tokens,
                         "temperature": 0.7,
-                    }
+                    },
                 },
-                timeout=60
+                timeout=60,
             )
 
             if response.status_code == 200:
                 result = response.json()
-                answer = result.get('response', '').strip()
+                answer = result.get("response", "").strip()
 
                 # Estimate confidence based on response characteristics
                 confidence = 0.5
                 if len(answer) > 100:
                     confidence += 0.2
-                if '[Source' in answer or 'according to' in answer.lower():
+                if "[Source" in answer or "according to" in answer.lower():
                     confidence += 0.1
-                if answer and not answer.endswith('...'):
+                if answer and not answer.endswith("..."):
                     confidence += 0.1
 
                 return answer, min(confidence, 0.95)
@@ -254,4 +257,3 @@ Answer:"""
             self.logger.error(f"LLM generation failed: {e}")
 
         return "Unable to generate a response at this time.", 0.0
-

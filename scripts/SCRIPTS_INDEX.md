@@ -26,6 +26,11 @@
 | `run_secondary_worker.py` | RSS daemon (Widow) |
 | `configure_widow_no_sleep.sh` | Keep server on full time (no suspend/hibernate/power-saver) — run on server |
 | `run_widow_updates.sh` | apt update on Widow |
+| `ddns_update_duckdns.sh` | DuckDNS DDNS **fallback** when router has no DDNS; cron on Widow; `configs/ddns.env` — [docs/DYNAMIC_DNS_WIDOW.md](../docs/DYNAMIC_DNS_WIDOW.md) (prefer router for entry + DDNS) |
+| `widow_setup_public_nginx.sh` | **Widow:** install nginx — HTTP→HTTPS, ACME path, self-signed 443 until certbot; `PUBLIC_DEMO_HOSTNAME` / `PUBLIC_API_UPSTREAM` — [docs/DYNAMIC_DNS_WIDOW.md](../docs/DYNAMIC_DNS_WIDOW.md) §6 |
+| `deploy_public_demo_to_widow.sh` | **`npm run build:bundle`** + rsync `web/dist` → Widow `/var/www/news-intelligence/web/dist` |
+| `widow_disable_public_api.sh` | **Widow (sudo):** disable `news-intelligence-api-public` — API stays on main GPU host; nginx uses `PUBLIC_API_UPSTREAM` |
+| `../api/scripts/run_widow_db_adjacent.py` | **Widow cron:** RSS / context_sync / entity_profile_sync / pending_db_flush without API — [docs/WIDOW_DB_ADJACENT_CRON.md](../docs/WIDOW_DB_ADJACENT_CRON.md) |
 | `run_backfill_on_widow.sh` | Run entity description backfill on Widow (DB local). `./scripts/run_backfill_on_widow.sh [--deploy] [--limit N]` — sources .env on remote so DB_HOST=127.0.0.1. |
 
 ## Wikipedia / entity descriptions

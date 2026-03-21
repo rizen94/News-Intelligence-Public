@@ -15,7 +15,7 @@ const StorylineCreationDialog = ({ open, onClose, onCreated }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
-  const handleCreate = async() => {
+  const handleCreate = async () => {
     try {
       setLoading(true);
       setError(null);

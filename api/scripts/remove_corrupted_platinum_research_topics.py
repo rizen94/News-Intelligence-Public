@@ -5,11 +5,13 @@ One-off: Remove research topics that were saved as gold but are actually platinu
 
 From project root: .venv/bin/python api/scripts/remove_corrupted_platinum_research_topics.py
 """
+
 import os
 import sys
 
 try:
     from dotenv import load_dotenv
+
     api_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     load_dotenv(os.path.join(api_dir, ".env"), override=False)
     load_dotenv(os.path.join(api_dir, "..", ".env"), override=False)
@@ -27,6 +29,7 @@ if not os.environ.get("DB_PASSWORD") and os.path.exists(
         pass
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 
 def main():
     from shared.database.connection import get_db_connection
@@ -71,6 +74,7 @@ def main():
         print(f"Deleted {deleted} row(s).")
     finally:
         conn.close()
+
 
 if __name__ == "__main__":
     main()

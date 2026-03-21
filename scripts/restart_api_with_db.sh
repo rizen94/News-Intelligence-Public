@@ -18,7 +18,7 @@ echo ""
 
 # Step 1: Stop existing API server
 echo "Step 1: Stopping existing API server..."
-pkill -f "uvicorn.*main_v4" || pkill -f "python.*main_v4" || echo "   (No API server running)"
+pkill -f 'uvicorn.*(main|main_v4):app' || echo "   (No API server running)"
 sleep 2
 
 # Step 2: Check SSH tunnel
@@ -108,7 +108,7 @@ export DB_HOST DB_PORT DB_NAME DB_USER DB_PASSWORD
 [ -n "$FRED_API_KEY" ] && export FRED_API_KEY
 
 # Start API server in background
-nohup "$PYTHON_BIN" -m uvicorn main_v4:app --host 0.0.0.0 --port 8000 --reload > "$PROJECT_ROOT/logs/api_server.log" 2>&1 &
+nohup "$PYTHON_BIN" -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload > "$PROJECT_ROOT/logs/api_server.log" 2>&1 &
 API_PID=$!
 
 echo "   ✅ API server started (PID: $API_PID)"
@@ -122,8 +122,8 @@ sleep 5
 echo ""
 echo "Testing API endpoints..."
 for domain in politics finance; do
-    echo -n "   Testing /api/v4/$domain/articles... "
-    response=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:8000/api/v4/$domain/articles?limit=1" || echo "000")
+    echo -n "   Testing /api/$domain/articles... "
+    response=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:8000/api/$domain/articles?limit=1" || echo "000")
     if [ "$response" = "200" ]; then
         echo "✅ OK"
     else

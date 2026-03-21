@@ -10,21 +10,20 @@ Domain validation rule:
   Do NOT migrate those to _check_domain — it would hide legitimate DB dependency failures.
 """
 
-from fastapi import APIRouter, HTTPException, Path, Query, Request, Body
-from fastapi.responses import JSONResponse
-from typing import Dict, Any, Optional
-from shared.domain_registry import ACTIVE_DOMAIN_KEYS_SET, DOMAIN_PATH_PATTERN
-from datetime import datetime, timedelta, timezone, date
 import logging
-from collections import Counter
 import re
+from collections import Counter
+from datetime import datetime, timedelta, timezone
+from typing import Any
 
+from fastapi import APIRouter, Body, HTTPException, Path, Query, Request
+from fastapi.responses import JSONResponse
 from psycopg2.extras import RealDictCursor
-
 from shared.database.connection import get_db_connection
+from shared.domain_registry import ACTIVE_DOMAIN_KEYS_SET, DOMAIN_PATH_PATTERN
 from shared.services.domain_aware_service import validate_domain
 
-from domains.finance.orchestrator_types import TaskType, TaskPriority
+from domains.finance.orchestrator_types import TaskPriority, TaskType
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +32,7 @@ def _validate_commodity(commodity: str) -> None:
     """Raise HTTP 400 if commodity is not in the registry."""
     try:
         from domains.finance.commodity_registry import get_commodity_ids
+
         ids = get_commodity_ids()
         if (commodity or "").lower() not in [x.lower() for x in ids]:
             raise HTTPException(
@@ -45,6 +45,7 @@ def _validate_commodity(commodity: str) -> None:
         logger.warning("Commodity registry check failed: %s", e)
         raise HTTPException(status_code=500, detail="Commodity registry unavailable")
 
+
 # Timeframe to timedelta for market endpoints
 _TIMEFRAME_MAP = {"1d": 1, "7d": 7, "30d": 30, "90d": 90, "1y": 365}
 
@@ -55,13 +56,19 @@ def _parse_timeframe(timeframe: str) -> timedelta:
     return timedelta(days=days)
 
 
-def _get_recent_finance_articles(days: int, limit: int = 200) -> list[Dict[str, Any]]:
+def _get_recent_finance_articles(days: int, limit: int = 200) -> list[dict[str, Any]]:
     """Fetch recent finance-domain articles. Returns list of dicts with id, title, summary, url, published_at, category."""
     try:
         from domains.news_aggregation.services.article_service import ArticleService
+
         svc = ArticleService(domain="finance")
         published_after = datetime.now(timezone.utc) - timedelta(days=days)
-        res = svc.get_articles(limit=limit, offset=0, include_content=False, filters={"published_after": published_after})
+        res = svc.get_articles(
+            limit=limit,
+            offset=0,
+            include_content=False,
+            filters={"published_after": published_after},
+        )
         data = res.get("data") or {}
         articles = data.get("articles") or []
         return [dict(a) for a in articles]
@@ -69,11 +76,9 @@ def _get_recent_finance_articles(days: int, limit: int = 200) -> list[Dict[str, 
         logger.warning("_get_recent_finance_articles failed: %s", e)
         return []
 
-router = APIRouter(
-    prefix="/api",
-    tags=["Finance"],
-    responses={404: {"description": "Not found"}}
-)
+
+router = APIRouter(prefix="/api", tags=["Finance"], responses={404: {"description": "Not found"}})
+
 
 def _check_domain(domain: str) -> None:
     """Validate domain; finance infrastructure endpoints work without main DB."""
@@ -85,12 +90,18 @@ def _check_domain(domain: str) -> None:
 # Infrastructure data (FRED, market store, cache)
 # ---------------------------------------------------------------------------
 
+
 @router.get("/{domain}/finance/tasks")  # List tasks with filters
 async def list_finance_tasks(
     request: Request,
     domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
-    status: str | None = Query(None, description="Filter by status: queued, planning, executing, evaluating, revising, complete, failed"),
-    task_type: str | None = Query(None, description="Filter by type: refresh, ingest, analysis, report, scheduled_refresh"),
+    status: str | None = Query(
+        None,
+        description="Filter by status: queued, planning, executing, evaluating, revising, complete, failed",
+    ),
+    task_type: str | None = Query(
+        None, description="Filter by type: refresh, ingest, analysis, report, scheduled_refresh"
+    ),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ):
@@ -114,7 +125,11 @@ async def get_finance_task(
     _check_domain(domain)
     orch = getattr(request.app.state, "finance_orchestrator", None)
     if not orch:
-        logger.warning("Finance task poll rejected: orchestrator not available (domain=%s task_id=%s)", domain, task_id)
+        logger.warning(
+            "Finance task poll rejected: orchestrator not available (domain=%s task_id=%s)",
+            domain,
+            task_id,
+        )
         raise HTTPException(status_code=503, detail="Finance orchestrator not available")
     status = orch.get_task_status(task_id)
     if not status:
@@ -145,13 +160,22 @@ async def get_finance_task(
                 ]
         if result.provenance:
             out["result"]["provenance"] = [
-                {"ref_id": e.ref_id, "source": e.source, "identifier": e.identifier, "date": str(e.date), "value": e.value, "unit": e.unit}
+                {
+                    "ref_id": e.ref_id,
+                    "source": e.source,
+                    "identifier": e.identifier,
+                    "date": str(e.date),
+                    "value": e.value,
+                    "unit": e.unit,
+                }
                 for e in result.provenance[:100]
             ]
     return {"success": True, "data": out, "timestamp": datetime.now().isoformat()}
 
 
-@router.get("/{domain}/finance/evidence/preview")  # On-demand evidence bundle (RSS + optional API summary + RAG)
+@router.get(
+    "/{domain}/finance/evidence/preview"
+)  # On-demand evidence bundle (RSS + optional API summary + RAG)
 async def finance_evidence_preview(
     request: Request,
     domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
@@ -167,6 +191,7 @@ async def finance_evidence_preview(
     validate_domain(domain)
     try:
         from domains.finance.evidence_collector import collect as evidence_collect
+
         bundle = evidence_collect(
             query=query,
             topic=topic,
@@ -182,7 +207,9 @@ async def finance_evidence_preview(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/{domain}/finance/evidence")  # Paginated evidence index (provenance from completed tasks)
+@router.get(
+    "/{domain}/finance/evidence"
+)  # Paginated evidence index (provenance from completed tasks)
 async def list_finance_evidence(
     request: Request,
     domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
@@ -215,7 +242,9 @@ async def list_finance_verification(
     return {"success": True, "data": data, "timestamp": datetime.now().isoformat()}
 
 
-@router.get("/{domain}/finance/trace/{task_id}")  # Task execution trace (spans, decisions, LLM calls)
+@router.get(
+    "/{domain}/finance/trace/{task_id}"
+)  # Task execution trace (spans, decisions, LLM calls)
 async def get_finance_trace(
     request: Request,
     domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
@@ -225,13 +254,16 @@ async def get_finance_trace(
     _check_domain(domain)
     try:
         from shared.logging.trace_logger import get_traces_for_task
+
         spans = get_traces_for_task(task_id)
         decisions = []
         llm_calls = []
         try:
-            from config.paths import LOG_DIR
             import json
             from pathlib import Path
+
+            from config.paths import LOG_DIR
+
             log_dir = Path(LOG_DIR)
             for fname in ("orchestrator_decisions.jsonl", "orchestrator_decisions_outcomes.jsonl"):
                 p = log_dir / fname
@@ -267,7 +299,9 @@ async def get_finance_trace(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/{domain}/finance/tasks/{task_id}/ledger")  # Ledger entries for this task (activity log)
+@router.get(
+    "/{domain}/finance/tasks/{task_id}/ledger"
+)  # Ledger entries for this task (activity log)
 async def get_finance_task_ledger(
     request: Request,
     domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
@@ -277,9 +311,14 @@ async def get_finance_task_ledger(
     _check_domain(domain)
     try:
         from domains.finance.data.evidence_ledger import get_by_report
+
         report_id = f"orchestrator_{task_id}"
         entries = get_by_report(report_id)
-        return {"success": True, "data": {"entries": entries}, "timestamp": datetime.now().isoformat()}
+        return {
+            "success": True,
+            "data": {"entries": entries},
+            "timestamp": datetime.now().isoformat(),
+        }
     except Exception as e:
         logger.warning("Task ledger fetch failed: %s", e)
         return {"success": True, "data": {"entries": []}, "timestamp": datetime.now().isoformat()}
@@ -366,36 +405,48 @@ async def get_finance_source_status(
             if last_failure and not last_success:
                 status = "down"
 
-            sources.append({
-                "source_id": src_id,
-                "name": name.replace("_", " ").title(),
-                "status": status,
-                "last_success": last_success,
-                "last_failure": last_failure,
-                "last_error": last_error,
-                "data_freshness": last_success or "never",
-                "next_scheduled_refresh": item.get("next_run"),
-            })
+            sources.append(
+                {
+                    "source_id": src_id,
+                    "name": name.replace("_", " ").title(),
+                    "status": status,
+                    "last_success": last_success,
+                    "last_failure": last_failure,
+                    "last_error": last_error,
+                    "data_freshness": last_success or "never",
+                    "next_scheduled_refresh": item.get("next_run"),
+                }
+            )
 
         # Add fred if in ledger but not in schedule
         if "fred" not in seen and "fred" in recent:
             recents = recent["fred"]
-            last_success = next((r["created_at"] for r in recents if r.get("status") == "success"), None)
-            last_failure = next((r["created_at"] for r in recents if r.get("status") == "error"), None)
+            last_success = next(
+                (r["created_at"] for r in recents if r.get("status") == "success"), None
+            )
+            last_failure = next(
+                (r["created_at"] for r in recents if r.get("status") == "error"), None
+            )
             last_error = next((r.get("error") for r in recents if r.get("status") == "error"), None)
             status = "healthy" if last_success else ("degraded" if last_failure else "unknown")
-            sources.append({
-                "source_id": "fred",
-                "name": "FRED",
-                "status": status,
-                "last_success": last_success,
-                "last_failure": last_failure,
-                "last_error": last_error,
-                "data_freshness": last_success or "never",
-                "next_scheduled_refresh": None,
-            })
+            sources.append(
+                {
+                    "source_id": "fred",
+                    "name": "FRED",
+                    "status": status,
+                    "last_success": last_success,
+                    "last_failure": last_failure,
+                    "last_error": last_error,
+                    "data_freshness": last_success or "never",
+                    "next_scheduled_refresh": None,
+                }
+            )
 
-        return {"success": True, "data": {"sources": sources}, "timestamp": datetime.now().isoformat()}
+        return {
+            "success": True,
+            "data": {"sources": sources},
+            "timestamp": datetime.now().isoformat(),
+        }
     except Exception as e:
         logger.error("Error fetching source status: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
@@ -410,22 +461,33 @@ async def get_finance_data_sources(
     try:
         import yaml
         from config.paths import SOURCES_YAML
+
         if not SOURCES_YAML.exists():
-            return {"success": True, "data": {"sources": []}, "timestamp": datetime.now().isoformat()}
+            return {
+                "success": True,
+                "data": {"sources": []},
+                "timestamp": datetime.now().isoformat(),
+            }
         with open(SOURCES_YAML) as f:
             cfg = yaml.safe_load(f) or {}
         sources = []
         for k, v in cfg.items():
             if isinstance(v, dict):
                 datasets = v.get("datasets") or {}
-                sources.append({
-                    "id": k,
-                    "name": v.get("name", k),
-                    "type": v.get("type", "api"),
-                    "symbols": list(datasets.keys()),
-                    "symbol_count": len(datasets),
-                })
-        return {"success": True, "data": {"sources": sources}, "timestamp": datetime.now().isoformat()}
+                sources.append(
+                    {
+                        "id": k,
+                        "name": v.get("name", k),
+                        "type": v.get("type", "api"),
+                        "symbols": list(datasets.keys()),
+                        "symbol_count": len(datasets),
+                    }
+                )
+        return {
+            "success": True,
+            "data": {"sources": sources},
+            "timestamp": datetime.now().isoformat(),
+        }
     except Exception as e:
         logger.error(f"Error fetching data sources: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
@@ -443,13 +505,22 @@ async def get_finance_market_data(
     _check_domain(domain)
     try:
         from domains.finance.data.market_data_store import get_series, list_symbols
+
         if symbol:
             r = get_series(source, symbol, start_date, end_date)
             if not r.success:
                 raise HTTPException(status_code=503, detail=f"Market data unavailable: {r.error}")
-            return {"success": True, "data": {"source": source, "symbol": symbol, "observations": r.data or []}, "timestamp": datetime.now().isoformat()}
+            return {
+                "success": True,
+                "data": {"source": source, "symbol": symbol, "observations": r.data or []},
+                "timestamp": datetime.now().isoformat(),
+            }
         symbols = list_symbols(source)
-        return {"success": True, "data": {"source": source, "symbols": symbols}, "timestamp": datetime.now().isoformat()}
+        return {
+            "success": True,
+            "data": {"source": source, "symbols": symbols},
+            "timestamp": datetime.now().isoformat(),
+        }
     except Exception as e:
         logger.error(f"Error fetching market data: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
@@ -458,7 +529,9 @@ async def get_finance_market_data(
 @router.get("/{domain}/finance/gold")  # Infrastructure: gold amalgam + SQLite
 async def get_gold_data(
     domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
-    source: str | None = Query(None, description="Source: freegoldapi, fred_iq12260, or omit for unified"),
+    source: str | None = Query(
+        None, description="Source: freegoldapi, fred_iq12260, or omit for unified"
+    ),
     start_date: str | None = Query(None, description="Start date YYYY-MM-DD"),
     end_date: str | None = Query(None, description="End date YYYY-MM-DD"),
     fetch: bool = Query(False, description="Fetch from sources if stored data empty"),
@@ -466,7 +539,8 @@ async def get_gold_data(
     """Get gold data from amalgamator. Unified view prefers USD/oz (freegoldapi)."""
     _check_domain(domain)
     try:
-        from domains.finance.gold_amalgamator import get_unified, get_stored, list_sources
+        from domains.finance.gold_amalgamator import get_stored, get_unified, list_sources
+
         if source:
             stored = get_stored(source_id=source, start=start_date, end=end_date)
             data = {"source": source, "observations": stored.get(source, [])}
@@ -509,14 +583,20 @@ async def trigger_gold_fetch(
         )
         result = await orch.run_task(task_id)
         if not result or (hasattr(result.status, "value") and result.status.value == "failed"):
-            raise HTTPException(status_code=503, detail=result.warnings[0] if result and result.warnings else "Refresh failed")
+            raise HTTPException(
+                status_code=503,
+                detail=result.warnings[0] if result and result.warnings else "Refresh failed",
+            )
         data = result.output or {}
         src = data.get("sources", {})
         counts = {k: v.get("count", v.get("chunks_embedded", 0)) for k, v in src.items()}
         return {
             "success": True,
-            "data": {"sources": counts, "total": data.get("total_observations", sum(counts.values()))},
-            "timestamp": datetime.now().isoformat()
+            "data": {
+                "sources": counts,
+                "total": data.get("total_observations", sum(counts.values())),
+            },
+            "timestamp": datetime.now().isoformat(),
         }
     except HTTPException:
         raise
@@ -535,6 +615,7 @@ async def get_gold_history(
     _check_domain(domain)
     try:
         from domains.finance.gold_amalgamator import get_history
+
         obs = get_history(days=days, fetch_if_empty=fetch_if_empty)
         return {
             "success": True,
@@ -554,13 +635,19 @@ async def get_gold_spot(
     _check_domain(domain)
     try:
         from domains.finance.data_sources.metals_dev import fetch_spot
+
         res = fetch_spot(metal="gold", currency="USD")
         if res.success and res.data:
             return {"success": True, "data": res.data, "timestamp": datetime.now().isoformat()}
         from domains.finance.gold_amalgamator import get_unified
+
         obs = get_unified(prefer_unit="USD/oz", fetch_if_empty=True)
         if not obs:
-            return {"success": True, "data": {"price": None, "unit": "USD/oz"}, "timestamp": datetime.now().isoformat()}
+            return {
+                "success": True,
+                "data": {"price": None, "unit": "USD/oz"},
+                "timestamp": datetime.now().isoformat(),
+            }
         latest = obs[-1]
         return {
             "success": True,
@@ -579,12 +666,15 @@ async def get_gold_spot(
 @router.get("/{domain}/finance/gold/authority")
 async def get_gold_authority(
     domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
-    authorities: str | None = Query("lbma,mcx,ibja", description="Comma-separated: lbma, mcx, ibja"),
+    authorities: str | None = Query(
+        "lbma,mcx,ibja", description="Comma-separated: lbma, mcx, ibja"
+    ),
 ):
     """Regional authority gold prices (LBMA London, MCX India, IBJA India) for geographic comparison."""
     _check_domain(domain)
     try:
         from domains.finance.data_sources.metals_dev import fetch_authority
+
         out = {}
         for auth in (authorities or "lbma,mcx,ibja").split(","):
             auth = auth.strip().lower()
@@ -637,6 +727,7 @@ async def get_gold_geo_events(
             for r in rows
         ]
         from domains.finance.news_orchestrator import is_relevant_to_commodity
+
         combined = [
             (ev, (ev.get("event_name") or "") + " " + (ev.get("geographic_scope") or ""))
             for ev in events
@@ -675,6 +766,7 @@ async def trigger_gold_fetch_history(
     _check_domain(domain)
     try:
         from domains.finance.gold_amalgamator import fetch_all, get_history
+
         end_dt = datetime.now(timezone.utc).date()
         start_dt = end_dt - timedelta(days=days)
         fetch_all(
@@ -701,6 +793,7 @@ async def get_commodities_list(
     _check_domain(domain)
     try:
         from domains.finance.commodity_registry import get_commodity_list_for_api
+
         return {
             "success": True,
             "data": get_commodity_list_for_api(),
@@ -723,7 +816,10 @@ async def get_commodity_news(
     _validate_commodity(commodity)
     try:
         from domains.finance.news_orchestrator import get_shortlist
-        shortlist = get_shortlist(topic=commodity.lower(), hours=hours, max_items=max_items, include_contexts=True)
+
+        shortlist = get_shortlist(
+            topic=commodity.lower(), hours=hours, max_items=max_items, include_contexts=True
+        )
         return {
             "success": True,
             "data": {"items": shortlist},
@@ -748,6 +844,7 @@ async def get_commodity_supply_chain(
     _validate_commodity(commodity)
     try:
         from domains.finance.news_orchestrator import get_supply_chain_items
+
         items = get_supply_chain_items(commodity.lower(), hours=hours, max_items=max_items)
         return {
             "success": True,
@@ -757,7 +854,9 @@ async def get_commodity_supply_chain(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("Error fetching commodity supply-chain for %s: %s", commodity, e, exc_info=True)
+        logger.error(
+            "Error fetching commodity supply-chain for %s: %s", commodity, e, exc_info=True
+        )
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -775,12 +874,17 @@ async def get_commodity_history(
     _validate_commodity(commodity)
     try:
         from domains.finance.commodity_registry import get_metals_dev
+
         cid = commodity.lower()
         if cid == "gold":
             from domains.finance.gold_amalgamator import get_history
+
             obs = get_history(days=days, fetch_if_empty=fetch_if_empty)
         else:
-            from domains.finance.data_sources.fred_commodity import fetch_commodity_history_from_fred
+            from domains.finance.data_sources.fred_commodity import (
+                fetch_commodity_history_from_fred,
+            )
+
             end_dt = datetime.now(timezone.utc).date()
             start_dt = end_dt - timedelta(days=max(1, days))
             start = start_dt.strftime("%Y-%m-%d")
@@ -790,6 +894,7 @@ async def get_commodity_history(
                 obs = fred_result.data
             elif get_metals_dev(cid):
                 from domains.finance.commodity_store import get_manual_history
+
                 obs = get_manual_history(cid, days=days)
             else:
                 obs = []
@@ -812,8 +917,9 @@ async def get_commodity_spot(
     _check_domain(domain)
     _validate_commodity(commodity)
     try:
-        from domains.finance.commodity_registry import get_unit, get_metals_dev
+        from domains.finance.commodity_registry import get_metals_dev, get_unit
         from domains.finance.data_sources.fred_commodity import fetch_commodity_spot_from_fred
+
         cid = commodity.lower()
         default_unit = get_unit(cid)
         fred_spot = fetch_commodity_spot_from_fred(cid)
@@ -828,8 +934,8 @@ async def get_commodity_spot(
                 "timestamp": datetime.now().isoformat(),
             }
         if get_metals_dev(cid):
-            from domains.finance.data_sources.metals_dev import fetch_spot
             from domains.finance.commodity_store import upsert_manual_observations
+            from domains.finance.data_sources.metals_dev import fetch_spot
 
             res = fetch_spot(metal=cid, currency="USD")
             if res.success and res.data:
@@ -853,6 +959,7 @@ async def get_commodity_spot(
                 return {"success": True, "data": data, "timestamp": datetime.now().isoformat()}
             if cid == "gold":
                 from domains.finance.gold_amalgamator import get_unified
+
                 unified = get_unified(prefer_unit="USD/oz", fetch_if_empty=True)
                 if unified:
                     latest = unified[-1]
@@ -886,9 +993,11 @@ async def get_commodity_authority(
     _validate_commodity(commodity)
     try:
         from domains.finance.commodity_registry import get_metals_dev
+
         if not get_metals_dev(commodity.lower()):
             return {"success": True, "data": {}, "timestamp": datetime.now().isoformat()}
         from domains.finance.data_sources.metals_dev import fetch_authority
+
         out = {}
         for auth in (authorities or "lbma,mcx,ibja").split(","):
             auth = auth.strip().lower()
@@ -899,7 +1008,7 @@ async def get_commodity_authority(
                 out[auth] = res.data
         return {"success": True, "data": out, "timestamp": datetime.now().isoformat()}
     except Exception as e:
-        logger.error(f"Error fetching %s authority: %s", commodity, e, exc_info=True)
+        logger.error("Error fetching %s authority: %s", commodity, e, exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -924,6 +1033,7 @@ async def get_commodity_geo_events(
         # Fetch more rows if we filter by commodity so we still have enough after filtering
         try:
             from domains.finance.commodity_registry import get_commodity_ids
+
             valid_ids = [x.lower() for x in get_commodity_ids()]
         except Exception:
             valid_ids = ["gold", "silver", "platinum"]
@@ -955,11 +1065,14 @@ async def get_commodity_geo_events(
         ]
         if commodity and (commodity or "").lower() in valid_ids:
             from domains.finance.news_orchestrator import is_relevant_to_commodity
+
             combined = [
                 (ev, (ev.get("event_name") or "") + " " + (ev.get("geographic_scope") or ""))
                 for ev in events
             ]
-            events = [ev for ev, text in combined if is_relevant_to_commodity(text, commodity)][:limit]
+            events = [ev for ev, text in combined if is_relevant_to_commodity(text, commodity)][
+                :limit
+            ]
         by_region = {}
         for ev in events:
             scope = (ev.get("geographic_scope") or "").strip()
@@ -1006,6 +1119,7 @@ async def get_commodity_regulatory_events(
     try:
         try:
             from domains.finance.commodity_registry import get_commodity_ids
+
             reg_ids = [x.lower() for x in get_commodity_ids()]
         except Exception:
             reg_ids = ["gold", "silver", "platinum"]
@@ -1038,11 +1152,14 @@ async def get_commodity_regulatory_events(
         ]
         if commodity and (commodity or "").lower() in reg_ids:
             from domains.finance.news_orchestrator import is_relevant_to_commodity
+
             combined = [
                 (ev, (ev.get("event_name") or "") + " " + (ev.get("geographic_scope") or ""))
                 for ev in events
             ]
-            events = [ev for ev, text in combined if is_relevant_to_commodity(text, commodity)][:limit]
+            events = [ev for ev, text in combined if is_relevant_to_commodity(text, commodity)][
+                :limit
+            ]
         return {
             "success": True,
             "data": {"events": events},
@@ -1076,12 +1193,18 @@ async def trigger_edgar_ingest(
         )
         result = await orch.run_task(task_id)
         if not result or (hasattr(result.status, "value") and result.status.value == "failed"):
-            raise HTTPException(status_code=503, detail=result.warnings[0] if result and result.warnings else "EDGAR ingest failed")
+            raise HTTPException(
+                status_code=503,
+                detail=result.warnings[0] if result and result.warnings else "EDGAR ingest failed",
+            )
         data = result.output or {}
         return {
             "success": True,
-            "data": {"chunks_embedded": data.get("chunks_embedded", 0), "chunk_ids": data.get("chunk_ids", [])[:50]},
-            "timestamp": datetime.now().isoformat()
+            "data": {
+                "chunks_embedded": data.get("chunks_embedded", 0),
+                "chunk_ids": data.get("chunk_ids", [])[:50],
+            },
+            "timestamp": datetime.now().isoformat(),
         }
     except HTTPException:
         raise
@@ -1098,13 +1221,23 @@ async def trigger_analysis(
     topic: str = Query("gold", description="Data topic: gold, all, fred"),
     start_date: str | None = Query(None, description="Date range start YYYY-MM-DD"),
     end_date: str | None = Query(None, description="Date range end YYYY-MM-DD"),
-    wait: bool = Query(True, description="If True, await completion; if False, return task_id for polling"),
-    deep: bool = Query(False, description="If True, pull more RSS, RAG, and historic expansions for richer context"),
+    wait: bool = Query(
+        True, description="If True, await completion; if False, return task_id for polling"
+    ),
+    deep: bool = Query(
+        False, description="If True, pull more RSS, RAG, and historic expansions for richer context"
+    ),
 ):
     """Submit analysis task. Use wait=false to get task_id and poll GET /tasks/{id}. Use deep=true for more evidence (RAG, more news, historic expansions)."""
     logger.info(
         "Finance analyze request: domain=%s query=%r topic=%s wait=%s deep=%s start_date=%s end_date=%s",
-        domain, query[:80] if query else "", topic, wait, deep, start_date, end_date,
+        domain,
+        query[:80] if query else "",
+        topic,
+        wait,
+        deep,
+        start_date,
+        end_date,
     )
     _check_domain(domain)
     orch = getattr(request.app.state, "finance_orchestrator", None)
@@ -1126,23 +1259,29 @@ async def trigger_analysis(
             priority=TaskPriority.high,
         )
         if not wait:
-            return {"success": True, "data": {"task_id": task_id}, "timestamp": datetime.now().isoformat()}
+            return {
+                "success": True,
+                "data": {"task_id": task_id},
+                "timestamp": datetime.now().isoformat(),
+            }
         result = await orch.run_task(task_id)
         if not result:
             raise HTTPException(status_code=503, detail="Analysis task failed")
         if hasattr(result.status, "value") and result.status.value == "failed":
-            raise HTTPException(status_code=503, detail=result.warnings[0] if result.warnings else "Analysis failed")
+            raise HTTPException(
+                status_code=503, detail=result.warnings[0] if result.warnings else "Analysis failed"
+            )
         data = result.output or {}
-        out = {"response": data.get("response", ""), "query": data.get("query", query), "task_id": task_id}
+        out = {
+            "response": data.get("response", ""),
+            "query": data.get("query", query),
+            "task_id": task_id,
+        }
         if data.get("verification"):
             out["verification"] = data["verification"]
         if result.confidence is not None:
             out["confidence"] = result.confidence
-        return {
-            "success": True,
-            "data": out,
-            "timestamp": datetime.now().isoformat()
-        }
+        return {"success": True, "data": out, "timestamp": datetime.now().isoformat()}
     except HTTPException:
         raise
     except Exception as e:
@@ -1158,7 +1297,9 @@ async def trigger_analysis_enhance(
     topic: str = Query("gold", description="Data topic: gold, silver, platinum, all, fred"),
     start_date: str | None = Query(None, description="Date range start YYYY-MM-DD"),
     end_date: str | None = Query(None, description="Date range end YYYY-MM-DD"),
-    wait: bool = Query(True, description="If True, await completion; if False, return task_id for polling"),
+    wait: bool = Query(
+        True, description="If True, await completion; if False, return task_id for polling"
+    ),
 ):
     """
     Re-run analysis with more data: more RSS (35), RAG on, historic context with 2 expansions.
@@ -1177,14 +1318,25 @@ async def trigger_analysis_enhance(
     try:
         task_id = orch.submit_task(TaskType.analysis, params, priority=TaskPriority.high)
         if not wait:
-            return {"success": True, "data": {"task_id": task_id, "enhance": True}, "timestamp": datetime.now().isoformat()}
+            return {
+                "success": True,
+                "data": {"task_id": task_id, "enhance": True},
+                "timestamp": datetime.now().isoformat(),
+            }
         result = await orch.run_task(task_id)
         if not result:
             raise HTTPException(status_code=503, detail="Enhance analysis failed")
         if hasattr(result.status, "value") and result.status.value == "failed":
-            raise HTTPException(status_code=503, detail=result.warnings[0] if result.warnings else "Enhance failed")
+            raise HTTPException(
+                status_code=503, detail=result.warnings[0] if result.warnings else "Enhance failed"
+            )
         data = result.output or {}
-        out = {"response": data.get("response", ""), "query": data.get("query", query), "task_id": task_id, "enhance": True}
+        out = {
+            "response": data.get("response", ""),
+            "query": data.get("query", query),
+            "task_id": task_id,
+            "enhance": True,
+        }
         if data.get("verification"):
             out["verification"] = data["verification"]
         if result.confidence is not None:
@@ -1201,12 +1353,15 @@ async def trigger_analysis_enhance(
 # Research topics (saved analyses for continual refinement)
 # ---------------------------------------------------------------------------
 
+
 @router.get("/{domain}/finance/research-topics")
 async def list_research_topics(
     domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
-    last_refined_task_id: str | None = Query(None, description="Return topic whose last refinement is this task"),
+    last_refined_task_id: str | None = Query(
+        None, description="Return topic whose last refinement is this task"
+    ),
 ):
     """List saved research topics (analyses that can be refined over time)."""
     validate_domain(domain)
@@ -1330,7 +1485,9 @@ async def create_research_topic(
             if not summary:
                 summary = result.output.get("response") or ""
             # Use task's commodity (topic) when not provided so platinum analyses save as platinum
-            if (not body.get("topic") or (topic or "").strip() == "gold") and result.output.get("topic"):
+            if (not body.get("topic") or (topic or "").strip() == "gold") and result.output.get(
+                "topic"
+            ):
                 topic = (result.output.get("topic") or "gold").strip() or "gold"
             if not start_date and result.output.get("start_date"):
                 start_date = result.output.get("start_date")
@@ -1357,7 +1514,15 @@ async def create_research_topic(
                 RETURNING id, name, query, topic, date_range_start, date_range_end, summary,
                           source_task_id, last_refined_task_id, last_refined_at, created_at, updated_at
                 """,
-                (name, query, topic, start_date or None, end_date or None, summary or None, task_id),
+                (
+                    name,
+                    query,
+                    topic,
+                    start_date or None,
+                    end_date or None,
+                    summary or None,
+                    task_id,
+                ),
             )
             row = cur.fetchone()
             conn.commit()
@@ -1432,7 +1597,10 @@ async def refine_research_topic(
         if not conn:
             return {
                 "success": True,
-                "data": {"task_id": new_task_id, "message": "Refinement started; update topic from result when complete."},
+                "data": {
+                    "task_id": new_task_id,
+                    "message": "Refinement started; update topic from result when complete.",
+                },
                 "timestamp": datetime.now().isoformat(),
             }
         try:
@@ -1451,7 +1619,10 @@ async def refine_research_topic(
 
         return {
             "success": True,
-            "data": {"task_id": new_task_id, "message": "Refinement started; open the result and use 'Update topic' to save the new summary."},
+            "data": {
+                "task_id": new_task_id,
+                "message": "Refinement started; open the result and use 'Update topic' to save the new summary.",
+            },
             "timestamp": datetime.now().isoformat(),
         }
     except HTTPException:
@@ -1493,7 +1664,11 @@ async def update_research_topic_from_task(
             cur.execute("SELECT id FROM finance.research_topics WHERE id = %s", (topic_id,))
             if not cur.fetchone():
                 raise HTTPException(status_code=404, detail="Research topic not found")
-            updates = ["last_refined_task_id = %s", "last_refined_at = CURRENT_TIMESTAMP", "updated_at = CURRENT_TIMESTAMP"]
+            updates = [
+                "last_refined_task_id = %s",
+                "last_refined_at = CURRENT_TIMESTAMP",
+                "updated_at = CURRENT_TIMESTAMP",
+            ]
             args = [task_id]
             if summary is not None:
                 updates.insert(0, "summary = %s")
@@ -1544,12 +1719,19 @@ async def trigger_fred_fetch(
         )
         result = await orch.run_task(task_id)
         if not result or (hasattr(result.status, "value") and result.status.value == "failed"):
-            raise HTTPException(status_code=503, detail=result.warnings[0] if result and result.warnings else "FRED fetch failed")
+            raise HTTPException(
+                status_code=503,
+                detail=result.warnings[0] if result and result.warnings else "FRED fetch failed",
+            )
         data = result.output or {}
         src = data.get("sources", {})
         fred_info = src.get("fred", {})
         count = fred_info.get("count", 0)
-        return {"success": True, "data": {"symbol": symbol, "observations_fetched": count}, "timestamp": datetime.now().isoformat()}
+        return {
+            "success": True,
+            "data": {"symbol": symbol, "observations_fetched": count},
+            "timestamp": datetime.now().isoformat(),
+        }
     except HTTPException:
         raise
     except Exception as e:
@@ -1561,7 +1743,7 @@ async def trigger_fred_fetch(
 async def get_market_trends(
     domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     timeframe: str | None = Query("7d", description="Timeframe: 1d, 7d, 30d, 90d, 1y"),
-    sector: str | None = Query(None, description="Filter by sector")
+    sector: str | None = Query(None, description="Filter by sector"),
 ):
     """
     Get market trends: article volume by day and optional gold summary.
@@ -1580,7 +1762,11 @@ async def get_market_trends(
         for a in articles:
             pub = a.get("published_at") or a.get("published_date")
             if pub:
-                d = pub.date() if hasattr(pub, "date") else (pub[:10] if isinstance(pub, str) else None)
+                d = (
+                    pub.date()
+                    if hasattr(pub, "date")
+                    else (pub[:10] if isinstance(pub, str) else None)
+                )
                 if d:
                     by_date[str(d)] += 1
 
@@ -1590,6 +1776,7 @@ async def get_market_trends(
         gold_latest = None
         try:
             from domains.finance.gold_amalgamator import get_stored
+
             end = datetime.now(timezone.utc).date()
             start = end - timedelta(days=min(days, 31))
             stored = get_stored(start=str(start), end=str(end))
@@ -1612,7 +1799,7 @@ async def get_market_trends(
                 "total_articles": len(articles),
                 "gold_latest": gold_latest,
             },
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.now().isoformat(),
         }
 
     except HTTPException:
@@ -1623,16 +1810,20 @@ async def get_market_trends(
 
 
 # Simple stopwords for title-word patterns (minimal set)
-_STOP = frozenset("a an the and or but in on at to for of with by from as is was are were be been being".split())
+_STOP = frozenset(
+    "a an the and or but in on at to for of with by from as is was are were be been being".split()
+)
 
 
 @router.get("/{domain}/finance/market-patterns")
 async def get_market_patterns(
     domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     pattern_type: str | None = Query(None, description="Pattern type filter"),
-    min_confidence: float | None = Query(0.5, ge=0.0, le=1.0, description="Minimum confidence score"),
+    min_confidence: float | None = Query(
+        0.5, ge=0.0, le=1.0, description="Minimum confidence score"
+    ),
     limit: int = Query(50, ge=1, le=100),
-    offset: int = Query(0, ge=0)
+    offset: int = Query(0, ge=0),
 ):
     """
     Get market patterns: simple keyword/category aggregates from recent finance articles.
@@ -1679,7 +1870,7 @@ async def get_market_patterns(
                 "limit": limit,
                 "offset": offset,
             },
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.now().isoformat(),
         }
 
     except HTTPException:
@@ -1691,9 +1882,25 @@ async def get_market_patterns(
 
 # Keywords that suggest corporate-announcement content (minimal set)
 _ANNOUNCEMENT_KEYWORDS = [
-    "earnings", "acquisition", "dividend", "ceo", "merger", "revenue", "forecast",
-    "guidance", "ipo", "buyback", "layoff", "restructuring", "sec", "filings",
-    "quarterly", "annual report", "board", "cfo", "executive",
+    "earnings",
+    "acquisition",
+    "dividend",
+    "ceo",
+    "merger",
+    "revenue",
+    "forecast",
+    "guidance",
+    "ipo",
+    "buyback",
+    "layoff",
+    "restructuring",
+    "sec",
+    "filings",
+    "quarterly",
+    "annual report",
+    "board",
+    "cfo",
+    "executive",
 ]
 
 
@@ -1703,7 +1910,7 @@ async def get_corporate_announcements(
     company: str | None = Query(None, description="Filter by company name"),
     announcement_type: str | None = Query(None, description="Filter by announcement type"),
     limit: int = Query(50, ge=1, le=100),
-    offset: int = Query(0, ge=0)
+    offset: int = Query(0, ge=0),
 ):
     """
     Get corporate announcements: finance articles matching announcement-related keywords.
@@ -1728,13 +1935,19 @@ async def get_corporate_announcements(
                 continue
             snippet = (a.get("summary") or a.get("title") or "")[:200]
             pub = a.get("published_at") or a.get("published_date")
-            announcements.append({
-                "title": a.get("title"),
-                "url": a.get("url"),
-                "published_at": pub.isoformat() if hasattr(pub, "isoformat") else str(pub) if pub else None,
-                "snippet": snippet,
-                "matched_keywords": matched,
-            })
+            announcements.append(
+                {
+                    "title": a.get("title"),
+                    "url": a.get("url"),
+                    "published_at": pub.isoformat()
+                    if hasattr(pub, "isoformat")
+                    else str(pub)
+                    if pub
+                    else None,
+                    "snippet": snippet,
+                    "matched_keywords": matched,
+                }
+            )
 
         total = len(announcements)
         announcements = announcements[offset : offset + limit]
@@ -1749,7 +1962,7 @@ async def get_corporate_announcements(
                 "limit": limit,
                 "offset": offset,
             },
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.now().isoformat(),
         }
 
     except HTTPException:
@@ -1757,4 +1970,3 @@ async def get_corporate_announcements(
     except Exception as e:
         logger.error(f"Error fetching corporate announcements: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
-

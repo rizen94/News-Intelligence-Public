@@ -78,13 +78,13 @@ const SystemAnalytics: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [tabValue, setTabValue] = useState(0);
   const [autoRefresh, setAutoRefresh] = useState(true);
-  const [refreshInterval, setRefreshInterval] = useState<NodeJS.Timeout | null>(
-    null,
-  );
+  const [refreshInterval, setRefreshInterval] = useState<ReturnType<
+    typeof setTimeout
+  > | null>(null);
 
   // Data states
   const [analyticsData, setAnalyticsData] = useState<AnalyticsData | null>(
-    null,
+    null
   );
   const [logStats, setLogStats] = useState<any>(null);
   const [systemMetrics, setSystemMetrics] = useState<any>(null);
@@ -95,7 +95,7 @@ const SystemAnalytics: React.FC = () => {
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(10);
 
-  const loadAnalyticsData = useCallback(async() => {
+  const loadAnalyticsData = useCallback(async () => {
     try {
       setRefreshing(true);
       setError(null);
@@ -159,9 +159,9 @@ const SystemAnalytics: React.FC = () => {
       : 0;
     const performanceScore = systemMetrics
       ? Math.max(
-        0,
-        100 - (systemMetrics.cpu_percent + systemMetrics.memory_percent) / 2,
-      )
+          0,
+          100 - (systemMetrics.cpu_percent + systemMetrics.memory_percent) / 2
+        )
       : 0;
     const reliabilityScore = Math.max(0, 100 - errorRate * 10);
     const overallScore = (performanceScore + reliabilityScore) / 2;
@@ -266,7 +266,7 @@ const SystemAnalytics: React.FC = () => {
   };
 
   const handleChangeRowsPerPage = (
-    event: React.ChangeEvent<HTMLInputElement>,
+    event: React.ChangeEvent<HTMLInputElement>
   ) => {
     setRowsPerPage(parseInt(event.target.value, 10));
     setPage(0);
@@ -364,7 +364,7 @@ const SystemAnalytics: React.FC = () => {
                     <Typography
                       variant='h2'
                       color={getHealthColor(
-                        analyticsData.system_health.overall_score,
+                        analyticsData.system_health.overall_score
                       )}
                     >
                       {analyticsData.system_health.overall_score.toFixed(1)}
@@ -373,7 +373,7 @@ const SystemAnalytics: React.FC = () => {
                       variant='determinate'
                       value={analyticsData.system_health.overall_score}
                       color={getHealthColor(
-                        analyticsData.system_health.overall_score,
+                        analyticsData.system_health.overall_score
                       )}
                       sx={{ mt: 2 }}
                     />
@@ -410,7 +410,7 @@ const SystemAnalytics: React.FC = () => {
                     <Typography
                       variant='h2'
                       color={getHealthColor(
-                        analyticsData.system_health.performance_score,
+                        analyticsData.system_health.performance_score
                       )}
                     >
                       {analyticsData.system_health.performance_score.toFixed(1)}
@@ -428,7 +428,7 @@ const SystemAnalytics: React.FC = () => {
                     <Typography
                       variant='h2'
                       color={getHealthColor(
-                        analyticsData.system_health.reliability_score,
+                        analyticsData.system_health.reliability_score
                       )}
                     >
                       {analyticsData.system_health.reliability_score.toFixed(1)}
@@ -479,7 +479,7 @@ const SystemAnalytics: React.FC = () => {
                                   %
                                 </TableCell>
                               </TableRow>
-                            ),
+                            )
                           )}
                         </TableBody>
                       </Table>
@@ -521,7 +521,7 @@ const SystemAnalytics: React.FC = () => {
                                   %
                                 </TableCell>
                               </TableRow>
-                            ),
+                            )
                           )}
                         </TableBody>
                       </Table>
@@ -547,7 +547,7 @@ const SystemAnalytics: React.FC = () => {
                     </Typography>
                     <Typography variant='h2' color='primary'>
                       {analyticsData.processing_metrics.ml_processing_rate.toFixed(
-                        1,
+                        1
                       )}
                       %
                     </Typography>
@@ -570,7 +570,7 @@ const SystemAnalytics: React.FC = () => {
                     </Typography>
                     <Typography variant='h2' color='primary'>
                       {analyticsData.processing_metrics.deduplication_efficiency.toFixed(
-                        1,
+                        1
                       )}
                       %
                     </Typography>
@@ -586,7 +586,7 @@ const SystemAnalytics: React.FC = () => {
                     </Typography>
                     <Typography variant='h2' color='primary'>
                       {analyticsData.processing_metrics.average_processing_time.toFixed(
-                        1,
+                        1
                       )}
                       s
                     </Typography>

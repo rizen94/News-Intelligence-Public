@@ -21,6 +21,7 @@ LLM routing uses Ollama (see ``config.settings`` and ``shared.services.ollama_mo
 # Dump all thread tracebacks on SIGUSR1 for debugging hung processes
 import faulthandler
 import signal as _signal
+
 faulthandler.enable()
 try:
     faulthandler.register(_signal.SIGUSR1)
@@ -30,78 +31,79 @@ except (AttributeError, OSError):
 # Reduce GIL switch interval so the main uvicorn thread gets more frequent
 # time slices among the many background worker threads
 import sys
+
 sys.setswitchinterval(0.001)  # 1ms (default 5ms)
 
 # Load .env before any config — override=False so shell/env take precedence
 # API often runs with CWD=api/, so load project-root .env (NEWS_API_KEY, FRED_API_KEY, etc.)
 import os
+
 from dotenv import load_dotenv
+
 load_dotenv(override=False)
 _env_root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".env")
 if os.path.isfile(_env_root):
     load_dotenv(_env_root, override=False)
-import sys
+import asyncio
 import logging
+import sys
 import threading
 import time
-import asyncio
 from contextlib import asynccontextmanager
-from typing import Dict, Any
 from datetime import datetime
 
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.openapi.docs import get_swagger_ui_html, get_redoc_html
 
 # Add the modules directory to the path
-sys.path.append(os.path.join(os.path.dirname(__file__), 'modules'))
-sys.path.append(os.path.join(os.path.dirname(__file__), 'shared'))
-sys.path.append(os.path.join(os.path.dirname(__file__), 'domains'))
+sys.path.append(os.path.join(os.path.dirname(__file__), "modules"))
+sys.path.append(os.path.join(os.path.dirname(__file__), "shared"))
+sys.path.append(os.path.join(os.path.dirname(__file__), "domains"))
 
 # Configure logging from centralized config (uses settings.LOG_LEVEL, LOG_DIR)
 try:
     from config.logging_config import setup_logging
+
     setup_logging()
     logger = logging.getLogger(__name__)
 except Exception as e:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    )
     logger = logging.getLogger(__name__)
     logger.warning("Centralized logging unavailable, using basicConfig: %s", e)
 
+# Import pipeline monitoring
+# from routes.pipeline_monitoring import router as pipeline_monitoring_router
+# Import compatibility layer
+from compatibility.v3_compatibility import compatibility_router
 from config.settings import (
-    news_intel_is_production,
-    news_intel_cors_allow_origins,
-    news_intel_trusted_hosts,
     news_intel_api_docs_enabled,
+    news_intel_cors_allow_origins,
     news_intel_expose_error_detail_to_client,
-    news_intel_security_middleware_enabled,
+    news_intel_is_production,
     news_intel_rate_limit_per_minute,
+    news_intel_security_middleware_enabled,
+    news_intel_trusted_hosts,
 )
+from domains.content_analysis.routes import router as content_analysis_router
+from domains.finance.routes.finance import router as finance_router
+from domains.intelligence_hub.routes import router as intelligence_hub_router
+from domains.intelligence_hub.routes.context_centric import router as context_centric_router
 
 # Import domain routers (consolidated — one per domain)
 from domains.news_aggregation.routes import router as news_aggregation_router
-from domains.content_analysis.routes import router as content_analysis_router
 from domains.storyline_management.routes import router as storyline_management_router
-from domains.intelligence_hub.routes import router as intelligence_hub_router
-from domains.intelligence_hub.routes.context_centric import router as context_centric_router
-from domains.finance.routes.finance import router as finance_router
-from domains.user_management.routes.user_management import router as user_management_router
 from domains.system_monitoring.routes import router as system_monitoring_router
-
-# Import pipeline monitoring
-# from routes.pipeline_monitoring import router as pipeline_monitoring_router
-
-# Import compatibility layer
-from compatibility.v3_compatibility import compatibility_router
+from domains.user_management.routes.user_management import router as user_management_router
 
 # Import shared services
 from shared.services.llm_service import llm_service
 
 # Import database configuration
-from shared.database.connection import get_db_connection, check_database_health
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -109,7 +111,20 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("Starting News Intelligence System v5.0")
     if news_intel_is_production():
-        logger.info("NEWS_INTEL_ENV=production — see docs/SECURITY_OPERATIONS.md for CORS, hosts, and OpenAPI")
+        logger.info(
+            "NEWS_INTEL_ENV=production — see docs/SECURITY_OPERATIONS.md for CORS, hosts, and OpenAPI"
+        )
+        try:
+            from shared.middleware import demo_readonly as _demo_ro
+
+            if _demo_ro.news_intel_demo_readonly_enabled():
+                logger.info(
+                    "NEWS_INTEL_DEMO_READ_ONLY — demo hosts=%s read_only_all=%s",
+                    _demo_ro.news_intel_demo_hosts_list(),
+                    _demo_ro.news_intel_demo_readonly_all_hosts(),
+                )
+        except Exception as e:
+            logger.debug("demo readonly env log skipped: %s", e)
         if not news_intel_cors_allow_origins():
             logger.warning(
                 "NEWS_INTEL_CORS_ORIGINS is empty: browsers on another origin cannot call the API with CORS. "
@@ -136,7 +151,7 @@ async def lifespan(app: FastAPI):
         )
 
         try:
-            pool = _init_pool()
+            _init_pool()
             logger.info("✅ Database connection pool initialized (persistent connections)")
             conn = get_db_connection()
             with conn.cursor() as cur:
@@ -157,7 +172,7 @@ async def lifespan(app: FastAPI):
             )
     except Exception as e:
         logger.error(f"❌ Database initialization error: {e}")
-    
+
     # Initialize LLM service
     async def init_llm(app: FastAPI) -> None:
         try:
@@ -181,6 +196,7 @@ async def lifespan(app: FastAPI):
     # Log finance embedding config (no heavy imports)
     try:
         from domains.finance.data.vector_store import get_embedding_collection_info
+
         model, coll = get_embedding_collection_info()
         logger.info(f"✅ Finance evidence: embedding={model}, collection={coll}")
     except Exception as e:
@@ -189,11 +205,10 @@ async def lifespan(app: FastAPI):
     # Initialize Finance Orchestrator (runs in its own background thread to avoid
     # blocking the main uvicorn event loop with sync DB/state operations)
     try:
-        from domains.finance.orchestrator import FinanceOrchestrator
-        from domains.finance import data_sources
-        from domains.finance.data import market_data_store, vector_store, evidence_ledger
-        from domains.finance import embedding, stats
+        from domains.finance import data_sources, embedding, stats
         from domains.finance import llm as finance_llm
+        from domains.finance.data import evidence_ledger, market_data_store, vector_store
+        from domains.finance.orchestrator import FinanceOrchestrator
 
         app.state.finance_orchestrator = FinanceOrchestrator(
             source_loader=data_sources,
@@ -207,12 +222,14 @@ async def lifespan(app: FastAPI):
         )
         logger.info("✅ Finance Orchestrator initialized")
         if app.state.finance_orchestrator:
+
             def _run_finance_background():
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
                 fo = app.state.finance_orchestrator
                 fo._schedule_task = None
                 fo._queue_task = None
+
                 async def _start():
                     fo._schedule_stop.clear()
                     fo._schedule_task = asyncio.create_task(fo._schedule_loop())
@@ -220,8 +237,12 @@ async def lifespan(app: FastAPI):
                     fo._queue_task = asyncio.create_task(fo._queue_loop())
                     while True:
                         await asyncio.sleep(60)
+
                 loop.run_until_complete(_start())
-            finance_bg_thread = threading.Thread(target=_run_finance_background, daemon=True, name="FinanceScheduler")
+
+            finance_bg_thread = threading.Thread(
+                target=_run_finance_background, daemon=True, name="FinanceScheduler"
+            )
             finance_bg_thread.start()
             app.state.finance_bg_thread = finance_bg_thread
             logger.info("✅ Finance scheduler and queue worker started (background thread)")
@@ -232,9 +253,10 @@ async def lifespan(app: FastAPI):
     # Orchestrator coordinator (collection + processing governor, importance, loop: assess/plan/execute/learn)
     # Runs in its own background thread to avoid blocking the main uvicorn event loop
     try:
-        from services.orchestrator_coordinator import OrchestratorCoordinator
         from collectors.rss_collector import collect_rss_feeds
+        from services.orchestrator_coordinator import OrchestratorCoordinator
         from shared.database.connection import get_db_connection as get_db
+
         coordinator = OrchestratorCoordinator(
             get_finance_orchestrator=lambda: getattr(app.state, "finance_orchestrator", None),
             get_automation=lambda: getattr(app.state, "automation", None),
@@ -242,17 +264,23 @@ async def lifespan(app: FastAPI):
             collect_rss_feeds_fn=collect_rss_feeds,
         )
         app.state.orchestrator_coordinator = coordinator
+
         def _run_coordinator_background():
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             coordinator._task = None
+
             async def _start():
                 coordinator._stop.clear()
                 coordinator._task = asyncio.create_task(coordinator._run_loop())
                 while True:
                     await asyncio.sleep(60)
+
             loop.run_until_complete(_start())
-        coord_thread = threading.Thread(target=_run_coordinator_background, daemon=True, name="OrchestratorCoord")
+
+        coord_thread = threading.Thread(
+            target=_run_coordinator_background, daemon=True, name="OrchestratorCoord"
+        )
         coord_thread.start()
         app.state.coordinator_thread = coord_thread
         logger.info("✅ Orchestrator coordinator started (background thread)")
@@ -266,27 +294,30 @@ async def lifespan(app: FastAPI):
         from services.ml_processing_service import MLProcessingService
 
         automation = AutomationManager(db_config)
-        
+
         # Start automation in background thread with limited default executor
         def start_automation():
             import asyncio
             from concurrent.futures import ThreadPoolExecutor
+
             loop = asyncio.new_event_loop()
             loop.set_default_executor(ThreadPoolExecutor(max_workers=2))
             asyncio.set_event_loop(loop)
             loop.run_until_complete(automation.start())
-        
+
         automation_thread = threading.Thread(target=start_automation, daemon=True)
         automation_thread.start()
-        
+
         logger.info("Automation manager started in background thread")
-        
+
         # Store automation manager for shutdown
         app.state.automation = automation
         app.state.automation_thread = automation_thread
         # Idle-time research topic refinement: automation can submit low-priority analysis tasks
-        automation.set_finance_orchestrator_getter(lambda: getattr(app.state, "finance_orchestrator", None))
-        
+        automation.set_finance_orchestrator_getter(
+            lambda: getattr(app.state, "finance_orchestrator", None)
+        )
+
         # Start ML processing service
         try:
             ml_processing_service = MLProcessingService()
@@ -295,25 +326,28 @@ async def lifespan(app: FastAPI):
             app.state.ml_processing = ml_processing_service
         except Exception as e:
             logger.error(f"❌ Failed to start ML Processing Service: {e}")
-        
+
         # Start topic extraction queue workers for all domains
         try:
-            from domains.content_analysis.services.topic_extraction_queue_worker import TopicExtractionQueueWorker
+            from domains.content_analysis.services.topic_extraction_queue_worker import (
+                TopicExtractionQueueWorker,
+            )
             from shared.database.connection import get_db_connection
-            
+
             def start_queue_workers_background():
                 """Start queue workers in background thread"""
                 import asyncio
+
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
-                
+
                 async def start_workers():
                     """Start queue workers for all active domains"""
-                    domains = ['politics', 'finance', 'science-tech']
+                    domains = ["politics", "finance", "science-tech"]
                     workers = []
                     for domain in domains:
                         try:
-                            schema = domain.replace('-', '_')
+                            schema = domain.replace("-", "_")
                             worker = TopicExtractionQueueWorker(get_db_connection, schema=schema)
                             workers.append(worker)
                             # Start worker in background task
@@ -321,15 +355,17 @@ async def lifespan(app: FastAPI):
                             logger.info(f"✅ Started topic extraction queue worker for {domain}")
                         except Exception as e:
                             logger.error(f"❌ Failed to start queue worker for {domain}: {e}")
-                    
+
                     # Keep workers running
                     while True:
                         await asyncio.sleep(60)  # Check every minute
-                
+
                 loop.run_until_complete(start_workers())
-            
+
             # Start queue workers in background thread
-            queue_worker_thread = threading.Thread(target=start_queue_workers_background, daemon=True)
+            queue_worker_thread = threading.Thread(
+                target=start_queue_workers_background, daemon=True
+            )
             queue_worker_thread.start()
             app.state.queue_worker_thread = queue_worker_thread
             logger.info("✅ Topic extraction queue workers started automatically in background")
@@ -340,22 +376,22 @@ async def lifespan(app: FastAPI):
         # Continue without automation if it fails
         app.state.automation = None
         app.state.automation_thread = None
-    
+
     # Start Route Supervisor
     try:
         from shared.services.route_supervisor import get_route_supervisor
-        
+
         supervisor = get_route_supervisor()
-        
+
         # Start monitoring in background
         def start_supervisor():
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             loop.run_until_complete(supervisor.start_monitoring())
-        
+
         supervisor_thread = threading.Thread(target=start_supervisor, daemon=True)
         supervisor_thread.start()
-        
+
         logger.info("✅ Route Supervisor started - monitoring routes and database connections")
         app.state.route_supervisor = supervisor
         app.state.route_supervisor_thread = supervisor_thread
@@ -368,20 +404,27 @@ async def lifespan(app: FastAPI):
     # Runs in its own thread to keep sync DB writes off the main event loop
     try:
         from services.health_monitor_orchestrator import get_health_monitor
+
         base_url = os.getenv("API_BASE_URL", "http://127.0.0.1:8000")
         health_monitor = get_health_monitor(base_url=base_url)
+
         def _run_health_monitor():
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             health_monitor._stop = asyncio.Event()
             health_monitor._task = None
+
             async def _start():
                 health_monitor._stop.clear()
                 health_monitor._task = asyncio.create_task(health_monitor._loop())
                 while True:
                     await asyncio.sleep(60)
+
             loop.run_until_complete(_start())
-        health_thread = threading.Thread(target=_run_health_monitor, daemon=True, name="HealthMonitor")
+
+        health_thread = threading.Thread(
+            target=_run_health_monitor, daemon=True, name="HealthMonitor"
+        )
         health_thread.start()
         app.state.health_monitor = health_monitor
         app.state.health_monitor_thread = health_thread
@@ -389,22 +432,22 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error("❌ Failed to start Health Monitor Orchestrator: %s", e)
         app.state.health_monitor = None
-    
+
     # Start unified Consolidation Scheduler (storylines, entities, investigations, events)
     try:
         from services.consolidation_scheduler import (
             CONSOLIDATION_INTERVAL_SECONDS,
             CONSOLIDATION_STARTUP_DELAY_SECONDS,
             CONSOLIDATION_TYPES,
-            run_consolidation_step,
             get_next_step_name,
+            run_consolidation_step,
         )
+
         consolidation_stop_event = threading.Event()
         consolidation_run_count = [0]  # mutable so thread can increment
 
         def run_consolidation_loop():
             """Run one consolidation type per interval; stagger so each runs ~2x per day."""
-            import time
             if CONSOLIDATION_STARTUP_DELAY_SECONDS > 0:
                 consolidation_stop_event.wait(CONSOLIDATION_STARTUP_DELAY_SECONDS)
             while not consolidation_stop_event.is_set():
@@ -413,9 +456,15 @@ async def lifespan(app: FastAPI):
                     logger.info("🔄 Running scheduled consolidation: %s", step_name)
                     result = run_consolidation_step(step_name)
                     if result.get("success"):
-                        logger.info("✅ Consolidation %s complete: %s", step_name, result.get("message", ""))
+                        logger.info(
+                            "✅ Consolidation %s complete: %s", step_name, result.get("message", "")
+                        )
                     else:
-                        logger.warning("⚠️ Consolidation %s finished with issues: %s", step_name, result.get("message", ""))
+                        logger.warning(
+                            "⚠️ Consolidation %s finished with issues: %s",
+                            step_name,
+                            result.get("message", ""),
+                        )
                 except Exception as e:
                     logger.error("❌ Consolidation %s error: %s", step_name, e)
                 consolidation_run_count[0] += 1
@@ -441,17 +490,25 @@ async def lifespan(app: FastAPI):
 
     # Start Newsroom Orchestrator v6 (optional, feature-flagged)
     try:
-        from orchestration.config import load_newsroom_config
         from orchestration.base import NewsroomOrchestrator
+        from orchestration.config import load_newsroom_config
         from shared.database.connection import get_db_connection
+
         newsroom_config = load_newsroom_config()
         if newsroom_config.get("enabled"):
-            newsroom_orchestrator = NewsroomOrchestrator(get_db_connection=get_db_connection, config=newsroom_config)
+            newsroom_orchestrator = NewsroomOrchestrator(
+                get_db_connection=get_db_connection, config=newsroom_config
+            )
             from orchestration.handlers import register_default_handlers
+
             register_default_handlers(newsroom_orchestrator)
+
             def run_newsroom():
                 newsroom_orchestrator.start()
-            newsroom_thread = threading.Thread(target=run_newsroom, daemon=True, name="NewsroomOrchestrator")
+
+            newsroom_thread = threading.Thread(
+                target=run_newsroom, daemon=True, name="NewsroomOrchestrator"
+            )
             newsroom_thread.start()
             app.state.newsroom_orchestrator = newsroom_orchestrator
             app.state.newsroom_orchestrator_thread = newsroom_thread
@@ -459,28 +516,30 @@ async def lifespan(app: FastAPI):
         else:
             app.state.newsroom_orchestrator = None
             app.state.newsroom_orchestrator_thread = None
-            logger.info("Newsroom Orchestrator disabled (enabled=false or NEWSROOM_ORCHESTRATOR_ENABLED not set)")
+            logger.info(
+                "Newsroom Orchestrator disabled (enabled=false or NEWSROOM_ORCHESTRATOR_ENABLED not set)"
+            )
     except Exception as e:
         logger.error(f"❌ Failed to start Newsroom Orchestrator: {e}")
         app.state.newsroom_orchestrator = None
         app.state.newsroom_orchestrator_thread = None
-    
+
     yield
-    
+
     # Shutdown
     logger.info("Shutting down News Intelligence System v5.0")
-    
+
     # Close LLM service
     try:
-        if hasattr(app.state, 'llm_service') and app.state.llm_service:
+        if hasattr(app.state, "llm_service") and app.state.llm_service:
             await app.state.llm_service.close()
             logger.info("LLM service closed")
     except Exception as e:
         logger.error(f"Error closing LLM service: {e}")
-    
+
     # Stop automation manager
     try:
-        if hasattr(app.state, 'automation') and app.state.automation:
+        if hasattr(app.state, "automation") and app.state.automation:
             # v8: Persist pending collection queue before stop
             try:
                 app.state.automation.persist_pending_collection_queue()
@@ -489,9 +548,9 @@ async def lifespan(app: FastAPI):
             # Signal automation to stop
             app.state.automation.is_running = False
             logger.info("Automation manager stop signal sent")
-            
+
             # Wait for automation thread to finish (with timeout)
-            if hasattr(app.state, 'automation_thread') and app.state.automation_thread:
+            if hasattr(app.state, "automation_thread") and app.state.automation_thread:
                 app.state.automation_thread.join(timeout=5)
                 if app.state.automation_thread.is_alive():
                     logger.warning("Automation thread did not stop gracefully")
@@ -499,7 +558,7 @@ async def lifespan(app: FastAPI):
                     logger.info("Automation manager stopped")
     except Exception as e:
         logger.error(f"Error stopping automation manager: {e}")
-    
+
     # Stop Health Monitor Orchestrator
     try:
         if hasattr(app.state, "health_monitor") and app.state.health_monitor:
@@ -518,25 +577,25 @@ async def lifespan(app: FastAPI):
 
     # Stop Finance Scheduler
     try:
-        if hasattr(app.state, 'finance_orchestrator') and app.state.finance_orchestrator:
+        if hasattr(app.state, "finance_orchestrator") and app.state.finance_orchestrator:
             app.state.finance_orchestrator.stop_scheduler()
             logger.info("Finance scheduler stopped")
     except Exception as e:
         logger.error(f"Error stopping Finance scheduler: {e}")
-    
+
     # Stop Route Supervisor
     try:
-        if hasattr(app.state, 'route_supervisor') and app.state.route_supervisor:
+        if hasattr(app.state, "route_supervisor") and app.state.route_supervisor:
             app.state.route_supervisor.stop_monitoring()
             logger.info("Route Supervisor stopped")
     except Exception as e:
         logger.error(f"Error stopping Route Supervisor: {e}")
-    
+
     # Stop Consolidation Scheduler
     try:
-        if hasattr(app.state, 'consolidation_stop_event') and app.state.consolidation_stop_event:
+        if hasattr(app.state, "consolidation_stop_event") and app.state.consolidation_stop_event:
             app.state.consolidation_stop_event.set()
-            if hasattr(app.state, 'consolidation_thread') and app.state.consolidation_thread:
+            if hasattr(app.state, "consolidation_thread") and app.state.consolidation_thread:
                 app.state.consolidation_thread.join(timeout=5)
             logger.info("Consolidation Scheduler stopped")
     except Exception as e:
@@ -544,9 +603,12 @@ async def lifespan(app: FastAPI):
 
     # Stop Newsroom Orchestrator
     try:
-        if hasattr(app.state, 'newsroom_orchestrator') and app.state.newsroom_orchestrator:
+        if hasattr(app.state, "newsroom_orchestrator") and app.state.newsroom_orchestrator:
             app.state.newsroom_orchestrator.is_running = False
-            if hasattr(app.state, 'newsroom_orchestrator_thread') and app.state.newsroom_orchestrator_thread:
+            if (
+                hasattr(app.state, "newsroom_orchestrator_thread")
+                and app.state.newsroom_orchestrator_thread
+            ):
                 app.state.newsroom_orchestrator_thread.join(timeout=5)
                 if app.state.newsroom_orchestrator_thread.is_alive():
                     logger.warning("Newsroom Orchestrator thread did not stop gracefully")
@@ -554,6 +616,7 @@ async def lifespan(app: FastAPI):
                     logger.info("Newsroom Orchestrator stopped")
     except Exception as e:
         logger.error(f"Error stopping Newsroom Orchestrator: {e}")
+
 
 # OpenAPI / docs — disabled in production unless NEWS_INTEL_ENABLE_API_DOCS=true
 _api_docs_on = news_intel_api_docs_enabled()
@@ -568,9 +631,9 @@ app = FastAPI(
     title="News Intelligence System v5.0",
     description="""
     ## News Intelligence System v5.0 - Domain-Driven AI Platform
-    
+
     A comprehensive news aggregation and analysis platform featuring:
-    
+
     * **Domain-Driven Architecture** - Organized into 6 business domains
     * **AI-Powered Analysis** - Using Llama 3.1 8B (primary) and Mistral 7B (secondary)
     * **News Aggregation** - RSS feed processing and article ingestion
@@ -579,22 +642,22 @@ app = FastAPI(
     * **Intelligence Hub** - Predictive analytics and strategic insights
     * **User Management** - Personalized experiences and behavior analysis
     * **System Monitoring** - Comprehensive health and performance tracking
-    
+
     ### Key Features
     - **Local AI Models Only** - Self-contained system using Ollama-hosted models
     - **Hybrid Processing** - Real-time operations (<5s) + batch processing (5-20s)
     - **Quality-First Approach** - Journalist-quality output with professional standards
     - **Domain-Driven Design** - Business-focused organization with integrated AI capabilities
     - **Scalable Architecture** - Microservice-ready structure for future growth
-    
+
     ### Model Performance
     - **Primary Model**: Llama 3.1 8B (2.93s for 200 words, 73.0 MMLU score)
     - **Secondary Model**: Mistral 7B (4.17s for 200 words, competitive quality)
     - **Resource Usage**: 9.3GB total storage (vs 109GB+ with previous models)
-    
+
     ### Authentication
     No per-user JWT on routes by default — use network isolation or a reverse proxy for access control.
-    
+
     ### Rate limiting and hardening
     Set `NEWS_INTEL_ENV=production` for stricter CORS, Host header checks, disabled OpenAPI by default,
     generic 500 responses, and in-app rate limiting (see `docs/SECURITY_OPERATIONS.md`).
@@ -607,49 +670,48 @@ app = FastAPI(
     openapi_tags=[
         {
             "name": "News Aggregation",
-            "description": "RSS feed processing, article ingestion, and content quality assessment"
+            "description": "RSS feed processing, article ingestion, and content quality assessment",
         },
         {
-            "name": "Content Analysis", 
-            "description": "Sentiment analysis, entity extraction, summarization, and bias detection"
+            "name": "Content Analysis",
+            "description": "Sentiment analysis, entity extraction, summarization, and bias detection",
         },
         {
             "name": "Storyline Management",
-            "description": "Storyline creation, timeline generation, and RAG-enhanced analysis"
+            "description": "Storyline creation, timeline generation, and RAG-enhanced analysis",
         },
         {
             "name": "Intelligence Hub",
-            "description": "Predictive analytics, trend analysis, and strategic insights"
+            "description": "Predictive analytics, trend analysis, and strategic insights",
         },
         {
             "name": "User Management",
-            "description": "User profiles, preferences, and personalized experiences"
+            "description": "User profiles, preferences, and personalized experiences",
         },
         {
             "name": "System Monitoring",
-            "description": "Health checks, performance monitoring, and alerting"
-        }
+            "description": "Health checks, performance monitoring, and alerting",
+        },
     ],
     contact={
         "name": "News Intelligence System",
         "url": "https://github.com/news-intelligence",
-        "email": "support@news-intelligence.com"
+        "email": "support@news-intelligence.com",
     },
-    license_info={
-        "name": "MIT License",
-        "url": "https://opensource.org/licenses/MIT"
-    }
+    license_info={"name": "MIT License", "url": "https://opensource.org/licenses/MIT"},
 )
 
 # Add request tracking and standardized API logging
 REQUEST_TIMEOUT_SECONDS = 30  # hard ceiling for any single request
 
+
 @app.middleware("http")
 async def request_tracker_middleware(request: Request, call_next):
     """Record API activity and enforce a per-request timeout to prevent runaway queries."""
     import uuid
-    from shared.services.api_request_tracker import record_request
+
     from shared.logging.activity_logger import log_api_request
+    from shared.services.api_request_tracker import record_request
 
     request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
     request.state.request_id = request_id
@@ -691,6 +753,7 @@ async def request_tracker_middleware(request: Request, call_next):
     response.headers["X-Request-ID"] = request_id
     return response
 
+
 # Add middleware (last added = outermost)
 app.add_middleware(
     CORSMiddleware,
@@ -713,6 +776,12 @@ if news_intel_security_middleware_enabled():
         rate_limit_per_minute=news_intel_rate_limit_per_minute(),
     )
 
+# Public demo read-only (outermost): block mutations when Host matches NEWS_INTEL_DEMO_HOSTS
+from shared.middleware.demo_readonly import DemoReadOnlyMiddleware  # noqa: E402
+
+app.add_middleware(DemoReadOnlyMiddleware)
+
+
 # Global exception handler
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
@@ -733,6 +802,7 @@ async def global_exception_handler(request: Request, exc: Exception):
         },
     )
 
+
 # Include domain routers
 app.include_router(news_aggregation_router)
 app.include_router(content_analysis_router)
@@ -748,6 +818,24 @@ app.include_router(system_monitoring_router)
 # Include v3.0 compatibility layer
 app.include_router(compatibility_router)
 
+
+@app.get("/api/public/demo_config")
+async def public_demo_config(request: Request):
+    """Expose whether this request's Host is in read-only demo mode (for SPA UX)."""
+    from shared.middleware.demo_readonly import should_apply_demo_readonly
+
+    readonly = should_apply_demo_readonly(request)
+    return {
+        "success": True,
+        "data": {
+            "readonly": readonly,
+            "hint": "When true, mutating API methods are disabled for this host (see docs/PUBLIC_DEPLOYMENT.md).",
+        },
+        "message": "ok",
+        "timestamp": datetime.now().isoformat(),
+    }
+
+
 # Root endpoint
 @app.get("/")
 async def root():
@@ -757,25 +845,24 @@ async def root():
             "name": "News Intelligence System v5.0",
             "version": "5.0.0",
             "architecture": "Domain-Driven Design",
-            "ai_models": {
-                "primary": "llama3.1:8b",
-                "secondary": "mistral:7b"
-            },
+            "ai_models": {"primary": "llama3.1:8b", "secondary": "mistral:7b"},
             "domains": [
                 "news_aggregation",
-                "content_analysis", 
+                "content_analysis",
                 "storyline_management",
                 "intelligence_hub",
                 "user_management",
-                "system_monitoring"
+                "system_monitoring",
             ],
             "docs": "/docs",
-            "redoc": "/redoc"
+            "redoc": "/redoc",
         },
         "message": "News Intelligence System v5.0 is running",
-        "timestamp": datetime.now().isoformat()
+        "timestamp": datetime.now().isoformat(),
     }
+
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="0.0.0.0", port=8000)

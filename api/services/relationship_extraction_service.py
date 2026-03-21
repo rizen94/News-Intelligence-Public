@@ -5,7 +5,7 @@ See docs/DATA_PIPELINE_ENHANCEMENTS_ROADMAP.md.
 """
 
 import logging
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any
 
 from shared.database.connection import get_db_connection
 
@@ -15,10 +15,10 @@ RELATIONSHIP_TYPE_CO_MENTIONED = "co_mentioned"
 
 
 def extract_relationships_from_contexts(
-    context_ids: Optional[List[int]] = None,
-    domain_key: Optional[str] = None,
+    context_ids: list[int] | None = None,
+    domain_key: str | None = None,
     limit: int = 50,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     From contexts (or context_ids), find entity pairs co-mentioned in the same context;
     map entity_profile_id -> (domain, canonical_entity_id) and insert into entity_relationships.
@@ -26,7 +26,12 @@ def extract_relationships_from_contexts(
     """
     conn = get_db_connection()
     if not conn:
-        return {"success": False, "extracted": 0, "relationship_ids": [], "error": "Database connection failed"}
+        return {
+            "success": False,
+            "extracted": 0,
+            "relationship_ids": [],
+            "error": "Database connection failed",
+        }
     try:
         with conn.cursor() as cur:
             # Resolve entity_profile_id -> (domain_key, canonical_entity_id)
@@ -35,7 +40,7 @@ def extract_relationships_from_contexts(
                 SELECT id, domain_key, canonical_entity_id FROM intelligence.entity_profiles
                 """,
             )
-            profile_to_domain_canonical: Dict[int, Tuple[str, int]] = {
+            profile_to_domain_canonical: dict[int, tuple[str, int]] = {
                 r[0]: (r[1], r[2]) for r in cur.fetchall()
             }
         if not profile_to_domain_canonical:
@@ -60,7 +65,7 @@ def extract_relationships_from_contexts(
                 rows = cur.fetchall()
         else:
             domain_clause = "AND c.domain_key = %s" if domain_key else ""
-            params: List[Any] = [limit * 5]  # v8: historical depth
+            params: list[Any] = [limit * 5]  # v8: historical depth
             if domain_key:
                 params.insert(0, domain_key)
             with conn.cursor() as cur:
@@ -69,7 +74,9 @@ def extract_relationships_from_contexts(
                     SELECT cem.context_id, array_agg(DISTINCT cem.entity_profile_id ORDER BY cem.entity_profile_id) AS profile_ids
                     FROM intelligence.context_entity_mentions cem
                     JOIN intelligence.contexts c ON c.id = cem.context_id
-                    WHERE 1=1 """ + domain_clause + """
+                    WHERE 1=1 """
+                    + domain_clause
+                    + """
                     GROUP BY cem.context_id
                     HAVING COUNT(DISTINCT cem.entity_profile_id) >= 2
                     ORDER BY cem.context_id DESC
@@ -79,8 +86,8 @@ def extract_relationships_from_contexts(
                 )
                 rows = cur.fetchall()
 
-        seen_pairs: Set[Tuple[Tuple[str, int], Tuple[str, int]]] = set()
-        to_insert: List[Tuple[str, int, str, int, float]] = []
+        seen_pairs: set[tuple[tuple[str, int], tuple[str, int]]] = set()
+        to_insert: list[tuple[str, int, str, int, float]] = []
         for context_id, profile_ids in rows:
             if not profile_ids:
                 continue
@@ -96,7 +103,9 @@ def extract_relationships_from_contexts(
                     if (d1, id1) == (d2, id2):
                         continue
                     # Normalize order to avoid duplicate (A,B) and (B,A)
-                    key = ((d1, id1), (d2, id2)) if (d1, id1) < (d2, id2) else ((d2, id2), (d1, id1))
+                    key = (
+                        ((d1, id1), (d2, id2)) if (d1, id1) < (d2, id2) else ((d2, id2), (d1, id1))
+                    )
                     if key in seen_pairs:
                         continue
                     seen_pairs.add(key)
@@ -106,7 +115,7 @@ def extract_relationships_from_contexts(
             conn.close()
             return {"success": True, "extracted": 0, "relationship_ids": []}
 
-        relationship_ids: List[int] = []
+        relationship_ids: list[int] = []
         with conn.cursor() as cur:
             for d1, id1, d2, id2, conf in to_insert:
                 try:
@@ -130,7 +139,11 @@ def extract_relationships_from_contexts(
             conn.rollback()
             logger.warning("relationship_extraction commit: %s", e)
         conn.close()
-        return {"success": True, "extracted": len(relationship_ids), "relationship_ids": relationship_ids}
+        return {
+            "success": True,
+            "extracted": len(relationship_ids),
+            "relationship_ids": relationship_ids,
+        }
     except Exception as e:
         logger.warning("extract_relationships_from_contexts: %s", e)
         try:
@@ -144,9 +157,9 @@ def get_network_subgraph(
     domain: str,
     entity_id: int,
     depth: int = 2,
-    relationship_types: Optional[List[str]] = None,
+    relationship_types: list[str] | None = None,
     limit_per_layer: int = 50,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     BFS from (domain, entity_id) over entity_relationships. Returns nodes and edges.
     entity_id is entity_canonical id in the given domain.
@@ -156,21 +169,21 @@ def get_network_subgraph(
         return {"success": False, "nodes": [], "edges": [], "error": "Database connection failed"}
     try:
         types_filter = ""
-        type_args: Optional[List[str]] = None
+        type_args: list[str] | None = None
         if relationship_types and "all" not in (relationship_types or []):
             types_filter = "AND relationship_type = ANY(%s)"
             type_args = relationship_types
-        nodes: List[Dict[str, Any]] = []
-        edges: List[Dict[str, Any]] = []
-        seen: Set[Tuple[str, int]] = {(domain, entity_id)}
-        frontier: List[Tuple[str, int]] = [(domain, entity_id)]
+        nodes: list[dict[str, Any]] = []
+        edges: list[dict[str, Any]] = []
+        seen: set[tuple[str, int]] = {(domain, entity_id)}
+        frontier: list[tuple[str, int]] = [(domain, entity_id)]
         nodes.append({"domain": domain, "entity_id": entity_id})
         for _ in range(depth):
             if not frontier:
                 break
-            next_frontier: List[Tuple[str, int]] = []
+            next_frontier: list[tuple[str, int]] = []
             for src_domain, src_id in frontier:
-                args_out: List[Any] = [src_domain, src_id]
+                args_out: list[Any] = [src_domain, src_id]
                 if type_args is not None:
                     args_out.append(type_args)
                 args_out.append(limit_per_layer)
@@ -180,20 +193,24 @@ def get_network_subgraph(
                         SELECT target_domain, target_entity_id, relationship_type, confidence
                         FROM intelligence.entity_relationships
                         WHERE source_domain = %s AND source_entity_id = %s
-                        """ + types_filter + """
+                        """
+                        + types_filter
+                        + """
                         LIMIT %s
                         """,
                         tuple(args_out),
                     )
                     for t_domain, t_id, rel_type, conf in cur.fetchall():
-                        edges.append({
-                            "source_domain": src_domain,
-                            "source_entity_id": src_id,
-                            "target_domain": t_domain,
-                            "target_entity_id": t_id,
-                            "relationship_type": rel_type,
-                            "confidence": float(conf) if conf is not None else None,
-                        })
+                        edges.append(
+                            {
+                                "source_domain": src_domain,
+                                "source_entity_id": src_id,
+                                "target_domain": t_domain,
+                                "target_entity_id": t_id,
+                                "relationship_type": rel_type,
+                                "confidence": float(conf) if conf is not None else None,
+                            }
+                        )
                         key = (t_domain, t_id)
                         if key not in seen:
                             seen.add(key)
@@ -205,20 +222,24 @@ def get_network_subgraph(
                         SELECT source_domain, source_entity_id, relationship_type, confidence
                         FROM intelligence.entity_relationships
                         WHERE target_domain = %s AND target_entity_id = %s
-                        """ + types_filter + """
+                        """
+                        + types_filter
+                        + """
                         LIMIT %s
                         """,
                         tuple(args_out),
                     )
                     for s_domain, s_id, rel_type, conf in cur.fetchall():
-                        edges.append({
-                            "source_domain": s_domain,
-                            "source_entity_id": s_id,
-                            "target_domain": src_domain,
-                            "target_entity_id": src_id,
-                            "relationship_type": rel_type,
-                            "confidence": float(conf) if conf is not None else None,
-                        })
+                        edges.append(
+                            {
+                                "source_domain": s_domain,
+                                "source_entity_id": s_id,
+                                "target_domain": src_domain,
+                                "target_entity_id": src_id,
+                                "relationship_type": rel_type,
+                                "confidence": float(conf) if conf is not None else None,
+                            }
+                        )
                         key = (s_domain, s_id)
                         if key not in seen:
                             seen.add(key)

@@ -5,9 +5,9 @@ Config file: api/config/newsroom.yaml (optional).
 Feature flag: NEWSROOM_ORCHESTRATOR_ENABLED (env overrides file).
 """
 
-import os
 import logging
-from typing import Any, Dict
+import os
+from typing import Any
 
 logger = logging.getLogger("orchestration")
 
@@ -44,7 +44,7 @@ DEFAULTS = {
 }
 
 
-def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     out = dict(base)
     for k, v in override.items():
         if k in out and isinstance(out[k], dict) and isinstance(v, dict):
@@ -54,7 +54,7 @@ def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any
     return out
 
 
-def load_newsroom_config() -> Dict[str, Any]:
+def load_newsroom_config() -> dict[str, Any]:
     """
     Load newsroom config from api/config/newsroom.yaml.
     Env NEWSROOM_ORCHESTRATOR_ENABLED overrides newsroom.enabled.
@@ -68,6 +68,7 @@ def load_newsroom_config() -> Dict[str, Any]:
     if NEWSROOM_YAML and NEWSROOM_YAML.exists():
         try:
             import yaml
+
             with open(NEWSROOM_YAML) as f:
                 file_config = yaml.safe_load(f) or {}
             newsroom = file_config.get("newsroom") or {}
@@ -75,7 +76,10 @@ def load_newsroom_config() -> Dict[str, Any]:
         except Exception as e:
             logger.warning("Failed to load newsroom.yaml: %s — using defaults", e)
     else:
-        logger.debug("newsroom.yaml not found at %s — using defaults", getattr(NEWSROOM_YAML, "resolve", lambda: None)())
+        logger.debug(
+            "newsroom.yaml not found at %s — using defaults",
+            getattr(NEWSROOM_YAML, "resolve", lambda: None)(),
+        )
 
     # Env overrides enabled
     env_val = os.getenv("NEWSROOM_ORCHESTRATOR_ENABLED", "").strip().lower()

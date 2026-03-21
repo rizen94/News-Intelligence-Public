@@ -8,7 +8,6 @@ See docs/STORY_STATE_UPDATE_TRIGGERS.md.
 """
 
 import logging
-from typing import List, Set, Tuple
 
 from shared.database.connection import get_db_connection
 
@@ -52,7 +51,9 @@ def process_fact_change_log(batch_size: int = 100) -> int:
             return 0
 
         for log_id, fact_id, entity_profile_id, change_type in rows:
-            triggered = _process_one_fact_change(conn, log_id, fact_id, entity_profile_id, change_type)
+            triggered = _process_one_fact_change(
+                conn, log_id, fact_id, entity_profile_id, change_type
+            )
             if triggered is not None:
                 processed += 1
                 with conn.cursor() as cur2:
@@ -76,7 +77,9 @@ def process_fact_change_log(batch_size: int = 100) -> int:
     return processed
 
 
-def _process_one_fact_change(conn, log_id: int, fact_id: int, entity_profile_id: int, change_type: str) -> int | None:
+def _process_one_fact_change(
+    conn, log_id: int, fact_id: int, entity_profile_id: int, change_type: str
+) -> int | None:
     """Resolve entity_profile -> (domain_key, canonical_name), find storylines, enqueue. Returns count enqueued or None on error."""
     with conn.cursor() as cur:
         cur.execute(
@@ -89,7 +92,9 @@ def _process_one_fact_change(conn, log_id: int, fact_id: int, entity_profile_id:
         )
         row = cur.fetchone()
     if not row:
-        logger.debug("fact_change_log %s: entity_profile_id %s not found", log_id, entity_profile_id)
+        logger.debug(
+            "fact_change_log %s: entity_profile_id %s not found", log_id, entity_profile_id
+        )
         return 0
     domain_key, canonical_entity_id, canonical_name = row
     if not domain_key:
@@ -112,7 +117,7 @@ def _process_one_fact_change(conn, log_id: int, fact_id: int, entity_profile_id:
     if not name:
         return 0
     # Find storylines: story_entity_index by entity_name (try domain schema then public)
-    storyline_ids: Set[int] = set()
+    storyline_ids: set[int] = set()
     for try_schema in (schema, "public"):
         try:
             with conn.cursor() as cur:
@@ -180,8 +185,8 @@ def process_story_update_queue(batch_size: int = 20) -> int:
             return 0
 
         # Dedupe by (domain_key, storyline_id), keep set of (domain_key, storyline_id)
-        seen: Set[Tuple[str, int]] = set()
-        to_update: List[Tuple[str, int]] = []
+        seen: set[tuple[str, int]] = set()
+        to_update: list[tuple[str, int]] = []
         for _id, domain_key, storyline_id, _trigger_type, _trigger_id, _priority in rows:
             key = (domain_key, storyline_id)
             if key not in seen:
@@ -213,6 +218,7 @@ def _update_story_state(conn, domain_key: str, storyline_id: int) -> None:
     """Update story state: write storyline_states row with maturity score and knowledge gaps (Phase 2)."""
     try:
         from services.story_state_service import update_story_state
+
         update_story_state(domain_key, storyline_id)
     except Exception as e:
         logger.debug("story state update %s/%s: %s", domain_key, storyline_id, e)

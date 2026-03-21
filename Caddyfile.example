@@ -1,0 +1,15 @@
+# Example Caddyfile (v2) — same-origin SPA + API proxy
+# Adjust root to your deployed web/dist path. Rename before use: caddy run --config Caddyfile
+
+demo.example.com {
+	route {
+		handle /api/* {
+			reverse_proxy 127.0.0.1:8000
+		}
+		handle {
+			root * /var/www/news-intelligence/web/dist
+			try_files {path} /index.html
+			file_server
+		}
+	}
+}

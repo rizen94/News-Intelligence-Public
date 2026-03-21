@@ -7,8 +7,8 @@ timeline with gap detection, milestone identification, and source attribution.
 
 import json
 import logging
-from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from datetime import datetime, timezone
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +24,7 @@ _CHRONO_EVENTS = "public.chronological_events"
 class TimelineBuilderService:
     """Constructs structured timelines from storyline events."""
 
-    def __init__(self, conn, schema_name: Optional[str] = None):
+    def __init__(self, conn, schema_name: str | None = None):
         """
         Args:
             conn: Open DB connection (psycopg2).
@@ -34,7 +34,7 @@ class TimelineBuilderService:
         self.conn = conn
         self.schema_name = schema_name.replace("-", "_") if schema_name else None
 
-    def build_timeline(self, storyline_id: int) -> Dict[str, Any]:
+    def build_timeline(self, storyline_id: int) -> dict[str, Any]:
         """
         Build a full timeline for a storyline.
 
@@ -91,9 +91,10 @@ class TimelineBuilderService:
         finally:
             cursor.close()
 
-    def _load_events(self, storyline_id: int) -> List[Dict]:
+    def _load_events(self, storyline_id: int) -> list[dict]:
         cursor = self.conn.cursor()
-        cursor.execute(f"""
+        cursor.execute(
+            f"""
             SELECT ce.id, ce.title, ce.description, ce.event_type,
                    ce.actual_event_date, ce.date_precision,
                    ce.location, ce.key_actors, ce.entities,
@@ -105,62 +106,75 @@ class TimelineBuilderService:
             WHERE ce.storyline_id = %s::text
               AND ce.canonical_event_id IS NULL
             ORDER BY ce.actual_event_date ASC NULLS LAST
-        """, (storyline_id,))
+        """,
+            (storyline_id,),
+        )
         rows = cursor.fetchall()
         cursor.close()
 
         return [
             {
-                "id": r[0], "title": r[1], "description": r[2],
-                "event_type": r[3], "event_date": r[4],
-                "date_precision": r[5], "location": r[6],
-                "key_actors": self._pj(r[7]), "entities": self._pj(r[8]),
+                "id": r[0],
+                "title": r[1],
+                "description": r[2],
+                "event_type": r[3],
+                "event_date": r[4],
+                "date_precision": r[5],
+                "location": r[6],
+                "key_actors": self._pj(r[7]),
+                "entities": self._pj(r[8]),
                 "importance": float(r[9] or 0),
-                "source_article_id": r[10], "source_count": r[11] or 1,
-                "is_ongoing": r[12], "outcome": r[13],
+                "source_article_id": r[10],
+                "source_count": r[11] or 1,
+                "is_ongoing": r[12],
+                "outcome": r[13],
                 # r[14] canonical_event_id — NULL for rows shown on timeline (primary row for a dedup cluster)
                 "canonical_event_id": r[14] if len(r) > 14 else None,
                 "extraction_method": r[15] if len(r) > 15 else None,
-                "extraction_confidence": float(r[16]) if len(r) > 16 and r[16] is not None else None,
+                "extraction_confidence": float(r[16])
+                if len(r) > 16 and r[16] is not None
+                else None,
                 "timeline_row_role": "primary",
             }
             for r in rows
         ]
 
     @staticmethod
-    def _order_events(events: List[Dict]) -> List[Dict]:
-        dated = [e for e in events if e.get('event_date')]
-        undated = [e for e in events if not e.get('event_date')]
-        dated.sort(key=lambda e: e['event_date'])
+    def _order_events(events: list[dict]) -> list[dict]:
+        dated = [e for e in events if e.get("event_date")]
+        undated = [e for e in events if not e.get("event_date")]
+        dated.sort(key=lambda e: e["event_date"])
         return dated + undated
 
     # ------------------------------------------------------------------
     # Gap detection
     # ------------------------------------------------------------------
 
-    def _detect_gaps(self, events: List[Dict], storyline_id: int) -> List[Dict]:
-        dated = [e for e in events if e.get('event_date')]
+    def _detect_gaps(self, events: list[dict], storyline_id: int) -> list[dict]:
+        dated = [e for e in events if e.get("event_date")]
         if len(dated) < 2:
             return []
 
         gap_threshold = self._gap_threshold(storyline_id)
         gaps = []
         for i in range(len(dated) - 1):
-            d1 = dated[i]['event_date']
-            d2 = dated[i + 1]['event_date']
+            d1 = dated[i]["event_date"]
+            d2 = dated[i + 1]["event_date"]
             if isinstance(d1, datetime):
                 d1 = d1.date()
             if isinstance(d2, datetime):
                 d2 = d2.date()
             delta = (d2 - d1).days
             if delta > gap_threshold:
-                gaps.append({
-                    "after_event_id": dated[i]['id'],
-                    "before_event_id": dated[i + 1]['id'],
-                    "gap_days": delta,
-                    "from_date": d1.isoformat(),
-                    "to_date": d2.isoformat(),
-                })
+                gaps.append(
+                    {
+                        "after_event_id": dated[i]["id"],
+                        "before_event_id": dated[i + 1]["id"],
+                        "gap_days": delta,
+                        "from_date": d1.isoformat(),
+                        "to_date": d2.isoformat(),
+                    }
+                )
         return gaps
 
     def _gap_threshold(self, storyline_id: int) -> int:
@@ -182,7 +196,7 @@ class TimelineBuilderService:
                     break
         finally:
             cursor.close()
-        if status in ('dormant', 'watching'):
+        if status in ("dormant", "watching"):
             return SLOW_GAP_DAYS
         return ACTIVE_GAP_DAYS
 
@@ -191,36 +205,42 @@ class TimelineBuilderService:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _identify_milestones(events: List[Dict]) -> List[Dict]:
+    def _identify_milestones(events: list[dict]) -> list[dict]:
         if not events:
             return []
 
         milestones = []
-        dated = [e for e in events if e.get('event_date')]
+        dated = [e for e in events if e.get("event_date")]
 
         if dated:
-            milestones.append({
-                "type": "first_event",
-                "event_id": dated[0]['id'],
-                "label": "Story begins",
-            })
+            milestones.append(
+                {
+                    "type": "first_event",
+                    "event_id": dated[0]["id"],
+                    "label": "Story begins",
+                }
+            )
 
-        high_importance = [e for e in events if e.get('importance', 0) >= 0.8]
+        high_importance = [e for e in events if e.get("importance", 0) >= 0.8]
         for e in high_importance:
-            milestones.append({
-                "type": "escalation",
-                "event_id": e['id'],
-                "label": f"Key development: {e['title'][:60]}",
-            })
+            milestones.append(
+                {
+                    "type": "escalation",
+                    "event_id": e["id"],
+                    "label": f"Key development: {e['title'][:60]}",
+                }
+            )
 
-        resolution_types = {'court_ruling', 'agreement', 'resignation', 'death'}
+        resolution_types = {"court_ruling", "agreement", "resignation", "death"}
         for e in events:
-            if e.get('event_type') in resolution_types and not e.get('is_ongoing'):
-                milestones.append({
-                    "type": "resolution",
-                    "event_id": e['id'],
-                    "label": f"Resolution: {e['title'][:60]}",
-                })
+            if e.get("event_type") in resolution_types and not e.get("is_ongoing"):
+                milestones.append(
+                    {
+                        "type": "resolution",
+                        "event_id": e["id"],
+                        "label": f"Resolution: {e['title'][:60]}",
+                    }
+                )
 
         return milestones
 
@@ -228,27 +248,32 @@ class TimelineBuilderService:
     # Source attribution
     # ------------------------------------------------------------------
 
-    def _attach_sources(self, events: List[Dict]) -> List[Dict]:
+    def _attach_sources(self, events: list[dict]) -> list[dict]:
         if not self.schema_name:
-            logger.debug("TimelineBuilderService: no schema_name; skipping article source enrichment")
+            logger.debug(
+                "TimelineBuilderService: no schema_name; skipping article source enrichment"
+            )
             return events
         sch = self.schema_name
         cursor = self.conn.cursor()
         try:
             for evt in events:
-                aid = evt.get('source_article_id')
+                aid = evt.get("source_article_id")
                 if not aid:
                     continue
-                cursor.execute(f"""
+                cursor.execute(
+                    f"""
                     SELECT title, source_domain, published_at
                     FROM {sch}.articles WHERE id = %s
-                """, (aid,))
+                """,
+                    (aid,),
+                )
                 row = cursor.fetchone()
                 if row:
-                    evt['source'] = {
-                        'article_title': row[0],
-                        'domain': row[1],
-                        'published_at': row[2].isoformat() if row[2] else None,
+                    evt["source"] = {
+                        "article_title": row[0],
+                        "domain": row[1],
+                        "published_at": row[2].isoformat() if row[2] else None,
                     }
         finally:
             cursor.close()
@@ -259,12 +284,12 @@ class TimelineBuilderService:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _compute_span(events: List[Dict]) -> Optional[Dict]:
-        dated = [e for e in events if e.get('event_date')]
+    def _compute_span(events: list[dict]) -> dict | None:
+        dated = [e for e in events if e.get("event_date")]
         if len(dated) < 2:
             return None
-        first = dated[0]['event_date']
-        last = dated[-1]['event_date']
+        first = dated[0]["event_date"]
+        last = dated[-1]["event_date"]
         if isinstance(first, datetime):
             first = first.date()
         if isinstance(last, datetime):
@@ -276,11 +301,10 @@ class TimelineBuilderService:
         }
 
     @staticmethod
-    def _count_distinct_sources(events: List[Dict]) -> int:
-        return len({
-            e.get('source', {}).get('domain')
-            for e in events if e.get('source', {}).get('domain')
-        })
+    def _count_distinct_sources(events: list[dict]) -> int:
+        return len(
+            {e.get("source", {}).get("domain") for e in events if e.get("source", {}).get("domain")}
+        )
 
     @staticmethod
     def _pj(val):

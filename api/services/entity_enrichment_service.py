@@ -8,7 +8,7 @@ See docs/RAG_ENHANCEMENT_ROADMAP.md.
 import json
 import logging
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from shared.database.connection import get_db_connection
 
@@ -18,10 +18,11 @@ logger = logging.getLogger(__name__)
 def _get_wikipedia_service():
     """Lazy import to avoid circular deps."""
     from modules.ml.rag_external_services import WikipediaService
+
     return WikipediaService()
 
 
-def _get_canonical_name_for_profile(entity_profile_id: int) -> Optional[tuple]:
+def _get_canonical_name_for_profile(entity_profile_id: int) -> tuple | None:
     """Return (canonical_name, domain_key) for entity_profile_id, or None."""
     conn = get_db_connection()
     if not conn:
@@ -42,10 +43,11 @@ def _get_canonical_name_for_profile(entity_profile_id: int) -> Optional[tuple]:
         conn.close()
 
 
-def _fetch_wikipedia_summary(canonical_name: str) -> Optional[Dict[str, Any]]:
+def _fetch_wikipedia_summary(canonical_name: str) -> dict[str, Any] | None:
     """Fetch entity knowledge via high-level connector (Wikipedia first, optional KG fallback)."""
     try:
         from services.entity_knowledge_connector import resolve_entity_knowledge
+
         result = resolve_entity_knowledge(
             canonical_name,
             sources=("wikipedia", "knowledge_graph"),
@@ -64,7 +66,9 @@ def _fetch_wikipedia_summary(canonical_name: str) -> Optional[Dict[str, Any]]:
     return None
 
 
-def _facts_from_wikipedia_summary(summary: Dict[str, Any], canonical_name: str) -> List[Dict[str, Any]]:
+def _facts_from_wikipedia_summary(
+    summary: dict[str, Any], canonical_name: str
+) -> list[dict[str, Any]]:
     """Turn a Wikipedia summary into a small list of fact dicts (fact_type, fact_text, confidence)."""
     facts = []
     extract = (summary.get("extract") or "").strip()
@@ -72,17 +76,21 @@ def _facts_from_wikipedia_summary(summary: Dict[str, Any], canonical_name: str) 
         return facts
     # One overarching "summary" fact; optionally split first 2 sentences as separate facts
     if len(extract) > 20:
-        facts.append({
-            "fact_type": "ATTRIBUTE",
-            "fact_text": extract[:2000],
-            "confidence": 0.85,
-        })
+        facts.append(
+            {
+                "fact_type": "ATTRIBUTE",
+                "fact_text": extract[:2000],
+                "confidence": 0.85,
+            }
+        )
     return facts
 
 
-def _merge_wikipedia_section_into_sections(existing_sections: List[Dict], wiki_summary: Dict) -> List[Dict]:
+def _merge_wikipedia_section_into_sections(
+    existing_sections: list[dict], wiki_summary: dict
+) -> list[dict]:
     """Append or replace a 'Background (Wikipedia)' section."""
-    title = wiki_summary.get("title", "")
+    wiki_summary.get("title", "")
     extract = (wiki_summary.get("extract") or "").strip()
     if not extract:
         return existing_sections
@@ -92,7 +100,9 @@ def _merge_wikipedia_section_into_sections(existing_sections: List[Dict], wiki_s
         "source": "wikipedia",
         "url": wiki_summary.get("url", ""),
     }
-    out = [s for s in (existing_sections or []) if (s.get("title") or "") != "Background (Wikipedia)"]
+    out = [
+        s for s in (existing_sections or []) if (s.get("title") or "") != "Background (Wikipedia)"
+    ]
     out.append(new_section)
     return out
 
@@ -181,7 +191,7 @@ def enrich_entity_profile(entity_profile_id: int) -> bool:
     return updated
 
 
-def get_entity_profile_ids_to_enrich(limit: int = 20) -> List[int]:
+def get_entity_profile_ids_to_enrich(limit: int = 20) -> list[int]:
     """Return entity_profile IDs that have no Wikipedia-derived section or no versioned_facts yet."""
     conn = get_db_connection()
     if not conn:

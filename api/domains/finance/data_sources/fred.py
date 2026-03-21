@@ -9,16 +9,19 @@ import time
 
 try:
     from config.logging_config import get_component_logger
+
     logger = get_component_logger("finance")
 except Exception:
     logger = logging.getLogger(__name__)
 
 from config.settings import FRED_API_KEY, FRED_RATE_LIMIT_PER_MINUTE
-from domains.finance.data_sources.base import DataSourceBase
-from domains.finance.data.api_cache import get as cache_get, set as cache_set
-from domains.finance.data.api_cache import FRED_TTL
-from domains.finance.data.market_data_store import upsert_observations, get_series
 from shared.data_result import DataResult
+
+from domains.finance.data.api_cache import FRED_TTL
+from domains.finance.data.api_cache import get as cache_get
+from domains.finance.data.api_cache import set as cache_set
+from domains.finance.data.market_data_store import upsert_observations
+from domains.finance.data_sources.base import DataSourceBase
 
 FRED_BASE = "https://api.stlouisfed.org/fred/series/observations"
 
@@ -50,10 +53,12 @@ def _fetch_fred(
     t0 = time.perf_counter()
     try:
         import requests
+
         r = requests.get(FRED_BASE, params=params, timeout=30)
         duration_ms = (time.perf_counter() - t0) * 1000
         try:
             from shared.logging.activity_logger import log_external_call
+
             log_external_call(
                 url=FRED_BASE,
                 status="success" if r.status_code == 200 else "error",
@@ -77,6 +82,7 @@ def _fetch_fred(
         duration_ms = (time.perf_counter() - t0) * 1000
         try:
             from shared.logging.activity_logger import log_external_call
+
             log_external_call(
                 url=FRED_BASE,
                 status="error",
@@ -115,11 +121,16 @@ class FREDDataSource(DataSourceBase):
                 val = float(v)
             except (TypeError, ValueError):
                 continue
-            out.append({
-                "date": o.get("date", ""),
-                "value": val,
-                "metadata": {"realtime_start": o.get("realtime_start"), "realtime_end": o.get("realtime_end")},
-            })
+            out.append(
+                {
+                    "date": o.get("date", ""),
+                    "value": val,
+                    "metadata": {
+                        "realtime_start": o.get("realtime_start"),
+                        "realtime_end": o.get("realtime_end"),
+                    },
+                }
+            )
         if not out:
             return DataResult.fail("No valid observations in series", "no_data")
         if store:

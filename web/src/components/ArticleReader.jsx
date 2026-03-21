@@ -38,10 +38,18 @@ import apiService from '../services/apiService';
 import Logger from '../utils/logger';
 import { api } from '../services/apiService';
 import { storylinesApi } from '../services/api/storylines';
+import { getCurrentDomain } from '../utils/domainHelper';
 
 import StorylineConfirmationDialog from './StorylineConfirmationDialog';
 
-const ArticleReader = ({ article, open, onClose, onAddToStoryline }) => {
+const ArticleReader = ({
+  article,
+  open,
+  onClose,
+  onAddToStoryline,
+  domain: domainProp,
+}) => {
+  const domain = domainProp ?? getCurrentDomain();
   const [fullContent, setFullContent] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -68,9 +76,9 @@ const ArticleReader = ({ article, open, onClose, onAddToStoryline }) => {
       loadStorylines();
       checkBookmarkStatus();
     }
-  }, [open, article]);
+  }, [open, article, domain]);
 
-  const loadFullContent = async() => {
+  const loadFullContent = async () => {
     if (!article) return;
 
     setLoading(true);
@@ -78,10 +86,7 @@ const ArticleReader = ({ article, open, onClose, onAddToStoryline }) => {
 
     try {
       const localFallback =
-        article.content ||
-        article.summary ||
-        article.excerpt ||
-        '';
+        article.content || article.summary || article.excerpt || '';
 
       // Prefer locally available text; avoid unnecessary hard-fail fetches.
       if (localFallback && localFallback.length >= 80) {
@@ -92,7 +97,7 @@ const ArticleReader = ({ article, open, onClose, onAddToStoryline }) => {
       // Only attempt full-content fetch when we have a valid article id.
       if (article.id) {
         const response = await api.post(
-          `/article-processing/fetch-full-content/${article.id}`,
+          `/article-processing/fetch-full-content/${article.id}`
         );
         if (response.data?.success && response.data.data?.content) {
           setFullContent(response.data.data.content);
@@ -114,10 +119,7 @@ const ArticleReader = ({ article, open, onClose, onAddToStoryline }) => {
     } catch (err) {
       Logger.error('Error loading full content:', err);
       const fallback =
-        article.content ||
-        article.summary ||
-        article.excerpt ||
-        '';
+        article.content || article.summary || article.excerpt || '';
       if (fallback) {
         setFullContent(fallback);
         setError(null);
@@ -130,21 +132,22 @@ const ArticleReader = ({ article, open, onClose, onAddToStoryline }) => {
     }
   };
 
-  const loadStorylines = async() => {
+  const loadStorylines = async () => {
     try {
-      const data = await storylinesApi.getStorylines();
-      if (data && data.success !== false) setStorylines(data.data?.storylines || data.data || []);
+      const data = await storylinesApi.getStorylines({}, domain);
+      if (data && data.success !== false)
+        setStorylines(data.data?.storylines || data.data || []);
     } catch (e) {
       Logger.error('ArticleReader', 'Failed to load storylines', e);
     }
   };
 
-  const checkBookmarkStatus = async() => {
+  const checkBookmarkStatus = async () => {
     // Bookmark functionality not implemented yet
     setIsBookmarked(false);
   };
 
-  const handleAddToStoryline = async() => {
+  const handleAddToStoryline = async () => {
     if (!selectedStoryline && !newStorylineTitle.trim()) {
       setError('Please select a storyline or create a new one');
       return;
@@ -162,32 +165,58 @@ const ArticleReader = ({ article, open, onClose, onAddToStoryline }) => {
     });
   };
 
-  const handleConfirmAction = async() => {
+  const handleConfirmAction = async () => {
     setActionLoading(true);
     setError(null);
 
     try {
+      const articleIdNum = Number(article.id);
+      if (isNaN(articleIdNum)) {
+        throw new Error('Invalid article ID');
+      }
+
       let storylineId = selectedStoryline;
 
-      // Create new storyline if needed
+      // Create new storyline if needed (link article in same request — avoids empty storylines)
       if (!selectedStoryline && newStorylineTitle.trim()) {
-        const createResponse = await apiService.createStoryline({
-          title: newStorylineTitle.trim(),
-          description: `Storyline created from article: ${article.title}`,
-        });
+        const createResponse = await apiService.createStoryline(
+          {
+            title: newStorylineTitle.trim(),
+            description: `Storyline created from article: ${article.title}`,
+            article_ids: [articleIdNum],
+          },
+          domain
+        );
 
-        if (createResponse.success) {
-          storylineId = createResponse.data?.storyline?.id || createResponse.data?.id;
-          if (!storylineId) {
-            throw new Error('Failed to get storyline ID after creation');
-          }
-          setStorylines(prev => [...prev, createResponse.data?.storyline || createResponse.data]);
-          showSnackbar('New storyline created successfully!', 'success');
-        } else {
-          throw new Error(
-            createResponse.message || createResponse.error || 'Failed to create storyline',
+        const createdIdRaw =
+          createResponse &&
+          typeof createResponse === 'object' &&
+          createResponse.id != null
+            ? createResponse.id
+            : createResponse?.data?.id;
+        const createdId =
+          createdIdRaw != null ? Number(createdIdRaw) : NaN;
+
+        if (!Number.isNaN(createdId)) {
+          setStorylines(prev => [...prev, createResponse]);
+          showSnackbar(
+            'New storyline created and article linked successfully!',
+            'success'
           );
+          onAddToStoryline?.(createdId, articleIdNum);
+          setShowStorylineDialog(false);
+          setSelectedStoryline('');
+          setNewStorylineTitle('');
+          setActionLoading(false);
+          setConfirmationDialog({ open: false, action: null, storyline: null });
+          return;
         }
+
+        throw new Error(
+          createResponse?.message ||
+            createResponse?.error ||
+            'Failed to create storyline'
+        );
       }
 
       // Validate storylineId before proceeding
@@ -195,18 +224,17 @@ const ArticleReader = ({ article, open, onClose, onAddToStoryline }) => {
         throw new Error('Please select a storyline or create a new one');
       }
 
-      // Convert to number to ensure it's a valid integer
       const storylineIdNum = Number(storylineId);
-      const articleIdNum = Number(article.id);
 
-      if (isNaN(storylineIdNum) || isNaN(articleIdNum)) {
+      if (isNaN(storylineIdNum)) {
         throw new Error('Invalid storyline or article ID');
       }
 
-      // Add article to storyline
+      // Add article to existing storyline
       const addResponse = await apiService.addArticleToStoryline(
         storylineIdNum,
         articleIdNum,
+        domain
       );
 
       if (addResponse.success) {
@@ -219,13 +247,17 @@ const ArticleReader = ({ article, open, onClose, onAddToStoryline }) => {
         // Extract error message, handling both string and object formats
         let errorMsg = 'Failed to add article to storyline';
         if (addResponse.error) {
-          errorMsg = typeof addResponse.error === 'string'
-            ? addResponse.error
-            : addResponse.error.detail || addResponse.error.message || JSON.stringify(addResponse.error);
+          errorMsg =
+            typeof addResponse.error === 'string'
+              ? addResponse.error
+              : addResponse.error.detail ||
+                addResponse.error.message ||
+                JSON.stringify(addResponse.error);
         } else if (addResponse.message) {
-          errorMsg = typeof addResponse.message === 'string'
-            ? addResponse.message
-            : JSON.stringify(addResponse.message);
+          errorMsg =
+            typeof addResponse.message === 'string'
+              ? addResponse.message
+              : JSON.stringify(addResponse.message);
         }
         throw new Error(errorMsg);
       }
@@ -238,7 +270,8 @@ const ArticleReader = ({ article, open, onClose, onAddToStoryline }) => {
       } else if (typeof err === 'string') {
         errorMessage = err;
       } else if (err && typeof err === 'object') {
-        errorMessage = err.message || err.detail || err.error || JSON.stringify(err);
+        errorMessage =
+          err.message || err.detail || err.error || JSON.stringify(err);
       }
       setError(errorMessage);
       showSnackbar(errorMessage, 'error');
@@ -266,12 +299,12 @@ const ArticleReader = ({ article, open, onClose, onAddToStoryline }) => {
     setSnackbar(prev => ({ ...prev, open: false }));
   };
 
-  const handleBookmark = async() => {
+  const handleBookmark = async () => {
     // Bookmark functionality not implemented yet
     Logger.info('Bookmark functionality not implemented yet');
   };
 
-  const handleShare = async() => {
+  const handleShare = async () => {
     if (navigator.share) {
       try {
         await navigator.share({
@@ -372,15 +405,15 @@ const ArticleReader = ({ article, open, onClose, onAddToStoryline }) => {
               {article.sentiment_score && (
                 <Chip
                   label={`Sentiment: ${(article.sentiment_score * 100).toFixed(
-                    0,
+                    0
                   )}%`}
                   size='small'
                   color={
                     article.sentiment_score > 0.5
                       ? 'success'
                       : article.sentiment_score < -0.5
-                        ? 'error'
-                        : 'default'
+                      ? 'error'
+                      : 'default'
                   }
                   variant='outlined'
                 />
@@ -392,7 +425,9 @@ const ArticleReader = ({ article, open, onClose, onAddToStoryline }) => {
                 <Box display='flex' alignItems='center' gap={0.5}>
                   <CalendarIcon fontSize='small' />
                   <Typography variant='body2'>
-                    {new Date(article.published_at || article.published_date).toLocaleDateString()}
+                    {new Date(
+                      article.published_at || article.published_date
+                    ).toLocaleDateString()}
                   </Typography>
                 </Box>
               )}

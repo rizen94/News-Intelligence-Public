@@ -8,23 +8,23 @@ import json
 import logging
 import time
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from shared.database.connection import get_db_connection
 
 logger = logging.getLogger(__name__)
 
 # In-memory state for streaming_status (last_urgent_at, queue_depth)
-_last_urgent_at: Optional[float] = None
+_last_urgent_at: float | None = None
 _urgent_queue_depth: int = 0
 
 
 def process_urgent_payload(
     source: str,
-    payload: Dict[str, Any],
+    payload: dict[str, Any],
     priority: str = "immediate",
     bypass_queue: bool = True,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Create a context from the urgent payload (title, content, domain, url); optionally run event detection.
     Returns { context_id?, event_ids?, alert_ids?, error? }.
@@ -38,7 +38,7 @@ def process_urgent_payload(
     domain_key = (payload.get("domain") or "politics").strip()
     if domain_key not in ("politics", "finance", "science-tech"):
         domain_key = "politics"
-    url = payload.get("url") or ""
+    payload.get("url") or ""
     metadata = payload.get("metadata") or {}
     metadata["source"] = source
     metadata["priority"] = priority
@@ -47,7 +47,12 @@ def process_urgent_payload(
     conn = get_db_connection()
     if not conn:
         _urgent_queue_depth = max(0, _urgent_queue_depth - 1)
-        return {"context_id": None, "event_ids": [], "alert_ids": [], "error": "Database unavailable"}
+        return {
+            "context_id": None,
+            "event_ids": [],
+            "alert_ids": [],
+            "error": "Database unavailable",
+        }
 
     context_id = None
     try:
@@ -85,7 +90,7 @@ def process_urgent_payload(
     return {"context_id": context_id, "event_ids": [], "alert_ids": [], "domain_key": domain_key}
 
 
-def get_streaming_status() -> Dict[str, Any]:
+def get_streaming_status() -> dict[str, Any]:
     """Return active_streams, last_urgent_at, queue_depth for GET /api/realtime/streaming_status."""
     global _last_urgent_at, _urgent_queue_depth
     return {

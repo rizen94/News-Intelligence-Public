@@ -19,17 +19,26 @@ export const monitoringApi = {
   /** Enhanced monitoring: connection status (API, database, webserver) + live activity feed */
   async getMonitoringOverview() {
     try {
-      const response = await getApi().get('/api/system_monitoring/monitoring/overview');
+      const response = await getApi().get(
+        '/api/system_monitoring/monitoring/overview'
+      );
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to fetch monitoring overview', error as Error);
-      return { success: false, connections: {}, activities: { current: [], recent: [] }, error: (error as any).message };
+      return {
+        success: false,
+        connections: {},
+        activities: { current: [], recent: [] },
+        error: (error as any).message,
+      };
     }
   },
 
   async getDatabaseStats() {
     try {
-      const response = await getApi().get('/api/system_monitoring/database/stats');
+      const response = await getApi().get(
+        '/api/system_monitoring/database/stats'
+      );
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to fetch database stats', error as Error);
@@ -49,7 +58,9 @@ export const monitoringApi = {
 
   async getHealthFeeds() {
     try {
-      const response = await getApi().get('/api/system_monitoring/health/feeds');
+      const response = await getApi().get(
+        '/api/system_monitoring/health/feeds'
+      );
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to fetch health feeds', error as Error);
@@ -69,7 +80,9 @@ export const monitoringApi = {
 
   async getPipelineStatus() {
     try {
-      const response = await getApi().get('/api/system_monitoring/pipeline_status');
+      const response = await getApi().get(
+        '/api/system_monitoring/pipeline_status'
+      );
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to fetch pipeline status', error as Error);
@@ -79,7 +92,9 @@ export const monitoringApi = {
 
   async getOrchestratorDashboard(params?: { decision_log_limit?: number }) {
     try {
-      const response = await getApi().get('/api/orchestrator/dashboard', { params });
+      const response = await getApi().get('/api/orchestrator/dashboard', {
+        params,
+      });
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to fetch orchestrator dashboard', error as Error);
@@ -90,9 +105,12 @@ export const monitoringApi = {
   /** Data sources actually pulled in the last N minutes (RSS feeds, orchestrator sources, pipeline stages). */
   async getSourcesCollected(minutes: number = 30) {
     try {
-      const response = await getApi().get('/api/system_monitoring/sources_collected', {
-        params: { minutes },
-      });
+      const response = await getApi().get(
+        '/api/system_monitoring/sources_collected',
+        {
+          params: { minutes },
+        }
+      );
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to fetch sources collected', error as Error);
@@ -103,9 +121,12 @@ export const monitoringApi = {
   /** What has been running vs not triggered recently (phases, pipeline checkpoints, activity log). */
   async getProcessRunSummary(hours: number = 24, activityLines: number = 80) {
     try {
-      const response = await getApi().get('/api/system_monitoring/process_run_summary', {
-        params: { hours, activity_lines: activityLines },
-      });
+      const response = await getApi().get(
+        '/api/system_monitoring/process_run_summary',
+        {
+          params: { hours, activity_lines: activityLines },
+        }
+      );
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to fetch process run summary', error as Error);
@@ -116,18 +137,27 @@ export const monitoringApi = {
   /** Automation manager: phases with last_run, queue_size, active_workers (for phase timeline). */
   async getAutomationStatus() {
     try {
-      const response = await getApi().get('/api/system_monitoring/automation/status');
+      const response = await getApi().get(
+        '/api/system_monitoring/automation/status'
+      );
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to fetch automation status', error as Error);
-      return { success: false, data: { phases: [], queue_size: 0 }, error: (error as any).message };
+      return {
+        success: false,
+        data: { phases: [], queue_size: 0 },
+        error: (error as any).message,
+      };
     }
   },
 
   /** Backlog progression: articles/documents/storylines remaining and catch-up ETA. */
   async getBacklogStatus() {
     try {
-      const response = await getApi().get('/api/system_monitoring/backlog_status', { timeout: 12000 });
+      const response = await getApi().get(
+        '/api/system_monitoring/backlog_status',
+        { timeout: 12000 }
+      );
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to fetch backlog status', error as Error);
@@ -136,23 +166,39 @@ export const monitoringApi = {
   },
 
   /** Live DB sessions (pg_stat_activity) for monitoring long-held connections. */
-  async getDatabaseConnections(params?: { limit?: number; long_running_seconds?: number }) {
+  async getDatabaseConnections(params?: {
+    limit?: number;
+    long_running_seconds?: number;
+  }) {
     try {
-      const response = await getApi().get('/api/system_monitoring/database/connections', { params, timeout: 20000 });
+      const response = await getApi().get(
+        '/api/system_monitoring/database/connections',
+        { params, timeout: 20000 }
+      );
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to fetch database connections', error as Error);
-      return { success: false, data: { sessions: [] }, error: (error as any).message };
+      return {
+        success: false,
+        data: { sessions: [] },
+        error: (error as any).message,
+      };
     }
   },
 
   /** Request that a phase run now (e.g. rss_processing, digest_generation). */
-  async triggerPhase(phase: string, options?: { domain?: string; storyline_id?: number }) {
+  async triggerPhase(
+    phase: string,
+    options?: { domain?: string; storyline_id?: number }
+  ) {
     try {
-      const response = await getApi().post('/api/system_monitoring/monitoring/trigger_phase', {
-        phase,
-        ...options,
-      });
+      const response = await getApi().post(
+        '/api/system_monitoring/monitoring/trigger_phase',
+        {
+          phase,
+          ...options,
+        }
+      );
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to trigger phase', error as Error);
@@ -162,11 +208,17 @@ export const monitoringApi = {
 
   async triggerPipeline() {
     try {
-      const response = await getApi().post('/api/system_monitoring/pipeline/trigger');
+      const response = await getApi().post(
+        '/api/system_monitoring/pipeline/trigger'
+      );
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to trigger pipeline', error as Error);
-      return { success: false, error: (error as any).message || 'Pipeline trigger API not yet implemented' };
+      return {
+        success: false,
+        error:
+          (error as any).message || 'Pipeline trigger API not yet implemented',
+      };
     }
   },
 
@@ -214,9 +266,12 @@ export const monitoringApi = {
 
   async getRealtimeLogs(limit: number = 50) {
     try {
-      const response = await getApi().get('/api/system_monitoring/logs/realtime', {
-        params: { limit },
-      });
+      const response = await getApi().get(
+        '/api/system_monitoring/logs/realtime',
+        {
+          params: { limit },
+        }
+      );
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to get realtime logs', error as Error);
@@ -237,7 +292,9 @@ export const monitoringApi = {
   /** Read-only SQL explorer (requires NEWS_INTEL_SQL_EXPLORER=true on API). */
   async getSqlExplorerEnabled() {
     try {
-      const response = await getApi().get('/api/system_monitoring/sql_explorer/enabled');
+      const response = await getApi().get(
+        '/api/system_monitoring/sql_explorer/enabled'
+      );
       return response.data as { success?: boolean; enabled?: boolean };
     } catch (error) {
       Logger.apiError('SQL explorer enabled check failed', error as Error);
@@ -247,10 +304,21 @@ export const monitoringApi = {
 
   async getSqlExplorerSchema() {
     try {
-      const response = await getApi().get('/api/system_monitoring/sql_explorer/schema', { timeout: 60000 });
+      const response = await getApi().get(
+        '/api/system_monitoring/sql_explorer/schema',
+        { timeout: 60000 }
+      );
       return response.data as {
         success?: boolean;
-        tables?: Array<{ schema: string; table: string; columns: Array<{ name: string; data_type: string; nullable: boolean }> }>;
+        tables?: Array<{
+          schema: string;
+          table: string;
+          columns: Array<{
+            name: string;
+            data_type: string;
+            nullable: boolean;
+          }>;
+        }>;
         error?: string;
       };
     } catch (error) {
@@ -277,14 +345,20 @@ export const monitoringApi = {
       };
     } catch (error: unknown) {
       Logger.apiError('SQL explorer query failed', error as Error);
-      const ax = error as { response?: { data?: { detail?: unknown } }; message?: string };
+      const ax = error as {
+        response?: { data?: { detail?: unknown } };
+        message?: string;
+      };
       const detail = ax?.response?.data?.detail;
       const msg =
         typeof detail === 'string'
           ? detail
           : Array.isArray(detail)
-            ? detail.map((d: { msg?: string }) => d?.msg).filter(Boolean).join('; ')
-            : ax?.message ?? 'Request failed';
+          ? detail
+              .map((d: { msg?: string }) => d?.msg)
+              .filter(Boolean)
+              .join('; ')
+          : ax?.message ?? 'Request failed';
       return {
         success: false,
         columns: [],
@@ -304,11 +378,13 @@ export const monitoringApi = {
     }
   },
 
-  async detectDuplicates(params: {
-    similarity_threshold?: number;
-    check_url?: boolean;
-    check_content?: boolean;
-  } = {}) {
+  async detectDuplicates(
+    params: {
+      similarity_threshold?: number;
+      check_url?: boolean;
+      check_content?: boolean;
+    } = {}
+  ) {
     try {
       const response = await getApi().get('/api/articles/duplicates/detect', {
         params,
@@ -356,7 +432,7 @@ export const monitoringApi = {
     try {
       const response = await getApi().post(
         '/api/articles/duplicates/auto_merge',
-        { dry_run: dryRun },
+        { dry_run: dryRun }
       );
       return response.data;
     } catch (error) {
@@ -379,7 +455,7 @@ export const monitoringApi = {
     try {
       const response = await getApi().post(
         '/api/articles/duplicates/analyze_similarity',
-        { article_id_1: articleId1, article_id_2: articleId2 },
+        { article_id_1: articleId1, article_id_2: articleId2 }
       );
       return response.data;
     } catch (error) {
@@ -400,7 +476,9 @@ export const monitoringApi = {
 
   async getMLQueueStatus() {
     try {
-      const response = await getApi().get('/api/system_monitoring/ml/queue_status');
+      const response = await getApi().get(
+        '/api/system_monitoring/ml/queue_status'
+      );
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to get ML queue status', error as Error);
@@ -410,7 +488,9 @@ export const monitoringApi = {
 
   async getAllMLProcessingStatus() {
     try {
-      const response = await getApi().get('/api/system_monitoring/ml/processing_status');
+      const response = await getApi().get(
+        '/api/system_monitoring/ml/processing_status'
+      );
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to get ML processing status', error as Error);
@@ -420,7 +500,9 @@ export const monitoringApi = {
 
   async getMLTimingStats() {
     try {
-      const response = await getApi().get('/api/system_monitoring/ml/timing_stats');
+      const response = await getApi().get(
+        '/api/system_monitoring/ml/timing_stats'
+      );
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to get ML timing stats', error as Error);
@@ -432,7 +514,7 @@ export const monitoringApi = {
     articleId: number,
     operation: string,
     priority: string = 'normal',
-    model?: string,
+    model?: string
   ) {
     try {
       const response = await getApi().post('/api/system_monitoring/ml/queue', {
@@ -443,14 +525,19 @@ export const monitoringApi = {
       });
       return response.data;
     } catch (error) {
-      Logger.apiError('Failed to queue article for ML processing', error as Error);
+      Logger.apiError(
+        'Failed to queue article for ML processing',
+        error as Error
+      );
       return { success: false, error: (error as any).message };
     }
   },
 
   async getFeedbackLoopStatus() {
     try {
-      const response = await getApi().get('/api/system_monitoring/feedback_loop/status');
+      const response = await getApi().get(
+        '/api/system_monitoring/feedback_loop/status'
+      );
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to get feedback loop status', error as Error);
@@ -460,7 +547,9 @@ export const monitoringApi = {
 
   async startFeedbackLoop() {
     try {
-      const response = await getApi().post('/api/system_monitoring/feedback_loop/start');
+      const response = await getApi().post(
+        '/api/system_monitoring/feedback_loop/start'
+      );
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to start feedback loop', error as Error);
@@ -470,7 +559,9 @@ export const monitoringApi = {
 
   async stopFeedbackLoop() {
     try {
-      const response = await getApi().post('/api/system_monitoring/feedback_loop/stop');
+      const response = await getApi().post(
+        '/api/system_monitoring/feedback_loop/stop'
+      );
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to stop feedback loop', error as Error);
@@ -480,11 +571,16 @@ export const monitoringApi = {
 
   async runAIAnalysis() {
     try {
-      const response = await getApi().post('/api/system_monitoring/ai-analysis/run');
+      const response = await getApi().post(
+        '/api/system_monitoring/ai-analysis/run'
+      );
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to run AI analysis', error as Error);
-      return { success: false, error: (error as any).message || 'AI analysis API not yet implemented' };
+      return {
+        success: false,
+        error: (error as any).message || 'AI analysis API not yet implemented',
+      };
     }
   },
 
@@ -493,12 +589,17 @@ export const monitoringApi = {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(
         `/api/${domainKey}/finance/market-trends`,
-        { params },
+        { params }
       );
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to fetch market trends', error as Error);
-      return { success: false, error: (error as any).message || 'Market trends API not yet implemented', data: null };
+      return {
+        success: false,
+        error:
+          (error as any).message || 'Market trends API not yet implemented',
+        data: null,
+      };
     }
   },
 
@@ -507,12 +608,17 @@ export const monitoringApi = {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(
         `/api/${domainKey}/finance/market-patterns`,
-        { params },
+        { params }
       );
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to fetch market patterns', error as Error);
-      return { success: false, error: (error as any).message || 'Market patterns API not yet implemented', data: null };
+      return {
+        success: false,
+        error:
+          (error as any).message || 'Market patterns API not yet implemented',
+        data: null,
+      };
     }
   },
 
@@ -521,12 +627,21 @@ export const monitoringApi = {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(
         `/api/${domainKey}/finance/corporate-announcements`,
-        { params },
+        { params }
       );
       return response.data;
     } catch (error) {
-      Logger.apiError('Failed to fetch corporate announcements', error as Error);
-      return { success: false, error: (error as any).message || 'Corporate announcements API not yet implemented', data: null };
+      Logger.apiError(
+        'Failed to fetch corporate announcements',
+        error as Error
+      );
+      return {
+        success: false,
+        error:
+          (error as any).message ||
+          'Corporate announcements API not yet implemented',
+        data: null,
+      };
     }
   },
 
@@ -534,7 +649,9 @@ export const monitoringApi = {
   async getFinanceDataSources(domain?: string) {
     try {
       const domainKey = domain || getCurrentDomain();
-      const response = await getApi().get(`/api/${domainKey}/finance/data-sources`);
+      const response = await getApi().get(
+        `/api/${domainKey}/finance/data-sources`
+      );
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to fetch finance data sources', error as Error);
@@ -542,12 +659,20 @@ export const monitoringApi = {
     }
   },
 
-  async getFinanceMarketData(params: { source?: string; symbol?: string; start_date?: string; end_date?: string } = {}, domain?: string) {
+  async getFinanceMarketData(
+    params: {
+      source?: string;
+      symbol?: string;
+      start_date?: string;
+      end_date?: string;
+    } = {},
+    domain?: string
+  ) {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(
         `/api/${domainKey}/finance/market-data`,
-        { params },
+        { params }
       );
       return response.data;
     } catch (error) {
@@ -556,13 +681,20 @@ export const monitoringApi = {
     }
   },
 
-  async getGoldData(params: { source?: string; start_date?: string; end_date?: string; fetch?: boolean } = {}, domain?: string) {
+  async getGoldData(
+    params: {
+      source?: string;
+      start_date?: string;
+      end_date?: string;
+      fetch?: boolean;
+    } = {},
+    domain?: string
+  ) {
     try {
       const domainKey = domain || getCurrentDomain();
-      const response = await getApi().get(
-        `/api/${domainKey}/finance/gold`,
-        { params },
-      );
+      const response = await getApi().get(`/api/${domainKey}/finance/gold`, {
+        params,
+      });
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to fetch gold data', error as Error);
@@ -570,13 +702,16 @@ export const monitoringApi = {
     }
   },
 
-  async triggerGoldFetch(params: { start_date?: string; end_date?: string } = {}, domain?: string) {
+  async triggerGoldFetch(
+    params: { start_date?: string; end_date?: string } = {},
+    domain?: string
+  ) {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().post(
         `/api/${domainKey}/finance/gold/fetch`,
         null,
-        { params: params },
+        { params: params }
       );
       return response.data;
     } catch (error) {
@@ -585,21 +720,33 @@ export const monitoringApi = {
     }
   },
 
-  async getGoldHistory(params: { days?: number; fetch_if_empty?: boolean } = {}, domain?: string) {
+  async getGoldHistory(
+    params: { days?: number; fetch_if_empty?: boolean } = {},
+    domain?: string
+  ) {
     try {
       const domainKey = domain || getCurrentDomain();
-      const response = await getApi().get(`/api/${domainKey}/finance/gold/history`, { params });
+      const response = await getApi().get(
+        `/api/${domainKey}/finance/gold/history`,
+        { params }
+      );
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to fetch gold history', error as Error);
-      return { success: false, data: { observations: [] }, error: (error as Error).message };
+      return {
+        success: false,
+        data: { observations: [] },
+        error: (error as Error).message,
+      };
     }
   },
 
   async getGoldSpot(domain?: string) {
     try {
       const domainKey = domain || getCurrentDomain();
-      const response = await getApi().get(`/api/${domainKey}/finance/gold/spot`);
+      const response = await getApi().get(
+        `/api/${domainKey}/finance/gold/spot`
+      );
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to fetch gold spot', error as Error);
@@ -607,10 +754,16 @@ export const monitoringApi = {
     }
   },
 
-  async getGoldAuthority(params: { authorities?: string } = {}, domain?: string) {
+  async getGoldAuthority(
+    params: { authorities?: string } = {},
+    domain?: string
+  ) {
     try {
       const domainKey = domain || getCurrentDomain();
-      const response = await getApi().get(`/api/${domainKey}/finance/gold/authority`, { params });
+      const response = await getApi().get(
+        `/api/${domainKey}/finance/gold/authority`,
+        { params }
+      );
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to fetch gold authority', error as Error);
@@ -621,11 +774,18 @@ export const monitoringApi = {
   async getGoldGeoEvents(params: { limit?: number } = {}, domain?: string) {
     try {
       const domainKey = domain || getCurrentDomain();
-      const response = await getApi().get(`/api/${domainKey}/finance/gold/geo-events`, { params });
+      const response = await getApi().get(
+        `/api/${domainKey}/finance/gold/geo-events`,
+        { params }
+      );
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to fetch gold geo-events', error as Error);
-      return { success: false, data: { events: [], by_region: {} }, error: (error as Error).message };
+      return {
+        success: false,
+        data: { events: [], by_region: {} },
+        error: (error as Error).message,
+      };
     }
   },
 
@@ -633,7 +793,9 @@ export const monitoringApi = {
   async getCommodities(domain?: string) {
     try {
       const domainKey = domain || getCurrentDomain();
-      const response = await getApi().get(`/api/${domainKey}/finance/commodities`);
+      const response = await getApi().get(
+        `/api/${domainKey}/finance/commodities`
+      );
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to fetch commodities list', error as Error);
@@ -656,7 +818,11 @@ export const monitoringApi = {
       return response.data;
     } catch (error) {
       Logger.apiError(`Failed to fetch ${commodity} news`, error as Error);
-      return { success: false, data: { items: [] }, error: (error as Error).message };
+      return {
+        success: false,
+        data: { items: [] },
+        error: (error as Error).message,
+      };
     }
   },
 
@@ -674,8 +840,15 @@ export const monitoringApi = {
       );
       return response.data;
     } catch (error) {
-      Logger.apiError(`Failed to fetch ${commodity} supply-chain`, error as Error);
-      return { success: false, data: { items: [] }, error: (error as Error).message };
+      Logger.apiError(
+        `Failed to fetch ${commodity} supply-chain`,
+        error as Error
+      );
+      return {
+        success: false,
+        data: { items: [] },
+        error: (error as Error).message,
+      };
     }
   },
 
@@ -694,14 +867,20 @@ export const monitoringApi = {
       return response.data;
     } catch (error) {
       Logger.apiError(`Failed to fetch ${commodity} history`, error as Error);
-      return { success: false, data: { observations: [] }, error: (error as Error).message };
+      return {
+        success: false,
+        data: { observations: [] },
+        error: (error as Error).message,
+      };
     }
   },
 
   async getCommoditySpot(commodity: string, domain?: string) {
     try {
       const domainKey = domain || getCurrentDomain();
-      const response = await getApi().get(`/api/${domainKey}/finance/commodity/${commodity}/spot`);
+      const response = await getApi().get(
+        `/api/${domainKey}/finance/commodity/${commodity}/spot`
+      );
       return response.data;
     } catch (error) {
       Logger.apiError(`Failed to fetch ${commodity} spot`, error as Error);
@@ -729,39 +908,59 @@ export const monitoringApi = {
 
   async getCommodityGeoEvents(
     params: { limit?: number; commodity?: string } = {},
-    domain?: string,
+    domain?: string
   ) {
     try {
       const domainKey = domain || getCurrentDomain();
-      const response = await getApi().get(`/api/${domainKey}/finance/commodity/geo-events`, { params });
+      const response = await getApi().get(
+        `/api/${domainKey}/finance/commodity/geo-events`,
+        { params }
+      );
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to fetch commodity geo-events', error as Error);
-      return { success: false, data: { events: [], by_region: {} }, error: (error as Error).message };
+      return {
+        success: false,
+        data: { events: [], by_region: {} },
+        error: (error as Error).message,
+      };
     }
   },
 
   async getCommodityRegulatoryEvents(
     params: { limit?: number; commodity?: string } = {},
-    domain?: string,
+    domain?: string
   ) {
     try {
       const domainKey = domain || getCurrentDomain();
-      const response = await getApi().get(`/api/${domainKey}/finance/commodity/regulatory-events`, { params });
+      const response = await getApi().get(
+        `/api/${domainKey}/finance/commodity/regulatory-events`,
+        { params }
+      );
       return response.data;
     } catch (error) {
-      Logger.apiError('Failed to fetch commodity regulatory-events', error as Error);
-      return { success: false, data: { events: [] }, error: (error as Error).message };
+      Logger.apiError(
+        'Failed to fetch commodity regulatory-events',
+        error as Error
+      );
+      return {
+        success: false,
+        data: { events: [] },
+        error: (error as Error).message,
+      };
     }
   },
 
-  async triggerGoldFetchHistory(params: { days?: number } = {}, domain?: string) {
+  async triggerGoldFetchHistory(
+    params: { days?: number } = {},
+    domain?: string
+  ) {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().post(
         `/api/${domainKey}/finance/gold/fetch-history`,
         null,
-        { params },
+        { params }
       );
       return response.data;
     } catch (error) {
@@ -770,13 +969,16 @@ export const monitoringApi = {
     }
   },
 
-  async triggerFredFetch(params: { symbol: string; start_date?: string; end_date?: string }, domain?: string) {
+  async triggerFredFetch(
+    params: { symbol: string; start_date?: string; end_date?: string },
+    domain?: string
+  ) {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().post(
         `/api/${domainKey}/finance/fetch-fred`,
         null,
-        { params: params },
+        { params: params }
       );
       return response.data;
     } catch (error) {

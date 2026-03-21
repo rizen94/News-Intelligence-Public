@@ -7,7 +7,7 @@ echo "====================================="
 
 # Stop all API processes
 echo "🛑 Stopping API server..."
-pkill -9 -f "main_v4.py" 2>/dev/null || echo "No main_v4 process found"
+pkill -9 -f "uvicorn.*main:app" 2>/dev/null || echo "No API process found"
 pkill -9 -f "uvicorn" 2>/dev/null || echo "No uvicorn process found"
 pkill -9 -f "start_dev_api.py" 2>/dev/null || echo "No dev API process found"
 pkill -9 -f "start_prod_api.py" 2>/dev/null || echo "No prod API process found"
@@ -33,12 +33,12 @@ export DB_PASSWORD=newsapp_password
 export DB_PORT=5432
 
 # Start with simple uvicorn command
-uvicorn main_v4:app --host 0.0.0.0 --port 8001 --log-level info &
+uvicorn main:app --host 0.0.0.0 --port 8001 --log-level info &
 sleep 15
 
 # Test the API
 echo "🧪 Testing API..."
-curl -s "http://localhost:8001/api/v4/system-monitoring/status" | python3 -c "
+curl -s "http://localhost:8001/api/system_monitoring/status" | python3 -c "
 import json, sys
 try:
     data = json.load(sys.stdin)

@@ -6,6 +6,7 @@ import logging
 
 try:
     from config.logging_config import get_component_logger
+
     logger = get_component_logger("finance")
 except Exception:
     logger = logging.getLogger(__name__)
@@ -25,7 +26,9 @@ def price_change_pct(values: list[tuple[str, float]]) -> float | None:
     return 100.0 * (last - first) / first
 
 
-def validate_range(value: float, min_val: float | None = None, max_val: float | None = None) -> tuple[bool, str]:
+def validate_range(
+    value: float, min_val: float | None = None, max_val: float | None = None
+) -> tuple[bool, str]:
     """
     Check value is within expected range.
     Returns (valid: bool, reason: str).

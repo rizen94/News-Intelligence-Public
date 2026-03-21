@@ -9,12 +9,22 @@
  *   defined in `App.tsx`.
  */
 import React, { useEffect } from 'react';
-import { Outlet, useParams, useNavigate, useLocation, Navigate } from 'react-router-dom';
+import {
+  Outlet,
+  useParams,
+  useNavigate,
+  useLocation,
+  Navigate,
+} from 'react-router-dom';
 import { Box, Select, MenuItem, FormControl, InputLabel } from '@mui/material';
 import { HeroStatusBar } from './HeroStatusBar';
 import { AppNav, APP_NAV_WIDTH } from './AppNav';
 import { useDomain } from '../contexts/DomainContext';
-import { isValidDomain, type DomainKey, getPathAfterDomain } from '../utils/domainHelper';
+import {
+  isValidDomain,
+  type DomainKey,
+  getPathAfterDomain,
+} from '../utils/domainHelper';
 
 const MainLayout: React.FC = () => {
   const { domain: urlDomain } = useParams<{ domain: string }>();
@@ -29,7 +39,7 @@ const MainLayout: React.FC = () => {
   }, [urlDomain, contextDomain, setDomain]);
 
   if (!urlDomain || !isValidDomain(urlDomain)) {
-    return <Navigate to="/politics/dashboard" replace />;
+    return <Navigate to='/politics/dashboard' replace />;
   }
 
   const handleDomainChange = (newDomain: string) => {
@@ -46,7 +56,7 @@ const MainLayout: React.FC = () => {
       <Box sx={{ display: 'flex', flex: 1 }}>
         <AppNav />
         <Box
-          component="main"
+          component='main'
           sx={{
             flex: 1,
             width: { md: `calc(100% - ${APP_NAV_WIDTH}px)` },
@@ -55,14 +65,14 @@ const MainLayout: React.FC = () => {
           }}
         >
           <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 2 }}>
-            <FormControl size="small" sx={{ minWidth: 140 }}>
+            <FormControl size='small' sx={{ minWidth: 140 }}>
               <InputLabel>Domain</InputLabel>
               <Select
                 value={contextDomain}
-                label="Domain"
-                onChange={(e) => handleDomainChange(e.target.value)}
+                label='Domain'
+                onChange={e => handleDomainChange(e.target.value)}
               >
-                {availableDomains.map((d) => (
+                {availableDomains.map(d => (
                   <MenuItem key={d.key} value={d.key}>
                     {d.name}
                   </MenuItem>

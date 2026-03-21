@@ -1,18 +1,16 @@
 """Unit tests for orchestrator skeleton and lifecycle logic."""
 
 from datetime import datetime, timezone
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 import pytest
-
 from domains.finance.orchestrator import FinanceOrchestrator
 from domains.finance.orchestrator_types import (
-    TaskType,
-    TaskPriority,
-    TaskStatus,
     Task,
     TaskContext,
-    TaskResult,
+    TaskPriority,
+    TaskStatus,
+    TaskType,
 )
 
 
@@ -88,11 +86,13 @@ def test_task_context_accumulates_data():
 @pytest.mark.asyncio
 async def test_list_evidence_index_from_completed_tasks():
     """list_evidence_index aggregates provenance from completed tasks."""
-    from unittest.mock import patch
 
     orch = FinanceOrchestrator()
     task_id = orch.submit_task(TaskType.refresh, {"topic": "gold"})
-    mock_fetch = lambda **kw: {"freegoldapi": [{"date": "2024-01-01", "value": 2000, "unit": "USD/oz"}]}
+
+    def mock_fetch(**kw):
+        return {"freegoldapi": [{"date": "2024-01-01", "value": 2000, "unit": "USD/oz"}]}
+
     with patch("domains.finance.gold_amalgamator.fetch_all", return_value=mock_fetch):
         await orch.run_task(task_id)
 

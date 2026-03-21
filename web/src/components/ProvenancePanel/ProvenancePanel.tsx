@@ -37,12 +37,12 @@ export default function ProvenancePanel({
   rows,
 }: ProvenancePanelProps) {
   const filtered = rows.filter(
-    (r) => r.value !== null && r.value !== undefined && r.value !== '',
+    r => r.value !== null && r.value !== undefined && r.value !== ''
   );
   if (filtered.length === 0) return null;
 
   return (
-    <Card variant="outlined" sx={{ mb: 2 }}>
+    <Card variant='outlined' sx={{ mb: 2 }}>
       <CardHeader
         title={title}
         subheader={subtitle}
@@ -50,9 +50,9 @@ export default function ProvenancePanel({
       />
       <Divider />
       <CardContent sx={{ '&:last-child': { pb: 2 }, pt: 2 }}>
-        <Table size="small">
+        <Table size='small'>
           <TableBody>
-            {filtered.map((r) => (
+            {filtered.map(r => (
               <TableRow key={r.label} sx={{ '&:last-child td': { border: 0 } }}>
                 <TableCell
                   sx={{
@@ -65,14 +65,20 @@ export default function ProvenancePanel({
                 >
                   {r.label}
                 </TableCell>
-                <TableCell sx={{ verticalAlign: 'top', wordBreak: 'break-word' }}>
+                <TableCell
+                  sx={{ verticalAlign: 'top', wordBreak: 'break-word' }}
+                >
                   {isExternalUrl(r.value) ? (
                     <Link
                       href={r.value}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      underline="hover"
-                      sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5 }}
+                      target='_blank'
+                      rel='noopener noreferrer'
+                      underline='hover'
+                      sx={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 0.5,
+                      }}
                     >
                       {r.value}
                       <OpenInNew sx={{ fontSize: 14 }} />
@@ -94,7 +100,7 @@ export default function ProvenancePanel({
 export function articleProvenanceRows(
   article: Record<string, unknown> | null | undefined,
   domain: string,
-  articleId: string | number,
+  articleId: string | number
 ): ProvenanceRow[] {
   if (!article) return [];
   const a = article;
@@ -105,22 +111,30 @@ export function articleProvenanceRows(
     {
       label: 'Browse corpus',
       value: (
-        <Link href={`/${domain}/articles`} underline="hover">
+        <Link href={`/${domain}/articles`} underline='hover'>
           All articles in domain
         </Link>
       ),
     },
-    { label: 'Source', value: (a.source || a.source_domain) as string | undefined },
+    {
+      label: 'Source',
+      value: (a.source || a.source_domain) as string | undefined,
+    },
     { label: 'Published', value: published },
     { label: 'Category', value: a.category as string | undefined },
-    { label: 'Quality score', value: a.quality_score != null ? String(a.quality_score) : undefined },
+    {
+      label: 'Quality score',
+      value: a.quality_score != null ? String(a.quality_score) : undefined,
+    },
     { label: 'ML status', value: a.ml_processing_status as string | undefined },
     { label: 'Created (ingested)', value: a.created_at as string | undefined },
     { label: 'Original URL', value: a.url as string | undefined },
   ];
   const meta = a.metadata as Record<string, unknown> | undefined;
-  if (meta?.feed_name) rows.push({ label: 'Feed', value: String(meta.feed_name) });
-  if (meta?.feed_url) rows.push({ label: 'Feed URL', value: String(meta.feed_url) });
+  if (meta?.feed_name)
+    rows.push({ label: 'Feed', value: String(meta.feed_name) });
+  if (meta?.feed_url)
+    rows.push({ label: 'Feed URL', value: String(meta.feed_url) });
   return rows;
 }
 
@@ -133,12 +147,21 @@ export function contextProvenanceRows(
     updated_at?: string | null;
     metadata?: Record<string, unknown> | null;
   },
-  article?: { id?: number; title?: string; url?: string | null; source?: string | null; published_date?: string | null } | null,
-  domainForRoutes?: string,
+  article?: {
+    id?: number;
+    title?: string;
+    url?: string | null;
+    source?: string | null;
+    published_date?: string | null;
+  } | null,
+  domainForRoutes?: string
 ): ProvenanceRow[] {
   const d = domainForRoutes || context.domain_key || '';
   const rows: ProvenanceRow[] = [
-    { label: 'Context ID', value: context.id != null ? String(context.id) : undefined },
+    {
+      label: 'Context ID',
+      value: context.id != null ? String(context.id) : undefined,
+    },
     { label: 'Domain key', value: context.domain_key },
     { label: 'Source type', value: context.source_type },
     { label: 'Created', value: context.created_at ?? undefined },
@@ -146,21 +169,26 @@ export function contextProvenanceRows(
   ];
   const meta = context.metadata || {};
   if (meta.url) rows.push({ label: 'Source URL', value: String(meta.url) });
-  if (meta.feed_name) rows.push({ label: 'Feed', value: String(meta.feed_name) });
-  if (meta.feed_url) rows.push({ label: 'Feed URL', value: String(meta.feed_url) });
+  if (meta.feed_name)
+    rows.push({ label: 'Feed', value: String(meta.feed_name) });
+  if (meta.feed_url)
+    rows.push({ label: 'Feed URL', value: String(meta.feed_url) });
   if (article?.id && d) {
     rows.push({
       label: 'Linked article',
       value: (
-        <Link href={`/${d}/articles/${article.id}`} underline="hover">
+        <Link href={`/${d}/articles/${article.id}`} underline='hover'>
           #{article.id} — {article.title || 'Open article'}
         </Link>
       ),
     });
   }
-  if (article?.url) rows.push({ label: 'Article original URL', value: article.url });
-  if (article?.source) rows.push({ label: 'Article source', value: article.source });
-  if (article?.published_date) rows.push({ label: 'Article published', value: article.published_date });
+  if (article?.url)
+    rows.push({ label: 'Article original URL', value: article.url });
+  if (article?.source)
+    rows.push({ label: 'Article source', value: article.source });
+  if (article?.published_date)
+    rows.push({ label: 'Article published', value: article.published_date });
   return rows;
 }
 
@@ -176,10 +204,13 @@ export function entityDossierProvenanceRows(
     metadata?: Record<string, unknown> | null;
   } | null,
   domain: string,
-  canonicalEntityId: number,
+  canonicalEntityId: number
 ): ProvenanceRow[] {
   const meta = dossier?.metadata || {};
-  const conf = meta.average_confidence ?? meta.confidence_summary ?? meta.compilation_confidence;
+  const conf =
+    meta.average_confidence ??
+    meta.confidence_summary ??
+    meta.compilation_confidence;
   const rows: ProvenanceRow[] = [
     { label: 'Domain', value: domain },
     { label: 'Canonical entity id', value: String(canonicalEntityId) },
@@ -201,8 +232,9 @@ export function entityDossierProvenanceRows(
     {
       label: 'Note',
       value: (
-        <Typography variant="body2" color="text.secondary" component="span">
-          Use the Articles tab for per–article ids; dossier narrative is derived from those rows.
+        <Typography variant='body2' color='text.secondary' component='span'>
+          Use the Articles tab for per–article ids; dossier narrative is derived
+          from those rows.
         </Typography>
       ),
     },
@@ -213,7 +245,7 @@ export function entityDossierProvenanceRows(
 export function storylineProvenanceRows(
   storyline: Record<string, unknown> | null | undefined,
   domain: string,
-  storylineId: string | number,
+  storylineId: string | number
 ): ProvenanceRow[] {
   if (!storyline) return [];
   const s = storyline;
@@ -221,14 +253,23 @@ export function storylineProvenanceRows(
     { label: 'Storyline ID', value: String(storylineId) },
     { label: 'Domain', value: domain },
     { label: 'Status', value: s.status as string | undefined },
-    { label: 'Articles linked', value: s.article_count != null ? String(s.article_count) : undefined },
+    {
+      label: 'Articles linked',
+      value: s.article_count != null ? String(s.article_count) : undefined,
+    },
     { label: 'Created', value: s.created_at as string | undefined },
     { label: 'Updated', value: s.updated_at as string | undefined },
-    { label: 'ML processing', value: s.ml_processing_status as string | undefined },
+    {
+      label: 'ML processing',
+      value: s.ml_processing_status as string | undefined,
+    },
     {
       label: 'Timeline',
       value: (
-        <Link href={`/${domain}/storylines/${storylineId}/timeline`} underline="hover">
+        <Link
+          href={`/${domain}/storylines/${storylineId}/timeline`}
+          underline='hover'
+        >
           Open chronological timeline
         </Link>
       ),
@@ -247,7 +288,7 @@ export function timelineProvenanceRows(
     time_span?: { start: string; end: string; days: number } | null;
   },
   domain: string,
-  storylineId: string | number,
+  storylineId: string | number
 ): ProvenanceRow[] {
   return [
     { label: 'Storyline ID', value: String(storylineId) },
@@ -255,24 +296,36 @@ export function timelineProvenanceRows(
     {
       label: 'Storyline',
       value: (
-        <Link href={`/${domain}/storylines/${storylineId}`} underline="hover">
+        <Link href={`/${domain}/storylines/${storylineId}`} underline='hover'>
           Back to storyline
         </Link>
       ),
     },
     {
       label: 'Timeline status',
-      value: timeline.timeline_status || (timeline.event_count ? 'ok' : 'empty'),
+      value:
+        timeline.timeline_status || (timeline.event_count ? 'ok' : 'empty'),
     },
-    { label: 'Events in timeline', value: timeline.event_count != null ? String(timeline.event_count) : undefined },
+    {
+      label: 'Events in timeline',
+      value:
+        timeline.event_count != null ? String(timeline.event_count) : undefined,
+    },
     {
       label: 'Merged duplicate rows',
       value:
-        timeline.merged_duplicate_events_count != null && timeline.merged_duplicate_events_count > 0
+        timeline.merged_duplicate_events_count != null &&
+        timeline.merged_duplicate_events_count > 0
           ? String(timeline.merged_duplicate_events_count)
           : undefined,
     },
-    { label: 'Distinct sources', value: timeline.source_count != null ? String(timeline.source_count) : undefined },
+    {
+      label: 'Distinct sources',
+      value:
+        timeline.source_count != null
+          ? String(timeline.source_count)
+          : undefined,
+    },
     {
       label: 'Time span',
       value: timeline.time_span
@@ -283,9 +336,10 @@ export function timelineProvenanceRows(
     {
       label: 'Note',
       value: (
-        <Typography variant="body2" color="text.secondary" component="span">
-          Events come from <code>public.chronological_events</code> (non-canonical rows). Extraction method is shown per
-          event when expanded.
+        <Typography variant='body2' color='text.secondary' component='span'>
+          Events come from <code>public.chronological_events</code>{' '}
+          (non-canonical rows). Extraction method is shown per event when
+          expanded.
         </Typography>
       ),
     },

@@ -11,7 +11,7 @@ T2.2 of V6_QUALITY_FIRST_TODO.md.
 
 import json
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from shared.database.connection import get_db_connection
 
@@ -44,7 +44,7 @@ def extract_positions_for_entity(
     entity_id: int,
     max_articles: int = 50,  # v8: 50 per entity for extract path; batch uses 25
     skip_existing: bool = True,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     For a canonical entity, scan recent articles mentioning it and extract positions via LLM.
     Stores results in intelligence.entity_positions.
@@ -91,7 +91,12 @@ def extract_positions_for_entity(
 
             if not articles:
                 conn.close()
-                return {"success": True, "positions_extracted": 0, "articles_scanned": 0, "note": "No articles with content"}
+                return {
+                    "success": True,
+                    "positions_extracted": 0,
+                    "articles_scanned": 0,
+                    "note": "No articles with content",
+                }
 
             # Get existing positions to skip already-extracted articles
             existing_article_ids = set()
@@ -123,19 +128,30 @@ def extract_positions_for_entity(
 
             articles_scanned += 1
             positions = _extract_positions_from_article(
-                entity_name, title or "", content or "", ml_data,
+                entity_name,
+                title or "",
+                content or "",
+                ml_data,
             )
 
             if positions:
                 _store_positions(
-                    domain_key, entity_id, article_id, title,
-                    published_at, positions,
+                    domain_key,
+                    entity_id,
+                    article_id,
+                    title,
+                    published_at,
+                    positions,
                 )
                 positions_extracted += len(positions)
 
         logger.info(
             "Position tracker %s/%s (%s): %d positions from %d articles",
-            domain_key, entity_id, entity_name, positions_extracted, articles_scanned,
+            domain_key,
+            entity_id,
+            entity_name,
+            positions_extracted,
+            articles_scanned,
         )
         return {
             "success": True,
@@ -157,10 +173,11 @@ def _extract_positions_from_article(
     title: str,
     content: str,
     ml_data: Any,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Use LLM to extract positions from a single article."""
     try:
         from shared.services.llm_service import LLMService
+
         llm = LLMService()
     except Exception:
         return _extract_positions_heuristic(entity_name, title, content, ml_data)
@@ -213,7 +230,7 @@ def _extract_positions_heuristic(
     title: str,
     content: str,
     ml_data: Any,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Fallback heuristic extraction when LLM is unavailable."""
     positions = []
     combined = f"{title} {content}".lower()
@@ -243,7 +260,7 @@ def _extract_positions_heuristic(
         if idx == -1:
             continue
         # Check entity appears within 200 chars of keyword
-        nearby = combined[max(0, idx - 200):idx + 200]
+        nearby = combined[max(0, idx - 200) : idx + 200]
         if entity_lower not in nearby and entity_lower.split()[-1] not in nearby:
             continue
 
@@ -255,14 +272,16 @@ def _extract_positions_heuristic(
         for end_char in ".!?\n":
             sent_end = context.find(end_char, len(context) // 2)
             if sent_end > 0:
-                context = context[:sent_end + 1]
+                context = context[: sent_end + 1]
                 break
 
-        positions.append({
-            "topic": title[:255] if title else context[:255],
-            "position": keyword,
-            "confidence": confidence,
-        })
+        positions.append(
+            {
+                "topic": title[:255] if title else context[:255],
+                "position": keyword,
+                "confidence": confidence,
+            }
+        )
         if len(positions) >= 3:
             break
 
@@ -275,7 +294,7 @@ def _store_positions(
     article_id: int,
     article_title: str,
     published_at: Any,
-    positions: List[Dict[str, Any]],
+    positions: list[dict[str, Any]],
 ) -> int:
     """Store extracted positions in intelligence.entity_positions."""
     conn = get_db_connection()
@@ -286,11 +305,15 @@ def _store_positions(
     try:
         with conn.cursor() as cur:
             for pos in positions:
-                evidence = json.dumps([{
-                    "article_id": article_id,
-                    "title": article_title or "",
-                    "published_at": published_at.isoformat() if published_at else None,
-                }])
+                evidence = json.dumps(
+                    [
+                        {
+                            "article_id": article_id,
+                            "title": article_title or "",
+                            "published_at": published_at.isoformat() if published_at else None,
+                        }
+                    ]
+                )
                 cur.execute(
                     """
                     INSERT INTO intelligence.entity_positions
@@ -323,17 +346,17 @@ def _store_positions(
 
 
 def run_position_tracker_batch(
-    domain_key: Optional[str] = None,
+    domain_key: str | None = None,
     min_mentions: int = 5,
     max_entities: int = 10,
     max_articles_per_entity: int = 25,  # v8
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Batch position extraction: find top entities by mention count, extract positions for each.
     Suitable for orchestrator scheduling.
     """
     domains = [domain_key] if domain_key else list(DOMAIN_SCHEMA.keys())
-    results: Dict[str, Any] = {}
+    results: dict[str, Any] = {}
 
     for d in domains:
         schema = DOMAIN_SCHEMA.get(d)
@@ -370,11 +393,13 @@ def run_position_tracker_batch(
                 r = extract_positions_for_entity(d, eid, max_articles=max_articles_per_entity)
                 domain_result["entities_processed"] += 1
                 domain_result["total_positions"] += r.get("positions_extracted", 0)
-                domain_result["details"].append({
-                    "entity_name": ename,
-                    "positions": r.get("positions_extracted", 0),
-                    "articles_scanned": r.get("articles_scanned", 0),
-                })
+                domain_result["details"].append(
+                    {
+                        "entity_name": ename,
+                        "positions": r.get("positions_extracted", 0),
+                        "articles_scanned": r.get("articles_scanned", 0),
+                    }
+                )
 
             results[d] = {"success": True, **domain_result}
         except Exception as e:
@@ -392,7 +417,7 @@ def get_entity_positions(
     domain_key: str,
     entity_id: int,
     limit: int = 50,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Retrieve stored positions for an entity."""
     conn = get_db_connection()
     if not conn:
@@ -412,15 +437,17 @@ def get_entity_positions(
             )
             positions = []
             for row in cur.fetchall():
-                positions.append({
-                    "id": row[0],
-                    "topic": row[1],
-                    "position": row[2],
-                    "confidence": float(row[3]) if row[3] else None,
-                    "evidence_refs": row[4] or [],
-                    "date_range": str(row[5]) if row[5] else None,
-                    "created_at": row[6].isoformat() if row[6] else None,
-                })
+                positions.append(
+                    {
+                        "id": row[0],
+                        "topic": row[1],
+                        "position": row[2],
+                        "confidence": float(row[3]) if row[3] else None,
+                        "evidence_refs": row[4] or [],
+                        "date_range": str(row[5]) if row[5] else None,
+                        "created_at": row[6].isoformat() if row[6] else None,
+                    }
+                )
         conn.close()
         return {"success": True, "positions": positions}
     except Exception as e:

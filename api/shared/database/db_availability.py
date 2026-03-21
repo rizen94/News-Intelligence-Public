@@ -14,10 +14,9 @@ from __future__ import annotations
 import os
 import threading
 import time
-from typing import Optional, Tuple
 
 _lock = threading.Lock()
-_cached: Tuple[float, bool] = (0.0, True)
+_cached: tuple[float, bool] = (0.0, True)
 
 
 def is_automation_db_ready() -> bool:

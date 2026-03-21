@@ -12,6 +12,7 @@ import sys
 
 try:
     from dotenv import load_dotenv
+
     api_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     load_dotenv(os.path.join(api_dir, ".env"), override=False)
     load_dotenv(os.path.join(api_dir, "..", ".env"), override=False)

@@ -28,7 +28,14 @@ import { useDomainRoute } from '../../hooks/useDomainRoute';
 import apiService from '../../services/apiService';
 import { format, subMonths } from 'date-fns';
 
-const PHASES = ['Planning', 'Data Collection', 'Synthesis', 'Verification', 'Revision', 'Complete'];
+const PHASES = [
+  'Planning',
+  'Data Collection',
+  'Synthesis',
+  'Verification',
+  'Revision',
+  'Complete',
+];
 
 function getTopicFromSources(sources: Record<string, boolean>): string {
   const { gold, silver, platinum, edgar, fred } = sources;
@@ -65,14 +72,26 @@ export default function FinancialAnalysis() {
   const navigate = useNavigate();
   const { domain, getDomainPath } = useDomainRoute();
   const [query, setQuery] = useState('');
-  const [sources, setSources] = useState({ gold: true, silver: false, platinum: false, edgar: false, fred: false });
-  const [dateStart, setDateStart] = useState(() => format(subMonths(new Date(), 24), 'yyyy-MM-dd'));
-  const [dateEnd, setDateEnd] = useState(() => format(new Date(), 'yyyy-MM-dd'));
+  const [sources, setSources] = useState({
+    gold: true,
+    silver: false,
+    platinum: false,
+    edgar: false,
+    fred: false,
+  });
+  const [dateStart, setDateStart] = useState(() =>
+    format(subMonths(new Date(), 24), 'yyyy-MM-dd')
+  );
+  const [dateEnd, setDateEnd] = useState(() =>
+    format(new Date(), 'yyyy-MM-dd')
+  );
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [recentTasks, setRecentTasks] = useState<TaskSummary[]>([]);
   const [recentLoading, setRecentLoading] = useState(false);
-  const [researchTopics, setResearchTopics] = useState<ResearchTopicSummary[]>([]);
+  const [researchTopics, setResearchTopics] = useState<ResearchTopicSummary[]>(
+    []
+  );
   const [researchTopicsLoading, setResearchTopicsLoading] = useState(false);
   const [refiningId, setRefiningId] = useState<number | null>(null);
 
@@ -101,13 +120,21 @@ export default function FinancialAnalysis() {
   }, [domain]);
 
   const topic = getTopicFromSources(sources);
-  const hasSource = sources.gold || sources.silver || sources.platinum || sources.edgar || sources.fred;
+  const hasSource =
+    sources.gold ||
+    sources.silver ||
+    sources.platinum ||
+    sources.edgar ||
+    sources.fred;
 
   const handleRefineTopic = async (topicId: number) => {
     if (!domain) return;
     setRefiningId(topicId);
     try {
-      const res = await apiService.refineFinanceResearchTopic(topicId, domain) as { data?: { task_id?: string } };
+      const res = (await apiService.refineFinanceResearchTopic(
+        topicId,
+        domain
+      )) as { data?: { task_id?: string } };
       const taskId = res?.data?.task_id;
       if (taskId) navigate(getDomainPath(`/analysis/${taskId}`));
     } catch {
@@ -117,13 +144,21 @@ export default function FinancialAnalysis() {
     }
   };
 
-  const handleSourceChange = (k: keyof typeof sources) => (_: unknown, checked: boolean) => {
-    setSources((s) => {
-      const next = { ...s, [k]: checked };
-      if (!next.gold && !next.silver && !next.platinum && !next.edgar && !next.fred) next.gold = true;
-      return next;
-    });
-  };
+  const handleSourceChange =
+    (k: keyof typeof sources) => (_: unknown, checked: boolean) => {
+      setSources(s => {
+        const next = { ...s, [k]: checked };
+        if (
+          !next.gold &&
+          !next.silver &&
+          !next.platinum &&
+          !next.edgar &&
+          !next.fred
+        )
+          next.gold = true;
+        return next;
+      });
+    };
 
   const handleSubmit = async () => {
     if (!query.trim()) return;
@@ -132,12 +167,27 @@ export default function FinancialAnalysis() {
     try {
       // Always send date range: default last 2 years so all sources (RSS, news, Wikipedia, SEC, FRED) are consulted
       const endDate = dateEnd || format(new Date(), 'yyyy-MM-dd');
-      const startDate = dateStart || format(subMonths(new Date(endDate), 24), 'yyyy-MM-dd');
+      const startDate =
+        dateStart || format(subMonths(new Date(endDate), 24), 'yyyy-MM-dd');
       const date_range = { start: startDate, end: endDate };
-      const res = await apiService.submitFinanceAnalysis(query, { topic, date_range, wait: false }, domain);
+      const res = await apiService.submitFinanceAnalysis(
+        query,
+        { topic, date_range, wait: false },
+        domain
+      );
       const id = (res as { data?: { task_id?: string } })?.data?.task_id;
       if (id) {
-        setRecentTasks((prev) => [{ task_id: id, task_type: 'analysis', status: 'queued', phase: 'planning', created_at: new Date().toISOString(), updated_at: new Date().toISOString() }, ...prev.slice(0, 14)]);
+        setRecentTasks(prev => [
+          {
+            task_id: id,
+            task_type: 'analysis',
+            status: 'queued',
+            phase: 'planning',
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+          ...prev.slice(0, 14),
+        ]);
         const path = getDomainPath(`/analysis/${id}`);
         navigate(path);
       } else {
@@ -149,9 +199,15 @@ export default function FinancialAnalysis() {
       if (status === 503 && detail) {
         setError(`Backend: ${detail}`);
       } else if (status != null && detail) {
-        setError(`Request failed (${status}): ${typeof detail === 'string' ? detail : String(detail)}`);
+        setError(
+          `Request failed (${status}): ${
+            typeof detail === 'string' ? detail : String(detail)
+          }`
+        );
       } else if (err?.message === 'Network Error' || !err?.response) {
-        setError('Cannot reach API. Check that the backend is running and the API URL is correct.');
+        setError(
+          'Cannot reach API. Check that the backend is running and the API URL is correct.'
+        );
       } else {
         setError(err?.message || 'Failed to submit analysis');
       }
@@ -162,14 +218,19 @@ export default function FinancialAnalysis() {
 
   return (
     <Box sx={{ p: 3, maxWidth: 720, mx: 'auto' }}>
-      <Typography variant="h5" gutterBottom>
+      <Typography variant='h5' gutterBottom>
         Financial Analysis
       </Typography>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-        Pick a commodity and ask your question. Every analysis uses all sources: RSS news, historic news, Wikipedia, SEC filings, and economic data (default: last 2 years). You can narrow the period below if you want.
+      <Typography variant='body2' color='text.secondary' sx={{ mb: 1 }}>
+        Pick a commodity and ask your question. Every analysis uses all sources:
+        RSS news, historic news, Wikipedia, SEC filings, and economic data
+        (default: last 2 years). You can narrow the period below if you want.
       </Typography>
-      <Alert severity="info" sx={{ mb: 2 }}>
-        After you run an analysis, you’re taken to the result page. When it’s ready, you’ll see the full report with sources. You can return here anytime and open any run from <strong>Your recent analyses</strong> below.
+      <Alert severity='info' sx={{ mb: 2 }}>
+        After you run an analysis, you’re taken to the result page. When it’s
+        ready, you’ll see the full report with sources. You can return here
+        anytime and open any run from <strong>Your recent analyses</strong>{' '}
+        below.
       </Alert>
 
       <Paper sx={{ p: 2, mb: 2 }}>
@@ -177,63 +238,106 @@ export default function FinancialAnalysis() {
           fullWidth
           multiline
           rows={3}
-          label="Your question"
-          placeholder="e.g. What drove the platinum price drop in 2023? How has gold performed over the past year?"
+          label='Your question'
+          placeholder='e.g. What drove the platinum price drop in 2023? How has gold performed over the past year?'
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          onChange={e => setQuery(e.target.value)}
           sx={{ mb: 2 }}
         />
-        <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 0.5 }}>
+        <Typography variant='subtitle2' color='text.secondary' sx={{ mb: 0.5 }}>
           Commodity (all sources are used every time)
         </Typography>
         <FormGroup row sx={{ mb: 2 }}>
           <FormControlLabel
-            control={<Checkbox checked={sources.gold} onChange={handleSourceChange('gold')} size="small" />}
-            label="Gold"
+            control={
+              <Checkbox
+                checked={sources.gold}
+                onChange={handleSourceChange('gold')}
+                size='small'
+              />
+            }
+            label='Gold'
           />
           <FormControlLabel
-            control={<Checkbox checked={sources.silver} onChange={handleSourceChange('silver')} size="small" />}
-            label="Silver"
+            control={
+              <Checkbox
+                checked={sources.silver}
+                onChange={handleSourceChange('silver')}
+                size='small'
+              />
+            }
+            label='Silver'
           />
           <FormControlLabel
-            control={<Checkbox checked={sources.platinum} onChange={handleSourceChange('platinum')} size="small" />}
-            label="Platinum"
+            control={
+              <Checkbox
+                checked={sources.platinum}
+                onChange={handleSourceChange('platinum')}
+                size='small'
+              />
+            }
+            label='Platinum'
           />
           <FormControlLabel
-            control={<Checkbox checked={sources.edgar} onChange={handleSourceChange('edgar')} size="small" />}
-            label="SEC filings"
+            control={
+              <Checkbox
+                checked={sources.edgar}
+                onChange={handleSourceChange('edgar')}
+                size='small'
+              />
+            }
+            label='SEC filings'
           />
           <FormControlLabel
-            control={<Checkbox checked={sources.fred} onChange={handleSourceChange('fred')} size="small" />}
-            label="Economic data"
+            control={
+              <Checkbox
+                checked={sources.fred}
+                onChange={handleSourceChange('fred')}
+                size='small'
+              />
+            }
+            label='Economic data'
           />
         </FormGroup>
-        <Typography variant="caption" display="block" color="text.secondary" sx={{ mb: 1 }}>
+        <Typography
+          variant='caption'
+          display='block'
+          color='text.secondary'
+          sx={{ mb: 1 }}
+        >
           Optional: narrow the time period (default is last 2 years).
         </Typography>
-        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, alignItems: 'center', mb: 2 }}>
+        <Box
+          sx={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: 2,
+            alignItems: 'center',
+            mb: 2,
+          }}
+        >
           <TextField
-            size="small"
-            type="date"
-            label="Start date"
+            size='small'
+            type='date'
+            label='Start date'
             value={dateStart}
-            onChange={(e) => setDateStart(e.target.value)}
+            onChange={e => setDateStart(e.target.value)}
             InputLabelProps={{ shrink: true }}
             sx={{ width: 160 }}
           />
           <TextField
-            size="small"
-            type="date"
-            label="End date"
+            size='small'
+            type='date'
+            label='End date'
             value={dateEnd}
-            onChange={(e) => setDateEnd(e.target.value)}
+            onChange={e => setDateEnd(e.target.value)}
             InputLabelProps={{ shrink: true }}
             sx={{ width: 160 }}
           />
         </Box>
 
         <Button
-          variant="contained"
+          variant='contained'
           onClick={handleSubmit}
           disabled={!query.trim() || !hasSource || submitting}
         >
@@ -242,64 +346,80 @@ export default function FinancialAnalysis() {
       </Paper>
 
       {error && (
-        <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
+        <Alert severity='error' sx={{ mb: 2 }} onClose={() => setError(null)}>
           {error}
         </Alert>
       )}
 
       <Paper sx={{ p: 2, mb: 2 }}>
         <Stepper activeStep={0} sx={{ mb: 2 }}>
-          {PHASES.map((label) => (
+          {PHASES.map(label => (
             <Step key={label}>
               <StepLabel>{label}</StepLabel>
             </Step>
           ))}
         </Stepper>
-        <Typography variant="body2" color="text.secondary">
-          Click &quot;Run analysis&quot; to start. You’ll be taken to the result page where progress is shown.
+        <Typography variant='body2' color='text.secondary'>
+          Click &quot;Run analysis&quot; to start. You’ll be taken to the result
+          page where progress is shown.
         </Typography>
       </Paper>
 
-      <Typography variant="subtitle1" fontWeight={600} sx={{ mb: 1 }}>
+      <Typography variant='subtitle1' fontWeight={600} sx={{ mb: 1 }}>
         Research topics
       </Typography>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-        Topics saved from analyses. Use <strong>Refine</strong> to re-run research and update with new data.
+      <Typography variant='body2' color='text.secondary' sx={{ mb: 1 }}>
+        Topics saved from analyses. Use <strong>Refine</strong> to re-run
+        research and update with new data.
       </Typography>
       <Paper sx={{ overflow: 'hidden', mb: 2 }}>
         {researchTopicsLoading ? (
           <Box sx={{ p: 2, textAlign: 'center' }}>
-            <Typography variant="body2" color="text.secondary">Loading…</Typography>
+            <Typography variant='body2' color='text.secondary'>
+              Loading…
+            </Typography>
           </Box>
         ) : researchTopics.length === 0 ? (
           <Box sx={{ p: 2 }}>
-            <Typography variant="body2" color="text.secondary">
-              No research topics yet. Run an analysis, then use &quot;Save as topic&quot; on the result page.
+            <Typography variant='body2' color='text.secondary'>
+              No research topics yet. Run an analysis, then use &quot;Save as
+              topic&quot; on the result page.
             </Typography>
           </Box>
         ) : (
-          <Table size="small">
+          <Table size='small'>
             <TableHead>
               <TableRow>
                 <TableCell>Name</TableCell>
                 <TableCell>Query</TableCell>
                 <TableCell>Last refined</TableCell>
-                <TableCell align="right">Action</TableCell>
+                <TableCell align='right'>Action</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
-              {researchTopics.map((t) => (
+              {researchTopics.map(t => (
                 <TableRow key={t.id}>
                   <TableCell sx={{ fontWeight: 500 }}>{t.name}</TableCell>
-                  <TableCell sx={{ color: 'text.secondary', fontSize: '0.875rem', maxWidth: 280 }} title={t.query}>
+                  <TableCell
+                    sx={{
+                      color: 'text.secondary',
+                      fontSize: '0.875rem',
+                      maxWidth: 280,
+                    }}
+                    title={t.query}
+                  >
                     {t.query.length > 60 ? `${t.query.slice(0, 60)}…` : t.query}
                   </TableCell>
-                  <TableCell sx={{ color: 'text.secondary', fontSize: '0.875rem' }}>
-                    {t.last_refined_at ? format(new Date(t.last_refined_at), 'MMM d, yyyy') : '—'}
+                  <TableCell
+                    sx={{ color: 'text.secondary', fontSize: '0.875rem' }}
+                  >
+                    {t.last_refined_at
+                      ? format(new Date(t.last_refined_at), 'MMM d, yyyy')
+                      : '—'}
                   </TableCell>
-                  <TableCell align="right">
+                  <TableCell align='right'>
                     <Button
-                      size="small"
+                      size='small'
                       disabled={refiningId === t.id}
                       onClick={() => handleRefineTopic(t.id)}
                     >
@@ -307,9 +427,13 @@ export default function FinancialAnalysis() {
                     </Button>
                     {t.last_refined_task_id && (
                       <Button
-                        size="small"
+                        size='small'
                         sx={{ ml: 0.5 }}
-                        onClick={() => navigate(getDomainPath(`/analysis/${t.last_refined_task_id}`))}
+                        onClick={() =>
+                          navigate(
+                            getDomainPath(`/analysis/${t.last_refined_task_id}`)
+                          )
+                        }
                       >
                         View result
                       </Button>
@@ -322,45 +446,67 @@ export default function FinancialAnalysis() {
         )}
       </Paper>
 
-      <Typography variant="subtitle1" fontWeight={600} sx={{ mb: 1 }}>
+      <Typography variant='subtitle1' fontWeight={600} sx={{ mb: 1 }}>
         Your recent analyses
       </Typography>
       <Paper sx={{ overflow: 'hidden' }}>
         {recentLoading ? (
           <Box sx={{ p: 2, textAlign: 'center' }}>
-            <Typography variant="body2" color="text.secondary">Loading…</Typography>
+            <Typography variant='body2' color='text.secondary'>
+              Loading…
+            </Typography>
           </Box>
         ) : recentTasks.length === 0 ? (
           <Box sx={{ p: 2 }}>
-            <Typography variant="body2" color="text.secondary">No analyses yet. Run one using the form above.</Typography>
+            <Typography variant='body2' color='text.secondary'>
+              No analyses yet. Run one using the form above.
+            </Typography>
           </Box>
         ) : (
-          <Table size="small">
+          <Table size='small'>
             <TableHead>
               <TableRow>
                 <TableCell>When</TableCell>
                 <TableCell>Status</TableCell>
-                <TableCell align="right">Action</TableCell>
+                <TableCell align='right'>Action</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
-              {recentTasks.map((t) => (
+              {recentTasks.map(t => (
                 <TableRow key={t.task_id}>
-                  <TableCell sx={{ color: 'text.secondary', fontSize: '0.875rem' }}>
-                    {t.created_at ? format(new Date(t.created_at), 'MMM d, yyyy · h:mm a') : '—'}
+                  <TableCell
+                    sx={{ color: 'text.secondary', fontSize: '0.875rem' }}
+                  >
+                    {t.created_at
+                      ? format(new Date(t.created_at), 'MMM d, yyyy · h:mm a')
+                      : '—'}
                   </TableCell>
                   <TableCell>
                     <Chip
-                      label={t.status === 'complete' ? 'Done' : t.status === 'failed' ? 'Failed' : t.phase || t.status}
-                      size="small"
-                      color={t.status === 'complete' ? 'success' : t.status === 'failed' ? 'error' : 'default'}
-                      variant="outlined"
+                      label={
+                        t.status === 'complete'
+                          ? 'Done'
+                          : t.status === 'failed'
+                          ? 'Failed'
+                          : t.phase || t.status
+                      }
+                      size='small'
+                      color={
+                        t.status === 'complete'
+                          ? 'success'
+                          : t.status === 'failed'
+                          ? 'error'
+                          : 'default'
+                      }
+                      variant='outlined'
                     />
                   </TableCell>
-                  <TableCell align="right">
+                  <TableCell align='right'>
                     <Button
-                      size="small"
-                      onClick={() => navigate(getDomainPath(`/analysis/${t.task_id}`))}
+                      size='small'
+                      onClick={() =>
+                        navigate(getDomainPath(`/analysis/${t.task_id}`))
+                      }
                     >
                       View result
                     </Button>

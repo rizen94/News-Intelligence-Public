@@ -11,7 +11,7 @@ See docs/ENTITY_GROUPING_AND_KEY_TARGETS.md.
 """
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -21,17 +21,17 @@ DEFAULT_DOWNTIME_RELATIONSHIP_LIMIT = 50
 
 
 def run_cycle(
-    domain_key: Optional[str] = None,
+    domain_key: str | None = None,
     relationship_limit: int = DEFAULT_RELATIONSHIP_LIMIT,
-    cleanup_policy: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
+    cleanup_policy: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """
     Run one organizer cycle: intelligence cleanup (merge duplicates, prune, cap)
     then relationship extraction (co-mentions -> entity_relationships).
 
     Returns combined stats for pipeline/downtime loop reporting.
     """
-    result: Dict[str, Any] = {
+    result: dict[str, Any] = {
         "cleanup": {},
         "relationships_extracted": 0,
         "errors": [],
@@ -39,6 +39,7 @@ def run_cycle(
     # 1. Cleanup: merge duplicate entities, prune low-value, cap count
     try:
         from services.intelligence_cleanup_controller import IntelligenceCleanupController
+
         controller = IntelligenceCleanupController(policy=cleanup_policy)
         cleanup_out = controller.run(domain_key=domain_key)
         result["cleanup"] = cleanup_out
@@ -49,6 +50,7 @@ def run_cycle(
     # 2. Relationship extraction: co-mentions -> entity_relationships (vectors between entities)
     try:
         from services.relationship_extraction_service import extract_relationships_from_contexts
+
         rel_out = extract_relationships_from_contexts(
             domain_key=domain_key,
             limit=relationship_limit,
@@ -65,10 +67,10 @@ def run_cycle(
 
 
 def get_key_entities(
-    domain_key: Optional[str] = None,
+    domain_key: str | None = None,
     limit: int = 100,
     min_mentions: int = 2,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Return a ranked list of entities by mention count (recurring / key targets).
     Uses entity_canonical + article_entities counts; does not require a cache table.
@@ -79,9 +81,9 @@ def get_key_entities(
     if not conn:
         return {"success": False, "entities": [], "error": "Database connection failed"}
 
-    domains: List[str] = [domain_key] if domain_key else ["politics", "finance", "science-tech"]
+    domains: list[str] = [domain_key] if domain_key else ["politics", "finance", "science-tech"]
     schema_map = {"politics": "politics", "finance": "finance", "science-tech": "science_tech"}
-    entities: List[Dict[str, Any]] = []
+    entities: list[dict[str, Any]] = []
 
     try:
         with conn.cursor() as cur:
@@ -102,13 +104,15 @@ def get_key_entities(
                     (min_mentions, limit),
                 )
                 for row in cur.fetchall():
-                    entities.append({
-                        "domain_key": d,
-                        "canonical_entity_id": row[0],
-                        "canonical_name": row[1],
-                        "entity_type": row[2],
-                        "mention_count": row[3],
-                    })
+                    entities.append(
+                        {
+                            "domain_key": d,
+                            "canonical_entity_id": row[0],
+                            "canonical_name": row[1],
+                            "entity_type": row[2],
+                            "mention_count": row[3],
+                        }
+                    )
         conn.close()
         # Sort across domains by mention_count and trim to limit
         entities.sort(key=lambda x: x["mention_count"], reverse=True)

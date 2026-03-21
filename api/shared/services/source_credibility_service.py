@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any
 from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
@@ -25,7 +25,7 @@ class SourceCredibilityResult:
     requires_corroboration: bool
     matched_rule: str  # e.g. "host_suffix:.gov", "host_contains:reuters", "default"
 
-    def to_metadata_dict(self, feed_url: str) -> Dict[str, Any]:
+    def to_metadata_dict(self, feed_url: str) -> dict[str, Any]:
         return {
             "tier": self.tier_id,
             "label": self.label,
@@ -36,7 +36,7 @@ class SourceCredibilityResult:
         }
 
 
-def _cfg() -> Dict[str, Any]:
+def _cfg() -> dict[str, Any]:
     try:
         from config.orchestrator_governance import get_orchestrator_governance_config
 
@@ -85,14 +85,14 @@ def resolve_source_credibility(feed_url: str, feed_name: str = "") -> SourceCred
             matched_rule="disabled",
         )
 
-    tiers: Dict[str, Any] = c.get("tiers") or {}
-    tier_order: List[str] = list(c.get("tier_order") or list(tiers.keys()))
+    tiers: dict[str, Any] = c.get("tiers") or {}
+    tier_order: list[str] = list(c.get("tier_order") or list(tiers.keys()))
     default_id = str(c.get("default_tier") or "tier_2")
 
     host = _host(feed_url)
     name = _norm_name(feed_name)
 
-    def _check_tier(tier_id: str) -> Optional[SourceCredibilityResult]:
+    def _check_tier(tier_id: str) -> SourceCredibilityResult | None:
         spec = tiers.get(tier_id)
         if not isinstance(spec, dict):
             return None

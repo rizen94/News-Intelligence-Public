@@ -3,16 +3,17 @@
 Pytest configuration and shared fixtures
 """
 
-import pytest
 import os
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
+
+import pytest
 
 # Set test environment
-os.environ['ENVIRONMENT'] = 'test'
-os.environ['DB_HOST'] = 'localhost'
-os.environ['DB_NAME'] = 'news_intelligence_test'
-os.environ['DB_USER'] = 'newsapp'
-os.environ['DB_PASSWORD'] = 'newsapp_password'
+os.environ["ENVIRONMENT"] = "test"
+os.environ["DB_HOST"] = "localhost"
+os.environ["DB_NAME"] = "news_intelligence_test"
+os.environ["DB_USER"] = "newsapp"
+os.environ["DB_PASSWORD"] = "newsapp_password"
 
 
 @pytest.fixture(scope="session")
@@ -30,4 +31,3 @@ def reset_mocks():
     """Reset mocks before each test"""
     yield
     # Cleanup if needed
-

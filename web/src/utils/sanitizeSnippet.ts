@@ -1,5 +1,8 @@
 export function stripHtml(input: string): string {
-  return input.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+  return input
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 export function sanitizeSnippet(input: unknown, fallback = ''): string {

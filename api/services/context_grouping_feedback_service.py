@@ -1,7 +1,7 @@
 """Persist and list human judgments on context ↔ grouping (topic/storyline/pattern)."""
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from shared.database.connection import get_db_connection
 
@@ -15,11 +15,11 @@ def submit_context_grouping_feedback(
     context_id: int,
     grouping_type: str,
     judgment: str,
-    grouping_id: Optional[int] = None,
-    grouping_label: Optional[str] = None,
-    notes: Optional[str] = None,
-    judged_by: Optional[str] = None,
-) -> Dict[str, Any]:
+    grouping_id: int | None = None,
+    grouping_label: str | None = None,
+    notes: str | None = None,
+    judged_by: str | None = None,
+) -> dict[str, Any]:
     if grouping_type not in GROUPING_TYPES:
         return {"success": False, "error": f"grouping_type must be one of {sorted(GROUPING_TYPES)}"}
     if judgment not in JUDGMENTS:
@@ -76,7 +76,7 @@ def submit_context_grouping_feedback(
 def list_context_grouping_feedback(
     context_id: int,
     limit: int = 50,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     conn = get_db_connection()
     if not conn:
         return {"success": False, "error": "Database connection failed", "items": []}
@@ -94,7 +94,7 @@ def list_context_grouping_feedback(
                 (context_id, min(max(limit, 1), 200)),
             )
             rows = cur.fetchall()
-        items: List[Dict[str, Any]] = []
+        items: list[dict[str, Any]] = []
         for r in rows:
             items.append(
                 {

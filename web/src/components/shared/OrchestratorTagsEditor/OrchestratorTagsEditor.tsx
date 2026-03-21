@@ -3,7 +3,17 @@
  * to prioritize this item for deeper story building.
  */
 import React, { useState } from 'react';
-import { Box, Chip, FormControl, InputLabel, Select, MenuItem, Typography, OutlinedInput, SelectChangeEvent } from '@mui/material';
+import {
+  Box,
+  Chip,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
+  Typography,
+  OutlinedInput,
+  SelectChangeEvent,
+} from '@mui/material';
 
 export const ORCHESTRATOR_TAG_OPTIONS = [
   { value: 'deep_story', label: 'Deep story' },
@@ -20,7 +30,11 @@ interface OrchestratorTagsEditorProps {
   disabled?: boolean;
 }
 
-export default function OrchestratorTagsEditor({ tags, onSave, disabled }: OrchestratorTagsEditorProps) {
+export default function OrchestratorTagsEditor({
+  tags,
+  onSave,
+  disabled,
+}: OrchestratorTagsEditorProps) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -42,7 +56,7 @@ export default function OrchestratorTagsEditor({ tags, onSave, disabled }: Orche
     setError(null);
     setSaving(true);
     try {
-      await onSave(tags.filter((t) => t !== tag));
+      await onSave(tags.filter(t => t !== tag));
     } catch (err) {
       setError((err as Error)?.message ?? 'Failed to update tags');
     } finally {
@@ -51,38 +65,59 @@ export default function OrchestratorTagsEditor({ tags, onSave, disabled }: Orche
   };
 
   const existingSet = new Set(tags);
-  const availableOptions = ORCHESTRATOR_TAG_OPTIONS.filter((o) => !existingSet.has(o.value));
+  const availableOptions = ORCHESTRATOR_TAG_OPTIONS.filter(
+    o => !existingSet.has(o.value)
+  );
 
   return (
     <Box>
-      <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+      <Typography variant='subtitle2' color='text.secondary' gutterBottom>
         Orchestrator tags
       </Typography>
-      <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1 }}>
+      <Typography
+        variant='caption'
+        color='text.secondary'
+        display='block'
+        sx={{ mb: 1 }}
+      >
         Tag for the orchestrator to prioritize when building deeper stories.
       </Typography>
-      <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 1, mb: 1 }}>
-        {tags.map((tag) => (
+      <Box
+        sx={{
+          display: 'flex',
+          flexWrap: 'wrap',
+          alignItems: 'center',
+          gap: 1,
+          mb: 1,
+        }}
+      >
+        {tags.map(tag => (
           <Chip
             key={tag}
-            label={ORCHESTRATOR_TAG_OPTIONS.find((o) => o.value === tag)?.label ?? tag}
-            size="small"
+            label={
+              ORCHESTRATOR_TAG_OPTIONS.find(o => o.value === tag)?.label ?? tag
+            }
+            size='small'
             onDelete={disabled || saving ? undefined : () => handleRemove(tag)}
-            color="primary"
-            variant="outlined"
+            color='primary'
+            variant='outlined'
           />
         ))}
         {availableOptions.length > 0 && (
-          <FormControl size="small" sx={{ minWidth: 140 }} disabled={disabled || saving}>
-            <InputLabel id="orchestrator-tag-add-label">Add tag</InputLabel>
+          <FormControl
+            size='small'
+            sx={{ minWidth: 140 }}
+            disabled={disabled || saving}
+          >
+            <InputLabel id='orchestrator-tag-add-label'>Add tag</InputLabel>
             <Select
-              labelId="orchestrator-tag-add-label"
-              value=""
-              label="Add tag"
+              labelId='orchestrator-tag-add-label'
+              value=''
+              label='Add tag'
               onChange={handleAdd}
-              input={<OutlinedInput label="Add tag" />}
+              input={<OutlinedInput label='Add tag' />}
             >
-              {availableOptions.map((o) => (
+              {availableOptions.map(o => (
                 <MenuItem key={o.value} value={o.value}>
                   {o.label}
                 </MenuItem>
@@ -92,7 +127,7 @@ export default function OrchestratorTagsEditor({ tags, onSave, disabled }: Orche
         )}
       </Box>
       {error && (
-        <Typography variant="caption" color="error">
+        <Typography variant='caption' color='error'>
           {error}
         </Typography>
       )}

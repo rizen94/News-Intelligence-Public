@@ -136,7 +136,7 @@ const RSSFeeds: React.FC = () => {
     description: '',
   });
 
-  const fetchFeeds = useCallback(async() => {
+  const fetchFeeds = useCallback(async () => {
     try {
       setLoading(true);
 
@@ -158,7 +158,11 @@ const RSSFeeds: React.FC = () => {
 
       if (response.success) {
         // Handle different response structures - ONLY load from database
-        const feedsData = response.data?.feeds || response.data?.data?.feeds || response.feeds || [];
+        const feedsData =
+          response.data?.feeds ||
+          response.data?.data?.feeds ||
+          response.feeds ||
+          [];
 
         console.log('🔍 Raw feeds data:', feedsData);
         console.log('🔍 Feeds data length:', feedsData.length);
@@ -174,7 +178,11 @@ const RSSFeeds: React.FC = () => {
               url: feed.url || feed.feed_url || '',
               description: feed.description || null,
               category: feed.category || null,
-              update_interval: feed.update_interval || (feed.fetch_interval_seconds ? feed.fetch_interval_seconds / 60 : 30),
+              update_interval:
+                feed.update_interval ||
+                (feed.fetch_interval_seconds
+                  ? feed.fetch_interval_seconds / 60
+                  : 30),
               article_count: feed.article_count || 0,
               last_fetched_at: feed.last_fetched_at || null,
               is_active: feed.is_active !== undefined ? feed.is_active : true,
@@ -188,7 +196,11 @@ const RSSFeeds: React.FC = () => {
 
         setFeeds(normalizedFeeds);
         setTotalPages(response.data?.total_pages || response.data?.total || 1);
-        setTotalFeeds(response.data?.total_count || response.data?.total || normalizedFeeds.length);
+        setTotalFeeds(
+          response.data?.total_count ||
+            response.data?.total ||
+            normalizedFeeds.length
+        );
 
         // Calculate statistics
         const feeds = normalizedFeeds;
@@ -214,7 +226,7 @@ const RSSFeeds: React.FC = () => {
     }
   }, [page, searchTerm, statusFilter, categoryFilter, sortBy]);
 
-  const fetchCategories = useCallback(async() => {
+  const fetchCategories = useCallback(async () => {
     try {
       const response = await apiService.rssFeeds.getCategories();
       if (response.success) {
@@ -239,7 +251,8 @@ const RSSFeeds: React.FC = () => {
     if (feed.last_fetched_at) {
       const lastFetch = new Date(feed.last_fetched_at);
       const now = new Date();
-      const hoursSinceFetch = (now.getTime() - lastFetch.getTime()) / (1000 * 60 * 60);
+      const hoursSinceFetch =
+        (now.getTime() - lastFetch.getTime()) / (1000 * 60 * 60);
       if (hoursSinceFetch > 24) return 'warning';
     }
     return 'success';
@@ -251,7 +264,8 @@ const RSSFeeds: React.FC = () => {
     if (feed.last_fetched_at) {
       const lastFetch = new Date(feed.last_fetched_at);
       const now = new Date();
-      const hoursSinceFetch = (now.getTime() - lastFetch.getTime()) / (1000 * 60 * 60);
+      const hoursSinceFetch =
+        (now.getTime() - lastFetch.getTime()) / (1000 * 60 * 60);
       if (hoursSinceFetch > 24) return 'Stale';
     }
     return 'Active';
@@ -274,7 +288,7 @@ const RSSFeeds: React.FC = () => {
     });
   };
 
-  const handleAddFeed = async() => {
+  const handleAddFeed = async () => {
     try {
       const response = await apiService.rssFeeds.createFeed(newFeed);
       if (response.success) {
@@ -297,13 +311,15 @@ const RSSFeeds: React.FC = () => {
     }
   };
 
-  const handleToggleFeed = async(feedId: number, isActive: boolean) => {
+  const handleToggleFeed = async (feedId: number, isActive: boolean) => {
     try {
       const response = await apiService.rssFeeds.updateFeed(feedId, {
         is_active: !isActive,
       });
       if (response.success) {
-        showSuccess(`Feed ${!isActive ? 'activated' : 'deactivated'} successfully`);
+        showSuccess(
+          `Feed ${!isActive ? 'activated' : 'deactivated'} successfully`
+        );
         fetchFeeds();
       }
     } catch (error: any) {
@@ -314,7 +330,7 @@ const RSSFeeds: React.FC = () => {
     }
   };
 
-  const handleDeleteFeed = async(feedId: number) => {
+  const handleDeleteFeed = async (feedId: number) => {
     try {
       const response = await apiService.rssFeeds.deleteFeed(feedId);
       if (response.success) {
@@ -329,7 +345,7 @@ const RSSFeeds: React.FC = () => {
     }
   };
 
-  const handleRefreshFeed = async(feedId: number) => {
+  const handleRefreshFeed = async (feedId: number) => {
     try {
       const response = await apiService.rssFeeds.refreshFeed(feedId);
       if (response.success) {
@@ -461,7 +477,9 @@ const RSSFeeds: React.FC = () => {
               fullWidth
               placeholder='Search feeds...'
               value={searchTerm}
-              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSearchTerm(e.target.value)}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                setSearchTerm(e.target.value)
+              }
               InputProps={{
                 startAdornment: (
                   <InputAdornment position='start'>
@@ -547,7 +565,8 @@ const RSSFeeds: React.FC = () => {
       ) : (
         <Box>
           <Typography variant='h6' sx={{ mb: 2, color: 'text.secondary' }}>
-            Displaying {feeds.length} feed{feeds.length !== 1 ? 's' : ''} from database
+            Displaying {feeds.length} feed{feeds.length !== 1 ? 's' : ''} from
+            database
           </Typography>
           <Grid container spacing={2}>
             {feeds.map((feed, index) => {
@@ -563,16 +582,36 @@ const RSSFeeds: React.FC = () => {
                       >
                         <Box flex={1}>
                           {/* Source Name - ALWAYS DISPLAYED */}
-                          <Box display='flex' alignItems='center' gap={1} mb={2}>
+                          <Box
+                            display='flex'
+                            alignItems='center'
+                            gap={1}
+                            mb={2}
+                          >
                             <RssFeedIcon color='primary' fontSize='small' />
-                            <Typography variant='h5' component='h2' sx={{ fontWeight: 'bold', color: 'primary.main' }}>
-                              {feed.name || feed.feed_name || feed.url || 'Unknown Source'}
+                            <Typography
+                              variant='h5'
+                              component='h2'
+                              sx={{ fontWeight: 'bold', color: 'primary.main' }}
+                            >
+                              {feed.name ||
+                                feed.feed_name ||
+                                feed.url ||
+                                'Unknown Source'}
                             </Typography>
                           </Box>
 
                           {/* Feed URL - ALWAYS VISIBLE */}
                           <Box mb={2}>
-                            <Typography variant='caption' color='text.secondary' sx={{ fontWeight: 'bold', display: 'block', mb: 0.5 }}>
+                            <Typography
+                              variant='caption'
+                              color='text.secondary'
+                              sx={{
+                                fontWeight: 'bold',
+                                display: 'block',
+                                mb: 0.5,
+                              }}
+                            >
                               Feed URL:
                             </Typography>
                             <Typography
@@ -593,21 +632,40 @@ const RSSFeeds: React.FC = () => {
 
                           {/* Description - ALWAYS SHOW SOMETHING */}
                           <Box mb={2}>
-                            <Typography variant='caption' color='text.secondary' sx={{ fontWeight: 'bold', display: 'block', mb: 0.5 }}>
+                            <Typography
+                              variant='caption'
+                              color='text.secondary'
+                              sx={{
+                                fontWeight: 'bold',
+                                display: 'block',
+                                mb: 0.5,
+                              }}
+                            >
                               Description:
                             </Typography>
                             <Typography
                               variant='body2'
                               color='text.secondary'
-                              sx={{ fontStyle: feed.description ? 'normal' : 'italic' }}
+                              sx={{
+                                fontStyle: feed.description
+                                  ? 'normal'
+                                  : 'italic',
+                              }}
                             >
                               {feed.description || 'No description available'}
                             </Typography>
                           </Box>
-                          <Box display='flex' alignItems='center' gap={1} mb={1}>
+                          <Box
+                            display='flex'
+                            alignItems='center'
+                            gap={1}
+                            mb={1}
+                          >
                             <Chip
                               icon={<Schedule />}
-                              label={`${feed.update_interval || 30}min interval`}
+                              label={`${
+                                feed.update_interval || 30
+                              }min interval`}
                               size='small'
                               variant='outlined'
                             />
@@ -857,7 +915,9 @@ const RSSFeeds: React.FC = () => {
           <Pagination
             count={totalPages}
             page={page}
-            onChange={(event: React.ChangeEvent<unknown>, value: number) => setPage(value)}
+            onChange={(event: React.ChangeEvent<unknown>, value: number) =>
+              setPage(value)
+            }
             color='primary'
           />
         </Box>

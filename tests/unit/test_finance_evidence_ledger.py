@@ -12,7 +12,7 @@ def _finance_ledger_db(monkeypatch, tmp_path):
 
 
 def test_ledger_record_and_get():
-    from domains.finance.data.evidence_ledger import record, get_by_report
+    from domains.finance.data.evidence_ledger import get_by_report, record
 
     rowid = record(
         report_id="test_rpt_1",
@@ -30,7 +30,7 @@ def test_ledger_record_and_get():
 
 
 def test_ledger_list_entries():
-    from domains.finance.data.evidence_ledger import record, list_entries
+    from domains.finance.data.evidence_ledger import list_entries, record
 
     record("r1", "orchestrator_refresh", "gold", {"status": "success"})
     record("r2", "orchestrator_refresh", "edgar", {"status": "success"})
@@ -46,7 +46,7 @@ def test_ledger_list_entries():
 
 
 def test_ledger_get_recent_by_source():
-    from domains.finance.data.evidence_ledger import record, get_recent_by_source
+    from domains.finance.data.evidence_ledger import get_recent_by_source, record
 
     record("r1", "orchestrator_refresh", "gold", {"status": "success"})
     record("r2", "orchestrator_refresh", "gold", {"status": "error", "error": "network"})

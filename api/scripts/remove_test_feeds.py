@@ -12,12 +12,13 @@ Usage:
   python api/scripts/remove_test_feeds.py --execute
 """
 
+import argparse
 import os
 import sys
-import argparse
 
 try:
     from dotenv import load_dotenv
+
     api_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     load_dotenv(os.path.join(api_dir, ".env"), override=False)
     load_dotenv(os.path.join(api_dir, "..", ".env"), override=False)
@@ -36,12 +37,18 @@ if not os.environ.get("DB_PASSWORD") and os.path.exists(
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-DOMAIN_SCHEMAS = [("politics", "politics"), ("finance", "finance"), ("science_tech", "science-tech")]
+DOMAIN_SCHEMAS = [
+    ("politics", "politics"),
+    ("finance", "finance"),
+    ("science_tech", "science-tech"),
+]
 
 
 def main():
     parser = argparse.ArgumentParser(description="Remove test/sample RSS feeds from domain tables.")
-    parser.add_argument("--execute", action="store_true", help="Actually delete; default is dry-run.")
+    parser.add_argument(
+        "--execute", action="store_true", help="Actually delete; default is dry-run."
+    )
     args = parser.parse_args()
     do_delete = args.execute
 

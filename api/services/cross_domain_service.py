@@ -7,7 +7,7 @@ See docs/DATA_PIPELINE_ENHANCEMENTS_ROADMAP.md.
 import logging
 import uuid
 from datetime import date, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from shared.database.connection import get_db_connection
 
@@ -17,10 +17,10 @@ DOMAINS = ("politics", "finance", "science_tech")
 
 
 def run_cross_domain_synthesis(
-    domains: Optional[List[str]] = None,
+    domains: list[str] | None = None,
     time_window_days: int = 30,  # v8: full-history
     correlation_threshold: float = 0.5,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Find cross-domain relationships (events spanning domains, shared entities, temporal overlap),
     persist to intelligence.cross_domain_correlations. Returns correlation_id(s) and list of correlations.
@@ -30,7 +30,12 @@ def run_cross_domain_synthesis(
         return {"success": False, "error": "Database connection failed", "correlations": []}
     target_domains = [d for d in (domains or list(DOMAINS)) if d in DOMAINS]
     if len(target_domains) < 2:
-        return {"success": True, "correlation_id": None, "correlations": [], "message": "Need at least 2 domains"}
+        return {
+            "success": True,
+            "correlation_id": None,
+            "correlations": [],
+            "message": "Need at least 2 domains",
+        }
     since = date.today() - timedelta(days=time_window_days)
     try:
         with conn.cursor() as cur:
@@ -58,7 +63,7 @@ def run_cross_domain_synthesis(
         return {"success": False, "error": str(e), "correlations": []}
 
     # Build correlation rows: (domain_1, domain_2, event_ids, entity_ids, type, strength)
-    seen_pairs: Dict[tuple, Dict[str, Any]] = {}
+    seen_pairs: dict[tuple, dict[str, Any]] = {}
     for r in rows:
         event_id, event_type, event_name, start_date, domain_keys, key_participant = r
         event_domains = list(domain_keys) if isinstance(domain_keys, (list, tuple)) else []
@@ -95,12 +100,19 @@ def run_cross_domain_synthesis(
 
     conn = get_db_connection()
     if not conn:
-        return {"success": True, "correlation_id": None, "correlations": list(seen_pairs.values()), "meta_storylines": []}
+        return {
+            "success": True,
+            "correlation_id": None,
+            "correlations": list(seen_pairs.values()),
+            "meta_storylines": [],
+        }
     inserted = []
     try:
         with conn.cursor() as cur:
             for pair, rec in seen_pairs.items():
-                strength = min(1.0, 0.5 + 0.1 * (len(rec["event_ids"]) + len(rec["entity_profile_ids"])))
+                strength = min(
+                    1.0, 0.5 + 0.1 * (len(rec["event_ids"]) + len(rec["entity_profile_ids"]))
+                )
                 if strength < correlation_threshold:
                     continue
                 cor_id = uuid.uuid4()
@@ -120,15 +132,17 @@ def run_cross_domain_synthesis(
                         rec["correlation_type"],
                     ),
                 )
-                inserted.append({
-                    "correlation_id": str(cor_id),
-                    "domain_1": rec["domain_1"],
-                    "domain_2": rec["domain_2"],
-                    "event_ids": rec["event_ids"],
-                    "entity_profile_ids": rec["entity_profile_ids"],
-                    "correlation_strength": strength,
-                    "correlation_type": rec["correlation_type"],
-                })
+                inserted.append(
+                    {
+                        "correlation_id": str(cor_id),
+                        "domain_1": rec["domain_1"],
+                        "domain_2": rec["domain_2"],
+                        "event_ids": rec["event_ids"],
+                        "entity_profile_ids": rec["entity_profile_ids"],
+                        "correlation_strength": strength,
+                        "correlation_type": rec["correlation_type"],
+                    }
+                )
         conn.commit()
     except Exception as e:
         logger.warning("run_cross_domain_synthesis insert: %s", e)
@@ -152,7 +166,7 @@ def run_cross_domain_synthesis(
     ]
 
     # v8: Processed documents that span domains (PDF sections in multiple domain_keys in window)
-    cross_domain_document_ids: List[int] = []
+    cross_domain_document_ids: list[int] = []
     try:
         conn2 = get_db_connection()
         if conn2:
@@ -185,18 +199,18 @@ def run_cross_domain_synthesis(
 
 
 def get_cross_domain_correlations(
-    domain_1: Optional[str] = None,
-    domain_2: Optional[str] = None,
-    since_days: Optional[int] = None,
+    domain_1: str | None = None,
+    domain_2: str | None = None,
+    since_days: int | None = None,
     limit: int = 50,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Read correlation rows with optional filters."""
     conn = get_db_connection()
     if not conn:
         return {"success": False, "correlations": [], "error": "Database connection failed"}
     try:
         conditions = ["1=1"]
-        args: List[Any] = []
+        args: list[Any] = []
         if domain_1:
             conditions.append("domain_1 = %s")
             args.append(domain_1)
@@ -213,7 +227,9 @@ def get_cross_domain_correlations(
                 SELECT correlation_id, domain_1, domain_2, entity_profile_ids, event_ids,
                        correlation_strength, correlation_type, discovered_at, metadata
                 FROM intelligence.cross_domain_correlations
-                WHERE """ + " AND ".join(conditions) + """
+                WHERE """
+                + " AND ".join(conditions)
+                + """
                 ORDER BY discovered_at DESC
                 LIMIT %s
                 """,
@@ -223,17 +239,19 @@ def get_cross_domain_correlations(
         conn.close()
         correlations = []
         for r in rows:
-            correlations.append({
-                "correlation_id": str(r[0]),
-                "domain_1": r[1],
-                "domain_2": r[2],
-                "entity_profile_ids": list(r[3]) if r[3] else [],
-                "event_ids": list(r[4]) if r[4] else [],
-                "correlation_strength": float(r[5]) if r[5] is not None else None,
-                "correlation_type": r[6],
-                "discovered_at": r[7].isoformat() if r[7] else None,
-                "metadata": r[8] or {},
-            })
+            correlations.append(
+                {
+                    "correlation_id": str(r[0]),
+                    "domain_1": r[1],
+                    "domain_2": r[2],
+                    "entity_profile_ids": list(r[3]) if r[3] else [],
+                    "event_ids": list(r[4]) if r[4] else [],
+                    "correlation_strength": float(r[5]) if r[5] is not None else None,
+                    "correlation_type": r[6],
+                    "discovered_at": r[7].isoformat() if r[7] else None,
+                    "metadata": r[8] or {},
+                }
+            )
         return {"success": True, "correlations": correlations}
     except Exception as e:
         logger.warning("get_cross_domain_correlations: %s", e)
@@ -245,19 +263,21 @@ def get_cross_domain_correlations(
 
 
 def get_unified_timeline(
-    domains: Optional[List[str]] = None,
-    since_days: Optional[int] = None,
+    domains: list[str] | None = None,
+    since_days: int | None = None,
     limit: int = 100,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Chronological events across domains with domain_key, event_type, entity links."""
     conn = get_db_connection()
     if not conn:
         return {"success": False, "events": [], "error": "Database connection failed"}
     try:
         conditions = ["1=1"]
-        args: List[Any] = []
+        args: list[Any] = []
         if since_days is not None:
-            conditions.append("(te.start_date IS NULL OR te.start_date >= CURRENT_DATE - INTERVAL '1 day' * %s)")
+            conditions.append(
+                "(te.start_date IS NULL OR te.start_date >= CURRENT_DATE - INTERVAL '1 day' * %s)"
+            )
             args.append(since_days)
         if domains:
             conditions.append("te.domain_keys && %s")
@@ -269,7 +289,9 @@ def get_unified_timeline(
                 SELECT te.id, te.event_type, te.event_name, te.start_date, te.end_date,
                        te.geographic_scope, te.key_participant_entity_ids, te.domain_keys, te.created_at
                 FROM intelligence.tracked_events te
-                WHERE """ + " AND ".join(conditions) + """
+                WHERE """
+                + " AND ".join(conditions)
+                + """
                 ORDER BY te.start_date DESC NULLS LAST, te.created_at DESC
                 LIMIT %s
                 """,
@@ -279,17 +301,21 @@ def get_unified_timeline(
         conn.close()
         events = []
         for r in rows:
-            events.append({
-                "id": r[0],
-                "event_type": r[1],
-                "event_name": r[2],
-                "start_date": str(r[3]) if r[3] else None,
-                "end_date": str(r[4]) if r[4] else None,
-                "geographic_scope": r[5],
-                "key_participant_entity_ids": r[6] if isinstance(r[6], list) else (list(r[6]) if r[6] else []),
-                "domain_keys": list(r[7]) if r[7] else [],
-                "created_at": r[8].isoformat() if r[8] else None,
-            })
+            events.append(
+                {
+                    "id": r[0],
+                    "event_type": r[1],
+                    "event_name": r[2],
+                    "start_date": str(r[3]) if r[3] else None,
+                    "end_date": str(r[4]) if r[4] else None,
+                    "geographic_scope": r[5],
+                    "key_participant_entity_ids": r[6]
+                    if isinstance(r[6], list)
+                    else (list(r[6]) if r[6] else []),
+                    "domain_keys": list(r[7]) if r[7] else [],
+                    "created_at": r[8].isoformat() if r[8] else None,
+                }
+            )
         return {"success": True, "events": events}
     except Exception as e:
         logger.warning("get_unified_timeline: %s", e)
@@ -301,11 +327,11 @@ def get_unified_timeline(
 
 
 def get_meta_storylines(
-    domain_1: Optional[str] = None,
-    domain_2: Optional[str] = None,
-    since_days: Optional[int] = None,
+    domain_1: str | None = None,
+    domain_2: str | None = None,
+    since_days: int | None = None,
     limit: int = 50,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Meta-storylines (cross-domain storylines) derived from cross_domain_correlations."""
     result = get_cross_domain_correlations(
         domain_1=domain_1,

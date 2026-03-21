@@ -12,6 +12,10 @@ adding more RSS. No process is left behind because of fast RSS; phases with no w
 When AUTOMATION_QUEUE_SOFT_CAP > 0 and combined queue depth (task_queue + requested queue) reaches the cap,
 new scheduled enqueues, continuous batch re-queues, and dependency-chain request_phase calls are skipped
 except phases in AUTOMATION_QUEUE_PAUSE_ALLOW (default: collection_cycle, health_check) so the backlog can drain.
+
+**Offload to Widow (DB host):** set ``AUTOMATION_SKIP_RSS_IN_COLLECTION_CYCLE=true`` on the GPU/main API host when
+RSS runs on Widow; set ``AUTOMATION_DISABLED_SCHEDULES=context_sync,entity_profile_sync,pending_db_flush`` (comma-separated)
+for phases moved to ``api/scripts/run_widow_db_adjacent.py`` cron — dependents' ``depends_on`` lists are adjusted automatically.
 Dependency settle time after a phase completes is capped by AUTOMATION_DEPENDENCY_SETTLE_CAP_SEC (default 180s)
 so long estimated_duration values (e.g. collection_cycle) do not block dependents such as storyline_discovery.
 
@@ -862,6 +866,8 @@ class AutomationManager:
             },
         }
 
+        self._apply_automation_disabled_schedules()
+
         # Performance metrics
         self.metrics = {
             "tasks_completed": 0,
@@ -873,6 +879,34 @@ class AutomationManager:
             "load_factor": 1.0,  # Multiplier for intervals based on load
             "processing_history": {},  # Track actual vs estimated durations
         }
+
+    def _apply_automation_disabled_schedules(self) -> None:
+        """Disable named schedules and strip them from depends_on so dependents still run (Widow cron offload)."""
+        raw = os.environ.get("AUTOMATION_DISABLED_SCHEDULES", "").strip()
+        if not raw:
+            return
+        disabled = {x.strip() for x in raw.split(",") if x.strip()}
+        for name in disabled:
+            if name in self.schedules:
+                self.schedules[name]["enabled"] = False
+                logger.info(
+                    "Automation schedule %s disabled (AUTOMATION_DISABLED_SCHEDULES)",
+                    name,
+                )
+            else:
+                logger.warning("AUTOMATION_DISABLED_SCHEDULES: unknown phase %s", name)
+        for sched_name, sched in self.schedules.items():
+            deps = list(sched.get("depends_on") or [])
+            if not deps:
+                continue
+            new_deps = [d for d in deps if d not in disabled]
+            if new_deps != deps:
+                sched["depends_on"] = new_deps
+                logger.info(
+                    "Automation: %s depends_on adjusted after disabled schedules: %s",
+                    sched_name,
+                    new_deps,
+                )
 
     def _automation_queue_depth(self) -> int:
         """Approximate pending tasks in worker queues (scheduled + governor-requested)."""
@@ -2253,11 +2287,21 @@ class AutomationManager:
             created_at=task.created_at,
             metadata=task.metadata or {},
         )
-        # 1. RSS fetch
-        try:
-            await self._execute_rss_processing(dummy)
-        except Exception as e:
-            logger.warning(f"Collection cycle RSS step failed: {e}")
+        # 1. RSS fetch (optional: Widow / cron runs collect_rss_feeds; main GPU host skips duplicate RSS)
+        skip_rss = os.environ.get("AUTOMATION_SKIP_RSS_IN_COLLECTION_CYCLE", "").lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+        if skip_rss:
+            logger.info(
+                "Collection cycle: skipping RSS (AUTOMATION_SKIP_RSS_IN_COLLECTION_CYCLE)"
+            )
+        else:
+            try:
+                await self._execute_rss_processing(dummy)
+            except Exception as e:
+                logger.warning(f"Collection cycle RSS step failed: {e}")
         # 2. Content enrichment — loop until drained or cap
         max_enrich_iters = 30
         for _ in range(max_enrich_iters):

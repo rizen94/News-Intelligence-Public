@@ -11,8 +11,8 @@ belongs and what doesn't.
 import json
 import logging
 import re
-from datetime import date, datetime, timezone
-from typing import Any, Dict, List, Optional
+from datetime import datetime, timezone
+from typing import Any
 
 from shared.database.connection import get_db_connection
 from shared.services.llm_service import LLMService, ModelType
@@ -52,7 +52,7 @@ async def review_event_coherence(
     event_id: int,
     relevance_threshold: float = 0.5,
     auto_remove: bool = True,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Review a single tracked event: ask the LLM whether each linked context
     actually belongs. Returns review results and optionally removes mismatches.
@@ -63,10 +63,13 @@ async def review_event_coherence(
 
     try:
         with conn.cursor() as cur:
-            cur.execute("""
+            cur.execute(
+                """
                 SELECT id, event_type, event_name, geographic_scope
                 FROM intelligence.tracked_events WHERE id = %s
-            """, (event_id,))
+            """,
+                (event_id,),
+            )
             ev_row = cur.fetchone()
             if not ev_row:
                 conn.close()
@@ -76,12 +79,15 @@ async def review_event_coherence(
             event_type = ev_row[1]
             event_scope = ev_row[3] or ""
 
-            cur.execute("""
+            cur.execute(
+                """
                 SELECT ec.id, ec.developments, ec.analysis
                 FROM intelligence.event_chronicles ec
                 WHERE ec.event_id = %s
                 ORDER BY ec.update_date DESC LIMIT 1
-            """, (event_id,))
+            """,
+                (event_id,),
+            )
             chron_row = cur.fetchone()
             if not chron_row:
                 conn.close()
@@ -93,19 +99,21 @@ async def review_event_coherence(
             event_summary = analysis.get("summary", "") if isinstance(analysis, dict) else ""
 
             context_ids = [
-                d["context_id"] for d in developments
-                if isinstance(d, dict) and d.get("context_id")
+                d["context_id"] for d in developments if isinstance(d, dict) and d.get("context_id")
             ]
             if not context_ids:
                 conn.close()
                 return {"event_id": event_id, "reviewed": 0, "removed": 0}
 
             placeholders = ",".join(["%s"] * len(context_ids))
-            cur.execute(f"""
+            cur.execute(
+                f"""
                 SELECT id, title, LEFT(content, 300) as snippet
                 FROM intelligence.contexts
                 WHERE id IN ({placeholders})
-            """, tuple(context_ids))
+            """,
+                tuple(context_ids),
+            )
             ctx_rows = cur.fetchall()
 
         conn.close()
@@ -115,12 +123,15 @@ async def review_event_coherence(
         return {"error": str(e)}
 
     if len(ctx_rows) < 2:
-        return {"event_id": event_id, "reviewed": len(ctx_rows), "removed": 0,
-                "message": "Too few contexts to review"}
+        return {
+            "event_id": event_id,
+            "reviewed": len(ctx_rows),
+            "removed": 0,
+            "message": "Too few contexts to review",
+        }
 
     articles_text = "\n".join(
-        f"ID={r[0]} | {r[1] or '(no title)'} | {_strip_html(r[2] or '')}"
-        for r in ctx_rows
+        f"ID={r[0]} | {r[1] or '(no title)'} | {_strip_html(r[2] or '')}" for r in ctx_rows
     )
 
     prompt = COHERENCE_PROMPT.format(
@@ -140,8 +151,12 @@ async def review_event_coherence(
 
     reviews = _parse_reviews(raw)
     if not reviews:
-        return {"event_id": event_id, "reviewed": 0, "removed": 0,
-                "message": "LLM returned no parseable reviews"}
+        return {
+            "event_id": event_id,
+            "reviewed": 0,
+            "removed": 0,
+            "message": "LLM returned no parseable reviews",
+        }
 
     irrelevant_ids = []
     review_details = []
@@ -155,13 +170,15 @@ async def review_event_coherence(
             continue
 
         is_match = relevant and confidence >= relevance_threshold
-        review_details.append({
-            "context_id": cid,
-            "relevant": relevant,
-            "confidence": confidence,
-            "reason": reason,
-            "kept": is_match,
-        })
+        review_details.append(
+            {
+                "context_id": cid,
+                "relevant": relevant,
+                "confidence": confidence,
+                "reason": reason,
+                "kept": is_match,
+            }
+        )
         if not is_match:
             irrelevant_ids.append(cid)
 
@@ -172,7 +189,8 @@ async def review_event_coherence(
             try:
                 with conn.cursor() as cur:
                     new_devs = [
-                        d for d in developments
+                        d
+                        for d in developments
                         if not (isinstance(d, dict) and d.get("context_id") in irrelevant_ids)
                     ]
 
@@ -182,19 +200,25 @@ async def review_event_coherence(
                     new_analysis["last_coherence_review"] = datetime.now(timezone.utc).isoformat()
                     new_analysis["contexts_removed"] = irrelevant_ids
 
-                    cur.execute("""
+                    cur.execute(
+                        """
                         UPDATE intelligence.event_chronicles
                         SET developments = %s, analysis = %s
                         WHERE id = %s
-                    """, (json.dumps(new_devs), json.dumps(new_analysis), chronicle_id))
+                    """,
+                        (json.dumps(new_devs), json.dumps(new_analysis), chronicle_id),
+                    )
                     removed = len(irrelevant_ids)
 
                     if kept_count < 2:
-                        cur.execute("""
+                        cur.execute(
+                            """
                             UPDATE intelligence.tracked_events
                             SET end_date = CURRENT_DATE, updated_at = NOW()
                             WHERE id = %s AND end_date IS NULL
-                        """, (event_id,))
+                        """,
+                            (event_id,),
+                        )
                         logger.info(f"Event {event_id} closed — too few contexts after review")
 
                 conn.commit()
@@ -220,7 +244,7 @@ async def review_event_coherence(
 async def review_all_open_events(
     relevance_threshold: float = 0.5,
     auto_remove: bool = True,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Review all open (no end_date) tracked events."""
     conn = get_db_connection()
     if not conn:
@@ -256,10 +280,10 @@ async def review_all_open_events(
 
 
 def _strip_html(text: str) -> str:
-    return re.sub(r'<[^>]+>', '', text).strip()
+    return re.sub(r"<[^>]+>", "", text).strip()
 
 
-def _parse_reviews(raw: str) -> List[Dict[str, Any]]:
+def _parse_reviews(raw: str) -> list[dict[str, Any]]:
     text = raw.strip()
     if "```" in text:
         for part in text.split("```"):
@@ -274,7 +298,7 @@ def _parse_reviews(raw: str) -> List[Dict[str, Any]]:
     if start == -1 or end == -1 or end <= start:
         return []
     try:
-        data = json.loads(text[start:end + 1])
+        data = json.loads(text[start : end + 1])
         return data if isinstance(data, list) else []
     except json.JSONDecodeError:
         return []

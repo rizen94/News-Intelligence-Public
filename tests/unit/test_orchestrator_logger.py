@@ -2,13 +2,12 @@
 
 import json
 import logging
-import pytest
 
 from domains.finance.orchestrator_logger import (
-    log_event,
+    EVAL_PASSED,
     TASK_ACCEPTED,
     WORKER_DISPATCHED,
-    EVAL_PASSED,
+    log_event,
 )
 
 

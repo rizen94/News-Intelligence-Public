@@ -39,7 +39,10 @@ import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import WarningIcon from '@mui/icons-material/Warning';
 import AutoStoriesIcon from '@mui/icons-material/AutoStories';
 import apiService from '../../services/apiService';
-import ProvenancePanel, { timelineProvenanceRows } from '../../components/ProvenancePanel/ProvenancePanel';
+import ProvenancePanel, {
+  timelineProvenanceRows,
+} from '../../components/ProvenancePanel/ProvenancePanel';
+import { usePublicDemoMode } from '../../contexts/PublicDemoContext';
 
 interface TimelineEvent {
   id: number;
@@ -128,6 +131,7 @@ const EVENT_TYPE_ICONS: Record<string, React.ReactNode> = {
 const StoryTimeline: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const { domain } = useDomainRoute();
+  const { readonly: demoReadonly } = usePublicDemoMode();
   const [timeline, setTimeline] = useState<TimelineData | null>(null);
   const [narrative, setNarrative] = useState<string>('');
   const [loading, setLoading] = useState(true);
@@ -135,7 +139,9 @@ const StoryTimeline: React.FC = () => {
   const [narrativeJobPending, setNarrativeJobPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [expandedEvents, setExpandedEvents] = useState<Set<number>>(new Set());
-  const [narrativeMode, setNarrativeMode] = useState<'chronological' | 'briefing'>('chronological');
+  const [narrativeMode, setNarrativeMode] = useState<
+    'chronological' | 'briefing'
+  >('chronological');
 
   const loadTimeline = useCallback(async () => {
     if (!id || !domain) return;
@@ -163,7 +169,11 @@ const StoryTimeline: React.FC = () => {
     if (!id || !domain) return;
     setNarrativeLoading(true);
     try {
-      const result = await apiService.getStorylineNarrative(id, narrativeMode, domain);
+      const result = await apiService.getStorylineNarrative(
+        id,
+        narrativeMode,
+        domain
+      );
       if (result?.success && result.data) {
         setNarrative(result.data.narrative || result.data.briefing || '');
         setNarrativeJobPending(!!result.data.job_pending);
@@ -200,7 +210,9 @@ const StoryTimeline: React.FC = () => {
     });
   };
 
-  const milestoneSet = new Set(timeline?.milestones?.map(m => m.event_id) || []);
+  const milestoneSet = new Set(
+    timeline?.milestones?.map(m => m.event_id) || []
+  );
   const gapAfterEvent = new Map(
     (timeline?.gaps || []).map(g => [g.after_event_id, g])
   );
@@ -216,7 +228,7 @@ const StoryTimeline: React.FC = () => {
   if (error || !timeline) {
     return (
       <Box sx={{ p: 3 }}>
-        <Alert severity="error">{error || 'No timeline data available'}</Alert>
+        <Alert severity='error'>{error || 'No timeline data available'}</Alert>
       </Box>
     );
   }
@@ -232,7 +244,11 @@ const StoryTimeline: React.FC = () => {
         narrativeMode === 'briefing'
           ? 'timeline_narrative_briefing'
           : 'timeline_narrative_chronological';
-      const res = await apiService.enqueueStorylineRefinement(id, jobType, domain);
+      const res = await apiService.enqueueStorylineRefinement(
+        id,
+        jobType,
+        domain
+      );
       if (res && (res as { success?: boolean }).success !== false) {
         setNarrativeJobPending(true);
       }
@@ -245,23 +261,23 @@ const StoryTimeline: React.FC = () => {
     <Box sx={{ maxWidth: 900, mx: 'auto', p: 3 }}>
       {domain && id && (
         <ProvenancePanel
-          title="Timeline provenance"
-          subtitle="Built from public.chronological_events for this storyline"
+          title='Timeline provenance'
+          subtitle='Built from public.chronological_events for this storyline'
           rows={timelineProvenanceRows(timeline, domain, id)}
         />
       )}
       {/* Header */}
       <Paper sx={{ p: 3, mb: 3 }}>
-        <Typography variant="h4" gutterBottom>
+        <Typography variant='h4' gutterBottom>
           Story Timeline
         </Typography>
         <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', mb: 2 }}>
-          <Chip label={`${timeline.event_count} events`} color="primary" />
-          <Chip label={`${timeline.source_count} sources`} color="secondary" />
+          <Chip label={`${timeline.event_count} events`} color='primary' />
+          <Chip label={`${timeline.source_count} sources`} color='secondary' />
           {timeline.time_span && (
             <Chip
               label={`${timeline.time_span.days} days (${timeline.time_span.start} — ${timeline.time_span.end})`}
-              variant="outlined"
+              variant='outlined'
             />
           )}
         </Box>
@@ -269,7 +285,7 @@ const StoryTimeline: React.FC = () => {
         {/* Milestone summary */}
         {timeline.milestones.length > 0 && (
           <Box sx={{ mt: 2 }}>
-            <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+            <Typography variant='subtitle2' color='text.secondary' gutterBottom>
               Key Milestones
             </Typography>
             <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
@@ -277,9 +293,15 @@ const StoryTimeline: React.FC = () => {
                 <Chip
                   key={i}
                   label={m.label}
-                  size="small"
-                  variant="outlined"
-                  color={m.type === 'resolution' ? 'success' : m.type === 'escalation' ? 'warning' : 'info'}
+                  size='small'
+                  variant='outlined'
+                  color={
+                    m.type === 'resolution'
+                      ? 'success'
+                      : m.type === 'escalation'
+                      ? 'warning'
+                      : 'info'
+                  }
                 />
               ))}
             </Box>
@@ -288,9 +310,12 @@ const StoryTimeline: React.FC = () => {
       </Paper>
 
       {eventsEmpty && (
-        <Alert severity="info" sx={{ mb: 3 }}>
-          No chronological events are linked to this storyline yet (or all rows are merged as duplicates).
-          {timeline.merged_duplicate_events_count ? ` ${timeline.merged_duplicate_events_count} merged duplicate row(s) exist in the database.` : ''}{' '}
+        <Alert severity='info' sx={{ mb: 3 }}>
+          No chronological events are linked to this storyline yet (or all rows
+          are merged as duplicates).
+          {timeline.merged_duplicate_events_count
+            ? ` ${timeline.merged_duplicate_events_count} merged duplicate row(s) exist in the database.`
+            : ''}{' '}
           <Link component={RouterLink} to={`/${domain}/storylines/${id}`}>
             Back to storyline
           </Link>
@@ -301,58 +326,63 @@ const StoryTimeline: React.FC = () => {
       <Paper sx={{ p: 3, mb: 3 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
           <AutoStoriesIcon />
-          <Typography variant="h6">Narrative</Typography>
+          <Typography variant='h6'>Narrative</Typography>
           <ToggleButtonGroup
             value={narrativeMode}
             exclusive
             onChange={(_, v) => v && setNarrativeMode(v)}
-            size="small"
+            size='small'
           >
-            <ToggleButton value="chronological">Full</ToggleButton>
-            <ToggleButton value="briefing">Briefing</ToggleButton>
+            <ToggleButton value='chronological'>Full</ToggleButton>
+            <ToggleButton value='briefing'>Briefing</ToggleButton>
           </ToggleButtonGroup>
           <Button
-            variant="outlined"
-            size="small"
+            variant='outlined'
+            size='small'
             onClick={() => loadNarrativeFromStore()}
             disabled={narrativeLoading}
           >
             Refresh from store
           </Button>
-          <Button
-            variant="contained"
-            size="small"
-            onClick={queueNarrativeRefresh}
-            disabled={eventsEmpty || narrativeLoading}
-          >
-            {narrativeLoading ? 'Working…' : 'Queue refresh'}
-          </Button>
-          {narrativeJobPending && (
-            <Chip size="small" color="warning" label="Queued / processing" />
+          {!demoReadonly && (
+            <Button
+              variant='contained'
+              size='small'
+              onClick={queueNarrativeRefresh}
+              disabled={eventsEmpty || narrativeLoading}
+            >
+              {narrativeLoading ? 'Working…' : 'Queue refresh'}
+            </Button>
+          )}
+          {narrativeJobPending && !demoReadonly && (
+            <Chip size='small' color='warning' label='Queued / processing' />
           )}
         </Box>
         {eventsEmpty && (
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-            Add chronological events to this storyline before queueing a new narrative (workers need timeline data).
+          <Typography variant='body2' color='text.secondary' sx={{ mb: 2 }}>
+            Add chronological events to this storyline before queueing a new
+            narrative (workers need timeline data).
           </Typography>
         )}
         {!eventsEmpty && (
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-            Shows the latest stored narrative. Requesting a refresh adds a background job — no on-demand LLM on this page.
+          <Typography variant='body2' color='text.secondary' sx={{ mb: 2 }}>
+            Shows the latest stored narrative. Requesting a refresh adds a
+            background job — no on-demand LLM on this page.
           </Typography>
         )}
         {narrativeLoading && <LinearProgress sx={{ mb: 2 }} />}
         {narrative ? (
           <Typography
-            variant="body1"
+            variant='body1'
             sx={{ whiteSpace: 'pre-wrap', lineHeight: 1.8 }}
           >
             {narrative}
           </Typography>
         ) : (
           !narrativeLoading && (
-            <Typography variant="body2" color="text.secondary">
-              No stored narrative for this mode yet. Queue a refresh to generate in the background.
+            <Typography variant='body2' color='text.secondary'>
+              No stored narrative for this mode yet. Queue a refresh to generate
+              in the background.
             </Typography>
           )
         )}
@@ -360,161 +390,253 @@ const StoryTimeline: React.FC = () => {
 
       {/* Timeline */}
       {!eventsEmpty && (
-      <Timeline position="right">
-        {timeline.events.map((evt) => {
-          const isMilestone = milestoneSet.has(evt.id);
-          const gap = gapAfterEvent.get(evt.id);
-          const color = EVENT_TYPE_COLORS[evt.event_type] || '#757575';
-          const expanded = expandedEvents.has(evt.id);
+        <Timeline position='right'>
+          {timeline.events.map(evt => {
+            const isMilestone = milestoneSet.has(evt.id);
+            const gap = gapAfterEvent.get(evt.id);
+            const color = EVENT_TYPE_COLORS[evt.event_type] || '#757575';
+            const expanded = expandedEvents.has(evt.id);
 
-          return (
-            <React.Fragment key={evt.id}>
-              <TimelineItem>
-                <TimelineOppositeContent sx={{ flex: 0.25, pt: 2 }}>
-                  <Typography variant="body2" color="text.secondary">
-                    {evt.event_date || 'Date unknown'}
-                  </Typography>
-                  {evt.date_precision !== 'exact' && evt.date_precision !== 'unknown' && (
-                    <Typography variant="caption" color="text.disabled">
-                      ~{evt.date_precision}
+            return (
+              <React.Fragment key={evt.id}>
+                <TimelineItem>
+                  <TimelineOppositeContent sx={{ flex: 0.25, pt: 2 }}>
+                    <Typography variant='body2' color='text.secondary'>
+                      {evt.event_date || 'Date unknown'}
                     </Typography>
-                  )}
-                </TimelineOppositeContent>
+                    {evt.date_precision !== 'exact' &&
+                      evt.date_precision !== 'unknown' && (
+                        <Typography variant='caption' color='text.disabled'>
+                          ~{evt.date_precision}
+                        </Typography>
+                      )}
+                  </TimelineOppositeContent>
 
-                <TimelineSeparator>
-                  <TimelineDot
-                    sx={{
-                      bgcolor: color,
-                      width: isMilestone ? 20 : 14,
-                      height: isMilestone ? 20 : 14,
-                      boxShadow: isMilestone ? `0 0 8px ${color}` : 'none',
-                    }}
-                  >
-                    {EVENT_TYPE_ICONS[evt.event_type] || <ArticleIcon sx={{ fontSize: 12 }} />}
-                  </TimelineDot>
-                  <TimelineConnector />
-                </TimelineSeparator>
+                  <TimelineSeparator>
+                    <TimelineDot
+                      sx={{
+                        bgcolor: color,
+                        width: isMilestone ? 20 : 14,
+                        height: isMilestone ? 20 : 14,
+                        boxShadow: isMilestone ? `0 0 8px ${color}` : 'none',
+                      }}
+                    >
+                      {EVENT_TYPE_ICONS[evt.event_type] || (
+                        <ArticleIcon sx={{ fontSize: 12 }} />
+                      )}
+                    </TimelineDot>
+                    <TimelineConnector />
+                  </TimelineSeparator>
 
-                <TimelineContent sx={{ pb: 3 }}>
-                  <Card
-                    variant="outlined"
-                    sx={{
-                      borderLeft: `4px solid ${color}`,
-                      ...(isMilestone && { boxShadow: 2 }),
-                    }}
-                  >
-                    <CardContent sx={{ pb: '8px !important' }}>
-                      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                        <Box sx={{ flex: 1 }}>
-                          <Typography variant="subtitle1" fontWeight={isMilestone ? 700 : 500}>
-                            {evt.title}
-                          </Typography>
-                          <Box sx={{ display: 'flex', gap: 0.5, mt: 0.5, flexWrap: 'wrap' }}>
-                            <Chip label={evt.event_type.replace('_', ' ')} size="small" sx={{ bgcolor: color, color: '#fff', fontSize: '0.7rem' }} />
-                            {evt.extraction_method && (
+                  <TimelineContent sx={{ pb: 3 }}>
+                    <Card
+                      variant='outlined'
+                      sx={{
+                        borderLeft: `4px solid ${color}`,
+                        ...(isMilestone && { boxShadow: 2 }),
+                      }}
+                    >
+                      <CardContent sx={{ pb: '8px !important' }}>
+                        <Box
+                          sx={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'flex-start',
+                          }}
+                        >
+                          <Box sx={{ flex: 1 }}>
+                            <Typography
+                              variant='subtitle1'
+                              fontWeight={isMilestone ? 700 : 500}
+                            >
+                              {evt.title}
+                            </Typography>
+                            <Box
+                              sx={{
+                                display: 'flex',
+                                gap: 0.5,
+                                mt: 0.5,
+                                flexWrap: 'wrap',
+                              }}
+                            >
                               <Chip
-                                label={`via ${evt.extraction_method}`}
-                                size="small"
-                                variant="outlined"
-                                title="How this event was extracted into the timeline"
+                                label={evt.event_type.replace('_', ' ')}
+                                size='small'
+                                sx={{
+                                  bgcolor: color,
+                                  color: '#fff',
+                                  fontSize: '0.7rem',
+                                }}
                               />
+                              {evt.extraction_method && (
+                                <Chip
+                                  label={`via ${evt.extraction_method}`}
+                                  size='small'
+                                  variant='outlined'
+                                  title='How this event was extracted into the timeline'
+                                />
+                              )}
+                              {evt.extraction_confidence != null && (
+                                <Chip
+                                  label={`conf ${Math.round(
+                                    evt.extraction_confidence * 100
+                                  )}%`}
+                                  size='small'
+                                  variant='outlined'
+                                />
+                              )}
+                              {evt.source_article_id && domain && (
+                                <Button
+                                  component={RouterLink}
+                                  to={`/${domain}/articles/${evt.source_article_id}`}
+                                  size='small'
+                                  variant='outlined'
+                                  sx={{
+                                    minHeight: 24,
+                                    py: 0,
+                                    textTransform: 'none',
+                                  }}
+                                >
+                                  Article #{evt.source_article_id}
+                                </Button>
+                              )}
+                              {evt.is_ongoing && (
+                                <Chip
+                                  label='ongoing'
+                                  size='small'
+                                  color='warning'
+                                  variant='outlined'
+                                />
+                              )}
+                              {evt.source_count > 1 && (
+                                <Chip
+                                  label={`${evt.source_count} sources`}
+                                  size='small'
+                                  color='info'
+                                  variant='outlined'
+                                />
+                              )}
+                              {evt.location && evt.location !== 'unknown' && (
+                                <Chip
+                                  label={evt.location}
+                                  size='small'
+                                  variant='outlined'
+                                />
+                              )}
+                            </Box>
+                          </Box>
+                          <IconButton
+                            size='small'
+                            onClick={() => toggleEvent(evt.id)}
+                          >
+                            {expanded ? <ExpandLessIcon /> : <ExpandMoreIcon />}
+                          </IconButton>
+                        </Box>
+
+                        <Collapse in={expanded}>
+                          <Box sx={{ mt: 2 }}>
+                            <Typography
+                              variant='caption'
+                              color='text.secondary'
+                              display='block'
+                              sx={{ mb: 1 }}
+                            >
+                              Event row id: {evt.id}
+                              {evt.date_precision &&
+                                ` · date precision: ${evt.date_precision}`}
+                              {evt.timeline_row_role &&
+                                ` · row role: ${evt.timeline_row_role}`}
+                              {evt.canonical_event_id != null &&
+                                ` · canonical_event_id: ${evt.canonical_event_id}`}
+                            </Typography>
+                            {evt.description && (
+                              <Typography variant='body2' sx={{ mb: 1 }}>
+                                {evt.description}
+                              </Typography>
                             )}
-                            {evt.extraction_confidence != null && (
-                              <Chip
-                                label={`conf ${Math.round(evt.extraction_confidence * 100)}%`}
-                                size="small"
-                                variant="outlined"
-                              />
+                            {evt.key_actors && evt.key_actors.length > 0 && (
+                              <Box sx={{ mb: 1 }}>
+                                <Typography
+                                  variant='caption'
+                                  color='text.secondary'
+                                >
+                                  Key Actors:
+                                </Typography>
+                                <Box
+                                  sx={{
+                                    display: 'flex',
+                                    gap: 0.5,
+                                    flexWrap: 'wrap',
+                                    mt: 0.5,
+                                  }}
+                                >
+                                  {evt.key_actors.map((a, i) => (
+                                    <Chip
+                                      key={i}
+                                      label={`${a.name}${
+                                        a.role ? ` (${a.role})` : ''
+                                      }`}
+                                      size='small'
+                                      variant='outlined'
+                                    />
+                                  ))}
+                                </Box>
+                              </Box>
                             )}
-                            {evt.source_article_id && domain && (
-                              <Button
-                                component={RouterLink}
-                                to={`/${domain}/articles/${evt.source_article_id}`}
-                                size="small"
-                                variant="outlined"
-                                sx={{ minHeight: 24, py: 0, textTransform: 'none' }}
-                              >
-                                Article #{evt.source_article_id}
-                              </Button>
-                            )}
-                            {evt.is_ongoing && <Chip label="ongoing" size="small" color="warning" variant="outlined" />}
-                            {evt.source_count > 1 && (
-                              <Chip label={`${evt.source_count} sources`} size="small" color="info" variant="outlined" />
-                            )}
-                            {evt.location && evt.location !== 'unknown' && (
-                              <Chip label={evt.location} size="small" variant="outlined" />
+                            {evt.source && (
+                              <>
+                                <Divider sx={{ my: 1 }} />
+                                <Typography
+                                  variant='caption'
+                                  color='text.secondary'
+                                >
+                                  Source: {evt.source.domain} —{' '}
+                                  {evt.source.article_title}
+                                  {evt.source.published_at &&
+                                    ` (${new Date(
+                                      evt.source.published_at
+                                    ).toLocaleDateString()})`}
+                                </Typography>
+                              </>
                             )}
                           </Box>
-                        </Box>
-                        <IconButton size="small" onClick={() => toggleEvent(evt.id)}>
-                          {expanded ? <ExpandLessIcon /> : <ExpandMoreIcon />}
-                        </IconButton>
-                      </Box>
-
-                      <Collapse in={expanded}>
-                        <Box sx={{ mt: 2 }}>
-                          <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1 }}>
-                            Event row id: {evt.id}
-                            {evt.date_precision && ` · date precision: ${evt.date_precision}`}
-                            {evt.timeline_row_role && ` · row role: ${evt.timeline_row_role}`}
-                            {evt.canonical_event_id != null && ` · canonical_event_id: ${evt.canonical_event_id}`}
-                          </Typography>
-                          {evt.description && (
-                            <Typography variant="body2" sx={{ mb: 1 }}>
-                              {evt.description}
-                            </Typography>
-                          )}
-                          {evt.key_actors && evt.key_actors.length > 0 && (
-                            <Box sx={{ mb: 1 }}>
-                              <Typography variant="caption" color="text.secondary">Key Actors:</Typography>
-                              <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', mt: 0.5 }}>
-                                {evt.key_actors.map((a, i) => (
-                                  <Chip key={i} label={`${a.name}${a.role ? ` (${a.role})` : ''}`} size="small" variant="outlined" />
-                                ))}
-                              </Box>
-                            </Box>
-                          )}
-                          {evt.source && (
-                            <>
-                              <Divider sx={{ my: 1 }} />
-                              <Typography variant="caption" color="text.secondary">
-                                Source: {evt.source.domain} — {evt.source.article_title}
-                                {evt.source.published_at && ` (${new Date(evt.source.published_at).toLocaleDateString()})`}
-                              </Typography>
-                            </>
-                          )}
-                        </Box>
-                      </Collapse>
-                    </CardContent>
-                  </Card>
-                </TimelineContent>
-              </TimelineItem>
-
-              {/* Gap indicator */}
-              {gap && (
-                <TimelineItem>
-                  <TimelineOppositeContent sx={{ flex: 0.25 }} />
-                  <TimelineSeparator>
-                    <TimelineDot sx={{ bgcolor: 'transparent', border: '2px dashed #bbb', boxShadow: 'none' }} />
-                    <TimelineConnector sx={{ borderStyle: 'dashed' }} />
-                  </TimelineSeparator>
-                  <TimelineContent>
-                    <Tooltip title={`${gap.from_date} to ${gap.to_date}`}>
-                      <Chip
-                        label={`${gap.gap_days}-day gap`}
-                        size="small"
-                        variant="outlined"
-                        color="default"
-                        sx={{ fontStyle: 'italic' }}
-                      />
-                    </Tooltip>
+                        </Collapse>
+                      </CardContent>
+                    </Card>
                   </TimelineContent>
                 </TimelineItem>
-              )}
-            </React.Fragment>
-          );
-        })}
-      </Timeline>
+
+                {/* Gap indicator */}
+                {gap && (
+                  <TimelineItem>
+                    <TimelineOppositeContent sx={{ flex: 0.25 }} />
+                    <TimelineSeparator>
+                      <TimelineDot
+                        sx={{
+                          bgcolor: 'transparent',
+                          border: '2px dashed #bbb',
+                          boxShadow: 'none',
+                        }}
+                      />
+                      <TimelineConnector sx={{ borderStyle: 'dashed' }} />
+                    </TimelineSeparator>
+                    <TimelineContent>
+                      <Tooltip title={`${gap.from_date} to ${gap.to_date}`}>
+                        <Chip
+                          label={`${gap.gap_days}-day gap`}
+                          size='small'
+                          variant='outlined'
+                          color='default'
+                          sx={{ fontStyle: 'italic' }}
+                        />
+                      </Tooltip>
+                    </TimelineContent>
+                  </TimelineItem>
+                )}
+              </React.Fragment>
+            );
+          })}
+        </Timeline>
       )}
     </Box>
   );

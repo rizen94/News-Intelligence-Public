@@ -3,8 +3,21 @@
  * Provides domain context throughout the application for v5.0 multi-domain architecture
  */
 
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { getCurrentDomain, setCurrentDomain, isValidDomain, AVAILABLE_DOMAINS, DomainKey, Domain } from '../utils/domainHelper';
+import React, {
+  createContext,
+  useContext,
+  useState,
+  useEffect,
+  ReactNode,
+} from 'react';
+import {
+  getCurrentDomain,
+  setCurrentDomain,
+  isValidDomain,
+  AVAILABLE_DOMAINS,
+  DomainKey,
+  Domain,
+} from '../utils/domainHelper';
 
 interface DomainContextType {
   domain: DomainKey;
@@ -28,7 +41,9 @@ export const DomainProvider: React.FC<DomainProviderProps> = ({ children }) => {
       setDomainState(newDomain);
       setCurrentDomain(newDomain);
       // Trigger a custom event so components can react to domain changes
-      window.dispatchEvent(new CustomEvent('domainChanged', { detail: { domain: newDomain } }));
+      window.dispatchEvent(
+        new CustomEvent('domainChanged', { detail: { domain: newDomain } })
+      );
     } else {
       console.warn(`Invalid domain: ${newDomain}`);
     }
@@ -47,12 +62,16 @@ export const DomainProvider: React.FC<DomainProviderProps> = ({ children }) => {
       }
     };
 
-    // eslint-disable-next-line no-undef
-    window.addEventListener('domainChanged', handleDomainChange as EventListener);
+    window.addEventListener(
+      'domainChanged',
+      handleDomainChange as (event: Event) => void
+    );
 
     return () => {
-      // eslint-disable-next-line no-undef
-      window.removeEventListener('domainChanged', handleDomainChange as EventListener);
+      window.removeEventListener(
+        'domainChanged',
+        handleDomainChange as (event: Event) => void
+      );
     };
   }, [domain]);
 
@@ -72,9 +91,7 @@ export const DomainProvider: React.FC<DomainProviderProps> = ({ children }) => {
   };
 
   return (
-    <DomainContext.Provider value={value}>
-      {children}
-    </DomainContext.Provider>
+    <DomainContext.Provider value={value}>{children}</DomainContext.Provider>
   );
 };
 

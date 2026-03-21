@@ -45,8 +45,20 @@ import { sanitizeSnippet } from '../../utils/sanitizeSnippet';
 type SynthesisResponse = Record<string, any> | null;
 type QualityResponse = Record<string, any> | null;
 
-function TabPanel({ children, value, index }: { children: React.ReactNode; value: number; index: number }) {
-  return <div hidden={value !== index}>{value === index && <Box sx={{ py: 3 }}>{children}</Box>}</div>;
+function TabPanel({
+  children,
+  value,
+  index,
+}: {
+  children: React.ReactNode;
+  value: number;
+  index: number;
+}) {
+  return (
+    <div hidden={value !== index}>
+      {value === index && <Box sx={{ py: 3 }}>{children}</Box>}
+    </div>
+  );
 }
 
 const SynthesizedView: React.FC = () => {
@@ -65,23 +77,30 @@ const SynthesizedView: React.FC = () => {
     void loadQuality();
   }, [domain, id, depth]);
 
-  const parseSectionsFromContent = (content: string): Array<{ title: string; content: string }> => {
+  const parseSectionsFromContent = (
+    content: string
+  ): Array<{ title: string; content: string }> => {
     if (!content) return [];
     return content
       .split(/^## /m)
       .slice(1)
-      .map((part) => {
+      .map(part => {
         const lines = part.split('\n');
-        return { title: lines[0]?.trim() || 'Section', content: lines.slice(1).join('\n').trim() };
+        return {
+          title: lines[0]?.trim() || 'Section',
+          content: lines.slice(1).join('\n').trim(),
+        };
       });
   };
 
-  const loadSynthesis = async(forceRegenerate = false) => {
+  const loadSynthesis = async (forceRegenerate = false) => {
     setLoading(true);
     setError(null);
     try {
       if (!forceRegenerate) {
-        const cachedResponse = await fetch(`/api/${domain}/synthesis/storyline/${id}/cached`);
+        const cachedResponse = await fetch(
+          `/api/${domain}/synthesis/storyline/${id}/cached`
+        );
         if (cachedResponse.ok) {
           const cachedData = await cachedResponse.json();
           if (cachedData.has_synthesis && cachedData.content) {
@@ -104,7 +123,12 @@ const SynthesizedView: React.FC = () => {
       const response = await fetch(`/api/${domain}/synthesis/storyline/${id}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ depth, include_terms: true, include_timeline: true, format: 'json' }),
+        body: JSON.stringify({
+          depth,
+          include_terms: true,
+          include_timeline: true,
+          format: 'json',
+        }),
       });
       if (!response.ok) throw new Error(`Synthesis failed: ${response.status}`);
       setSynthesis(await response.json());
@@ -115,7 +139,7 @@ const SynthesizedView: React.FC = () => {
     }
   };
 
-  const loadQuality = async() => {
+  const loadQuality = async () => {
     try {
       const response = await fetch(`/api/${domain}/synthesis/quality/${id}`);
       if (response.ok) setQuality(await response.json());
@@ -124,8 +148,10 @@ const SynthesizedView: React.FC = () => {
     }
   };
 
-  const downloadMarkdown = async() => {
-    const response = await fetch(`/api/${domain}/synthesis/storyline/${id}/markdown?depth=${depth}`);
+  const downloadMarkdown = async () => {
+    const response = await fetch(
+      `/api/${domain}/synthesis/storyline/${id}/markdown?depth=${depth}`
+    );
     if (!response.ok) return;
     const data = await response.json();
     const blob = new Blob([data.markdown], { type: 'text/markdown' });
@@ -138,43 +164,138 @@ const SynthesizedView: React.FC = () => {
   };
 
   if (loading) {
-    return <Container maxWidth="lg" sx={{ py: 4 }}><Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}><CircularProgress size={60} /><Typography variant="h6">Synthesizing Content...</Typography></Box></Container>;
+    return (
+      <Container maxWidth='lg' sx={{ py: 4 }}>
+        <Box
+          sx={{
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: 2,
+          }}
+        >
+          <CircularProgress size={60} />
+          <Typography variant='h6'>Synthesizing Content...</Typography>
+        </Box>
+      </Container>
+    );
   }
   if (error) {
-    return <Container maxWidth="lg" sx={{ py: 4 }}><Alert severity="error" sx={{ mb: 2 }}>{error}</Alert><Button startIcon={<BackIcon />} onClick={() => navigate(-1)}>Go Back</Button></Container>;
+    return (
+      <Container maxWidth='lg' sx={{ py: 4 }}>
+        <Alert severity='error' sx={{ mb: 2 }}>
+          {error}
+        </Alert>
+        <Button startIcon={<BackIcon />} onClick={() => navigate(-1)}>
+          Go Back
+        </Button>
+      </Container>
+    );
   }
 
   return (
-    <Container maxWidth="xl" sx={{ py: 4 }}>
+    <Container maxWidth='xl' sx={{ py: 4 }}>
       <Breadcrumbs sx={{ mb: 2 }}>
-        <Link component={RouterLink} to={`/${domain}/dashboard`} underline="hover" color="inherit">{(domain || '').toUpperCase()}</Link>
-        <Link component={RouterLink} to={`/${domain}/storylines`} underline="hover" color="inherit">Storylines</Link>
-        <Typography color="text.primary">Synthesized View</Typography>
+        <Link
+          component={RouterLink}
+          to={`/${domain}/dashboard`}
+          underline='hover'
+          color='inherit'
+        >
+          {(domain || '').toUpperCase()}
+        </Link>
+        <Link
+          component={RouterLink}
+          to={`/${domain}/storylines`}
+          underline='hover'
+          color='inherit'
+        >
+          Storylines
+        </Link>
+        <Typography color='text.primary'>Synthesized View</Typography>
       </Breadcrumbs>
 
       <Paper sx={{ p: 3, mb: 3 }}>
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 2 }}>
+        <Box
+          sx={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'flex-start',
+            flexWrap: 'wrap',
+            gap: 2,
+          }}
+        >
           <Box>
-            <Typography variant="h4" component="h1" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <Typography
+              variant='h4'
+              component='h1'
+              sx={{ display: 'flex', alignItems: 'center', gap: 1 }}
+            >
               <SynthesisIcon sx={{ fontSize: 36 }} />
               {synthesis?.title || 'Synthesized Article'}
             </Typography>
-            <Box sx={{ mt: 1, display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'center' }}>
-              <Chip label={`${synthesis?.word_count || 0} words`} size="small" />
-              <Chip label={`${synthesis?.total_sources || synthesis?.source_articles?.length || 0} sources`} size="small" color="primary" />
-              <Chip label={`Quality: ${((synthesis?.quality_score || 0) * 100).toFixed(0)}%`} size="small" color={synthesis?.quality_score > 0.7 ? 'success' : 'warning'} />
-              {synthesis?.synthesized_at && <Typography variant="caption" color="text.secondary">Generated: {new Date(synthesis.synthesized_at).toLocaleString()}</Typography>}
+            <Box
+              sx={{
+                mt: 1,
+                display: 'flex',
+                gap: 1,
+                flexWrap: 'wrap',
+                alignItems: 'center',
+              }}
+            >
+              <Chip
+                label={`${synthesis?.word_count || 0} words`}
+                size='small'
+              />
+              <Chip
+                label={`${
+                  synthesis?.total_sources ||
+                  synthesis?.source_articles?.length ||
+                  0
+                } sources`}
+                size='small'
+                color='primary'
+              />
+              <Chip
+                label={`Quality: ${(
+                  (synthesis?.quality_score || 0) * 100
+                ).toFixed(0)}%`}
+                size='small'
+                color={synthesis?.quality_score > 0.7 ? 'success' : 'warning'}
+              />
+              {synthesis?.synthesized_at && (
+                <Typography variant='caption' color='text.secondary'>
+                  Generated:{' '}
+                  {new Date(synthesis.synthesized_at).toLocaleString()}
+                </Typography>
+              )}
             </Box>
           </Box>
           <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-            <ToggleButtonGroup value={depth} exclusive onChange={(_, val) => val && setDepth(val)} size="small">
-              <ToggleButton value="brief">Brief</ToggleButton>
-              <ToggleButton value="standard">Standard</ToggleButton>
-              <ToggleButton value="comprehensive">Comprehensive</ToggleButton>
+            <ToggleButtonGroup
+              value={depth}
+              exclusive
+              onChange={(_, val) => val && setDepth(val)}
+              size='small'
+            >
+              <ToggleButton value='brief'>Brief</ToggleButton>
+              <ToggleButton value='standard'>Standard</ToggleButton>
+              <ToggleButton value='comprehensive'>Comprehensive</ToggleButton>
             </ToggleButtonGroup>
-            <IconButton onClick={() => loadSynthesis(true)} title="Regenerate"><RefreshIcon /></IconButton>
-            <IconButton onClick={downloadMarkdown} title="Download Markdown"><DownloadIcon /></IconButton>
-            <IconButton onClick={() => navigator.clipboard.writeText(synthesis?.summary || '')} title="Copy Summary"><CopyIcon /></IconButton>
+            <IconButton onClick={() => loadSynthesis(true)} title='Regenerate'>
+              <RefreshIcon />
+            </IconButton>
+            <IconButton onClick={downloadMarkdown} title='Download Markdown'>
+              <DownloadIcon />
+            </IconButton>
+            <IconButton
+              onClick={() =>
+                navigator.clipboard.writeText(synthesis?.summary || '')
+              }
+              title='Copy Summary'
+            >
+              <CopyIcon />
+            </IconButton>
           </Box>
         </Box>
       </Paper>
@@ -182,22 +303,43 @@ const SynthesizedView: React.FC = () => {
       <Grid container spacing={3}>
         <Grid item xs={12} md={8}>
           <Paper sx={{ p: 3, mb: 3 }}>
-            <Typography variant="h6" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-              <ArticleIcon color="primary" /> Summary
+            <Typography
+              variant='h6'
+              gutterBottom
+              sx={{ display: 'flex', alignItems: 'center', gap: 1 }}
+            >
+              <ArticleIcon color='primary' /> Summary
             </Typography>
-            <Typography variant="body1" sx={{ lineHeight: 1.8 }}>{sanitizeSnippet(synthesis?.summary, '')}</Typography>
+            <Typography variant='body1' sx={{ lineHeight: 1.8 }}>
+              {sanitizeSnippet(synthesis?.summary, '')}
+            </Typography>
           </Paper>
           <Paper sx={{ p: 3, mb: 3 }}>
-            <Tabs value={tabValue} onChange={(_, v) => setTabValue(v)} sx={{ mb: 2 }}>
-              <Tab label="Formatted" />
-              <Tab label="Markdown" />
-              <Tab label="Raw" />
+            <Tabs
+              value={tabValue}
+              onChange={(_, v) => setTabValue(v)}
+              sx={{ mb: 2 }}
+            >
+              <Tab label='Formatted' />
+              <Tab label='Markdown' />
+              <Tab label='Raw' />
             </Tabs>
             <TabPanel value={tabValue} index={0}>
               {(synthesis?.sections || []).map((section: any, idx: number) => (
                 <Box key={idx} sx={{ mb: 4 }}>
-                  <Typography variant="h5" gutterBottom sx={{ borderBottom: 2, borderColor: 'divider', pb: 1 }}>{section.title}</Typography>
-                  <Typography variant="body1" sx={{ lineHeight: 1.8, whiteSpace: 'pre-wrap' }}>{sanitizeSnippet(section.content, '')}</Typography>
+                  <Typography
+                    variant='h5'
+                    gutterBottom
+                    sx={{ borderBottom: 2, borderColor: 'divider', pb: 1 }}
+                  >
+                    {section.title}
+                  </Typography>
+                  <Typography
+                    variant='body1'
+                    sx={{ lineHeight: 1.8, whiteSpace: 'pre-wrap' }}
+                  >
+                    {sanitizeSnippet(section.content, '')}
+                  </Typography>
                 </Box>
               ))}
             </TabPanel>
@@ -205,7 +347,12 @@ const SynthesizedView: React.FC = () => {
               <ReactMarkdown>{synthesis?.markdown || ''}</ReactMarkdown>
             </TabPanel>
             <TabPanel value={tabValue} index={2}>
-              <Typography variant="caption" sx={{ whiteSpace: 'pre-wrap', fontFamily: 'monospace' }}>{JSON.stringify(synthesis, null, 2)}</Typography>
+              <Typography
+                variant='caption'
+                sx={{ whiteSpace: 'pre-wrap', fontFamily: 'monospace' }}
+              >
+                {JSON.stringify(synthesis, null, 2)}
+              </Typography>
             </TabPanel>
           </Paper>
         </Grid>
@@ -213,29 +360,80 @@ const SynthesizedView: React.FC = () => {
         <Grid item xs={12} md={4}>
           {quality && (
             <Paper sx={{ p: 2, mb: 2 }}>
-              <Typography variant="subtitle1" sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}><QualityIcon fontSize="small" />Quality Assessment</Typography>
-              <Chip label={`Score: ${((quality.overall_score || 0) * 100).toFixed(0)}%`} size="small" />
+              <Typography
+                variant='subtitle1'
+                sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}
+              >
+                <QualityIcon fontSize='small' />
+                Quality Assessment
+              </Typography>
+              <Chip
+                label={`Score: ${((quality.overall_score || 0) * 100).toFixed(
+                  0
+                )}%`}
+                size='small'
+              />
             </Paper>
           )}
           {!!synthesis?.key_terms_explained && (
             <Paper sx={{ p: 2, mb: 2 }}>
-              <Typography variant="subtitle1" sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}><GlossaryIcon fontSize="small" />Key Terms</Typography>
-              {Object.entries(synthesis.key_terms_explained).map(([term, definition], idx) => (
-                <Accordion key={idx} disableGutters sx={{ boxShadow: 'none', '&:before': { display: 'none' } }}>
-                  <AccordionSummary expandIcon={<ExpandMoreIcon />} sx={{ px: 0 }}><Typography variant="body2" fontWeight="medium">{term}</Typography></AccordionSummary>
-                  <AccordionDetails sx={{ px: 0 }}><Typography variant="caption">{String(definition)}</Typography></AccordionDetails>
-                </Accordion>
-              ))}
+              <Typography
+                variant='subtitle1'
+                sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}
+              >
+                <GlossaryIcon fontSize='small' />
+                Key Terms
+              </Typography>
+              {Object.entries(synthesis.key_terms_explained).map(
+                ([term, definition], idx) => (
+                  <Accordion
+                    key={idx}
+                    disableGutters
+                    sx={{ boxShadow: 'none', '&:before': { display: 'none' } }}
+                  >
+                    <AccordionSummary
+                      expandIcon={<ExpandMoreIcon />}
+                      sx={{ px: 0 }}
+                    >
+                      <Typography variant='body2' fontWeight='medium'>
+                        {term}
+                      </Typography>
+                    </AccordionSummary>
+                    <AccordionDetails sx={{ px: 0 }}>
+                      <Typography variant='caption'>
+                        {String(definition)}
+                      </Typography>
+                    </AccordionDetails>
+                  </Accordion>
+                )
+              )}
             </Paper>
           )}
           {!!synthesis?.timeline?.length && (
             <Paper sx={{ p: 2, mb: 2 }}>
-              <Typography variant="subtitle1" sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}><TimelineIcon fontSize="small" />Timeline</Typography>
+              <Typography
+                variant='subtitle1'
+                sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}
+              >
+                <TimelineIcon fontSize='small' />
+                Timeline
+              </Typography>
               <List dense>
                 {synthesis.timeline.map((event: any, idx: number) => (
                   <ListItem key={idx} sx={{ alignItems: 'flex-start', px: 0 }}>
-                    <ListItemIcon sx={{ minWidth: 80 }}><Typography variant="caption" color="primary" fontWeight="bold">{event.date || '—'}</Typography></ListItemIcon>
-                    <ListItemText primary={event.event} secondary={event.source} />
+                    <ListItemIcon sx={{ minWidth: 80 }}>
+                      <Typography
+                        variant='caption'
+                        color='primary'
+                        fontWeight='bold'
+                      >
+                        {event.date || '—'}
+                      </Typography>
+                    </ListItemIcon>
+                    <ListItemText
+                      primary={event.event}
+                      secondary={event.source}
+                    />
                   </ListItem>
                 ))}
               </List>
@@ -243,12 +441,30 @@ const SynthesizedView: React.FC = () => {
           )}
           {!!synthesis?.source_articles?.length && (
             <Paper sx={{ p: 2 }}>
-              <Typography variant="subtitle1" sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}><SourceIcon fontSize="small" />Sources ({synthesis.source_articles.length})</Typography>
+              <Typography
+                variant='subtitle1'
+                sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}
+              >
+                <SourceIcon fontSize='small' />
+                Sources ({synthesis.source_articles.length})
+              </Typography>
               <List dense>
                 {synthesis.source_articles.map((article: any, idx: number) => (
                   <ListItem key={idx} sx={{ px: 0 }}>
                     <ListItemText
-                      primary={<Link href={article.url} target="_blank" rel="noopener" underline="hover">{sanitizeSnippet(article.title, `Article #${idx + 1}`)}</Link>}
+                      primary={
+                        <Link
+                          href={article.url}
+                          target='_blank'
+                          rel='noopener'
+                          underline='hover'
+                        >
+                          {sanitizeSnippet(
+                            article.title,
+                            `Article #${idx + 1}`
+                          )}
+                        </Link>
+                      }
                       secondary={article.source_name}
                     />
                   </ListItem>
@@ -260,7 +476,9 @@ const SynthesizedView: React.FC = () => {
       </Grid>
 
       <Box sx={{ mt: 3 }}>
-        <Button startIcon={<BackIcon />} onClick={() => navigate(-1)}>Back to Storyline</Button>
+        <Button startIcon={<BackIcon />} onClick={() => navigate(-1)}>
+          Back to Storyline
+        </Button>
       </Box>
     </Container>
   );

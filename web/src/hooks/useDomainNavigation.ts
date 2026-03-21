@@ -5,7 +5,11 @@
 
 import { useNavigate } from 'react-router-dom';
 import { useDomain } from '../contexts/DomainContext';
-import { isValidDomain, DomainKey, getPathAfterDomain } from '../utils/domainHelper';
+import {
+  isValidDomain,
+  DomainKey,
+  getPathAfterDomain,
+} from '../utils/domainHelper';
 
 export const useDomainNavigation = () => {
   const { domain } = useDomain();

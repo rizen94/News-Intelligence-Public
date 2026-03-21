@@ -16,19 +16,20 @@ export interface GetStorylinesParams {
 export const storylinesApi = {
   async getStorylines(
     params: GetStorylinesParams = {},
-    domain?: string,
+    domain?: string
   ): Promise<StorylineListResponse | { success: false; error: string }> {
     try {
       const domainKey = domain || getCurrentDomain();
       const apiParams: Record<string, number | string> = {};
       if (params.page !== undefined) apiParams.page = params.page;
-      if (params.page_size !== undefined) apiParams.page_size = params.page_size;
+      if (params.page_size !== undefined)
+        apiParams.page_size = params.page_size;
       else if (params.limit !== undefined) apiParams.page_size = params.limit;
       if (params.status) apiParams.status = params.status;
 
       const response = await getApi().get<StorylineListResponse>(
         `/api/${domainKey}/storylines`,
-        { params: apiParams },
+        { params: apiParams }
       );
       return response.data;
     } catch (error) {
@@ -39,24 +40,38 @@ export const storylinesApi = {
 
   async getStoryline(
     id: string,
-    domain?: string,
-  ): Promise<StorylineDetail | { success: false; error: string; statusCode?: number | null }> {
+    domain?: string
+  ): Promise<
+    | StorylineDetail
+    | { success: false; error: string; statusCode?: number | null }
+  > {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get<StorylineDetail>(
-        `/api/${domainKey}/storylines/${id}`,
+        `/api/${domainKey}/storylines/${id}`
       );
       return response.data;
     } catch (error: unknown) {
       Logger.apiError('Failed to fetch storyline', error as Error);
       let errorMessage = 'Unknown error';
       let statusCode: number | null = null;
-      const err = error as { response?: { status: number; data?: { detail?: string; message?: string } }; request?: unknown; message?: string };
+      const err = error as {
+        response?: {
+          status: number;
+          data?: { detail?: string; message?: string };
+        };
+        request?: unknown;
+        message?: string;
+      };
       if (err.response) {
         statusCode = err.response.status;
-        errorMessage = err.response.data?.detail || err.response.data?.message || `HTTP ${statusCode}`;
+        errorMessage =
+          err.response.data?.detail ||
+          err.response.data?.message ||
+          `HTTP ${statusCode}`;
       } else if (err.request) {
-        errorMessage = 'No response from server. The API may be down or unreachable.';
+        errorMessage =
+          'No response from server. The API may be down or unreachable.';
       } else {
         errorMessage = err.message || 'Unknown error';
       }
@@ -68,7 +83,7 @@ export const storylinesApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(
-        `/api/${domainKey}/storylines/${id}/timeline`,
+        `/api/${domainKey}/storylines/${id}/timeline`
       );
       return response.data;
     } catch (error) {
@@ -94,13 +109,13 @@ export const storylinesApi = {
   async getStorylineNarrative(
     id: string | number,
     mode: 'chronological' | 'briefing' = 'chronological',
-    domain?: string,
+    domain?: string
   ) {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(
         `/api/${domainKey}/storylines/${id}/narrative`,
-        { params: { mode } },
+        { params: { mode } }
       );
       return response.data;
     } catch (error) {
@@ -110,43 +125,50 @@ export const storylinesApi = {
   },
 
   /**
-   * Queue storyline refinement (RAG analysis, ~70B finisher, timeline narrative). Workers drain the DB queue.
+   * Queue storyline refinement (RAG analysis, ~70B finisher, ~70B headline_refiner, timeline narrative). Workers drain the DB queue.
    */
   async enqueueStorylineRefinement(
     id: string | number,
     jobType:
       | 'comprehensive_rag'
       | 'narrative_finisher'
+      | 'headline_refiner'
       | 'timeline_narrative_chronological'
       | 'timeline_narrative_briefing',
     domain?: string,
-    priority: 'high' | 'medium' | 'low' = 'medium',
+    priority: 'high' | 'medium' | 'low' = 'medium'
   ) {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().post(
         `/api/${domainKey}/storylines/${id}/refinement_jobs`,
-        { job_type: jobType, priority },
+        { job_type: jobType, priority }
       );
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to enqueue storyline refinement', error as Error);
       return {
         success: false,
-        error: (error as any)?.response?.data?.detail || (error as Error).message,
+        error:
+          (error as any)?.response?.data?.detail || (error as Error).message,
       };
     }
   },
 
   async createStoryline(
-    storylineData: { title: string; description?: string; status?: string; article_ids?: number[] },
-    domain?: string,
+    storylineData: {
+      title: string;
+      description?: string;
+      status?: string;
+      article_ids?: number[];
+    },
+    domain?: string
   ) {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().post(
         `/api/${domainKey}/storylines`,
-        storylineData,
+        storylineData
       );
       return response.data;
     } catch (error) {
@@ -158,13 +180,13 @@ export const storylinesApi = {
   async updateStoryline(
     id: string | number,
     data: { title: string; description?: string; status?: string },
-    domain?: string,
+    domain?: string
   ) {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().put(
         `/api/${domainKey}/storylines/${id}`,
-        data,
+        data
       );
       return response.data;
     } catch (error) {
@@ -177,7 +199,7 @@ export const storylinesApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().delete(
-        `/api/${domainKey}/storylines/${id}`,
+        `/api/${domainKey}/storylines/${id}`
       );
       return response.data;
     } catch (error) {
@@ -187,19 +209,25 @@ export const storylinesApi = {
   },
 
   async discoverStorylines(
-    params: { hours?: number; save?: boolean; minSimilarity?: number; minArticles?: number } = {},
-    domain?: string,
+    params: {
+      hours?: number;
+      save?: boolean;
+      minSimilarity?: number;
+      minArticles?: number;
+    } = {},
+    domain?: string
   ) {
     try {
       const domainKey = domain || getCurrentDomain();
       const queryParams: Record<string, string | number | boolean> = {};
       if (params.hours != null) queryParams.hours = params.hours;
       if (params.save != null) queryParams.save = params.save;
-      if (params.minSimilarity != null) queryParams.min_similarity = params.minSimilarity;
+      if (params.minSimilarity != null)
+        queryParams.min_similarity = params.minSimilarity;
       const response = await getApi().post(
         `/api/${domainKey}/storylines/discover`,
         {},
-        { params: queryParams },
+        { params: queryParams }
       );
       return response.data;
     } catch (error) {
@@ -213,7 +241,7 @@ export const storylinesApi = {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(
         `/api/${domainKey}/storylines/breaking_news`,
-        { params: { hours } },
+        { params: { hours } }
       );
       return response.data;
     } catch (error) {
@@ -227,7 +255,7 @@ export const storylinesApi = {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(
         `/api/${domainKey}/storylines/compare`,
-        { params: { min_similarity: minSimilarity } },
+        { params: { min_similarity: minSimilarity } }
       );
       return response.data;
     } catch (error) {
@@ -241,7 +269,7 @@ export const storylinesApi = {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(
         `/api/${domainKey}/storylines/evolution`,
-        { params: { hours } },
+        { params: { hours } }
       );
       return response.data;
     } catch (error) {
@@ -253,13 +281,18 @@ export const storylinesApi = {
   async checkStorylineMerge(
     storylineId1: string | number,
     storylineId2: string | number,
-    domain?: string,
+    domain?: string
   ) {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(
         `/api/${domainKey}/storylines/merge_check`,
-        { params: { storyline_id_1: storylineId1, storyline_id_2: storylineId2 } },
+        {
+          params: {
+            storyline_id_1: storylineId1,
+            storyline_id_2: storylineId2,
+          },
+        }
       );
       return response.data;
     } catch (error) {
@@ -270,7 +303,9 @@ export const storylinesApi = {
 
   async getConsolidationStatus() {
     try {
-      const response = await getApi().get('/api/storylines/consolidation/status');
+      const response = await getApi().get(
+        '/api/storylines/consolidation/status'
+      );
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to get consolidation status', error as Error);
@@ -296,7 +331,7 @@ export const storylinesApi = {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(
         `/api/${domainKey}/storylines/hierarchy`,
-        { params: { mega_only: megaOnly } },
+        { params: { mega_only: megaOnly } }
       );
       return response.data;
     } catch (error) {
@@ -308,10 +343,9 @@ export const storylinesApi = {
   async getMegaStorylines(limit: number = 20, domain?: string) {
     try {
       const domainKey = domain || getCurrentDomain();
-      const response = await getApi().get(
-        `/api/${domainKey}/storylines/mega`,
-        { params: { limit } },
-      );
+      const response = await getApi().get(`/api/${domainKey}/storylines/mega`, {
+        params: { limit },
+      });
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to get mega storylines', error as Error);
@@ -322,12 +356,12 @@ export const storylinesApi = {
   async mergeStorylines(
     primaryId: string | number,
     secondaryId: string | number,
-    domain?: string,
+    domain?: string
   ) {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().post(
-        `/api/${domainKey}/storylines/merge/${primaryId}/${secondaryId}`,
+        `/api/${domainKey}/storylines/merge/${primaryId}/${secondaryId}`
       );
       return response.data;
     } catch (error) {
@@ -339,13 +373,13 @@ export const storylinesApi = {
   async getRelatedStorylines(
     storylineId: string | number,
     limit: number = 10,
-    domain?: string,
+    domain?: string
   ) {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(
         `/api/${domainKey}/storylines/${storylineId}/related`,
-        { params: { limit } },
+        { params: { limit } }
       );
       return response.data;
     } catch (error) {
@@ -358,22 +392,30 @@ export const storylinesApi = {
     const domainKey = domain || getCurrentDomain();
     try {
       const response = await getApi().post(
-        `/api/${domainKey}/storylines/${id}/analyze`,
+        `/api/${domainKey}/storylines/${id}/analyze`
       );
       return response?.data || { success: true, message: 'Analysis started' };
     } catch (error: any) {
       Logger.apiError('Failed to analyze storyline', error);
-      if (error?.response?.status === 404 || error?.code === 'ERR_BAD_REQUEST') {
+      if (
+        error?.response?.status === 404 ||
+        error?.code === 'ERR_BAD_REQUEST'
+      ) {
         try {
           const fallback = await getApi().post(
-            `/api/${domainKey}/storylines/${id}/analyze`,
+            `/api/${domainKey}/storylines/${id}/analyze`
           );
-          return fallback?.data || { success: true, message: 'Analysis started' };
+          return (
+            fallback?.data || { success: true, message: 'Analysis started' }
+          );
         } catch {
           // fall through to error return
         }
       }
-      const msg = error?.response?.data?.detail || error?.message || 'Failed to start analysis';
+      const msg =
+        error?.response?.data?.detail ||
+        error?.message ||
+        'Failed to start analysis';
       return { success: false, error: msg };
     }
   },
@@ -381,13 +423,13 @@ export const storylinesApi = {
   async getAvailableArticles(
     storylineId: string | number,
     params: any = {},
-    domain?: string,
+    domain?: string
   ) {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(
         `/api/${domainKey}/storylines/${storylineId}/available_articles`,
-        { params },
+        { params }
       );
       return response.data;
     } catch (error) {
@@ -399,12 +441,12 @@ export const storylinesApi = {
   async addArticleToStoryline(
     storylineId: string | number,
     articleId: string | number,
-    domain?: string,
+    domain?: string
   ) {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().post(
-        `/api/${domainKey}/storylines/${storylineId}/articles/${articleId}`,
+        `/api/${domainKey}/storylines/${storylineId}/articles/${articleId}`
       );
       return response.data;
     } catch (error) {
@@ -416,25 +458,31 @@ export const storylinesApi = {
   async removeArticleFromStoryline(
     storylineId: string | number,
     articleId: string | number,
-    domain?: string,
+    domain?: string
   ) {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().delete(
-        `/api/${domainKey}/storylines/${storylineId}/articles/${articleId}`,
+        `/api/${domainKey}/storylines/${storylineId}/articles/${articleId}`
       );
       return response.data;
     } catch (error) {
-      Logger.apiError('Failed to remove article from storyline', error as Error);
+      Logger.apiError(
+        'Failed to remove article from storyline',
+        error as Error
+      );
       return { success: false, error: (error as any).message };
     }
   },
 
-  async getStorylineAutomationSettings(storylineId: string | number, domain?: string) {
+  async getStorylineAutomationSettings(
+    storylineId: string | number,
+    domain?: string
+  ) {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(
-        `/api/${domainKey}/storylines/${storylineId}/automation/settings`,
+        `/api/${domainKey}/storylines/${storylineId}/automation/settings`
       );
       return response.data;
     } catch (error) {
@@ -446,13 +494,13 @@ export const storylinesApi = {
   async updateStorylineAutomationSettings(
     storylineId: string | number,
     settings: any,
-    domain?: string,
+    domain?: string
   ) {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().put(
         `/api/${domainKey}/storylines/${storylineId}/automation/settings`,
-        settings,
+        settings
       );
       return response.data;
     } catch (error) {
@@ -464,12 +512,12 @@ export const storylinesApi = {
   async triggerStorylineDiscovery(
     storylineId: string | number,
     forceRefresh: boolean = false,
-    domain?: string,
+    domain?: string
   ) {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().post(
-        `/api/${domainKey}/storylines/${storylineId}/automation/discover?force_refresh=${forceRefresh}`,
+        `/api/${domainKey}/storylines/${storylineId}/automation/discover?force_refresh=${forceRefresh}`
       );
       return response.data;
     } catch (error) {
@@ -478,11 +526,14 @@ export const storylinesApi = {
     }
   },
 
-  async getAutomationSuggestions(storylineId: string | number, domain?: string) {
+  async getAutomationSuggestions(
+    storylineId: string | number,
+    domain?: string
+  ) {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(
-        `/api/${domainKey}/storylines/${storylineId}/automation/suggestions`,
+        `/api/${domainKey}/storylines/${storylineId}/automation/suggestions`
       );
       return response.data;
     } catch (error) {
@@ -494,12 +545,12 @@ export const storylinesApi = {
   async approveSuggestion(
     storylineId: string | number,
     suggestionId: string | number,
-    domain?: string,
+    domain?: string
   ) {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().post(
-        `/api/${domainKey}/storylines/${storylineId}/automation/suggestions/${suggestionId}/approve`,
+        `/api/${domainKey}/storylines/${storylineId}/automation/suggestions/${suggestionId}/approve`
       );
       return response.data;
     } catch (error) {
@@ -511,12 +562,12 @@ export const storylinesApi = {
   async rejectSuggestion(
     storylineId: string | number,
     suggestionId: string | number,
-    domain?: string,
+    domain?: string
   ) {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().post(
-        `/api/${domainKey}/storylines/${storylineId}/automation/suggestions/${suggestionId}/reject`,
+        `/api/${domainKey}/storylines/${storylineId}/automation/suggestions/${suggestionId}/reject`
       );
       return response.data;
     } catch (error) {

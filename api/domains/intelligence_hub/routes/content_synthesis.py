@@ -3,18 +3,16 @@ Deep Content Synthesis API Routes
 Provides endpoints for creating comprehensive, Wikipedia-style synthesized content.
 """
 
-from fastapi import APIRouter, HTTPException, Path, Query, Body, BackgroundTasks
-from typing import Dict, Any, List, Optional
-from shared.domain_registry import DOMAIN_PATH_PATTERN
-from pydantic import BaseModel, Field
-from datetime import datetime
 import logging
 import threading
+from datetime import datetime
+from typing import Any
 
-from services.deep_content_synthesis import (
-    get_synthesis_service,
-    SynthesizedArticle
-)
+from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, Path, Query
+from psycopg2.extras import RealDictCursor
+from pydantic import BaseModel, Field
+from services.deep_content_synthesis import get_synthesis_service
+from shared.domain_registry import DOMAIN_PATH_PATTERN
 
 logger = logging.getLogger(__name__)
 
@@ -25,9 +23,13 @@ router = APIRouter(prefix="/api", tags=["Content Synthesis"])
 # REQUEST/RESPONSE MODELS
 # =============================================================================
 
+
 class SynthesisRequest(BaseModel):
     """Request model for content synthesis"""
-    depth: str = Field("comprehensive", description="Synthesis depth: brief, standard, comprehensive")
+
+    depth: str = Field(
+        "comprehensive", description="Synthesis depth: brief, standard, comprehensive"
+    )
     include_terms: bool = Field(True, description="Include key term explanations")
     include_timeline: bool = Field(True, description="Include event timeline")
     format: str = Field("json", description="Output format: json, markdown")
@@ -35,6 +37,7 @@ class SynthesisRequest(BaseModel):
 
 class TopicSynthesisRequest(BaseModel):
     """Request for topic-based synthesis"""
+
     topic: str = Field(..., min_length=3, max_length=200)
     hours: int = Field(168, ge=24, le=720, description="Hours of content to analyze")
     depth: str = Field("comprehensive")
@@ -43,33 +46,35 @@ class TopicSynthesisRequest(BaseModel):
 
 class StorylineSynthesisResponse(BaseModel):
     """Response model for synthesized storyline"""
+
     success: bool
     title: str
     summary: str
-    sections: List[Dict[str, Any]]
+    sections: list[dict[str, Any]]
     word_count: int
     source_count: int
     quality_score: float
-    key_entities: List[str]
-    key_terms: Dict[str, str]
-    timeline: List[Dict[str, Any]]
+    key_entities: list[str]
+    key_terms: dict[str, str]
+    timeline: list[dict[str, Any]]
     created_at: str
-    markdown: Optional[str] = None
+    markdown: str | None = None
 
 
 # =============================================================================
 # STORYLINE SYNTHESIS
 # =============================================================================
 
-@router.post("/{domain}/synthesis/storyline/{storyline_id}", response_model=Dict[str, Any])
+
+@router.post("/{domain}/synthesis/storyline/{storyline_id}", response_model=dict[str, Any])
 async def synthesize_storyline(
     storyline_id: int = Path(..., gt=0),
     request: SynthesisRequest = Body(...),
-    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN)
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
 ):
     """
     Create comprehensive, Wikipedia-style content for a storyline.
-    
+
     This synthesizes all articles in the storyline into:
     - Background section with domain context
     - Current developments section
@@ -78,30 +83,28 @@ async def synthesize_storyline(
     - Analysis and implications
     - Glossary of key terms
     - Event timeline
-    
+
     The output is suitable for publication as an informative article.
     """
     try:
         service = get_synthesis_service()
-        
+
         synthesized = service.synthesize_storyline_content(
-            domain=domain,
-            storyline_id=storyline_id,
-            depth=request.depth
+            domain=domain, storyline_id=storyline_id, depth=request.depth
         )
-        
+
         response = {
             "success": True,
             "storyline_id": storyline_id,
             "domain": domain,
-            **synthesized.to_dict()
+            **synthesized.to_dict(),
         }
-        
+
         if request.format == "markdown":
             response["markdown"] = synthesized.to_markdown()
-        
+
         return response
-        
+
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
@@ -114,36 +117,33 @@ async def get_storyline_markdown(
     storyline_id: int = Path(..., gt=0),
     domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     depth: str = Query("comprehensive"),
-    regenerate: bool = Query(False, description="Force regeneration even if cached")
+    regenerate: bool = Query(False, description="Force regeneration even if cached"),
 ):
     """
     Get storyline synthesis as markdown document.
     """
     try:
         service = get_synthesis_service()
-        
+
         # Try to get cached version first
         if not regenerate:
             saved = service.get_saved_synthesis(domain, storyline_id)
-            if saved and saved.get('synthesized_markdown'):
+            if saved and saved.get("synthesized_markdown"):
                 return {
                     "success": True,
                     "storyline_id": storyline_id,
-                    "title": saved.get('title', ''),
-                    "markdown": saved['synthesized_markdown'],
-                    "word_count": saved.get('synthesis_word_count', 0),
+                    "title": saved.get("title", ""),
+                    "markdown": saved["synthesized_markdown"],
+                    "word_count": saved.get("synthesis_word_count", 0),
                     "cached": True,
-                    "synthesized_at": str(saved.get('synthesized_at', ''))
+                    "synthesized_at": str(saved.get("synthesized_at", "")),
                 }
-        
+
         # Generate fresh synthesis
         synthesized = service.synthesize_storyline_content(
-            domain=domain,
-            storyline_id=storyline_id,
-            depth=depth,
-            save_to_db=True
+            domain=domain, storyline_id=storyline_id, depth=depth, save_to_db=True
         )
-        
+
         return {
             "success": True,
             "storyline_id": storyline_id,
@@ -151,9 +151,9 @@ async def get_storyline_markdown(
             "markdown": synthesized.to_markdown(),
             "word_count": synthesized.word_count,
             "source_count": synthesized.total_sources,
-            "cached": False
+            "cached": False,
         }
-        
+
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
@@ -161,10 +161,9 @@ async def get_storyline_markdown(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/{domain}/synthesis/storyline/{storyline_id}/cached", response_model=Dict[str, Any])
+@router.get("/{domain}/synthesis/storyline/{storyline_id}/cached", response_model=dict[str, Any])
 async def get_cached_synthesis(
-    storyline_id: int = Path(..., gt=0),
-    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN)
+    storyline_id: int = Path(..., gt=0), domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN)
 ):
     """
     Get cached synthesized content if available.
@@ -173,27 +172,27 @@ async def get_cached_synthesis(
     try:
         service = get_synthesis_service()
         saved = service.get_saved_synthesis(domain, storyline_id)
-        
-        if not saved or not saved.get('synthesized_content'):
+
+        if not saved or not saved.get("synthesized_content"):
             return {
                 "success": True,
                 "has_synthesis": False,
                 "storyline_id": storyline_id,
-                "message": "No cached synthesis available. Use POST to generate."
+                "message": "No cached synthesis available. Use POST to generate.",
             }
-        
+
         return {
             "success": True,
             "has_synthesis": True,
             "storyline_id": storyline_id,
-            "title": saved.get('title', ''),
-            "content": saved['synthesized_content'],
-            "markdown": saved.get('synthesized_markdown', ''),
-            "word_count": saved.get('synthesis_word_count', 0),
-            "quality_score": saved.get('synthesis_quality_score', 0),
-            "synthesized_at": str(saved.get('synthesized_at', ''))
+            "title": saved.get("title", ""),
+            "content": saved["synthesized_content"],
+            "markdown": saved.get("synthesized_markdown", ""),
+            "word_count": saved.get("synthesis_word_count", 0),
+            "quality_score": saved.get("synthesis_quality_score", 0),
+            "synthesized_at": str(saved.get("synthesized_at", "")),
         }
-        
+
     except Exception as e:
         logger.error(f"Get cached synthesis error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -203,14 +202,14 @@ async def get_cached_synthesis(
 # TOPIC SYNTHESIS
 # =============================================================================
 
-@router.post("/{domain}/synthesis/topic", response_model=Dict[str, Any])
+
+@router.post("/{domain}/synthesis/topic", response_model=dict[str, Any])
 async def synthesize_topic(
-    request: TopicSynthesisRequest,
-    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN)
+    request: TopicSynthesisRequest, domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN)
 ):
     """
     Create comprehensive, Wikipedia-style content about a topic.
-    
+
     Searches for articles matching the topic and synthesizes them into
     a comprehensive, educational article with:
     - Full context and background
@@ -222,26 +221,23 @@ async def synthesize_topic(
     """
     try:
         service = get_synthesis_service()
-        
+
         synthesized = service.synthesize_topic_content(
-            domain=domain,
-            topic_name=request.topic,
-            hours=request.hours,
-            depth=request.depth
+            domain=domain, topic_name=request.topic, hours=request.hours, depth=request.depth
         )
-        
+
         response = {
             "success": True,
             "topic": request.topic,
             "domain": domain,
-            **synthesized.to_dict()
+            **synthesized.to_dict(),
         }
-        
+
         if request.format == "markdown":
             response["markdown"] = synthesized.to_markdown()
-        
+
         return response
-        
+
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
@@ -255,33 +251,25 @@ async def get_topic_synthesis(
     domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     hours: int = Query(168, ge=24, le=720),
     depth: str = Query("standard"),
-    format: str = Query("json")
+    format: str = Query("json"),
 ):
     """
     Quick topic synthesis via GET request.
     """
     try:
         service = get_synthesis_service()
-        
+
         synthesized = service.synthesize_topic_content(
-            domain=domain,
-            topic_name=topic_name,
-            hours=hours,
-            depth=depth
+            domain=domain, topic_name=topic_name, hours=hours, depth=depth
         )
-        
-        response = {
-            "success": True,
-            "topic": topic_name,
-            "domain": domain,
-            **synthesized.to_dict()
-        }
-        
+
+        response = {"success": True, "topic": topic_name, "domain": domain, **synthesized.to_dict()}
+
         if format == "markdown":
             response["markdown"] = synthesized.to_markdown()
-        
+
         return response
-        
+
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
@@ -293,43 +281,42 @@ async def get_topic_synthesis(
 # BREAKING NEWS SYNTHESIS
 # =============================================================================
 
-@router.get("/{domain}/synthesis/breaking", response_model=Dict[str, Any])
+
+@router.get("/{domain}/synthesis/breaking", response_model=dict[str, Any])
 async def synthesize_breaking_news(
     domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     hours: int = Query(24, ge=1, le=72),
     min_articles: int = Query(3, ge=2, le=10),
-    format: str = Query("json")
+    format: str = Query("json"),
 ):
     """
     Synthesize comprehensive articles for breaking/trending stories.
-    
+
     Automatically identifies clusters of related articles and creates
     comprehensive synthesized content for each breaking story.
     """
     try:
         service = get_synthesis_service()
-        
+
         synthesized_list = service.synthesize_breaking_news(
-            domain=domain,
-            hours=hours,
-            min_articles=min_articles
+            domain=domain, hours=hours, min_articles=min_articles
         )
-        
+
         results = []
         for article in synthesized_list:
             result = article.to_dict()
             if format == "markdown":
                 result["markdown"] = article.to_markdown()
             results.append(result)
-        
+
         return {
             "success": True,
             "domain": domain,
             "hours": hours,
             "breaking_stories": len(results),
-            "stories": results
+            "stories": results,
         }
-        
+
     except Exception as e:
         logger.error(f"Breaking news synthesis error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -340,23 +327,23 @@ async def synthesize_breaking_news(
 # =============================================================================
 
 # Store for background synthesis tasks
-synthesis_tasks: Dict[str, Dict[str, Any]] = {}
+synthesis_tasks: dict[str, dict[str, Any]] = {}
 
 
-@router.post("/{domain}/synthesis/storylines/bulk", response_model=Dict[str, Any])
+@router.post("/{domain}/synthesis/storylines/bulk", response_model=dict[str, Any])
 async def bulk_synthesize_storylines(
-    storyline_ids: List[int] = Body(..., min_items=1, max_items=20),
+    storyline_ids: list[int] = Body(..., min_items=1, max_items=20),
     depth: str = Body("standard"),
     domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
-    background_tasks: BackgroundTasks = None
+    background_tasks: BackgroundTasks = None,
 ):
     """
     Synthesize multiple storylines in background.
-    
+
     Returns a task ID to check progress.
     """
     task_id = f"{domain}_{datetime.now().strftime('%Y%m%d%H%M%S')}"
-    
+
     synthesis_tasks[task_id] = {
         "status": "running",
         "domain": domain,
@@ -364,95 +351,89 @@ async def bulk_synthesize_storylines(
         "completed": 0,
         "results": [],
         "errors": [],
-        "started_at": datetime.now().isoformat()
+        "started_at": datetime.now().isoformat(),
     }
-    
+
     def process_bulk():
         service = get_synthesis_service()
-        
+
         for storyline_id in storyline_ids:
             try:
                 synthesized = service.synthesize_storyline_content(
-                    domain=domain,
-                    storyline_id=storyline_id,
-                    depth=depth
+                    domain=domain, storyline_id=storyline_id, depth=depth
                 )
-                synthesis_tasks[task_id]["results"].append({
-                    "storyline_id": storyline_id,
-                    "title": synthesized.title,
-                    "word_count": synthesized.word_count,
-                    "quality_score": synthesized.quality_score
-                })
+                synthesis_tasks[task_id]["results"].append(
+                    {
+                        "storyline_id": storyline_id,
+                        "title": synthesized.title,
+                        "word_count": synthesized.word_count,
+                        "quality_score": synthesized.quality_score,
+                    }
+                )
             except Exception as e:
-                synthesis_tasks[task_id]["errors"].append({
-                    "storyline_id": storyline_id,
-                    "error": str(e)
-                })
-            
+                synthesis_tasks[task_id]["errors"].append(
+                    {"storyline_id": storyline_id, "error": str(e)}
+                )
+
             synthesis_tasks[task_id]["completed"] += 1
-        
+
         synthesis_tasks[task_id]["status"] = "completed"
         synthesis_tasks[task_id]["completed_at"] = datetime.now().isoformat()
-    
+
     # Run in background thread
     thread = threading.Thread(target=process_bulk, daemon=True)
     thread.start()
-    
+
     return {
         "success": True,
         "task_id": task_id,
         "message": f"Synthesizing {len(storyline_ids)} storylines in background",
-        "check_status": f"/api/{domain}/synthesis/tasks/{task_id}"
+        "check_status": f"/api/{domain}/synthesis/tasks/{task_id}",
     }
 
 
-@router.get("/{domain}/synthesis/tasks/{task_id}", response_model=Dict[str, Any])
+@router.get("/{domain}/synthesis/tasks/{task_id}", response_model=dict[str, Any])
 async def get_synthesis_task_status(
-    task_id: str = Path(...),
-    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN)
+    task_id: str = Path(...), domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN)
 ):
     """
     Check status of a bulk synthesis task.
     """
     if task_id not in synthesis_tasks:
         raise HTTPException(status_code=404, detail="Task not found")
-    
-    return {
-        "success": True,
-        "task_id": task_id,
-        **synthesis_tasks[task_id]
-    }
+
+    return {"success": True, "task_id": task_id, **synthesis_tasks[task_id]}
 
 
 # =============================================================================
 # SYNTHESIS QUALITY CHECK
 # =============================================================================
 
-@router.get("/{domain}/synthesis/quality/{storyline_id}", response_model=Dict[str, Any])
+
+@router.get("/{domain}/synthesis/quality/{storyline_id}", response_model=dict[str, Any])
 async def check_synthesis_quality(
-    storyline_id: int = Path(..., gt=0),
-    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN)
+    storyline_id: int = Path(..., gt=0), domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN)
 ):
     """
     Analyze storyline and suggest improvements for synthesis quality.
     """
     try:
         service = get_synthesis_service()
-        
+
         # Get basic info
-        schema = domain.replace('-', '_')
+        schema = domain.replace("-", "_")
         storyline, articles = service._fetch_storyline_with_articles(schema, storyline_id)
-        
+
         if not storyline:
             raise HTTPException(status_code=404, detail="Storyline not found")
-        
+
         # Calculate quality metrics
         article_count = len(articles)
-        total_content = sum([len(a.get('content', '') or '') for a in articles])
+        total_content = sum([len(a.get("content", "") or "") for a in articles])
         avg_content_length = total_content // max(article_count, 1)
-        
-        sources = set([a.get('source_name', a.get('source_domain', '')) for a in articles])
-        
+
+        sources = set([a.get("source_name", a.get("source_domain", "")) for a in articles])
+
         quality_factors = {
             "article_count": article_count,
             "article_count_score": min(article_count / 10, 1.0),
@@ -462,13 +443,13 @@ async def check_synthesis_quality(
             "content_score": min(avg_content_length / 2000, 1.0),
             "has_sufficient_content": total_content > 5000,
         }
-        
+
         overall_score = (
-            quality_factors["article_count_score"] * 0.3 +
-            quality_factors["source_diversity_score"] * 0.3 +
-            quality_factors["content_score"] * 0.4
+            quality_factors["article_count_score"] * 0.3
+            + quality_factors["source_diversity_score"] * 0.3
+            + quality_factors["content_score"] * 0.4
         )
-        
+
         recommendations = []
         if article_count < 5:
             recommendations.append("Add more articles for a more comprehensive synthesis")
@@ -478,17 +459,17 @@ async def check_synthesis_quality(
             recommendations.append("Articles have limited content - synthesis may be shallow")
         if total_content < 3000:
             recommendations.append("Total content is low - consider waiting for more coverage")
-        
+
         return {
             "success": True,
             "storyline_id": storyline_id,
-            "title": storyline.get('title', ''),
+            "title": storyline.get("title", ""),
             "quality_factors": quality_factors,
             "overall_score": round(overall_score, 2),
             "ready_for_synthesis": overall_score > 0.5 and total_content > 3000,
-            "recommendations": recommendations
+            "recommendations": recommendations,
         }
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -500,15 +481,16 @@ async def check_synthesis_quality(
 # SUPER-STORYLINE (MEGA) SYNTHESIS
 # =============================================================================
 
-@router.post("/{domain}/synthesis/mega/{mega_storyline_id}", response_model=Dict[str, Any])
+
+@router.post("/{domain}/synthesis/mega/{mega_storyline_id}", response_model=dict[str, Any])
 async def synthesize_mega_storyline(
     mega_storyline_id: int = Path(..., gt=0),
     domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
-    request: SynthesisRequest = Body(...)
+    request: SynthesisRequest = Body(...),
 ):
     """
     Create comprehensive synthesis for a mega-storyline (super-storyline).
-    
+
     Combines all child storylines into an overarching narrative with:
     - Executive summary of the entire topic
     - Individual storyline summaries
@@ -518,76 +500,82 @@ async def synthesize_mega_storyline(
     """
     try:
         service = get_synthesis_service()
-        schema = domain.replace('-', '_')
-        
+        schema = domain.replace("-", "_")
+
         # Fetch mega-storyline and its children
         conn = service.get_db_connection()
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             # Get mega-storyline
-            cur.execute(f"""
+            cur.execute(
+                f"""
                 SELECT * FROM {schema}.storylines
                 WHERE id = %s AND is_mega_storyline = TRUE
-            """, (mega_storyline_id,))
+            """,
+                (mega_storyline_id,),
+            )
             mega = cur.fetchone()
-            
+
             if not mega:
                 conn.close()
                 raise HTTPException(status_code=404, detail="Mega-storyline not found")
-            
+
             # Get child storylines
-            cur.execute(f"""
+            cur.execute(
+                f"""
                 SELECT * FROM {schema}.storylines
                 WHERE parent_storyline_id = %s
                 ORDER BY created_at DESC
-            """, (mega_storyline_id,))
+            """,
+                (mega_storyline_id,),
+            )
             children = cur.fetchall()
-            
+
             conn.close()
-        
+
         if not children:
             raise HTTPException(status_code=400, detail="No child storylines found")
-        
+
         # Synthesize each child storyline
         child_syntheses = []
-        all_facts = []
         all_entities = set()
         all_terms = {}
         all_sources = []
-        
+
         for child in children:
             try:
                 child_synth = service.synthesize_storyline_content(
                     domain=domain,
-                    storyline_id=child['id'],
-                    depth="standard"  # Use standard for children
+                    storyline_id=child["id"],
+                    depth="standard",  # Use standard for children
                 )
-                child_syntheses.append({
-                    "id": child['id'],
-                    "title": child_synth.title,
-                    "summary": child_synth.summary,
-                    "word_count": child_synth.word_count,
-                    "source_count": child_synth.total_sources
-                })
-                
+                child_syntheses.append(
+                    {
+                        "id": child["id"],
+                        "title": child_synth.title,
+                        "summary": child_synth.summary,
+                        "word_count": child_synth.word_count,
+                        "source_count": child_synth.total_sources,
+                    }
+                )
+
                 all_entities.update(child_synth.key_entities)
                 all_terms.update(child_synth.key_terms_explained)
                 all_sources.extend(child_synth.source_articles)
-                
+
             except Exception as e:
                 logger.warning(f"Failed to synthesize child {child['id']}: {e}")
-        
+
         # Create mega-synthesis combining children
-        mega_title = mega.get('title', 'Comprehensive Topic Analysis')
-        
+        mega_title = mega.get("title", "Comprehensive Topic Analysis")
+
         # Generate executive summary
-        children_summaries = "\n".join([
-            f"- {c['title']}: {c['summary'][:200]}..."
-            for c in child_syntheses[:10]
-        ])
-        
-        from services.deep_content_synthesis import LLM_MODEL, OLLAMA_BASE_URL, LLM_TIMEOUT
+        children_summaries = "\n".join(
+            [f"- {c['title']}: {c['summary'][:200]}..." for c in child_syntheses[:10]]
+        )
+
         import requests
-        
+        from services.deep_content_synthesis import LLM_MODEL, LLM_TIMEOUT, OLLAMA_BASE_URL
+
         exec_prompt = f"""Write a comprehensive executive summary for the mega-storyline: "{mega_title}"
 
 This encompasses these sub-stories:
@@ -606,17 +594,17 @@ Write in encyclopedic, authoritative style."""
             response = requests.post(
                 f"{OLLAMA_BASE_URL}/api/generate",
                 json={"model": LLM_MODEL, "prompt": exec_prompt, "stream": False},
-                timeout=LLM_TIMEOUT
+                timeout=LLM_TIMEOUT,
             )
             if response.status_code == 200:
-                exec_summary = response.json().get('response', '').strip()
+                exec_summary = response.json().get("response", "").strip()
         except:
             exec_summary = f"This mega-storyline encompasses {len(child_syntheses)} related storylines covering various aspects of {mega_title}."
-        
+
         # Calculate stats
-        total_words = sum([c['word_count'] for c in child_syntheses])
-        total_sources = len(set([s.get('url', '') for s in all_sources]))
-        
+        total_words = sum([c["word_count"] for c in child_syntheses])
+        total_sources = len(set([s.get("url", "") for s in all_sources]))
+
         response = {
             "success": True,
             "mega_storyline_id": mega_storyline_id,
@@ -629,9 +617,9 @@ Write in encyclopedic, authoritative style."""
             "key_entities": list(all_entities)[:30],
             "key_terms": all_terms,
             "domain": domain,
-            "created_at": datetime.now().isoformat()
+            "created_at": datetime.now().isoformat(),
         }
-        
+
         if request.format == "markdown":
             # Generate markdown
             md_lines = [
@@ -642,31 +630,32 @@ Write in encyclopedic, authoritative style."""
                 exec_summary,
                 "",
                 "## Storylines",
-                ""
+                "",
             ]
             for child in child_syntheses:
-                md_lines.extend([
-                    f"### {child['title']}",
-                    "",
-                    child['summary'],
-                    "",
-                    f"*{child['source_count']} sources, {child['word_count']} words*",
-                    ""
-                ])
-            
+                md_lines.extend(
+                    [
+                        f"### {child['title']}",
+                        "",
+                        child["summary"],
+                        "",
+                        f"*{child['source_count']} sources, {child['word_count']} words*",
+                        "",
+                    ]
+                )
+
             if all_terms:
                 md_lines.extend(["## Key Terms", ""])
                 for term, defn in list(all_terms.items())[:15]:
                     md_lines.append(f"**{term}**: {defn}")
                     md_lines.append("")
-            
+
             response["markdown"] = "\n".join(md_lines)
-        
+
         return response
-        
+
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Mega synthesis error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-

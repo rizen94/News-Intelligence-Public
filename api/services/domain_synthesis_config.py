@@ -8,7 +8,7 @@ and provides typed access for synthesis, editorial, discovery, and extraction se
 import logging
 import os
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import yaml
 
@@ -20,26 +20,26 @@ _CONFIG_PATH = os.path.join(
     "domain_synthesis_config.yaml",
 )
 
-_cached_raw: Optional[Dict[str, Any]] = None
+_cached_raw: dict[str, Any] | None = None
 
 
 @dataclass
 class TopicFilter:
-    exclude_keywords: List[str] = field(default_factory=list)
-    exclude_categories: List[str] = field(default_factory=list)
-    include_categories: List[str] = field(default_factory=list)
+    exclude_keywords: list[str] = field(default_factory=list)
+    exclude_categories: list[str] = field(default_factory=list)
+    include_categories: list[str] = field(default_factory=list)
 
 
 @dataclass
 class DomainSynthesisConfig:
     domain_key: str
-    focus_areas: List[str] = field(default_factory=list)
+    focus_areas: list[str] = field(default_factory=list)
     """Cross-cutting themes for topic/storyline alignment (e.g. science-tech: AI, genomics)."""
-    macro_subject_axes: List[str] = field(default_factory=list)
-    event_type_priorities: List[str] = field(default_factory=list)
-    entity_type_weights: Dict[str, float] = field(default_factory=dict)
-    storyline_patterns: List[str] = field(default_factory=list)
-    editorial_sections: List[str] = field(default_factory=list)
+    macro_subject_axes: list[str] = field(default_factory=list)
+    event_type_priorities: list[str] = field(default_factory=list)
+    entity_type_weights: dict[str, float] = field(default_factory=dict)
+    storyline_patterns: list[str] = field(default_factory=list)
+    editorial_sections: list[str] = field(default_factory=list)
     topic_filter: TopicFilter = field(default_factory=TopicFilter)
     llm_context: str = ""
 
@@ -57,16 +57,16 @@ class DomainSynthesisConfig:
     def entity_weight(self, entity_type: str) -> float:
         return self.entity_type_weights.get(entity_type, 0.5)
 
-    def prioritised_event_types(self) -> List[str]:
+    def prioritised_event_types(self) -> list[str]:
         return list(self.event_type_priorities)
 
 
-def _load_raw() -> Dict[str, Any]:
+def _load_raw() -> dict[str, Any]:
     global _cached_raw
     if _cached_raw is not None:
         return _cached_raw
     try:
-        with open(_CONFIG_PATH, "r") as fh:
+        with open(_CONFIG_PATH) as fh:
             _cached_raw = yaml.safe_load(fh) or {}
     except FileNotFoundError:
         logger.error("Domain synthesis config not found at %s", _CONFIG_PATH)

@@ -1,9 +1,7 @@
 """Unit tests for orchestrator utils — DataResult normalization."""
 
-import pytest
-
-from shared.data_result import DataResult
 from domains.finance.orchestrator_utils import normalize_to_data_result
+from shared.data_result import DataResult
 
 
 def test_normalize_passthrough_data_result():

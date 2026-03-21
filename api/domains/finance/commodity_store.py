@@ -9,15 +9,15 @@ Used to:
 """
 
 from datetime import datetime, timedelta, timezone
-from typing import List, Dict
 
-from domains.finance.data.market_data_store import upsert_observations, get_series
 from shared.data_result import DataResult
+
+from domains.finance.data.market_data_store import get_series, upsert_observations
 
 SOURCE_COMMODITY_MANUAL = "commodity_manual"
 
 
-def normalize_observation(obs: Dict) -> Dict:
+def normalize_observation(obs: dict) -> dict:
     """
     Normalize a raw observation to market_data_store format:
     {\"date\": str, \"value\": float, \"metadata\": dict}.
@@ -34,7 +34,7 @@ def normalize_observation(obs: Dict) -> Dict:
     }
 
 
-def upsert_manual_observations(metal: str, observations: List[Dict]) -> DataResult[bool]:
+def upsert_manual_observations(metal: str, observations: list[dict]) -> DataResult[bool]:
     """
     Upsert one or more observations for a commodity into the manual store.
     Metal is the symbol; observations should include date/value/unit.
@@ -48,7 +48,7 @@ def upsert_manual_observations(metal: str, observations: List[Dict]) -> DataResu
 def get_manual_history(
     metal: str,
     days: int = 90,
-) -> List[Dict]:
+) -> list[dict]:
     """
     Get historical observations for a commodity from the manual store.
     Returns list of {\"date\": str, \"value\": float, \"unit\": str, \"source_id\": str}.
@@ -65,7 +65,7 @@ def get_manual_history(
     )
     if not isinstance(res, DataResult) or not res.success:
         return []
-    out: List[Dict] = []
+    out: list[dict] = []
     for row in res.data or []:
         meta = row.get("metadata") or {}
         out.append(
@@ -77,4 +77,3 @@ def get_manual_history(
             }
         )
     return out
-

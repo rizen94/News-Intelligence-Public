@@ -57,9 +57,7 @@ import {
   MergeType,
   SelectAll,
 } from '@mui/icons-material';
-import {
-  Checkbox,
-} from '@mui/material';
+import { Checkbox } from '@mui/material';
 // Import with explicit default to avoid webpack issues
 import apiServiceDefault, { getApiService } from '../../services/apiService';
 const apiService = apiServiceDefault || getApiService();
@@ -92,7 +90,7 @@ const TopicManagement = () => {
     severity: 'success',
   });
 
-  const loadTopics = useCallback(async() => {
+  const loadTopics = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -120,7 +118,7 @@ const TopicManagement = () => {
     }
   }, [searchQuery, selectedCategory, statusFilter, sortBy]);
 
-  const loadTopicsNeedingReview = useCallback(async() => {
+  const loadTopicsNeedingReview = useCallback(async () => {
     try {
       const response = await apiService.getTopicsNeedingReview(0.6, 50);
 
@@ -132,9 +130,11 @@ const TopicManagement = () => {
     }
   }, []);
 
-  const loadTopicArticles = useCallback(async(topicId) => {
+  const loadTopicArticles = useCallback(async topicId => {
     try {
-      const response = await apiService.getManagedTopicArticles(topicId, { limit: 50 });
+      const response = await apiService.getManagedTopicArticles(topicId, {
+        limit: 50,
+      });
 
       if (response.success) {
         setTopicArticles(response.data.articles || []);
@@ -144,20 +144,23 @@ const TopicManagement = () => {
     }
   }, []);
 
-  const loadTopicDetails = useCallback(async(topicId) => {
-    try {
-      const response = await apiService.getManagedTopic(topicId);
+  const loadTopicDetails = useCallback(
+    async topicId => {
+      try {
+        const response = await apiService.getManagedTopic(topicId);
 
-      if (response.success) {
-        setSelectedTopic(response.data);
-        await loadTopicArticles(topicId);
+        if (response.success) {
+          setSelectedTopic(response.data);
+          await loadTopicArticles(topicId);
+        }
+      } catch (err) {
+        console.error('Error loading topic details:', err);
       }
-    } catch (err) {
-      console.error('Error loading topic details:', err);
-    }
-  }, [loadTopicArticles]);
+    },
+    [loadTopicArticles]
+  );
 
-  const handleSubmitFeedback = async(isCorrect, feedbackNotes) => {
+  const handleSubmitFeedback = async (isCorrect, feedbackNotes) => {
     if (!selectedAssignment) return;
 
     try {
@@ -168,7 +171,7 @@ const TopicManagement = () => {
           is_correct: isCorrect,
           feedback_notes: feedbackNotes,
           validated_by: 'current_user', // TODO: Get from auth context
-        },
+        }
       );
 
       if (response.success) {
@@ -191,7 +194,7 @@ const TopicManagement = () => {
     }
   };
 
-  const handleBulkReview = async(isCorrect, feedbackNotes) => {
+  const handleBulkReview = async (isCorrect, feedbackNotes) => {
     if (selectedAssignments.size === 0) return;
 
     try {
@@ -203,11 +206,13 @@ const TopicManagement = () => {
             is_correct: isCorrect,
             feedback_notes: feedbackNotes,
             validated_by: 'current_user',
-          }),
-        ),
+          })
+        )
       );
 
-      const successCount = results.filter(r => r.status === 'fulfilled' && r.value.success).length;
+      const successCount = results.filter(
+        r => r.status === 'fulfilled' && r.value.success
+      ).length;
 
       if (successCount > 0) {
         await loadTopics();
@@ -220,7 +225,9 @@ const TopicManagement = () => {
         setError(null);
         setSnackbar({
           open: true,
-          message: `Successfully reviewed ${successCount} assignment${successCount > 1 ? 's' : ''}`,
+          message: `Successfully reviewed ${successCount} assignment${
+            successCount > 1 ? 's' : ''
+          }`,
           severity: 'success',
         });
       } else {
@@ -233,7 +240,7 @@ const TopicManagement = () => {
     }
   };
 
-  const handleToggleAssignment = (assignmentId) => {
+  const handleToggleAssignment = assignmentId => {
     const newSelected = new Set(selectedAssignments);
     if (newSelected.has(assignmentId)) {
       newSelected.delete(assignmentId);
@@ -255,7 +262,7 @@ const TopicManagement = () => {
     }
   };
 
-  const handleMergeTopics = async() => {
+  const handleMergeTopics = async () => {
     if (topicsToMerge.length < 2) {
       setError('Please select at least 2 topics to merge');
       return;
@@ -266,14 +273,18 @@ const TopicManagement = () => {
       setError(null);
 
       // mergeTopics expects two topic names (cluster names), not IDs
-      const primaryTopic = topicsToMerge[0].name || topicsToMerge[0].cluster_name;
-      const secondaryTopic = topicsToMerge[1].name || topicsToMerge[1].cluster_name;
+      const primaryTopic =
+        topicsToMerge[0].name || topicsToMerge[0].cluster_name;
+      const secondaryTopic =
+        topicsToMerge[1].name || topicsToMerge[1].cluster_name;
       const result = await apiService.mergeTopics(primaryTopic, secondaryTopic);
 
       if (result.success) {
         setSnackbar({
           open: true,
-          message: result.data?.message || `Successfully merged ${topicsToMerge.length} topics`,
+          message:
+            result.data?.message ||
+            `Successfully merged ${topicsToMerge.length} topics`,
           severity: 'success',
         });
         setMergeDialogOpen(false);
@@ -301,7 +312,7 @@ const TopicManagement = () => {
     }
   };
 
-  const handleProcessArticle = async(articleId) => {
+  const handleProcessArticle = async articleId => {
     try {
       setProcessingArticle(articleId);
       const response = await apiService.processArticleTopics(articleId);
@@ -328,13 +339,13 @@ const TopicManagement = () => {
     loadTopicsNeedingReview();
   }, [loadTopics, loadTopicsNeedingReview]);
 
-  const getAccuracyColor = (accuracy) => {
+  const getAccuracyColor = accuracy => {
     if (accuracy >= 0.8) return 'success';
     if (accuracy >= 0.6) return 'warning';
     return 'error';
   };
 
-  const getAccuracyLabel = (accuracy) => {
+  const getAccuracyLabel = accuracy => {
     if (accuracy >= 0.8) return 'High';
     if (accuracy >= 0.6) return 'Medium';
     return 'Low';
@@ -350,9 +361,7 @@ const TopicManagement = () => {
       maxWidth='sm'
       fullWidth
     >
-      <DialogTitle>
-        Review Topic Assignment
-      </DialogTitle>
+      <DialogTitle>Review Topic Assignment</DialogTitle>
       <DialogContent>
         {selectedAssignment && (
           <Box sx={{ mt: 2 }}>
@@ -363,7 +372,8 @@ const TopicManagement = () => {
               Topic: {selectedAssignment.topic_name || 'Unknown'}
             </Typography>
             <Typography variant='body2' color='text.secondary' gutterBottom>
-              Confidence: {(selectedAssignment.confidence_score * 100).toFixed(1)}%
+              Confidence:{' '}
+              {(selectedAssignment.confidence_score * 100).toFixed(1)}%
             </Typography>
             <Divider sx={{ my: 2 }} />
             <TextField
@@ -388,7 +398,12 @@ const TopicManagement = () => {
           Cancel
         </Button>
         <Button
-          onClick={() => handleSubmitFeedback(false, document.getElementById('feedback-notes')?.value || '')}
+          onClick={() =>
+            handleSubmitFeedback(
+              false,
+              document.getElementById('feedback-notes')?.value || ''
+            )
+          }
           color='error'
           startIcon={<ThumbDown />}
           disabled={feedbackLoading}
@@ -396,7 +411,12 @@ const TopicManagement = () => {
           Incorrect
         </Button>
         <Button
-          onClick={() => handleSubmitFeedback(true, document.getElementById('feedback-notes')?.value || '')}
+          onClick={() =>
+            handleSubmitFeedback(
+              true,
+              document.getElementById('feedback-notes')?.value || ''
+            )
+          }
           color='success'
           startIcon={<ThumbUp />}
           disabled={feedbackLoading}
@@ -415,8 +435,9 @@ const TopicManagement = () => {
       </Typography>
 
       <Typography variant='body1' color='text.secondary' sx={{ mb: 3 }}>
-        Manage topics, review assignments, and improve accuracy through iterative learning.
-        The system learns from your feedback to provide better topic assignments over time.
+        Manage topics, review assignments, and improve accuracy through
+        iterative learning. The system learns from your feedback to provide
+        better topic assignments over time.
       </Typography>
 
       {/* Controls */}
@@ -428,7 +449,7 @@ const TopicManagement = () => {
                 fullWidth
                 label='Search Topics'
                 value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
+                onChange={e => setSearchQuery(e.target.value)}
                 InputProps={{
                   startAdornment: (
                     <Search sx={{ mr: 1, color: 'text.secondary' }} />
@@ -443,7 +464,7 @@ const TopicManagement = () => {
                 <InputLabel>Category</InputLabel>
                 <Select
                   value={selectedCategory}
-                  onChange={(e) => setSelectedCategory(e.target.value)}
+                  onChange={e => setSelectedCategory(e.target.value)}
                   label='Category'
                 >
                   <MenuItem value=''>All</MenuItem>
@@ -462,7 +483,7 @@ const TopicManagement = () => {
                 <InputLabel>Status</InputLabel>
                 <Select
                   value={statusFilter}
-                  onChange={(e) => setStatusFilter(e.target.value)}
+                  onChange={e => setStatusFilter(e.target.value)}
                   label='Status'
                 >
                   <MenuItem value=''>All</MenuItem>
@@ -478,7 +499,7 @@ const TopicManagement = () => {
                 <InputLabel>Sort By</InputLabel>
                 <Select
                   value={sortBy}
-                  onChange={(e) => setSortBy(e.target.value)}
+                  onChange={e => setSortBy(e.target.value)}
                   label='Sort By'
                 >
                   <MenuItem value='accuracy_score'>Accuracy</MenuItem>
@@ -561,7 +582,7 @@ const TopicManagement = () => {
             </Box>
           ) : (
             <Grid container spacing={3}>
-              {topics.map((topic) => (
+              {topics.map(topic => (
                 <Grid item xs={12} md={6} lg={4} key={topic.id}>
                   <Card
                     sx={{
@@ -569,9 +590,7 @@ const TopicManagement = () => {
                       cursor: 'pointer',
                       '&:hover': { boxShadow: 3 },
                       border:
-                        selectedTopic?.id === topic.id
-                          ? '2px solid'
-                          : 'none',
+                        selectedTopic?.id === topic.id ? '2px solid' : 'none',
                       borderColor: 'primary.main',
                     }}
                     onClick={() => {
@@ -596,7 +615,10 @@ const TopicManagement = () => {
                         >
                           {topic.name}
                         </Typography>
-                        <Badge badgeContent={topic.article_count} color='primary'>
+                        <Badge
+                          badgeContent={topic.article_count}
+                          color='primary'
+                        >
                           <Article />
                         </Badge>
                       </Box>
@@ -630,7 +652,9 @@ const TopicManagement = () => {
                             Accuracy:
                           </Typography>
                           <Chip
-                            label={`${(topic.accuracy_score * 100).toFixed(0)}%`}
+                            label={`${(topic.accuracy_score * 100).toFixed(
+                              0
+                            )}%`}
                             size='small'
                             color={getAccuracyColor(topic.accuracy_score)}
                           />
@@ -645,7 +669,8 @@ const TopicManagement = () => {
 
                       <Box sx={{ mb: 2 }}>
                         <Typography variant='body2' color='text.secondary'>
-                          Confidence: {(topic.confidence_score * 100).toFixed(1)}%
+                          Confidence:{' '}
+                          {(topic.confidence_score * 100).toFixed(1)}%
                         </Typography>
                         <Typography variant='body2' color='text.secondary'>
                           Reviews: {topic.review_count} (
@@ -666,7 +691,7 @@ const TopicManagement = () => {
                         </Typography>
                         <IconButton
                           size='small'
-                          onClick={(e) => {
+                          onClick={e => {
                             e.stopPropagation();
                             setSelectedTopic(topic);
                             loadTopicDetails(topic.id);
@@ -706,7 +731,7 @@ const TopicManagement = () => {
             </Card>
           ) : (
             <Grid container spacing={3}>
-              {topicsNeedingReview.map((topic) => (
+              {topicsNeedingReview.map(topic => (
                 <Grid item xs={12} md={6} key={topic.topic_id}>
                   <Card
                     sx={{
@@ -731,7 +756,11 @@ const TopicManagement = () => {
                         />
                       </Box>
 
-                      <Typography variant='body2' color='text.secondary' sx={{ mb: 2 }}>
+                      <Typography
+                        variant='body2'
+                        color='text.secondary'
+                        sx={{ mb: 2 }}
+                      >
                         Review Count: {topic.review_count} | Incorrect:{' '}
                         {topic.incorrect_assignments}
                       </Typography>
@@ -748,7 +777,10 @@ const TopicManagement = () => {
                         variant='contained'
                         startIcon={<RateReview />}
                         onClick={() => {
-                          setSelectedTopic({ id: topic.topic_id, name: topic.topic_name });
+                          setSelectedTopic({
+                            id: topic.topic_id,
+                            name: topic.topic_name,
+                          });
                           loadTopicDetails(topic.topic_id);
                           setActiveTab(2);
                         }}
@@ -779,10 +811,7 @@ const TopicManagement = () => {
               <Typography variant='h5' gutterBottom sx={{ mb: 0 }}>
                 {selectedTopic.name}
               </Typography>
-              <Chip
-                label={selectedTopic.category || 'other'}
-                color='primary'
-              />
+              <Chip label={selectedTopic.category || 'other'} color='primary' />
             </Box>
 
             {/* Topic Metrics */}
@@ -878,7 +907,15 @@ const TopicManagement = () => {
             {/* Topic Articles with Feedback */}
             <Accordion>
               <AccordionSummary expandIcon={<ExpandMore />}>
-                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', mr: 2 }}>
+                <Box
+                  sx={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    width: '100%',
+                    mr: 2,
+                  }}
+                >
                   <Typography variant='h6'>
                     Articles ({topicArticles.length})
                   </Typography>
@@ -887,12 +924,13 @@ const TopicManagement = () => {
                       size='small'
                       variant='outlined'
                       startIcon={<SelectAll />}
-                      onClick={(e) => {
+                      onClick={e => {
                         e.stopPropagation();
                         handleSelectAllAssignments();
                       }}
                     >
-                      {selectedAssignments.size === topicArticles.filter(a => !a.is_validated).length
+                      {selectedAssignments.size ===
+                      topicArticles.filter(a => !a.is_validated).length
                         ? 'Deselect All'
                         : 'Select All Unreviewed'}
                     </Button>
@@ -901,10 +939,24 @@ const TopicManagement = () => {
               </AccordionSummary>
               <AccordionDetails>
                 {selectedAssignments.size > 0 && (
-                  <Box sx={{ mb: 2, p: 2, bgcolor: 'action.selected', borderRadius: 1 }}>
-                    <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <Box
+                    sx={{
+                      mb: 2,
+                      p: 2,
+                      bgcolor: 'action.selected',
+                      borderRadius: 1,
+                    }}
+                  >
+                    <Box
+                      sx={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                      }}
+                    >
                       <Typography variant='body2'>
-                        {selectedAssignments.size} assignment{selectedAssignments.size > 1 ? 's' : ''} selected
+                        {selectedAssignments.size} assignment
+                        {selectedAssignments.size > 1 ? 's' : ''} selected
                       </Typography>
                       <Box sx={{ display: 'flex', gap: 1 }}>
                         <Button
@@ -942,7 +994,7 @@ const TopicManagement = () => {
                   </Box>
                 )}
                 <List>
-                  {topicArticles.map((article) => {
+                  {topicArticles.map(article => {
                     const assignmentId = article.assignment_id || article.id;
                     const isSelected = selectedAssignments.has(assignmentId);
                     const isUnvalidated = !article.is_validated;
@@ -952,7 +1004,9 @@ const TopicManagement = () => {
                         {isUnvalidated && (
                           <Checkbox
                             checked={isSelected}
-                            onChange={() => handleToggleAssignment(assignmentId)}
+                            onChange={() =>
+                              handleToggleAssignment(assignmentId)
+                            }
                             sx={{ mr: 1 }}
                           />
                         )}
@@ -978,24 +1032,35 @@ const TopicManagement = () => {
                                       <Cancel />
                                     )
                                   }
-                                  label={article.is_correct ? 'Correct' : 'Incorrect'}
+                                  label={
+                                    article.is_correct ? 'Correct' : 'Incorrect'
+                                  }
                                   size='small'
-                                  color={article.is_correct ? 'success' : 'error'}
+                                  color={
+                                    article.is_correct ? 'success' : 'error'
+                                  }
                                 />
                               )}
                             </Box>
                           }
                           secondary={
                             <Box>
-                              <Typography variant='body2' color='text.secondary'>
+                              <Typography
+                                variant='body2'
+                                color='text.secondary'
+                              >
                                 {article.source_domain} •{' '}
                                 {article.published_at
-                                  ? new Date(article.published_at).toLocaleDateString()
+                                  ? new Date(
+                                      article.published_at
+                                    ).toLocaleDateString()
                                   : 'N/A'}
                               </Typography>
                               <Box sx={{ mt: 1, display: 'flex', gap: 1 }}>
                                 <Chip
-                                  label={`${(article.confidence_score * 100).toFixed(0)}% confidence`}
+                                  label={`${(
+                                    article.confidence_score * 100
+                                  ).toFixed(0)}% confidence`}
                                   size='small'
                                   variant='outlined'
                                 />
@@ -1008,7 +1073,11 @@ const TopicManagement = () => {
                                 )}
                               </Box>
                               {article.feedback_notes && (
-                                <Typography variant='caption' color='text.secondary' sx={{ mt: 0.5, display: 'block' }}>
+                                <Typography
+                                  variant='caption'
+                                  color='text.secondary'
+                                  sx={{ mt: 0.5, display: 'block' }}
+                                >
                                   Note: {article.feedback_notes}
                                 </Typography>
                               )}
@@ -1065,11 +1134,13 @@ const TopicManagement = () => {
         fullWidth
       >
         <DialogTitle>
-          Bulk Review {selectedAssignments.size} Assignment{selectedAssignments.size > 1 ? 's' : ''}
+          Bulk Review {selectedAssignments.size} Assignment
+          {selectedAssignments.size > 1 ? 's' : ''}
         </DialogTitle>
         <DialogContent>
           <Typography variant='body2' color='text.secondary' sx={{ mb: 2 }}>
-            Mark all selected assignments as {bulkReviewAction === 'correct' ? 'correct' : 'incorrect'}?
+            Mark all selected assignments as{' '}
+            {bulkReviewAction === 'correct' ? 'correct' : 'incorrect'}?
           </Typography>
           <TextField
             fullWidth
@@ -1091,14 +1162,21 @@ const TopicManagement = () => {
           </Button>
           <Button
             onClick={() => {
-              const notes = document.getElementById('bulk-feedback-notes')?.value || '';
+              const notes =
+                document.getElementById('bulk-feedback-notes')?.value || '';
               handleBulkReview(bulkReviewAction === 'correct', notes);
             }}
             color={bulkReviewAction === 'correct' ? 'success' : 'error'}
             variant='contained'
             disabled={feedbackLoading}
           >
-            {feedbackLoading ? <CircularProgress size={20} /> : `Mark as ${bulkReviewAction === 'correct' ? 'Correct' : 'Incorrect'}`}
+            {feedbackLoading ? (
+              <CircularProgress size={20} />
+            ) : (
+              `Mark as ${
+                bulkReviewAction === 'correct' ? 'Correct' : 'Incorrect'
+              }`
+            )}
           </Button>
         </DialogActions>
       </Dialog>
@@ -1121,24 +1199,29 @@ const TopicManagement = () => {
         </DialogTitle>
         <DialogContent>
           <Typography variant='body2' color='text.secondary' sx={{ mb: 2 }}>
-            Select topics to merge. The first topic will be kept, and others will be merged into it.
+            Select topics to merge. The first topic will be kept, and others
+            will be merged into it.
           </Typography>
           <List>
             {topics.map(topic => (
               <ListItem key={topic.id}>
                 <Checkbox
                   checked={topicsToMerge.some(t => t.id === topic.id)}
-                  onChange={(e) => {
+                  onChange={e => {
                     if (e.target.checked) {
                       setTopicsToMerge([...topicsToMerge, topic]);
                     } else {
-                      setTopicsToMerge(topicsToMerge.filter(t => t.id !== topic.id));
+                      setTopicsToMerge(
+                        topicsToMerge.filter(t => t.id !== topic.id)
+                      );
                     }
                   }}
                 />
                 <ListItemText
                   primary={topic.name}
-                  secondary={`${topic.article_count || 0} articles • ${(topic.accuracy_score * 100).toFixed(0)}% accuracy`}
+                  secondary={`${topic.article_count || 0} articles • ${(
+                    topic.accuracy_score * 100
+                  ).toFixed(0)}% accuracy`}
                 />
               </ListItem>
             ))}
@@ -1159,7 +1242,11 @@ const TopicManagement = () => {
             disabled={topicsToMerge.length < 2 || feedbackLoading}
             startIcon={<MergeType />}
           >
-            {feedbackLoading ? <CircularProgress size={20} /> : `Merge ${topicsToMerge.length} Topics`}
+            {feedbackLoading ? (
+              <CircularProgress size={20} />
+            ) : (
+              `Merge ${topicsToMerge.length} Topics`
+            )}
           </Button>
         </DialogActions>
       </Dialog>
@@ -1183,4 +1270,3 @@ const TopicManagement = () => {
 };
 
 export default TopicManagement;
-

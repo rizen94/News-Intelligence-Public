@@ -11,6 +11,7 @@ from typing import Any
 
 try:
     from config.logging_config import get_component_logger
+
     LOG = get_component_logger("finance")
 except Exception:
     LOG = logging.getLogger("finance.orchestrator")
@@ -50,13 +51,16 @@ def log_event(
     log_fn(msg)
 
 
-def log_queue_decision(activity: str, reason: str, task_id: str, priority: str, **extra: Any) -> None:
+def log_queue_decision(
+    activity: str, reason: str, task_id: str, priority: str, **extra: Any
+) -> None:
     """
     Log what activity is being queued and why. Writes to shared activity logger
     for consolidated storage (logs/activity.log, logs/activity.jsonl).
     """
     try:
         from shared.logging.activity_logger import log_orchestrator_decision
+
         log_orchestrator_decision(
             orchestrator_id="finance",
             activity=activity,

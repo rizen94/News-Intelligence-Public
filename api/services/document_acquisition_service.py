@@ -8,14 +8,14 @@ See docs/V6_QUALITY_FIRST_UPGRADE_PLAN.md, V6_QUALITY_FIRST_TODO.md Tier 3.
 import json
 import logging
 from datetime import date
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from shared.database.connection import get_db_connection
 
 logger = logging.getLogger(__name__)
 
 
-def ingest_from_config(config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+def ingest_from_config(config: dict[str, Any] | None = None) -> dict[str, Any]:
     """
     Read document_sources.ingest_urls from config; for each entry (url or {url, title, ...}),
     insert a row into processed_documents (metadata only). Returns { inserted: int, errors: [] }.
@@ -23,6 +23,7 @@ def ingest_from_config(config: Optional[Dict[str, Any]] = None) -> Dict[str, Any
     if config is None:
         try:
             from config.orchestrator_governance import get_orchestrator_governance_config
+
             config = get_orchestrator_governance_config()
         except Exception as e:
             logger.warning("document_acquisition: config load failed: %s", e)
@@ -38,7 +39,7 @@ def ingest_from_config(config: Optional[Dict[str, Any]] = None) -> Dict[str, Any
         return {"inserted": 0, "errors": ["Database unavailable"]}
 
     inserted = 0
-    errors: List[str] = []
+    errors: list[str] = []
     try:
         with conn.cursor() as cur:
             for entry in urls:
@@ -64,6 +65,7 @@ def ingest_from_config(config: Optional[Dict[str, Any]] = None) -> Dict[str, Any
                 if isinstance(pub, str):
                     try:
                         from datetime import datetime
+
                         pub = datetime.fromisoformat(pub.replace("Z", "+00:00")).date()
                     except (ValueError, TypeError):
                         pub = None
@@ -76,7 +78,14 @@ def ingest_from_config(config: Optional[Dict[str, Any]] = None) -> Dict[str, Any
                         (source_type, source_name, source_url, title, document_type, publication_date)
                         VALUES (%s, %s, %s, %s, %s, %s)
                         """,
-                        (row.get("source_type"), row.get("source_name"), url, row.get("title"), row.get("document_type"), pub),
+                        (
+                            row.get("source_type"),
+                            row.get("source_name"),
+                            url,
+                            row.get("title"),
+                            row.get("document_type"),
+                            pub,
+                        ),
                     )
                     inserted += 1
                 except Exception as e:
@@ -95,15 +104,15 @@ def ingest_from_config(config: Optional[Dict[str, Any]] = None) -> Dict[str, Any
 
 def create_document(
     source_url: str,
-    title: Optional[str] = None,
-    source_type: Optional[str] = None,
-    source_name: Optional[str] = None,
-    document_type: Optional[str] = None,
-    publication_date: Optional[date] = None,
-    authors: Optional[List[str]] = None,
-    metadata: Optional[Dict[str, Any]] = None,
-    publication_date_str: Optional[str] = None,
-) -> Dict[str, Any]:
+    title: str | None = None,
+    source_type: str | None = None,
+    source_name: str | None = None,
+    document_type: str | None = None,
+    publication_date: date | None = None,
+    authors: list[str] | None = None,
+    metadata: dict[str, Any] | None = None,
+    publication_date_str: str | None = None,
+) -> dict[str, Any]:
     """
     Insert one processed_document from given metadata. Returns { success, document_id, error }.
     publication_date can be date or ISO date string via publication_date_str.
@@ -111,7 +120,10 @@ def create_document(
     if publication_date is None and publication_date_str:
         try:
             from datetime import datetime
-            publication_date = datetime.fromisoformat(publication_date_str.replace("Z", "+00:00")).date()
+
+            publication_date = datetime.fromisoformat(
+                publication_date_str.replace("Z", "+00:00")
+            ).date()
         except (ValueError, TypeError):
             pass
     conn = get_db_connection()

@@ -5,19 +5,19 @@ Extracted from rss_fetcher_service.py
 """
 
 import asyncio
+import hashlib
+import json
+import logging
+import time
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from typing import Any
+
 import aiohttp
 import feedparser
-import logging
-import json
-import hashlib
-import re
-from typing import Dict, List, Any, Optional, Tuple
-from datetime import datetime, timedelta
-from dataclasses import dataclass
-import time
-
 from config.database import get_db
 from sqlalchemy import text
+
 from .base import BaseRSSService
 
 logger = logging.getLogger(__name__)
@@ -26,10 +26,17 @@ logger = logging.getLogger(__name__)
 def _log_rss_if_available(feed_id, feed_name, status, fetched, saved, start_time, error=None):
     try:
         from shared.logging.activity_logger import log_rss_pull
+
         duration_ms = (time.time() - start_time) * 1000
-        log_rss_pull(feed_id=feed_id, feed_name=feed_name, status=status,
-                     articles_fetched=fetched, articles_saved=saved,
-                     duration_ms=duration_ms, error=error)
+        log_rss_pull(
+            feed_id=feed_id,
+            feed_name=feed_name,
+            status=status,
+            articles_fetched=fetched,
+            articles_saved=saved,
+            duration_ms=duration_ms,
+            error=error,
+        )
     except Exception:
         pass
 
@@ -37,6 +44,7 @@ def _log_rss_if_available(feed_id, feed_name, status, fetched, saved, start_time
 @dataclass
 class ArticleData:
     """Structured article data from RSS feed"""
+
     title: str
     url: str
     content: str
@@ -46,14 +54,14 @@ class ArticleData:
     source_tier: int
     source_priority: int
     language: str
-    categories: List[str]
-    tags: List[str]
+    categories: list[str]
+    tags: list[str]
 
 
 class RSSFetchingModule:
     """
     RSS Fetching Module - Async feed fetching with filtering
-    
+
     Provides:
     - Async feed fetching with concurrency control
     - Comprehensive article filtering
@@ -61,11 +69,11 @@ class RSSFetchingModule:
     - Article saving
     - Feed statistics updating
     """
-    
+
     def __init__(self, base_service: BaseRSSService):
         """
         Initialize fetching module
-        
+
         Args:
             base_service: Base RSS service for feed management
         """
@@ -74,56 +82,54 @@ class RSSFetchingModule:
         self.session = None
         self.filtering_config = None
         self._load_filtering_config()
-    
+
     async def __aenter__(self):
         """Async context manager entry"""
         self.session = aiohttp.ClientSession(
             timeout=aiohttp.ClientTimeout(total=30),
-            headers={'User-Agent': 'News Intelligence RSS Fetcher/1.0'}
+            headers={"User-Agent": "News Intelligence RSS Fetcher/1.0"},
         )
         return self
-    
+
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit"""
         if self.session:
             await self.session.close()
-    
+
     def _load_filtering_config(self):
         """Load filtering configuration from base service"""
         self.filtering_config = self.base_service.filtering_config or {}
-    
-    async def fetch_all_feeds(self, max_concurrent: int = 5) -> Dict[str, Any]:
+
+    async def fetch_all_feeds(self, max_concurrent: int = 5) -> dict[str, Any]:
         """Fetch articles from all active RSS feeds with concurrency control"""
         try:
             # Get all active feeds using base service
             feeds_result = await self.base_service.get_feeds(active_only=True, limit=1000)
             feeds = feeds_result.get("feeds", [])
-            
+
             if not feeds:
                 return {"message": "No active feeds found", "articles_processed": 0}
-            
+
             # Sort feeds by priority and tier
             feeds.sort(key=lambda x: (x["priority"], x["tier"]))
-            
+
             # Process feeds in batches
             semaphore = asyncio.Semaphore(max_concurrent)
             tasks = []
-            
+
             for feed in feeds:
-                task = asyncio.create_task(
-                    self._fetch_feed_with_semaphore(semaphore, feed)
-                )
+                task = asyncio.create_task(self._fetch_feed_with_semaphore(semaphore, feed))
                 tasks.append(task)
-            
+
             # Wait for all tasks to complete
             results = await asyncio.gather(*tasks, return_exceptions=True)
-            
+
             # Aggregate results
             total_articles = 0
             total_filtered = 0
             total_duplicates = 0
             errors = []
-            
+
             for i, result in enumerate(results):
                 if isinstance(result, Exception):
                     errors.append(f"Feed {feeds[i]['name']}: {str(result)}")
@@ -132,54 +138,56 @@ class RSSFetchingModule:
                     total_articles += result.get("articles_processed", 0)
                     total_filtered += result.get("articles_filtered", 0)
                     total_duplicates += result.get("duplicates_found", 0)
-            
+
             return {
                 "feeds_processed": len(feeds),
                 "articles_processed": total_articles,
                 "articles_filtered": total_filtered,
                 "duplicates_found": total_duplicates,
                 "errors": errors,
-                "status": "completed"
+                "status": "completed",
             }
-            
+
         except Exception as e:
             self.logger.error(f"Error in fetch_all_feeds: {e}")
             return {"error": str(e), "status": "failed"}
-    
-    async def _fetch_feed_with_semaphore(self, semaphore: asyncio.Semaphore, feed: Dict[str, Any]) -> Dict[str, Any]:
+
+    async def _fetch_feed_with_semaphore(
+        self, semaphore: asyncio.Semaphore, feed: dict[str, Any]
+    ) -> dict[str, Any]:
         """Fetch single feed with semaphore for concurrency control"""
         async with semaphore:
             return await self.fetch_single_feed(feed)
-    
-    async def fetch_single_feed(self, feed: Dict[str, Any]) -> Dict[str, Any]:
+
+    async def fetch_single_feed(self, feed: dict[str, Any]) -> dict[str, Any]:
         """Fetch articles from a single RSS feed"""
         feed_id = feed["id"]
         feed_name = feed["name"]
         feed_url = feed["url"]
-        feed_tier = feed["tier"]
-        feed_priority = feed["priority"]
-        feed_language = feed["language"]
-        feed_category = feed["category"]
+        feed["tier"]
+        feed["priority"]
+        feed["language"]
+        feed["category"]
         max_articles = feed["max_articles_per_update"]
-        
+
         start_time = time.time()
         articles_processed = 0
         articles_filtered = 0
         duplicates_found = 0
-        
+
         try:
             self.logger.info(f"Fetching feed: {feed_name}")
-            
+
             # Fetch RSS content
             async with self.session.get(feed_url) as response:
                 if response.status != 200:
                     raise Exception(f"HTTP {response.status}: {response.reason}")
-                
+
                 content = await response.text()
-            
+
             # Parse RSS feed
             feed_data = feedparser.parse(content)
-            
+
             if not feed_data.entries:
                 self.logger.warning(f"No entries found in feed: {feed_name}")
                 _log_rss_if_available(feed_id, feed_name, "no_entries", 0, 0, start_time)
@@ -189,40 +197,49 @@ class RSSFetchingModule:
                     "articles_processed": 0,
                     "articles_filtered": 0,
                     "duplicates_found": 0,
-                    "status": "no_entries"
+                    "status": "no_entries",
                 }
-            
+
             # Process articles
             for entry in feed_data.entries[:max_articles]:
                 try:
                     # Extract article data
                     article_data = self._extract_article_data(entry, feed)
-                    
+
                     # Apply filtering
                     if not await self._apply_filters(article_data):
                         articles_filtered += 1
                         continue
-                    
+
                     # Check for duplicates
                     if await self._is_duplicate(article_data):
                         duplicates_found += 1
                         continue
-                    
+
                     # Save article
                     await self._save_article(article_data)
                     articles_processed += 1
-                    
+
                 except Exception as e:
                     self.logger.warning(f"Error processing article from {feed_name}: {e}")
                     continue
-            
+
             # Update feed statistics
             response_time = int((time.time() - start_time) * 1000)
             await self._update_feed_stats(feed_id, articles_processed, response_time, True)
-            
-            self.logger.info(f"Processed {articles_processed} articles from {feed_name} "
-                           f"(filtered: {articles_filtered}, duplicates: {duplicates_found})")
-            _log_rss_if_available(feed_id, feed_name, "success", len(feed_data.entries), articles_processed, start_time)
+
+            self.logger.info(
+                f"Processed {articles_processed} articles from {feed_name} "
+                f"(filtered: {articles_filtered}, duplicates: {duplicates_found})"
+            )
+            _log_rss_if_available(
+                feed_id,
+                feed_name,
+                "success",
+                len(feed_data.entries),
+                articles_processed,
+                start_time,
+            )
             return {
                 "feed_id": feed_id,
                 "feed_name": feed_name,
@@ -230,9 +247,9 @@ class RSSFetchingModule:
                 "articles_filtered": articles_filtered,
                 "duplicates_found": duplicates_found,
                 "response_time": response_time,
-                "status": "success"
+                "status": "success",
             }
-            
+
         except Exception as e:
             self.logger.error(f"Error fetching feed {feed_name}: {e}")
             await self._update_feed_stats(feed_id, 0, 0, False, str(e))
@@ -244,25 +261,25 @@ class RSSFetchingModule:
                 "articles_filtered": 0,
                 "duplicates_found": 0,
                 "error": str(e),
-                "status": "error"
+                "status": "error",
             }
-    
-    def _extract_article_data(self, entry: Any, feed: Dict[str, Any]) -> ArticleData:
+
+    def _extract_article_data(self, entry: Any, feed: dict[str, Any]) -> ArticleData:
         """Extract structured data from RSS entry"""
-        title = entry.get('title', '')[:500]
-        url = entry.get('link', '')[:500]
-        content = entry.get('summary', '') or entry.get('description', '')
+        title = entry.get("title", "")[:500]
+        url = entry.get("link", "")[:500]
+        content = entry.get("summary", "") or entry.get("description", "")
         summary = content[:1000] if content else ""
-        
+
         # Parse published date
         published_date = None
-        if hasattr(entry, 'published_parsed') and entry.published_parsed:
+        if hasattr(entry, "published_parsed") and entry.published_parsed:
             published_date = datetime(*entry.published_parsed[:6])
-        elif hasattr(entry, 'updated_parsed') and entry.updated_parsed:
+        elif hasattr(entry, "updated_parsed") and entry.updated_parsed:
             published_date = datetime(*entry.updated_parsed[:6])
         else:
             published_date = datetime.now()
-        
+
         return ArticleData(
             title=title,
             url=url,
@@ -274,94 +291,94 @@ class RSSFetchingModule:
             source_priority=feed["priority"],
             language=feed["language"],
             categories=[feed["category"]],
-            tags=feed.get("tags", [])
+            tags=feed.get("tags", []),
         )
-    
+
     async def _apply_filters(self, article: ArticleData) -> bool:
         """Apply comprehensive filtering to article"""
         try:
             # Category whitelist filter
             if not self._check_category_filter(article):
                 return False
-            
+
             # Keyword blacklist filter
             if not self._check_keyword_blacklist(article):
                 return False
-            
+
             # URL pattern filter
             if not self._check_url_patterns(article):
                 return False
-            
+
             # NLP classifier filter (if available)
             if not await self._check_nlp_classifier(article):
                 return False
-            
+
             return True
-            
+
         except Exception as e:
             self.logger.warning(f"Error applying filters to article: {e}")
             return True  # Allow article if filtering fails
-    
+
     def _check_category_filter(self, article: ArticleData) -> bool:
         """Check if article matches category whitelist"""
         if not self.filtering_config or "category_whitelist" not in self.filtering_config:
             return True
-        
+
         category_config = self.filtering_config["category_whitelist"]
         article_text = f"{article.title} {article.content}".lower()
-        
+
         for category, keywords in category_config.items():
             if any(keyword.lower() in article_text for keyword in keywords):
                 return True
-        
+
         return False
-    
+
     def _check_keyword_blacklist(self, article: ArticleData) -> bool:
         """Check if article contains blacklisted keywords"""
         if not self.filtering_config or "keyword_blacklist" not in self.filtering_config:
             return True
-        
+
         blacklist_config = self.filtering_config["keyword_blacklist"]
         article_text = f"{article.title} {article.content}".lower()
-        
+
         for category, keywords in blacklist_config.items():
             if any(keyword.lower() in article_text for keyword in keywords):
                 self.logger.debug(f"Article filtered by {category} blacklist: {article.title}")
                 return False
-        
+
         return True
-    
+
     def _check_url_patterns(self, article: ArticleData) -> bool:
         """Check if article URL matches include/exclude patterns"""
         if not self.filtering_config or "url_patterns" not in self.filtering_config:
             return True
-        
+
         url_config = self.filtering_config["url_patterns"]
         url = article.url.lower()
-        
+
         # Check exclude patterns first
         exclude_patterns = url_config.get("exclude_patterns", [])
         for pattern in exclude_patterns:
             if pattern.lower() in url:
                 self.logger.debug(f"Article filtered by URL exclude pattern: {article.title}")
                 return False
-        
+
         # Check include patterns
         include_patterns = url_config.get("include_patterns", [])
         if include_patterns:
             if not any(pattern.lower() in url for pattern in include_patterns):
                 self.logger.debug(f"Article filtered by URL include pattern: {article.title}")
                 return False
-        
+
         return True
-    
+
     async def _check_nlp_classifier(self, article: ArticleData) -> bool:
         """Check article using NLP classifier.
         Future: local NLP classifier (e.g. HuggingFace) for feed/category filtering.
         Currently a no-op — all articles allowed.
         """
         return True
-    
+
     async def _is_duplicate(self, article: ArticleData) -> bool:
         """Check if article is a duplicate"""
         try:
@@ -369,34 +386,37 @@ class RSSFetchingModule:
             db = next(db_gen)
             try:
                 # Check for exact URL match
-                url_result = db.execute(text("""
+                url_result = db.execute(
+                    text("""
                     SELECT id FROM articles WHERE url = :url
-                """), {"url": article.url}).fetchone()
-                
+                """),
+                    {"url": article.url},
+                ).fetchone()
+
                 if url_result:
                     return True
-                
+
                 # Check for similar title (basic similarity)
                 title_hash = hashlib.md5(article.title.lower().encode()).hexdigest()
-                title_result = db.execute(text("""
-                    SELECT id FROM articles 
+                title_result = db.execute(
+                    text("""
+                    SELECT id FROM articles
                     WHERE MD5(LOWER(title)) = :title_hash
                     AND created_at >= :recent_date
-                """), {
-                    "title_hash": title_hash,
-                    "recent_date": datetime.now() - timedelta(days=7)
-                }).fetchone()
-                
+                """),
+                    {"title_hash": title_hash, "recent_date": datetime.now() - timedelta(days=7)},
+                ).fetchone()
+
                 if title_result:
                     return True
-                
+
                 return False
             finally:
                 db.close()
         except Exception as e:
             self.logger.warning(f"Error checking duplicates: {e}")
             return False
-    
+
     async def _save_article(self, article: ArticleData) -> bool:
         """Save article to database. Inline enrichment: if content < 500 chars, try trafilatura once."""
         try:
@@ -406,6 +426,7 @@ class RSSFetchingModule:
             if len(insert_content) < 500 and article.url and article.url.strip():
                 try:
                     from services.article_content_enrichment_service import enrich_article_content
+
                     full_text, ok = enrich_article_content(article.url)
                     if ok and full_text:
                         insert_content = full_text
@@ -419,7 +440,8 @@ class RSSFetchingModule:
             db_gen = get_db()
             db = next(db_gen)
             try:
-                db.execute(text("""
+                db.execute(
+                    text("""
                     INSERT INTO articles (
                         title, url, content, summary, published_date, created_at,
                         source, source_tier, source_priority, language, categories,
@@ -429,22 +451,24 @@ class RSSFetchingModule:
                         :source, :source_tier, :source_priority, :language, :categories,
                         :enrichment_status, :enrichment_attempts
                     ) ON CONFLICT (url) DO NOTHING
-                """), {
-                    "title": article.title,
-                    "url": article.url,
-                    "content": insert_content,
-                    "summary": article.summary,
-                    "published_date": article.published_date,
-                    "created_at": datetime.now(),
-                    "source": article.source,
-                    "source_tier": article.source_tier,
-                    "source_priority": article.source_priority,
-                    "language": article.language,
-                    "categories": json.dumps(article.categories),
-                    "enrichment_status": enrichment_status,
-                    "enrichment_attempts": enrichment_attempts,
-                })
-                
+                """),
+                    {
+                        "title": article.title,
+                        "url": article.url,
+                        "content": insert_content,
+                        "summary": article.summary,
+                        "published_date": article.published_date,
+                        "created_at": datetime.now(),
+                        "source": article.source,
+                        "source_tier": article.source_tier,
+                        "source_priority": article.source_priority,
+                        "language": article.language,
+                        "categories": json.dumps(article.categories),
+                        "enrichment_status": enrichment_status,
+                        "enrichment_attempts": enrichment_attempts,
+                    },
+                )
+
                 db.commit()
                 return True
             finally:
@@ -452,9 +476,15 @@ class RSSFetchingModule:
         except Exception as e:
             self.logger.error(f"Error saving article: {e}")
             return False
-    
-    async def _update_feed_stats(self, feed_id: int, articles_processed: int, 
-                                response_time: int, success: bool, error_message: str = None):
+
+    async def _update_feed_stats(
+        self,
+        feed_id: int,
+        articles_processed: int,
+        response_time: int,
+        success: bool,
+        error_message: str = None,
+    ):
         """Update feed performance statistics"""
         try:
             db_gen = get_db()
@@ -462,52 +492,60 @@ class RSSFetchingModule:
             try:
                 # Update feed table
                 if success:
-                    db.execute(text("""
-                        UPDATE rss_feeds 
+                    db.execute(
+                        text("""
+                        UPDATE rss_feeds
                         SET last_fetched = CURRENT_TIMESTAMP,
                             last_success = CURRENT_TIMESTAMP,
                             last_error = NULL,
                             status = 'active'
                         WHERE id = :feed_id
-                    """), {"feed_id": feed_id})
+                    """),
+                        {"feed_id": feed_id},
+                    )
                 else:
-                    db.execute(text("""
-                        UPDATE rss_feeds 
+                    db.execute(
+                        text("""
+                        UPDATE rss_feeds
                         SET last_fetched = CURRENT_TIMESTAMP,
                             last_error = :error_message,
                             status = 'error'
                         WHERE id = :feed_id
-                    """), {"feed_id": feed_id, "error_message": error_message})
-                
+                    """),
+                        {"feed_id": feed_id, "error_message": error_message},
+                    )
+
                 # Update daily performance metrics
                 today = datetime.now().date()
-                db.execute(text("""
+                db.execute(
+                    text("""
                     INSERT INTO feed_performance_metrics (
                         feed_id, date, articles_fetched, success_rate, avg_response_time
                     ) VALUES (
                         :feed_id, :date, :articles_fetched, :success_rate, :avg_response_time
-                    ) ON CONFLICT (feed_id, date) 
-                    DO UPDATE SET 
+                    ) ON CONFLICT (feed_id, date)
+                    DO UPDATE SET
                         articles_fetched = feed_performance_metrics.articles_fetched + :articles_fetched,
-                        success_rate = CASE 
-                            WHEN :success THEN 
+                        success_rate = CASE
+                            WHEN :success THEN
                                 (feed_performance_metrics.success_rate + 100.0) / 2.0
-                            ELSE 
+                            ELSE
                                 (feed_performance_metrics.success_rate + 0.0) / 2.0
                         END,
                         avg_response_time = :avg_response_time
-                """), {
-                    "feed_id": feed_id,
-                    "date": today,
-                    "articles_fetched": articles_processed,
-                    "success_rate": 100.0 if success else 0.0,
-                    "avg_response_time": response_time,
-                    "success": success
-                })
-                
+                """),
+                    {
+                        "feed_id": feed_id,
+                        "date": today,
+                        "articles_fetched": articles_processed,
+                        "success_rate": 100.0 if success else 0.0,
+                        "avg_response_time": response_time,
+                        "success": success,
+                    },
+                )
+
                 db.commit()
             finally:
                 db.close()
         except Exception as e:
             self.logger.error(f"Error updating feed stats: {e}")
-

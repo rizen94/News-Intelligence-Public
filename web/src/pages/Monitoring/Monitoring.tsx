@@ -282,7 +282,7 @@ const Monitoring = () => {
     return () => clearInterval(interval);
   }, [pipelineRunning, pipelineETA]);
 
-  const loadMonitoringData = async() => {
+  const loadMonitoringData = async () => {
     try {
       setLoading(true);
       setError(null);
@@ -314,47 +314,66 @@ const Monitoring = () => {
           console.warn('Orchestrator dashboard error:', err);
           return { status: {}, error: (err && err.message) || 'Unavailable' };
         }),
-        apiService.getDatabaseStats().catch((err: any) => ({ success: false, data: null })),
-        apiService.getDevices().catch((err: any) => ({ success: false, data: null })),
-        apiService.getHealthFeeds().catch((err: any) => ({ success: false, data: null })),
+        apiService
+          .getDatabaseStats()
+          .catch((err: any) => ({ success: false, data: null })),
+        apiService
+          .getDevices()
+          .catch((err: any) => ({ success: false, data: null })),
+        apiService
+          .getHealthFeeds()
+          .catch((err: any) => ({ success: false, data: null })),
       ]);
 
-      const monitoringResult = systemResponse.status === 'fulfilled' && systemResponse.value?.success
-        ? systemResponse.value
-        : null;
-      const pipelineResult = pipelineStatusResponse.status === 'fulfilled' && pipelineStatusResponse.value?.success
-        ? pipelineStatusResponse.value
-        : null;
-      const healthResult = healthResponse.status === 'fulfilled' && healthResponse.value?.success
-        ? healthResponse.value
-        : null;
+      const monitoringResult =
+        systemResponse.status === 'fulfilled' && systemResponse.value?.success
+          ? systemResponse.value
+          : null;
+      const pipelineResult =
+        pipelineStatusResponse.status === 'fulfilled' &&
+        pipelineStatusResponse.value?.success
+          ? pipelineStatusResponse.value
+          : null;
+      const healthResult =
+        healthResponse.status === 'fulfilled' && healthResponse.value?.success
+          ? healthResponse.value
+          : null;
 
-      console.log('🔍 API Response received:', { monitoringResult, pipelineResult, healthResult });
+      console.log('🔍 API Response received:', {
+        monitoringResult,
+        pipelineResult,
+        healthResult,
+      });
 
       // Extract pipeline data from API response
-      const pipelineResponse = pipelineResult?.data ? {
-        system_status: pipelineResult.data.pipeline_status || 'idle',
-        active_traces_count: pipelineResult.data.active_traces || 0,
-        current_stage: pipelineResult.data.current_stage || null,
-        overall_progress: pipelineResult.data.overall_progress || 0,
-      } : {
-        system_status: 'idle',
-        active_traces_count: 0,
-      };
+      const pipelineResponse = pipelineResult?.data
+        ? {
+            system_status: pipelineResult.data.pipeline_status || 'idle',
+            active_traces_count: pipelineResult.data.active_traces || 0,
+            current_stage: pipelineResult.data.current_stage || null,
+            overall_progress: pipelineResult.data.overall_progress || 0,
+          }
+        : {
+            system_status: 'idle',
+            active_traces_count: 0,
+          };
 
-      const performanceResponse = pipelineResult?.data ? {
-        total_traces: pipelineResult.data.total_traces || 0,
-        success_rate: pipelineResult.data.success_rate || 0,
-        total_articles_processed: pipelineResult.data.articles_processed || 0,
-        total_feeds_processed: 0, // Not available in pipeline status
-        error_count: pipelineResult.data.errors || 0,
-      } : {
-        total_traces: 0,
-        success_rate: 0,
-        total_articles_processed: 0,
-        total_feeds_processed: 0,
-        error_count: 0,
-      };
+      const performanceResponse = pipelineResult?.data
+        ? {
+            total_traces: pipelineResult.data.total_traces || 0,
+            success_rate: pipelineResult.data.success_rate || 0,
+            total_articles_processed:
+              pipelineResult.data.articles_processed || 0,
+            total_feeds_processed: 0, // Not available in pipeline status
+            error_count: pipelineResult.data.errors || 0,
+          }
+        : {
+            total_traces: 0,
+            success_rate: 0,
+            total_articles_processed: 0,
+            total_feeds_processed: 0,
+            error_count: 0,
+          };
 
       const tracesResponse = {
         data: {
@@ -373,20 +392,33 @@ const Monitoring = () => {
       let overallStatus = 'unknown';
       if (monitoringResult?.data) {
         const systemStatus = monitoringResult.data.system?.status || 'unknown';
-        const databaseStatus = monitoringResult.data.database?.status || 'unknown';
+        const databaseStatus =
+          monitoringResult.data.database?.status || 'unknown';
         const redisStatus = monitoringResult.data.redis?.status || 'unknown';
         const alertsStatus = monitoringResult.data.alerts?.status || 'unknown';
 
         // Redis is not used (removed from architecture); treat not_used as OK
         const redisOk = redisStatus === 'healthy' || redisStatus === 'not_used';
-        if (systemStatus === 'healthy' && databaseStatus === 'healthy' &&
-            redisOk && alertsStatus === 'healthy') {
+        if (
+          systemStatus === 'healthy' &&
+          databaseStatus === 'healthy' &&
+          redisOk &&
+          alertsStatus === 'healthy'
+        ) {
           overallStatus = 'healthy';
-        } else if (systemStatus === 'warning' || databaseStatus === 'warning' ||
-                   (redisStatus !== 'not_used' && redisStatus !== 'healthy') || alertsStatus === 'warning') {
+        } else if (
+          systemStatus === 'warning' ||
+          databaseStatus === 'warning' ||
+          (redisStatus !== 'not_used' && redisStatus !== 'healthy') ||
+          alertsStatus === 'warning'
+        ) {
           overallStatus = 'warning';
-        } else if (systemStatus === 'unhealthy' || databaseStatus === 'unhealthy' ||
-                   (redisStatus !== 'not_used' && redisStatus !== 'healthy') || alertsStatus === 'unhealthy') {
+        } else if (
+          systemStatus === 'unhealthy' ||
+          databaseStatus === 'unhealthy' ||
+          (redisStatus !== 'not_used' && redisStatus !== 'healthy') ||
+          alertsStatus === 'unhealthy'
+        ) {
           overallStatus = 'unhealthy';
         } else {
           // Use API's overall_status if available, otherwise use calculated
@@ -397,10 +429,17 @@ const Monitoring = () => {
         overallStatus = healthResult.status;
       } else if (pipelineResult?.data?.pipeline_status) {
         // Fallback to pipeline status if available
-        overallStatus = pipelineResult.data.pipeline_status === 'healthy' ? 'healthy' :
-          pipelineResult.data.pipeline_status === 'error' ? 'unhealthy' : 'warning';
+        overallStatus =
+          pipelineResult.data.pipeline_status === 'healthy'
+            ? 'healthy'
+            : pipelineResult.data.pipeline_status === 'error'
+            ? 'unhealthy'
+            : 'warning';
       }
-      if (overallStatus === 'degraded' && Array.isArray(healthResult?.degraded_reasons)) {
+      if (
+        overallStatus === 'degraded' &&
+        Array.isArray(healthResult?.degraded_reasons)
+      ) {
         setDegradedReasons(healthResult.degraded_reasons);
       } else {
         setDegradedReasons(null);
@@ -416,23 +455,38 @@ const Monitoring = () => {
       setPipelineTraces(
         Array.isArray(tracesResponse?.data?.traces)
           ? tracesResponse.data.traces
-          : [],
+          : []
       );
-      const orchData = orchestratorResponse.status === 'fulfilled' && orchestratorResponse.value && !orchestratorResponse.value.error
-        ? orchestratorResponse.value
-        : null;
+      const orchData =
+        orchestratorResponse.status === 'fulfilled' &&
+        orchestratorResponse.value &&
+        !orchestratorResponse.value.error
+          ? orchestratorResponse.value
+          : null;
       setOrchestratorDashboard(orchData);
-      if (dbStatsResponse.status === 'fulfilled' && dbStatsResponse.value?.success && dbStatsResponse.value?.data) {
+      if (
+        dbStatsResponse.status === 'fulfilled' &&
+        dbStatsResponse.value?.success &&
+        dbStatsResponse.value?.data
+      ) {
         setDbStats(dbStatsResponse.value.data);
       } else {
         setDbStats(null);
       }
-      if (devicesResponse.status === 'fulfilled' && devicesResponse.value?.success && devicesResponse.value?.data) {
+      if (
+        devicesResponse.status === 'fulfilled' &&
+        devicesResponse.value?.success &&
+        devicesResponse.value?.data
+      ) {
         setDevices(devicesResponse.value.data);
       } else {
         setDevices(null);
       }
-      if (healthFeedsResponse.status === 'fulfilled' && healthFeedsResponse.value?.success && healthFeedsResponse.value?.data) {
+      if (
+        healthFeedsResponse.status === 'fulfilled' &&
+        healthFeedsResponse.value?.success &&
+        healthFeedsResponse.value?.data
+      ) {
         setHealthFeeds(healthFeedsResponse.value.data);
       } else {
         setHealthFeeds(null);
@@ -587,7 +641,7 @@ Do you want to proceed with completing the remaining processes?`;
       setActionMessage({
         type: 'warning',
         text: `Pipeline is already running or another process is active. ETA: ${formatETA(
-          displayPipelineETA || pipelineETA,
+          displayPipelineETA || pipelineETA
         )}`,
       });
       return;
@@ -624,7 +678,7 @@ Do you want to proceed with triggering the pipeline?`,
     });
   };
 
-  const handleConfirmAction = async() => {
+  const handleConfirmAction = async () => {
     const { type } = confirmDialog;
     setConfirmDialog({ open: false, type: null, title: '', content: '' });
 
@@ -639,7 +693,7 @@ Do you want to proceed with triggering the pipeline?`,
     }
   };
 
-  const executeTriggerPipeline = async() => {
+  const executeTriggerPipeline = async () => {
     try {
       setActionLoading(prev => ({ ...prev, pipeline: true }));
       setActionMessage(null);
@@ -683,7 +737,7 @@ Do you want to proceed with triggering the pipeline?`,
       setActionMessage({
         type: 'warning',
         text: `RSS feeds are already updating or another process is active. ETA: ${formatETA(
-          displayRssETA || rssETA,
+          displayRssETA || rssETA
         )}`,
       });
       return;
@@ -720,7 +774,7 @@ Do you want to proceed with updating RSS feeds?`,
     });
   };
 
-  const executeUpdateRSSFeeds = async() => {
+  const executeUpdateRSSFeeds = async () => {
     try {
       setActionLoading(prev => ({ ...prev, rss: true }));
       setActionMessage(null);
@@ -783,7 +837,7 @@ Do you want to proceed with updating RSS feeds?`,
       setActionMessage({
         type: 'warning',
         text: `AI analysis is already running or another process is active. ETA: ${formatETA(
-          displayAnalysisETA || analysisETA,
+          displayAnalysisETA || analysisETA
         )}`,
       });
       return;
@@ -820,7 +874,7 @@ Do you want to proceed with running AI sentiment analysis?`,
     });
   };
 
-  const executeRunAIAnalysis = async() => {
+  const executeRunAIAnalysis = async () => {
     try {
       setActionLoading(prev => ({ ...prev, analysis: true }));
       setActionMessage(null);
@@ -853,7 +907,7 @@ Do you want to proceed with running AI sentiment analysis?`,
     }
   };
 
-  const executeMasterSwitch = async() => {
+  const executeMasterSwitch = async () => {
     try {
       setActionLoading(prev => ({
         ...prev,
@@ -914,7 +968,7 @@ Do you want to proceed with running AI sentiment analysis?`,
       setActionMessage({
         type: 'success',
         text: `All processes completed successfully! Executed: ${executedProcesses.join(
-          ', ',
+          ', '
         )}`,
       });
     } catch (error: any) {
@@ -934,35 +988,35 @@ Do you want to proceed with running AI sentiment analysis?`,
 
   const getStatusColor = status => {
     switch (status?.toLowerCase()) {
-    case 'healthy':
-      return 'success';
-    case 'degraded':
-      return 'warning';
-    case 'error':
-      return 'error';
-    case 'idle':
-      return 'info';
-    case 'running':
-      return 'success';
-    default:
-      return 'default';
+      case 'healthy':
+        return 'success';
+      case 'degraded':
+        return 'warning';
+      case 'error':
+        return 'error';
+      case 'idle':
+        return 'info';
+      case 'running':
+        return 'success';
+      default:
+        return 'default';
     }
   };
 
   const getStatusIcon = status => {
     switch (status?.toLowerCase()) {
-    case 'healthy':
-      return <CheckCircleIcon />;
-    case 'degraded':
-      return <WarningIcon />;
-    case 'error':
-      return <ErrorIcon />;
-    case 'idle':
-      return <Schedule />;
-    case 'running':
-      return <SpeedIcon />;
-    default:
-      return <WarningIcon />;
+      case 'healthy':
+        return <CheckCircleIcon />;
+      case 'degraded':
+        return <WarningIcon />;
+      case 'error':
+        return <ErrorIcon />;
+      case 'idle':
+        return <Schedule />;
+      case 'running':
+        return <SpeedIcon />;
+      default:
+        return <WarningIcon />;
     }
   };
 
@@ -1043,15 +1097,28 @@ Do you want to proceed with running AI sentiment analysis?`,
       {error && (
         <Alert severity='error' sx={{ mb: 3 }}>
           {error}
-          <Typography variant='body2' sx={{ mt: 1 }} component='span' display='block'>
-            Status and data here use the same API as the rest of the app. If other pages load but this one does not, try refreshing or check the connection chip in the header.
+          <Typography
+            variant='body2'
+            sx={{ mt: 1 }}
+            component='span'
+            display='block'
+          >
+            Status and data here use the same API as the rest of the app. If
+            other pages load but this one does not, try refreshing or check the
+            connection chip in the header.
           </Typography>
         </Alert>
       )}
 
       {!error && (
-        <Typography variant='caption' color='text.secondary' display='block' sx={{ mb: 1 }}>
-          Status and data on this page use the same API connection as the rest of the app (see connection chip in header).
+        <Typography
+          variant='caption'
+          color='text.secondary'
+          display='block'
+          sx={{ mb: 1 }}
+        >
+          Status and data on this page use the same API connection as the rest
+          of the app (see connection chip in header).
         </Typography>
       )}
 
@@ -1082,8 +1149,14 @@ Do you want to proceed with running AI sentiment analysis?`,
                     >
                       Overall Status
                     </Typography>
-                    {systemStatus?.overall === 'degraded' && degradedReasons?.length ? (
-                      <Typography variant='caption' display='block' color='text.secondary' sx={{ mt: 0.5, textAlign: 'center' }}>
+                    {systemStatus?.overall === 'degraded' &&
+                    degradedReasons?.length ? (
+                      <Typography
+                        variant='caption'
+                        display='block'
+                        color='text.secondary'
+                        sx={{ mt: 0.5, textAlign: 'center' }}
+                      >
                         {degradedReasons.join(' · ')}
                       </Typography>
                     ) : null}
@@ -1105,7 +1178,9 @@ Do you want to proceed with running AI sentiment analysis?`,
                 <Grid item xs={12} md={3}>
                   <Box textAlign='center'>
                     <Typography variant='h4' color='primary'>
-                      {['healthy', 'not_used'].includes(systemStatus?.monitoringData?.data?.redis?.status ?? '')
+                      {['healthy', 'not_used'].includes(
+                        systemStatus?.monitoringData?.data?.redis?.status ?? ''
+                      )
                         ? '—'
                         : '✗'}
                     </Typography>
@@ -1154,17 +1229,22 @@ Do you want to proceed with running AI sentiment analysis?`,
                     <strong>Tables:</strong> {dbStats.total_tables ?? 0}
                   </Typography>
                   <Typography variant='body2'>
-                    <strong>Articles:</strong> {(dbStats.totals?.articles ?? 0).toLocaleString()}
+                    <strong>Articles:</strong>{' '}
+                    {(dbStats.totals?.articles ?? 0).toLocaleString()}
                   </Typography>
                   <Typography variant='body2'>
-                    <strong>Storylines:</strong> {(dbStats.totals?.storylines ?? 0).toLocaleString()}
+                    <strong>Storylines:</strong>{' '}
+                    {(dbStats.totals?.storylines ?? 0).toLocaleString()}
                   </Typography>
                   <Typography variant='body2'>
-                    <strong>RSS feeds:</strong> {(dbStats.totals?.rss_feeds ?? 0).toLocaleString()}
+                    <strong>RSS feeds:</strong>{' '}
+                    {(dbStats.totals?.rss_feeds ?? 0).toLocaleString()}
                   </Typography>
                 </>
               ) : (
-                <Typography variant='body2' color='text.secondary'>Loading…</Typography>
+                <Typography variant='body2' color='text.secondary'>
+                  Loading…
+                </Typography>
               )}
             </CardContent>
           </Card>
@@ -1181,28 +1261,41 @@ Do you want to proceed with running AI sentiment analysis?`,
                     <li key={d.name}>
                       <Typography variant='body2'>
                         <strong>{d.name}</strong> ({d.type})
-                        {d.disk != null && (
-                          <> — Disk: {d.disk.percent}% used</>
-                        )}
+                        {d.disk != null && <> — Disk: {d.disk.percent}% used</>}
                         {d.project_usage_bytes != null && (
-                          <> — Project: {(d.project_usage_bytes / 1024 / 1024).toFixed(1)} MB</>
+                          <>
+                            {' '}
+                            — Project:{' '}
+                            {(d.project_usage_bytes / 1024 / 1024).toFixed(
+                              1
+                            )}{' '}
+                            MB
+                          </>
                         )}
                         {d.processes?.length != null && (
                           <> — {d.processes.length} processes</>
                         )}
                         {d.status && d.status !== 'ok' && (
-                          <Chip size='small' label={d.status} sx={{ ml: 0.5 }} />
+                          <Chip
+                            size='small'
+                            label={d.status}
+                            sx={{ ml: 0.5 }}
+                          />
                         )}
                       </Typography>
                     </li>
                   ))}
                 </Box>
               ) : (
-                <Typography variant='body2' color='text.secondary'>Loading…</Typography>
+                <Typography variant='body2' color='text.secondary'>
+                  Loading…
+                </Typography>
               )}
               {devices?.total_project_usage_bytes != null && (
                 <Typography variant='body2' sx={{ mt: 1 }}>
-                  Total project space: {(devices.total_project_usage_bytes / 1024 / 1024).toFixed(1)} MB
+                  Total project space:{' '}
+                  {(devices.total_project_usage_bytes / 1024 / 1024).toFixed(1)}{' '}
+                  MB
                 </Typography>
               )}
             </CardContent>
@@ -1220,15 +1313,34 @@ Do you want to proceed with running AI sentiment analysis?`,
                     <li key={f.name}>
                       <Typography variant='body2'>
                         {f.last_ok === true ? (
-                          <CheckCircleIcon sx={{ fontSize: 16, color: 'success.main', verticalAlign: 'middle', mr: 0.5 }} />
+                          <CheckCircleIcon
+                            sx={{
+                              fontSize: 16,
+                              color: 'success.main',
+                              verticalAlign: 'middle',
+                              mr: 0.5,
+                            }}
+                          />
                         ) : f.last_ok === false ? (
-                          <WarningIcon sx={{ fontSize: 16, color: 'warning.main', verticalAlign: 'middle', mr: 0.5 }} />
+                          <WarningIcon
+                            sx={{
+                              fontSize: 16,
+                              color: 'warning.main',
+                              verticalAlign: 'middle',
+                              mr: 0.5,
+                            }}
+                          />
                         ) : null}
                         <strong>{f.name}</strong>
                         {f.last_message != null && ` — ${f.last_message}`}
                         {f.last_check_at && (
-                          <Typography component='span' variant='caption' display='block'>
-                            Last check: {new Date(f.last_check_at).toLocaleString()}
+                          <Typography
+                            component='span'
+                            variant='caption'
+                            display='block'
+                          >
+                            Last check:{' '}
+                            {new Date(f.last_check_at).toLocaleString()}
                           </Typography>
                         )}
                       </Typography>
@@ -1237,12 +1349,20 @@ Do you want to proceed with running AI sentiment analysis?`,
                 </Box>
               ) : (
                 <Typography variant='body2' color='text.secondary'>
-                  {healthFeeds ? 'No feeds configured or health monitor not run yet.' : 'Loading…'}
+                  {healthFeeds
+                    ? 'No feeds configured or health monitor not run yet.'
+                    : 'Loading…'}
                 </Typography>
               )}
               {healthFeeds?.interval_seconds && (
-                <Typography variant='caption' color='text.secondary' display='block' sx={{ mt: 1 }}>
-                  Health monitor runs every {healthFeeds.interval_seconds}s; alerts created on failure.
+                <Typography
+                  variant='caption'
+                  color='text.secondary'
+                  display='block'
+                  sx={{ mt: 1 }}
+                >
+                  Health monitor runs every {healthFeeds.interval_seconds}s;
+                  alerts created on failure.
                 </Typography>
               )}
             </CardContent>
@@ -1314,18 +1434,36 @@ Do you want to proceed with running AI sentiment analysis?`,
                 <>
                   <Box display='flex' alignItems='center' gap={2} mb={2}>
                     <Chip
-                      icon={orchestratorDashboard.status?.running ? getStatusIcon('running') : getStatusIcon('idle')}
-                      label={orchestratorDashboard.status?.running ? 'Running' : 'Idle'}
-                      color={orchestratorDashboard.status?.running ? 'success' : 'default'}
+                      icon={
+                        orchestratorDashboard.status?.running
+                          ? getStatusIcon('running')
+                          : getStatusIcon('idle')
+                      }
+                      label={
+                        orchestratorDashboard.status?.running
+                          ? 'Running'
+                          : 'Idle'
+                      }
+                      color={
+                        orchestratorDashboard.status?.running
+                          ? 'success'
+                          : 'default'
+                      }
                       size='medium'
                     />
                     <Typography variant='body2' color='text.secondary'>
-                      Cycle: {orchestratorDashboard.status?.current_cycle ?? '—'}
+                      Cycle:{' '}
+                      {orchestratorDashboard.status?.current_cycle ?? '—'}
                     </Typography>
                   </Box>
                   <Box sx={{ flex: 1 }}>
-                    <Typography variant='body2' color='text.secondary' paragraph>
-                      Collection governor, learning, and resource coordination. Decision log and metrics available via API.
+                    <Typography
+                      variant='body2'
+                      color='text.secondary'
+                      paragraph
+                    >
+                      Collection governor, learning, and resource coordination.
+                      Decision log and metrics available via API.
                     </Typography>
                     <Button
                       size='small'
@@ -1340,7 +1478,8 @@ Do you want to proceed with running AI sentiment analysis?`,
                 </>
               ) : (
                 <Typography variant='body2' color='text.secondary'>
-                  Orchestrator dashboard unavailable (API not running or not configured).
+                  Orchestrator dashboard unavailable (API not running or not
+                  configured).
                 </Typography>
               )}
             </CardContent>
@@ -1456,11 +1595,18 @@ Do you want to proceed with running AI sentiment analysis?`,
                           </TableCell>
                           <TableCell>
                             <Typography variant='body2'>
-                              {trace.created_at ? formatDate(trace.created_at) : 'N/A'}
+                              {trace.created_at
+                                ? formatDate(trace.created_at)
+                                : 'N/A'}
                             </Typography>
                           </TableCell>
                           <TableCell>
-                            <Typography variant='body2' color={trace.error_message ? 'error' : 'text.secondary'}>
+                            <Typography
+                              variant='body2'
+                              color={
+                                trace.error_message ? 'error' : 'text.secondary'
+                              }
+                            >
                               {trace.error_message || '-'}
                             </Typography>
                           </TableCell>
@@ -1751,17 +1897,17 @@ Do you want to proceed with running AI sentiment analysis?`,
                     pipelineRunning
                       ? 'warning'
                       : masterRunning && !pipelineRunning
-                        ? 'info'
-                        : 'primary'
+                      ? 'info'
+                      : 'primary'
                   }
                 >
                   {actionLoading.pipeline
                     ? 'Triggering...'
                     : pipelineRunning
-                      ? `Pipeline Running (${pipelineProgress.toFixed(0)}%)`
-                      : masterRunning && !pipelineRunning
-                        ? 'Pipeline Queued'
-                        : 'Trigger Pipeline'}
+                    ? `Pipeline Running (${pipelineProgress.toFixed(0)}%)`
+                    : masterRunning && !pipelineRunning
+                    ? 'Pipeline Queued'
+                    : 'Trigger Pipeline'}
                 </Button>
                 {pipelineRunning && (
                   <Box
@@ -1843,17 +1989,17 @@ Do you want to proceed with running AI sentiment analysis?`,
                     analysisRunning
                       ? 'warning'
                       : masterRunning && !analysisRunning
-                        ? 'info'
-                        : 'primary'
+                      ? 'info'
+                      : 'primary'
                   }
                 >
                   {actionLoading.analysis
                     ? 'Running...'
                     : analysisRunning
-                      ? `AI Analysis Running (${analysisProgress.toFixed(0)}%)`
-                      : masterRunning && !analysisRunning
-                        ? 'AI Analysis Queued'
-                        : 'Run AI Analysis'}
+                    ? `AI Analysis Running (${analysisProgress.toFixed(0)}%)`
+                    : masterRunning && !analysisRunning
+                    ? 'AI Analysis Queued'
+                    : 'Run AI Analysis'}
                 </Button>
                 {analysisRunning && (
                   <Box
@@ -1935,17 +2081,17 @@ Do you want to proceed with running AI sentiment analysis?`,
                     rssRunning
                       ? 'warning'
                       : masterRunning && !rssRunning
-                        ? 'info'
-                        : 'primary'
+                      ? 'info'
+                      : 'primary'
                   }
                 >
                   {actionLoading.rss
                     ? 'Updating...'
                     : rssRunning
-                      ? `RSS Updating (${rssProgress.toFixed(0)}%)`
-                      : masterRunning && !rssRunning
-                        ? 'RSS Feeds Queued'
-                        : 'Update RSS Feeds'}
+                    ? `RSS Updating (${rssProgress.toFixed(0)}%)`
+                    : masterRunning && !rssRunning
+                    ? 'RSS Feeds Queued'
+                    : 'Update RSS Feeds'}
                 </Button>
                 {rssRunning && (
                   <Box

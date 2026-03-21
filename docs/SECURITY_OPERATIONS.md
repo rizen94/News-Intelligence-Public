@@ -2,7 +2,7 @@
 
 **Purpose:** Practical hardening for **mixed** deployments (mostly LAN, sometimes reachable from the wider internet). This is **not** a penetration-test report or compliance checklist.
 
-**Related:** [ARCHITECTURE_AND_OPERATIONS.md](ARCHITECTURE_AND_OPERATIONS.md) · [SETUP_ENV_AND_RUNTIME.md](SETUP_ENV_AND_RUNTIME.md) · [MONITORING_SSH_SETUP.md](MONITORING_SSH_SETUP.md) · [DATABASE_CONNECTION_AUDIT.md](DATABASE_CONNECTION_AUDIT.md)
+**Related:** [ARCHITECTURE_AND_OPERATIONS.md](ARCHITECTURE_AND_OPERATIONS.md) · [SETUP_ENV_AND_RUNTIME.md](SETUP_ENV_AND_RUNTIME.md) · [MONITORING_SSH_SETUP.md](MONITORING_SSH_SETUP.md) · [DATABASE_CONNECTION_AUDIT.md](DATABASE_CONNECTION_AUDIT.md) · [PUBLIC_DEPLOYMENT.md](PUBLIC_DEPLOYMENT.md) (HTTPS demo, read-only mode)
 
 ---
 
@@ -34,6 +34,10 @@
 | `NEWS_INTEL_SQL_EXPLORER` | `true` | Read-only SQL explorer in Monitor — **high impact**; anyone who can reach the API can read the DB. Keep off outside trusted networks. |
 | `LOG_LLM_FULL_TEXT` | `true` | Logs full prompts/responses — may contain PII or article text; keep **off** in shared log sinks. |
 | `CRON_HEARTBEAT_KEY` | Long random string | **Optional.** When set, `POST /api/system_monitoring/cron_heartbeat` with header **`X-Cron-Heartbeat-Key`** matching this value can append a row to **`automation_run_history`** (e.g. phase `cron_rss`) so cron runs are visible without log files. If unset, the endpoint returns **501** (not configured). Treat like any shared secret; restrict network access to the API. |
+| `NEWS_INTEL_DEMO_READ_ONLY` | `true` / `1` | With **`NEWS_INTEL_DEMO_HOSTS`**, blocks mutating methods for matching `Host` (public read-only demo). See [PUBLIC_DEPLOYMENT.md](PUBLIC_DEPLOYMENT.md). |
+| `NEWS_INTEL_DEMO_HOSTS` | Comma hostnames, no port | Hostnames for which demo read-only applies (must match reverse-proxy `Host`). |
+| `NEWS_INTEL_DEMO_READ_ONLY_ALL` | `true` / `1` | If set and **`NEWS_INTEL_DEMO_HOSTS`** is empty, apply read-only on every host (single-purpose demo server only). |
+| `NEWS_INTEL_DEMO_POST_ALLOWLIST` | Comma path prefixes | Optional POST allowlist in demo mode; default none. |
 
 Copy examples into project-root `.env` from [configs/env.example](../configs/env.example).
 
@@ -75,6 +79,7 @@ Copy examples into project-root `.env` from [configs/env.example](../configs/env
 5. Ensure TLS at the reverse proxy; enable HSTS there (in-app middleware also sets HSTS when middleware runs).
 6. Confirm `NEWS_INTEL_SQL_EXPLORER` and `LOG_LLM_FULL_TEXT` are off unless you accept the risk.
 7. Firewall DB, Redis, and Ollama from untrusted networks.
+8. For a **public read-only demo**, set `NEWS_INTEL_DEMO_*` per [PUBLIC_DEPLOYMENT.md](PUBLIC_DEPLOYMENT.md).
 
 ---
 

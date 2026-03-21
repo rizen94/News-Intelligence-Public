@@ -67,12 +67,14 @@ const StorylineAutomationDialog = ({
     }
   }, [open, storylineId]);
 
-  const loadSettings = async() => {
+  const loadSettings = async () => {
     try {
       setLoading(true);
       setError(null);
       // eslint-disable-next-line no-undef
-      const response = await apiService.getStorylineAutomationSettings(storylineId);
+      const response = await apiService.getStorylineAutomationSettings(
+        storylineId
+      );
 
       if (response.success) {
         const data = response.data;
@@ -101,7 +103,7 @@ const StorylineAutomationDialog = ({
     }
   };
 
-  const handleSave = async() => {
+  const handleSave = async () => {
     try {
       setSaving(true);
       setError(null);
@@ -123,7 +125,10 @@ const StorylineAutomationDialog = ({
       };
 
       // eslint-disable-next-line no-undef
-      const response = await apiService.updateStorylineAutomationSettings(storylineId, updateData);
+      const response = await apiService.updateStorylineAutomationSettings(
+        storylineId,
+        updateData
+      );
 
       if (response && response.success) {
         setSuccess('Automation settings updated successfully');
@@ -134,13 +139,16 @@ const StorylineAutomationDialog = ({
           onClose();
         }, 1000);
       } else {
-        const errorMsg = response?.error || response?.message || 'Failed to update settings';
+        const errorMsg =
+          response?.error || response?.message || 'Failed to update settings';
         console.error('Save failed:', response);
         setError(errorMsg);
       }
     } catch (err) {
       console.error('Error saving settings:', err);
-      setError(`Failed to save automation settings: ${err.message || err.toString()}`);
+      setError(
+        `Failed to save automation settings: ${err.message || err.toString()}`
+      );
     } finally {
       setSaving(false);
     }
@@ -156,7 +164,7 @@ const StorylineAutomationDialog = ({
     }
   };
 
-  const removeKeyword = (keyword) => {
+  const removeKeyword = keyword => {
     setSettings({
       ...settings,
       search_keywords: settings.search_keywords.filter(k => k !== keyword),
@@ -173,7 +181,7 @@ const StorylineAutomationDialog = ({
     }
   };
 
-  const removeEntity = (entity) => {
+  const removeEntity = entity => {
     setSettings({
       ...settings,
       search_entities: settings.search_entities.filter(e => e !== entity),
@@ -184,16 +192,21 @@ const StorylineAutomationDialog = ({
     if (excludeInput.trim()) {
       setSettings({
         ...settings,
-        search_exclude_keywords: [...settings.search_exclude_keywords, excludeInput.trim()],
+        search_exclude_keywords: [
+          ...settings.search_exclude_keywords,
+          excludeInput.trim(),
+        ],
       });
       setExcludeInput('');
     }
   };
 
-  const removeExcludeKeyword = (keyword) => {
+  const removeExcludeKeyword = keyword => {
     setSettings({
       ...settings,
-      search_exclude_keywords: settings.search_exclude_keywords.filter(k => k !== keyword),
+      search_exclude_keywords: settings.search_exclude_keywords.filter(
+        k => k !== keyword
+      ),
     });
   };
 
@@ -229,22 +242,32 @@ const StorylineAutomationDialog = ({
         {!loading && (
           <>
             {error && (
-              <Alert severity='error' sx={{ mb: 2 }} onClose={() => setError(null)}>
+              <Alert
+                severity='error'
+                sx={{ mb: 2 }}
+                onClose={() => setError(null)}
+              >
                 {error}
               </Alert>
             )}
 
             {success && (
-              <Alert severity='success' sx={{ mb: 2 }} onClose={() => setSuccess(null)}>
+              <Alert
+                severity='success'
+                sx={{ mb: 2 }}
+                onClose={() => setSuccess(null)}
+              >
                 {success}
               </Alert>
             )}
 
-            {settings.automation_enabled && settings.automation_mode === 'disabled' && (
-              <Alert severity='warning' sx={{ mb: 2 }}>
-                Automation is enabled but mode is set to 'disabled'. Please select a different mode.
-              </Alert>
-            )}
+            {settings.automation_enabled &&
+              settings.automation_mode === 'disabled' && (
+                <Alert severity='warning' sx={{ mb: 2 }}>
+                  Automation is enabled but mode is set to 'disabled'. Please
+                  select a different mode.
+                </Alert>
+              )}
 
             {/* Enable Automation */}
             <Box sx={{ mb: 3 }}>
@@ -252,14 +275,19 @@ const StorylineAutomationDialog = ({
                 control={
                   <Switch
                     checked={settings.automation_enabled}
-                    onChange={(e) =>
-                      setSettings({ ...settings, automation_enabled: e.target.checked })
+                    onChange={e =>
+                      setSettings({
+                        ...settings,
+                        automation_enabled: e.target.checked,
+                      })
                     }
                   />
                 }
                 label={
                   <Box>
-                    <Typography variant='subtitle1'>Enable Automation</Typography>
+                    <Typography variant='subtitle1'>
+                      Enable Automation
+                    </Typography>
                     <Typography variant='caption' color='text.secondary'>
                       Automatically discover and suggest relevant articles
                     </Typography>
@@ -278,19 +306,28 @@ const StorylineAutomationDialog = ({
                   <Select
                     value={settings.automation_mode}
                     label='Automation Mode'
-                    onChange={(e) => {
+                    onChange={e => {
                       const newMode = e.target.value;
                       setSettings({ ...settings, automation_mode: newMode });
                       // Auto-disable if mode is 'disabled'
                       if (newMode === 'disabled') {
-                        setSettings((prev) => ({ ...prev, automation_enabled: false }));
+                        setSettings(prev => ({
+                          ...prev,
+                          automation_enabled: false,
+                        }));
                       }
                     }}
                   >
                     <MenuItem value='disabled'>Disabled</MenuItem>
-                    <MenuItem value='manual'>Manual (Suggestions Only)</MenuItem>
-                    <MenuItem value='auto_approve'>Auto-Approve (High Confidence)</MenuItem>
-                    <MenuItem value='review_queue'>Review Queue (Full Control)</MenuItem>
+                    <MenuItem value='manual'>
+                      Manual (Suggestions Only)
+                    </MenuItem>
+                    <MenuItem value='auto_approve'>
+                      Auto-Approve (High Confidence)
+                    </MenuItem>
+                    <MenuItem value='review_queue'>
+                      Review Queue (Full Control)
+                    </MenuItem>
                   </Select>
                   <FormHelperText>
                     {settings.automation_mode === 'disabled' &&
@@ -315,8 +352,8 @@ const StorylineAutomationDialog = ({
                       size='small'
                       placeholder='Add keyword (e.g., "Ukraine", "conflict")'
                       value={keywordInput}
-                      onChange={(e) => setKeywordInput(e.target.value)}
-                      onKeyPress={(e) => {
+                      onChange={e => setKeywordInput(e.target.value)}
+                      onKeyPress={e => {
                         if (e.key === 'Enter') {
                           addKeyword();
                         }
@@ -327,7 +364,7 @@ const StorylineAutomationDialog = ({
                     </Button>
                   </Box>
                   <Stack direction='row' spacing={1} flexWrap='wrap' gap={1}>
-                    {settings.search_keywords.map((keyword) => (
+                    {settings.search_keywords.map(keyword => (
                       <Chip
                         key={keyword}
                         label={keyword}
@@ -349,8 +386,8 @@ const StorylineAutomationDialog = ({
                       size='small'
                       placeholder='Add entity (e.g., "Volodymyr Zelensky", "Russia")'
                       value={entityInput}
-                      onChange={(e) => setEntityInput(e.target.value)}
-                      onKeyPress={(e) => {
+                      onChange={e => setEntityInput(e.target.value)}
+                      onKeyPress={e => {
                         if (e.key === 'Enter') {
                           addEntity();
                         }
@@ -361,7 +398,7 @@ const StorylineAutomationDialog = ({
                     </Button>
                   </Box>
                   <Stack direction='row' spacing={1} flexWrap='wrap' gap={1}>
-                    {settings.search_entities.map((entity) => (
+                    {settings.search_entities.map(entity => (
                       <Chip
                         key={entity}
                         label={entity}
@@ -384,8 +421,8 @@ const StorylineAutomationDialog = ({
                       size='small'
                       placeholder='Add keyword to exclude (e.g., "advertisement")'
                       value={excludeInput}
-                      onChange={(e) => setExcludeInput(e.target.value)}
-                      onKeyPress={(e) => {
+                      onChange={e => setExcludeInput(e.target.value)}
+                      onKeyPress={e => {
                         if (e.key === 'Enter') {
                           addExcludeKeyword();
                         }
@@ -396,7 +433,7 @@ const StorylineAutomationDialog = ({
                     </Button>
                   </Box>
                   <Stack direction='row' spacing={1} flexWrap='wrap' gap={1}>
-                    {settings.search_exclude_keywords.map((keyword) => (
+                    {settings.search_exclude_keywords.map(keyword => (
                       <Chip
                         key={keyword}
                         label={keyword}
@@ -417,15 +454,24 @@ const StorylineAutomationDialog = ({
 
                 <Box sx={{ mb: 2 }}>
                   <Typography gutterBottom>
-                    Minimum Combined Score: {settings.min_relevance_score.toFixed(2)}
+                    Minimum Combined Score:{' '}
+                    {settings.min_relevance_score.toFixed(2)}
                   </Typography>
-                  <Typography variant='caption' color='text.secondary' sx={{ mb: 1, display: 'block' }}>
-                    Combined score = (Relevance × 0.4) + (Quality × 0.3) + (Semantic × 0.3)
+                  <Typography
+                    variant='caption'
+                    color='text.secondary'
+                    sx={{ mb: 1, display: 'block' }}
+                  >
+                    Combined score = (Relevance × 0.4) + (Quality × 0.3) +
+                    (Semantic × 0.3)
                   </Typography>
                   <Slider
                     value={settings.min_relevance_score}
                     onChange={(e, newValue) =>
-                      setSettings({ ...settings, min_relevance_score: newValue })
+                      setSettings({
+                        ...settings,
+                        min_relevance_score: newValue,
+                      })
                     }
                     min={0}
                     max={1}
@@ -433,13 +479,15 @@ const StorylineAutomationDialog = ({
                     marks
                   />
                   <FormHelperText>
-                    Articles must meet this combined score threshold to be suggested (default: 0.60)
+                    Articles must meet this combined score threshold to be
+                    suggested (default: 0.60)
                   </FormHelperText>
                 </Box>
 
                 <Box sx={{ mb: 2 }}>
                   <Typography gutterBottom>
-                    Minimum Quality Score: {settings.min_quality_score.toFixed(2)}
+                    Minimum Quality Score:{' '}
+                    {settings.min_quality_score.toFixed(2)}
                   </Typography>
                   <Slider
                     value={settings.min_quality_score}
@@ -459,7 +507,7 @@ const StorylineAutomationDialog = ({
                     type='number'
                     label='Max Articles Per Run'
                     value={settings.max_articles_per_run}
-                    onChange={(e) => {
+                    onChange={e => {
                       const val = parseInt(e.target.value);
                       if (!isNaN(val) && val > 0 && val <= 100) {
                         setSettings({
@@ -479,7 +527,7 @@ const StorylineAutomationDialog = ({
                     type='number'
                     label='Date Range (days)'
                     value={settings.date_range_days}
-                    onChange={(e) => {
+                    onChange={e => {
                       const val = parseInt(e.target.value);
                       if (!isNaN(val) && val > 0 && val <= 365) {
                         setSettings({
@@ -499,7 +547,7 @@ const StorylineAutomationDialog = ({
                     type='number'
                     label='Frequency (hours)'
                     value={settings.frequency_hours}
-                    onChange={(e) => {
+                    onChange={e => {
                       const val = parseInt(e.target.value);
                       if (!isNaN(val) && val > 0 && val <= 168) {
                         setSettings({
@@ -533,4 +581,3 @@ const StorylineAutomationDialog = ({
 };
 
 export default StorylineAutomationDialog;
-

@@ -3,9 +3,8 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from domains.finance.orchestrator import FinanceOrchestrator
-from domains.finance.orchestrator_types import TaskType, TaskPriority
+from domains.finance.orchestrator_types import TaskType
 
 
 def mock_fetch_all(*, start=None, end=None, store=True):

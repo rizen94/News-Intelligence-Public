@@ -8,13 +8,12 @@ with default_transaction_read_only=on, statement timeout, and row cap.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import psycopg2
+from config.settings import SQL_EXPLORER_ENABLED
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
-
-from config.settings import SQL_EXPLORER_ENABLED
 from shared.database.connection import get_db_connect_kwargs
 
 logger = logging.getLogger(__name__)
@@ -85,17 +84,19 @@ def _validate_sql(sql: str) -> str:
 
 
 @router.get("/enabled")
-def sql_explorer_enabled() -> Dict[str, Any]:
+def sql_explorer_enabled() -> dict[str, Any]:
     """Always 200 — lets the UI show setup instructions when disabled."""
     return {"success": True, "enabled": SQL_EXPLORER_ENABLED}
 
 
 @router.get("/schema")
-def sql_explorer_schema() -> Dict[str, Any]:
+def sql_explorer_schema() -> dict[str, Any]:
     """Columns for user schemas (excludes pg_catalog / information_schema)."""
     _reject_if_disabled()
     kwargs = get_db_connect_kwargs()
-    kwargs["options"] = f"-c statement_timeout={_STATEMENT_TIMEOUT_MS} -c default_transaction_read_only=on"
+    kwargs["options"] = (
+        f"-c statement_timeout={_STATEMENT_TIMEOUT_MS} -c default_transaction_read_only=on"
+    )
     conn = psycopg2.connect(**kwargs)
     try:
         with conn.cursor() as cur:
@@ -112,7 +113,7 @@ def sql_explorer_schema() -> Dict[str, Any]:
     finally:
         conn.close()
 
-    tables: Dict[str, Dict[str, Any]] = {}
+    tables: dict[str, dict[str, Any]] = {}
     for table_schema, table_name, column_name, data_type, is_nullable in rows:
         key = f"{table_schema}.{table_name}"
         if key not in tables:
@@ -131,16 +132,18 @@ def sql_explorer_schema() -> Dict[str, Any]:
 
 
 @router.post("/query")
-def sql_explorer_query(body: SqlExplorerQueryBody) -> Dict[str, Any]:
+def sql_explorer_query(body: SqlExplorerQueryBody) -> dict[str, Any]:
     _reject_if_disabled()
     sql = _validate_sql(body.sql)
     kwargs = get_db_connect_kwargs()
-    kwargs["options"] = f"-c statement_timeout={_STATEMENT_TIMEOUT_MS} -c default_transaction_read_only=on"
+    kwargs["options"] = (
+        f"-c statement_timeout={_STATEMENT_TIMEOUT_MS} -c default_transaction_read_only=on"
+    )
     conn = psycopg2.connect(**kwargs)
-    columns: List[str] = []
-    rows: List[List[Any]] = []
+    columns: list[str] = []
+    rows: list[list[Any]] = []
     truncated = False
-    rowcount: Optional[int] = None
+    rowcount: int | None = None
     try:
         conn.set_session(readonly=True, autocommit=False)
         with conn.cursor() as cur:

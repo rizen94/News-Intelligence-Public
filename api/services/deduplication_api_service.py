@@ -3,7 +3,7 @@ Deduplication API backend (P3): consolidate_articles, merge_claims.
 """
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from shared.database.connection import get_db_connection
 
@@ -11,19 +11,25 @@ logger = logging.getLogger(__name__)
 
 
 def consolidate_articles(
-    domain: Optional[str] = None,
+    domain: str | None = None,
     limit: int = 50,
     dry_run: bool = True,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Run article consolidation (merge duplicates). Uses ArticleDeduplicationSystem when available.
     Returns merged count and clusters.
     """
     try:
         from scripts.article_deduplication import ArticleDeduplicationSystem
+
         dedup = ArticleDeduplicationSystem()
         if not dedup.connect_database():
-            return {"success": False, "merged": 0, "clusters": [], "error": "Database connection failed"}
+            return {
+                "success": False,
+                "merged": 0,
+                "clusters": [],
+                "error": "Database connection failed",
+            }
         try:
             report = dedup.generate_deduplication_report()
             url_dups = report.get("url_duplicates", [])[:limit]
@@ -41,9 +47,9 @@ def consolidate_articles(
 
 
 def merge_claims(
-    claim_ids: Optional[List[int]] = None,
+    claim_ids: list[int] | None = None,
     similarity_threshold: float = 0.9,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Record claim merges: first claim in list is canonical; others are merged into it.
     Persists to intelligence.claim_merges.
@@ -54,7 +60,12 @@ def merge_claims(
     merged_ids = claim_ids[1:]
     conn = get_db_connection()
     if not conn:
-        return {"success": False, "merged": 0, "unified_claim_ids": [], "error": "Database unavailable"}
+        return {
+            "success": False,
+            "merged": 0,
+            "unified_claim_ids": [],
+            "error": "Database unavailable",
+        }
     inserted = 0
     try:
         with conn.cursor() as cur:

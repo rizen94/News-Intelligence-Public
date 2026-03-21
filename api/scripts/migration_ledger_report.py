@@ -17,7 +17,6 @@ import os
 import re
 import sys
 from collections import defaultdict
-from typing import Dict, List, Set, Tuple
 
 try:
     from dotenv import load_dotenv
@@ -50,9 +49,9 @@ def _num3(filename: str) -> str | None:
     return m.group(1) if m else None
 
 
-def _files_by_prefix(files: List[Tuple[str, str]]) -> Dict[str, List[str]]:
+def _files_by_prefix(files: list[tuple[str, str]]) -> dict[str, list[str]]:
     """prefix (3 digits) -> list of filenames."""
-    d: Dict[str, List[str]] = defaultdict(list)
+    d: dict[str, list[str]] = defaultdict(list)
     for name, _path in files:
         p = _num3(name)
         if p:
@@ -60,7 +59,9 @@ def _files_by_prefix(files: List[Tuple[str, str]]) -> Dict[str, List[str]]:
     return dict(d)
 
 
-def _ledger_covers_stem(ledger_ids: Set[str], stem: str, num: str | None, ambiguous_nums: Set[str]) -> bool:
+def _ledger_covers_stem(
+    ledger_ids: set[str], stem: str, num: str | None, ambiguous_nums: set[str]
+) -> bool:
     if stem in ledger_ids:
         return True
     if num and num not in ambiguous_nums and num in ledger_ids:
@@ -79,7 +80,11 @@ def main() -> int:
     args = p.parse_args()
 
     from shared.database.connection import get_db_connection
-    from shared.migration_sql_paths import archive_historical_dir, list_sql_migrations, migrations_root
+    from shared.migration_sql_paths import (
+        archive_historical_dir,
+        list_sql_migrations,
+        migrations_root,
+    )
 
     files = list_sql_migrations(include_archive=True)
     stems = {_stem(name) for name, _p in files}
@@ -93,7 +98,7 @@ def main() -> int:
         print("ERROR: no DB connection", file=sys.stderr)
         return 1
 
-    ledger_rows: List[Tuple[str, str | None, str | None]] = []
+    ledger_rows: list[tuple[str, str | None, str | None]] = []
     ledger_ok = True
     err: str | None = None
     try:
@@ -114,16 +119,18 @@ def main() -> int:
 
     ledger_ids = {r[0] for r in ledger_rows}
 
-    missing_ledger: List[dict] = []
+    missing_ledger: list[dict] = []
     if ledger_ok:
         for name, path in sorted(files, key=lambda x: x[0]):
             stem = _stem(name)
             num = _num3(name)
             loc = "active" if name in active_names else "archive/historical"
             if not _ledger_covers_stem(ledger_ids, stem, num, ambiguous_nums):
-                missing_ledger.append({"file": name, "location": loc, "path": path, "reason": "no_matching_row"})
+                missing_ledger.append(
+                    {"file": name, "location": loc, "path": path, "reason": "no_matching_row"}
+                )
 
-    orphan_ledger: List[dict] = []
+    orphan_ledger: list[dict] = []
     if ledger_ok:
         for mid, applied_at, notes in ledger_rows:
             stem_key = _stem(mid)
@@ -180,12 +187,16 @@ def main() -> int:
             print(f"  ... and {len(missing_for_report) - 200} more")
 
     if orphan_ledger:
-        print("\nLedger IDs with no matching .sql on disk (typo, renamed file, or environment-specific):")
+        print(
+            "\nLedger IDs with no matching .sql on disk (typo, renamed file, or environment-specific):"
+        )
         for item in orphan_ledger:
             print(f"  - {item['migration_id']} (applied_at={item['applied_at']})")
 
     if ledger_ok and not missing_for_report and not orphan_ledger:
-        print("\nOK: every file (per filter) has ledger coverage and every ledger row matches a file.")
+        print(
+            "\nOK: every file (per filter) has ledger coverage and every ledger row matches a file."
+        )
     elif ledger_ok:
         print(
             "\nNote: Pre-176 files are often intentionally absent from the ledger;"

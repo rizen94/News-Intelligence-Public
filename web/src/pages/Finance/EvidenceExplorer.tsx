@@ -27,8 +27,11 @@ export default function EvidenceExplorer() {
     if (!domain) return;
     setLoading(true);
     apiService
-      .getFinanceEvidenceIndex({ source: source || undefined, limit: 100 }, domain)
-      .then((res) => {
+      .getFinanceEvidenceIndex(
+        { source: source || undefined, limit: 100 },
+        domain
+      )
+      .then(res => {
         const d = res?.data;
         setEntries(d?.entries || []);
         setTotal(d?.total ?? 0);
@@ -60,24 +63,24 @@ export default function EvidenceExplorer() {
 
   return (
     <Box sx={{ p: 3 }}>
-      <Typography variant="h5" gutterBottom>
+      <Typography variant='h5' gutterBottom>
         Evidence Explorer
       </Typography>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+      <Typography variant='body2' color='text.secondary' sx={{ mb: 2 }}>
         Browse verifiable facts from completed analysis and refresh tasks.
       </Typography>
 
-      <FormControl size="small" sx={{ minWidth: 140, mb: 2 }}>
+      <FormControl size='small' sx={{ minWidth: 140, mb: 2 }}>
         <InputLabel>Filter by source</InputLabel>
         <Select
           value={source}
-          label="Filter by source"
-          onChange={(e) => setSource(e.target.value)}
+          label='Filter by source'
+          onChange={e => setSource(e.target.value)}
         >
-          <MenuItem value="">All</MenuItem>
-          <MenuItem value="gold">Gold</MenuItem>
-          <MenuItem value="fred">FRED</MenuItem>
-          <MenuItem value="edgar_10k">EDGAR 10-K</MenuItem>
+          <MenuItem value=''>All</MenuItem>
+          <MenuItem value='gold'>Gold</MenuItem>
+          <MenuItem value='fred'>FRED</MenuItem>
+          <MenuItem value='edgar_10k'>EDGAR 10-K</MenuItem>
         </Select>
       </FormControl>
 
@@ -91,7 +94,7 @@ export default function EvidenceExplorer() {
           disableRowSelectionOnClick
         />
       </Paper>
-      <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+      <Typography variant='body2' color='text.secondary' sx={{ mt: 1 }}>
         {total} total entries
       </Typography>
     </Box>

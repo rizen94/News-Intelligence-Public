@@ -7,7 +7,7 @@ Emits INVESTIGATION_NEEDED when article entity count >= threshold; records inves
 
 import json
 import logging
-from typing import Any, Optional
+from typing import Any
 
 from shared.database.connection import get_db_connection
 
@@ -29,7 +29,7 @@ def _get_entity_count_and_ids(conn, domain_key: str, article_id: int) -> tuple[i
     try:
         with conn.cursor() as cur:
             cur.execute(
-                f'SELECT COUNT(*), COALESCE(array_agg(canonical_entity_id) FILTER (WHERE canonical_entity_id IS NOT NULL), ARRAY[]::integer[]) '
+                f"SELECT COUNT(*), COALESCE(array_agg(canonical_entity_id) FILTER (WHERE canonical_entity_id IS NOT NULL), ARRAY[]::integer[]) "
                 f'FROM "{schema}".article_entities WHERE article_id = %s',
                 (article_id,),
             )
@@ -84,7 +84,12 @@ def handle_article_ingested(envelope: EventEnvelope, orchestrator: Any = None) -
                     deduplication_key=f"inv:{domain_key}:{article_id}",
                 )
             )
-            logger.info("Journalist: emitted INVESTIGATION_NEEDED domain=%s article_id=%s entities=%s", domain_key, article_id, count)
+            logger.info(
+                "Journalist: emitted INVESTIGATION_NEEDED domain=%s article_id=%s entities=%s",
+                domain_key,
+                article_id,
+                count,
+            )
     finally:
         conn.close()
 
@@ -119,7 +124,12 @@ def handle_investigation_needed(envelope: EventEnvelope, orchestrator: Any = Non
                     domain_key,
                     entity_ids if isinstance(entity_ids, list) else [],
                     float(pattern_confidence) if pattern_confidence is not None else None,
-                    json.dumps({"article_id": payload.get("article_id"), "trigger": payload.get("trigger", "investigation_needed")}),
+                    json.dumps(
+                        {
+                            "article_id": payload.get("article_id"),
+                            "trigger": payload.get("trigger", "investigation_needed"),
+                        }
+                    ),
                 ),
             )
         conn.commit()

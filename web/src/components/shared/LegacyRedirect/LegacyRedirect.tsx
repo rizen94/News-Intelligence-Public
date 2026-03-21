@@ -11,7 +11,10 @@ interface LegacyRedirectProps {
   preserveParams?: boolean;
 }
 
-const LegacyRedirect: React.FC<LegacyRedirectProps> = ({ to, preserveParams = false }) => {
+const LegacyRedirect: React.FC<LegacyRedirectProps> = ({
+  to,
+  preserveParams = false,
+}) => {
   const params = useParams();
 
   if (preserveParams) {

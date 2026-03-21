@@ -9,7 +9,6 @@ import logging
 from typing import Any
 
 from orchestration.events.envelope import EventEnvelope
-from orchestration.events.types import EventType
 
 logger = logging.getLogger("orchestration")
 
@@ -17,7 +16,11 @@ logger = logging.getLogger("orchestration")
 def handle_article_ingested(envelope: EventEnvelope, orchestrator: Any = None) -> None:
     """Optional: check quality threshold, filter low-quality."""
     payload = envelope.payload or {}
-    logger.debug("Editor: article_ingested domain=%s article_id=%s", payload.get("domain_key"), payload.get("article_id"))
+    logger.debug(
+        "Editor: article_ingested domain=%s article_id=%s",
+        payload.get("domain_key"),
+        payload.get("article_id"),
+    )
 
 
 def handle_breaking_news(envelope: EventEnvelope, orchestrator: Any = None) -> None:

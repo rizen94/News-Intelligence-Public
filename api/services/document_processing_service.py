@@ -15,10 +15,9 @@ import json
 import logging
 import os
 import re
-import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 from urllib.parse import urljoin
 
 from shared.database.connection import get_db_connection
@@ -37,7 +36,11 @@ PERMANENT_HTTP_CODES = (404, 410)
 MAX_PROCESSING_ATTEMPTS = 5
 # Process this many documents in parallel per batch (throughput vs LLM/DB load)
 BATCH_PARALLEL_WORKERS = 3
-ENABLE_BROWSER_PDF_FALLBACK = os.getenv("ENABLE_BROWSER_PDF_FALLBACK", "1").strip().lower() not in {"0", "false", "no"}
+ENABLE_BROWSER_PDF_FALLBACK = os.getenv("ENABLE_BROWSER_PDF_FALLBACK", "1").strip().lower() not in {
+    "0",
+    "false",
+    "no",
+}
 
 # Section heading heuristics: lines that are short, often bold/large, start sections
 HEADING_PATTERN = re.compile(
@@ -76,6 +79,7 @@ Text:
 # PDF download
 # ---------------------------------------------------------------------------
 
+
 def _is_permanent_failure(error_message: str) -> bool:
     """True if we should stop retrying this URL (404/410 or explicit 'permanent')."""
     if not error_message:
@@ -89,7 +93,9 @@ def _is_permanent_failure(error_message: str) -> bool:
     return False
 
 
-def _download_pdf(url: str, max_mb: int = MAX_PDF_SIZE_MB, head_first: bool = True) -> Tuple[Optional[bytes], Optional[str]]:
+def _download_pdf(
+    url: str, max_mb: int = MAX_PDF_SIZE_MB, head_first: bool = True
+) -> tuple[bytes | None, str | None]:
     """
     Download PDF from URL. Returns (bytes, None) or (None, error).
     - Optional HEAD request first to fail fast on 404/403/410.
@@ -116,13 +122,13 @@ def _download_pdf(url: str, max_mb: int = MAX_PDF_SIZE_MB, head_first: bool = Tr
             if head_resp.status_code >= 400 and head_resp.status_code < 500:
                 return None, f"HTTP {head_resp.status_code}"
         except requests.exceptions.Timeout:
-            return None, f"HEAD timeout"
+            return None, "HEAD timeout"
         except requests.exceptions.RequestException as e:
             # HEAD can fail (e.g. 405 Method Not Allowed); proceed to GET
             logger.debug("HEAD request failed, trying GET: %s", e)
 
     # GET with retries for timeout and 5xx only
-    last_error: Optional[str] = None
+    last_error: str | None = None
     for attempt in range(DOWNLOAD_RETRIES + 1):
         try:
             resp = requests.get(url, timeout=DOWNLOAD_TIMEOUT, stream=True, headers=headers)
@@ -157,9 +163,10 @@ def _download_pdf(url: str, max_mb: int = MAX_PDF_SIZE_MB, head_first: bool = Tr
     return None, last_error or "Download failed"
 
 
-def _resolve_pdf_url_from_landing_page(url: str, timeout: int = 20) -> Optional[str]:
+def _resolve_pdf_url_from_landing_page(url: str, timeout: int = 20) -> str | None:
     """Try to resolve a direct PDF URL from an HTML landing page."""
     import requests
+
     try:
         resp = requests.get(
             url,
@@ -177,7 +184,9 @@ def _resolve_pdf_url_from_landing_page(url: str, timeout: int = 20) -> Optional[
         for m in re.finditer(r'href=["\']([^"\']+\.pdf[^"\']*)["\']', html, re.I):
             return urljoin(resp.url or url, m.group(1))
         # Second: common download endpoints that imply file payload
-        for m in re.finditer(r'href=["\']([^"\']*(?:download|attachment|file)[^"\']*)["\']', html, re.I):
+        for m in re.finditer(
+            r'href=["\']([^"\']*(?:download|attachment|file)[^"\']*)["\']', html, re.I
+        ):
             candidate = urljoin(resp.url or url, m.group(1))
             if "pdf" in candidate.lower():
                 return candidate
@@ -186,7 +195,7 @@ def _resolve_pdf_url_from_landing_page(url: str, timeout: int = 20) -> Optional[
     return None
 
 
-def _resolve_pdf_url_via_browser(url: str, timeout_ms: int = 20000) -> Optional[str]:
+def _resolve_pdf_url_via_browser(url: str, timeout_ms: int = 20000) -> str | None:
     """Browser-based fallback: render page and discover PDF links/network responses."""
     if not ENABLE_BROWSER_PDF_FALLBACK:
         return None
@@ -196,7 +205,7 @@ def _resolve_pdf_url_via_browser(url: str, timeout_ms: int = 20000) -> Optional[
         logger.debug("playwright not installed; skip browser PDF fallback")
         return None
 
-    found: List[str] = []
+    found: list[str] = []
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
@@ -219,10 +228,13 @@ def _resolve_pdf_url_via_browser(url: str, timeout_ms: int = 20000) -> Optional[
                 if found:
                     return found[0]
 
-                links = page.eval_on_selector_all(
-                    "a[href]",
-                    "els => els.map(e => e.href).filter(Boolean)",
-                ) or []
+                links = (
+                    page.eval_on_selector_all(
+                        "a[href]",
+                        "els => els.map(e => e.href).filter(Boolean)",
+                    )
+                    or []
+                )
                 for href in links:
                     if ".pdf" in str(href).lower():
                         return str(href)
@@ -241,7 +253,8 @@ def _resolve_pdf_url_via_browser(url: str, timeout_ms: int = 20000) -> Optional[
 # PDF text extraction with pdfplumber
 # ---------------------------------------------------------------------------
 
-def _extract_text_from_pdf(pdf_bytes: bytes, max_pages: int = MAX_PAGES) -> Dict[str, Any]:
+
+def _extract_text_from_pdf(pdf_bytes: bytes, max_pages: int = MAX_PAGES) -> dict[str, Any]:
     """
     Extract text, sections, and tables from PDF bytes using pdfplumber.
     Returns {pages: [{page_num, text, tables}], metadata: {...}, total_text: str}.
@@ -251,7 +264,7 @@ def _extract_text_from_pdf(pdf_bytes: bytes, max_pages: int = MAX_PAGES) -> Dict
     except ImportError:
         return _extract_text_fallback(pdf_bytes, max_pages)
 
-    result: Dict[str, Any] = {
+    result: dict[str, Any] = {
         "pages": [],
         "metadata": {},
         "total_text": "",
@@ -265,27 +278,31 @@ def _extract_text_from_pdf(pdf_bytes: bytes, max_pages: int = MAX_PAGES) -> Dict
                 "info": pdf.metadata or {},
             }
 
-            all_text_parts: List[str] = []
+            all_text_parts: list[str] = []
             for i, page in enumerate(pdf.pages[:max_pages]):
                 page_text = page.extract_text() or ""
                 tables = page.extract_tables() or []
                 table_data = []
                 for table in tables:
                     if table:
-                        table_data.append({
-                            "rows": len(table),
-                            "cols": len(table[0]) if table[0] else 0,
-                            "data": [
-                                [str(cell) if cell else "" for cell in row]
-                                for row in table[:20]  # cap table rows
-                            ],
-                        })
+                        table_data.append(
+                            {
+                                "rows": len(table),
+                                "cols": len(table[0]) if table[0] else 0,
+                                "data": [
+                                    [str(cell) if cell else "" for cell in row]
+                                    for row in table[:20]  # cap table rows
+                                ],
+                            }
+                        )
 
-                result["pages"].append({
-                    "page_num": i + 1,
-                    "text": page_text,
-                    "tables": table_data,
-                })
+                result["pages"].append(
+                    {
+                        "page_num": i + 1,
+                        "text": page_text,
+                        "tables": table_data,
+                    }
+                )
                 all_text_parts.append(page_text)
                 result["table_count"] += len(table_data)
 
@@ -297,7 +314,7 @@ def _extract_text_from_pdf(pdf_bytes: bytes, max_pages: int = MAX_PAGES) -> Dict
     return result
 
 
-def _extract_text_pymupdf(pdf_bytes: bytes, max_pages: int = MAX_PAGES) -> Optional[Dict[str, Any]]:
+def _extract_text_pymupdf(pdf_bytes: bytes, max_pages: int = MAX_PAGES) -> dict[str, Any] | None:
     """Optional: extract text with PyMuPDF (fitz) — often faster and handles some PDFs better."""
     try:
         import fitz  # PyMuPDF
@@ -325,7 +342,7 @@ def _extract_text_pymupdf(pdf_bytes: bytes, max_pages: int = MAX_PAGES) -> Optio
         return None
 
 
-def _extract_text_fallback(pdf_bytes: bytes, max_pages: int = MAX_PAGES) -> Dict[str, Any]:
+def _extract_text_fallback(pdf_bytes: bytes, max_pages: int = MAX_PAGES) -> dict[str, Any]:
     """Fallback: try PyMuPDF (if available), then pdfminer, or return minimal result."""
     result = _extract_text_pymupdf(pdf_bytes, max_pages)
     if result and (result.get("total_text") or "").strip():
@@ -333,6 +350,7 @@ def _extract_text_fallback(pdf_bytes: bytes, max_pages: int = MAX_PAGES) -> Dict
 
     try:
         from pdfminer.high_level import extract_text as pdfminer_extract
+
         text = pdfminer_extract(io.BytesIO(pdf_bytes), maxpages=max_pages)
         if text and text.strip():
             return {
@@ -357,15 +375,16 @@ def _extract_text_fallback(pdf_bytes: bytes, max_pages: int = MAX_PAGES) -> Dict
 # Section identification
 # ---------------------------------------------------------------------------
 
-def _identify_sections(total_text: str) -> List[Dict[str, Any]]:
+
+def _identify_sections(total_text: str) -> list[dict[str, Any]]:
     """
     Parse extracted text into sections based on heading detection.
     Returns [{title, content, level, start_pos}].
     """
     lines = total_text.split("\n")
-    sections: List[Dict[str, Any]] = []
+    sections: list[dict[str, Any]] = []
     current_title = "Document Header"
-    current_content: List[str] = []
+    current_content: list[str] = []
     current_level = 0
 
     for line in lines:
@@ -400,11 +419,13 @@ def _identify_sections(total_text: str) -> List[Dict[str, Any]]:
             # Save previous section
             content_text = "\n".join(current_content).strip()
             if content_text or current_title != "Document Header":
-                sections.append({
-                    "title": current_title,
-                    "content": content_text,
-                    "level": current_level,
-                })
+                sections.append(
+                    {
+                        "title": current_title,
+                        "content": content_text,
+                        "level": current_level,
+                    }
+                )
             current_title = stripped
             current_content = []
             current_level = level
@@ -414,11 +435,13 @@ def _identify_sections(total_text: str) -> List[Dict[str, Any]]:
     # Final section
     content_text = "\n".join(current_content).strip()
     if content_text:
-        sections.append({
-            "title": current_title,
-            "content": content_text,
-            "level": current_level,
-        })
+        sections.append(
+            {
+                "title": current_title,
+                "content": content_text,
+                "level": current_level,
+            }
+        )
 
     return sections
 
@@ -427,12 +450,14 @@ def _identify_sections(total_text: str) -> List[Dict[str, Any]]:
 # Entity extraction from document text
 # ---------------------------------------------------------------------------
 
-def _extract_entities_from_text(text: str, max_chars: int = 3000) -> List[Dict[str, Any]]:
+
+def _extract_entities_from_text(text: str, max_chars: int = 3000) -> list[dict[str, Any]]:
     """Extract entities from document text via LLM with heuristic fallback."""
     excerpt = text[:max_chars]
 
     try:
         from shared.services.llm_service import LLMService
+
         llm = LLMService()
         prompt = ENTITY_EXTRACTION_PROMPT.format(text=excerpt)
         response = llm.generate(prompt, max_tokens=500)
@@ -448,7 +473,8 @@ def _extract_entities_from_text(text: str, max_chars: int = 3000) -> List[Dict[s
                         "type": e.get("type", "other"),
                         "context": e.get("context", "")[:300],
                     }
-                    for e in entities if e.get("name")
+                    for e in entities
+                    if e.get("name")
                 ]
     except Exception as e:
         logger.debug("LLM entity extraction from document: %s", e)
@@ -470,10 +496,11 @@ def _extract_entities_from_text(text: str, max_chars: int = 3000) -> List[Dict[s
 # Key findings extraction via LLM
 # ---------------------------------------------------------------------------
 
+
 def _extract_key_findings(
     title: str,
-    sections: List[Dict[str, Any]],
-) -> List[Dict[str, Any]]:
+    sections: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
     """Use LLM to extract key findings from document sections."""
     sections_text = ""
     for s in sections[:15]:
@@ -486,6 +513,7 @@ def _extract_key_findings(
 
     try:
         from shared.services.llm_service import LLMService
+
         llm = LLMService()
         prompt = FINDINGS_PROMPT.format(title=title or "Untitled", sections_text=sections_text)
         response = llm.generate(prompt, max_tokens=600)
@@ -501,7 +529,8 @@ def _extract_key_findings(
                         "section": f.get("section", "general"),
                         "importance": f.get("importance", "medium"),
                     }
-                    for f in findings if f.get("finding")
+                    for f in findings
+                    if f.get("finding")
                 ]
     except Exception as e:
         logger.debug("LLM key findings extraction: %s", e)
@@ -513,14 +542,15 @@ def _extract_key_findings(
 # Main processing pipeline
 # ---------------------------------------------------------------------------
 
+
 def process_document(
     document_id: int,
-    storyline_connections: Optional[List[Dict[str, Any]]] = None,
-    extracted_sections: Optional[List[Dict[str, Any]]] = None,
-    key_findings: Optional[List[Dict[str, Any]]] = None,
-    entities_mentioned: Optional[List[Dict[str, Any]]] = None,
+    storyline_connections: list[dict[str, Any]] | None = None,
+    extracted_sections: list[dict[str, Any]] | None = None,
+    key_findings: list[dict[str, Any]] | None = None,
+    entities_mentioned: list[dict[str, Any]] | None = None,
     force_reprocess: bool = False,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Full document processing pipeline:
       1. Fetch document metadata from processed_documents
@@ -552,7 +582,15 @@ def process_document(
                 conn.close()
                 return {"success": False, "error": f"Document {document_id} not found"}
 
-            doc_id, source_url, title, source_type, doc_type, existing_sections, existing_metadata = doc_row
+            (
+                doc_id,
+                source_url,
+                title,
+                source_type,
+                doc_type,
+                existing_sections,
+                existing_metadata,
+            ) = doc_row
 
             # Skip if already processed (unless forced)
             if existing_sections and not force_reprocess and not extracted_sections:
@@ -570,7 +608,7 @@ def process_document(
 
         # Automatic extraction if not provided
         auto_extracted = False
-        processing_metadata: Dict[str, Any] = {"method": "manual"}
+        processing_metadata: dict[str, Any] = {"method": "manual"}
         prev_attempts = 0
         if existing_metadata and isinstance(existing_metadata, dict):
             proc = existing_metadata.get("processing") or {}
@@ -612,7 +650,9 @@ def process_document(
                     entities_mentioned = entities_mentioned or []
                     logger.info(
                         "Document %s marked permanent failure (attempts=%s, error=%s)",
-                        document_id, attempts, error_msg[:80],
+                        document_id,
+                        attempts,
+                        error_msg[:80],
                     )
 
         # Store results
@@ -623,7 +663,7 @@ def process_document(
         try:
             with conn.cursor() as cur:
                 updates = ["updated_at = NOW()"]
-                params: List[Any] = []
+                params: list[Any] = []
 
                 if extracted_sections is not None:
                     updates.append("extracted_sections = %s")
@@ -746,10 +786,10 @@ def process_document(
         return {"success": False, "error": str(e)}
 
 
-def _process_from_url(url: str, title: str) -> Dict[str, Any]:
+def _process_from_url(url: str, title: str) -> dict[str, Any]:
     """Download PDF from URL and extract text, sections, entities, findings."""
     pdf_url = url
-    resolved_via: Optional[str] = None
+    resolved_via: str | None = None
     pdf_bytes, download_error = _download_pdf(pdf_url)
     # If source URL is likely a landing page or is blocked, try to resolve a direct PDF URL.
     should_try_resolution = bool(download_error) and any(
@@ -793,16 +833,13 @@ def _process_from_url(url: str, title: str) -> Dict[str, Any]:
         "page_count": extraction.get("metadata", {}).get("page_count", 0),
         "table_count": extraction.get("table_count", 0),
         "text_length": len(total_text),
-        "tables": [
-            t for page in extraction.get("pages", [])
-            for t in page.get("tables", [])
-        ],
+        "tables": [t for page in extraction.get("pages", []) for t in page.get("tables", [])],
     }
 
 
 def _assess_impact(
-    sections: List[Dict[str, Any]],
-    findings: List[Dict[str, Any]],
+    sections: list[dict[str, Any]],
+    findings: list[dict[str, Any]],
 ) -> str:
     """Generate a brief impact assessment from sections and findings."""
     high_findings = [f for f in findings if f.get("importance") == "high"]
@@ -824,14 +861,15 @@ def _assess_impact(
 # Process from raw PDF bytes (for file upload)
 # ---------------------------------------------------------------------------
 
+
 def process_uploaded_pdf(
     pdf_bytes: bytes,
     title: str,
-    source_name: Optional[str] = None,
+    source_name: str | None = None,
     source_type: str = "upload",
     document_type: str = "report",
-    domain_key: Optional[str] = None,
-) -> Dict[str, Any]:
+    domain_key: str | None = None,
+) -> dict[str, Any]:
     """
     Process a directly uploaded PDF (not from URL).
     Creates a processed_documents row, then runs the full extraction pipeline.
@@ -869,15 +907,17 @@ def process_uploaded_pdf(
                     json.dumps(sections),
                     json.dumps(key_findings),
                     json.dumps(entities),
-                    json.dumps({
-                        "processing": {
-                            "method": "upload_pdf",
-                            "page_count": extraction.get("metadata", {}).get("page_count", 0),
-                            "table_count": extraction.get("table_count", 0),
-                            "text_length": len(total_text),
-                            "domain_key": domain_key,
+                    json.dumps(
+                        {
+                            "processing": {
+                                "method": "upload_pdf",
+                                "page_count": extraction.get("metadata", {}).get("page_count", 0),
+                                "table_count": extraction.get("table_count", 0),
+                                "text_length": len(total_text),
+                                "domain_key": domain_key,
+                            }
                         }
-                    }),
+                    ),
                 ),
             )
             doc_id = cur.fetchone()[0]
@@ -921,7 +961,8 @@ def process_uploaded_pdf(
 # Batch processing
 # ---------------------------------------------------------------------------
 
-def process_unprocessed_documents(limit: int = 10) -> Dict[str, Any]:
+
+def process_unprocessed_documents(limit: int = 10) -> dict[str, Any]:
     """Process documents that have a source_url but no extracted_sections yet."""
     conn = get_db_connection()
     if not conn:
@@ -950,17 +991,22 @@ def process_unprocessed_documents(limit: int = 10) -> Dict[str, Any]:
         if workers <= 1 or len(docs) <= 1:
             for doc_id, url, title in docs:
                 r = process_document(doc_id)
-                results.append({
-                    "document_id": doc_id,
-                    "title": title,
-                    "result": r.get("success", False),
-                    "sections": r.get("section_count", 0),
-                    "findings": r.get("finding_count", 0),
-                    "error": r.get("error"),
-                })
+                results.append(
+                    {
+                        "document_id": doc_id,
+                        "title": title,
+                        "result": r.get("success", False),
+                        "sections": r.get("section_count", 0),
+                        "findings": r.get("finding_count", 0),
+                        "error": r.get("error"),
+                    }
+                )
         else:
             with ThreadPoolExecutor(max_workers=workers) as executor:
-                future_to_doc = {executor.submit(process_document, doc_id): (doc_id, title) for doc_id, _url, title in docs}
+                future_to_doc = {
+                    executor.submit(process_document, doc_id): (doc_id, title)
+                    for doc_id, _url, title in docs
+                }
                 for future in as_completed(future_to_doc):
                     doc_id, title = future_to_doc[future]
                     try:
@@ -968,14 +1014,16 @@ def process_unprocessed_documents(limit: int = 10) -> Dict[str, Any]:
                     except Exception as e:
                         logger.warning("document_processing doc_id=%s: %s", doc_id, e)
                         r = {"success": False, "error": str(e)}
-                    results.append({
-                        "document_id": doc_id,
-                        "title": title,
-                        "result": r.get("success", False),
-                        "sections": r.get("section_count", 0),
-                        "findings": r.get("finding_count", 0),
-                        "error": r.get("error"),
-                    })
+                    results.append(
+                        {
+                            "document_id": doc_id,
+                            "title": title,
+                            "result": r.get("success", False),
+                            "sections": r.get("section_count", 0),
+                            "findings": r.get("finding_count", 0),
+                            "error": r.get("error"),
+                        }
+                    )
 
         return {
             "success": True,

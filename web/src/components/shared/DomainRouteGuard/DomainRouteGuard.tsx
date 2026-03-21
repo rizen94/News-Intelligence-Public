@@ -26,9 +26,20 @@ const DomainRouteGuard: React.FC<DomainRouteGuardProps> = ({ children }) => {
   if (!domain || !isValidDomain(domain)) {
     // Show loading instead of null - prevents blank white screen
     return (
-      <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 300, gap: 2 }}>
+      <Box
+        sx={{
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          minHeight: 300,
+          gap: 2,
+        }}
+      >
         <CircularProgress />
-        <Typography variant="body2" color="text.secondary">Loading...</Typography>
+        <Typography variant='body2' color='text.secondary'>
+          Loading...
+        </Typography>
       </Box>
     );
   }

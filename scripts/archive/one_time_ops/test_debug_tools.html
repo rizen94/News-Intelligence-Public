@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Debug Tools Test Page</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        h1 {
+            color: #333;
+            border-bottom: 3px solid #4CAF50;
+            padding-bottom: 10px;
+        }
+        h2 {
+            color: #555;
+            margin-top: 30px;
+        }
+        .button {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 5px;
+            transition: background 0.3s;
+        }
+        .button:hover {
+            background: #45a049;
+        }
+        .button-secondary {
+            background: #2196F3;
+        }
+        .button-secondary:hover {
+            background: #0b7dda;
+        }
+        .output {
+            background: #f9f9f9;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 15px;
+            margin-top: 10px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            max-height: 400px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+        }
+        .success {
+            color: #4CAF50;
+            font-weight: bold;
+        }
+        .error {
+            color: #f44336;
+            font-weight: bold;
+        }
+        .info {
+            color: #2196F3;
+        }
+        code {
+            background: #f4f4f4;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Courier New', monospace;
+        }
+        .section {
+            margin: 20px 0;
+            padding: 15px;
+            background: #fafafa;
+            border-left: 4px solid #4CAF50;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🐛 News Intelligence Debug Tools Test Page</h1>
+        <p>This page tests the debugging utilities for the News Intelligence System frontend.</p>
+        <p><strong>Note:</strong> These tools are only available when the React app is running in development mode.</p>
+    </div>
+
+    <div class="container">
+        <h2>Debug Helper Tests</h2>
+        
+        <div class="section">
+            <h3>System Information</h3>
+            <button class="button" onclick="testDebugInfo()">Get Debug Info</button>
+            <button class="button button-secondary" onclick="testNetworkStatus()">Check Network Status</button>
+            <div id="debug-output" class="output"></div>
+        </div>
+
+        <div class="section">
+            <h3>API Statistics</h3>
+            <button class="button" onclick="testApiStats()">Get API Call Statistics</button>
+            <div id="api-stats-output" class="output"></div>
+        </div>
+
+        <div class="section">
+            <h3>Performance Testing</h3>
+            <button class="button" onclick="testPerformance()">Measure Performance</button>
+            <div id="performance-output" class="output"></div>
+        </div>
+
+        <div class="section">
+            <h3>LocalStorage Monitoring</h3>
+            <button class="button" onclick="testLocalStorage()">Test LocalStorage</button>
+            <button class="button button-secondary" onclick="clearLocalStorage()">Clear LocalStorage</button>
+            <div id="localstorage-output" class="output"></div>
+        </div>
+    </div>
+
+    <div class="container">
+        <h2>Feature Test Helper</h2>
+        
+        <div class="section">
+            <h3>Run Tests</h3>
+            <button class="button" onclick="runAllTests()">Run All Tests</button>
+            <button class="button button-secondary" onclick="runCriticalTests()">Run Critical Tests Only</button>
+            <button class="button button-secondary" onclick="getTestSummary()">Get Test Summary</button>
+            <div id="test-output" class="output"></div>
+        </div>
+    </div>
+
+    <div class="container">
+        <h2>Instructions</h2>
+        <ol>
+            <li>Make sure the React app is running in development mode: <code>npm start</code></li>
+            <li>Open this page in your browser</li>
+            <li>Open the browser console (F12) to see detailed logs</li>
+            <li>Click the buttons above to test various debug functions</li>
+            <li>Check the output areas for results</li>
+        </ol>
+        <p><strong>Note:</strong> Some functions require the React app to be loaded. If you see errors, make sure you're accessing this through the React app at <code>http://localhost:3000</code></p>
+    </div>
+
+    <script>
+        function output(elementId, message, type = 'info') {
+            const element = document.getElementById(elementId);
+            const timestamp = new Date().toLocaleTimeString();
+            const className = type === 'error' ? 'error' : type === 'success' ? 'success' : 'info';
+            element.innerHTML += `<span class="${className}">[${timestamp}] ${message}</span>\n`;
+            element.scrollTop = element.scrollHeight;
+        }
+
+        function clearOutput(elementId) {
+            document.getElementById(elementId).innerHTML = '';
+        }
+
+        async function testDebugInfo() {
+            clearOutput('debug-output');
+            output('debug-output', 'Testing debugHelper.getDebugInfo()...', 'info');
+            
+            try {
+                if (typeof window.debugHelper !== 'undefined') {
+                    const info = window.debugHelper.getDebugInfo();
+                    output('debug-output', '✅ Debug info retrieved successfully!', 'success');
+                    output('debug-output', JSON.stringify(info, null, 2), 'info');
+                } else {
+                    output('debug-output', '❌ debugHelper not available. Make sure the React app is running in development mode.', 'error');
+                    output('debug-output', 'Access the React app at http://localhost:3000 and open the console.', 'info');
+                }
+            } catch (error) {
+                output('debug-output', `❌ Error: ${error.message}`, 'error');
+            }
+        }
+
+        async function testNetworkStatus() {
+            clearOutput('debug-output');
+            output('debug-output', 'Testing network status...', 'info');
+            
+            try {
+                if (typeof window.debugHelper !== 'undefined') {
+                    const status = await window.debugHelper.checkNetworkStatus();
+                    if (status) {
+                        output('debug-output', '✅ Network status: Connected', 'success');
+                    } else {
+                        output('debug-output', '❌ Network status: Disconnected', 'error');
+                    }
+                } else {
+                    output('debug-output', '❌ debugHelper not available.', 'error');
+                }
+            } catch (error) {
+                output('debug-output', `❌ Error: ${error.message}`, 'error');
+            }
+        }
+
+        function testApiStats() {
+            clearOutput('api-stats-output');
+            output('api-stats-output', 'Getting API call statistics...', 'info');
+            
+            try {
+                if (typeof window.debugHelper !== 'undefined') {
+                    const stats = window.debugHelper.getApiCallStats();
+                    output('api-stats-output', '✅ API Statistics:', 'success');
+                    output('api-stats-output', JSON.stringify(stats, null, 2), 'info');
+                } else {
+                    output('api-stats-output', '❌ debugHelper not available.', 'error');
+                }
+            } catch (error) {
+                output('api-stats-output', `❌ Error: ${error.message}`, 'error');
+            }
+        }
+
+        function testPerformance() {
+            clearOutput('performance-output');
+            output('performance-output', 'Testing performance measurement...', 'info');
+            
+            try {
+                if (typeof window.debugHelper !== 'undefined') {
+                    // Test sync performance
+                    window.debugHelper.measurePerformance('Test Operation', () => {
+                        let sum = 0;
+                        for (let i = 0; i < 1000000; i++) {
+                            sum += i;
+                        }
+                    });
+                    output('performance-output', '✅ Performance test completed. Check console for details.', 'success');
+                } else {
+                    output('performance-output', '❌ debugHelper not available.', 'error');
+                }
+            } catch (error) {
+                output('performance-output', `❌ Error: ${error.message}`, 'error');
+            }
+        }
+
+        function testLocalStorage() {
+            clearOutput('localstorage-output');
+            output('localstorage-output', 'Testing localStorage...', 'info');
+            
+            try {
+                const testKey = '__debug_test__';
+                localStorage.setItem(testKey, 'test-value-' + Date.now());
+                const value = localStorage.getItem(testKey);
+                localStorage.removeItem(testKey);
+                
+                if (value) {
+                    output('localstorage-output', '✅ localStorage is working!', 'success');
+                    output('localstorage-output', `Test value: ${value}`, 'info');
+                } else {
+                    output('localstorage-output', '❌ localStorage test failed', 'error');
+                }
+                
+                // Show current localStorage contents
+                output('localstorage-output', '\nCurrent localStorage contents:', 'info');
+                for (let i = 0; i < localStorage.length; i++) {
+                    const key = localStorage.key(i);
+                    if (key) {
+                        output('localstorage-output', `  ${key}: ${localStorage.getItem(key)}`, 'info');
+                    }
+                }
+            } catch (error) {
+                output('localstorage-output', `❌ Error: ${error.message}`, 'error');
+            }
+        }
+
+        function clearLocalStorage() {
+            if (confirm('Are you sure you want to clear all localStorage? This will remove saved preferences.')) {
+                localStorage.clear();
+                output('localstorage-output', '✅ localStorage cleared', 'success');
+            }
+        }
+
+        async function runAllTests() {
+            clearOutput('test-output');
+            output('test-output', 'Running all feature tests...', 'info');
+            
+            try {
+                if (typeof featureTestHelper !== 'undefined') {
+                    const results = await featureTestHelper.runAllTests();
+                    output('test-output', `✅ Completed ${results.length} tests`, 'success');
+                    results.forEach(result => {
+                        const icon = result.passed ? '✅' : '❌';
+                        output('test-output', `${icon} ${result.name}: ${result.message} (${result.duration.toFixed(2)}ms)`, result.passed ? 'success' : 'error');
+                    });
+                } else {
+                    output('test-output', '❌ featureTestHelper not available. Make sure the React app is running.', 'error');
+                }
+            } catch (error) {
+                output('test-output', `❌ Error: ${error.message}`, 'error');
+            }
+        }
+
+        async function runCriticalTests() {
+            clearOutput('test-output');
+            output('test-output', 'Running critical tests only...', 'info');
+            
+            try {
+                if (typeof featureTestHelper !== 'undefined') {
+                    const results = await featureTestHelper.runCriticalTests();
+                    output('test-output', `✅ Completed ${results.length} critical tests`, 'success');
+                    results.forEach(result => {
+                        const icon = result.passed ? '✅' : '❌';
+                        output('test-output', `${icon} ${result.name}: ${result.message}`, result.passed ? 'success' : 'error');
+                    });
+                } else {
+                    output('test-output', '❌ featureTestHelper not available.', 'error');
+                }
+            } catch (error) {
+                output('test-output', `❌ Error: ${error.message}`, 'error');
+            }
+        }
+
+        function getTestSummary() {
+            clearOutput('test-output');
+            output('test-output', 'Getting test summary...', 'info');
+            
+            try {
+                if (typeof featureTestHelper !== 'undefined') {
+                    const summary = featureTestHelper.getSummary();
+                    output('test-output', '✅ Test Summary:', 'success');
+                    output('test-output', JSON.stringify(summary, null, 2), 'info');
+                } else {
+                    output('test-output', '❌ featureTestHelper not available.', 'error');
+                }
+            } catch (error) {
+                output('test-output', `❌ Error: ${error.message}`, 'error');
+            }
+        }
+
+        // Check if tools are available on load
+        window.addEventListener('load', () => {
+            setTimeout(() => {
+                if (typeof window.debugHelper !== 'undefined') {
+                    console.log('%c✅ Debug Helper is available!', 'color: #4CAF50; font-size: 16px; font-weight: bold;');
+                } else {
+                    console.log('%c⚠️ Debug Helper not found. Make sure you\'re accessing this through the React app.', 'color: #ff9800; font-size: 14px;');
+                }
+                
+                if (typeof featureTestHelper !== 'undefined') {
+                    console.log('%c✅ Feature Test Helper is available!', 'color: #2196F3; font-size: 16px; font-weight: bold;');
+                } else {
+                    console.log('%c⚠️ Feature Test Helper not found.', 'color: #ff9800; font-size: 14px;');
+                }
+            }, 1000);
+        });
+    </script>
+</body>
+</html>
+

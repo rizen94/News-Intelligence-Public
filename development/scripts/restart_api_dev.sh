@@ -9,7 +9,7 @@ echo "=========================================="
 echo "🛑 Stopping API server..."
 pkill -f "start_dev_api.py" 2>/dev/null || echo "No dev API process found"
 pkill -f "start_prod_api.py" 2>/dev/null || echo "No prod API process found"
-pkill -f "main_v4.py" 2>/dev/null || echo "No main_v4 process found"
+pkill -f "uvicorn.*main:app" 2>/dev/null || echo "No API process found"
 pkill -f "uvicorn" 2>/dev/null || echo "No uvicorn process found"
 sleep 3
 
@@ -39,7 +39,7 @@ sleep 10
 
 # Test the API
 echo "🧪 Testing API..."
-curl -s "http://localhost:8001/api/v4/system-monitoring/status" | python3 -c "
+curl -s "http://localhost:8001/api/system_monitoring/status" | python3 -c "
 import json, sys
 try:
     data = json.load(sys.stdin)

@@ -4,26 +4,23 @@ Storyline Evolution Routes
 Intelligent storyline evolution and quality assessment
 """
 
-from fastapi import APIRouter, HTTPException, Path, Query, Depends
-from typing import Optional
-from shared.domain_registry import DOMAIN_PATH_PATTERN
 import logging
 
+from fastapi import APIRouter, Depends, HTTPException, Path, Query
+from shared.domain_registry import DOMAIN_PATH_PATTERN
 from shared.services.domain_aware_service import validate_domain
-from ..services.storyline_service import StorylineService
-from ..services.quality_assessment_service import QualityAssessmentService
+
 from ..schemas.storyline_schemas import (
-    StorylineEvolutionRequest,
     EvolutionResult,
-    QualityAssessmentResult
+    QualityAssessmentResult,
+    StorylineEvolutionRequest,
 )
+from ..services.quality_assessment_service import QualityAssessmentService
+from ..services.storyline_service import StorylineService
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(
-    tags=["Storyline Evolution"],
-    responses={404: {"description": "Not found"}}
-)
+router = APIRouter(tags=["Storyline Evolution"], responses={404: {"description": "Not found"}})
 
 
 async def validate_domain_dependency(domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN)) -> str:
@@ -37,20 +34,20 @@ async def validate_domain_dependency(domain: str = Path(..., pattern=DOMAIN_PATH
 async def evolve_domain_storyline(
     domain: str = Depends(validate_domain_dependency),
     storyline_id: int = Path(..., description="Storyline ID", ge=1),
-    request: Optional[StorylineEvolutionRequest] = None,
-    force_evolution: bool = Query(False, description="Force evolution even if recent")
+    request: StorylineEvolutionRequest | None = None,
+    force_evolution: bool = Query(False, description="Force evolution even if recent"),
 ):
     """Evolve storyline with new content"""
     try:
         storyline_service = StorylineService(domain=domain)
-        
+
         new_article_ids = request.new_article_ids if request else None
         force = request.force_evolution if request else force_evolution
-        
+
         result = await storyline_service.evolve_storyline_with_new_content(
             storyline_id, new_article_ids, force
         )
-        
+
         if result.get("success"):
             data = result.get("data", {})
             return EvolutionResult(
@@ -61,11 +58,11 @@ async def evolve_domain_storyline(
                 summary_updated=data.get("summary_updated", False),
                 context_updated=data.get("context_updated", False),
                 summary_length=data.get("summary_length", 0),
-                context_stats=data.get("context_stats", {})
+                context_stats=data.get("context_stats", {}),
             )
         else:
             raise HTTPException(status_code=500, detail=result.get("error", "Evolution failed"))
-            
+
     except HTTPException:
         raise
     except Exception as e:
@@ -73,16 +70,18 @@ async def evolve_domain_storyline(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/{domain}/storylines/{storyline_id}/assess_quality", response_model=QualityAssessmentResult)
+@router.post(
+    "/{domain}/storylines/{storyline_id}/assess_quality", response_model=QualityAssessmentResult
+)
 async def assess_domain_storyline_quality(
     domain: str = Depends(validate_domain_dependency),
-    storyline_id: int = Path(..., description="Storyline ID", ge=1)
+    storyline_id: int = Path(..., description="Storyline ID", ge=1),
 ):
     """Assess storyline quality"""
     try:
         quality_service = QualityAssessmentService(domain=domain)
         result = await quality_service.assess_storyline_quality(storyline_id)
-        
+
         if result.get("success"):
             data = result.get("data", {})
             return QualityAssessmentResult(
@@ -93,14 +92,13 @@ async def assess_domain_storyline_quality(
                 narrative_quality_score=data.get("narrative_quality_score", 0.0),
                 source_diversity=data.get("source_diversity", 0),
                 article_count=data.get("article_count", 0),
-                recommendations=data.get("recommendations", [])
+                recommendations=data.get("recommendations", []),
             )
         else:
             raise HTTPException(status_code=500, detail=result.get("error", "Assessment failed"))
-            
+
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error assessing quality: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-

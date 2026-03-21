@@ -5,10 +5,9 @@ Populates intelligence.tracked_events and intelligence.event_chronicles.
 
 import json
 import logging
-import asyncio
 import re
 from datetime import date
-from typing import List, Dict, Any, Optional, TypedDict
+from typing import Any, TypedDict
 
 from shared.services.llm_service import LLMService, ModelType
 
@@ -49,17 +48,33 @@ Respond with valid JSON only — an array of event objects:
 """
 
 VALID_EVENT_TYPES = {
-    "conflict", "election", "legislation", "investigation", "diplomatic",
-    "economic", "disaster", "protest", "policy", "appointment", "other",
-    "market_shift", "government_bond", "regulatory",
+    "conflict",
+    "election",
+    "legislation",
+    "investigation",
+    "diplomatic",
+    "economic",
+    "disaster",
+    "protest",
+    "policy",
+    "appointment",
+    "other",
+    "market_shift",
+    "government_bond",
+    "regulatory",
 }
 
 # Domain key as stored in article_to_context / contexts -> schema name for article_entities
-_DOMAIN_TO_SCHEMA = {"politics": "politics", "finance": "finance", "science-tech": "science_tech", "science_tech": "science_tech"}
+_DOMAIN_TO_SCHEMA = {
+    "politics": "politics",
+    "finance": "finance",
+    "science-tech": "science_tech",
+    "science_tech": "science_tech",
+}
 _MAX_KEY_PARTICIPANTS = 20
 
 
-def _resolve_context_ids_to_entity_profile_ids(conn, context_ids: List[int]) -> List[int]:
+def _resolve_context_ids_to_entity_profile_ids(conn, context_ids: list[int]) -> list[int]:
     """
     Resolve context IDs to up to _MAX_KEY_PARTICIPANTS unique entity_profile IDs.
     Uses article_to_context -> domain article_entities -> entity_profiles.
@@ -77,7 +92,7 @@ def _resolve_context_ids_to_entity_profile_ids(conn, context_ids: List[int]) -> 
             return []
 
         # Group article_ids by domain_key so we can query each schema once
-        by_domain: Dict[str, List[int]] = {}
+        by_domain: dict[str, list[int]] = {}
         for article_id, dk in article_domain_pairs:
             if dk not in by_domain:
                 by_domain[dk] = []
@@ -90,7 +105,7 @@ def _resolve_context_ids_to_entity_profile_ids(conn, context_ids: List[int]) -> 
                 continue
             with conn.cursor() as cur:
                 cur.execute(
-                    f'SELECT article_id, canonical_entity_id FROM {schema}.article_entities WHERE article_id = ANY(%s)',
+                    f"SELECT article_id, canonical_entity_id FROM {schema}.article_entities WHERE article_id = ANY(%s)",
                     (list(set(article_ids)),),
                 )
                 for _aid, cid in cur.fetchall():
@@ -116,17 +131,18 @@ class DiscoverEventsResult(TypedDict, total=False):
 
     error: str
     events_created: int
-    events: List[Dict[str, Any]]
+    events: list[dict[str, Any]]
     message: str
 
 
 def _strip_html(text: str) -> str:
     import re
-    return re.sub(r'<[^>]+>', '', text).strip()
+
+    return re.sub(r"<[^>]+>", "", text).strip()
 
 
 async def discover_events_from_contexts(
-    domain_key: Optional[str] = None, limit: int = 100
+    domain_key: str | None = None, limit: int = 100
 ) -> DiscoverEventsResult:
     """
     Analyze recent contexts and create tracked events from clusters.
@@ -146,7 +162,8 @@ async def discover_events_from_contexts(
 
             # Only analyze contexts not already linked to an event chronicle
             if domain_key:
-                cur.execute("""
+                cur.execute(
+                    """
                     SELECT c.id, c.title, c.content, c.domain_key, c.metadata, c.created_at
                     FROM intelligence.contexts c
                     WHERE c.domain_key = %s
@@ -156,9 +173,12 @@ async def discover_events_from_contexts(
                       )
                     ORDER BY c.created_at DESC
                     LIMIT %s
-                """, (domain_key, limit))
+                """,
+                    (domain_key, limit),
+                )
             else:
-                cur.execute("""
+                cur.execute(
+                    """
                     SELECT c.id, c.title, c.content, c.domain_key, c.metadata, c.created_at
                     FROM intelligence.contexts c
                     WHERE NOT EXISTS (
@@ -167,7 +187,9 @@ async def discover_events_from_contexts(
                     )
                     ORDER BY c.created_at DESC
                     LIMIT %s
-                """, (limit,))
+                """,
+                    (limit,),
+                )
             rows = cur.fetchall()
         conn.close()
     except Exception as e:
@@ -182,8 +204,7 @@ async def discover_events_from_contexts(
         return {"events_created": 0, "message": "No unlinked contexts to analyze"}
 
     articles_text = "\n".join(
-        f"ID={r[0]} | {r[1] or '(no title)'} | {_strip_html((r[2] or '')[:600])}"
-        for r in rows
+        f"ID={r[0]} | {r[1] or '(no title)'} | {_strip_html((r[2] or '')[:600])}" for r in rows
     )
 
     existing_note = ""
@@ -202,7 +223,10 @@ async def discover_events_from_contexts(
             "(corporate probes, fraud, DOJ). Name events specifically (e.g. 'Fed rate decision March 2026', 'SEC investigation into X')."
         )
 
-    prompt = EVENT_GROUPING_PROMPT.format(articles=articles_text, domain_hint=domain_hint) + existing_note
+    prompt = (
+        EVENT_GROUPING_PROMPT.format(articles=articles_text, domain_hint=domain_hint)
+        + existing_note
+    )
 
     llm = LLMService()
     try:
@@ -214,7 +238,9 @@ async def discover_events_from_contexts(
     events = _parse_llm_events(raw_response)
     logger.info("discover_events: LLM proposed %d events from %d contexts", len(events), len(rows))
     for ev in events:
-        logger.info("  proposed: %s (%s)", ev.get("event_name", "?")[:60], ev.get("event_type", "?"))
+        logger.info(
+            "  proposed: %s (%s)", ev.get("event_name", "?")[:60], ev.get("event_type", "?")
+        )
     if not events:
         return {"events_created": 0, "message": "LLM returned no valid events"}
 
@@ -241,32 +267,52 @@ async def discover_events_from_contexts(
                 geo = ev.get("geographic_scope", "")[:100]
                 summary = ev.get("summary", "")
 
-                dates = [context_dates[cid] for cid in valid_ids if cid in context_dates and context_dates[cid]]
+                dates = [
+                    context_dates[cid]
+                    for cid in valid_ids
+                    if cid in context_dates and context_dates[cid]
+                ]
                 start = min(dates).date() if dates else date.today()
 
-                cur.execute("""
+                cur.execute(
+                    """
                     SELECT id FROM intelligence.tracked_events
                     WHERE (event_name = %s OR event_name ILIKE %s) AND event_type = %s
-                """, (event_name, f'%{event_name[:40]}%', event_type))
+                """,
+                    (event_name, f"%{event_name[:40]}%", event_type),
+                )
                 if cur.fetchone():
                     continue
 
                 if domain_key:
                     domains = [domain_key]
                 else:
-                    domains = list({context_id_to_domain[cid] for cid in valid_ids if cid in context_id_to_domain})
+                    domains = list(
+                        {
+                            context_id_to_domain[cid]
+                            for cid in valid_ids
+                            if cid in context_id_to_domain
+                        }
+                    )
 
                 # Build initial editorial briefing from LLM summary
                 initial_briefing = summary[:500] if summary else None
-                initial_briefing_json = json.dumps({
-                    "headline": event_name,
-                    "summary": summary or "",
-                    "impact": "",
-                    "what_next": "",
-                    "key_participants": [],
-                }) if summary else None
+                initial_briefing_json = (
+                    json.dumps(
+                        {
+                            "headline": event_name,
+                            "summary": summary or "",
+                            "impact": "",
+                            "what_next": "",
+                            "key_participants": [],
+                        }
+                    )
+                    if summary
+                    else None
+                )
 
-                cur.execute("""
+                cur.execute(
+                    """
                     INSERT INTO intelligence.tracked_events
                     (event_type, event_name, start_date, geographic_scope,
                      key_participant_entity_ids, milestones, domain_keys,
@@ -274,24 +320,36 @@ async def discover_events_from_contexts(
                      briefing_version, briefing_status)
                     VALUES (%s, %s, %s, %s, '[]', '[]', %s, %s, %s, 1, 'draft')
                     RETURNING id
-                """, (event_type, event_name, start, geo, domains,
-                      initial_briefing, initial_briefing_json))
+                """,
+                    (
+                        event_type,
+                        event_name,
+                        start,
+                        geo,
+                        domains,
+                        initial_briefing,
+                        initial_briefing_json,
+                    ),
+                )
                 event_id = cur.fetchone()[0]
 
                 developments = [{"context_id": cid, "type": "initial"} for cid in valid_ids]
                 analysis = {"summary": summary, "context_count": len(valid_ids)}
 
-                cur.execute("""
+                cur.execute(
+                    """
                     INSERT INTO intelligence.event_chronicles
                     (event_id, update_date, developments, analysis, predictions, momentum_score)
                     VALUES (%s, %s, %s, %s, '[]', %s)
-                """, (
-                    event_id,
-                    date.today(),
-                    json.dumps(developments),
-                    json.dumps(analysis),
-                    min(1.0, len(valid_ids) * 0.15),
-                ))
+                """,
+                    (
+                        event_id,
+                        date.today(),
+                        json.dumps(developments),
+                        json.dumps(analysis),
+                        min(1.0, len(valid_ids) * 0.15),
+                    ),
+                )
 
                 # Auto-populate key_participant_entity_ids from contexts linked to this event
                 profile_ids = _resolve_context_ids_to_entity_profile_ids(conn, valid_ids)
@@ -301,12 +359,14 @@ async def discover_events_from_contexts(
                         (json.dumps(profile_ids), event_id),
                     )
 
-                created_events.append({
-                    "event_id": event_id,
-                    "event_name": event_name,
-                    "event_type": event_type,
-                    "context_count": len(valid_ids),
-                })
+                created_events.append(
+                    {
+                        "event_id": event_id,
+                        "event_name": event_name,
+                        "event_type": event_type,
+                        "context_count": len(valid_ids),
+                    }
+                )
 
         conn.commit()
         conn.close()
@@ -334,7 +394,7 @@ def _backfill_key_participants_for_event(conn, event_id: int) -> bool:
     Populate key_participant_entity_ids for an existing event from its chronicle developments.
     Returns True if updated.
     """
-    context_ids: List[int] = []
+    context_ids: list[int] = []
     try:
         with conn.cursor() as cur:
             cur.execute(
@@ -382,14 +442,17 @@ def backfill_key_participants_for_tracked_events(limit: int = 30) -> int:
     updated = 0
     try:
         with conn.cursor() as cur:
-            cur.execute("""
+            cur.execute(
+                """
                 SELECT id FROM intelligence.tracked_events
                 WHERE key_participant_entity_ids IS NULL
                    OR key_participant_entity_ids = '[]'
                    OR key_participant_entity_ids = 'null'
                 ORDER BY id DESC
                 LIMIT %s
-            """, (limit,))
+            """,
+                (limit,),
+            )
             event_ids = [r[0] for r in cur.fetchall()]
         for eid in event_ids:
             if _backfill_key_participants_for_event(conn, eid):
@@ -422,7 +485,8 @@ def link_tracked_events_to_storylines(limit: int = 50) -> int:
     linked = 0
     try:
         with conn.cursor() as cur:
-            cur.execute("""
+            cur.execute(
+                """
                 SELECT id, COALESCE(key_participant_entity_ids, '[]'::jsonb) as profile_ids
                 FROM intelligence.tracked_events
                 WHERE storyline_id IS NULL
@@ -430,15 +494,21 @@ def link_tracked_events_to_storylines(limit: int = 50) -> int:
                   AND jsonb_array_length(COALESCE(key_participant_entity_ids, '[]'::jsonb)) > 0
                 ORDER BY id DESC
                 LIMIT %s
-            """, (limit,))
+            """,
+                (limit,),
+            )
             rows = cur.fetchall()
         if not rows:
             conn.close()
             return 0
 
-        for (event_id, profile_ids_json) in rows:
+        for event_id, profile_ids_json in rows:
             try:
-                profile_ids = json.loads(profile_ids_json) if isinstance(profile_ids_json, str) else (profile_ids_json or [])
+                profile_ids = (
+                    json.loads(profile_ids_json)
+                    if isinstance(profile_ids_json, str)
+                    else (profile_ids_json or [])
+                )
                 profile_ids = [int(x) for x in profile_ids if isinstance(x, (int, float))]
                 if not profile_ids:
                     continue
@@ -451,7 +521,7 @@ def link_tracked_events_to_storylines(limit: int = 50) -> int:
                 if not domain_canonicals:
                     continue
                 # Group by domain: domain_key -> set of canonical_entity_id
-                by_domain: Dict[str, List[int]] = {}
+                by_domain: dict[str, list[int]] = {}
                 for dk, cid in domain_canonicals:
                     if dk not in by_domain:
                         by_domain[dk] = []
@@ -490,7 +560,11 @@ def link_tracked_events_to_storylines(limit: int = 50) -> int:
                             (storyline_id_val, event_id),
                         )
                     linked += 1
-                    logger.debug("link_tracked_events_to_storylines: event %s -> %s", event_id, storyline_id_val)
+                    logger.debug(
+                        "link_tracked_events_to_storylines: event %s -> %s",
+                        event_id,
+                        storyline_id_val,
+                    )
             except Exception as e:
                 logger.debug("link_tracked_events_to_storylines event %s: %s", event_id, e)
                 continue
@@ -537,7 +611,10 @@ async def run_event_tracking_batch(limit: int = 300) -> int:
     if total > 0 or backfilled > 0 or linked > 0:
         logger.info(
             "run_event_tracking_batch: %d new events, %d chronicle updates, %d participant backfills, %d storyline links",
-            created_total, updated, backfilled, linked,
+            created_total,
+            updated,
+            backfilled,
+            linked,
         )
     return total
 
@@ -555,7 +632,8 @@ async def _update_existing_event_chronicles(limit: int = 20) -> int:
 
     try:
         with conn.cursor() as cur:
-            cur.execute("""
+            cur.execute(
+                """
                 SELECT te.id, te.event_name, te.event_type,
                        COALESCE(te.domain_keys, '{}') as domain_keys,
                        COALESCE(te.key_participant_entity_ids, '[]'::jsonb) as key_participant_entity_ids,
@@ -563,7 +641,9 @@ async def _update_existing_event_chronicles(limit: int = 20) -> int:
                 FROM intelligence.tracked_events te
                 ORDER BY te.id DESC
                 LIMIT %s
-            """, (limit,))
+            """,
+                (limit,),
+            )
             events = cur.fetchall()
 
         if not events:
@@ -571,7 +651,14 @@ async def _update_existing_event_chronicles(limit: int = 20) -> int:
             return 0
 
         updates = 0
-        for event_id, event_name, event_type, domain_keys, participant_ids_json, last_update in events:
+        for (
+            event_id,
+            event_name,
+            event_type,
+            domain_keys,
+            participant_ids_json,
+            last_update,
+        ) in events:
             # Build search terms: significant words (len >= 4) from event name, up to 3
             words = [w for w in re.split(r"\W+", (event_name or "")) if len(w) >= 4][:3]
             if not words:
@@ -586,11 +673,15 @@ async def _update_existing_event_chronicles(limit: int = 20) -> int:
                 params.append(f"%{w}%")
             participant_ids: list = []
             if participant_ids_json and isinstance(participant_ids_json, list):
-                participant_ids = [int(x) for x in participant_ids_json if isinstance(x, (int, float))]
+                participant_ids = [
+                    int(x) for x in participant_ids_json if isinstance(x, (int, float))
+                ]
             elif isinstance(participant_ids_json, str):
                 try:
                     participant_ids = json.loads(participant_ids_json)
-                    participant_ids = [int(x) for x in participant_ids if isinstance(x, (int, float))]
+                    participant_ids = [
+                        int(x) for x in participant_ids if isinstance(x, (int, float))
+                    ]
                 except Exception:
                     pass
             if participant_ids:
@@ -618,17 +709,25 @@ async def _update_existing_event_chronicles(limit: int = 20) -> int:
 
             if new_contexts:
                 developments = [
-                    {"context_id": c[0], "type": "update", "title": c[1], "excerpt": (c[2] or "")[:200]}
+                    {
+                        "context_id": c[0],
+                        "type": "update",
+                        "title": c[1],
+                        "excerpt": (c[2] or "")[:200],
+                    }
                     for c in new_contexts
                 ]
 
                 # Build on prior analysis instead of starting empty
                 prior_analysis = {}
                 with conn.cursor() as cur:
-                    cur.execute("""
+                    cur.execute(
+                        """
                         SELECT analysis FROM intelligence.event_chronicles
                         WHERE event_id = %s ORDER BY update_date DESC LIMIT 1
-                    """, (event_id,))
+                    """,
+                        (event_id,),
+                    )
                     prev = cur.fetchone()
                     if prev and prev[0] and isinstance(prev[0], dict):
                         prior_analysis = prev[0]
@@ -642,12 +741,19 @@ async def _update_existing_event_chronicles(limit: int = 20) -> int:
                 }
 
                 with conn.cursor() as cur:
-                    cur.execute("""
+                    cur.execute(
+                        """
                         INSERT INTO intelligence.event_chronicles
                         (event_id, update_date, developments, analysis, predictions, momentum_score)
                         VALUES (%s, CURRENT_DATE, %s, %s, '[]', %s)
-                    """, (event_id, json.dumps(developments), json.dumps(analysis),
-                          min(1.0, len(new_contexts) * 0.1)))
+                    """,
+                        (
+                            event_id,
+                            json.dumps(developments),
+                            json.dumps(analysis),
+                            min(1.0, len(new_contexts) * 0.1),
+                        ),
+                    )
                 updates += 1
 
         conn.commit()
@@ -664,9 +770,10 @@ async def _update_existing_event_chronicles(limit: int = 20) -> int:
         return 0
 
 
-def _parse_llm_events(raw: str) -> List[Dict[str, Any]]:
+def _parse_llm_events(raw: str) -> list[dict[str, Any]]:
     """Extract JSON array of events from LLM response, tolerant of markdown fences and truncation."""
     import re
+
     text = raw.strip()
 
     # Strip markdown code fences
@@ -686,7 +793,7 @@ def _parse_llm_events(raw: str) -> List[Dict[str, Any]]:
         return []
 
     end = text.rfind("]")
-    candidate = text[start:end + 1] if end > start else text[start:]
+    candidate = text[start : end + 1] if end > start else text[start:]
 
     # First try: parse the full array
     try:
@@ -698,7 +805,7 @@ def _parse_llm_events(raw: str) -> List[Dict[str, Any]]:
 
     # Second try: the response may be truncated — try to recover individual objects
     recovered = []
-    for m in re.finditer(r'\{[^{}]*\}', candidate):
+    for m in re.finditer(r"\{[^{}]*\}", candidate):
         try:
             obj = json.loads(m.group())
             if "event_name" in obj:

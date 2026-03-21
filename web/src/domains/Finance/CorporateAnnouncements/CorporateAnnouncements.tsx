@@ -58,7 +58,7 @@ const CorporateAnnouncements: React.FC = () => {
   const [total, setTotal] = useState(0);
   const limit = 20;
 
-  const loadAnnouncements = useCallback(async() => {
+  const loadAnnouncements = useCallback(async () => {
     if (domain !== 'finance') {
       setError('This page is only available for the Finance domain');
       setLoading(false);
@@ -69,11 +69,14 @@ const CorporateAnnouncements: React.FC = () => {
       setLoading(true);
       setError(null);
 
-      const response = await apiService.getCorporateAnnouncements({
-        ...filters,
-        limit,
-        offset: (page - 1) * limit,
-      }, domain);
+      const response = await apiService.getCorporateAnnouncements(
+        {
+          ...filters,
+          limit,
+          offset: (page - 1) * limit,
+        },
+        domain
+      );
 
       if (response.success) {
         setAnnouncements(response.data?.announcements || []);
@@ -100,7 +103,7 @@ const CorporateAnnouncements: React.FC = () => {
   if (domain !== 'finance') {
     return (
       <Box sx={{ p: 3 }}>
-        <Alert severity="warning">
+        <Alert severity='warning'>
           Corporate Announcements is only available in the Finance domain.
         </Alert>
       </Box>
@@ -109,12 +112,23 @@ const CorporateAnnouncements: React.FC = () => {
 
   return (
     <Box sx={{ p: 3 }}>
-      <Box sx={{ mb: 3, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <Typography variant="h4" component="h1" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+      <Box
+        sx={{
+          mb: 3,
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+        }}
+      >
+        <Typography
+          variant='h4'
+          component='h1'
+          sx={{ display: 'flex', alignItems: 'center', gap: 1 }}
+        >
           <Business /> Corporate Announcements
         </Typography>
         <Button
-          variant="outlined"
+          variant='outlined'
           startIcon={<Refresh />}
           onClick={loadAnnouncements}
           disabled={loading}
@@ -129,58 +143,60 @@ const CorporateAnnouncements: React.FC = () => {
           <Grid item xs={12} sm={6} md={3}>
             <TextField
               fullWidth
-              label="Company Name"
+              label='Company Name'
               value={filters.company}
-              onChange={(e) => handleFilterChange('company', e.target.value)}
-              size="small"
+              onChange={e => handleFilterChange('company', e.target.value)}
+              size='small'
             />
           </Grid>
           <Grid item xs={12} sm={6} md={2}>
             <TextField
               fullWidth
-              label="Ticker Symbol"
+              label='Ticker Symbol'
               value={filters.ticker}
-              onChange={(e) => handleFilterChange('ticker', e.target.value.toUpperCase())}
-              size="small"
+              onChange={e =>
+                handleFilterChange('ticker', e.target.value.toUpperCase())
+              }
+              size='small'
             />
           </Grid>
           <Grid item xs={12} sm={6} md={2}>
-            <FormControl fullWidth size="small">
+            <FormControl fullWidth size='small'>
               <InputLabel>Type</InputLabel>
               <Select
                 value={filters.type}
-                onChange={(e) => handleFilterChange('type', e.target.value)}
-                label="Type"
+                onChange={e => handleFilterChange('type', e.target.value)}
+                label='Type'
               >
-                <MenuItem value="all">All Types</MenuItem>
-                <MenuItem value="earnings">Earnings</MenuItem>
-                <MenuItem value="merger">Merger & Acquisition</MenuItem>
-                <MenuItem value="product">Product Launch</MenuItem>
-                <MenuItem value="executive">Executive Change</MenuItem>
-                <MenuItem value="regulatory">Regulatory Filing</MenuItem>
-                <MenuItem value="guidance">Guidance</MenuItem>
+                <MenuItem value='all'>All Types</MenuItem>
+                <MenuItem value='earnings'>Earnings</MenuItem>
+                <MenuItem value='merger'>Merger & Acquisition</MenuItem>
+                <MenuItem value='product'>Product Launch</MenuItem>
+                <MenuItem value='executive'>Executive Change</MenuItem>
+                <MenuItem value='regulatory'>Regulatory Filing</MenuItem>
+                <MenuItem value='guidance'>Guidance</MenuItem>
               </Select>
             </FormControl>
           </Grid>
           <Grid item xs={12} sm={6} md={2}>
             <TextField
               fullWidth
-              label="Start Date"
-              type="date"
+              label='Start Date'
+              type='date'
               value={filters.startDate}
-              onChange={(e) => handleFilterChange('startDate', e.target.value)}
-              size="small"
+              onChange={e => handleFilterChange('startDate', e.target.value)}
+              size='small'
               InputLabelProps={{ shrink: true }}
             />
           </Grid>
           <Grid item xs={12} sm={6} md={2}>
             <TextField
               fullWidth
-              label="End Date"
-              type="date"
+              label='End Date'
+              type='date'
               value={filters.endDate}
-              onChange={(e) => handleFilterChange('endDate', e.target.value)}
-              size="small"
+              onChange={e => handleFilterChange('endDate', e.target.value)}
+              size='small'
               InputLabelProps={{ shrink: true }}
             />
           </Grid>
@@ -194,27 +210,35 @@ const CorporateAnnouncements: React.FC = () => {
       )}
 
       {error && (
-        <Alert severity="error" sx={{ mb: 3 }}>
+        <Alert severity='error' sx={{ mb: 3 }}>
           {error}
         </Alert>
       )}
 
       {!loading && !error && (
         <>
-          <Box sx={{ mb: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <Typography variant="body2" color="text.secondary">
+          <Box
+            sx={{
+              mb: 2,
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+            }}
+          >
+            <Typography variant='body2' color='text.secondary'>
               {total} announcement{total !== 1 ? 's' : ''} found
             </Typography>
             <Chip
-              label="API Endpoint: /api/finance/finance/corporate-announcements"
-              color="info"
-              size="small"
+              label='API Endpoint: /api/finance/finance/corporate-announcements'
+              color='info'
+              size='small'
             />
           </Box>
 
           {announcements.length === 0 ? (
-            <Alert severity="info">
-              No corporate announcements found. The backend API endpoint needs to be implemented.
+            <Alert severity='info'>
+              No corporate announcements found. The backend API endpoint needs
+              to be implemented.
             </Alert>
           ) : (
             <TableContainer component={Paper}>
@@ -236,19 +260,26 @@ const CorporateAnnouncements: React.FC = () => {
                     <TableRow key={announcement.id}>
                       <TableCell>
                         {announcement.announcement_date
-                          ? new Date(announcement.announcement_date).toLocaleDateString()
+                          ? new Date(
+                              announcement.announcement_date
+                            ).toLocaleDateString()
                           : 'N/A'}
                       </TableCell>
-                      <TableCell>{announcement.company_name || 'N/A'}</TableCell>
                       <TableCell>
-                        <Chip label={announcement.ticker_symbol || 'N/A'} size="small" />
+                        {announcement.company_name || 'N/A'}
+                      </TableCell>
+                      <TableCell>
+                        <Chip
+                          label={announcement.ticker_symbol || 'N/A'}
+                          size='small'
+                        />
                       </TableCell>
                       <TableCell>
                         <Chip
                           label={announcement.announcement_type || 'N/A'}
-                          size="small"
-                          color="primary"
-                          variant="outlined"
+                          size='small'
+                          color='primary'
+                          variant='outlined'
                         />
                       </TableCell>
                       <TableCell>{announcement.title || 'N/A'}</TableCell>
@@ -256,39 +287,51 @@ const CorporateAnnouncements: React.FC = () => {
                         {announcement.sentiment_label && (
                           <Chip
                             label={announcement.sentiment_label}
-                            size="small"
+                            size='small'
                             color={
-                              announcement.sentiment_label === 'positive' ? 'success' :
-                                announcement.sentiment_label === 'negative' ? 'error' : 'default'
+                              announcement.sentiment_label === 'positive'
+                                ? 'success'
+                                : announcement.sentiment_label === 'negative'
+                                ? 'error'
+                                : 'default'
                             }
                           />
                         )}
                       </TableCell>
                       <TableCell>
-                        {announcement.market_impact !== null && announcement.market_impact !== undefined ? (
-                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                        {announcement.market_impact !== null &&
+                        announcement.market_impact !== undefined ? (
+                          <Box
+                            sx={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 0.5,
+                            }}
+                          >
                             {announcement.market_impact >= 0 ? (
-                              <TrendingUp color="success" fontSize="small" />
+                              <TrendingUp color='success' fontSize='small' />
                             ) : (
-                              <TrendingDown color="error" fontSize="small" />
+                              <TrendingDown color='error' fontSize='small' />
                             )}
-                            <Typography variant="body2">
+                            <Typography variant='body2'>
                               {announcement.market_impact > 0 ? '+' : ''}
                               {announcement.market_impact.toFixed(2)}%
                             </Typography>
                           </Box>
-                        ) : 'N/A'}
+                        ) : (
+                          'N/A'
+                        )}
                       </TableCell>
                       <TableCell>
                         {announcement.source_url && (
-                          <Tooltip title="View Source">
+                          <Tooltip title='View Source'>
                             <IconButton
-                              size="small"
+                              size='small'
                               href={announcement.source_url}
-                              target="_blank"
-                              rel="noopener noreferrer"
+                              target='_blank'
+                              rel='noopener noreferrer'
                             >
-                              <OpenInNew fontSize="small" />
+                              <OpenInNew fontSize='small' />
                             </IconButton>
                           </Tooltip>
                         )}
@@ -306,4 +349,3 @@ const CorporateAnnouncements: React.FC = () => {
 };
 
 export default CorporateAnnouncements;
-

@@ -4,9 +4,9 @@
 
 This document outlines the frontend style consistency improvements implemented in Phase 1, providing guidelines for maintaining code quality and consistency across the React frontend.
 
-**Last Updated**: 2025-09-24  
-**Version**: 3.0  
-**Status**: Phase 1 Complete
+**Last Updated**: 2026-03  
+**Version**: 8.0 (aligned with product; tooling unchanged)  
+**Status**: Active — ESLint + Prettier match `web/.eslintrc.js` and `web/.prettierrc` (`no-console` is **warn**; prefer `Logger` per below)
 
 ---
 
@@ -21,20 +21,15 @@ This document outlines the frontend style consistency improvements implemented i
   - Consistent message formatting
 
 ### **2. ESLint Configuration**
-- **Created**: `.eslintrc.js` - Comprehensive linting rules
+- **Source of truth**: `web/.eslintrc.js` (extends `react-app`, `eslint:recommended`)
 - **Features**:
-  - Arrow function enforcement
-  - Console statement warnings
-  - Import organization rules
-  - Code style consistency
+  - Arrow function enforcement (`prefer-arrow-callback`)
+  - **`no-console`: warn** — use `Logger` for new code; legacy `console` may still warn
+  - Code style (quotes, semicolons, indentation) aligned with Prettier where not conflicting
 
 ### **3. Prettier Configuration**
-- **Created**: `.prettierrc` - Code formatting standards
-- **Features**:
-  - Single quotes, semicolons
-  - 80-character line width
-  - Consistent indentation
-  - JSX formatting
+- **Source of truth**: `web/.prettierrc` (`printWidth`: 80, `singleQuote`, `semi`, `tabWidth`: 2)
+- Run **`npm run format`** / **`npm run format:check`** — do not rely on prose line lengths in this doc alone
 
 ### **4. Component Template**
 - **Created**: `src/templates/ComponentTemplate.js` - Standard component structure

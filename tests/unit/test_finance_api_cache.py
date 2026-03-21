@@ -3,9 +3,8 @@ Unit tests for finance api_cache (SQLite).
 Uses tmp_path for isolation; patches config paths before importing.
 """
 
-import json
 import pytest
-from pathlib import Path
+
 
 # Patch before importing finance modules
 @pytest.fixture(autouse=True)

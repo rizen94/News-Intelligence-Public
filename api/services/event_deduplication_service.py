@@ -14,8 +14,8 @@ as canonical and merges metadata from subsequent sources.
 
 import json
 import logging
-from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from datetime import datetime, timedelta
+from typing import Any
 
 import httpx
 
@@ -27,7 +27,7 @@ OLLAMA_URL = "http://localhost:11434"
 EMBED_MODEL = "nomic-embed-text"
 
 
-async def _get_embedding(text: str) -> Optional[List[float]]:
+async def _get_embedding(text: str) -> list[float] | None:
     """Get a 768-d embedding from Ollama's nomic-embed-text model."""
     async with httpx.AsyncClient(timeout=60.0) as client:
         try:
@@ -52,7 +52,7 @@ class EventDeduplicationService:
     # Public entry point
     # ------------------------------------------------------------------
 
-    async def deduplicate_event(self, event_id: int) -> Optional[int]:
+    async def deduplicate_event(self, event_id: int) -> int | None:
         """
         Check if *event_id* is a duplicate of an existing canonical event.
 
@@ -61,20 +61,35 @@ class EventDeduplicationService:
         metadata when a match is confirmed.
         """
         cursor = self.conn.cursor()
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT id, event_fingerprint, title, description, event_type,
                    actual_event_date, date_precision, location, key_actors,
                    entities, embedding, storyline_id
             FROM chronological_events
             WHERE id = %s
-        """, (event_id,))
+        """,
+            (event_id,),
+        )
         row = cursor.fetchone()
         cursor.close()
         if not row:
             return None
 
-        (eid, fingerprint, title, desc, etype, edate, precision,
-         loc, actors_json, entities_json, embedding, storyline_id) = row
+        (
+            eid,
+            fingerprint,
+            title,
+            desc,
+            etype,
+            edate,
+            precision,
+            loc,
+            actors_json,
+            entities_json,
+            embedding,
+            storyline_id,
+        ) = row
 
         key_actors = self._parse_json(actors_json)
         entities = self._parse_json(entities_json)
@@ -100,10 +115,12 @@ class EventDeduplicationService:
                 return canonical
 
         # --- Tier 3: entity + temporal overlap ---------------------------
-        actor_names = [a.get('name', '') for a in key_actors] if isinstance(key_actors, list) else []
+        actor_names = (
+            [a.get("name", "") for a in key_actors] if isinstance(key_actors, list) else []
+        )
         entity_names = []
         if isinstance(entities, list):
-            entity_names = [e.get('name', '') if isinstance(e, dict) else str(e) for e in entities]
+            entity_names = [e.get("name", "") if isinstance(e, dict) else str(e) for e in entities]
         all_names = list(set(n.lower().strip() for n in actor_names + entity_names if n))
 
         canonical = self._match_by_entities(eid, all_names, edate, precision)
@@ -117,15 +134,18 @@ class EventDeduplicationService:
     # Batch entry point
     # ------------------------------------------------------------------
 
-    async def deduplicate_recent(self, limit: int = 50) -> Dict[str, int]:
+    async def deduplicate_recent(self, limit: int = 50) -> dict[str, int]:
         """Deduplicate events that have not yet been checked."""
         cursor = self.conn.cursor()
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT id FROM chronological_events
             WHERE canonical_event_id IS NULL
             ORDER BY extraction_timestamp DESC
             LIMIT %s
-        """, (limit,))
+        """,
+            (limit,),
+        )
         rows = cursor.fetchall()
         cursor.close()
 
@@ -141,27 +161,31 @@ class EventDeduplicationService:
     # Matching tiers
     # ------------------------------------------------------------------
 
-    def _match_by_fingerprint(self, event_id: int, fingerprint: str) -> Optional[int]:
+    def _match_by_fingerprint(self, event_id: int, fingerprint: str) -> int | None:
         if not fingerprint:
             return None
         cursor = self.conn.cursor()
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT id FROM chronological_events
             WHERE event_fingerprint = %s
               AND id != %s
               AND canonical_event_id IS NULL
             ORDER BY extraction_timestamp ASC
             LIMIT 1
-        """, (fingerprint, event_id))
+        """,
+            (fingerprint, event_id),
+        )
         row = cursor.fetchone()
         cursor.close()
         return row[0] if row else None
 
-    def _match_by_embedding(self, event_id: int, embedding: list) -> Optional[int]:
+    def _match_by_embedding(self, event_id: int, embedding: list) -> int | None:
         cursor = self.conn.cursor()
         try:
-            vec_literal = '[' + ','.join(str(x) for x in embedding) + ']'
-            cursor.execute("""
+            vec_literal = "[" + ",".join(str(x) for x in embedding) + "]"
+            cursor.execute(
+                """
                 SELECT id, 1 - (embedding <=> %s::vector) AS similarity
                 FROM chronological_events
                 WHERE id != %s
@@ -169,7 +193,9 @@ class EventDeduplicationService:
                   AND embedding IS NOT NULL
                 ORDER BY embedding <=> %s::vector
                 LIMIT 1
-            """, (vec_literal, event_id, vec_literal))
+            """,
+                (vec_literal, event_id, vec_literal),
+            )
             row = cursor.fetchone()
             if row and row[1] >= SIMILARITY_THRESHOLD:
                 return row[0]
@@ -183,10 +209,10 @@ class EventDeduplicationService:
     def _match_by_entities(
         self,
         event_id: int,
-        entity_names: List[str],
-        event_date: Optional[datetime],
+        entity_names: list[str],
+        event_date: datetime | None,
         precision: str,
-    ) -> Optional[int]:
+    ) -> int | None:
         if len(entity_names) < ENTITY_OVERLAP_MIN:
             return None
 
@@ -194,20 +220,26 @@ class EventDeduplicationService:
         cursor = self.conn.cursor()
         try:
             if event_date and window:
-                cursor.execute("""
+                cursor.execute(
+                    """
                     SELECT id, key_actors, entities
                     FROM chronological_events
                     WHERE id != %s
                       AND canonical_event_id IS NULL
                       AND actual_event_date BETWEEN %s AND %s
-                """, (event_id, event_date - window, event_date + window))
+                """,
+                    (event_id, event_date - window, event_date + window),
+                )
             else:
-                cursor.execute("""
+                cursor.execute(
+                    """
                     SELECT id, key_actors, entities
                     FROM chronological_events
                     WHERE id != %s
                       AND canonical_event_id IS NULL
-                """, (event_id,))
+                """,
+                    (event_id,),
+                )
 
             for row in cursor.fetchall():
                 cand_id, cand_actors_json, cand_entities_json = row
@@ -216,7 +248,7 @@ class EventDeduplicationService:
                     parsed = self._parse_json(j)
                     if isinstance(parsed, list):
                         for item in parsed:
-                            name = item.get('name', '') if isinstance(item, dict) else str(item)
+                            name = item.get("name", "") if isinstance(item, dict) else str(item)
                             if name:
                                 cand_names.add(name.lower().strip())
                 overlap = len(set(entity_names) & cand_names)
@@ -237,42 +269,60 @@ class EventDeduplicationService:
         """Point duplicate at canonical and merge metadata."""
         cursor = self.conn.cursor()
         try:
-            cursor.execute("""
+            cursor.execute(
+                """
                 UPDATE chronological_events
                 SET canonical_event_id = %s
                 WHERE id = %s
-            """, (canonical_id, duplicate_id))
+            """,
+                (canonical_id, duplicate_id),
+            )
 
-            cursor.execute("""
+            cursor.execute(
+                """
                 UPDATE chronological_events
                 SET source_count = source_count + 1,
                     last_corroborated_at = CURRENT_TIMESTAMP
                 WHERE id = %s
-            """, (canonical_id,))
+            """,
+                (canonical_id,),
+            )
 
             # Merge key_actors from duplicate into canonical
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT key_actors FROM chronological_events WHERE id = %s
-            """, (duplicate_id,))
+            """,
+                (duplicate_id,),
+            )
             dup_actors = self._parse_json((cursor.fetchone() or (None,))[0])
 
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT key_actors FROM chronological_events WHERE id = %s
-            """, (canonical_id,))
+            """,
+                (canonical_id,),
+            )
             can_actors = self._parse_json((cursor.fetchone() or (None,))[0])
 
             if isinstance(dup_actors, list) and isinstance(can_actors, list):
                 existing_names = {
-                    a.get('name', '').lower() for a in can_actors if isinstance(a, dict)
+                    a.get("name", "").lower() for a in can_actors if isinstance(a, dict)
                 }
                 for actor in dup_actors:
-                    if isinstance(actor, dict) and actor.get('name', '').lower() not in existing_names:
+                    if (
+                        isinstance(actor, dict)
+                        and actor.get("name", "").lower() not in existing_names
+                    ):
                         can_actors.append(actor)
-                cursor.execute("""
+                cursor.execute(
+                    """
                     UPDATE chronological_events
                     SET key_actors = %s
                     WHERE id = %s
-                """, (json.dumps(can_actors), canonical_id))
+                """,
+                    (json.dumps(can_actors), canonical_id),
+                )
 
             self.conn.commit()
             logger.info(f"Merged event {duplicate_id} -> canonical {canonical_id}")
@@ -289,12 +339,15 @@ class EventDeduplicationService:
     def _store_embedding(self, event_id: int, embedding: list):
         cursor = self.conn.cursor()
         try:
-            vec_literal = '[' + ','.join(str(x) for x in embedding) + ']'
-            cursor.execute("""
+            vec_literal = "[" + ",".join(str(x) for x in embedding) + "]"
+            cursor.execute(
+                """
                 UPDATE chronological_events
                 SET embedding = %s::vector
                 WHERE id = %s
-            """, (vec_literal, event_id))
+            """,
+                (vec_literal, event_id),
+            )
             self.conn.commit()
         except Exception as e:
             logger.error(f"Failed to store embedding for event {event_id}: {e}")
@@ -303,13 +356,13 @@ class EventDeduplicationService:
             cursor.close()
 
     @staticmethod
-    def _precision_window(precision: str) -> Optional[timedelta]:
+    def _precision_window(precision: str) -> timedelta | None:
         return {
-            'exact': timedelta(days=1),
-            'week': timedelta(weeks=1),
-            'month': timedelta(days=31),
-            'quarter': timedelta(days=93),
-            'year': timedelta(days=366),
+            "exact": timedelta(days=1),
+            "week": timedelta(weeks=1),
+            "month": timedelta(days=31),
+            "quarter": timedelta(days=93),
+            "year": timedelta(days=366),
         }.get(precision)
 
     @staticmethod

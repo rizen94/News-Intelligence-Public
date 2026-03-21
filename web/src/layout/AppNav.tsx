@@ -3,7 +3,15 @@
  */
 import React, { useState } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
-import { Box, List, ListItemButton, ListItemIcon, ListItemText, Drawer, ListSubheader } from '@mui/material';
+import {
+  Box,
+  List,
+  ListItemButton,
+  ListItemIcon,
+  ListItemText,
+  Drawer,
+  ListSubheader,
+} from '@mui/material';
 import DashboardIcon from '@mui/icons-material/Dashboard';
 import ExploreIcon from '@mui/icons-material/Explore';
 import SearchIcon from '@mui/icons-material/Search';
@@ -19,10 +27,16 @@ import VisibilityIcon from '@mui/icons-material/Visibility';
 import EventNoteIcon from '@mui/icons-material/EventNote';
 import ChecklistIcon from '@mui/icons-material/Checklist';
 import TableChartIcon from '@mui/icons-material/TableChart';
+import { usePublicDemoMode } from '../contexts/PublicDemoContext';
 
 export const APP_NAV_WIDTH = 220;
 
-type NavItem = { path: string; label: string; icon: React.ReactNode; domain?: string };
+type NavItem = {
+  path: string;
+  label: string;
+  icon: React.ReactNode;
+  domain?: string;
+};
 type NavSection = { id: string; label: string; items: NavItem[] };
 
 const NAV_SECTIONS: NavSection[] = [
@@ -42,7 +56,9 @@ const NAV_SECTIONS: NavSection[] = [
   {
     id: 'stories',
     label: 'Stories',
-    items: [{ path: 'storylines', label: 'Storylines', icon: <AutoStoriesIcon /> }],
+    items: [
+      { path: 'storylines', label: 'Storylines', icon: <AutoStoriesIcon /> },
+    ],
   },
   {
     id: 'signals',
@@ -74,15 +90,30 @@ const NAV_SECTIONS: NavSection[] = [
     label: 'Operations',
     items: [
       { path: 'monitor', label: 'Monitor', icon: <MonitorHeartIcon /> },
-      { path: 'monitor/sql-explorer', label: 'SQL explorer', icon: <TableChartIcon /> },
-      { path: 'audit-checklist', label: 'Audit checklist', icon: <ChecklistIcon /> },
+      {
+        path: 'monitor/sql-explorer',
+        label: 'SQL explorer',
+        icon: <TableChartIcon />,
+      },
+      {
+        path: 'audit-checklist',
+        label: 'Audit checklist',
+        icon: <ChecklistIcon />,
+      },
       { path: 'analyze', label: 'Analyze (planned)', icon: <AnalyticsIcon /> },
     ],
   },
   {
     id: 'finance',
     label: 'Finance',
-    items: [{ path: 'commodity/gold', label: 'Commodity', icon: <ShowChartIcon />, domain: 'finance' }],
+    items: [
+      {
+        path: 'commodity/gold',
+        label: 'Commodity',
+        icon: <ShowChartIcon />,
+        domain: 'finance',
+      },
+    ],
   },
 ];
 
@@ -91,22 +122,31 @@ export function AppNav() {
   const navigate = useNavigate();
   const location = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const { readonly: demoReadonly } = usePublicDemoMode();
 
   const base = `/${domain ?? 'politics'}`;
 
-  const sections = NAV_SECTIONS.map((section) => ({
+  const sections = NAV_SECTIONS.map(section => ({
     ...section,
-    items: section.items.filter((item) => !item.domain || item.domain === domain),
-  })).filter((section) => section.items.length > 0);
+    items: section.items.filter(item => {
+      if (item.domain && item.domain !== domain) return false;
+      if (demoReadonly) {
+        if (section.id === 'operations') return false;
+        if (item.path === 'rss_feeds' || item.path === 'watchlist') return false;
+        if (item.path?.startsWith('commodity')) return false;
+      }
+      return true;
+    }),
+  })).filter(section => section.items.length > 0);
   const navContent = (
     <Box sx={{ pt: 2, width: APP_NAV_WIDTH }}>
-      {sections.map((section) => (
+      {sections.map(section => (
         <List
           key={section.id}
           dense
           subheader={
             <ListSubheader
-              component="div"
+              component='div'
               disableSticky
               sx={{ lineHeight: '28px', fontSize: '0.72rem', fontWeight: 700 }}
             >
@@ -120,22 +160,26 @@ export function AppNav() {
             let navSelected = location.pathname === fullPath;
             if (!navSelected && !path.includes('/')) {
               navSelected = location.pathname.startsWith(`${fullPath}/`);
-              if (path === 'monitor' && location.pathname.startsWith(`${base}/monitor/`) && location.pathname !== monitorExact) {
+              if (
+                path === 'monitor' &&
+                location.pathname.startsWith(`${base}/monitor/`) &&
+                location.pathname !== monitorExact
+              ) {
                 navSelected = false;
               }
             }
             return (
-            <ListItemButton
-              key={path}
-              selected={navSelected}
-              onClick={() => {
-                navigate(`${base}/${path}`);
-                setMobileOpen(false);
-              }}
-            >
-              <ListItemIcon sx={{ minWidth: 40 }}>{icon}</ListItemIcon>
-              <ListItemText primary={label} />
-            </ListItemButton>
+              <ListItemButton
+                key={path}
+                selected={navSelected}
+                onClick={() => {
+                  navigate(`${base}/${path}`);
+                  setMobileOpen(false);
+                }}
+              >
+                <ListItemIcon sx={{ minWidth: 40 }}>{icon}</ListItemIcon>
+                <ListItemText primary={label} />
+              </ListItemButton>
             );
           })}
         </List>
@@ -146,20 +190,23 @@ export function AppNav() {
   return (
     <>
       <Drawer
-        variant="temporary"
+        variant='temporary'
         open={mobileOpen}
         onClose={() => setMobileOpen(false)}
         ModalProps={{ keepMounted: true }}
         sx={{
           display: { xs: 'block', md: 'none' },
-          '& .MuiDrawer-paper': { width: APP_NAV_WIDTH, boxSizing: 'border-box' },
+          '& .MuiDrawer-paper': {
+            width: APP_NAV_WIDTH,
+            boxSizing: 'border-box',
+          },
         }}
       >
         <Box sx={{ px: 1, py: 2, fontWeight: 600 }}>NewsIntel</Box>
         {navContent}
       </Drawer>
       <Drawer
-        variant="permanent"
+        variant='permanent'
         sx={{
           display: { xs: 'none', md: 'block' },
           width: APP_NAV_WIDTH,

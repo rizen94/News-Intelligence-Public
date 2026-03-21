@@ -4,10 +4,9 @@ POST /api/deduplication/consolidate_articles, POST /api/deduplication/merge_clai
 """
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from fastapi import APIRouter, Body
-
 from services.deduplication_api_service import consolidate_articles as run_consolidate_articles
 from services.deduplication_api_service import merge_claims as run_merge_claims
 
@@ -18,10 +17,10 @@ router = APIRouter(prefix="/api/deduplication", tags=["Deduplication (P3)"])
 
 @router.post("/consolidate_articles")
 def post_consolidate_articles(
-    domain: Optional[str] = Body(None, embed=True),
+    domain: str | None = Body(None, embed=True),
     limit: int = Body(50, embed=True),
     dry_run: bool = Body(True, embed=True),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Merge duplicate articles (domain, limit, dry_run). Returns merged count and clusters."""
     result = run_consolidate_articles(domain=domain, limit=limit, dry_run=dry_run)
     if not result.get("success"):
@@ -39,9 +38,9 @@ def post_consolidate_articles(
 
 @router.post("/merge_claims")
 def post_merge_claims(
-    claim_ids: Optional[List[int]] = Body(None, embed=True),
+    claim_ids: list[int] | None = Body(None, embed=True),
     similarity_threshold: float = Body(0.9, embed=True),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Merge claims: first id is canonical, others merged into it. Returns merged count and unified_claim_ids."""
     result = run_merge_claims(claim_ids=claim_ids, similarity_threshold=similarity_threshold)
     if not result.get("success"):

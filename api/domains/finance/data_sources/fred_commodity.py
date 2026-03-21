@@ -8,15 +8,17 @@ from datetime import datetime, timedelta, timezone
 
 try:
     from config.logging_config import get_component_logger
+
     logger = get_component_logger("finance")
 except Exception:
     logger = logging.getLogger(__name__)
 
 from config.settings import FRED_API_KEY
-from domains.finance.data_sources.fred import get_client
+from shared.data_result import DataResult
+
 from domains.finance.commodity_registry import get_fred_series_id as registry_get_fred_series_id
 from domains.finance.commodity_registry import get_unit as registry_get_unit
-from shared.data_result import DataResult
+from domains.finance.data_sources.fred import get_client
 
 
 def get_fred_series_id(commodity: str) -> str | None:
@@ -49,12 +51,14 @@ def fetch_commodity_history_from_fred(
     raw = result.data or []
     out = []
     for o in raw:
-        out.append({
-            "date": o.get("date", ""),
-            "value": o["value"],
-            "unit": unit,
-            "source_id": f"fred_{series_id}",
-        })
+        out.append(
+            {
+                "date": o.get("date", ""),
+                "value": o["value"],
+                "unit": unit,
+                "source_id": f"fred_{series_id}",
+            }
+        )
     return DataResult.ok(out)
 
 
@@ -76,9 +80,11 @@ def fetch_commodity_spot_from_fred(commodity: str) -> DataResult[dict]:
     unit = registry_get_unit((commodity or "").lower())
     obs = sorted(result.data, key=lambda o: o.get("date", ""), reverse=True)
     latest = obs[0]
-    return DataResult.ok({
-        "price": latest["value"],
-        "unit": latest.get("unit", unit),
-        "date": latest.get("date", ""),
-        "source_id": latest.get("source_id", "fred"),
-    })
+    return DataResult.ok(
+        {
+            "price": latest["value"],
+            "unit": latest.get("unit", unit),
+            "date": latest.get("date", ""),
+            "source_id": latest.get("source_id", "fred"),
+        }
+    )

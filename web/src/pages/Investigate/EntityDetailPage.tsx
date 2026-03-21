@@ -3,10 +3,22 @@
  */
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Card, CardHeader, CardContent, Typography, Button, Box, Skeleton, Stack } from '@mui/material';
+import {
+  Card,
+  CardHeader,
+  CardContent,
+  Typography,
+  Button,
+  Box,
+  Skeleton,
+  Stack,
+} from '@mui/material';
 import ArrowBack from '@mui/icons-material/ArrowBack';
 import AutoAwesome from '@mui/icons-material/AutoAwesome';
-import { contextCentricApi, type EntityProfile } from '@/services/api/contextCentric';
+import {
+  contextCentricApi,
+  type EntityProfile,
+} from '@/services/api/contextCentric';
 import OrchestratorTagsEditor from '@/components/shared/OrchestratorTagsEditor/OrchestratorTagsEditor';
 
 function displayName(p: EntityProfile): string {
@@ -28,11 +40,20 @@ export default function EntityDetailPage() {
       return;
     }
     let cancelled = false;
-    contextCentricApi.getEntityProfile(numId)
-      .then((p) => { if (!cancelled) setProfile(p); })
-      .catch(() => { if (!cancelled) setProfile(null); })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
+    contextCentricApi
+      .getEntityProfile(numId)
+      .then(p => {
+        if (!cancelled) setProfile(p);
+      })
+      .catch(() => {
+        if (!cancelled) setProfile(null);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [id]);
 
   if (!domain) return null;
@@ -41,54 +62,85 @@ export default function EntityDetailPage() {
 
   return (
     <Box>
-      <Stack direction="row" spacing={1} sx={{ mb: 2 }}>
-        <Button startIcon={<ArrowBack />} onClick={() => navigate(`/${domain}/investigate/entities`)}>
+      <Stack direction='row' spacing={1} sx={{ mb: 2 }}>
+        <Button
+          startIcon={<ArrowBack />}
+          onClick={() => navigate(`/${domain}/investigate/entities`)}
+        >
           Back
         </Button>
         {canonicalId != null && (
           <Button
             startIcon={<AutoAwesome />}
-            variant="contained"
-            onClick={() => navigate(`/${domain}/investigate/entities/${canonicalId}/dossier`)}
+            variant='contained'
+            onClick={() =>
+              navigate(`/${domain}/investigate/entities/${canonicalId}/dossier`)
+            }
           >
             View Full Dossier
           </Button>
         )}
       </Stack>
       {loading ? (
-        <Skeleton variant="rectangular" height={200} />
+        <Skeleton variant='rectangular' height={200} />
       ) : !profile ? (
-        <Typography color="text.secondary">Entity not found.</Typography>
+        <Typography color='text.secondary'>Entity not found.</Typography>
       ) : (
         <Card>
-          <CardHeader title={displayName(profile)} subheader={profile.domain_key} />
+          <CardHeader
+            title={displayName(profile)}
+            subheader={profile.domain_key}
+          />
           <CardContent>
             <Box sx={{ mb: 2 }}>
               <OrchestratorTagsEditor
-                tags={Array.isArray(profile.metadata?.orchestrator_tags) ? (profile.metadata.orchestrator_tags as string[]) : []}
-                onSave={async (tags) => {
-                  const updated = await contextCentricApi.updateEntityProfile(profile.id, { orchestrator_tags: tags });
+                tags={
+                  Array.isArray(profile.metadata?.orchestrator_tags)
+                    ? (profile.metadata.orchestrator_tags as string[])
+                    : []
+                }
+                onSave={async tags => {
+                  const updated = await contextCentricApi.updateEntityProfile(
+                    profile.id,
+                    { orchestrator_tags: tags }
+                  );
                   setProfile(updated);
                 }}
               />
             </Box>
             {profile.relationships_summary && (
-              <Typography variant="body2" paragraph>{profile.relationships_summary}</Typography>
+              <Typography variant='body2' paragraph>
+                {profile.relationships_summary}
+              </Typography>
             )}
             {profile.sections != null && (
               <Box sx={{ mt: 2 }}>
-                <Typography variant="subtitle2">Sections</Typography>
+                <Typography variant='subtitle2'>Sections</Typography>
                 {Array.isArray(profile.sections)
-                  ? (profile.sections as { title?: string; content?: string }[]).map((s, i) => (
+                  ? (
+                      profile.sections as { title?: string; content?: string }[]
+                    ).map((s, i) => (
                       <Box key={i} sx={{ mt: 1 }}>
-                        {s.title && <Typography variant="caption" color="text.secondary">{s.title}</Typography>}
-                        {s.content && <Typography variant="body2">{s.content}</Typography>}
+                        {s.title && (
+                          <Typography variant='caption' color='text.secondary'>
+                            {s.title}
+                          </Typography>
+                        )}
+                        {s.content && (
+                          <Typography variant='body2'>{s.content}</Typography>
+                        )}
                       </Box>
                     ))
-                  : Object.entries(profile.sections as Record<string, unknown>).map(([key, val]) => (
+                  : Object.entries(
+                      profile.sections as Record<string, unknown>
+                    ).map(([key, val]) => (
                       <Box key={key} sx={{ mt: 1 }}>
-                        <Typography variant="caption" color="text.secondary">{key}</Typography>
-                        <Typography variant="body2">{typeof val === 'string' ? val : JSON.stringify(val)}</Typography>
+                        <Typography variant='caption' color='text.secondary'>
+                          {key}
+                        </Typography>
+                        <Typography variant='body2'>
+                          {typeof val === 'string' ? val : JSON.stringify(val)}
+                        </Typography>
                       </Box>
                     ))}
               </Box>

@@ -6,7 +6,7 @@ persists to intelligence.pattern_discoveries. See docs/CONTEXT_CENTRIC_UPGRADE_P
 
 import json
 import logging
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any
 
 from shared.database.connection import get_db_connection
 
@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 PATTERN_TYPES = ("network", "temporal", "behavioral", "event")
 
 
-def _discover_network_patterns(conn, domain_key: Optional[str], limit: int) -> List[Dict[str, Any]]:
+def _discover_network_patterns(conn, domain_key: str | None, limit: int) -> list[dict[str, Any]]:
     """
     Co-occurrence: entity profiles that appear together in the same context.
     One pattern per (profile_a, profile_b) pair with context_ids and confidence from mention count.
@@ -55,18 +55,20 @@ def _discover_network_patterns(conn, domain_key: Optional[str], limit: int) -> L
             for i in range(len(profile_ids)):
                 for j in range(i + 1, len(profile_ids)):
                     a, b = profile_ids[i], profile_ids[j]
-                    patterns.append({
-                        "pattern_type": "network",
-                        "domain_key": domain_key,
-                        "context_ids": [context_id],
-                        "entity_profile_ids": [a, b],
-                        "confidence": 0.75,
-                        "data": {"relation": "co_mentioned", "context_count": 1},
-                    })
+                    patterns.append(
+                        {
+                            "pattern_type": "network",
+                            "domain_key": domain_key,
+                            "context_ids": [context_id],
+                            "entity_profile_ids": [a, b],
+                            "confidence": 0.75,
+                            "data": {"relation": "co_mentioned", "context_count": 1},
+                        }
+                    )
     return patterns
 
 
-def _discover_temporal_patterns(conn, domain_key: Optional[str], limit: int) -> List[Dict[str, Any]]:
+def _discover_temporal_patterns(conn, domain_key: str | None, limit: int) -> list[dict[str, Any]]:
     """
     Context density over time: group contexts by created_at date, emit one pattern per day with multiple contexts.
     """
@@ -99,18 +101,20 @@ def _discover_temporal_patterns(conn, domain_key: Optional[str], limit: int) -> 
                 (limit,),
             )
         for d, ctx_ids, cnt in cur.fetchall():
-            patterns.append({
-                "pattern_type": "temporal",
-                "domain_key": domain_key,
-                "context_ids": list(ctx_ids) if ctx_ids else [],
-                "entity_profile_ids": [],
-                "confidence": min(0.9, 0.5 + 0.1 * min(cnt, 4)),
-                "data": {"date": str(d), "context_count": cnt},
-            })
+            patterns.append(
+                {
+                    "pattern_type": "temporal",
+                    "domain_key": domain_key,
+                    "context_ids": list(ctx_ids) if ctx_ids else [],
+                    "entity_profile_ids": [],
+                    "confidence": min(0.9, 0.5 + 0.1 * min(cnt, 4)),
+                    "data": {"date": str(d), "context_count": cnt},
+                }
+            )
     return patterns
 
 
-def _discover_behavioral_patterns(conn, domain_key: Optional[str], limit: int) -> List[Dict[str, Any]]:
+def _discover_behavioral_patterns(conn, domain_key: str | None, limit: int) -> list[dict[str, Any]]:
     """
     Entity + source type: which entity profiles appear in which source types (e.g. article).
     One pattern per (entity_profile_id, source_type) with context count.
@@ -145,18 +149,20 @@ def _discover_behavioral_patterns(conn, domain_key: Optional[str], limit: int) -
                 (limit,),
             )
         for source_type, profile_id, ctx_ids, cnt in cur.fetchall():
-            patterns.append({
-                "pattern_type": "behavioral",
-                "domain_key": domain_key,
-                "context_ids": list(ctx_ids)[:50] if ctx_ids else [],
-                "entity_profile_ids": [profile_id],
-                "confidence": min(0.9, 0.5 + 0.05 * min(cnt, 8)),
-                "data": {"source_type": source_type, "context_count": cnt},
-            })
+            patterns.append(
+                {
+                    "pattern_type": "behavioral",
+                    "domain_key": domain_key,
+                    "context_ids": list(ctx_ids)[:50] if ctx_ids else [],
+                    "entity_profile_ids": [profile_id],
+                    "confidence": min(0.9, 0.5 + 0.05 * min(cnt, 8)),
+                    "data": {"source_type": source_type, "context_count": cnt},
+                }
+            )
     return patterns
 
 
-def _discover_event_patterns(conn, limit: int) -> List[Dict[str, Any]]:
+def _discover_event_patterns(conn, limit: int) -> list[dict[str, Any]]:
     """
     Events sharing participants: from tracked_events.key_participant_entity_ids, find events that share >= 1 entity.
     """
@@ -176,9 +182,9 @@ def _discover_event_patterns(conn, limit: int) -> List[Dict[str, Any]]:
     if len(rows) < 2:
         return patterns
     # Build sets of participant ids per event; find pairs that share at least one participant
-    event_profiles: Dict[int, Set[int]] = {}
+    event_profiles: dict[int, set[int]] = {}
     for event_id, _et, _en, ids_json in rows:
-        ids: Set[int] = set()
+        ids: set[int] = set()
         try:
             raw = ids_json if isinstance(ids_json, list) else json.loads(ids_json or "[]")
             for x in raw or []:
@@ -190,7 +196,7 @@ def _discover_event_patterns(conn, limit: int) -> List[Dict[str, Any]]:
             pass
         if ids:
             event_profiles[event_id] = ids
-    seen_pairs: Set[Tuple[int, int]] = set()
+    seen_pairs: set[tuple[int, int]] = set()
     for eid1, set1 in event_profiles.items():
         for eid2, set2 in event_profiles.items():
             if eid1 >= eid2:
@@ -199,20 +205,22 @@ def _discover_event_patterns(conn, limit: int) -> List[Dict[str, Any]]:
                 pair = (eid1, eid2)
                 if pair not in seen_pairs:
                     seen_pairs.add(pair)
-                    patterns.append({
-                        "pattern_type": "event",
-                        "domain_key": None,
-                        "context_ids": [],
-                        "entity_profile_ids": list(set1 | set2),
-                        "confidence": 0.7,
-                        "data": {"event_ids": [eid1, eid2], "shared_participants": True},
-                    })
+                    patterns.append(
+                        {
+                            "pattern_type": "event",
+                            "domain_key": None,
+                            "context_ids": [],
+                            "entity_profile_ids": list(set1 | set2),
+                            "confidence": 0.7,
+                            "data": {"event_ids": [eid1, eid2], "shared_participants": True},
+                        }
+                    )
                     if len(patterns) >= limit:
                         return patterns
     return patterns
 
 
-def run_pattern_discovery(domain_key: Optional[str] = None, limit_per_type: int = 20) -> int:
+def run_pattern_discovery(domain_key: str | None = None, limit_per_type: int = 20) -> int:
     """
     Run pattern detectors and insert into pattern_discoveries.
     When domain_key is None, only event and temporal (all domains) run.
@@ -224,7 +232,7 @@ def run_pattern_discovery(domain_key: Optional[str] = None, limit_per_type: int 
         return 0
     inserted = 0
     try:
-        all_patterns: List[Dict[str, Any]] = []
+        all_patterns: list[dict[str, Any]] = []
         if domain_key is not None:
             all_patterns.extend(_discover_network_patterns(conn, domain_key, limit_per_type))
             all_patterns.extend(_discover_temporal_patterns(conn, domain_key, limit_per_type))
@@ -278,7 +286,7 @@ def run_pattern_discovery_batch() -> int:
     return total
 
 
-def generate_pattern_report(domain_key: Optional[str] = None, limit: int = 20) -> Dict[str, Any]:
+def generate_pattern_report(domain_key: str | None = None, limit: int = 20) -> dict[str, Any]:
     """
     Generate a readable narrative report from recent pattern discoveries.
     Returns { success, report_text, pattern_count, patterns }.
@@ -314,22 +322,33 @@ def generate_pattern_report(domain_key: Optional[str] = None, limit: int = 20) -
         conn.close()
 
         if not rows:
-            return {"success": True, "report_text": "No patterns discovered yet.", "pattern_count": 0, "patterns": []}
+            return {
+                "success": True,
+                "report_text": "No patterns discovered yet.",
+                "pattern_count": 0,
+                "patterns": [],
+            }
 
         patterns_list = []
         context_parts = []
         for ptype, conf, data, ctx_ids, ent_ids, created in rows:
             data = data if isinstance(data, dict) else {}
             desc = data.get("description", "") or data.get("summary", "") or ""
-            patterns_list.append({
-                "type": ptype,
-                "confidence": float(conf) if conf is not None else None,
-                "data": data,
-                "context_count": len(ctx_ids) if ctx_ids else 0,
-                "entity_count": len(ent_ids) if ent_ids else 0,
-            })
+            patterns_list.append(
+                {
+                    "type": ptype,
+                    "confidence": float(conf) if conf is not None else None,
+                    "data": data,
+                    "context_count": len(ctx_ids) if ctx_ids else 0,
+                    "entity_count": len(ent_ids) if ent_ids else 0,
+                }
+            )
             conf_str = f" (confidence: {float(conf):.0%})" if conf is not None else ""
-            context_parts.append(f"- [{ptype}]{conf_str}: {desc[:200]}" if desc else f"- [{ptype}]{conf_str}: {json.dumps(data)[:200]}")
+            context_parts.append(
+                f"- [{ptype}]{conf_str}: {desc[:200]}"
+                if desc
+                else f"- [{ptype}]{conf_str}: {json.dumps(data)[:200]}"
+            )
 
         # LLM narrative
         prompt = (
@@ -346,10 +365,13 @@ def generate_pattern_report(domain_key: Optional[str] = None, limit: int = 20) -
         report_text = None
         try:
             import asyncio
-            from shared.services.llm_service import llm_service, TaskType
+
+            from shared.services.llm_service import TaskType, llm_service
 
             async def _gen():
-                result = await llm_service.generate_summary(prompt[:3500], task_type=TaskType.QUICK_SUMMARY)
+                result = await llm_service.generate_summary(
+                    prompt[:3500], task_type=TaskType.QUICK_SUMMARY
+                )
                 if result.get("success"):
                     return (result.get("summary") or "").strip() or None
                 return None
@@ -358,6 +380,7 @@ def generate_pattern_report(domain_key: Optional[str] = None, limit: int = 20) -
                 loop = asyncio.get_event_loop()
                 if loop.is_running():
                     import concurrent.futures
+
                     with concurrent.futures.ThreadPoolExecutor() as pool:
                         report_text = pool.submit(lambda: asyncio.run(_gen())).result(timeout=60)
                 else:

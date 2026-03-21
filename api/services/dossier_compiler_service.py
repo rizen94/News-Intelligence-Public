@@ -9,16 +9,22 @@ Phase 1: T1.3 entity dossier basic compilation. See docs/V6_QUALITY_FIRST_UPGRAD
 import json
 import logging
 from datetime import date
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from shared.database.connection import get_db_connection
 
 logger = logging.getLogger(__name__)
 
 
-def _generate_dossier_narrative(entity_name: str, entity_type: str, chronicle_data: list,
-                                 positions: list, relationships: list,
-                                 storyline_refs: list, patterns: dict) -> Optional[str]:
+def _generate_dossier_narrative(
+    entity_name: str,
+    entity_type: str,
+    chronicle_data: list,
+    positions: list,
+    relationships: list,
+    storyline_refs: list,
+    patterns: dict,
+) -> str | None:
     """Generate a readable narrative summary for the entity dossier using LLM."""
     parts = [f"Entity: {entity_name} ({entity_type})"]
 
@@ -26,7 +32,9 @@ def _generate_dossier_narrative(entity_name: str, entity_type: str, chronicle_da
         recent = chronicle_data[:8]
         parts.append(f"\nRecent mentions ({len(chronicle_data)} total):")
         for c in recent:
-            parts.append(f"- {c.get('title', 'Untitled')} ({c.get('source_domain', '')}, {c.get('published_at', '?')})")
+            parts.append(
+                f"- {c.get('title', 'Untitled')} ({c.get('source_domain', '')}, {c.get('published_at', '?')})"
+            )
 
     if positions:
         parts.append(f"\nKnown positions ({len(positions)}):")
@@ -36,7 +44,9 @@ def _generate_dossier_narrative(entity_name: str, entity_type: str, chronicle_da
     if relationships:
         parts.append(f"\nRelationships ({len(relationships)}):")
         for r in relationships[:5]:
-            parts.append(f"- {r.get('relationship_type', '?')} with entity {r.get('target_entity_id', '?')} in {r.get('target_domain', '?')}")
+            parts.append(
+                f"- {r.get('relationship_type', '?')} with entity {r.get('target_entity_id', '?')} in {r.get('target_domain', '?')}"
+            )
 
     if storyline_refs:
         parts.append(f"\nConnected storylines ({len(storyline_refs)}):")
@@ -44,10 +54,14 @@ def _generate_dossier_narrative(entity_name: str, entity_type: str, chronicle_da
             parts.append(f"- {s.get('title', 'Untitled')}")
 
     if patterns and patterns.get("discoveries"):
-        parts.append(f"\nDetected patterns:")
+        parts.append("\nDetected patterns:")
         for pat in patterns["discoveries"][:3]:
             data = pat.get("data", {})
-            desc = data.get("description", "") or data.get("summary", "") or str(pat.get("pattern_type", ""))
+            desc = (
+                data.get("description", "")
+                or data.get("summary", "")
+                or str(pat.get("pattern_type", ""))
+            )
             parts.append(f"- [{pat.get('pattern_type', '')}] {desc[:150]}")
 
     context = "\n".join(parts)
@@ -66,10 +80,13 @@ def _generate_dossier_narrative(entity_name: str, entity_type: str, chronicle_da
 
     try:
         import asyncio
-        from shared.services.llm_service import llm_service, TaskType
+
+        from shared.services.llm_service import TaskType, llm_service
 
         async def _gen():
-            result = await llm_service.generate_summary(prompt[:3500], task_type=TaskType.QUICK_SUMMARY)
+            result = await llm_service.generate_summary(
+                prompt[:3500], task_type=TaskType.QUICK_SUMMARY
+            )
             if result.get("success"):
                 return (result.get("summary") or "").strip() or None
             return None
@@ -78,6 +95,7 @@ def _generate_dossier_narrative(entity_name: str, entity_type: str, chronicle_da
             loop = asyncio.get_event_loop()
             if loop.is_running():
                 import concurrent.futures
+
                 with concurrent.futures.ThreadPoolExecutor() as pool:
                     return pool.submit(lambda: asyncio.run(_gen())).result(timeout=60)
             else:
@@ -88,6 +106,7 @@ def _generate_dossier_narrative(entity_name: str, entity_type: str, chronicle_da
         logger.debug("Dossier narrative LLM failed: %s", e)
         return None
 
+
 # domain_key -> schema_name (per domains table / 122)
 DOMAIN_TO_SCHEMA = {
     "politics": "politics",
@@ -96,7 +115,7 @@ DOMAIN_TO_SCHEMA = {
 }
 
 
-def compile_dossier(domain_key: str, entity_id: int) -> Dict[str, Any]:
+def compile_dossier(domain_key: str, entity_id: int) -> dict[str, Any]:
     """
     Build or refresh the entity dossier for (domain_key, entity_id).
     Fetches articles where article_entities.canonical_entity_id = entity_id,
@@ -121,7 +140,10 @@ def compile_dossier(domain_key: str, entity_id: int) -> Dict[str, Any]:
             )
             entity_row = cur.fetchone()
             if not entity_row:
-                return {"success": False, "error": f"Entity {entity_id} not found in domain {domain_key}"}
+                return {
+                    "success": False,
+                    "error": f"Entity {entity_id} not found in domain {domain_key}",
+                }
 
             # Articles that mention this entity (canonical_entity_id)
             cur.execute(
@@ -136,22 +158,26 @@ def compile_dossier(domain_key: str, entity_id: int) -> Dict[str, Any]:
                 (entity_id,),
             )
             article_rows = cur.fetchall()
-            chronicle_data: List[Dict[str, Any]] = []
-            article_ids: List[int] = []
+            chronicle_data: list[dict[str, Any]] = []
+            article_ids: list[int] = []
             for row in article_rows:
                 aid, title, url, published_at, source_domain, snippet = row
                 article_ids.append(aid)
-                chronicle_data.append({
-                    "article_id": aid,
-                    "title": title or "",
-                    "url": url or "",
-                    "published_at": published_at.isoformat() if published_at else None,
-                    "source_domain": source_domain or "",
-                    "snippet": (snippet[:300] + "…") if snippet and len(snippet) > 300 else (snippet or ""),
-                })
+                chronicle_data.append(
+                    {
+                        "article_id": aid,
+                        "title": title or "",
+                        "url": url or "",
+                        "published_at": published_at.isoformat() if published_at else None,
+                        "source_domain": source_domain or "",
+                        "snippet": (snippet[:300] + "…")
+                        if snippet and len(snippet) > 300
+                        else (snippet or ""),
+                    }
+                )
 
             # Storylines that contain any of these articles (for relationships / context)
-            storyline_refs: List[Dict[str, Any]] = []
+            storyline_refs: list[dict[str, Any]] = []
             if article_ids:
                 cur.execute(
                     f"""
@@ -165,11 +191,13 @@ def compile_dossier(domain_key: str, entity_id: int) -> Dict[str, Any]:
                     (article_ids,),
                 )
                 for row in cur.fetchall():
-                    storyline_refs.append({
-                        "storyline_id": row[0],
-                        "title": row[1] or "",
-                        "created_at": row[2].isoformat() if row[2] else None,
-                    })
+                    storyline_refs.append(
+                        {
+                            "storyline_id": row[0],
+                            "title": row[1] or "",
+                            "created_at": row[2].isoformat() if row[2] else None,
+                        }
+                    )
 
             # T2.2: Relationship web from intelligence.entity_relationships
             cur.execute(
@@ -180,16 +208,18 @@ def compile_dossier(domain_key: str, entity_id: int) -> Dict[str, Any]:
                 """,
                 (domain_key, entity_id, domain_key, entity_id),
             )
-            relationship_rows: List[Dict[str, Any]] = []
+            relationship_rows: list[dict[str, Any]] = []
             for r in cur.fetchall():
-                relationship_rows.append({
-                    "source_domain": r[0],
-                    "source_entity_id": r[1],
-                    "target_domain": r[2],
-                    "target_entity_id": r[3],
-                    "relationship_type": r[4],
-                    "confidence": float(r[5]) if r[5] is not None else None,
-                })
+                relationship_rows.append(
+                    {
+                        "source_domain": r[0],
+                        "source_entity_id": r[1],
+                        "target_domain": r[2],
+                        "target_entity_id": r[3],
+                        "relationship_type": r[4],
+                        "confidence": float(r[5]) if r[5] is not None else None,
+                    }
+                )
             relationships = relationship_rows
 
             compilation_date = date.today()
@@ -205,19 +235,21 @@ def compile_dossier(domain_key: str, entity_id: int) -> Dict[str, Any]:
                 """,
                 (domain_key, entity_id),
             )
-            positions: List[Dict[str, Any]] = []
+            positions: list[dict[str, Any]] = []
             for prow in cur.fetchall():
-                positions.append({
-                    "id": prow[0],
-                    "topic": prow[1],
-                    "position": prow[2],
-                    "confidence": float(prow[3]) if prow[3] is not None else None,
-                    "evidence_refs": prow[4] or [],
-                    "created_at": prow[5].isoformat() if prow[5] else None,
-                })
+                positions.append(
+                    {
+                        "id": prow[0],
+                        "topic": prow[1],
+                        "position": prow[2],
+                        "confidence": float(prow[3]) if prow[3] is not None else None,
+                        "evidence_refs": prow[4] or [],
+                        "created_at": prow[5].isoformat() if prow[5] else None,
+                    }
+                )
 
             # T2.2: Pull pattern_discoveries that mention this entity's profile
-            patterns: Dict[str, Any] = {}
+            patterns: dict[str, Any] = {}
             try:
                 cur.execute(
                     """
@@ -242,13 +274,15 @@ def compile_dossier(domain_key: str, entity_id: int) -> Dict[str, Any]:
                     )
                     pattern_list = []
                     for pd_row in cur.fetchall():
-                        pattern_list.append({
-                            "id": pd_row[0],
-                            "pattern_type": pd_row[1],
-                            "confidence": float(pd_row[2]) if pd_row[2] is not None else None,
-                            "data": pd_row[3] or {},
-                            "created_at": pd_row[4].isoformat() if pd_row[4] else None,
-                        })
+                        pattern_list.append(
+                            {
+                                "id": pd_row[0],
+                                "pattern_type": pd_row[1],
+                                "confidence": float(pd_row[2]) if pd_row[2] is not None else None,
+                                "data": pd_row[3] or {},
+                                "created_at": pd_row[4].isoformat() if pd_row[4] else None,
+                            }
+                        )
                     if pattern_list:
                         patterns = {
                             "count": len(pattern_list),
@@ -342,7 +376,7 @@ def compile_dossier(domain_key: str, entity_id: int) -> Dict[str, Any]:
 
 def _run_scheduled_dossier_compiles(
     max_dossiers: int,
-    get_db_connection_fn: Optional[Any] = None,
+    get_db_connection_fn: Any | None = None,
     stale_days: int = 7,
 ) -> int:
     """
@@ -351,11 +385,12 @@ def _run_scheduled_dossier_compiles(
     Returns number of dossiers successfully compiled.
     """
     from shared.database.connection import get_db_connection
+
     fn = get_db_connection_fn or get_db_connection
     conn = fn() if callable(fn) else None
     if not conn:
         return 0
-    candidates: List[tuple] = []
+    candidates: list[tuple] = []
     try:
         with conn.cursor() as cur:
             cur.execute(

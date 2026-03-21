@@ -14,7 +14,7 @@ interface DomainIndicatorProps {
 
 const DomainIndicator: React.FC<DomainIndicatorProps> = ({
   variant = 'badge',
-  showLabel = true
+  showLabel = true,
 }) => {
   const { domainName, domain } = useDomain();
 
@@ -72,14 +72,21 @@ const DomainIndicator: React.FC<DomainIndicatorProps> = ({
         }}
       >
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-          <Typography variant="h6" sx={{ fontSize: '1.5rem' }}>
+          <Typography variant='h6' sx={{ fontSize: '1.5rem' }}>
             {config.icon}
           </Typography>
           <Box>
-            <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+            <Typography
+              variant='caption'
+              color='text.secondary'
+              sx={{ display: 'block' }}
+            >
               Current Domain
             </Typography>
-            <Typography variant="h6" sx={{ color: config.color, fontWeight: 600 }}>
+            <Typography
+              variant='h6'
+              sx={{ color: config.color, fontWeight: 600 }}
+            >
               {config.name}
             </Typography>
           </Box>
@@ -91,13 +98,13 @@ const DomainIndicator: React.FC<DomainIndicatorProps> = ({
   if (variant === 'inline') {
     return (
       <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5 }}>
-        <Typography variant="body2" component="span">
+        <Typography variant='body2' component='span'>
           {config.icon}
         </Typography>
         {showLabel && (
           <Chip
             label={config.name}
-            size="small"
+            size='small'
             sx={{
               backgroundColor: config.bg,
               color: config.color,
@@ -126,6 +133,3 @@ const DomainIndicator: React.FC<DomainIndicatorProps> = ({
 };
 
 export default DomainIndicator;
-
-
-

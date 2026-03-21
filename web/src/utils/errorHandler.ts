@@ -14,13 +14,16 @@ export interface ErrorInfo {
  */
 export const formatError = (error: any): ErrorInfo => {
   // Network/Connection errors
-  if (error?.code === 'ECONNREFUSED' ||
-      error?.message?.includes('Network Error') ||
-      error?.message?.includes('fetch') ||
-      !error?.response) {
+  if (
+    error?.code === 'ECONNREFUSED' ||
+    error?.message?.includes('Network Error') ||
+    error?.message?.includes('fetch') ||
+    !error?.response
+  ) {
     return {
       message: error?.message || 'Network error',
-      userFriendly: 'Cannot connect to the server. Please check your connection and try again.',
+      userFriendly:
+        'Cannot connect to the server. Please check your connection and try again.',
       actionable: 'Make sure the API server is running on port 8000.',
     };
   }
@@ -47,14 +50,19 @@ export const formatError = (error: any): ErrorInfo => {
   if (error?.response?.status === 400) {
     return {
       message: error?.message || 'Invalid request',
-      userFriendly: error?.response?.data?.detail || 'Invalid request. Please check your input and try again.',
+      userFriendly:
+        error?.response?.data?.detail ||
+        'Invalid request. Please check your input and try again.',
     };
   }
 
   // Generic error
   return {
     message: error?.message || 'An error occurred',
-    userFriendly: error?.response?.data?.detail || error?.message || 'An unexpected error occurred. Please try again.',
+    userFriendly:
+      error?.response?.data?.detail ||
+      error?.message ||
+      'An unexpected error occurred. Please try again.',
   };
 };
 
@@ -75,4 +83,3 @@ export const getActionableError = (error: any): string => {
   }
   return errorInfo.userFriendly;
 };
-

@@ -11,14 +11,9 @@ Each domain (politics, finance, science-tech) has:
 """
 
 import logging
-import re
-from typing import List, Dict, Any, Optional, Set
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta
-from collections import Counter
 import os
-import psycopg2
-from psycopg2.extras import RealDictCursor
+from dataclasses import dataclass, field
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -26,25 +21,27 @@ logger = logging.getLogger(__name__)
 @dataclass
 class DomainEntity:
     """A domain-specific entity with context"""
+
     name: str
     entity_type: str  # person, organization, concept, event, etc.
-    aliases: List[str] = field(default_factory=list)
+    aliases: list[str] = field(default_factory=list)
     description: str = ""
     importance: float = 0.5  # 0-1
-    related_entities: List[str] = field(default_factory=list)
-    external_refs: Dict[str, str] = field(default_factory=dict)  # source -> url
+    related_entities: list[str] = field(default_factory=list)
+    external_refs: dict[str, str] = field(default_factory=dict)  # source -> url
 
 
 @dataclass
 class DomainContext:
     """Domain-specific context for enriching RAG results"""
+
     domain: str
-    entities_found: List[DomainEntity]
+    entities_found: list[DomainEntity]
     historical_context: str
-    key_concepts: List[str]
-    related_topics: List[str]
-    external_sources: List[Dict[str, str]]
-    domain_terminology: Dict[str, str]
+    key_concepts: list[str]
+    related_topics: list[str]
+    external_sources: list[dict[str, str]]
+    domain_terminology: dict[str, str]
     timeline_context: str
     geopolitical_context: str = ""
     economic_context: str = ""
@@ -63,7 +60,7 @@ POLITICS_ENTITIES = {
         description="Executive branch of the US federal government",
         importance=0.95,
         related_entities=["President", "Vice President", "Cabinet"],
-        external_refs={"official": "https://www.whitehouse.gov"}
+        external_refs={"official": "https://www.whitehouse.gov"},
     ),
     "congress": DomainEntity(
         name="US Congress",
@@ -72,7 +69,7 @@ POLITICS_ENTITIES = {
         description="Legislative branch consisting of Senate and House of Representatives",
         importance=0.95,
         related_entities=["Senate", "House of Representatives", "Speaker"],
-        external_refs={"official": "https://www.congress.gov"}
+        external_refs={"official": "https://www.congress.gov"},
     ),
     "supreme court": DomainEntity(
         name="Supreme Court",
@@ -81,7 +78,7 @@ POLITICS_ENTITIES = {
         description="Highest court in the US judicial system",
         importance=0.9,
         related_entities=["Chief Justice", "Justices"],
-        external_refs={"official": "https://www.supremecourt.gov"}
+        external_refs={"official": "https://www.supremecourt.gov"},
     ),
     "senate": DomainEntity(
         name="US Senate",
@@ -177,7 +174,7 @@ FINANCE_ENTITIES = {
         description="Central bank of the United States",
         importance=0.95,
         related_entities=["Fed Chair", "FOMC", "Interest Rates"],
-        external_refs={"official": "https://www.federalreserve.gov"}
+        external_refs={"official": "https://www.federalreserve.gov"},
     ),
     "ecb": DomainEntity(
         name="European Central Bank",
@@ -185,7 +182,7 @@ FINANCE_ENTITIES = {
         aliases=["european central bank"],
         description="Central bank for the eurozone",
         importance=0.85,
-        external_refs={"official": "https://www.ecb.europa.eu"}
+        external_refs={"official": "https://www.ecb.europa.eu"},
     ),
     # Exchanges
     "nyse": DomainEntity(
@@ -194,7 +191,7 @@ FINANCE_ENTITIES = {
         aliases=["new york stock exchange", "wall street"],
         description="Largest stock exchange by market capitalization",
         importance=0.9,
-        external_refs={"official": "https://www.nyse.com"}
+        external_refs={"official": "https://www.nyse.com"},
     ),
     "nasdaq": DomainEntity(
         name="NASDAQ",
@@ -202,7 +199,7 @@ FINANCE_ENTITIES = {
         aliases=["nasdaq composite"],
         description="Second-largest stock exchange, technology-focused",
         importance=0.9,
-        external_refs={"official": "https://www.nasdaq.com"}
+        external_refs={"official": "https://www.nasdaq.com"},
     ),
     # Indices
     "s&p 500": DomainEntity(
@@ -226,7 +223,7 @@ FINANCE_ENTITIES = {
         aliases=["securities and exchange commission"],
         description="Federal agency regulating securities markets",
         importance=0.85,
-        external_refs={"official": "https://www.sec.gov"}
+        external_refs={"official": "https://www.sec.gov"},
     ),
     # Concepts
     "interest rate": DomainEntity(
@@ -423,7 +420,11 @@ SCIENCE_TECH_SOURCES = [
     {"name": "IEEE", "url": "https://www.ieee.org", "type": "standards"},
     {"name": "ACM", "url": "https://www.acm.org", "type": "computing_research"},
     {"name": "Nature", "url": "https://www.nature.com", "type": "scientific_journal"},
-    {"name": "MIT Technology Review", "url": "https://www.technologyreview.com", "type": "tech_analysis"},
+    {
+        "name": "MIT Technology Review",
+        "url": "https://www.technologyreview.com",
+        "type": "tech_analysis",
+    },
     {"name": "Wired", "url": "https://www.wired.com", "type": "tech_news"},
     {"name": "TechCrunch", "url": "https://techcrunch.com", "type": "startup_news"},
     {"name": "GitHub", "url": "https://github.com", "type": "open_source"},
@@ -435,31 +436,31 @@ class DomainKnowledgeService:
     Provides domain-specific knowledge for RAG enrichment.
     """
 
-    def __init__(self, db_config: Dict[str, Any] = None):
+    def __init__(self, db_config: dict[str, Any] = None):
         self.db_config = db_config or {
-            'host': os.getenv('DB_HOST', 'localhost'),
-            'port': int(os.getenv('DB_PORT', 5433)),
-            'database': os.getenv('DB_NAME', 'news_intelligence'),
-            'user': os.getenv('DB_USER', 'newsapp'),
-            'password': os.getenv('DB_PASSWORD', 'newsapp_password'),
+            "host": os.getenv("DB_HOST", "localhost"),
+            "port": int(os.getenv("DB_PORT", 5433)),
+            "database": os.getenv("DB_NAME", "news_intelligence"),
+            "user": os.getenv("DB_USER", "newsapp"),
+            "password": os.getenv("DB_PASSWORD", "newsapp_password"),
         }
 
         # Domain knowledge bases
         self.knowledge_bases = {
-            'politics': {
-                'entities': POLITICS_ENTITIES,
-                'terminology': POLITICS_TERMINOLOGY,
-                'sources': POLITICS_SOURCES,
+            "politics": {
+                "entities": POLITICS_ENTITIES,
+                "terminology": POLITICS_TERMINOLOGY,
+                "sources": POLITICS_SOURCES,
             },
-            'finance': {
-                'entities': FINANCE_ENTITIES,
-                'terminology': FINANCE_TERMINOLOGY,
-                'sources': FINANCE_SOURCES,
+            "finance": {
+                "entities": FINANCE_ENTITIES,
+                "terminology": FINANCE_TERMINOLOGY,
+                "sources": FINANCE_SOURCES,
             },
-            'science-tech': {
-                'entities': SCIENCE_TECH_ENTITIES,
-                'terminology': SCIENCE_TECH_TERMINOLOGY,
-                'sources': SCIENCE_TECH_SOURCES,
+            "science-tech": {
+                "entities": SCIENCE_TECH_ENTITIES,
+                "terminology": SCIENCE_TECH_TERMINOLOGY,
+                "sources": SCIENCE_TECH_SOURCES,
             },
         }
 
@@ -467,19 +468,16 @@ class DomainKnowledgeService:
 
     def get_db_connection(self):
         from shared.database.connection import get_db_connection as _get_conn
+
         return _get_conn()
 
-    def extract_domain_entities(
-        self,
-        domain: str,
-        text: str
-    ) -> List[DomainEntity]:
+    def extract_domain_entities(self, domain: str, text: str) -> list[DomainEntity]:
         """
         Extract domain-specific entities from text.
         """
-        schema = domain.replace('-', '_')
+        schema = domain.replace("-", "_")
         kb = self.knowledge_bases.get(domain, self.knowledge_bases.get(schema, {}))
-        entities_db = kb.get('entities', {})
+        entities_db = kb.get("entities", {})
 
         text_lower = text.lower()
         found_entities = []
@@ -496,17 +494,13 @@ class DomainKnowledgeService:
         found_entities.sort(key=lambda e: e.importance, reverse=True)
         return found_entities
 
-    def get_terminology_definitions(
-        self,
-        domain: str,
-        text: str
-    ) -> Dict[str, str]:
+    def get_terminology_definitions(self, domain: str, text: str) -> dict[str, str]:
         """
         Get definitions for domain terminology found in text.
         """
-        schema = domain.replace('-', '_')
+        schema = domain.replace("-", "_")
         kb = self.knowledge_bases.get(domain, self.knowledge_bases.get(schema, {}))
-        terminology = kb.get('terminology', {})
+        terminology = kb.get("terminology", {})
 
         text_lower = text.lower()
         found_terms = {}
@@ -518,27 +512,22 @@ class DomainKnowledgeService:
         return found_terms
 
     def get_relevant_sources(
-        self,
-        domain: str,
-        content_type: Optional[str] = None
-    ) -> List[Dict[str, str]]:
+        self, domain: str, content_type: str | None = None
+    ) -> list[dict[str, str]]:
         """
         Get relevant external sources for a domain.
         """
-        schema = domain.replace('-', '_')
+        schema = domain.replace("-", "_")
         kb = self.knowledge_bases.get(domain, self.knowledge_bases.get(schema, {}))
-        sources = kb.get('sources', [])
+        sources = kb.get("sources", [])
 
         if content_type:
-            sources = [s for s in sources if s.get('type') == content_type]
+            sources = [s for s in sources if s.get("type") == content_type]
 
         return sources
 
     def generate_historical_context(
-        self,
-        domain: str,
-        entities: List[DomainEntity],
-        timeframe: str = "recent"
+        self, domain: str, entities: list[DomainEntity], timeframe: str = "recent"
     ) -> str:
         """
         Generate historical context for the given entities.
@@ -546,122 +535,144 @@ class DomainKnowledgeService:
         if not entities:
             return ""
 
-        domain_name = domain.replace('-', ' ').title()
+        domain_name = domain.replace("-", " ").title()
         entity_names = [e.name for e in entities[:5]]
 
-        if domain == 'politics':
+        if domain == "politics":
             return self._generate_politics_context(entity_names, timeframe)
-        elif domain == 'finance':
+        elif domain == "finance":
             return self._generate_finance_context(entity_names, timeframe)
-        elif domain in ['science-tech', 'science_tech']:
+        elif domain in ["science-tech", "science_tech"]:
             return self._generate_science_tech_context(entity_names, timeframe)
         else:
             return f"Context for {', '.join(entity_names)} in {domain_name}."
 
-    def _generate_politics_context(self, entities: List[str], timeframe: str) -> str:
+    def _generate_politics_context(self, entities: list[str], timeframe: str) -> str:
         """Generate politics-specific historical context"""
         context_parts = []
 
-        if any('congress' in e.lower() or 'senate' in e.lower() or 'house' in e.lower() for e in entities):
+        if any(
+            "congress" in e.lower() or "senate" in e.lower() or "house" in e.lower()
+            for e in entities
+        ):
             context_parts.append(
                 "Congressional dynamics are shaped by current party control, "
                 "committee leadership, and pending legislation."
             )
 
-        if any('white house' in e.lower() or 'president' in e.lower() for e in entities):
+        if any("white house" in e.lower() or "president" in e.lower() for e in entities):
             context_parts.append(
                 "Executive actions and policy priorities are central to "
                 "understanding current political developments."
             )
 
-        if any('supreme court' in e.lower() or 'court' in e.lower() for e in entities):
+        if any("supreme court" in e.lower() or "court" in e.lower() for e in entities):
             context_parts.append(
                 "Judicial decisions have lasting impacts on policy and law, "
                 "with the current court composition affecting rulings."
             )
 
-        if any('election' in e.lower() or 'vote' in e.lower() for e in entities):
+        if any("election" in e.lower() or "vote" in e.lower() for e in entities):
             context_parts.append(
                 "Electoral dynamics, polling, and campaign developments "
                 "influence political strategies and outcomes."
             )
 
-        return " ".join(context_parts) if context_parts else (
-            "Political developments are interconnected with legislative, "
-            "executive, and judicial branch activities."
+        return (
+            " ".join(context_parts)
+            if context_parts
+            else (
+                "Political developments are interconnected with legislative, "
+                "executive, and judicial branch activities."
+            )
         )
 
-    def _generate_finance_context(self, entities: List[str], timeframe: str) -> str:
+    def _generate_finance_context(self, entities: list[str], timeframe: str) -> str:
         """Generate finance-specific historical context"""
         context_parts = []
 
-        if any('federal reserve' in e.lower() or 'fed' in e.lower() or 'interest' in e.lower() for e in entities):
+        if any(
+            "federal reserve" in e.lower() or "fed" in e.lower() or "interest" in e.lower()
+            for e in entities
+        ):
             context_parts.append(
                 "Federal Reserve policy on interest rates significantly impacts "
                 "borrowing costs, market valuations, and economic growth."
             )
 
-        if any('inflation' in e.lower() or 'cpi' in e.lower() for e in entities):
+        if any("inflation" in e.lower() or "cpi" in e.lower() for e in entities):
             context_parts.append(
                 "Inflation trends affect consumer purchasing power, "
                 "corporate earnings, and monetary policy decisions."
             )
 
-        if any('s&p' in e.lower() or 'dow' in e.lower() or 'nasdaq' in e.lower() for e in entities):
+        if any("s&p" in e.lower() or "dow" in e.lower() or "nasdaq" in e.lower() for e in entities):
             context_parts.append(
                 "Major indices reflect overall market sentiment and are "
                 "influenced by earnings, economic data, and global events."
             )
 
-        if any('recession' in e.lower() or 'gdp' in e.lower() for e in entities):
+        if any("recession" in e.lower() or "gdp" in e.lower() for e in entities):
             context_parts.append(
                 "Economic growth indicators and recession risks are closely "
                 "monitored by investors and policymakers."
             )
 
-        return " ".join(context_parts) if context_parts else (
-            "Financial markets are influenced by monetary policy, "
-            "economic indicators, and global events."
+        return (
+            " ".join(context_parts)
+            if context_parts
+            else (
+                "Financial markets are influenced by monetary policy, "
+                "economic indicators, and global events."
+            )
         )
 
-    def _generate_science_tech_context(self, entities: List[str], timeframe: str) -> str:
+    def _generate_science_tech_context(self, entities: list[str], timeframe: str) -> str:
         """Generate science-tech-specific historical context"""
         context_parts = []
 
-        if any('ai' in e.lower() or 'artificial intelligence' in e.lower() or 'machine learning' in e.lower() for e in entities):
+        if any(
+            "ai" in e.lower()
+            or "artificial intelligence" in e.lower()
+            or "machine learning" in e.lower()
+            for e in entities
+        ):
             context_parts.append(
                 "AI development has accelerated rapidly with large language models, "
                 "raising both opportunities and concerns about capabilities and safety."
             )
 
-        if any('openai' in e.lower() or 'chatgpt' in e.lower() or 'gpt' in e.lower() for e in entities):
+        if any(
+            "openai" in e.lower() or "chatgpt" in e.lower() or "gpt" in e.lower() for e in entities
+        ):
             context_parts.append(
                 "The emergence of ChatGPT and similar systems has transformed "
                 "public awareness and adoption of AI technologies."
             )
 
-        if any('cyber' in e.lower() or 'security' in e.lower() for e in entities):
+        if any("cyber" in e.lower() or "security" in e.lower() for e in entities):
             context_parts.append(
                 "Cybersecurity threats continue to evolve with state-sponsored "
                 "attacks, ransomware, and data breaches affecting organizations globally."
             )
 
-        if any('quantum' in e.lower() for e in entities):
+        if any("quantum" in e.lower() for e in entities):
             context_parts.append(
                 "Quantum computing development progresses toward practical applications, "
                 "with implications for cryptography and scientific computing."
             )
 
-        return " ".join(context_parts) if context_parts else (
-            "Technology developments are rapidly evolving across AI, cloud computing, "
-            "and cybersecurity with significant societal implications."
+        return (
+            " ".join(context_parts)
+            if context_parts
+            else (
+                "Technology developments are rapidly evolving across AI, cloud computing, "
+                "and cybersecurity with significant societal implications."
+            )
         )
 
     def enrich_rag_context(
-        self,
-        domain: str,
-        text: str,
-        storyline_title: Optional[str] = None
+        self, domain: str, text: str, storyline_title: str | None = None
     ) -> DomainContext:
         """
         Enrich RAG context with domain-specific knowledge.
@@ -693,9 +704,9 @@ class DomainKnowledgeService:
         geo_context = ""
         econ_context = ""
 
-        if domain == 'politics':
+        if domain == "politics":
             geo_context = self._get_geopolitical_context(entities)
-        elif domain == 'finance':
+        elif domain == "finance":
             econ_context = self._get_economic_context(entities)
 
         # Generate timeline context
@@ -714,9 +725,9 @@ class DomainKnowledgeService:
             economic_context=econ_context,
         )
 
-    def _get_geopolitical_context(self, entities: List[DomainEntity]) -> str:
+    def _get_geopolitical_context(self, entities: list[DomainEntity]) -> str:
         """Get geopolitical context for politics domain"""
-        if any(e.entity_type in ['institution', 'party'] for e in entities):
+        if any(e.entity_type in ["institution", "party"] for e in entities):
             return (
                 "Current political dynamics involve inter-party negotiations, "
                 "legislative priorities, and executive-legislative relations. "
@@ -724,34 +735,40 @@ class DomainKnowledgeService:
             )
         return ""
 
-    def _get_economic_context(self, entities: List[DomainEntity]) -> str:
+    def _get_economic_context(self, entities: list[DomainEntity]) -> str:
         """Get economic context for finance domain"""
-        has_monetary = any('fed' in e.name.lower() or 'interest' in e.name.lower() for e in entities)
-        has_market = any(e.entity_type in ['exchange', 'index'] for e in entities)
+        has_monetary = any(
+            "fed" in e.name.lower() or "interest" in e.name.lower() for e in entities
+        )
+        has_market = any(e.entity_type in ["exchange", "index"] for e in entities)
 
         parts = []
         if has_monetary:
-            parts.append("Monetary policy decisions impact all asset classes and economic activity.")
+            parts.append(
+                "Monetary policy decisions impact all asset classes and economic activity."
+            )
         if has_market:
-            parts.append("Market movements reflect collective investor sentiment and economic expectations.")
+            parts.append(
+                "Market movements reflect collective investor sentiment and economic expectations."
+            )
 
         return " ".join(parts)
 
-    def _generate_timeline_context(self, domain: str, entities: List[DomainEntity]) -> str:
+    def _generate_timeline_context(self, domain: str, entities: list[DomainEntity]) -> str:
         """Generate timeline-relevant context"""
-        if domain == 'politics':
+        if domain == "politics":
             return (
                 "Political timelines often align with legislative sessions, "
                 "election cycles, and administration terms. Key dates include "
                 "budget deadlines, primary elections, and inauguration periods."
             )
-        elif domain == 'finance':
+        elif domain == "finance":
             return (
                 "Financial timelines follow quarterly earnings cycles, FOMC meetings, "
                 "and economic data releases. Key dates include employment reports, "
                 "CPI releases, and Fed announcements."
             )
-        elif domain in ['science-tech', 'science_tech']:
+        elif domain in ["science-tech", "science_tech"]:
             return (
                 "Technology timelines are marked by product launches, research milestones, "
                 "and regulatory developments. Conference seasons and earnings reports "
@@ -759,17 +776,13 @@ class DomainKnowledgeService:
             )
         return ""
 
-    def get_entity_details(
-        self,
-        domain: str,
-        entity_name: str
-    ) -> Optional[DomainEntity]:
+    def get_entity_details(self, domain: str, entity_name: str) -> DomainEntity | None:
         """
         Get detailed information about a specific entity.
         """
-        schema = domain.replace('-', '_')
+        schema = domain.replace("-", "_")
         kb = self.knowledge_bases.get(domain, self.knowledge_bases.get(schema, {}))
-        entities_db = kb.get('entities', {})
+        entities_db = kb.get("entities", {})
 
         entity_lower = entity_name.lower()
 
@@ -787,15 +800,12 @@ class DomainKnowledgeService:
         return None
 
     def search_knowledge_base(
-        self,
-        domain: str,
-        query: str,
-        limit: int = 10
-    ) -> List[Dict[str, Any]]:
+        self, domain: str, query: str, limit: int = 10
+    ) -> list[dict[str, Any]]:
         """
         Search the domain knowledge base for relevant information.
         """
-        schema = domain.replace('-', '_')
+        schema = domain.replace("-", "_")
         kb = self.knowledge_bases.get(domain, self.knowledge_bases.get(schema, {}))
 
         results = []
@@ -803,31 +813,35 @@ class DomainKnowledgeService:
         query_words = set(query_lower.split())
 
         # Search entities
-        for key, entity in kb.get('entities', {}).items():
+        for key, entity in kb.get("entities", {}).items():
             all_text = f"{entity.name} {entity.description} {' '.join(entity.aliases)}".lower()
             matches = len(query_words & set(all_text.split()))
             if matches > 0:
-                results.append({
-                    'type': 'entity',
-                    'name': entity.name,
-                    'description': entity.description,
-                    'importance': entity.importance,
-                    'relevance': matches / len(query_words),
-                })
+                results.append(
+                    {
+                        "type": "entity",
+                        "name": entity.name,
+                        "description": entity.description,
+                        "importance": entity.importance,
+                        "relevance": matches / len(query_words),
+                    }
+                )
 
         # Search terminology
-        for term, definition in kb.get('terminology', {}).items():
+        for term, definition in kb.get("terminology", {}).items():
             if query_lower in term.lower() or query_lower in definition.lower():
-                results.append({
-                    'type': 'term',
-                    'name': term,
-                    'description': definition,
-                    'importance': 0.5,
-                    'relevance': 0.5,
-                })
+                results.append(
+                    {
+                        "type": "term",
+                        "name": term,
+                        "description": definition,
+                        "importance": 0.5,
+                        "relevance": 0.5,
+                    }
+                )
 
         # Sort by relevance and importance
-        results.sort(key=lambda x: (x['relevance'], x['importance']), reverse=True)
+        results.sort(key=lambda x: (x["relevance"], x["importance"]), reverse=True)
         return results[:limit]
 
 
@@ -841,4 +855,3 @@ def get_domain_knowledge_service() -> DomainKnowledgeService:
     if _domain_knowledge_service is None:
         _domain_knowledge_service = DomainKnowledgeService()
     return _domain_knowledge_service
-

@@ -47,7 +47,7 @@ const ArticleTopics = ({ articleId }) => {
     }
   }, [articleId]);
 
-  const loadArticleTopics = async() => {
+  const loadArticleTopics = async () => {
     try {
       setLoading(true);
       setError(null);
@@ -65,7 +65,7 @@ const ArticleTopics = ({ articleId }) => {
     }
   };
 
-  const handleProcessTopics = async() => {
+  const handleProcessTopics = async () => {
     try {
       setProcessing(true);
       setError(null);
@@ -83,7 +83,7 @@ const ArticleTopics = ({ articleId }) => {
     }
   };
 
-  const handleSubmitFeedback = async(isCorrect, feedbackNotes) => {
+  const handleSubmitFeedback = async (isCorrect, feedbackNotes) => {
     if (!selectedAssignment) return;
 
     try {
@@ -94,7 +94,7 @@ const ArticleTopics = ({ articleId }) => {
           is_correct: isCorrect,
           feedback_notes: feedbackNotes,
           validated_by: 'current_user', // TODO: Get from auth context
-        },
+        }
       );
 
       if (response.success) {
@@ -135,7 +135,9 @@ const ArticleTopics = ({ articleId }) => {
           <Button
             size='small'
             variant='outlined'
-            startIcon={processing ? <CircularProgress size={16} /> : <AutoAwesome />}
+            startIcon={
+              processing ? <CircularProgress size={16} /> : <AutoAwesome />
+            }
             onClick={handleProcessTopics}
             disabled={processing}
           >
@@ -171,8 +173,12 @@ const ArticleTopics = ({ articleId }) => {
                 <ListItem>
                   <ListItemText
                     primary={
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                        <Typography variant='body1'>{topic.topic_name}</Typography>
+                      <Box
+                        sx={{ display: 'flex', alignItems: 'center', gap: 1 }}
+                      >
+                        <Typography variant='body1'>
+                          {topic.topic_name}
+                        </Typography>
                         <Chip
                           label={topic.category || 'other'}
                           size='small'
@@ -180,7 +186,9 @@ const ArticleTopics = ({ articleId }) => {
                         />
                         {topic.is_validated && (
                           <Chip
-                            icon={topic.is_correct ? <CheckCircle /> : <Cancel />}
+                            icon={
+                              topic.is_correct ? <CheckCircle /> : <Cancel />
+                            }
                             label={topic.is_correct ? 'Correct' : 'Incorrect'}
                             size='small'
                             color={topic.is_correct ? 'success' : 'error'}
@@ -191,11 +199,16 @@ const ArticleTopics = ({ articleId }) => {
                     secondary={
                       <Box sx={{ mt: 1 }}>
                         <Typography variant='body2' color='text.secondary'>
-                          Confidence: {(topic.confidence_score * 100).toFixed(1)}% |{' '}
+                          Confidence:{' '}
+                          {(topic.confidence_score * 100).toFixed(1)}% |{' '}
                           Relevance: {(topic.relevance_score * 100).toFixed(1)}%
                         </Typography>
                         {topic.feedback_notes && (
-                          <Typography variant='caption' color='text.secondary' sx={{ mt: 0.5, display: 'block' }}>
+                          <Typography
+                            variant='caption'
+                            color='text.secondary'
+                            sx={{ mt: 0.5, display: 'block' }}
+                          >
                             Note: {topic.feedback_notes}
                           </Typography>
                         )}
@@ -252,7 +265,8 @@ const ArticleTopics = ({ articleId }) => {
                   Topic: <strong>{selectedAssignment.topic_name}</strong>
                 </Typography>
                 <Typography variant='body2' color='text.secondary' gutterBottom>
-                  Confidence: {(selectedAssignment.confidence_score * 100).toFixed(1)}%
+                  Confidence:{' '}
+                  {(selectedAssignment.confidence_score * 100).toFixed(1)}%
                 </Typography>
                 <Divider sx={{ my: 2 }} />
                 <TextField
@@ -278,7 +292,8 @@ const ArticleTopics = ({ articleId }) => {
             </Button>
             <Button
               onClick={() => {
-                const notes = document.getElementById('feedback-notes')?.value || '';
+                const notes =
+                  document.getElementById('feedback-notes')?.value || '';
                 handleSubmitFeedback(false, notes);
               }}
               color='error'
@@ -289,7 +304,8 @@ const ArticleTopics = ({ articleId }) => {
             </Button>
             <Button
               onClick={() => {
-                const notes = document.getElementById('feedback-notes')?.value || '';
+                const notes =
+                  document.getElementById('feedback-notes')?.value || '';
                 handleSubmitFeedback(true, notes);
               }}
               color='success'
@@ -307,4 +323,3 @@ const ArticleTopics = ({ articleId }) => {
 };
 
 export default ArticleTopics;
-

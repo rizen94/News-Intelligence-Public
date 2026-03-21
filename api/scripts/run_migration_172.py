@@ -35,6 +35,7 @@ def main():
 
     try:
         from shared.migration_sql_paths import resolve_migration_sql_file
+
         path = resolve_migration_sql_file("172_daily_analytics_rollups.sql")
     except FileNotFoundError as e:
         print(f"ERROR: {e}")
@@ -63,4 +64,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

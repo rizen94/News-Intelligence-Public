@@ -11,12 +11,13 @@ Or with full paths (e.g. from home):
 """
 
 import os
-import sys
 import subprocess
+import sys
 from datetime import datetime
 
 try:
     from dotenv import load_dotenv
+
     api_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     load_dotenv(os.path.join(api_dir, ".env"), override=False)
     load_dotenv(os.path.join(api_dir, "..", ".env"), override=False)
@@ -53,15 +54,22 @@ def main():
     print("--- 1. Backing up public.articles and public.rss_feeds ---")
     cmd = [
         "pg_dump",
-        "-h", cfg["host"],
-        "-p", str(cfg["port"]),
-        "-U", cfg["user"],
-        "-d", cfg["database"],
-        "-t", "public.articles",
-        "-t", "public.rss_feeds",
+        "-h",
+        cfg["host"],
+        "-p",
+        str(cfg["port"]),
+        "-U",
+        cfg["user"],
+        "-d",
+        cfg["database"],
+        "-t",
+        "public.articles",
+        "-t",
+        "public.rss_feeds",
         "--data-only",
         "--no-owner",
-        "-f", backup_file,
+        "-f",
+        backup_file,
     ]
     r = subprocess.run(cmd, env=env, capture_output=True, text=True)
     if r.returncode != 0:
@@ -85,7 +93,9 @@ def main():
     finally:
         conn.close()
 
-    print("--- Done. Run diagnose_db_legacy_data.py again to confirm; new data will land in domain schemas. ---")
+    print(
+        "--- Done. Run diagnose_db_legacy_data.py again to confirm; new data will land in domain schemas. ---"
+    )
 
 
 if __name__ == "__main__":

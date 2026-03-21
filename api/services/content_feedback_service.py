@@ -4,7 +4,7 @@ for articles, storylines, and whole briefings. Used to reorder briefing feed and
 """
 
 import logging
-from typing import Dict, Any, List, Optional, Set
+from typing import Any
 
 from shared.database.connection import get_db_connection
 
@@ -14,11 +14,11 @@ logger = logging.getLogger(__name__)
 def submit_feedback(
     domain: str,
     item_type: str,
-    item_id: Optional[int],
+    item_id: int | None,
     *,
-    rating: Optional[int] = None,
+    rating: int | None = None,
     not_interested: bool = False,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Record feedback for an article, storyline, or whole briefing.
     item_type: 'article' | 'storyline' | 'briefing'
@@ -55,9 +55,9 @@ def submit_feedback(
         return {"success": False, "error": str(e)}
 
 
-def get_not_interested_ids(domain: str, item_type: str) -> Set[int]:
+def get_not_interested_ids(domain: str, item_type: str) -> set[int]:
     """Return set of article_id or storyline_id that user marked not interested."""
-    out: Set[int] = set()
+    out: set[int] = set()
     try:
         conn = get_db_connection()
         if not conn:
@@ -78,11 +78,11 @@ def get_not_interested_ids(domain: str, item_type: str) -> Set[int]:
     return out
 
 
-def get_ratings_for_items(domain: str, item_type: str, item_ids: List[int]) -> Dict[int, int]:
+def get_ratings_for_items(domain: str, item_type: str, item_ids: list[int]) -> dict[int, int]:
     """Return mapping item_id -> latest rating (1-5) for given ids. Used to boost high-rated in ordering."""
     if not item_ids:
         return {}
-    out: Dict[int, int] = {}
+    out: dict[int, int] = {}
     try:
         conn = get_db_connection()
         if not conn:

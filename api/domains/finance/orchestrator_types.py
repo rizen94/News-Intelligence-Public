@@ -4,7 +4,7 @@ Dataclasses only; no ORM.
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime, date, timezone
+from datetime import date, datetime, timezone
 from enum import Enum
 from typing import Any
 
@@ -106,7 +106,9 @@ class TaskContext:
     evidence_index: list[EvidenceIndexEntry] = field(default_factory=list)
     evidence_chunks: list[Any] = field(default_factory=list)  # EvidenceChunk
     rss_snippets: list[dict[str, Any]] = field(default_factory=list)  # from evidence_collector
-    historic_context_summary: str | None = None  # from historic context orchestrator when date range set
+    historic_context_summary: str | None = (
+        None  # from historic context orchestrator when date range set
+    )
     historic_context_events: list[dict[str, Any]] = field(default_factory=list)
     stats_results: dict[str, Any] = field(default_factory=dict)
     llm_prompt: str | None = None

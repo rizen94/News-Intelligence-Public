@@ -1,6 +1,6 @@
 [project]
 name = "news-intelligence"
-version = "7.0.0"
+version = "8.0.0"
 description = "AI-powered news aggregation and analysis with local LLM inference"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -52,7 +52,11 @@ dependencies = [
 [project.optional-dependencies]
 finance = ["chromadb", "sentence-transformers"]
 documents = ["pymupdf>=1.23.0"]  # optional: faster/robust PDF text fallback when pdfplumber fails
-dev = ["pytest>=7.0.0"]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.23.0",
+    "ruff>=0.15.0",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -66,11 +70,34 @@ pythonpath = ["api"]
 testpaths = ["tests"]
 addopts = "-v --tb=short"
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 filterwarnings = ["ignore::DeprecationWarning"]
+markers = [
+    "requires_api: needs a running API (e.g. localhost:8001); skipped in CI by default",
+    "requires_db: needs PostgreSQL; may skip if unavailable",
+]
 
 [tool.ruff]
 line-length = 100
 target-version = "py310"
+exclude = [
+    ".git",
+    ".venv",
+    "__pycache__",
+    "api/_archived",
+]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP"]
+# E501: line length — formatter handles wrapping
+# E402: imports after sys.path/bootstrap (legacy modules)
+# E722: bare except (legacy; fix incrementally)
+# F401/F403: unused imports / star-imports (__init__ barrels) — tighten later
+# N803/N806/N818: ML conventions (X, y) and local ALL_CAPS config blocks in functions
+# UP035: typing.Dict/List deprecation — optional modernization
+ignore = ["E501", "E402", "E722", "F401", "F403", "N803", "N806", "N818", "UP035"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false

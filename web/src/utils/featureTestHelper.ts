@@ -36,7 +36,7 @@ class FeatureTestHelper {
    * Run a single test
    */
   async runTest(testName: string): Promise<TestResult | null> {
-    const test = this.tests.find((t) => t.name === testName);
+    const test = this.tests.find(t => t.name === testName);
     if (!test) {
       console.error(`Test not found: ${testName}`);
       return null;
@@ -82,7 +82,11 @@ class FeatureTestHelper {
         results.push(result);
         const icon = result.passed ? '✅' : '❌';
         const critical = test.critical ? ' [CRITICAL]' : '';
-        console.log(`${icon} ${test.name}${critical}: ${result.message} (${result.duration.toFixed(2)}ms)`);
+        console.log(
+          `${icon} ${test.name}${critical}: ${
+            result.message
+          } (${result.duration.toFixed(2)}ms)`
+        );
       }
     }
 
@@ -94,7 +98,7 @@ class FeatureTestHelper {
    * Run critical tests only
    */
   async runCriticalTests(): Promise<TestResult[]> {
-    const criticalTests = this.tests.filter((t) => t.critical);
+    const criticalTests = this.tests.filter(t => t.critical);
     const results: TestResult[] = [];
 
     for (const test of criticalTests) {
@@ -116,16 +120,17 @@ class FeatureTestHelper {
     failed: number;
     criticalFailed: number;
     averageDuration: number;
-    } {
+  } {
     const total = this.results.length;
-    const passed = this.results.filter((r) => r.passed).length;
+    const passed = this.results.filter(r => r.passed).length;
     const failed = total - passed;
     const criticalFailed = this.results.filter(
-      (r) => !r.passed && this.tests.find((t) => t.name === r.name)?.critical,
+      r => !r.passed && this.tests.find(t => t.name === r.name)?.critical
     ).length;
     const averageDuration =
       this.results.length > 0
-        ? this.results.reduce((sum, r) => sum + r.duration, 0) / this.results.length
+        ? this.results.reduce((sum, r) => sum + r.duration, 0) /
+          this.results.length
         : 0;
 
     return {
@@ -155,7 +160,7 @@ class FeatureTestHelper {
         timestamp: new Date().toISOString(),
       },
       null,
-      2,
+      2
     );
   }
 }
@@ -170,7 +175,7 @@ export const registerDefaultTests = () => {
     name: 'API Connection',
     description: 'Verify API server is accessible',
     critical: true,
-    test: async() => {
+    test: async () => {
       try {
         const response = await fetch('/api/system_monitoring/health', {
           method: 'GET',
@@ -208,7 +213,10 @@ export const registerDefaultTests = () => {
     critical: true,
     test: () => {
       const domain = localStorage.getItem('currentDomain');
-      return domain !== null && DOMAIN_KEYS_LIST.includes(domain as (typeof DOMAIN_KEYS_LIST)[number]);
+      return (
+        domain !== null &&
+        DOMAIN_KEYS_LIST.includes(domain as (typeof DOMAIN_KEYS_LIST)[number])
+      );
     },
   });
 
@@ -217,9 +225,11 @@ export const registerDefaultTests = () => {
     name: 'API Connection Manager',
     description: 'Verify API connection manager is initialized',
     critical: true,
-    test: async() => {
+    test: async () => {
       try {
-        const { getAPIConnectionManager } = await import('../services/apiConnectionManager');
+        const { getAPIConnectionManager } = await import(
+          '../services/apiConnectionManager'
+        );
         const manager = getAPIConnectionManager();
         return manager !== null && typeof manager.getApiInstance === 'function';
       } catch {
@@ -259,10 +269,9 @@ if (import.meta.env.DEV) {
 
   console.log(
     '%c🧪 Feature Test Helper Active',
-    'color: #2196F3; font-size: 16px; font-weight: bold;',
+    'color: #2196F3; font-size: 16px; font-weight: bold;'
   );
   console.log('Run tests with: featureTestHelper.runAllTests()');
 }
 
 export default featureTestHelper;
-

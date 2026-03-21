@@ -8,34 +8,49 @@ import logging
 import re
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone, date
+from datetime import date, datetime, timezone
 from typing import Any
 
 try:
     from config.logging_config import get_component_logger
+
     logger = get_component_logger("finance")
 except Exception:
     logger = logging.getLogger(__name__)
 
-from domains.finance.orchestrator_logger import log_event, log_queue_decision, TASK_ACCEPTED, TASK_PLANNED, WORKER_DISPATCHED, WORKER_COMPLETED, WORKER_FAILED, EVAL_PASSED, EVAL_FAILED, TASK_COMPLETED, TASK_FAILED, SOURCE_SKIPPED
-from shared.logging.trace_logger import span_context
 from shared.logging.decision_logger import log_decision, log_decision_outcome
-from domains.finance.orchestrator_utils import normalize_to_data_result
+from shared.logging.trace_logger import span_context
+
+from domains.finance.orchestrator_logger import (
+    EVAL_FAILED,
+    EVAL_PASSED,
+    SOURCE_SKIPPED,
+    TASK_ACCEPTED,
+    TASK_COMPLETED,
+    TASK_FAILED,
+    TASK_PLANNED,
+    WORKER_COMPLETED,
+    WORKER_DISPATCHED,
+    WORKER_FAILED,
+    log_event,
+    log_queue_decision,
+)
 from domains.finance.orchestrator_types import (
+    ClaimCheck,
+    ClaimVerdict,
+    EvidenceIndexEntry,
+    QualityCriteria,
+    RefreshSummary,
+    ResultStatus,
     Task,
     TaskContext,
+    TaskPriority,
     TaskResult,
     TaskStatus,
     TaskType,
-    TaskPriority,
-    ResultStatus,
-    RefreshSummary,
-    EvidenceIndexEntry,
     VerificationResult,
-    ClaimCheck,
-    ClaimVerdict,
-    QualityCriteria,
 )
+from domains.finance.orchestrator_utils import normalize_to_data_result
 
 
 def _status_to_phase(status: TaskStatus, task_type: TaskType) -> str:
@@ -96,7 +111,9 @@ class FinanceOrchestrator:
 
         self._tasks: dict[str, Task] = {}
         self._task_order: list[str] = []
-        self._executor = ThreadPoolExecutor(max_workers=cpu_concurrency, thread_name_prefix="fin_orch")
+        self._executor = ThreadPoolExecutor(
+            max_workers=cpu_concurrency, thread_name_prefix="fin_orch"
+        )
         self._gpu_lock = asyncio.Lock()
         self._schedule_last_run: dict[str, datetime] = {}
         self._schedule_task: asyncio.Task | None = None
@@ -124,7 +141,7 @@ class FinanceOrchestrator:
         if task.status != TaskStatus.queued:
             return self.get_task_result(task_id)
 
-        loop = asyncio.get_event_loop()
+        asyncio.get_event_loop()
         try:
             task.update_status(TaskStatus.planning)
             log_event(TASK_PLANNED, task_id, {"type": task.task_type.value})
@@ -133,7 +150,11 @@ class FinanceOrchestrator:
             if task.task_type == TaskType.refresh:
                 plan = self._plan_refresh(task)
                 task.update_status(TaskStatus.executing)
-                log_event(WORKER_DISPATCHED, task_id, {"phase": "refresh", "actions": plan.get("actions", [])})
+                log_event(
+                    WORKER_DISPATCHED,
+                    task_id,
+                    {"phase": "refresh", "actions": plan.get("actions", [])},
+                )
                 await self._execute_refresh(task, plan)
                 task.update_status(TaskStatus.evaluating)
                 met = self._evaluate_refresh(task)
@@ -143,10 +164,14 @@ class FinanceOrchestrator:
                     log_event(EVAL_PASSED, task_id, {"phase": "refresh"})
                     task.update_status(TaskStatus.complete)
                 elif any_succeeded:
-                    log_event(EVAL_FAILED, task_id, {"phase": "refresh", "note": "partial_accepted"})
+                    log_event(
+                        EVAL_FAILED, task_id, {"phase": "refresh", "note": "partial_accepted"}
+                    )
                     task.update_status(TaskStatus.complete)
                 else:
-                    log_event(EVAL_FAILED, task_id, {"phase": "refresh", "note": "all_sources_failed"})
+                    log_event(
+                        EVAL_FAILED, task_id, {"phase": "refresh", "note": "all_sources_failed"}
+                    )
                     task.update_status(TaskStatus.failed)
                 log_event(WORKER_COMPLETED, task_id, {"phase": "refresh"})
                 self._build_evidence_index(task)
@@ -161,9 +186,17 @@ class FinanceOrchestrator:
                 plan = self._plan_analysis(task)
                 while task.current_iteration < task.iteration_budget:
                     task.update_status(TaskStatus.executing)
-                    log_event(WORKER_DISPATCHED, task_id, {"phase": "analysis", "iteration": task.current_iteration + 1})
+                    log_event(
+                        WORKER_DISPATCHED,
+                        task_id,
+                        {"phase": "analysis", "iteration": task.current_iteration + 1},
+                    )
                     is_revision = task.current_iteration > 0
-                    with span_context(task_id, "analysis" + ("_revision" if is_revision else ""), span_type="phase"):
+                    with span_context(
+                        task_id,
+                        "analysis" + ("_revision" if is_revision else ""),
+                        span_type="phase",
+                    ):
                         await self._execute_analysis(task, plan, is_revision=is_revision)
                     task.update_status(TaskStatus.evaluating)
                     vr = self._extract_and_verify_claims(task)
@@ -174,7 +207,9 @@ class FinanceOrchestrator:
                         decision_point="eval_gate",
                         current_phase="analysis",
                         chosen_option="accept" if passed else "revise",
-                        rationale="Verification passed" if passed else f"Unsupported/fabricated: {vr.unsupported}/{vr.fabricated}",
+                        rationale="Verification passed"
+                        if passed
+                        else f"Unsupported/fabricated: {vr.unsupported}/{vr.fabricated}",
                         available_options=["accept", "revise"],
                         iterations_so_far=task.current_iteration + 1,
                         eval_score=vr.verified / max(vr.total_claims, 1) if vr else 0,
@@ -184,14 +219,20 @@ class FinanceOrchestrator:
                     )
                     if passed:
                         log_decision_outcome(dec_id, "success")
-                        log_event(EVAL_PASSED, task_id, {"phase": "analysis", "iteration": task.current_iteration + 1})
+                        log_event(
+                            EVAL_PASSED,
+                            task_id,
+                            {"phase": "analysis", "iteration": task.current_iteration + 1},
+                        )
                         task.update_status(TaskStatus.complete)
                         break
                     if task.current_iteration + 1 >= task.iteration_budget:
                         log_decision_outcome(dec_id, "partial")
                         task.update_status(TaskStatus.complete)
                         task.context.revision_notes.append("Iteration budget exhausted")
-                        log_event(EVAL_FAILED, task_id, {"phase": "analysis", "note": "budget_exhausted"})
+                        log_event(
+                            EVAL_FAILED, task_id, {"phase": "analysis", "note": "budget_exhausted"}
+                        )
                         break
                     task.current_iteration += 1
                     task.update_status(TaskStatus.revising)
@@ -229,7 +270,10 @@ class FinanceOrchestrator:
         if topic in ("gold", "silver", "platinum"):
             return {"actions": [topic], "start": start, "end": end}
         if topic == "edgar":
-            return {"actions": ["edgar"], "filings_per_company": task.parameters.get("filings_per_company", 1)}
+            return {
+                "actions": ["edgar"],
+                "filings_per_company": task.parameters.get("filings_per_company", 1),
+            }
         if topic == "fred":
             symbol = task.parameters.get("symbol")
             return {"actions": ["fred"], "symbol": symbol, "start": start, "end": end}
@@ -243,39 +287,57 @@ class FinanceOrchestrator:
         async def _run_gold() -> dict[str, Any]:
             def _sync():
                 from domains.finance.gold_amalgamator import fetch_all
+
                 start = plan.get("start")
                 end = plan.get("end")
                 out = fetch_all(start=start, end=end, store=True)
-                return {"results": out, "report_id": f"gold_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"}
+                return {
+                    "results": out,
+                    "report_id": f"gold_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}",
+                }
+
             return await asyncio.get_event_loop().run_in_executor(self._executor, _sync)
 
         async def _run_commodity(commodity: str) -> dict[str, Any]:
             def _sync():
                 from domains.finance.commodity_fetcher import fetch_commodity
+
                 start = plan.get("start")
                 end = plan.get("end")
                 out = fetch_commodity(topic=commodity, start=start, end=end, store=True)
-                return {"results": out, "report_id": f"{commodity}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"}
+                return {
+                    "results": out,
+                    "report_id": f"{commodity}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}",
+                }
+
             return await asyncio.get_event_loop().run_in_executor(self._executor, _sync)
 
         async def _run_edgar() -> dict[str, Any]:
             def _sync():
                 from domains.finance.data_sources.edgar import ingest_edgar_10ks
+
                 filings = plan.get("filings_per_company", 1)
-                count, chunk_ids = ingest_edgar_10ks(filings_per_company=filings, record_ledger=True)
+                count, chunk_ids = ingest_edgar_10ks(
+                    filings_per_company=filings, record_ledger=True
+                )
                 return {"chunks_embedded": count, "chunk_ids": chunk_ids}
+
             return await asyncio.get_event_loop().run_in_executor(self._executor, _sync)
 
         async def _run_fred() -> dict[str, Any]:
             def _sync():
                 from domains.finance.data_sources import get_source
                 from domains.finance.data_sources.fred import get_client
+
                 client = get_source("fred") or get_client()
                 symbol = plan.get("symbol") or "IQ12260"
-                r = client.fetch_observations(symbol, start=plan.get("start"), end=plan.get("end"), store=True)
+                r = client.fetch_observations(
+                    symbol, start=plan.get("start"), end=plan.get("end"), store=True
+                )
                 if r.success and r.data:
                     return {"symbol": symbol, "observations": r.data, "success": True}
                 return {"symbol": symbol, "observations": [], "success": False, "error": r.error}
+
             return await asyncio.get_event_loop().run_in_executor(self._executor, _sync)
 
         tasks_to_run = []
@@ -296,7 +358,9 @@ class FinanceOrchestrator:
             except Exception as e:
                 err_msg = str(e)
                 dr = normalize_to_data_result(e)
-                task.context.errors.append({"source": name, "error": dr.error, "error_type": dr.error_type})
+                task.context.errors.append(
+                    {"source": name, "error": dr.error, "error_type": dr.error_type}
+                )
                 is_404 = "404" in err_msg
                 logger.warning("Refresh %s failed: %s", name, e)
                 results[name] = {"success": False, "error": err_msg}
@@ -327,12 +391,19 @@ class FinanceOrchestrator:
             elif name == "edgar":
                 chunks_embedded = data.get("chunks_embedded", 0)
                 chunk_ids = data.get("chunk_ids", [])
-                sources_summary["edgar"] = {"success": chunks_embedded > 0, "chunks_embedded": chunks_embedded}
+                sources_summary["edgar"] = {
+                    "success": chunks_embedded > 0,
+                    "chunks_embedded": chunks_embedded,
+                }
             elif name == "fred":
                 obs_list = data.get("observations") or []
                 count = len(obs_list) if isinstance(obs_list, list) else 0
                 total_obs += count
-                sources_summary["fred"] = {"success": count > 0, "count": count, "error": data.get("error")}
+                sources_summary["fred"] = {
+                    "success": count > 0,
+                    "count": count,
+                    "error": data.get("error"),
+                }
 
         task.context.fetched_data["refresh_summary"] = RefreshSummary(
             sources=sources_summary,
@@ -340,7 +411,10 @@ class FinanceOrchestrator:
             chunks_embedded=chunks_embedded,
             chunk_ids=chunk_ids,
         )
-        met = len([s for s in sources_summary.values() if s.get("success")]) >= self.quality_criteria.min_sources
+        met = (
+            len([s for s in sources_summary.values() if s.get("success")])
+            >= self.quality_criteria.min_sources
+        )
         return met
 
     def _build_evidence_index(self, task: Task) -> list[EvidenceIndexEntry]:
@@ -352,24 +426,37 @@ class FinanceOrchestrator:
         entries: list[EvidenceIndexEntry] = []
         ref_counter = [0]
 
-        def _add(source: str, identifier: str, d: str, value: float | str, unit: str, context: str = ""):
+        def _add(
+            source: str, identifier: str, d: str, value: float | str, unit: str, context: str = ""
+        ):
             ref_counter[0] += 1
             ref_id = f"REF-{ref_counter[0]:03d}"
             try:
                 dt = datetime.fromisoformat(d.replace("Z", "+00:00")).date() if d else date.today()
             except (ValueError, TypeError):
                 dt = date.today()
-            entries.append(EvidenceIndexEntry(
-                ref_id=ref_id, source=source, identifier=identifier,
-                date=dt, value=value, unit=unit, context=context,
-            ))
+            entries.append(
+                EvidenceIndexEntry(
+                    ref_id=ref_id,
+                    source=source,
+                    identifier=identifier,
+                    date=dt,
+                    value=value,
+                    unit=unit,
+                    context=context,
+                )
+            )
 
         # Gold: observations from each source
         gold_data = results.get("gold", {}).get("results") or {}
         max_per_source = 100
         for metal in ("silver", "platinum"):
             metal_raw = results.get(metal) or {}
-            metal_data = metal_raw.get("results") if isinstance(metal_raw.get("results"), dict) else metal_raw
+            metal_data = (
+                metal_raw.get("results")
+                if isinstance(metal_raw.get("results"), dict)
+                else metal_raw
+            )
             if isinstance(metal_data, dict):
                 for sid, obs_list in metal_data.items():
                     if not isinstance(obs_list, list):
@@ -379,7 +466,14 @@ class FinanceOrchestrator:
                         v = o.get("value")
                         unit = o.get("unit", "USD/toz")
                         if d and v is not None:
-                            _add(metal, sid, d, float(v), unit, "{} price {}".format(metal.capitalize(), unit))
+                            _add(
+                                metal,
+                                sid,
+                                d,
+                                float(v),
+                                unit,
+                                f"{metal.capitalize()} price {unit}",
+                            )
         for sid, obs_list in gold_data.items():
             if not isinstance(obs_list, list):
                 continue
@@ -405,7 +499,14 @@ class FinanceOrchestrator:
         ingest_data = task.context.fetched_data.get("ingest_results") or {}
         chunks = edgar_data.get("chunks_embedded", 0) or ingest_data.get("chunks_embedded", 0)
         if chunks > 0:
-            _add("edgar_10k", "mining_companies", str(date.today()), chunks, "chunks", "EDGAR 10-K sections ingested")
+            _add(
+                "edgar_10k",
+                "mining_companies",
+                str(date.today()),
+                chunks,
+                "chunks",
+                "EDGAR 10-K sections ingested",
+            )
 
         task.context.evidence_index = entries
         return entries
@@ -440,15 +541,17 @@ class FinanceOrchestrator:
             snippet = (s.get("snippet") or "")[:500]
             pub = s.get("published_at") or ""
             url = s.get("url") or s.get("id") or ""
-            entries.append(EvidenceIndexEntry(
-                ref_id=_next_ref(),
-                source="rss",
-                identifier=url[:100] if url else "news",
-                date=_parse_date(pub) if pub else date.today(),
-                value=title,
-                unit="",
-                context=snippet,
-            ))
+            entries.append(
+                EvidenceIndexEntry(
+                    ref_id=_next_ref(),
+                    source="rss",
+                    identifier=url[:100] if url else "news",
+                    date=_parse_date(pub) if pub else date.today(),
+                    value=title,
+                    unit="",
+                    context=snippet,
+                )
+            )
 
         historic_events = getattr(task.context, "historic_context_events", None) or []
         for ev in historic_events[:30]:
@@ -457,15 +560,17 @@ class FinanceOrchestrator:
             source_ids = ev.get("source_ids") or []
             agreement = ev.get("agreement_count") or 0
             identifier = ",".join(source_ids)[:80] if source_ids else "historic"
-            entries.append(EvidenceIndexEntry(
-                ref_id=_next_ref(),
-                source="historic",
-                identifier=identifier,
-                date=_parse_date(date_approx) if date_approx else date.today(),
-                value=summary,
-                unit=f"{agreement} sources" if agreement else "",
-                context=summary,
-            ))
+            entries.append(
+                EvidenceIndexEntry(
+                    ref_id=_next_ref(),
+                    source="historic",
+                    identifier=identifier,
+                    date=_parse_date(date_approx) if date_approx else date.today(),
+                    value=summary,
+                    unit=f"{agreement} sources" if agreement else "",
+                    context=summary,
+                )
+            )
 
         if entries != (task.context.evidence_index or []):
             task.context.evidence_index = entries
@@ -485,12 +590,27 @@ class FinanceOrchestrator:
         so the LLM can explain why the move happened.
         """
         q = (query or "").lower()
-        cause_terms = ("drop", "fall", "decline", "rise", "why", "reason", "cause", "driver", "driven")
+        cause_terms = (
+            "drop",
+            "fall",
+            "decline",
+            "rise",
+            "why",
+            "reason",
+            "cause",
+            "driver",
+            "driven",
+        )
         if not any(t in q for t in cause_terms) and len(q.split()) < 4:
             return
-        causes_query = f"{query} causes reasons drivers" if len(query or "") > 10 else f"{topic or 'price'} decline causes reasons"
+        causes_query = (
+            f"{query} causes reasons drivers"
+            if len(query or "") > 10
+            else f"{topic or 'price'} decline causes reasons"
+        )
         try:
             from services.historic_context_orchestrator import run_historic_context
+
             h = run_historic_context(
                 query=causes_query,
                 start_date=start,
@@ -504,7 +624,9 @@ class FinanceOrchestrator:
                 extra = (h.get("summary") or "").strip()[:2500]
                 if extra:
                     existing = getattr(task.context, "historic_context_summary", None) or ""
-                    task.context.historic_context_summary = f"{existing}\n\n## Causes-focused search\n{extra}"
+                    task.context.historic_context_summary = (
+                        f"{existing}\n\n## Causes-focused search\n{extra}"
+                    )
                     logger.info("Merged causes-focused historic context: %d chars", len(extra))
         except Exception as e:
             logger.debug("Causes-focused historic context failed: %s", e)
@@ -515,13 +637,19 @@ class FinanceOrchestrator:
 
         def _sync():
             from domains.finance.data_sources.edgar import ingest_edgar_10ks
-            return ingest_edgar_10ks(filings_per_company=plan["filings_per_company"], record_ledger=True)
+
+            return ingest_edgar_10ks(
+                filings_per_company=plan["filings_per_company"], record_ledger=True
+            )
 
         loop = asyncio.get_event_loop()
         try:
             count, chunk_ids = await loop.run_in_executor(self._executor, _sync)
             self._ledger_record(task, "edgar", "success")
-            task.context.fetched_data["ingest_results"] = {"chunks_embedded": count, "chunk_ids": chunk_ids}
+            task.context.fetched_data["ingest_results"] = {
+                "chunks_embedded": count,
+                "chunk_ids": chunk_ids,
+            }
             task.context.fetched_data["refresh_summary"] = RefreshSummary(
                 sources={"edgar": {"success": count > 0, "chunks_embedded": count}},
                 total_observations=0,
@@ -530,7 +658,9 @@ class FinanceOrchestrator:
             )
         except Exception as e:
             dr = normalize_to_data_result(e)
-            task.context.errors.append({"source": "edgar", "error": dr.error, "error_type": dr.error_type})
+            task.context.errors.append(
+                {"source": "edgar", "error": dr.error, "error_type": dr.error_type}
+            )
             self._ledger_record(task, "edgar", "error", error=str(e))
             raise
 
@@ -542,7 +672,9 @@ class FinanceOrchestrator:
         n_chunks = 25 if deep else 15
         return {"query": query, "topic": topic, "n_chunks": n_chunks, "deep": deep}
 
-    async def _execute_analysis(self, task: Task, plan: dict[str, Any], is_revision: bool = False) -> None:
+    async def _execute_analysis(
+        self, task: Task, plan: dict[str, Any], is_revision: bool = False
+    ) -> None:
         """Run refresh/retrieve/stats/build prompt + LLM. If is_revision, only call LLM with revision prompt."""
         if is_revision and task.context.llm_prompt:
             prompt = task.context.llm_prompt
@@ -550,9 +682,13 @@ class FinanceOrchestrator:
                 if self.llm_wrapper:
                     try:
                         from domains.finance.llm import generate
+
                         response = await generate(
-                            prompt, system_prompt=None,
-                            task_id=task.task_id, phase="revision", prompt_template_id="revision",
+                            prompt,
+                            system_prompt=None,
+                            task_id=task.task_id,
+                            phase="revision",
+                            prompt_template_id="revision",
                         )
                         task.context.llm_response = response
                     except Exception as e:
@@ -586,6 +722,7 @@ class FinanceOrchestrator:
                 if (topic in ("gold", "all", "")) and not task.context.evidence_index:
                     try:
                         from domains.finance.gold_amalgamator import get_stored
+
                         start = task.parameters.get("start_date") or task.parameters.get("start")
                         end = task.parameters.get("end_date") or task.parameters.get("end")
                         stored = get_stored(start=start, end=end)
@@ -612,29 +749,44 @@ class FinanceOrchestrator:
                                 for sid, obs in normalized.items():
                                     rr["gold"]["results"][sid] = obs
                                 self._build_evidence_index(task)
-                                logger.info("Gold evidence from store (refresh had no data): %d entries", len(task.context.evidence_index))
+                                logger.info(
+                                    "Gold evidence from store (refresh had no data): %d entries",
+                                    len(task.context.evidence_index),
+                                )
                     except Exception as e:
                         logger.warning("Fallback to stored gold failed: %s", e)
                 if not task.context.evidence_index and topic in ("silver", "platinum"):
                     try:
                         from domains.finance.commodity_store import get_manual_history
+
                         obs_list = get_manual_history(topic, days=730)
                         if obs_list:
                             rr = task.context.fetched_data.setdefault("refresh_results", {})
                             rr[topic] = {
                                 "results": {
                                     topic: [
-                                        {"date": o.get("date"), "value": o.get("value"), "unit": o.get("unit", "USD/toz")}
+                                        {
+                                            "date": o.get("date"),
+                                            "value": o.get("value"),
+                                            "unit": o.get("unit", "USD/toz"),
+                                        }
                                         for o in obs_list[:100]
                                     ]
                                 }
                             }
                             self._build_evidence_index(task)
-                            logger.info("%s evidence from manual store: %d entries", topic.capitalize(), len(task.context.evidence_index))
+                            logger.info(
+                                "%s evidence from manual store: %d entries",
+                                topic.capitalize(),
+                                len(task.context.evidence_index),
+                            )
                     except Exception as e:
                         logger.warning("Fallback to manual store for %s failed: %s", topic, e)
                 if not task.context.evidence_index:
-                    logger.warning("Analysis task %s has no evidence (refresh and store fallback yielded nothing)", task.task_id)
+                    logger.warning(
+                        "Analysis task %s has no evidence (refresh and store fallback yielded nothing)",
+                        task.task_id,
+                    )
                 if task.context.evidence_index and topic == "gold":
                     self._evidence_cache[cache_key] = (now, list(task.context.evidence_index))
 
@@ -642,8 +794,9 @@ class FinanceOrchestrator:
         chunks_text: list[str] = []
         if self.embedding_module and self.vector_store:
             try:
-                from domains.finance.embedding import embed_text
                 from domains.finance.data.vector_store import query as vs_query
+                from domains.finance.embedding import embed_text
+
                 vec = embed_text(query)
                 if vec:
                     result = vs_query([vec], n_results=n_chunks)
@@ -659,15 +812,27 @@ class FinanceOrchestrator:
         end = task.parameters.get("end_date") or task.parameters.get("end")
         if not start or not end:
             from datetime import date, timedelta
+
             _end = date.today()
             _start = _end - timedelta(days=730)
             start = start or _start.isoformat()
             end = end or _end.isoformat()
-            logger.info("Analysis task %s: using default date range %s to %s (all sources including historic context)", task.task_id, start, end)
+            logger.info(
+                "Analysis task %s: using default date range %s to %s (all sources including historic context)",
+                task.task_id,
+                start,
+                end,
+            )
         else:
-            logger.info("Analysis task %s: date range %s to %s, including historic context", task.task_id, start, end)
+            logger.info(
+                "Analysis task %s: date range %s to %s, including historic context",
+                task.task_id,
+                start,
+                end,
+            )
         try:
             from domains.finance.evidence_collector import collect as evidence_collect
+
             max_rss = 35 if deep else 25
             bundle = evidence_collect(
                 query=query,
@@ -686,9 +851,15 @@ class FinanceOrchestrator:
             if bundle.get("historic_context_summary"):
                 task.context.historic_context_summary = bundle["historic_context_summary"]
                 task.context.historic_context_events = bundle.get("historic_context_events") or []
-                logger.info("Historic context summary length %d chars, events %d", len(bundle["historic_context_summary"]), len(bundle.get("historic_context_events") or []))
+                logger.info(
+                    "Historic context summary length %d chars, events %d",
+                    len(bundle["historic_context_summary"]),
+                    len(bundle.get("historic_context_events") or []),
+                )
             else:
-                logger.warning("Historic context returned empty summary (sources may have returned nothing)")
+                logger.warning(
+                    "Historic context returned empty summary (sources may have returned nothing)"
+                )
             self._append_rss_and_historic_evidence(task)
             self._run_causes_focused_historic_if_needed(task, query, topic, start, end)
             # Merge RAG chunks from evidence collector into evidence_chunks so prompt gets them
@@ -699,7 +870,9 @@ class FinanceOrchestrator:
                     if r:
                         existing.append(r[:800] if isinstance(r, str) else str(r)[:800])
                 task.context.evidence_chunks = existing[:30]
-                logger.info("Evidence: %d vector + %d RAG chunks", len(chunks_text), len(rag_chunks))
+                logger.info(
+                    "Evidence: %d vector + %d RAG chunks", len(chunks_text), len(rag_chunks)
+                )
         except Exception as e:
             logger.debug("Evidence collector (RSS) failed: %s", e)
             task.context.rss_snippets = []
@@ -709,6 +882,7 @@ class FinanceOrchestrator:
         if self.stats_module and task.context.evidence_index:
             try:
                 from domains.finance.stats import latest_value, price_change_pct
+
                 # Build obs list from gold entries
                 gold_entries = [e for e in task.context.evidence_index if e.source == "gold"]
                 if gold_entries:
@@ -716,7 +890,11 @@ class FinanceOrchestrator:
                     latest = latest_value(obs)
                     if latest is not None:
                         stats_results["latest_gold_usd"] = latest
-                    vals = [(str(e.date), float(e.value)) for e in gold_entries[:30] if isinstance(e.value, (int, float))]
+                    vals = [
+                        (str(e.date), float(e.value))
+                        for e in gold_entries[:30]
+                        if isinstance(e.value, (int, float))
+                    ]
                     pct = price_change_pct(vals)
                     if pct is not None:
                         stats_results["gold_price_change_pct"] = round(pct, 2)
@@ -733,11 +911,21 @@ class FinanceOrchestrator:
             if self.llm_wrapper:
                 try:
                     from domains.finance.llm import generate
-                    ctx_docs = [{"ref_id": e.ref_id, "source": e.source, "char_count": len(str(e.context or ""))}
-                                for e in (task.context.evidence_index or [])[:20]]
+
+                    ctx_docs = [
+                        {
+                            "ref_id": e.ref_id,
+                            "source": e.source,
+                            "char_count": len(str(e.context or "")),
+                        }
+                        for e in (task.context.evidence_index or [])[:20]
+                    ]
                     response = await generate(
-                        prompt, system_prompt=system_prompt,
-                        task_id=task.task_id, phase="synthesis", prompt_template_id="analysis",
+                        prompt,
+                        system_prompt=system_prompt,
+                        task_id=task.task_id,
+                        phase="synthesis",
+                        prompt_template_id="analysis",
                         context_documents=ctx_docs,
                     )
                     task.context.llm_response = response
@@ -765,11 +953,17 @@ Do not invent or guess values. Structure your response: (1) establish what happe
         if price_entries or narrative_entries:
             parts.append("## Evidence (cite by REF-ID)\n")
             for e in price_entries:
-                parts.append(f"- {e.ref_id}: {e.source} {e.identifier} | {e.date} | {e.value} {e.unit} | {e.context}")
+                parts.append(
+                    f"- {e.ref_id}: {e.source} {e.identifier} | {e.date} | {e.value} {e.unit} | {e.context}"
+                )
             for e in narrative_entries:
-                parts.append(f"- {e.ref_id}: {e.source} {e.identifier} | {e.date} | {e.value} {e.unit} | {e.context}")
+                parts.append(
+                    f"- {e.ref_id}: {e.source} {e.identifier} | {e.date} | {e.value} {e.unit} | {e.context}"
+                )
         else:
-            parts.append("## Evidence\nNo evidence was retrieved for this query (sources may be temporarily unavailable or no data in date range).")
+            parts.append(
+                "## Evidence\nNo evidence was retrieved for this query (sources may be temporarily unavailable or no data in date range)."
+            )
         if stats_results:
             parts.append("\n## Computed stats\n")
             for k, v in stats_results.items():
@@ -777,12 +971,14 @@ Do not invent or guess values. Structure your response: (1) establish what happe
         if task.context.evidence_chunks:
             parts.append("\n## Relevant excerpts (RAG / vector)\n")
             for i, txt in enumerate(task.context.evidence_chunks[:18]):
-                parts.append(f"[Excerpt {i+1}]\n{txt[:500]}...\n")
+                parts.append(f"[Excerpt {i + 1}]\n{txt[:500]}...\n")
         historic = getattr(task.context, "historic_context_summary", None)
         if historic:
             parts.append("\n## Historic context (multi-source)\n")
             parts.append(historic[:6000])
-            parts.append("\nUse this historic context where it helps explain causes or prior events. Events mentioned by more sources are more reliable.")
+            parts.append(
+                "\nUse this historic context where it helps explain causes or prior events. Events mentioned by more sources are more reliable."
+            )
         rss_snippets = getattr(task.context, "rss_snippets", None) or []
         if rss_snippets:
             parts.append("\n## News / reporting (use for causes, drivers, and context)\n")
@@ -791,9 +987,13 @@ Do not invent or guess values. Structure your response: (1) establish what happe
                 snippet = (s.get("snippet") or "")[:350]
                 pub = s.get("published_at") or ""
                 parts.append(f"- {title} ({pub})\n  {snippet}\n")
-            parts.append("Use the news/reporting above where relevant to explain causes, supply/demand, or market context. Cite price evidence (REF-ids) for levels and dates.")
+            parts.append(
+                "Use the news/reporting above where relevant to explain causes, supply/demand, or market context. Cite price evidence (REF-ids) for levels and dates."
+            )
         else:
-            parts.append("\n## News / reporting\nNo news or reporting excerpts are available for this topic. Base your analysis on the price and other evidence above; note that causes or drivers are not evidenced.")
+            parts.append(
+                "\n## News / reporting\nNo news or reporting excerpts are available for this topic. Base your analysis on the price and other evidence above; note that causes or drivers are not evidenced."
+            )
         parts.append(
             "\n## Response\n"
             "1) Establish the move: Using the Evidence (REF-ids), state clearly what happened to price/levels and over which dates. Cite REF-ids for every number and date.\n"
@@ -818,11 +1018,11 @@ Do not invent or guess values. Structure your response: (1) establish what happe
         # Extract dollar amounts ($X, $X.XX)
         dollar_pattern = re.compile(r"\$\s*([\d,]+(?:\.\d{2})?)")
         # Extract percentages (X%, X.XX%)
-        pct_pattern = re.compile(r"([\d.]+)\s*%")
+        re.compile(r"([\d.]+)\s*%")
         # Extract dates (YYYY-MM-DD, MM/DD/YYYY)
         date_pattern = re.compile(r"\b(\d{4}-\d{2}-\d{2}|\d{1,2}/\d{1,2}/\d{2,4})\b")
         # Extract numeric values (standalone numbers that could be prices)
-        num_pattern = re.compile(r"\b(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)\b")
+        re.compile(r"\b(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)\b")
 
         def _find_match(value: str | float, tol_pct: float = 0.5) -> EvidenceIndexEntry | None:
             try:
@@ -894,7 +1094,11 @@ Do not invent or guess values. Structure your response: (1) establish what happe
             logger.info("Analysis rejected: %d fabricated claims", vr.fabricated)
             return False
         if vr.unsupported > qc.max_unsupported_claims:
-            logger.info("Analysis rejected: %d unsupported claims (max %d)", vr.unsupported, qc.max_unsupported_claims)
+            logger.info(
+                "Analysis rejected: %d unsupported claims (max %d)",
+                vr.unsupported,
+                qc.max_unsupported_claims,
+            )
             return False
         return True
 
@@ -903,7 +1107,11 @@ Do not invent or guess values. Structure your response: (1) establish what happe
         vr = task.context.verification_result
         if not vr or not vr.details:
             return
-        failed = [d for d in vr.details if d.verdict in (ClaimVerdict.unsupported, ClaimVerdict.fabricated)]
+        failed = [
+            d
+            for d in vr.details
+            if d.verdict in (ClaimVerdict.unsupported, ClaimVerdict.fabricated)
+        ]
         if not failed:
             return
         index = {e.ref_id: e for e in (task.context.evidence_index or [])}
@@ -914,7 +1122,7 @@ Do not invent or guess values. Structure your response: (1) establish what happe
             "\n## Errors to fix\n",
         ]
         for d in failed[:10]:
-            parts.append(f"- \"{d.claim_text}\" (verdict: {d.verdict.value})")
+            parts.append(f'- "{d.claim_text}" (verdict: {d.verdict.value})')
         parts.append("\n## Evidence (use these REF-ids)\n")
         for e in list(index.values())[:30]:
             parts.append(f"- {e.ref_id}: {e.date} | {e.value} {e.unit}")
@@ -926,9 +1134,11 @@ Do not invent or guess values. Structure your response: (1) establish what happe
         """Load scheduled tasks from finance_schedule.yaml."""
         try:
             from config.paths import FINANCE_SCHEDULE_YAML
+
             if not FINANCE_SCHEDULE_YAML.exists():
                 return []
             import yaml
+
             with open(FINANCE_SCHEDULE_YAML) as f:
                 cfg = yaml.safe_load(f) or {}
             sched = cfg.get("schedule") or {}
@@ -981,7 +1191,8 @@ Do not invent or guess values. Structure your response: (1) establish what happe
         while not self._queue_stop.is_set():
             try:
                 queued_ids = [
-                    tid for tid in self._task_order
+                    tid
+                    for tid in self._task_order
                     if self._tasks.get(tid) and self._tasks[tid].status == TaskStatus.queued
                 ]
                 if not queued_ids:
@@ -993,9 +1204,16 @@ Do not invent or guess values. Structure your response: (1) establish what happe
                 # Prefer high priority, then FIFO by _task_order
                 next_id = min(
                     queued_ids,
-                    key=lambda tid: (self._tasks[tid].priority.sort_value, self._task_order.index(tid)),
+                    key=lambda tid: (
+                        self._tasks[tid].priority.sort_value,
+                        self._task_order.index(tid),
+                    ),
                 )
-                logger.info("Queue worker running task %s (type=%s)", next_id, self._tasks[next_id].task_type.value)
+                logger.info(
+                    "Queue worker running task %s (type=%s)",
+                    next_id,
+                    self._tasks[next_id].task_type.value,
+                )
                 try:
                     result = await self.run_task(next_id)
                     if result:
@@ -1037,7 +1255,9 @@ Do not invent or guess values. Structure your response: (1) establish what happe
                         except ValueError:
                             tt = TaskType.refresh
                         task_id = self.submit_task(
-                            tt, params, priority=TaskPriority.low,
+                            tt,
+                            params,
+                            priority=TaskPriority.low,
                             reason=f"Scheduled run: {name} (interval met)",
                         )
                         logger.info("Scheduled task %s submitted: %s", name, task_id)
@@ -1064,14 +1284,17 @@ Do not invent or guess values. Structure your response: (1) establish what happe
             next_run = None
             if last:
                 from datetime import timedelta
+
                 next_run = last + timedelta(hours=interval_hours)
-            items.append({
-                "name": name,
-                "task_type": spec.get("task_type", "refresh"),
-                "interval_hours": interval_hours,
-                "last_run": last.isoformat() if last else None,
-                "next_run": next_run.isoformat() if next_run else None,
-            })
+            items.append(
+                {
+                    "name": name,
+                    "task_type": spec.get("task_type", "refresh"),
+                    "interval_hours": interval_hours,
+                    "last_run": last.isoformat() if last else None,
+                    "next_run": next_run.isoformat() if next_run else None,
+                }
+            )
         return {"tasks": items}
 
     def _ledger_record(self, task: Task, source_id: str, status: str, **kwargs: Any) -> None:
@@ -1080,6 +1303,7 @@ Do not invent or guess values. Structure your response: (1) establish what happe
             return
         try:
             from domains.finance.data.evidence_ledger import record
+
             report_id = f"orchestrator_{task.task_id}"
             record(
                 report_id=report_id,
@@ -1139,7 +1363,9 @@ Do not invent or guess values. Structure your response: (1) establish what happe
             else:
                 reason = "Queued"
 
-        log_queue_decision(activity=activity, reason=reason, task_id=task_id, priority=priority.value)
+        log_queue_decision(
+            activity=activity, reason=reason, task_id=task_id, priority=priority.value
+        )
         log_event(TASK_ACCEPTED, task_id, {"type": task_type.value, "priority": priority.value})
         logger.info(
             "Task submitted: id=%s type=%s priority=%s — %s",
@@ -1197,7 +1423,8 @@ Do not invent or guess values. Structure your response: (1) establish what happe
         """
         entries: list[dict[str, Any]] = []
         tasks = [
-            t for t in self._tasks.values()
+            t
+            for t in self._tasks.values()
             if t.status in (TaskStatus.complete, TaskStatus.failed) and t.context.evidence_index
         ]
         tasks.sort(key=lambda t: t.updated_at, reverse=True)
@@ -1205,16 +1432,18 @@ Do not invent or guess values. Structure your response: (1) establish what happe
             for e in task.context.evidence_index:
                 if source and e.source != source:
                     continue
-                entries.append({
-                    "ref_id": e.ref_id,
-                    "source": e.source,
-                    "identifier": e.identifier,
-                    "date": str(e.date) if e.date else None,
-                    "value": e.value,
-                    "unit": e.unit,
-                    "context": e.context,
-                    "task_id": task.task_id,
-                })
+                entries.append(
+                    {
+                        "ref_id": e.ref_id,
+                        "source": e.source,
+                        "identifier": e.identifier,
+                        "date": str(e.date) if e.date else None,
+                        "value": e.value,
+                        "unit": e.unit,
+                        "context": e.context,
+                        "task_id": task.task_id,
+                    }
+                )
         total = len(entries)
         page = entries[offset : offset + limit]
         return {"entries": page, "total": total, "limit": limit, "offset": offset}
@@ -1230,7 +1459,8 @@ Do not invent or guess values. Structure your response: (1) establish what happe
         """
         items: list[dict[str, Any]] = []
         tasks = [
-            t for t in self._tasks.values()
+            t
+            for t in self._tasks.values()
             if t.task_type == TaskType.analysis
             and t.status in (TaskStatus.complete, TaskStatus.failed)
             and t.context.verification_result
@@ -1240,19 +1470,21 @@ Do not invent or guess values. Structure your response: (1) establish what happe
             vr = task.context.verification_result
             if not vr:
                 continue
-            items.append({
-                "task_id": task.task_id,
-                "query": task.parameters.get("query", ""),
-                "total_claims": vr.total_claims,
-                "verified": vr.verified,
-                "unsupported": vr.unsupported,
-                "fabricated": vr.fabricated,
-                "details": [
-                    {"claim_text": c.claim_text, "ref_id": c.ref_id, "verdict": c.verdict.value}
-                    for c in vr.details[:20]
-                ],
-                "updated_at": task.updated_at.isoformat(),
-            })
+            items.append(
+                {
+                    "task_id": task.task_id,
+                    "query": task.parameters.get("query", ""),
+                    "total_claims": vr.total_claims,
+                    "verified": vr.verified,
+                    "unsupported": vr.unsupported,
+                    "fabricated": vr.fabricated,
+                    "details": [
+                        {"claim_text": c.claim_text, "ref_id": c.ref_id, "verdict": c.verdict.value}
+                        for c in vr.details[:20]
+                    ],
+                    "updated_at": task.updated_at.isoformat(),
+                }
+            )
         total = len(items)
         page = items[offset : offset + limit]
         return {"verifications": page, "total": total, "limit": limit, "offset": offset}
@@ -1331,8 +1563,17 @@ Do not invent or guess values. Structure your response: (1) establish what happe
                     "verified": vr.verified if vr else 0,
                     "unsupported": vr.unsupported if vr else 0,
                     "fabricated": vr.fabricated if vr else 0,
-                } if vr else None,
-                "rss_snippets": [{"title": s.get("title"), "url": s.get("url"), "published_at": s.get("published_at")} for s in rss[:20]],
+                }
+                if vr
+                else None,
+                "rss_snippets": [
+                    {
+                        "title": s.get("title"),
+                        "url": s.get("url"),
+                        "published_at": s.get("published_at"),
+                    }
+                    for s in rss[:20]
+                ],
             }
         elif task.task_type in (TaskType.refresh, TaskType.ingest):
             if summary:
@@ -1345,7 +1586,9 @@ Do not invent or guess values. Structure your response: (1) establish what happe
 
         return TaskResult(
             task_id=task.task_id,
-            status=ResultStatus.failed if task.status == TaskStatus.failed else ResultStatus.success,
+            status=ResultStatus.failed
+            if task.status == TaskStatus.failed
+            else ResultStatus.success,
             output=output,
             confidence=confidence,
             iterations_used=task.current_iteration,

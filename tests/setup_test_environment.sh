@@ -16,7 +16,7 @@ echo "🗄️ Setting up test database..."
 
 # Verify API is running
 echo "🌐 Verifying API is running..."
-if curl -s http://localhost:8001/api/v4/system-monitoring/status > /dev/null; then
+if curl -s http://localhost:8001/api/system_monitoring/status > /dev/null; then
     echo "✅ API is running on port 8001"
 else
     echo "❌ API is not running. Please start the API server first."

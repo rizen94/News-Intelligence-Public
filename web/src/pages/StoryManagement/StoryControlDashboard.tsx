@@ -107,10 +107,28 @@ interface SnackbarState {
 
 const UKRAINE_STORY_DATA: StoryForm = {
   name: 'Ukraine-Russia Conflict',
-  description: 'Tracking the ongoing Ukraine-Russia conflict including military operations, diplomatic efforts, and international response.',
+  description:
+    'Tracking the ongoing Ukraine-Russia conflict including military operations, diplomatic efforts, and international response.',
   priority_level: 10,
-  keywords: ['Ukraine', 'Russia', 'conflict', 'war', 'invasion', 'military', 'defense', 'sanctions', 'ceasefire', 'NATO'],
-  entities: ['Volodymyr Zelensky', 'Vladimir Putin', 'NATO', 'European Union', 'United Nations'],
+  keywords: [
+    'Ukraine',
+    'Russia',
+    'conflict',
+    'war',
+    'invasion',
+    'military',
+    'defense',
+    'sanctions',
+    'ceasefire',
+    'NATO',
+  ],
+  entities: [
+    'Volodymyr Zelensky',
+    'Vladimir Putin',
+    'NATO',
+    'European Union',
+    'United Nations',
+  ],
   geographic_regions: ['Ukraine', 'Russia', 'Eastern Europe'],
   quality_threshold: 0.8,
   max_articles_per_day: 200,
@@ -124,9 +142,12 @@ const StoryControlDashboard: React.FC = () => {
     severity: 'info',
   });
 
-  const showSuccess = (message: string) => setSnackbar({ open: true, message, severity: 'success' });
-  const showError = (message: string) => setSnackbar({ open: true, message, severity: 'error' });
-  const showLoading = (message: string) => setSnackbar({ open: true, message, severity: 'info' });
+  const showSuccess = (message: string) =>
+    setSnackbar({ open: true, message, severity: 'success' });
+  const showError = (message: string) =>
+    setSnackbar({ open: true, message, severity: 'error' });
+  const showLoading = (message: string) =>
+    setSnackbar({ open: true, message, severity: 'info' });
 
   const [stories, setStories] = useState<Story[]>([]);
   const [loading, setLoading] = useState(true);
@@ -134,7 +155,8 @@ const StoryControlDashboard: React.FC = () => {
   const [activeTab, setActiveTab] = useState(0);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [showUkraineDialog, setShowUkraineDialog] = useState(false);
-  const [feedbackLoopStatus, setFeedbackLoopStatus] = useState<FeedbackLoopStatus | null>(null);
+  const [feedbackLoopStatus, setFeedbackLoopStatus] =
+    useState<FeedbackLoopStatus | null>(null);
   const [weeklyDigest, setWeeklyDigest] = useState<WeeklyDigest | null>(null);
   const [buttonLoading, setButtonLoading] = useState<ButtonLoadingState>({});
 
@@ -347,7 +369,9 @@ const StoryControlDashboard: React.FC = () => {
     }));
   };
 
-  const getPriorityColor = (priority: number): 'error' | 'warning' | 'info' | 'success' => {
+  const getPriorityColor = (
+    priority: number
+  ): 'error' | 'warning' | 'info' | 'success' => {
     if (priority >= 8) return 'error';
     if (priority >= 6) return 'warning';
     if (priority >= 4) return 'info';

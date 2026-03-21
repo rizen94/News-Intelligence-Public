@@ -62,7 +62,7 @@ const ArticleDeduplicationManager = () => {
   const [dryRun, setDryRun] = useState(true);
   const [similarityThreshold, setSimilarityThreshold] = useState(85);
 
-  const loadDeduplicationData = useCallback(async() => {
+  const loadDeduplicationData = useCallback(async () => {
     setLoading(true);
     setError(null);
 
@@ -110,12 +110,10 @@ const ArticleDeduplicationManager = () => {
     loadDeduplicationData();
   }, [loadDeduplicationData]);
 
-  const handleDetectDuplicates = async() => {
+  const handleDetectDuplicates = async () => {
     setLoading(true);
     try {
-      const response = await api.get(
-        '/api/articles/duplicates/detect',
-      );
+      const response = await api.get('/api/articles/duplicates/detect');
       if (response.data?.success) {
         setDuplicates(response.data.data?.url_duplicates || []);
         setContentDuplicates(response.data.data?.content_duplicates || []);
@@ -133,7 +131,7 @@ const ArticleDeduplicationManager = () => {
     }
   };
 
-  const handleAutoMerge = async() => {
+  const handleAutoMerge = async () => {
     setLoading(true);
     try {
       const response = await api.post(
@@ -141,14 +139,14 @@ const ArticleDeduplicationManager = () => {
         null,
         {
           params: { dry_run: dryRun },
-        },
+        }
       );
 
       if (response.data?.success) {
         alert(
           `${dryRun ? 'Dry run: ' : ''}Merged ${
             response.data.data?.total_processed || 0
-          } duplicate articles`,
+          } duplicate articles`
         );
         loadDeduplicationData(); // Refresh data
       }
@@ -159,12 +157,10 @@ const ArticleDeduplicationManager = () => {
     }
   };
 
-  const handleAddPrevention = async() => {
+  const handleAddPrevention = async () => {
     setLoading(true);
     try {
-      const response = await api.post(
-        '/api/articles/duplicates/prevent',
-      );
+      const response = await api.post('/api/articles/duplicates/prevent');
 
       if (response.data?.success) {
         alert('Deduplication prevention constraints added successfully');
@@ -193,14 +189,14 @@ const ArticleDeduplicationManager = () => {
 
   const getDuplicateTypeIcon = type => {
     switch (type) {
-    case 'exact_url':
-      return <Link color='error' />;
-    case 'content_hash':
-      return <ContentCopy color='warning' />;
-    case 'content_similarity':
-      return <Info color='info' />;
-    default:
-      return <Info />;
+      case 'exact_url':
+        return <Link color='error' />;
+      case 'content_hash':
+        return <ContentCopy color='warning' />;
+      case 'content_similarity':
+        return <Info color='info' />;
+      default:
+        return <Info />;
     }
   };
 
@@ -508,7 +504,7 @@ const ArticleDeduplicationManager = () => {
                           <ListItemText
                             primary={article.title}
                             secondary={`${article.domain} - ${new Date(
-                              article.created_at,
+                              article.created_at
                             ).toLocaleDateString()}`}
                           />
                           <ListItemSecondaryAction>
@@ -592,7 +588,7 @@ const ArticleDeduplicationManager = () => {
                             <ListItemSecondaryAction>
                               <Chip
                                 label={`${(article.similarity * 100).toFixed(
-                                  1,
+                                  1
                                 )}%`}
                                 size='small'
                                 color={
@@ -601,7 +597,7 @@ const ArticleDeduplicationManager = () => {
                               />
                             </ListItemSecondaryAction>
                           </ListItem>
-                        ),
+                        )
                       )}
                     </List>
                   </AccordionDetails>

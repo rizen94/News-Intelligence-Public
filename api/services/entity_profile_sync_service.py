@@ -64,7 +64,9 @@ def backfill_entity_canonical(domain_key: str) -> int:
             conn.commit()
         conn.close()
         if created > 0:
-            logger.info(f"backfill_entity_canonical {domain_key}: {created} canonical entities created")
+            logger.info(
+                f"backfill_entity_canonical {domain_key}: {created} canonical entities created"
+            )
         return created
     except Exception as e:
         logger.warning(f"backfill_entity_canonical {domain_key} failed: {e}")
@@ -122,7 +124,9 @@ def sync_domain_entity_profiles(domain_key: str) -> int:
                     continue
 
                 # Insert entity_profiles row
-                metadata = json.dumps({"canonical_name": canonical_name, "entity_type": entity_type})
+                metadata = json.dumps(
+                    {"canonical_name": canonical_name, "entity_type": entity_type}
+                )
                 cur.execute(
                     """
                     INSERT INTO intelligence.entity_profiles
@@ -163,7 +167,10 @@ def sync_domain_entity_profiles(domain_key: str) -> int:
             logger.info(f"Entity profile sync {domain_key}: {created} new mappings created")
         # Backfill context_entity_mentions for existing contexts (article_entities now map to profiles)
         try:
-            from services.context_processor_service import backfill_context_entity_mentions_for_domain
+            from services.context_processor_service import (
+                backfill_context_entity_mentions_for_domain,
+            )
+
             backfill_context_entity_mentions_for_domain(domain_key, limit=1000)
         except Exception as e:
             logger.debug(f"Entity profile sync backfill mentions: {e}")

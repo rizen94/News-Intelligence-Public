@@ -13,6 +13,7 @@ from typing import Any
 
 try:
     from config.logging_config import get_component_logger
+
     logger = get_component_logger("orchestrator")
 except Exception:
     logger = logging.getLogger(__name__)
@@ -22,13 +23,12 @@ SCHEMA_VERSION = 1
 
 def _get_db_path() -> Path:
     from config.paths import ORCHESTRATOR_STATE_DB
+
     return Path(ORCHESTRATOR_STATE_DB)
 
 
 def _init_schema(conn: sqlite3.Connection) -> None:
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS _schema_meta (key TEXT PRIMARY KEY, value TEXT)"
-    )
+    conn.execute("CREATE TABLE IF NOT EXISTS _schema_meta (key TEXT PRIMARY KEY, value TEXT)")
     cur = conn.execute("SELECT value FROM _schema_meta WHERE key = 'schema_version'")
     if cur.fetchone() is None:
         conn.execute(
@@ -116,9 +116,7 @@ def get_controller_state() -> dict[str, Any]:
     try:
         conn = sqlite3.connect(str(_get_db_path()))
         _init_schema(conn)
-        cur = conn.execute(
-            "SELECT state_json FROM orchestrator_controller_state WHERE id = 1"
-        )
+        cur = conn.execute("SELECT state_json FROM orchestrator_controller_state WHERE id = 1")
         row = cur.fetchone()
         conn.close()
         if row and row[0]:
@@ -215,12 +213,36 @@ def update_source_profile(
         now = datetime.now(timezone.utc).isoformat()
         existing = get_source_profile(source_id)
         if existing:
-            ht = historical_update_times if historical_update_times is not None else existing["historical_update_times"]
-            avg = average_interval_seconds if average_interval_seconds is not None else existing["average_interval_seconds"]
-            rel = reliability_score if reliability_score is not None else existing["reliability_score"]
-            cv = content_value_score if content_value_score is not None else existing["content_value_score"]
-            empty = last_empty_fetch_count if last_empty_fetch_count is not None else existing["last_empty_fetch_count"]
-            pred = predicted_next_update if predicted_next_update is not None else existing["predicted_next_update"]
+            ht = (
+                historical_update_times
+                if historical_update_times is not None
+                else existing["historical_update_times"]
+            )
+            avg = (
+                average_interval_seconds
+                if average_interval_seconds is not None
+                else existing["average_interval_seconds"]
+            )
+            rel = (
+                reliability_score
+                if reliability_score is not None
+                else existing["reliability_score"]
+            )
+            cv = (
+                content_value_score
+                if content_value_score is not None
+                else existing["content_value_score"]
+            )
+            empty = (
+                last_empty_fetch_count
+                if last_empty_fetch_count is not None
+                else existing["last_empty_fetch_count"]
+            )
+            pred = (
+                predicted_next_update
+                if predicted_next_update is not None
+                else existing["predicted_next_update"]
+            )
         else:
             ht = historical_update_times or []
             avg = average_interval_seconds
@@ -396,7 +418,12 @@ def get_recent_metrics(metric_name: str | None = None, limit: int = 100) -> list
         rows = cur.fetchall()
         conn.close()
         return [
-            {"id": r["id"], "metric_name": r["metric_name"], "value": r["value"], "recorded_at": r["recorded_at"]}
+            {
+                "id": r["id"],
+                "metric_name": r["metric_name"],
+                "value": r["value"],
+                "recorded_at": r["recorded_at"],
+            }
             for r in rows
         ]
     except Exception as e:
@@ -453,7 +480,12 @@ def save_learned_pattern(
         cur = conn.execute(
             """INSERT INTO orchestrator_learned_patterns (pattern_type, pattern_data, confidence, updated_at)
                VALUES (?, ?, ?, ?)""",
-            (pattern_type, json.dumps(pattern_data) if pattern_data is not None else None, confidence, now),
+            (
+                pattern_type,
+                json.dumps(pattern_data) if pattern_data is not None else None,
+                confidence,
+                now,
+            ),
         )
         rowid = cur.lastrowid
         conn.commit()

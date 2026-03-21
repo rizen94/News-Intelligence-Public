@@ -7,16 +7,15 @@ When file write or activity_logger forward fails, the write is no-op (failure sw
 
 import hashlib
 import json
-import os
 import threading
 import time
 import uuid
-from contextlib import asynccontextmanager
+from collections.abc import Callable, Coroutine
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from functools import wraps
 from pathlib import Path
-from typing import Any, Callable, Coroutine, List, Optional
+from typing import Any
 
 # Lazy init
 _LOG_DIR: Path | None = None
@@ -33,6 +32,7 @@ def _ensure_init() -> Path:
             return _LOG_DIR
         try:
             from config.paths import LOG_DIR
+
             _LOG_DIR = Path(LOG_DIR)
         except Exception:
             _LOG_DIR = Path(__file__).resolve().parents[3] / "logs"
@@ -50,6 +50,7 @@ def _log_full_text() -> bool:
     """Whether to log full prompt/response (dev: true, prod: false)."""
     try:
         from config.settings import LOG_LLM_FULL_TEXT
+
         return bool(LOG_LLM_FULL_TEXT)
     except Exception:
         return False
@@ -58,50 +59,50 @@ def _log_full_text() -> bool:
 @dataclass
 class LLMInteractionRecord:
     interaction_id: str
-    task_id: Optional[str]
-    request_id: Optional[str]
+    task_id: str | None
+    request_id: str | None
     phase: str
     worker: str
     model: str
-    prompt_template_id: Optional[str]
+    prompt_template_id: str | None
     prompt_hash: str
     system_prompt_hash: str
-    input_token_count: Optional[int]
-    context_documents: List[dict]
-    output_token_count: Optional[int]
+    input_token_count: int | None
+    context_documents: list[dict]
+    output_token_count: int | None
     response_hash: str
     latency_ms: float
-    finish_reason: Optional[str]
-    self_eval_score: Optional[float]
-    downstream_eval_score: Optional[float]
-    eval_criteria: Optional[str]
-    estimated_cost_usd: Optional[float]
+    finish_reason: str | None
+    self_eval_score: float | None
+    downstream_eval_score: float | None
+    eval_criteria: str | None
+    estimated_cost_usd: float | None
     timestamp: str
-    prompt_text: Optional[str]
-    response_text: Optional[str]
+    prompt_text: str | None
+    response_text: str | None
 
 
 def log_llm_interaction(
     *,
-    task_id: Optional[str] = None,
-    request_id: Optional[str] = None,
+    task_id: str | None = None,
+    request_id: str | None = None,
     phase: str = "unknown",
     worker: str = "unknown",
     model: str,
-    prompt_template_id: Optional[str] = None,
+    prompt_template_id: str | None = None,
     prompt: str = "",
-    system_prompt: Optional[str] = "",
-    input_token_count: Optional[int] = None,
-    context_documents: Optional[List[dict]] = None,
+    system_prompt: str | None = "",
+    input_token_count: int | None = None,
+    context_documents: list[dict] | None = None,
     response: str = "",
-    output_token_count: Optional[int] = None,
+    output_token_count: int | None = None,
     latency_ms: float = 0,
-    finish_reason: Optional[str] = None,
-    self_eval_score: Optional[float] = None,
-    downstream_eval_score: Optional[float] = None,
-    eval_criteria: Optional[str] = None,
-    estimated_cost_usd: Optional[float] = None,
-    log_full_text: Optional[bool] = None,
+    finish_reason: str | None = None,
+    self_eval_score: float | None = None,
+    downstream_eval_score: float | None = None,
+    eval_criteria: str | None = None,
+    estimated_cost_usd: float | None = None,
+    log_full_text: bool | None = None,
     **extra: Any,
 ) -> str:
     """
@@ -148,7 +149,12 @@ def log_llm_interaction(
 
     try:
         from shared.logging.activity_logger import log_activity
-        simple = {k: v for k, v in entry.items() if k not in ("prompt_text", "response_text", "context_documents")}
+
+        simple = {
+            k: v
+            for k, v in entry.items()
+            if k not in ("prompt_text", "response_text", "context_documents")
+        }
         if context_documents:
             simple["context_doc_count"] = len(context_documents)
         log_activity(
@@ -167,7 +173,7 @@ def log_llm_interaction(
 def track_llm_call(
     phase: str = "unknown",
     worker: str = "unknown",
-    prompt_template_id: Optional[str] = None,
+    prompt_template_id: str | None = None,
 ):
     """
     Decorator for LLM call functions. Captures timing and logs to ledger.
@@ -214,5 +220,7 @@ def track_llm_call(
                     status="error",
                 )
                 raise
+
         return wrapper
+
     return decorator

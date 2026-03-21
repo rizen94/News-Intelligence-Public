@@ -10,7 +10,7 @@ event timeline. Two modes:
 
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from shared.services.llm_service import LLMService, ModelType
 
@@ -57,12 +57,10 @@ Use a professional, concise tone."""
 class NarrativeSynthesisService:
     """Generates narrative text from structured timeline data."""
 
-    def __init__(self, llm: Optional[LLMService] = None):
+    def __init__(self, llm: LLMService | None = None):
         self.llm = llm or LLMService()
 
-    async def generate_chronological_narrative(
-        self, timeline: Dict[str, Any]
-    ) -> Dict[str, Any]:
+    async def generate_chronological_narrative(self, timeline: dict[str, Any]) -> dict[str, Any]:
         """
         Produce a long-form chronological narrative from a timeline dict
         (as returned by TimelineBuilderService.build_timeline).
@@ -92,9 +90,7 @@ class NarrativeSynthesisService:
             logger.error(f"Narrative generation failed: {e}")
             return {"success": False, "error": str(e)}
 
-    async def generate_briefing(
-        self, timeline: Dict[str, Any]
-    ) -> Dict[str, Any]:
+    async def generate_briefing(self, timeline: dict[str, Any]) -> dict[str, Any]:
         """Produce a short executive briefing from timeline data."""
         events = timeline.get("events", [])
         if not events:
@@ -104,8 +100,8 @@ class NarrativeSynthesisService:
         latest = events[-1]
         all_entities = set()
         for e in events:
-            for a in (e.get('key_actors') or []):
-                name = a.get('name', '') if isinstance(a, dict) else str(a)
+            for a in e.get("key_actors") or []:
+                name = a.get("name", "") if isinstance(a, dict) else str(a)
                 if name:
                     all_entities.add(name)
 
@@ -141,36 +137,36 @@ class NarrativeSynthesisService:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _format_events_block(events: List[Dict], gaps: List[Dict]) -> str:
-        gap_map = {g['after_event_id']: g for g in gaps}
+    def _format_events_block(events: list[dict], gaps: list[dict]) -> str:
+        gap_map = {g["after_event_id"]: g for g in gaps}
         lines = []
         for evt in events:
-            date_str = str(evt.get('event_date') or 'date unknown')
-            prec = evt.get('date_precision', '')
-            if prec and prec != 'exact':
+            date_str = str(evt.get("event_date") or "date unknown")
+            prec = evt.get("date_precision", "")
+            if prec and prec != "exact":
                 date_str += f" (approx: {prec})"
             sources = ""
-            if evt.get('source_count', 1) > 1:
+            if evt.get("source_count", 1) > 1:
                 sources = f" [{evt['source_count']} sources]"
             source_info = ""
-            if evt.get('source', {}).get('domain'):
+            if evt.get("source", {}).get("domain"):
                 source_info = f" (via {evt['source']['domain']})"
 
             lines.append(
                 f"[{date_str}] {evt['title']}{sources}{source_info}\n"
                 f"  {evt.get('description') or evt.get('outcome') or ''}"
             )
-            if evt.get('is_ongoing'):
+            if evt.get("is_ongoing"):
                 lines.append("  (ongoing)")
 
-            gap = gap_map.get(evt['id'])
+            gap = gap_map.get(evt["id"])
             if gap:
                 lines.append(f"\n  --- {gap['gap_days']}-day gap ---\n")
 
         return "\n\n".join(lines)
 
     @staticmethod
-    def _storyline_title(timeline: Dict) -> str:
+    def _storyline_title(timeline: dict) -> str:
         if timeline.get("events"):
             first = timeline["events"][0]
             return first.get("title", "Untitled Storyline")

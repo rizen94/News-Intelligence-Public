@@ -28,6 +28,7 @@ def handle_article_ingested(envelope: EventEnvelope, orchestrator: Any = None) -
         return
     try:
         from datetime import datetime, timezone
+
         ts = datetime.now(timezone.utc).isoformat()
         value = json.dumps({"domain_key": domain_key, "article_id": article_id, "at": ts})
         with conn.cursor() as cur:

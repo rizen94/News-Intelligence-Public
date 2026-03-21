@@ -7,8 +7,4 @@ from middleware.logging import LoggingMiddleware
 from middleware.metrics import MetricsMiddleware
 from middleware.security import SecurityMiddleware
 
-__all__ = [
-    "LoggingMiddleware",
-    "MetricsMiddleware", 
-    "SecurityMiddleware"
-]
+__all__ = ["LoggingMiddleware", "MetricsMiddleware", "SecurityMiddleware"]

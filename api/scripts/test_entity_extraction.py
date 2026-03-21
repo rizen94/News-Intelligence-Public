@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """Test entity extraction: run on one article and show results."""
 
+import asyncio
 import os
 import sys
-import asyncio
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+
 async def main():
-    from shared.database.connection import get_db_connection
     from services.article_entity_extraction_service import get_article_entity_extraction_service
+    from shared.database.connection import get_db_connection
 
     conn = get_db_connection()
     if not conn:
@@ -25,11 +26,11 @@ async def main():
                 ORDER BY id DESC LIMIT 1
             """)
             row = cur.fetchone()
-        
+
         if not row:
             print("No articles found in politics.articles")
             return 0
-        
+
         article_id, title, content = row
         print(f"Testing entity extraction on article {article_id}:")
         print(f"  Title: {title[:80]}...")
@@ -37,7 +38,7 @@ async def main():
 
         svc = get_article_entity_extraction_service()
         result = await svc.extract_and_store(article_id, title, content, schema="politics")
-        
+
         if result.get("success"):
             c = result.get("counts", {})
             print("✅ Entity extraction completed:")
@@ -46,14 +47,17 @@ async def main():
             print(f"   Times: {c.get('times', 0)}")
             print(f"   Countries: {c.get('countries', 0)}")
             print(f"   Keywords: {c.get('keywords', 0)}")
-            
+
             # Show stored entities
             with conn.cursor() as cur:
-                cur.execute("""
+                cur.execute(
+                    """
                     SELECT entity_name, entity_type, mention_source, confidence
                     FROM politics.article_entities WHERE article_id = %s
                     ORDER BY entity_type, entity_name LIMIT 20
-                """, (article_id,))
+                """,
+                    (article_id,),
+                )
                 rows = cur.fetchall()
                 if rows:
                     print()
@@ -66,6 +70,7 @@ async def main():
     finally:
         conn.close()
     return 0
+
 
 if __name__ == "__main__":
     sys.exit(asyncio.run(main()))

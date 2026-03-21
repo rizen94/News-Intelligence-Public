@@ -7,8 +7,8 @@ and exposes latest digests for GET /api/products/weekly_digest.
 import asyncio
 import json
 import logging
-from datetime import datetime, timedelta, date
-from typing import Any, Dict, List, Optional
+from datetime import date, datetime, timedelta
+from typing import Any
 
 from shared.database.connection import get_db_connection
 
@@ -19,8 +19,9 @@ _digest_service: Any = None
 
 def _get_daily_briefing_service():
     """Lazy init DailyBriefingService with shared db_config."""
-    from shared.database.connection import get_db_config
     from modules.ml.daily_briefing_service import DailyBriefingService
+    from shared.database.connection import get_db_config
+
     return DailyBriefingService(get_db_config())
 
 
@@ -54,7 +55,7 @@ def _weekly_digest_exists(week_start: date) -> bool:
         conn.close()
 
 
-def _run_weekly_briefing_sync(week_start: date) -> Optional[Dict[str, Any]]:
+def _run_weekly_briefing_sync(week_start: date) -> dict[str, Any] | None:
     """Generate weekly briefing for the given week (sync), aggregating from all domains. Returns weekly_briefing dict or None."""
     try:
         svc = _get_daily_briefing_service()
@@ -68,8 +69,8 @@ def _run_weekly_briefing_sync(week_start: date) -> Optional[Dict[str, Any]]:
 def _insert_weekly_digest(
     week_start: date,
     week_end: date,
-    weekly_briefing: Dict[str, Any],
-) -> Optional[str]:
+    weekly_briefing: dict[str, Any],
+) -> str | None:
     """Map weekly_briefing to weekly_digests columns and INSERT. Enriches with editorial ledes."""
     if not weekly_briefing or "error" in weekly_briefing:
         return None
@@ -88,7 +89,8 @@ def _insert_weekly_digest(
             editorial_suggestions = []
             for schema in ("politics", "finance", "science_tech"):
                 try:
-                    cur.execute(f"""
+                    cur.execute(
+                        f"""
                         SELECT id, title, editorial_document->>'lede' as lede
                         FROM {schema}.storylines
                         WHERE updated_at >= %s
@@ -97,14 +99,18 @@ def _insert_weekly_digest(
                           AND editorial_document->>'lede' != ''
                         ORDER BY updated_at DESC
                         LIMIT 5
-                    """, (week_start,))
+                    """,
+                        (week_start,),
+                    )
                     for row in cur.fetchall():
-                        editorial_suggestions.append({
-                            "domain": schema.replace("_", "-"),
-                            "storyline_id": row[0],
-                            "title": row[1],
-                            "lede": row[2],
-                        })
+                        editorial_suggestions.append(
+                            {
+                                "domain": schema.replace("_", "-"),
+                                "storyline_id": row[0],
+                                "title": row[1],
+                                "lede": row[2],
+                            }
+                        )
                 except Exception:
                     pass
 
@@ -169,7 +175,7 @@ class DigestService:
         except Exception as e:
             logger.warning("generate_digest_if_needed failed: %s", e)
 
-    def get_latest_weekly_digests(self, limit: int = 10) -> List[Dict[str, Any]]:
+    def get_latest_weekly_digests(self, limit: int = 10) -> list[dict[str, Any]]:
         """Return latest weekly_digests rows for GET /api/products/weekly_digest."""
         conn = get_db_connection()
         if not conn:
@@ -188,6 +194,7 @@ class DigestService:
                     (limit,),
                 )
                 rows = cur.fetchall()
+
             def _norm_json(val, default):
                 if val is None:
                     return default

@@ -149,7 +149,7 @@ class Logger {
   static componentLifecycle(
     componentName: string,
     event: string,
-    data?: LogData,
+    data?: LogData
   ): void {
     const message = `Component ${componentName}: ${event}`;
     if (data) {
@@ -182,7 +182,7 @@ class Logger {
   static performance(
     operation: string,
     duration: number,
-    metadata?: LogData,
+    metadata?: LogData
   ): void {
     const message = `Performance: ${operation} took ${duration}ms`;
     if (metadata) {

@@ -42,7 +42,7 @@ class DebugHelper {
     method: string,
     status?: number,
     duration?: number,
-    error?: any,
+    error?: any
   ): void {
     if (!this.config.enabled || !this.config.trackApiCalls) return;
 
@@ -86,7 +86,7 @@ class DebugHelper {
     component: string,
     stateName: string,
     prevValue: any,
-    nextValue: any,
+    nextValue: any
   ): void {
     if (!this.config.enabled || !this.config.trackStateChanges) return;
 
@@ -115,7 +115,9 @@ class DebugHelper {
 
     // Warn if operation takes too long
     if (duration > 100) {
-      console.warn(`⚠️ Slow operation detected: ${label} took ${duration.toFixed(2)}ms`);
+      console.warn(
+        `⚠️ Slow operation detected: ${label} took ${duration.toFixed(2)}ms`
+      );
     }
 
     return result;
@@ -126,7 +128,7 @@ class DebugHelper {
    */
   async measurePerformanceAsync<T>(
     label: string,
-    fn: () => Promise<T>,
+    fn: () => Promise<T>
   ): Promise<T> {
     if (!this.config.enabled || !this.config.trackPerformance) {
       return fn();
@@ -140,7 +142,9 @@ class DebugHelper {
     console.log(`⏱️ ${label}: ${duration.toFixed(2)}ms`);
 
     if (duration > 1000) {
-      console.warn(`⚠️ Slow async operation: ${label} took ${duration.toFixed(2)}ms`);
+      console.warn(
+        `⚠️ Slow async operation: ${label} took ${duration.toFixed(2)}ms`
+      );
     }
 
     return result;
@@ -204,16 +208,16 @@ class DebugHelper {
     averageDuration: number;
     errors: number;
     slowCalls: number;
-    } {
+  } {
     const calls = this.apiCallLog;
     const total = calls.length;
-    const durations = calls.map((c) => c.duration).filter((d) => d > 0);
+    const durations = calls.map(c => c.duration).filter(d => d > 0);
     const averageDuration =
       durations.length > 0
         ? durations.reduce((a, b) => a + b, 0) / durations.length
         : 0;
-    const errors = calls.filter((c) => !c.status || c.status >= 400).length;
-    const slowCalls = calls.filter((c) => c.duration > 1000).length;
+    const errors = calls.filter(c => !c.status || c.status >= 400).length;
+    const slowCalls = calls.filter(c => c.duration > 1000).length;
 
     return {
       total,
@@ -248,17 +252,17 @@ class DebugHelper {
     const originalRemoveItem = localStorage.removeItem;
     const originalClear = localStorage.clear;
 
-    localStorage.setItem = function(key: string, value: string) {
+    localStorage.setItem = function (key: string, value: string) {
       console.log('💾 localStorage.setItem:', { key, value });
       originalSetItem.apply(this, [key, value]);
     };
 
-    localStorage.removeItem = function(key: string) {
+    localStorage.removeItem = function (key: string) {
       console.log('🗑️ localStorage.removeItem:', key);
       originalRemoveItem.apply(this, [key]);
     };
 
-    localStorage.clear = function() {
+    localStorage.clear = function () {
       console.log('🧹 localStorage.clear');
       originalClear.apply(this);
     };
@@ -272,8 +276,8 @@ class DebugHelper {
     if (!this.config.enabled) return;
 
     const events = ['resize', 'scroll', 'focus', 'blur'];
-    events.forEach((event) => {
-      window.addEventListener(event, (e) => {
+    events.forEach(event => {
+      window.addEventListener(event, e => {
         console.log(`🪟 Window event: ${event}`, e);
       });
     });
@@ -289,7 +293,7 @@ class DebugHelper {
     localStorage: Record<string, string>;
     apiStats: ReturnType<typeof this.getApiCallStats>;
     timestamp: string;
-    } {
+  } {
     const localStorageData: Record<string, string> = {};
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
@@ -358,11 +362,15 @@ if (import.meta.env.DEV) {
 
   console.log(
     '%c🐛 Debug Helper Active',
-    'color: #4CAF50; font-size: 16px; font-weight: bold;',
+    'color: #4CAF50; font-size: 16px; font-weight: bold;'
   );
   console.log('Access debug tools with: window.debugHelper');
-  console.log('Available methods:', Object.getOwnPropertyNames(Object.getPrototypeOf(debugHelper)).filter(name => name !== 'constructor'));
+  console.log(
+    'Available methods:',
+    Object.getOwnPropertyNames(Object.getPrototypeOf(debugHelper)).filter(
+      name => name !== 'constructor'
+    )
+  );
 }
 
 export default debugHelper;
-

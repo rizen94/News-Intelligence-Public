@@ -154,7 +154,7 @@ const StorylineTracking: React.FC = () => {
                         color='primary'
                         variant='outlined'
                       />
-                    ),
+                    )
                   )}
                 </Box>
               </CardContent>
@@ -176,7 +176,7 @@ const StorylineTracking: React.FC = () => {
                         color='secondary'
                         variant='outlined'
                       />
-                    ),
+                    )
                   )}
                 </Box>
               </CardContent>

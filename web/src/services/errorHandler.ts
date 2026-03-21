@@ -18,29 +18,33 @@ class ErrorHandler {
     }
 
     // Handle unhandled JavaScript errors and resource loading errors
-    window.addEventListener('error', (event) => {
-      // Check if it's a resource loading error
-      const target = event.target;
-      if (target && target instanceof HTMLElement) {
-        const tagName = target.tagName;
-        if (tagName === 'IMG' || tagName === 'SCRIPT' || tagName === 'LINK') {
-          this.handleResourceError(target);
-          return;
+    window.addEventListener(
+      'error',
+      event => {
+        // Check if it's a resource loading error
+        const target = event.target;
+        if (target && target instanceof HTMLElement) {
+          const tagName = target.tagName;
+          if (tagName === 'IMG' || tagName === 'SCRIPT' || tagName === 'LINK') {
+            this.handleResourceError(target);
+            return;
+          }
         }
-      }
 
-      // Otherwise, it's a JavaScript error
-      this.handleError({
-        message: event.message,
-        filename: event.filename,
-        lineno: event.lineno,
-        colno: event.colno,
-        error: event.error,
-      });
-    }, true); // Use capture phase to catch resource errors
+        // Otherwise, it's a JavaScript error
+        this.handleError({
+          message: event.message,
+          filename: event.filename,
+          lineno: event.lineno,
+          colno: event.colno,
+          error: event.error,
+        });
+      },
+      true
+    ); // Use capture phase to catch resource errors
 
     // Handle unhandled promise rejections
-    window.addEventListener('unhandledrejection', (event) => {
+    window.addEventListener('unhandledrejection', event => {
       this.handleUnhandledRejection(event.reason);
     });
 
@@ -69,7 +73,7 @@ class ErrorHandler {
         lineno: errorInfo.lineno,
         colno: errorInfo.colno,
         url: window.location.href,
-      },
+      }
     );
   }
 
@@ -77,9 +81,7 @@ class ErrorHandler {
    * Handle unhandled promise rejections
    */
   private handleUnhandledRejection(reason: any): void {
-    const error = reason instanceof Error
-      ? reason
-      : new Error(String(reason));
+    const error = reason instanceof Error ? reason : new Error(String(reason));
 
     loggingService.error(
       `Unhandled Promise Rejection: ${error.message}`,
@@ -88,7 +90,7 @@ class ErrorHandler {
         type: 'unhandled_promise_rejection',
         reason: reason,
         url: window.location.href,
-      },
+      }
     );
   }
 
@@ -97,44 +99,37 @@ class ErrorHandler {
    */
   private handleResourceError(element: HTMLElement): void {
     const tagName = element.tagName.toLowerCase();
-    const src = (element as HTMLImageElement).src ||
-                (element as HTMLLinkElement).href ||
-                (element as HTMLScriptElement).src ||
-                'unknown';
+    const src =
+      (element as HTMLImageElement).src ||
+      (element as HTMLLinkElement).href ||
+      (element as HTMLScriptElement).src ||
+      'unknown';
 
-    loggingService.warn(
-      `Resource loading error: ${tagName} failed to load`,
-      {
-        type: 'resource_error',
-        tagName,
-        src,
-        url: window.location.href,
-      },
-    );
+    loggingService.warn(`Resource loading error: ${tagName} failed to load`, {
+      type: 'resource_error',
+      tagName,
+      src,
+      url: window.location.href,
+    });
   }
 
   /**
    * Handle API errors
    */
   handleApiError(error: any, context?: Record<string, any>): void {
-    const errorMessage = error?.response?.data?.message ||
-                        error?.message ||
-                        'Unknown API error';
+    const errorMessage =
+      error?.response?.data?.message || error?.message || 'Unknown API error';
 
     const status = error?.response?.status;
     const url = error?.config?.url;
 
-    loggingService.error(
-      `API Error: ${errorMessage}`,
-      error,
-      {
-        type: 'api_error',
-        status,
-        url,
-        method: error?.config?.method,
-        ...context,
-      },
-    );
+    loggingService.error(`API Error: ${errorMessage}`, error, {
+      type: 'api_error',
+      status,
+      url,
+      method: error?.config?.method,
+      ...context,
+    });
   }
 
   /**
@@ -147,7 +142,7 @@ class ErrorHandler {
       {
         type: 'network_error',
         ...context,
-      },
+      }
     );
   }
 
@@ -155,29 +150,23 @@ class ErrorHandler {
    * Handle validation errors
    */
   handleValidationError(field: string, message: string, value?: any): void {
-    loggingService.warn(
-      `Validation Error: ${field} - ${message}`,
-      {
-        type: 'validation_error',
-        field,
-        message,
-        value: value ? String(value).substring(0, 100) : undefined,
-      },
-    );
+    loggingService.warn(`Validation Error: ${field} - ${message}`, {
+      type: 'validation_error',
+      field,
+      message,
+      value: value ? String(value).substring(0, 100) : undefined,
+    });
   }
 
   /**
    * Handle timeout errors
    */
   handleTimeoutError(operation: string, timeout: number): void {
-    loggingService.warn(
-      `Timeout Error: ${operation} exceeded ${timeout}ms`,
-      {
-        type: 'timeout_error',
-        operation,
-        timeout,
-      },
-    );
+    loggingService.warn(`Timeout Error: ${operation} exceeded ${timeout}ms`, {
+      type: 'timeout_error',
+      operation,
+      timeout,
+    });
   }
 }
 
@@ -190,4 +179,3 @@ if (typeof window !== 'undefined') {
 }
 
 export default errorHandler;
-

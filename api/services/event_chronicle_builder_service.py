@@ -8,7 +8,7 @@ Reuses: intelligence.tracked_events, intelligence.event_chronicles, {domain}.sto
 import json
 import logging
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from shared.database.connection import get_db_connection
 
@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 def _run_scheduled_chronicle_updates(
     max_events: int,
-    get_db_connection_fn: Optional[Any] = None,
+    get_db_connection_fn: Any | None = None,
 ) -> int:
     """
     Used by OrchestratorCoordinator: fetch up to max_events tracked event IDs,
@@ -27,7 +27,7 @@ def _run_scheduled_chronicle_updates(
     conn = fn() if callable(fn) else None
     if not conn:
         return 0
-    event_ids: List[int] = []
+    event_ids: list[int] = []
     try:
         with conn.cursor() as cur:
             cur.execute(
@@ -49,6 +49,7 @@ def _run_scheduled_chronicle_updates(
             updated += 1
     return updated
 
+
 DOMAIN_TO_SCHEMA = {
     "politics": "politics",
     "finance": "finance",
@@ -58,10 +59,10 @@ DOMAIN_TO_SCHEMA = {
 
 def build_chronicle_for_event(
     event_id: int,
-    update_date: Optional[date] = None,
+    update_date: date | None = None,
     developments_days: int = 7,
     max_storylines_per_domain: int = 15,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Build one event_chronicles row for the given tracked_event.
     - Loads event (domain_keys, event_name); for each domain_key queries that schema's
@@ -115,7 +116,7 @@ def build_chronicle_for_event(
             else:
                 domain_keys = ["politics", "finance", "science-tech"]
 
-            developments: List[Dict[str, Any]] = []
+            developments: list[dict[str, Any]] = []
             for dk in domain_keys:
                 schema = DOMAIN_TO_SCHEMA.get(dk)
                 if not schema:
@@ -133,19 +134,21 @@ def build_chronicle_for_event(
                     )
                     for srow in cur.fetchall():
                         sid, title, updated_at, summary = srow
-                        developments.append({
-                            "storyline_id": sid,
-                            "domain_key": dk,
-                            "title": (title or "")[:200],
-                            "updated_at": updated_at.isoformat() if updated_at else None,
-                            "summary_snippet": (summary or "")[:300] if summary else None,
-                        })
+                        developments.append(
+                            {
+                                "storyline_id": sid,
+                                "domain_key": dk,
+                                "title": (title or "")[:200],
+                                "updated_at": updated_at.isoformat() if updated_at else None,
+                                "summary_snippet": (summary or "")[:300] if summary else None,
+                            }
+                        )
                 except Exception as e:
                     logger.debug("event_chronicle_builder: skip domain %s: %s", dk, e)
 
             momentum_score = min(1.0, len(developments) / 10.0) if developments else 0.5
             analysis = {"developments_count": len(developments), "domains_queried": domain_keys}
-            predictions: List[Any] = []
+            predictions: list[Any] = []
 
             cur.execute(
                 """

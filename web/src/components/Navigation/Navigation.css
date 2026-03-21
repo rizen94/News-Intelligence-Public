@@ -40,15 +40,15 @@
 }
 
 /* Domain-specific badge colors */
-.nav-domain-badge[data-domain="politics"] {
+.nav-domain-badge[data-domain='politics'] {
   background: #1976d2;
 }
 
-.nav-domain-badge[data-domain="finance"] {
+.nav-domain-badge[data-domain='finance'] {
   background: #2e7d32;
 }
 
-.nav-domain-badge[data-domain="science-tech"] {
+.nav-domain-badge[data-domain='science-tech'] {
   background: #7b1fa2;
 }
 

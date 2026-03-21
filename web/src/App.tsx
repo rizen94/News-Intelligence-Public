@@ -12,11 +12,18 @@
  * See docs/WEB_PRODUCT_DISPLAY_PLAN.md for product notes.
  */
 import React, { useEffect } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import {
+  BrowserRouter as Router,
+  Routes,
+  Route,
+  Navigate,
+} from 'react-router-dom';
 import { ThemeProvider, createTheme, CssBaseline } from '@mui/material';
 import './App.css';
 
 import { DomainProvider } from './contexts/DomainContext';
+import { PublicDemoProvider } from './contexts/PublicDemoContext';
+import { DemoRouteGuard } from './components/DemoRouteGuard/DemoRouteGuard';
 import { getAPIConnectionManager } from './services/apiConnectionManager';
 import loggingService from './services/loggingService';
 import errorHandler from './services/errorHandler';
@@ -80,7 +87,7 @@ function App() {
       environment: import.meta.env.MODE || 'development',
     });
     const connectionManager = getAPIConnectionManager();
-    connectionManager.testConnection().then((connected) => {
+    connectionManager.testConnection().then(connected => {
       if (connected) loggingService.info('API connection established');
       else loggingService.warn('API connection check failed');
     });
@@ -92,53 +99,178 @@ function App() {
       <ThemeProvider theme={theme}>
         <CssBaseline />
         <DomainProvider>
-          <Router>
-            <div className="App">
-              <Routes>
-                <Route path="/" element={<Navigate to="/politics/dashboard" replace />} />
-                <Route path="/:domain" element={<MainLayout />}>
-                  <Route index element={<Navigate to="dashboard" replace />} />
-                  <Route path="dashboard" element={<Dashboard />} />
-                  <Route path="discover" element={<DiscoverPage />} />
-                  <Route path="discover/contexts/:id" element={<ContextDetailPage />} />
-                  <Route path="storylines" element={<Storylines />} />
+          <PublicDemoProvider>
+            <Router>
+              <div className='App'>
+                <Routes>
+                <Route
+                  path='/'
+                  element={<Navigate to='/politics/dashboard' replace />}
+                />
+                <Route path='/:domain' element={<MainLayout />}>
+                  <Route index element={<Navigate to='dashboard' replace />} />
+                  <Route path='dashboard' element={<Dashboard />} />
+                  <Route path='discover' element={<DiscoverPage />} />
+                  <Route
+                    path='discover/contexts/:id'
+                    element={<ContextDetailPage />}
+                  />
+                  <Route path='storylines' element={<Storylines />} />
                   {/* Static segments before :id — otherwise "discovery" / "synthesized" match as storyline ids */}
-                  <Route path="storylines/discovery" element={<StorylineDiscovery />} />
-                  <Route path="storylines/synthesized" element={<SynthesizedView />} />
-                  <Route path="storylines/:id/timeline" element={<StoryTimeline />} />
-                  <Route path="storylines/:id" element={<StorylineDetail />} />
-                  <Route path="articles" element={<Articles />} />
-                  <Route path="articles/deduplication" element={<ArticleDeduplicationManager />} />
-                  <Route path="articles/:id" element={<ArticleDetail />} />
-                  <Route path="briefings" element={<Briefings />} />
-                  <Route path="report" element={<ReportPage />} />
-                  <Route path="rss_feeds" element={<RSSFeeds />} />
-                  <Route path="topics" element={<Topics />} />
-                  <Route path="watchlist" element={<Watchlist />} />
-                  <Route path="events" element={<Events />} />
-                  <Route path="investigate" element={<InvestigatePage />} />
-                  <Route path="investigate/events/:id" element={<EventDetailPage />} />
-                  <Route path="investigate/entities" element={<EntitiesListPage />} />
-                  <Route path="investigate/entities/:id" element={<EntityDetailPage />} />
-                  <Route path="investigate/entities/:entityId/dossier" element={<EntityDossierPage />} />
-                  <Route path="investigate/search" element={<SearchPage />} />
-                  <Route path="investigate/documents" element={<ProcessedDocumentsPage />} />
-                  <Route path="investigate/documents/:documentId" element={<ProcessedDocumentDetailPage />} />
-                  <Route path="investigate/narrative-threads" element={<NarrativeThreadsPage />} />
-                  <Route path="monitor" element={<MonitorPage />} />
-                  <Route path="monitor/sql-explorer" element={<SqlExplorerPage />} />
-                  <Route path="audit-checklist" element={<AuditChecklistPage />} />
-                  <Route path="analyze" element={<AnalyzePage />} />
-                  <Route path="analysis" element={<FinancialAnalysis />} />
-                  <Route path="analysis/:taskId" element={<FinancialAnalysisResult />} />
-                  <Route path="trace/:taskId" element={<TaskTraceViewer />} />
-                  <Route path="commodity" element={<Navigate to="commodity/gold" replace />} />
-                  <Route path="commodity/:commodity" element={<CommodityDashboard />} />
+                  <Route
+                    path='storylines/discovery'
+                    element={
+                      <DemoRouteGuard>
+                        <StorylineDiscovery />
+                      </DemoRouteGuard>
+                    }
+                  />
+                  <Route
+                    path='storylines/synthesized'
+                    element={<SynthesizedView />}
+                  />
+                  <Route
+                    path='storylines/:id/timeline'
+                    element={<StoryTimeline />}
+                  />
+                  <Route path='storylines/:id' element={<StorylineDetail />} />
+                  <Route path='articles' element={<Articles />} />
+                  <Route
+                    path='articles/deduplication'
+                    element={
+                      <DemoRouteGuard>
+                        <ArticleDeduplicationManager />
+                      </DemoRouteGuard>
+                    }
+                  />
+                  <Route path='articles/:id' element={<ArticleDetail />} />
+                  <Route path='briefings' element={<Briefings />} />
+                  <Route path='report' element={<ReportPage />} />
+                  <Route
+                    path='rss_feeds'
+                    element={
+                      <DemoRouteGuard>
+                        <RSSFeeds />
+                      </DemoRouteGuard>
+                    }
+                  />
+                  <Route path='topics' element={<Topics />} />
+                  <Route
+                    path='watchlist'
+                    element={
+                      <DemoRouteGuard>
+                        <Watchlist />
+                      </DemoRouteGuard>
+                    }
+                  />
+                  <Route path='events' element={<Events />} />
+                  <Route path='investigate' element={<InvestigatePage />} />
+                  <Route
+                    path='investigate/events/:id'
+                    element={<EventDetailPage />}
+                  />
+                  <Route
+                    path='investigate/entities'
+                    element={<EntitiesListPage />}
+                  />
+                  <Route
+                    path='investigate/entities/:id'
+                    element={<EntityDetailPage />}
+                  />
+                  <Route
+                    path='investigate/entities/:entityId/dossier'
+                    element={<EntityDossierPage />}
+                  />
+                  <Route path='investigate/search' element={<SearchPage />} />
+                  <Route
+                    path='investigate/documents'
+                    element={<ProcessedDocumentsPage />}
+                  />
+                  <Route
+                    path='investigate/documents/:documentId'
+                    element={<ProcessedDocumentDetailPage />}
+                  />
+                  <Route
+                    path='investigate/narrative-threads'
+                    element={<NarrativeThreadsPage />}
+                  />
+                  <Route
+                    path='monitor'
+                    element={
+                      <DemoRouteGuard>
+                        <MonitorPage />
+                      </DemoRouteGuard>
+                    }
+                  />
+                  <Route
+                    path='monitor/sql-explorer'
+                    element={
+                      <DemoRouteGuard>
+                        <SqlExplorerPage />
+                      </DemoRouteGuard>
+                    }
+                  />
+                  <Route
+                    path='audit-checklist'
+                    element={
+                      <DemoRouteGuard>
+                        <AuditChecklistPage />
+                      </DemoRouteGuard>
+                    }
+                  />
+                  <Route
+                    path='analyze'
+                    element={
+                      <DemoRouteGuard>
+                        <AnalyzePage />
+                      </DemoRouteGuard>
+                    }
+                  />
+                  <Route
+                    path='analysis'
+                    element={
+                      <DemoRouteGuard>
+                        <FinancialAnalysis />
+                      </DemoRouteGuard>
+                    }
+                  />
+                  <Route
+                    path='analysis/:taskId'
+                    element={
+                      <DemoRouteGuard>
+                        <FinancialAnalysisResult />
+                      </DemoRouteGuard>
+                    }
+                  />
+                  <Route
+                    path='trace/:taskId'
+                    element={
+                      <DemoRouteGuard>
+                        <TaskTraceViewer />
+                      </DemoRouteGuard>
+                    }
+                  />
+                  <Route
+                    path='commodity'
+                    element={<Navigate to='commodity/gold' replace />}
+                  />
+                  <Route
+                    path='commodity/:commodity'
+                    element={
+                      <DemoRouteGuard>
+                        <CommodityDashboard />
+                      </DemoRouteGuard>
+                    }
+                  />
                 </Route>
-                <Route path="*" element={<Navigate to="/politics/dashboard" replace />} />
+                <Route
+                  path='*'
+                  element={<Navigate to='/politics/dashboard' replace />}
+                />
               </Routes>
             </div>
-          </Router>
+            </Router>
+          </PublicDemoProvider>
         </DomainProvider>
       </ThemeProvider>
     </ErrorBoundary>

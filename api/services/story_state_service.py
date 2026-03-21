@@ -6,7 +6,7 @@ See docs/RAG_ENHANCEMENT_ROADMAP.md.
 
 import json
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from shared.database.connection import get_db_connection
 
@@ -60,7 +60,8 @@ def compute_maturity_score(conn, domain_key: str, storyline_id: int) -> float:
                 continue
         # 0.3 from recency (updated_at in last 30 days)
         if updated_at:
-            from datetime import datetime, timezone, timedelta
+            from datetime import datetime, timezone
+
             if updated_at.tzinfo is None:
                 updated_at = updated_at.replace(tzinfo=timezone.utc)
             delta = (datetime.now(timezone.utc) - updated_at).days
@@ -75,12 +76,12 @@ def compute_maturity_score(conn, domain_key: str, storyline_id: int) -> float:
     return min(1.0, round(score, 2))
 
 
-def detect_knowledge_gaps(conn, domain_key: str, storyline_id: int) -> List[str]:
+def detect_knowledge_gaps(conn, domain_key: str, storyline_id: int) -> list[str]:
     """
     Return knowledge gap descriptions from rules: few articles, no articles, or no recent coverage.
     Can be extended with LLM or more rules (e.g. missing entities).
     """
-    gaps: List[str] = []
+    gaps: list[str] = []
     try:
         with conn.cursor() as cur:
             schema = _schema_for_domain(domain_key)
@@ -108,13 +109,16 @@ def detect_knowledge_gaps(conn, domain_key: str, storyline_id: int) -> List[str]
                     )
                     rec = cur.fetchone()
                 if rec and rec[0]:
-                    from datetime import datetime, timezone, timedelta
+                    from datetime import datetime, timedelta, timezone
+
                     now = datetime.now(timezone.utc)
                     last_at = rec[0]
                     if getattr(last_at, "tzinfo", None) is None:
                         last_at = last_at.replace(tzinfo=timezone.utc)
                     if (now - last_at) > timedelta(days=7):
-                        gaps.append("No new articles in the last 7 days; consider adding recent coverage.")
+                        gaps.append(
+                            "No new articles in the last 7 days; consider adding recent coverage."
+                        )
             except Exception:
                 pass
     except Exception:
@@ -122,7 +126,7 @@ def detect_knowledge_gaps(conn, domain_key: str, storyline_id: int) -> List[str]
     return gaps
 
 
-def get_previous_state(conn, domain_key: str, storyline_id: int) -> Optional[Dict[str, Any]]:
+def get_previous_state(conn, domain_key: str, storyline_id: int) -> dict[str, Any] | None:
     """Load latest storyline_states row for (domain_key, storyline_id)."""
     try:
         with conn.cursor() as cur:
@@ -144,7 +148,9 @@ def get_previous_state(conn, domain_key: str, storyline_id: int) -> Optional[Dic
             "version": row[1],
             "state_summary": row[2],
             "maturity_score": float(row[3]) if row[3] is not None else None,
-            "knowledge_gaps": row[4] if isinstance(row[4], list) else (json.loads(row[4]) if row[4] else []),
+            "knowledge_gaps": row[4]
+            if isinstance(row[4], list)
+            else (json.loads(row[4]) if row[4] else []),
             "created_at": row[5],
         }
     except Exception as e:
@@ -155,9 +161,9 @@ def get_previous_state(conn, domain_key: str, storyline_id: int) -> Optional[Dic
 def update_story_state(
     domain_key: str,
     storyline_id: int,
-    state_summary: Optional[str] = None,
+    state_summary: str | None = None,
     significant_change: bool = False,
-    change_summary: Optional[str] = None,
+    change_summary: str | None = None,
 ) -> bool:
     """
     Compute maturity and knowledge gaps, optionally detect change vs previous state,

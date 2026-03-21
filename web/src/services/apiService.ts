@@ -66,12 +66,16 @@ class APIService {
 
   get rssFeeds() {
     return {
-      getFeeds: (params?: any, domain?: string) => this.getRSSFeeds(params, domain),
-      createFeed: (feedData: any, domain?: string) => this.createRSSFeed(feedData, domain),
+      getFeeds: (params?: any, domain?: string) =>
+        this.getRSSFeeds(params, domain),
+      createFeed: (feedData: any, domain?: string) =>
+        this.createRSSFeed(feedData, domain),
       updateFeed: (feedId: number, feedData: any, domain?: string) =>
         this.updateRSSFeed(feedId, feedData, domain),
-      deleteFeed: (feedId: number, domain?: string) => this.deleteRSSFeed(feedId, domain),
-      refreshFeed: (feedId: number, domain?: string) => this.refreshRSSFeed(feedId, domain),
+      deleteFeed: (feedId: number, domain?: string) =>
+        this.deleteRSSFeed(feedId, domain),
+      refreshFeed: (feedId: number, domain?: string) =>
+        this.refreshRSSFeed(feedId, domain),
       getCategories: (domain?: string) => this.getRSSCategories(domain),
     };
   }
@@ -102,7 +106,8 @@ class APIService {
   addArticleToStoryline = storylinesApi.addArticleToStoryline;
   removeArticleFromStoryline = storylinesApi.removeArticleFromStoryline;
   getStorylineAutomationSettings = storylinesApi.getStorylineAutomationSettings;
-  updateStorylineAutomationSettings = storylinesApi.updateStorylineAutomationSettings;
+  updateStorylineAutomationSettings =
+    storylinesApi.updateStorylineAutomationSettings;
   triggerStorylineDiscovery = storylinesApi.triggerStorylineDiscovery;
   getAutomationSuggestions = storylinesApi.getAutomationSuggestions;
   approveSuggestion = storylinesApi.approveSuggestion;
@@ -118,12 +123,14 @@ class APIService {
   getStorylineImpact = intelligenceApi.getStorylineImpact;
   getTrendingImpact = intelligenceApi.getTrendingImpact;
   getIntelligenceDashboard = intelligenceApi.getIntelligenceDashboard;
-  getEventStorylineClaimConsistency = intelligenceApi.getEventStorylineClaimConsistency;
+  getEventStorylineClaimConsistency =
+    intelligenceApi.getEventStorylineClaimConsistency;
   getParticipantPositionDeltas = intelligenceApi.getParticipantPositionDeltas;
   getCausalChains = intelligenceApi.getCausalChains;
   getNarrativeDivergenceMap = intelligenceApi.getNarrativeDivergenceMap;
   runWatchlistThemeBridge = intelligenceApi.runWatchlistThemeBridge;
-  runDocumentIntelligenceIntegration = intelligenceApi.runDocumentIntelligenceIntegration;
+  runDocumentIntelligenceIntegration =
+    intelligenceApi.runDocumentIntelligenceIntegration;
   getDomainEvents = intelligenceApi.getDomainEvents;
   synthesizeStoryline = intelligenceApi.synthesizeStoryline;
   getSynthesizedContent = intelligenceApi.getSynthesizedContent;
@@ -234,11 +241,15 @@ class APIService {
   getFinanceResearchTopic = financeAnalysisApi.getResearchTopic;
   createFinanceResearchTopic = financeAnalysisApi.createResearchTopic;
   refineFinanceResearchTopic = financeAnalysisApi.refineResearchTopic;
-  updateFinanceResearchTopicFromTask = financeAnalysisApi.updateResearchTopicFromTask;
+  updateFinanceResearchTopicFromTask =
+    financeAnalysisApi.updateResearchTopicFromTask;
 
   // Story expectations (alias for storylines)
   async getActiveStories(domain?: string) {
-    return storylinesApi.getStorylines({ status: 'active', limit: 100 }, domain);
+    return storylinesApi.getStorylines(
+      { status: 'active', limit: 100 },
+      domain
+    );
   }
 
   async createStoryExpectation(data: any, domain?: string) {

@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 
 try:
     from config.logging_config import get_component_logger
+
     logger = get_component_logger("finance")
 except Exception:
     logger = logging.getLogger(__name__)
@@ -27,6 +28,7 @@ def fetch_commodity(
     topic = (topic or "gold").lower()
     if topic == "gold":
         from domains.finance.gold_amalgamator import fetch_all
+
         return fetch_all(start=start, end=end, store=store)
 
     # Silver/platinum: try FRED first, then metals.dev
@@ -35,9 +37,11 @@ def fetch_commodity(
     start_dt = None
     if end:
         from datetime import datetime as _dt
+
         end_dt = _dt.strptime(end, "%Y-%m-%d").date()
     if start:
         from datetime import datetime as _dt
+
         start_dt = _dt.strptime(start, "%Y-%m-%d").date()
     if end_dt is None:
         end_dt = datetime.now(timezone.utc).date()
@@ -46,13 +50,17 @@ def fetch_commodity(
     start_str = start_dt.strftime("%Y-%m-%d")
     end_str = end_dt.strftime("%Y-%m-%d")
 
-    from domains.finance.data.evidence_ledger import record as ledger_record
     from shared.data_result import DataResult
+
+    from domains.finance.data.evidence_ledger import record as ledger_record
 
     # 1) Try FRED first
     try:
         from domains.finance.data_sources.fred_commodity import fetch_commodity_history_from_fred
-        fred_result = fetch_commodity_history_from_fred(topic, start=start_str, end=end_str, store=False)
+
+        fred_result = fetch_commodity_history_from_fred(
+            topic, start=start_str, end=end_str, store=False
+        )
         if fred_result.success and fred_result.data:
             obs = fred_result.data
             dates = [o.get("date") for o in obs if o.get("date")]
@@ -63,7 +71,10 @@ def fetch_commodity(
                 evidence_data={
                     "status": "ok",
                     "observations_count": len(obs),
-                    "date_range": {"start": min(dates) if dates else None, "end": max(dates) if dates else None},
+                    "date_range": {
+                        "start": min(dates) if dates else None,
+                        "end": max(dates) if dates else None,
+                    },
                     "unit": obs[0].get("unit", "") if obs else "",
                     "description": f"{topic} prices via FRED",
                     "retrieved_at": datetime.now(timezone.utc).isoformat(),
@@ -85,7 +96,10 @@ def fetch_commodity(
         evidence = {
             "status": status,
             "observations_count": len(obs),
-            "date_range": {"start": min(dates) if dates else None, "end": max(dates) if dates else None},
+            "date_range": {
+                "start": min(dates) if dates else None,
+                "end": max(dates) if dates else None,
+            },
             "unit": obs[0].get("unit", "") if obs else "",
             "description": f"{topic} prices via metals.dev (fallback)",
             "retrieved_at": datetime.now(timezone.utc).isoformat(),
@@ -99,7 +113,12 @@ def fetch_commodity(
             source_id="metals_dev",
             evidence_data=evidence,
         )
-        logger.info("Commodity fetcher: %s via metals.dev (%d observations, status=%s)", topic, len(obs), status)
+        logger.info(
+            "Commodity fetcher: %s via metals.dev (%d observations, status=%s)",
+            topic,
+            len(obs),
+            status,
+        )
         return {"metals_dev": obs}
     except Exception as e:
         logger.debug("Commodity fetcher metals.dev flow failed: %s", e, exc_info=True)

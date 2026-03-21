@@ -14,7 +14,7 @@ def _finance_market_db(monkeypatch, tmp_path):
 
 
 def test_upsert_and_get_series():
-    from domains.finance.data.market_data_store import upsert_observations, get_series
+    from domains.finance.data.market_data_store import get_series, upsert_observations
 
     obs = [
         {"date": "2024-01-01", "value": 100.5},
@@ -32,7 +32,7 @@ def test_upsert_and_get_series():
 
 
 def test_upsert_replaces_same_date():
-    from domains.finance.data.market_data_store import upsert_observations, get_series
+    from domains.finance.data.market_data_store import get_series, upsert_observations
 
     upsert_observations("fred", "IQ12260", [{"date": "2024-01-01", "value": 100}])
     upsert_observations("fred", "IQ12260", [{"date": "2024-01-01", "value": 200}])
@@ -43,7 +43,7 @@ def test_upsert_replaces_same_date():
 
 
 def test_get_series_date_range():
-    from domains.finance.data.market_data_store import upsert_observations, get_series
+    from domains.finance.data.market_data_store import get_series, upsert_observations
 
     obs = [
         {"date": "2024-01-01", "value": 1},
@@ -58,7 +58,7 @@ def test_get_series_date_range():
 
 
 def test_list_symbols():
-    from domains.finance.data.market_data_store import upsert_observations, list_symbols
+    from domains.finance.data.market_data_store import list_symbols, upsert_observations
 
     upsert_observations("fred", "IQ12260", [{"date": "2024-01-01", "value": 1}])
     upsert_observations("fred", "DCOILWTICO", [{"date": "2024-01-01", "value": 70}])

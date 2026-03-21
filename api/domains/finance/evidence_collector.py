@@ -5,11 +5,12 @@ Uses the news orchestrator for topic-aware shortlist when query/topic are presen
 """
 
 import logging
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 try:
     from config.logging_config import get_component_logger
+
     logger = get_component_logger("finance")
 except Exception:
     logger = logging.getLogger(__name__)
@@ -52,7 +53,11 @@ def collect(
     if include_rss:
         try:
             if use_news_orchestrator and (query or topic):
-                from domains.finance.news_orchestrator import get_shortlist, shortlist_to_rss_snippets
+                from domains.finance.news_orchestrator import (
+                    get_shortlist,
+                    shortlist_to_rss_snippets,
+                )
+
                 shortlist = get_shortlist(
                     query=query,
                     topic=topic,
@@ -63,6 +68,7 @@ def collect(
                 result["rss_snippets"] = shortlist_to_rss_snippets(shortlist)
             else:
                 from domains.news_aggregation.services.article_service import ArticleService
+
                 article_svc = ArticleService(domain="finance")
                 published_after = datetime.now(timezone.utc) - timedelta(hours=hours)
                 res = article_svc.get_articles(
@@ -75,19 +81,26 @@ def collect(
                 for a in articles:
                     snippet = (a.get("summary") or a.get("content") or "")[:400]
                     pub = a.get("published_at") or a.get("published_date")
-                    result["rss_snippets"].append({
-                        "id": a.get("id"),
-                        "title": a.get("title") or "",
-                        "snippet": snippet,
-                        "published_at": pub.isoformat() if hasattr(pub, "isoformat") else str(pub) if pub else "",
-                        "url": a.get("url") or "",
-                    })
+                    result["rss_snippets"].append(
+                        {
+                            "id": a.get("id"),
+                            "title": a.get("title") or "",
+                            "snippet": snippet,
+                            "published_at": pub.isoformat()
+                            if hasattr(pub, "isoformat")
+                            else str(pub)
+                            if pub
+                            else "",
+                            "url": a.get("url") or "",
+                        }
+                    )
         except Exception as e:
             logger.warning("Evidence collector RSS fetch failed: %s", e)
 
     if include_api_summary:
         try:
             from domains.finance.gold_amalgamator import get_stored
+
             stored = get_stored(start=start_date, end=end_date)
             if stored:
                 total = sum(len(obs) for obs in stored.values() if isinstance(obs, list))
@@ -101,8 +114,9 @@ def collect(
 
     if include_rag and query:
         try:
-            from domains.finance.embedding import embed_text
             from domains.finance.data.vector_store import query as vs_query
+            from domains.finance.embedding import embed_text
+
             vec = embed_text(query)
             if vec:
                 r = vs_query([vec], n_results=15)
@@ -113,8 +127,15 @@ def collect(
 
     if include_historic_context and query and start_date and end_date:
         try:
-            logger.info("Fetching historic context: query=%r topic=%s range=%s to %s", query[:60], topic, start_date, end_date)
+            logger.info(
+                "Fetching historic context: query=%r topic=%s range=%s to %s",
+                query[:60],
+                topic,
+                start_date,
+                end_date,
+            )
             from services.historic_context_orchestrator import run_historic_context
+
             h = run_historic_context(
                 query=query,
                 start_date=start_date,
@@ -126,9 +147,15 @@ def collect(
             if h.get("success"):
                 result["historic_context_summary"] = h.get("summary")
                 result["historic_context_events"] = h.get("events") or []
-                logger.info("Historic context success: summary %d chars, %d events", len(h.get("summary") or ""), len(h.get("events") or []))
+                logger.info(
+                    "Historic context success: summary %d chars, %d events",
+                    len(h.get("summary") or ""),
+                    len(h.get("events") or []),
+                )
             else:
-                logger.warning("Historic context returned success=False: %s", h.get("error", "unknown"))
+                logger.warning(
+                    "Historic context returned success=False: %s", h.get("error", "unknown")
+                )
         except Exception as e:
             logger.warning("Evidence collector historic context failed: %s", e)
 

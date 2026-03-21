@@ -40,7 +40,9 @@ async def main():
         try:
             r = await client.get("/api/orchestrator/status")
             if r.status_code != 200:
-                errors.append(f"GET /api/orchestrator/status returned {r.status_code}: {r.text[:200]}")
+                errors.append(
+                    f"GET /api/orchestrator/status returned {r.status_code}: {r.text[:200]}"
+                )
             else:
                 data = r.json()
                 assert "running" in data, "status should have 'running'"
@@ -52,15 +54,16 @@ async def main():
         try:
             r = await client.get("/api/orchestrator/metrics")
             if r.status_code != 200:
-                errors.append(f"GET /api/orchestrator/metrics returned {r.status_code}: {r.text[:200]}")
+                errors.append(
+                    f"GET /api/orchestrator/metrics returned {r.status_code}: {r.text[:200]}"
+                )
             else:
                 data = r.json()
                 assert "performance_metrics" in data and "resource_usage" in data
                 print(
                     "GET /api/orchestrator/metrics:",
                     r.status_code,
-                    "metrics=%s usage=%s"
-                    % (
+                    "metrics={} usage={}".format(
                         len(data.get("performance_metrics", [])),
                         len(data.get("resource_usage", [])),
                     ),

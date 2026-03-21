@@ -9,7 +9,7 @@ after loading the dump. Falls back to Wikipedia API when no local match is found
 """
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from shared.database.connection import get_db_connection
 
@@ -19,10 +19,11 @@ logger = logging.getLogger(__name__)
 def _get_wikipedia_api_service():
     """Lazy import to avoid circular deps."""
     from modules.ml.rag_external_services import WikipediaService
+
     return WikipediaService()
 
 
-def lookup_entity(name: str) -> Optional[Dict[str, Any]]:
+def lookup_entity(name: str) -> dict[str, Any] | None:
     """
     Look up an entity by name in the local Wikipedia knowledge base.
     Tries: exact title_lower → alias match (if aliases populated) → title prefix →
@@ -106,7 +107,7 @@ def lookup_entity(name: str) -> Optional[Dict[str, Any]]:
     return None
 
 
-def _row_to_summary(row: tuple) -> Dict[str, Any]:
+def _row_to_summary(row: tuple) -> dict[str, Any]:
     """Convert DB row to API-style summary dict."""
     page_id, title, title_lower, abstract, page_url, page_type = row
     return {
@@ -118,7 +119,7 @@ def _row_to_summary(row: tuple) -> Dict[str, Any]:
     }
 
 
-def search_entities(query: str, limit: int = 10) -> List[Dict[str, Any]]:
+def search_entities(query: str, limit: int = 10) -> list[dict[str, Any]]:
     """Full-text search over local Wikipedia knowledge. Prefers person/org when page_type is set."""
     if not query or not query.strip():
         return []
@@ -151,7 +152,7 @@ def search_entities(query: str, limit: int = 10) -> List[Dict[str, Any]]:
         conn.close()
 
 
-def lookup_batch(names: List[str]) -> Dict[str, Dict[str, Any]]:
+def lookup_batch(names: list[str]) -> dict[str, dict[str, Any]]:
     """
     Batch lookup by list of names. Returns dict mapping name (original) -> summary.
     Uses the same logic as lookup_entity for each name (exact → alias → prefix → FTS)
@@ -175,7 +176,7 @@ def lookup_batch(names: List[str]) -> Dict[str, Dict[str, Any]]:
     return result
 
 
-def lookup_entity_with_fallback(name: str) -> Optional[Dict[str, Any]]:
+def lookup_entity_with_fallback(name: str) -> dict[str, Any] | None:
     """
     Look up entity in local DB first; if not found, call Wikipedia API.
     Returns API-style summary (title, extract, url, etc.) for use by entity_enrichment and RAG.
@@ -202,7 +203,7 @@ def lookup_entity_with_fallback(name: str) -> Optional[Dict[str, Any]]:
     return None
 
 
-def _cache_api_result(summary: Dict[str, Any]) -> None:
+def _cache_api_result(summary: dict[str, Any]) -> None:
     """Upsert a Wikipedia API result into local intelligence.wikipedia_knowledge.
 
     The tsv tsvector column is maintained by a DB trigger, so we only need
@@ -216,6 +217,7 @@ def _cache_api_result(summary: Dict[str, Any]) -> None:
     page_id = summary.get("pageid") or summary.get("page_id")
     if not page_id:
         import hashlib
+
         page_id = int(hashlib.md5(title.encode()).hexdigest()[:8], 16)
     page_url = summary.get("url") or ""
     try:
@@ -243,7 +245,7 @@ def _cache_api_result(summary: Dict[str, Any]) -> None:
         logger.debug("_cache_api_result for '%s': %s", title[:40], e)
 
 
-def cache_knowledge_graph_result(name: str, result: Dict[str, Any]) -> None:
+def cache_knowledge_graph_result(name: str, result: dict[str, Any]) -> None:
     """
     Store a Knowledge Graph API result in intelligence.wikipedia_knowledge so
     subsequent lookups hit local first. Uses synthetic negative page_id to avoid
@@ -255,6 +257,7 @@ def cache_knowledge_graph_result(name: str, result: Dict[str, Any]) -> None:
     if not title or not description:
         return
     import hashlib
+
     synthetic_page_id = -abs(int(hashlib.md5(title.encode()).hexdigest()[:8], 16))
     try:
         conn = get_db_connection()

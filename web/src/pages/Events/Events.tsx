@@ -26,14 +26,33 @@ import { useDomain } from '../../contexts/DomainContext';
 import apiService from '../../services/apiService';
 
 const EVENT_TYPES = [
-  'all', 'legal_action', 'policy_decision', 'election', 'conflict',
-  'economic_event', 'scientific_discovery', 'natural_disaster',
-  'public_statement', 'investigation', 'legislation', 'court_ruling',
-  'arrest', 'protest', 'agreement', 'appointment', 'resignation',
-  'death', 'meeting', 'report_release', 'other',
+  'all',
+  'legal_action',
+  'policy_decision',
+  'election',
+  'conflict',
+  'economic_event',
+  'scientific_discovery',
+  'natural_disaster',
+  'public_statement',
+  'investigation',
+  'legislation',
+  'court_ruling',
+  'arrest',
+  'protest',
+  'agreement',
+  'appointment',
+  'resignation',
+  'death',
+  'meeting',
+  'report_release',
+  'other',
 ];
 
-const TYPE_COLORS: Record<string, 'error' | 'primary' | 'secondary' | 'success' | 'warning' | 'info' | 'default'> = {
+const TYPE_COLORS: Record<
+  string,
+  'error' | 'primary' | 'secondary' | 'success' | 'warning' | 'info' | 'default'
+> = {
   court_ruling: 'error',
   legal_action: 'error',
   investigation: 'warning',
@@ -88,35 +107,62 @@ const Events: React.FC = () => {
 
   return (
     <Box sx={{ p: 3 }}>
-      <Typography variant="h4" gutterBottom>
+      <Typography variant='h4' gutterBottom>
         Extracted Events
       </Typography>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-        Discrete real-world events extracted from articles with temporal grounding.
+      <Typography variant='body2' color='text.secondary' sx={{ mb: 3 }}>
+        Discrete real-world events extracted from articles with temporal
+        grounding.
       </Typography>
 
       {/* Filters */}
-      <Paper sx={{ p: 2, mb: 3, display: 'flex', gap: 2, alignItems: 'center', flexWrap: 'wrap' }}>
-        <FormControl size="small" sx={{ minWidth: 180 }}>
+      <Paper
+        sx={{
+          p: 2,
+          mb: 3,
+          display: 'flex',
+          gap: 2,
+          alignItems: 'center',
+          flexWrap: 'wrap',
+        }}
+      >
+        <FormControl size='small' sx={{ minWidth: 180 }}>
           <InputLabel>Event Type</InputLabel>
           <Select
             value={eventType}
-            label="Event Type"
-            onChange={(e) => { setEventType(e.target.value); setPage(0); }}
+            label='Event Type'
+            onChange={e => {
+              setEventType(e.target.value);
+              setPage(0);
+            }}
           >
             {EVENT_TYPES.map(t => (
-              <MenuItem key={t} value={t}>{t === 'all' ? 'All Types' : t.replace(/_/g, ' ')}</MenuItem>
+              <MenuItem key={t} value={t}>
+                {t === 'all' ? 'All Types' : t.replace(/_/g, ' ')}
+              </MenuItem>
             ))}
           </Select>
         </FormControl>
         <FormControlLabel
-          control={<Switch checked={ongoingOnly} onChange={(_, v) => { setOngoingOnly(v); setPage(0); }} />}
-          label="Ongoing only"
+          control={
+            <Switch
+              checked={ongoingOnly}
+              onChange={(_, v) => {
+                setOngoingOnly(v);
+                setPage(0);
+              }}
+            />
+          }
+          label='Ongoing only'
         />
-        <Chip label={`${total} events`} color="primary" variant="outlined" />
+        <Chip label={`${total} events`} color='primary' variant='outlined' />
       </Paper>
 
-      {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+      {error && (
+        <Alert severity='error' sx={{ mb: 2 }}>
+          {error}
+        </Alert>
+      )}
 
       {loading ? (
         <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
@@ -124,7 +170,7 @@ const Events: React.FC = () => {
         </Box>
       ) : (
         <TableContainer component={Paper}>
-          <Table size="small">
+          <Table size='small'>
             <TableHead>
               <TableRow>
                 <TableCell>Date</TableCell>
@@ -134,66 +180,90 @@ const Events: React.FC = () => {
                 <TableCell>Extraction</TableCell>
                 <TableCell>Dedup</TableCell>
                 <TableCell>Source article</TableCell>
-                <TableCell align="center">Sources</TableCell>
-                <TableCell align="center">Ongoing</TableCell>
+                <TableCell align='center'>Sources</TableCell>
+                <TableCell align='center'>Ongoing</TableCell>
                 <TableCell>Storyline</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
-              {events.map((evt) => (
+              {events.map(evt => (
                 <TableRow
                   key={evt.id}
                   hover
                   sx={{ cursor: evt.storyline_id ? 'pointer' : 'default' }}
                   onClick={() => {
                     if (evt.storyline_id) {
-                      navigate(`/${domain}/storylines/${evt.storyline_id}/timeline`);
+                      navigate(
+                        `/${domain}/storylines/${evt.storyline_id}/timeline`
+                      );
                     }
                   }}
                 >
                   <TableCell sx={{ whiteSpace: 'nowrap' }}>
                     {evt.event_date || '—'}
-                    {evt.date_precision && evt.date_precision !== 'exact' && evt.date_precision !== 'unknown' && (
-                      <Typography variant="caption" display="block" color="text.disabled">
-                        ~{evt.date_precision}
-                      </Typography>
-                    )}
+                    {evt.date_precision &&
+                      evt.date_precision !== 'exact' &&
+                      evt.date_precision !== 'unknown' && (
+                        <Typography
+                          variant='caption'
+                          display='block'
+                          color='text.disabled'
+                        >
+                          ~{evt.date_precision}
+                        </Typography>
+                      )}
                   </TableCell>
                   <TableCell>{evt.title}</TableCell>
                   <TableCell>
                     <Chip
                       label={evt.event_type.replace(/_/g, ' ')}
-                      size="small"
+                      size='small'
                       color={TYPE_COLORS[evt.event_type] || 'default'}
                     />
                   </TableCell>
-                  <TableCell>{evt.location !== 'unknown' ? evt.location : '—'}</TableCell>
+                  <TableCell>
+                    {evt.location !== 'unknown' ? evt.location : '—'}
+                  </TableCell>
                   <TableCell sx={{ maxWidth: 140 }}>
                     {evt.extraction_method ? (
-                      <Chip size="small" variant="outlined" label={String(evt.extraction_method)} />
+                      <Chip
+                        size='small'
+                        variant='outlined'
+                        label={String(evt.extraction_method)}
+                      />
                     ) : (
                       '—'
                     )}
                   </TableCell>
                   <TableCell sx={{ maxWidth: 160 }}>
-                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                    <Box
+                      sx={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 0.5,
+                      }}
+                    >
                       {evt.dedup_role && (
-                        <Chip size="small" label={String(evt.dedup_role)} variant="outlined" />
+                        <Chip
+                          size='small'
+                          label={String(evt.dedup_role)}
+                          variant='outlined'
+                        />
                       )}
                       {evt.canonical_event_id != null && (
-                        <Typography variant="caption" color="text.secondary">
+                        <Typography variant='caption' color='text.secondary'>
                           canonical #{evt.canonical_event_id}
                         </Typography>
                       )}
                       {!evt.dedup_role && evt.canonical_event_id == null && '—'}
                     </Box>
                   </TableCell>
-                  <TableCell onClick={(e) => e.stopPropagation()}>
+                  <TableCell onClick={e => e.stopPropagation()}>
                     {evt.source_article_id ? (
                       <Link
                         component={RouterLink}
                         to={`/${domain}/articles/${evt.source_article_id}`}
-                        underline="hover"
+                        underline='hover'
                       >
                         #{evt.source_article_id}
                       </Link>
@@ -201,33 +271,46 @@ const Events: React.FC = () => {
                       '—'
                     )}
                   </TableCell>
-                  <TableCell align="center">{evt.source_count}</TableCell>
-                  <TableCell align="center">{evt.is_ongoing ? '✓' : ''}</TableCell>
+                  <TableCell align='center'>{evt.source_count}</TableCell>
+                  <TableCell align='center'>
+                    {evt.is_ongoing ? '✓' : ''}
+                  </TableCell>
                   <TableCell>
                     {evt.storyline_id ? (
-                      <Chip label={`#${evt.storyline_id}`} size="small" variant="outlined" />
+                      <Chip
+                        label={`#${evt.storyline_id}`}
+                        size='small'
+                        variant='outlined'
+                      />
                     ) : (
-                      <Typography variant="caption" color="text.disabled">unlinked</Typography>
+                      <Typography variant='caption' color='text.disabled'>
+                        unlinked
+                      </Typography>
                     )}
                   </TableCell>
                 </TableRow>
               ))}
               {events.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={10} align="center" sx={{ py: 4 }}>
-                    <Typography color="text.secondary">No events found</Typography>
+                  <TableCell colSpan={10} align='center' sx={{ py: 4 }}>
+                    <Typography color='text.secondary'>
+                      No events found
+                    </Typography>
                   </TableCell>
                 </TableRow>
               )}
             </TableBody>
           </Table>
           <TablePagination
-            component="div"
+            component='div'
             count={total}
             page={page}
             onPageChange={(_, p) => setPage(p)}
             rowsPerPage={rowsPerPage}
-            onRowsPerPageChange={(e) => { setRowsPerPage(parseInt(e.target.value, 10)); setPage(0); }}
+            onRowsPerPageChange={e => {
+              setRowsPerPage(parseInt(e.target.value, 10));
+              setPage(0);
+            }}
             rowsPerPageOptions={[10, 25, 50, 100]}
           />
         </TableContainer>

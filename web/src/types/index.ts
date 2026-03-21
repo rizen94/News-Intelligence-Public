@@ -5,7 +5,14 @@
 
 import React from 'react';
 
-export type { EditorialDocument, StorylineEntity, ReportStoryline, ReportPayload, ReportInvestigation, ReportRecentEvent } from './editorial';
+export type {
+  EditorialDocument,
+  StorylineEntity,
+  ReportStoryline,
+  ReportPayload,
+  ReportInvestigation,
+  ReportRecentEvent,
+} from './editorial';
 
 // ============================================================================
 // API Response Types
@@ -163,7 +170,11 @@ export interface Storyline {
   document_version?: number | null;
   document_status?: string | null;
   ml_processing_status?: string;
-  top_entities?: Array<{ name: string; type: string; description_short?: string }>;
+  top_entities?: Array<{
+    name: string;
+    type: string;
+    description_short?: string;
+  }>;
 }
 
 export interface StorylineDetail extends Storyline {
@@ -202,7 +213,11 @@ export interface StorylineDetail extends Storyline {
 }
 
 export interface StorylineListItem extends Storyline {
-  top_entities?: Array<{ name: string; type: string; description_short?: string }>;
+  top_entities?: Array<{
+    name: string;
+    type: string;
+    description_short?: string;
+  }>;
 }
 
 export interface StorylineListResponse {

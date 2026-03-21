@@ -16,7 +16,7 @@ NC='\033[0m' # No Color
 # Quick Status
 echo "📊 Quick Status:"
 echo "----------------"
-STATUS=$(curl -s "http://localhost:8000/api/v4/content_analysis/llm/status")
+STATUS=$(curl -s "http://localhost:8000/api/content_analysis/llm/status")
 if [ $? -eq 0 ]; then
     echo "$STATUS" | python3 -c "
 import sys, json
@@ -43,7 +43,7 @@ echo ""
 echo "📋 Queue Status (All Domains):"
 echo "-------------------------------"
 for domain in politics finance science-tech; do
-    QUEUE=$(curl -s "http://localhost:8000/api/v4/$domain/content_analysis/topics/queue/status")
+    QUEUE=$(curl -s "http://localhost:8000/api/$domain/content_analysis/topics/queue/status")
     if [ $? -eq 0 ]; then
         echo "$QUEUE" | python3 -c "
 import sys, json
@@ -64,7 +64,7 @@ done
 echo ""
 echo "📈 Dashboard Summary:"
 echo "---------------------"
-DASHBOARD=$(curl -s "http://localhost:8000/api/v4/content_analysis/llm/dashboard")
+DASHBOARD=$(curl -s "http://localhost:8000/api/content_analysis/llm/dashboard")
 if [ $? -eq 0 ]; then
     echo "$DASHBOARD" | python3 -c "
 import sys, json

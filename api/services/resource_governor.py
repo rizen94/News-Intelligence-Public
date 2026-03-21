@@ -4,11 +4,12 @@ Used by OrchestratorCoordinator to decide if a task can run (can_run, remaining_
 """
 
 import logging
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 try:
     from config.logging_config import get_component_logger
+
     logger = get_component_logger("orchestrator")
 except Exception:
     logger = logging.getLogger(__name__)
@@ -27,6 +28,7 @@ class ResourceGovernor:
         if config is None:
             try:
                 from config.orchestrator_governance import get_orchestrator_governance_config
+
                 config = get_orchestrator_governance_config()
             except Exception as e:
                 logger.warning("ResourceGovernor: config load failed: %s", e)
@@ -40,6 +42,7 @@ class ResourceGovernor:
         """Record usage snapshot (e.g. llm_tokens or api_calls)."""
         try:
             from . import orchestrator_state
+
             orchestrator_state.record_resource_usage(
                 resource_type=resource_type,
                 usage=amount,
@@ -52,6 +55,7 @@ class ResourceGovernor:
         """Remaining LLM token budget for today (UTC)."""
         try:
             from . import orchestrator_state
+
             now = datetime.now(timezone.utc)
             today_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
             used = orchestrator_state.get_resource_usage_sum(RESOURCE_LLM_TOKENS, today_start)
@@ -64,6 +68,7 @@ class ResourceGovernor:
         """Sum of api_calls usage in the last 60 minutes."""
         try:
             from . import orchestrator_state
+
             now = datetime.now(timezone.utc)
             since = (now - timedelta(hours=1)).isoformat()
             return orchestrator_state.get_resource_usage_sum(RESOURCE_API_CALLS, since)

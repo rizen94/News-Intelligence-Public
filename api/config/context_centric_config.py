@@ -4,8 +4,7 @@ Task flags control which context-centric tasks run; set to false to fall back to
 """
 
 import logging
-from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -23,13 +22,14 @@ DEFAULT_TASKS = {
 }
 
 
-def get_context_centric_config() -> Dict[str, Any]:
+def get_context_centric_config() -> dict[str, Any]:
     """
     Load context_centric.yaml. Returns dict with "tasks" (task_name -> bool).
     Missing file or key => task enabled (True).
     """
     try:
         from config.paths import CONFIG_DIR
+
         yaml_path = CONFIG_DIR / "context_centric.yaml"
     except Exception as e:
         logger.debug("Context-centric config path unavailable: %s", e)
@@ -40,6 +40,7 @@ def get_context_centric_config() -> Dict[str, Any]:
 
     try:
         import yaml
+
         with open(yaml_path) as f:
             cfg = yaml.safe_load(f) or {}
     except Exception as e:

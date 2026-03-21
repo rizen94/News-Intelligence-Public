@@ -8,7 +8,7 @@ domain, correlation_id, deduplication_key.
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any
 
 from .types import EventType
 
@@ -18,15 +18,15 @@ class EventEnvelope:
     """Event envelope for the newsroom message bus."""
 
     event_type: EventType
-    payload: Dict[str, Any]
+    payload: dict[str, Any]
     priority: int = 3
-    domain: Optional[str] = None
-    correlation_id: Optional[str] = None
-    deduplication_key: Optional[str] = None
+    domain: str | None = None
+    correlation_id: str | None = None
+    deduplication_key: str | None = None
     event_id: str = field(default_factory=lambda: str(uuid.uuid4()))
-    timestamp: Optional[str] = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    timestamp: str | None = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "event_id": self.event_id,
             "event_type": self.event_type.value,
@@ -39,7 +39,7 @@ class EventEnvelope:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "EventEnvelope":
+    def from_dict(cls, data: dict[str, Any]) -> "EventEnvelope":
         event_type = data["event_type"]
         if isinstance(event_type, str):
             event_type = EventType(event_type)

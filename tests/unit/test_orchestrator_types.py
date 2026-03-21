@@ -1,19 +1,17 @@
 """Unit tests for orchestrator data structures."""
 
-from datetime import datetime, timezone, date
-
-import pytest
+from datetime import date, datetime, timezone
 
 from domains.finance.orchestrator_types import (
+    EvidenceIndexEntry,
+    QualityCriteria,
+    ResultStatus,
     Task,
     TaskContext,
-    TaskType,
-    TaskStatus,
     TaskPriority,
     TaskResult,
-    ResultStatus,
-    QualityCriteria,
-    EvidenceIndexEntry,
+    TaskStatus,
+    TaskType,
 )
 
 

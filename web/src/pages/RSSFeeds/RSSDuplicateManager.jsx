@@ -56,7 +56,7 @@ const RSSDuplicateManager = () => {
   });
   const [dryRun, setDryRun] = useState(true);
 
-  const loadDuplicateData = useCallback(async() => {
+  const loadDuplicateData = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
@@ -95,12 +95,10 @@ const RSSDuplicateManager = () => {
     loadDuplicateData();
   }, [loadDuplicateData]);
 
-  const handleDetectDuplicates = async() => {
+  const handleDetectDuplicates = async () => {
     setLoading(true);
     try {
-      const response = await api.get(
-        '/api/rss_feeds/duplicates/detect',
-      );
+      const response = await api.get('/api/rss_feeds/duplicates/detect');
       if (response.data?.success) {
         setDuplicates(response.data.data?.exact_duplicates || []);
         setSimilarFeeds(response.data.data?.similar_domains || []);
@@ -117,7 +115,7 @@ const RSSDuplicateManager = () => {
     }
   };
 
-  const handleAutoMerge = async() => {
+  const handleAutoMerge = async () => {
     setLoading(true);
     try {
       const response = await api.post(
@@ -125,14 +123,14 @@ const RSSDuplicateManager = () => {
         null,
         {
           params: { dry_run: dryRun },
-        },
+        }
       );
 
       if (response.data?.success) {
         alert(
           `${dryRun ? 'Dry run: ' : ''}Merged ${
             response.data.data?.total_processed || 0
-          } duplicate feeds`,
+          } duplicate feeds`
         );
         loadDuplicateData(); // Refresh data
       }
@@ -143,12 +141,10 @@ const RSSDuplicateManager = () => {
     }
   };
 
-  const handleAddPrevention = async() => {
+  const handleAddPrevention = async () => {
     setLoading(true);
     try {
-      const response = await api.post(
-        '/api/rss_feeds/duplicates/prevent',
-      );
+      const response = await api.post('/api/rss_feeds/duplicates/prevent');
 
       if (response.data?.success) {
         alert('Duplicate prevention constraints added successfully');

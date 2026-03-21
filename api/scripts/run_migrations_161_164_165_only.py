@@ -10,6 +10,7 @@ import sys
 
 try:
     from dotenv import load_dotenv
+
     api_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     load_dotenv(os.path.join(api_dir, ".env"), override=False)
     load_dotenv(os.path.join(api_dir, "..", ".env"), override=False)
@@ -65,7 +66,9 @@ def main():
 
     conn.close()
     print("  Done. Run 167 with: PYTHONPATH=api .venv/bin/python3 api/scripts/run_migration_167.py")
-    print("  Then verify: PYTHONPATH=api .venv/bin/python3 api/scripts/verify_migrations_160_167.py")
+    print(
+        "  Then verify: PYTHONPATH=api .venv/bin/python3 api/scripts/verify_migrations_160_167.py"
+    )
     return 0
 
 

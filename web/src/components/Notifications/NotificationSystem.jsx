@@ -25,23 +25,23 @@ const ActionTypes = {
 // Reducer
 function notificationReducer(state, action) {
   switch (action.type) {
-  case ActionTypes.ADD_NOTIFICATION:
-    return {
-      ...state,
-      notifications: [...state.notifications, action.payload],
-    };
-  case ActionTypes.REMOVE_NOTIFICATION:
-    return {
-      ...state,
-      notifications: state.notifications.filter(n => n.id !== action.payload),
-    };
-  case ActionTypes.CLEAR_ALL:
-    return {
-      ...state,
-      notifications: [],
-    };
-  default:
-    return state;
+    case ActionTypes.ADD_NOTIFICATION:
+      return {
+        ...state,
+        notifications: [...state.notifications, action.payload],
+      };
+    case ActionTypes.REMOVE_NOTIFICATION:
+      return {
+        ...state,
+        notifications: state.notifications.filter(n => n.id !== action.payload),
+      };
+    case ActionTypes.CLEAR_ALL:
+      return {
+        ...state,
+        notifications: [],
+      };
+    default:
+      return state;
   }
 }
 
@@ -55,7 +55,7 @@ export const NotificationProvider = ({ children }) => {
   const addNotification = (
     message,
     type = NOTIFICATION_TYPES.INFO,
-    duration = 6000,
+    duration = 6000
   ) => {
     const id = Date.now() + Math.random();
     const notification = {
@@ -150,7 +150,7 @@ export function useNotifications() {
   const context = useContext(NotificationContext);
   if (!context) {
     throw new Error(
-      'useNotifications must be used within a NotificationProvider',
+      'useNotifications must be used within a NotificationProvider'
     );
   }
   return context;

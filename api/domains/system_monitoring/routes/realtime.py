@@ -5,11 +5,10 @@ POST /api/realtime/process_urgent, GET /api/realtime/streaming_status.
 
 import asyncio
 import logging
-from typing import Any, Dict, Optional
+from typing import Any
 
 from fastapi import APIRouter, Body
-
-from services.realtime_urgent_service import process_urgent_payload, get_streaming_status
+from services.realtime_urgent_service import get_streaming_status, process_urgent_payload
 
 logger = logging.getLogger(__name__)
 
@@ -19,11 +18,11 @@ router = APIRouter(prefix="/api/realtime", tags=["Realtime / urgent ingest"])
 @router.post("/process_urgent")
 async def post_process_urgent(
     source: str = Body("webhook", embed=True),
-    payload: Dict[str, Any] = Body(..., embed=True),
+    payload: dict[str, Any] = Body(..., embed=True),
     priority: str = Body("immediate", embed=True),
     bypass_queue: bool = Body(True, embed=True),
     run_event_detection: bool = Body(False, embed=True),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Ingest urgent content (streaming/webhook). Creates a context; optionally runs event detection (time-bound).
     Payload should include title, content, and optionally domain, url, metadata.
@@ -41,6 +40,7 @@ async def post_process_urgent(
     if run_event_detection and result.get("context_id"):
         try:
             from services.event_tracking_service import discover_events_from_contexts
+
             ev_result = await asyncio.wait_for(
                 discover_events_from_contexts(
                     domain_key=result.get("domain_key") or "politics",
@@ -67,7 +67,7 @@ async def post_process_urgent(
 
 
 @router.get("/streaming_status")
-def get_realtime_streaming_status() -> Dict[str, Any]:
+def get_realtime_streaming_status() -> dict[str, Any]:
     """Return active_streams, last_urgent_at, queue_depth."""
     status = get_streaming_status()
     return {

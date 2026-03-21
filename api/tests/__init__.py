@@ -2,4 +2,3 @@
 """
 Tests package for News Intelligence API
 """
-

@@ -39,14 +39,28 @@ def test_fetch_all_mocked(monkeypatch):
     from shared.data_result import DataResult
 
     def mock_freegoldapi(start=None, end=None):
-        return DataResult.ok([
-            {"date": "2024-01-01", "value": 2050.0, "unit": "USD/oz", "source_id": "freegoldapi"},
-        ])
+        return DataResult.ok(
+            [
+                {
+                    "date": "2024-01-01",
+                    "value": 2050.0,
+                    "unit": "USD/oz",
+                    "source_id": "freegoldapi",
+                },
+            ]
+        )
 
     def mock_fred(start=None, end=None):
-        return DataResult.ok([
-            {"date": "2024-01-01", "value": 100.0, "unit": "index", "source_id": "fred_iq12260"},
-        ])
+        return DataResult.ok(
+            [
+                {
+                    "date": "2024-01-01",
+                    "value": 100.0,
+                    "unit": "index",
+                    "source_id": "fred_iq12260",
+                },
+            ]
+        )
 
     monkeypatch.setattr("domains.finance.gold_sources.freegoldapi.fetch", mock_freegoldapi)
     monkeypatch.setattr("domains.finance.gold_sources.fred_gold.fetch", mock_fred)
@@ -60,6 +74,7 @@ def test_fetch_all_mocked(monkeypatch):
 
     # Stored data
     from domains.finance.gold_amalgamator import get_stored
+
     stored = get_stored()
     assert "freegoldapi" in stored
     assert len(stored["freegoldapi"]) == 1

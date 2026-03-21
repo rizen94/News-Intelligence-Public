@@ -72,22 +72,25 @@ class LoggingService {
     level: LogLevel,
     message: string,
     context?: Record<string, any>,
-    error?: Error,
+    error?: Error
   ): LogEntry {
     return {
       level,
       message,
       timestamp: new Date().toISOString(),
       context,
-      error: error ? {
-        name: error.name,
-        message: error.message,
-        stack: error.stack,
-      } as Error : undefined,
+      error: error
+        ? ({
+            name: error.name,
+            message: error.message,
+            stack: error.stack,
+          } as Error)
+        : undefined,
       userId: this.userId || undefined,
       sessionId: this.sessionId,
       url: typeof window !== 'undefined' ? window.location.href : undefined,
-      userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : undefined,
+      userAgent:
+        typeof navigator !== 'undefined' ? navigator.userAgent : undefined,
     };
   }
 
@@ -153,8 +156,17 @@ class LoggingService {
   /**
    * Log a critical error (always sent to remote)
    */
-  critical(message: string, error?: Error, context?: Record<string, any>): void {
-    const entry = this.createLogEntry(LogLevel.CRITICAL, message, context, error);
+  critical(
+    message: string,
+    error?: Error,
+    context?: Record<string, any>
+  ): void {
+    const entry = this.createLogEntry(
+      LogLevel.CRITICAL,
+      message,
+      context,
+      error
+    );
     this.logBuffer.push(entry);
 
     console.error(`[CRITICAL] ${message}`, error || context || '');
@@ -184,7 +196,7 @@ class LoggingService {
     url: string,
     status: number,
     duration: number,
-    error?: Error,
+    error?: Error
   ): void {
     const context = {
       type: 'api_call',
@@ -206,7 +218,11 @@ class LoggingService {
   /**
    * Log performance metrics
    */
-  logPerformance(operation: string, duration: number, context?: Record<string, any>): void {
+  logPerformance(
+    operation: string,
+    duration: number,
+    context?: Record<string, any>
+  ): void {
     const perfContext = {
       type: 'performance',
       operation,
@@ -227,23 +243,22 @@ class LoggingService {
   logComponentError(errorContext: ErrorContext): void {
     const { error, component, action, props, state } = errorContext;
 
-    this.error(
-      `Component Error in ${component || 'Unknown'}`,
-      error,
-      {
-        type: 'component_error',
-        component,
-        action,
-        props: this.sanitizeForLogging(props),
-        state: this.sanitizeForLogging(state),
-      },
-    );
+    this.error(`Component Error in ${component || 'Unknown'}`, error, {
+      type: 'component_error',
+      component,
+      action,
+      props: this.sanitizeForLogging(props),
+      state: this.sanitizeForLogging(state),
+    });
   }
 
   /**
    * Sanitize data for logging (remove sensitive info, avoid circular refs)
    */
-  private sanitizeForLogging(data: any, seen: WeakSet<object> = new WeakSet()): any {
+  private sanitizeForLogging(
+    data: any,
+    seen: WeakSet<object> = new WeakSet()
+  ): any {
     if (!data || typeof data !== 'object') {
       return data;
     }
@@ -256,14 +271,23 @@ class LoggingService {
     }
     seen.add(data);
 
-    const sensitiveKeys = ['password', 'token', 'apiKey', 'secret', 'authorization'];
+    const sensitiveKeys = [
+      'password',
+      'token',
+      'apiKey',
+      'secret',
+      'authorization',
+    ];
     const sanitized = Array.isArray(data) ? [...data] : { ...data };
 
     for (const key in sanitized) {
       if (Object.prototype.hasOwnProperty.call(sanitized, key)) {
         if (sensitiveKeys.some(sk => key.toLowerCase().includes(sk))) {
           sanitized[key] = '[REDACTED]';
-        } else if (typeof sanitized[key] === 'object' && sanitized[key] !== null) {
+        } else if (
+          typeof sanitized[key] === 'object' &&
+          sanitized[key] !== null
+        ) {
           sanitized[key] = this.sanitizeForLogging(sanitized[key], seen);
         }
       }
@@ -275,7 +299,10 @@ class LoggingService {
   /**
    * Send log entry to remote server
    */
-  private async sendLogToRemote(entry: LogEntry, immediate: boolean = false): Promise<void> {
+  private async sendLogToRemote(
+    entry: LogEntry,
+    immediate: boolean = false
+  ): Promise<void> {
     if (!this.enableRemoteLogging) return;
 
     try {
@@ -394,4 +421,3 @@ if (import.meta.env.DEV && typeof window !== 'undefined') {
 }
 
 export default loggingService;
-

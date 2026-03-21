@@ -20,4 +20,6 @@ def register_default_handlers(orchestrator: Any) -> None:
     orchestrator.register_handler(EventType.BREAKING_NEWS, editor.handle_breaking_news)
     orchestrator.register_handler(EventType.BREAKING_NEWS, chief_editor.handle_breaking_news)
     orchestrator.register_handler(EventType.PATTERN_DETECTED, journalist.handle_pattern_detected)
-    orchestrator.register_handler(EventType.INVESTIGATION_NEEDED, journalist.handle_investigation_needed)
+    orchestrator.register_handler(
+        EventType.INVESTIGATION_NEEDED, journalist.handle_investigation_needed
+    )

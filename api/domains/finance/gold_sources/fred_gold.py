@@ -8,13 +8,15 @@ import logging
 
 try:
     from config.logging_config import get_component_logger
+
     logger = get_component_logger("finance")
 except Exception:
     logger = logging.getLogger(__name__)
 
 from config.settings import FRED_API_KEY, FRED_GOLD_SERIES_ID
-from domains.finance.data_sources.fred import get_client
 from shared.data_result import DataResult
+
+from domains.finance.data_sources.fred import get_client
 
 SOURCE_ID = "fred_iq12260"
 UNIT = "index"  # Dec 2024 = 100
@@ -38,11 +40,16 @@ def fetch(start: str | None = None, end: str | None = None) -> DataResult[list[d
     out = []
     for o in raw_obs:
         meta = o.get("metadata") or {}
-        out.append({
-            "date": o.get("date", ""),
-            "value": o["value"],
-            "unit": UNIT,
-            "source_id": SOURCE_ID,
-            "metadata": {"realtime_start": meta.get("realtime_start"), "realtime_end": meta.get("realtime_end")},
-        })
+        out.append(
+            {
+                "date": o.get("date", ""),
+                "value": o["value"],
+                "unit": UNIT,
+                "source_id": SOURCE_ID,
+                "metadata": {
+                    "realtime_start": meta.get("realtime_start"),
+                    "realtime_end": meta.get("realtime_end"),
+                },
+            }
+        )
     return DataResult.ok(out)

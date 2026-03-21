@@ -77,4 +77,3 @@ export const API_CONFIG = {
 export const HEALTH_CHECK_ENDPOINT = '/api/system_monitoring/health';
 
 export default API_CONFIG;
-

@@ -70,7 +70,11 @@ let apiService: any = null;
 
 // Try multiple import patterns to handle webpack module resolution
 // Pattern 1: Default export
-if (apiServiceDefault && typeof apiServiceDefault === 'object' && typeof (apiServiceDefault as any).getTopics === 'function') {
+if (
+  apiServiceDefault &&
+  typeof apiServiceDefault === 'object' &&
+  typeof (apiServiceDefault as any).getTopics === 'function'
+) {
   apiService = apiServiceDefault;
   console.log('✅ apiService loaded via default export');
 }
@@ -98,16 +102,26 @@ if (!apiService || typeof apiService.getTopics !== 'function') {
 
   // Create a minimal fallback that at least prevents crashes
   apiService = {
-    getTopics: () => Promise.resolve({ success: false, error: 'apiService not initialized' }),
-    getTopicArticles: () => Promise.resolve({ success: false, error: 'apiService not initialized' }),
-    getTopicSummary: () => Promise.resolve({ success: false, error: 'apiService not initialized' }),
-    getArticles: () => Promise.resolve({ success: false, error: 'apiService not initialized' }),
-    getCategoryStats: () => Promise.resolve({ success: false, error: 'apiService not initialized' }),
-    getWordCloud: () => Promise.resolve({ success: false, error: 'apiService not initialized' }),
-    getBigPicture: () => Promise.resolve({ success: false, error: 'apiService not initialized' }),
-    getTrendingTopics: () => Promise.resolve({ success: false, error: 'apiService not initialized' }),
-    clusterArticles: () => Promise.resolve({ success: false, error: 'apiService not initialized' }),
-    convertTopicToStoryline: () => Promise.resolve({ success: false, error: 'apiService not initialized' }),
+    getTopics: () =>
+      Promise.resolve({ success: false, error: 'apiService not initialized' }),
+    getTopicArticles: () =>
+      Promise.resolve({ success: false, error: 'apiService not initialized' }),
+    getTopicSummary: () =>
+      Promise.resolve({ success: false, error: 'apiService not initialized' }),
+    getArticles: () =>
+      Promise.resolve({ success: false, error: 'apiService not initialized' }),
+    getCategoryStats: () =>
+      Promise.resolve({ success: false, error: 'apiService not initialized' }),
+    getWordCloud: () =>
+      Promise.resolve({ success: false, error: 'apiService not initialized' }),
+    getBigPicture: () =>
+      Promise.resolve({ success: false, error: 'apiService not initialized' }),
+    getTrendingTopics: () =>
+      Promise.resolve({ success: false, error: 'apiService not initialized' }),
+    clusterArticles: () =>
+      Promise.resolve({ success: false, error: 'apiService not initialized' }),
+    convertTopicToStoryline: () =>
+      Promise.resolve({ success: false, error: 'apiService not initialized' }),
   };
 }
 
@@ -211,7 +225,8 @@ interface TrendingTopic {
 const Topics: React.FC = () => {
   const navigate = useNavigate();
   const { domain } = useDomainRoute();
-  const { showSuccess, showError, showInfo, NotificationComponent } = useNotification();
+  const { showSuccess, showError, showInfo, NotificationComponent } =
+    useNotification();
   const [topics, setTopics] = useState<Topic[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -225,24 +240,34 @@ const Topics: React.FC = () => {
   const [activeTab, setActiveTab] = useState(0);
 
   // New enhanced data states
-  const [wordCloudData, setWordCloudData] = useState<WordCloudData | null>(null);
-  const [bigPictureData, setBigPictureData] = useState<BigPictureData | null>(null);
+  const [wordCloudData, setWordCloudData] = useState<WordCloudData | null>(
+    null
+  );
+  const [bigPictureData, setBigPictureData] = useState<BigPictureData | null>(
+    null
+  );
   const [trendingTopics, setTrendingTopics] = useState<TrendingTopic[]>([]);
   const [timePeriod, setTimePeriod] = useState<number>(24);
   const [articleDialogOpen, setArticleDialogOpen] = useState(false);
-  const [selectedArticle, setSelectedArticle] = useState<TopicArticle | null>(null);
+  const [selectedArticle, setSelectedArticle] = useState<TopicArticle | null>(
+    null
+  );
   const [bannedTopicsDialogOpen, setBannedTopicsDialogOpen] = useState(false);
-  const [bannedTopicsList, setBannedTopicsList] = useState<{ id: number; topic_name: string; created_at?: string; reason?: string }[]>([]);
-  const [mergeSuggestions, setMergeSuggestions] = useState<{
-    primary: { id: number; cluster_name: string; article_count: number };
-    secondary: { id: number; cluster_name: string; article_count: number };
-    score: number;
-    reason: string;
-    suggested_name: string;
-  }[]>([]);
+  const [bannedTopicsList, setBannedTopicsList] = useState<
+    { id: number; topic_name: string; created_at?: string; reason?: string }[]
+  >([]);
+  const [mergeSuggestions, setMergeSuggestions] = useState<
+    {
+      primary: { id: number; cluster_name: string; article_count: number };
+      secondary: { id: number; cluster_name: string; article_count: number };
+      score: number;
+      reason: string;
+      suggested_name: string;
+    }[]
+  >([]);
   const [mergeSuggestionsLoading, setMergeSuggestionsLoading] = useState(false);
 
-  const loadTopics = useCallback(async() => {
+  const loadTopics = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -264,7 +289,8 @@ const Topics: React.FC = () => {
           showInfo(`No topics found matching "${searchQuery}"`);
         }
       } else {
-        const errorMsg = response.message || 'Unable to load topics. Please try again.';
+        const errorMsg =
+          response.message || 'Unable to load topics. Please try again.';
         setError(errorMsg);
         showError(errorMsg);
       }
@@ -277,116 +303,194 @@ const Topics: React.FC = () => {
     }
   }, [searchQuery, selectedCategory, domain]);
 
-  const loadTopicArticles = useCallback(async(topicName: string) => {
-    try {
-      const service = getApiServiceSafe();
-      console.log(`Loading articles for topic: "${topicName}"`);
-      // Increase limit to get more articles
-      const response = await service.getTopicArticles(topicName, 100, 0, domain);
-      console.log('Topic articles response:', response);
+  const loadTopicArticles = useCallback(
+    async (topicName: string) => {
+      try {
+        const service = getApiServiceSafe();
+        console.log(`Loading articles for topic: "${topicName}"`);
+        // Increase limit to get more articles
+        const response = await service.getTopicArticles(
+          topicName,
+          100,
+          0,
+          domain
+        );
+        console.log('Topic articles response:', response);
 
-      if (response.success) {
-        const articles = response.data?.articles || response.data || [];
-        console.log(`Found ${articles.length} articles for topic "${topicName}"`);
+        if (response.success) {
+          const articles = response.data?.articles || response.data || [];
+          console.log(
+            `Found ${articles.length} articles for topic "${topicName}"`
+          );
 
-        // If no articles found via topic assignment, try searching by keyword
-        if (articles.length === 0) {
-          console.log(`No articles assigned to topic, searching articles by keyword: "${topicName}"`);
+          // If no articles found via topic assignment, try searching by keyword
+          if (articles.length === 0) {
+            console.log(
+              `No articles assigned to topic, searching articles by keyword: "${topicName}"`
+            );
+            const service = getApiServiceSafe();
+            const searchResponse = await service.getArticles(
+              {
+                search: topicName,
+                limit: 100,
+              },
+              domain
+            );
+
+            if (searchResponse.success) {
+              const searchArticles =
+                searchResponse.data?.articles ||
+                searchResponse.data?.data?.articles ||
+                [];
+              console.log(
+                `Found ${searchArticles.length} articles matching keyword "${topicName}"`
+              );
+              setTopicArticles(searchArticles);
+              if (searchArticles.length > 0) {
+                setError(
+                  `Found ${searchArticles.length} articles matching "${topicName}" but they're not yet assigned to this topic. Click "Run Topic Clustering" to assign articles to topics.`
+                );
+              } else {
+                // Check if the search term is a domain name or category
+                const domainNames = [
+                  'politics',
+                  'finance',
+                  'science-tech',
+                  'science_tech',
+                  'science & technology',
+                ];
+                const categoryNames = [
+                  'technology',
+                  'tech',
+                  'science',
+                  'health',
+                  'business',
+                  'economy',
+                  'environment',
+                  'sports',
+                  'entertainment',
+                  'education',
+                  'employment',
+                ];
+
+                const searchTermLower = topicName.toLowerCase();
+
+                if (domainNames.includes(searchTermLower)) {
+                  setError(
+                    `"${topicName}" is a domain, not a topic. Topics are specific subjects extracted from articles (like "China", "Ukraine", "Donald Trump", "2026 elections"). To view all articles in the ${topicName} domain, go to the Articles page.`
+                  );
+                } else if (categoryNames.includes(searchTermLower)) {
+                  setError(
+                    `"${topicName}" is a category, not a specific topic. Topics are granular subjects extracted from article content (like "Artificial Intelligence", "Space Exploration", "Quantum Computing"). Try running topic clustering to extract specific topics from articles, or search for a more specific topic name.`
+                  );
+                } else {
+                  setError(
+                    `Topic "${topicName}" not found and no articles match this keyword. Try running topic clustering to create topics from articles, or search for an existing topic.`
+                  );
+                }
+                showInfo(
+                  'No articles found. Try running topic clustering to process articles and assign them to topics.'
+                );
+              }
+            } else {
+              setTopicArticles([]);
+              setError(`No articles found for topic "${topicName}".`);
+              showInfo(
+                'No articles assigned to this topic yet. Try running topic clustering to assign articles.'
+              );
+            }
+          } else {
+            // Map API response fields to frontend format
+            const mappedArticles = articles.map((article: any) => ({
+              ...article,
+              sentiment: article.sentiment_label || article.sentiment,
+              topic_confidence:
+                article.relevance_score || article.topic_confidence,
+            }));
+            setTopicArticles(mappedArticles);
+            setError(null);
+          }
+        } else {
+          // If topic doesn't exist, try searching by keyword
           const service = getApiServiceSafe();
-          const searchResponse = await service.getArticles({
-            search: topicName,
-            limit: 100,
-          }, domain);
+          const searchResponse = await service.getArticles(
+            {
+              search: topicName,
+              limit: 100,
+            },
+            domain
+          );
 
           if (searchResponse.success) {
-            const searchArticles = searchResponse.data?.articles || searchResponse.data?.data?.articles || [];
-            console.log(`Found ${searchArticles.length} articles matching keyword "${topicName}"`);
-            setTopicArticles(searchArticles);
+            const searchArticles =
+              searchResponse.data?.articles ||
+              searchResponse.data?.data?.articles ||
+              [];
             if (searchArticles.length > 0) {
-              setError(`Found ${searchArticles.length} articles matching "${topicName}" but they're not yet assigned to this topic. Click "Run Topic Clustering" to assign articles to topics.`);
+              setTopicArticles(searchArticles);
+              setError(
+                `Found ${searchArticles.length} articles matching "${topicName}" but they're not yet assigned to this topic. Click "Run Topic Clustering" to assign articles to topics.`
+              );
             } else {
-              // Check if the search term is a domain name or category
-              const domainNames = ['politics', 'finance', 'science-tech', 'science_tech', 'science & technology'];
-              const categoryNames = ['technology', 'tech', 'science', 'health', 'business', 'economy', 'environment', 'sports', 'entertainment', 'education', 'employment'];
-              
-              const searchTermLower = topicName.toLowerCase();
-              
-              if (domainNames.includes(searchTermLower)) {
-                setError(`"${topicName}" is a domain, not a topic. Topics are specific subjects extracted from articles (like "China", "Ukraine", "Donald Trump", "2026 elections"). To view all articles in the ${topicName} domain, go to the Articles page.`);
-              } else if (categoryNames.includes(searchTermLower)) {
-                setError(`"${topicName}" is a category, not a specific topic. Topics are granular subjects extracted from article content (like "Artificial Intelligence", "Space Exploration", "Quantum Computing"). Try running topic clustering to extract specific topics from articles, or search for a more specific topic name.`);
+              // Check if the search term is a domain name
+              const domainNames = [
+                'politics',
+                'finance',
+                'science-tech',
+                'science_tech',
+              ];
+              if (domainNames.includes(topicName.toLowerCase())) {
+                setError(
+                  `"${topicName}" is a domain, not a topic. Topics are specific subjects extracted from articles (like "China", "Ukraine", "President Donald Trump"). To view all articles in the ${topicName} domain, go to the Articles page.`
+                );
               } else {
-                setError(`Topic "${topicName}" not found and no articles match this keyword. Try running topic clustering to create topics from articles, or search for an existing topic.`);
+                setError(
+                  `Topic "${topicName}" not found and no articles match this keyword.`
+                );
               }
-              showInfo('No articles found. Try running topic clustering to process articles and assign them to topics.');
+              showInfo(
+                'Topic not found. Try running topic clustering first to create topics from articles, or search for an existing topic.'
+              );
+              setTopicArticles([]);
             }
           } else {
+            const errorMsg =
+              response.error ||
+              response.message ||
+              `Failed to load articles for topic "${topicName}"`;
+            console.error('Topic articles API error:', errorMsg);
+            setError(errorMsg);
             setTopicArticles([]);
-            setError(`No articles found for topic "${topicName}".`);
-            showInfo('No articles assigned to this topic yet. Try running topic clustering to assign articles.');
           }
-        } else {
-          // Map API response fields to frontend format
-          const mappedArticles = articles.map((article: any) => ({
-            ...article,
-            sentiment: article.sentiment_label || article.sentiment,
-            topic_confidence: article.relevance_score || article.topic_confidence,
-          }));
-          setTopicArticles(mappedArticles);
-          setError(null);
         }
-      } else {
-        // If topic doesn't exist, try searching by keyword
+      } catch (err: any) {
+        console.error('Error loading topic articles:', err);
+        setError(
+          `Error loading articles: ${err.message}. The topic "${topicName}" may not exist in the database yet. Try running topic clustering.`
+        );
+        setTopicArticles([]);
+      }
+    },
+    [domain]
+  );
+
+  const loadTopicSummary = useCallback(
+    async (topicName: string) => {
+      try {
         const service = getApiServiceSafe();
-        const searchResponse = await service.getArticles({
-          search: topicName,
-          limit: 100,
-        }, domain);
+        const response = await service.getTopicSummary(topicName, domain);
 
-        if (searchResponse.success) {
-          const searchArticles = searchResponse.data?.articles || searchResponse.data?.data?.articles || [];
-          if (searchArticles.length > 0) {
-            setTopicArticles(searchArticles);
-            setError(`Found ${searchArticles.length} articles matching "${topicName}" but they're not yet assigned to this topic. Click "Run Topic Clustering" to assign articles to topics.`);
-          } else {
-            // Check if the search term is a domain name
-            const domainNames = ['politics', 'finance', 'science-tech', 'science_tech'];
-            if (domainNames.includes(topicName.toLowerCase())) {
-              setError(`"${topicName}" is a domain, not a topic. Topics are specific subjects extracted from articles (like "China", "Ukraine", "President Donald Trump"). To view all articles in the ${topicName} domain, go to the Articles page.`);
-            } else {
-              setError(`Topic "${topicName}" not found and no articles match this keyword.`);
-            }
-            showInfo('Topic not found. Try running topic clustering first to create topics from articles, or search for an existing topic.');
-            setTopicArticles([]);
-          }
-        } else {
-          const errorMsg = response.error || response.message || `Failed to load articles for topic "${topicName}"`;
-          console.error('Topic articles API error:', errorMsg);
-          setError(errorMsg);
-          setTopicArticles([]);
+        if (response.success) {
+          setTopicSummary(response.data);
         }
+      } catch (err) {
+        console.error('Error loading topic summary:', err);
       }
-    } catch (err: any) {
-      console.error('Error loading topic articles:', err);
-      setError(`Error loading articles: ${err.message}. The topic "${topicName}" may not exist in the database yet. Try running topic clustering.`);
-      setTopicArticles([]);
-    }
-  }, [domain]);
+    },
+    [domain]
+  );
 
-  const loadTopicSummary = useCallback(async(topicName: string) => {
-    try {
-      const service = getApiServiceSafe();
-      const response = await service.getTopicSummary(topicName, domain);
-
-      if (response.success) {
-        setTopicSummary(response.data);
-      }
-    } catch (err) {
-      console.error('Error loading topic summary:', err);
-    }
-  }, [domain]);
-
-  const loadCategories = useCallback(async() => {
+  const loadCategories = useCallback(async () => {
     try {
       const service = getApiServiceSafe();
       const response = await service.getCategoryStats();
@@ -400,7 +504,7 @@ const Topics: React.FC = () => {
   }, []);
 
   // New enhanced data loading functions
-  const loadWordCloudData = useCallback(async() => {
+  const loadWordCloudData = useCallback(async () => {
     try {
       const service = getApiServiceSafe();
       // Use min_frequency=1 to get all topics (even with 1 article)
@@ -420,7 +524,7 @@ const Topics: React.FC = () => {
     }
   }, [timePeriod, domain]);
 
-  const loadBigPictureData = useCallback(async() => {
+  const loadBigPictureData = useCallback(async () => {
     try {
       const service = getApiServiceSafe();
       const response = await service.getBigPicture(timePeriod, domain);
@@ -429,7 +533,10 @@ const Topics: React.FC = () => {
         console.log('Setting big picture data:', response.data);
         setBigPictureData(response.data);
       } else {
-        console.warn('Big Picture API returned unsuccessful or no data:', response);
+        console.warn(
+          'Big Picture API returned unsuccessful or no data:',
+          response
+        );
         setBigPictureData(null);
       }
     } catch (err) {
@@ -438,7 +545,7 @@ const Topics: React.FC = () => {
     }
   }, [timePeriod, domain]);
 
-  const loadMergeSuggestions = useCallback(async() => {
+  const loadMergeSuggestions = useCallback(async () => {
     try {
       setMergeSuggestionsLoading(true);
       const service = getApiServiceSafe();
@@ -455,7 +562,7 @@ const Topics: React.FC = () => {
     }
   }, [domain]);
 
-  const loadBannedTopics = useCallback(async() => {
+  const loadBannedTopics = useCallback(async () => {
     try {
       const service = getApiServiceSafe();
       const res = await service.getBannedTopics?.(domain);
@@ -467,7 +574,7 @@ const Topics: React.FC = () => {
     }
   }, [domain]);
 
-  const loadTrendingTopics = useCallback(async() => {
+  const loadTrendingTopics = useCallback(async () => {
     try {
       const service = getApiServiceSafe();
       const response = await service.getTrendingTopics(timePeriod, 20, domain);
@@ -479,7 +586,7 @@ const Topics: React.FC = () => {
     }
   }, [timePeriod, domain]);
 
-  const handleTopicSelect = async(topic: Topic) => {
+  const handleTopicSelect = async (topic: Topic) => {
     setSelectedTopic(topic);
     setError(null); // Clear previous errors
     setTopicArticles([]); // Clear previous articles
@@ -489,7 +596,7 @@ const Topics: React.FC = () => {
     ]);
   };
 
-  const handleClusterArticles = async() => {
+  const handleClusterArticles = async () => {
     try {
       setClustering(true);
       setError(null);
@@ -498,21 +605,28 @@ const Topics: React.FC = () => {
 
       if (response.success) {
         // Clustering started - wait a bit then reload topics
-        showSuccess('Topic clustering started! Processing articles in the background...');
+        showSuccess(
+          'Topic clustering started! Processing articles in the background...'
+        );
         // Wait a few seconds for processing, then reload
-        setTimeout(async() => {
+        setTimeout(async () => {
           await loadTopics();
           await loadBigPictureData();
           showSuccess('Topics updated! Check the results below.');
         }, 5000);
       } else {
         // Check if articles were queued (this is still success)
-        const errorMsg = response.message || response.error || 'Topic clustering failed. Please try again.';
+        const errorMsg =
+          response.message ||
+          response.error ||
+          'Topic clustering failed. Please try again.';
         if (errorMsg.includes('queued') || errorMsg.includes('queue')) {
-          showInfo('Articles queued for processing. Topics will appear as processing completes.');
+          showInfo(
+            'Articles queued for processing. Topics will appear as processing completes.'
+          );
           setError(null);
           // Reload after a delay
-          setTimeout(async() => {
+          setTimeout(async () => {
             await loadTopics();
             await loadBigPictureData();
           }, 10000);
@@ -536,16 +650,24 @@ const Topics: React.FC = () => {
     }
   };
 
-  const handleTransformToStoryline = async(topicName: string) => {
+  const handleTransformToStoryline = async (topicName: string) => {
     try {
       const service = getApiServiceSafe();
-      const response = await service.convertTopicToStoryline(topicName, undefined, domain);
+      const response = await service.convertTopicToStoryline(
+        topicName,
+        undefined,
+        domain
+      );
 
       if (response.success) {
         setError(null);
-        showSuccess(`Successfully converted "${topicName}" to storyline: ${response.data.storyline_title}`);
+        showSuccess(
+          `Successfully converted "${topicName}" to storyline: ${response.data.storyline_title}`
+        );
       } else {
-        const errorMsg = response.message || 'Failed to convert topic to storyline. Please try again.';
+        const errorMsg =
+          response.message ||
+          'Failed to convert topic to storyline. Please try again.';
         setError(errorMsg);
         showError(errorMsg);
       }
@@ -580,35 +702,48 @@ const Topics: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [timePeriod]);
 
-  const getUrgencyColor = (urgency?: string): 'error' | 'warning' | 'default' | 'info' => {
+  const getUrgencyColor = (
+    urgency?: string
+  ): 'error' | 'warning' | 'default' | 'info' => {
     switch (urgency) {
-    case 'breaking':
-      return 'error';
-    case 'urgent':
-      return 'warning';
-    case 'normal':
-      return 'default';
-    case 'low':
-      return 'info';
-    default:
-      return 'default';
+      case 'breaking':
+        return 'error';
+      case 'urgent':
+        return 'warning';
+      case 'normal':
+        return 'default';
+      case 'low':
+        return 'info';
+      default:
+        return 'default';
     }
   };
 
-  const getSentimentColor = (sentiment?: string): 'success' | 'error' | 'default' => {
+  const getSentimentColor = (
+    sentiment?: string
+  ): 'success' | 'error' | 'default' => {
     switch (sentiment) {
-    case 'positive':
-      return 'success';
-    case 'negative':
-      return 'error';
-    case 'neutral':
-      return 'default';
-    default:
-      return 'default';
+      case 'positive':
+        return 'success';
+      case 'negative':
+        return 'error';
+      case 'neutral':
+        return 'default';
+      default:
+        return 'default';
     }
   };
 
-  const getCategoryColor = (category?: string): 'error' | 'success' | 'info' | 'warning' | 'secondary' | 'primary' | 'default' => {
+  const getCategoryColor = (
+    category?: string
+  ):
+    | 'error'
+    | 'success'
+    | 'info'
+    | 'warning'
+    | 'secondary'
+    | 'primary'
+    | 'default' => {
     const colors = {
       politics: 'error',
       economy: 'success',
@@ -624,7 +759,10 @@ const Topics: React.FC = () => {
     return colors[category] || 'default';
   };
 
-  const WordCloudVisualization: React.FC<{ words: WordCloudWord[]; onTopicClick?: (topicName: string) => void }> = ({ words, onTopicClick }) => {
+  const WordCloudVisualization: React.FC<{
+    words: WordCloudWord[];
+    onTopicClick?: (topicName: string) => void;
+  }> = ({ words, onTopicClick }) => {
     if (!words || words.length === 0) {
       return (
         <Box sx={{ textAlign: 'center', py: 6 }}>
@@ -695,7 +833,9 @@ const Topics: React.FC = () => {
     if (!data || !data.insights) {
       return (
         <Box sx={{ p: 3, textAlign: 'center' }}>
-          <Typography color="text.secondary">Loading big picture data...</Typography>
+          <Typography color='text.secondary'>
+            Loading big picture data...
+          </Typography>
         </Box>
       );
     }
@@ -800,17 +940,18 @@ const Topics: React.FC = () => {
                           {topic.article_count} articles
                         </Typography>
                         {onBanTopic && (
-                          <Tooltip title="Ban this topic (exclude from views – for vague or unhelpful topics like &quot;truth social post&quot;, &quot;on friday&quot;)">
+                          <Tooltip title='Ban this topic (exclude from views – for vague or unhelpful topics like "truth social post", "on friday")'>
                             <IconButton
-                              size="small"
-                              color="default"
+                              size='small'
+                              color='default'
                               onClick={async () => {
-                                if (onBanTopic) await onBanTopic(topic.category);
+                                if (onBanTopic)
+                                  await onBanTopic(topic.category);
                               }}
                               sx={{ ml: 0.5 }}
                               aria-label={`Ban topic: ${topic.category}`}
                             >
-                              <Block fontSize="small" />
+                              <Block fontSize='small' />
                             </IconButton>
                           </Tooltip>
                         )}
@@ -882,7 +1023,9 @@ const Topics: React.FC = () => {
                 fullWidth
                 label='Search Topics'
                 value={searchQuery}
-                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSearchQuery(e.target.value)}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                  setSearchQuery(e.target.value)
+                }
                 InputProps={{
                   startAdornment: (
                     <Search sx={{ mr: 1, color: 'text.secondary' }} />
@@ -1007,16 +1150,18 @@ const Topics: React.FC = () => {
               Word Cloud - What's Happening
             </Typography>
             <Typography variant='body2' color='text.secondary' sx={{ mb: 2 }}>
-              Hybrid trend map across topic clusters plus entity/context signals.
-              Larger words indicate stronger multi-source coverage.
+              Hybrid trend map across topic clusters plus entity/context
+              signals. Larger words indicate stronger multi-source coverage.
             </Typography>
             <WordCloudVisualization
               words={wordCloudData?.word_cloud || wordCloudData?.words || []}
-              onTopicClick={async(topicName: string) => {
+              onTopicClick={async (topicName: string) => {
                 // Find the topic from the topics list or create a minimal topic object
                 const topic = topics.find(t => t.name === topicName) || {
                   name: topicName,
-                  category: wordCloudData?.word_cloud?.find(w => w.text === topicName)?.category || 'general',
+                  category:
+                    wordCloudData?.word_cloud?.find(w => w.text === topicName)
+                      ?.category || 'general',
                 };
 
                 // Select the topic to show details with Transform button
@@ -1024,9 +1169,14 @@ const Topics: React.FC = () => {
 
                 // Scroll to topic details section
                 setTimeout(() => {
-                  const detailsElement = document.querySelector('[data-topic-details]');
+                  const detailsElement = document.querySelector(
+                    '[data-topic-details]'
+                  );
                   if (detailsElement) {
-                    detailsElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    detailsElement.scrollIntoView({
+                      behavior: 'smooth',
+                      block: 'start',
+                    });
                   }
                 }, 100);
               }}
@@ -1051,8 +1201,8 @@ const Topics: React.FC = () => {
               distribution.
             </Typography>
             <Button
-              size="small"
-              variant="outlined"
+              size='small'
+              variant='outlined'
               startIcon={<Block />}
               onClick={() => {
                 loadBannedTopics();
@@ -1065,11 +1215,17 @@ const Topics: React.FC = () => {
             <BigPictureInsights
               data={bigPictureData}
               domain={domain}
-              onBanTopic={async (topicName) => {
+              onBanTopic={async topicName => {
                 const service = getApiServiceSafe();
-                const res = await service.banTopic(topicName, undefined, domain);
+                const res = await service.banTopic(
+                  topicName,
+                  undefined,
+                  domain
+                );
                 if (res?.success) {
-                  showSuccess(`Topic "${topicName}" banned and will be excluded from views`);
+                  showSuccess(
+                    `Topic "${topicName}" banned and will be excluded from views`
+                  );
                   loadBigPictureData();
                   loadWordCloudData();
                   loadTrendingTopics();
@@ -1081,27 +1237,37 @@ const Topics: React.FC = () => {
             <Dialog
               open={bannedTopicsDialogOpen}
               onClose={() => setBannedTopicsDialogOpen(false)}
-              maxWidth="sm"
+              maxWidth='sm'
               fullWidth
             >
               <DialogTitle>Banned topics</DialogTitle>
               <DialogContent>
-                <Typography variant='body2' color='text.secondary' sx={{ mb: 2 }}>
-                  Topics you&apos;ve banned are excluded from Big Picture, Word Cloud, and Trending views.
+                <Typography
+                  variant='body2'
+                  color='text.secondary'
+                  sx={{ mb: 2 }}
+                >
+                  Topics you&apos;ve banned are excluded from Big Picture, Word
+                  Cloud, and Trending views.
                 </Typography>
                 {bannedTopicsList.length === 0 ? (
-                  <Typography color="text.secondary">No banned topics.</Typography>
+                  <Typography color='text.secondary'>
+                    No banned topics.
+                  </Typography>
                 ) : (
                   <List dense>
-                    {bannedTopicsList.map((b) => (
+                    {bannedTopicsList.map(b => (
                       <ListItem
                         key={b.id}
                         secondaryAction={
                           <Button
-                            size="small"
+                            size='small'
                             onClick={async () => {
                               const service = getApiServiceSafe();
-                              const res = await service.unbanTopic?.(b.topic_name, domain);
+                              const res = await service.unbanTopic?.(
+                                b.topic_name,
+                                domain
+                              );
                               if (res?.success) {
                                 showSuccess(`Topic "${b.topic_name}" unbanned`);
                                 loadBannedTopics();
@@ -1109,7 +1275,9 @@ const Topics: React.FC = () => {
                                 loadWordCloudData();
                                 loadTrendingTopics();
                               } else {
-                                showError(res?.error || 'Failed to unban topic');
+                                showError(
+                                  res?.error || 'Failed to unban topic'
+                                );
                               }
                             }}
                           >
@@ -1117,14 +1285,19 @@ const Topics: React.FC = () => {
                           </Button>
                         }
                       >
-                        <ListItemText primary={b.topic_name} secondary={b.reason} />
+                        <ListItemText
+                          primary={b.topic_name}
+                          secondary={b.reason}
+                        />
                       </ListItem>
                     ))}
                   </List>
                 )}
               </DialogContent>
               <DialogActions>
-                <Button onClick={() => setBannedTopicsDialogOpen(false)}>Close</Button>
+                <Button onClick={() => setBannedTopicsDialogOpen(false)}>
+                  Close
+                </Button>
               </DialogActions>
             </Dialog>
           </CardContent>
@@ -1245,12 +1418,18 @@ const Topics: React.FC = () => {
       {activeTab === 3 && (
         <Card>
           <CardContent>
-            <Typography variant='h6' gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <Typography
+              variant='h6'
+              gutterBottom
+              sx={{ display: 'flex', alignItems: 'center', gap: 1 }}
+            >
               <MergeType />
               Merge Suggestions
             </Typography>
             <Typography variant='body2' color='text.secondary' sx={{ mb: 2 }}>
-              Second-layer clustering: topics that look similar and could be merged (e.g. &quot;Remove Former Prince Andrew&quot; and &quot;Removing Prince Andrew Succession&quot;).
+              Second-layer clustering: topics that look similar and could be
+              merged (e.g. &quot;Remove Former Prince Andrew&quot; and
+              &quot;Removing Prince Andrew Succession&quot;).
             </Typography>
             <Button
               size='small'
@@ -1267,13 +1446,23 @@ const Topics: React.FC = () => {
                 <CircularProgress />
               </Box>
             ) : mergeSuggestions.length === 0 ? (
-              <Typography color='text.secondary'>No merge suggestions. Try refreshing after adding more topics.</Typography>
+              <Typography color='text.secondary'>
+                No merge suggestions. Try refreshing after adding more topics.
+              </Typography>
             ) : (
               <List>
                 {mergeSuggestions.map((s, i) => (
                   <ListItem
                     key={i}
-                    sx={{ flexDirection: 'column', alignItems: 'stretch', border: 1, borderColor: 'divider', borderRadius: 1, mb: 1, p: 2 }}
+                    sx={{
+                      flexDirection: 'column',
+                      alignItems: 'stretch',
+                      border: 1,
+                      borderColor: 'divider',
+                      borderRadius: 1,
+                      mb: 1,
+                      p: 2,
+                    }}
                     secondaryAction={
                       <Button
                         variant='contained'
@@ -1284,11 +1473,15 @@ const Topics: React.FC = () => {
                           const res = await service.mergeClusters?.(
                             s.primary.cluster_name,
                             s.secondary.cluster_name,
-                            domain,
+                            domain
                           );
                           if (res?.success) {
-                            showSuccess(`Merged "${s.secondary.cluster_name}" into "${s.primary.cluster_name}"`);
-                            setMergeSuggestions(prev => prev.filter((_, idx) => idx !== i));
+                            showSuccess(
+                              `Merged "${s.secondary.cluster_name}" into "${s.primary.cluster_name}"`
+                            );
+                            setMergeSuggestions(prev =>
+                              prev.filter((_, idx) => idx !== i)
+                            );
                             loadTopics();
                             loadBigPictureData();
                             loadWordCloudData();
@@ -1304,13 +1497,34 @@ const Topics: React.FC = () => {
                   >
                     <ListItemText
                       primary={
-                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
-                          <Chip label={s.primary.cluster_name} size='small' color='primary' />
-                          <Typography component='span' color='text.secondary'>+</Typography>
-                          <Chip label={s.secondary.cluster_name} size='small' variant='outlined' />
+                        <Box
+                          sx={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 1,
+                            flexWrap: 'wrap',
+                          }}
+                        >
+                          <Chip
+                            label={s.primary.cluster_name}
+                            size='small'
+                            color='primary'
+                          />
+                          <Typography component='span' color='text.secondary'>
+                            +
+                          </Typography>
+                          <Chip
+                            label={s.secondary.cluster_name}
+                            size='small'
+                            variant='outlined'
+                          />
                         </Box>
                       }
-                      secondary={`Score: ${(s.score * 100).toFixed(0)}% • ${s.reason} • ${s.primary.article_count + s.secondary.article_count} articles combined`}
+                      secondary={`Score: ${(s.score * 100).toFixed(0)}% • ${
+                        s.reason
+                      } • ${
+                        s.primary.article_count + s.secondary.article_count
+                      } articles combined`}
                     />
                   </ListItem>
                 ))}
@@ -1408,8 +1622,8 @@ const Topics: React.FC = () => {
                           Latest:{' '}
                           {topic.latest_article
                             ? new Date(
-                              topic.latest_article,
-                            ).toLocaleDateString()
+                                topic.latest_article
+                              ).toLocaleDateString()
                             : 'N/A'}
                         </Typography>
 
@@ -1532,7 +1746,14 @@ const Topics: React.FC = () => {
             {/* Topic Articles */}
             <Accordion defaultExpanded>
               <AccordionSummary expandIcon={<ExpandMore />}>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, width: '100%' }}>
+                <Box
+                  sx={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 2,
+                    width: '100%',
+                  }}
+                >
                   <Typography variant='h6'>
                     📰 Articles ({topicArticles.length})
                   </Typography>
@@ -1541,7 +1762,7 @@ const Topics: React.FC = () => {
                       variant='outlined'
                       size='small'
                       startIcon={<Transform />}
-                      onClick={async(e) => {
+                      onClick={async e => {
                         e.stopPropagation();
                         await handleTransformToStoryline(selectedTopic.name);
                       }}
@@ -1560,33 +1781,58 @@ const Topics: React.FC = () => {
                 )}
                 {topicArticles.length === 0 ? (
                   <Box sx={{ textAlign: 'center', py: 4 }}>
-                    <Article sx={{ fontSize: 48, color: 'text.secondary', mb: 2 }} />
-                    <Typography variant='h6' color='text.secondary' gutterBottom>
+                    <Article
+                      sx={{ fontSize: 48, color: 'text.secondary', mb: 2 }}
+                    />
+                    <Typography
+                      variant='h6'
+                      color='text.secondary'
+                      gutterBottom
+                    >
                       No articles found
                     </Typography>
-                    <Typography variant='body2' color='text.secondary' sx={{ mb: 3 }}>
-                      This topic doesn't have any assigned articles yet. Run topic clustering to analyze articles and assign them to topics.
+                    <Typography
+                      variant='body2'
+                      color='text.secondary'
+                      sx={{ mb: 3 }}
+                    >
+                      This topic doesn't have any assigned articles yet. Run
+                      topic clustering to analyze articles and assign them to
+                      topics.
                     </Typography>
                     <Button
                       variant='contained'
-                      startIcon={clustering ? <CircularProgress size={16} /> : <Analytics />}
+                      startIcon={
+                        clustering ? (
+                          <CircularProgress size={16} />
+                        ) : (
+                          <Analytics />
+                        )
+                      }
                       onClick={handleClusterArticles}
                       disabled={clustering}
                       sx={{ mt: 2 }}
                     >
-                      {clustering ? 'Clustering Articles...' : 'Run Topic Clustering'}
+                      {clustering
+                        ? 'Clustering Articles...'
+                        : 'Run Topic Clustering'}
                     </Button>
-                    <Typography variant='body2' color='text.secondary' sx={{ mt: 2 }}>
-                      This will analyze all articles and assign them to relevant topics.
+                    <Typography
+                      variant='body2'
+                      color='text.secondary'
+                      sx={{ mt: 2 }}
+                    >
+                      This will analyze all articles and assign them to relevant
+                      topics.
                     </Typography>
                   </Box>
                 ) : (
                   <List>
                     {topicArticles.map((article: TopicArticle) => (
-                      <ListItem 
-                        key={article.id} 
+                      <ListItem
+                        key={article.id}
                         divider
-                        onClick={(e) => {
+                        onClick={e => {
                           e.preventDefault();
                           e.stopPropagation();
                         }}
@@ -1599,10 +1845,19 @@ const Topics: React.FC = () => {
                               <span>
                                 {article.source || article.source_domain} •{' '}
                                 {new Date(
-                                  article.created_at || article.published_at,
+                                  article.created_at || article.published_at
                                 ).toLocaleDateString()}
                               </span>
-                              <Box component='span' sx={{ mt: 1, ml: 1, display: 'inline-flex', flexWrap: 'wrap', gap: 0.5 }}>
+                              <Box
+                                component='span'
+                                sx={{
+                                  mt: 1,
+                                  ml: 1,
+                                  display: 'inline-flex',
+                                  flexWrap: 'wrap',
+                                  gap: 0.5,
+                                }}
+                              >
                                 {article.sentiment && (
                                   <Chip
                                     label={article.sentiment}
@@ -1695,11 +1950,18 @@ const Topics: React.FC = () => {
         PaperProps={{ sx: { minHeight: '50vh', maxHeight: '90vh' } }}
       >
         <DialogTitle>
-          <Box display='flex' justifyContent='space-between' alignItems='center'>
+          <Box
+            display='flex'
+            justifyContent='space-between'
+            alignItems='center'
+          >
             <Typography variant='h5' component='div' sx={{ flex: 1, pr: 2 }}>
               {selectedArticle?.title}
             </Typography>
-            <IconButton onClick={() => setArticleDialogOpen(false)} size='small'>
+            <IconButton
+              onClick={() => setArticleDialogOpen(false)}
+              size='small'
+            >
               <Close />
             </IconButton>
           </Box>
@@ -1710,27 +1972,45 @@ const Topics: React.FC = () => {
               {/* Article Metadata */}
               <Box sx={{ mb: 2, display: 'flex', gap: 1, flexWrap: 'wrap' }}>
                 {selectedArticle.source_domain && (
-                  <Chip label={selectedArticle.source_domain} size='small' variant='outlined' />
+                  <Chip
+                    label={selectedArticle.source_domain}
+                    size='small'
+                    variant='outlined'
+                  />
                 )}
-                {(selectedArticle.published_at || selectedArticle.created_at) && (
+                {(selectedArticle.published_at ||
+                  selectedArticle.created_at) && (
                   <Chip
                     label={new Date(
-                      selectedArticle.published_at || selectedArticle.created_at || '',
+                      selectedArticle.published_at ||
+                        selectedArticle.created_at ||
+                        ''
                     ).toLocaleDateString()}
                     size='small'
                     variant='outlined'
                   />
                 )}
-                {(selectedArticle.sentiment || selectedArticle.sentiment_label) && (
+                {(selectedArticle.sentiment ||
+                  selectedArticle.sentiment_label) && (
                   <Chip
-                    label={selectedArticle.sentiment || selectedArticle.sentiment_label}
+                    label={
+                      selectedArticle.sentiment ||
+                      selectedArticle.sentiment_label
+                    }
                     size='small'
-                    color={getSentimentColor(selectedArticle.sentiment || selectedArticle.sentiment_label)}
+                    color={getSentimentColor(
+                      selectedArticle.sentiment ||
+                        selectedArticle.sentiment_label
+                    )}
                   />
                 )}
-                {(selectedArticle.topic_confidence || selectedArticle.relevance_score) && (
+                {(selectedArticle.topic_confidence ||
+                  selectedArticle.relevance_score) && (
                   <Chip
-                    label={`${((selectedArticle.topic_confidence || selectedArticle.relevance_score) * 100).toFixed(0)}% relevance`}
+                    label={`${(
+                      (selectedArticle.topic_confidence ||
+                        selectedArticle.relevance_score) * 100
+                    ).toFixed(0)}% relevance`}
                     size='small'
                     variant='outlined'
                   />
@@ -1745,7 +2025,10 @@ const Topics: React.FC = () => {
                   <Typography variant='h6' gutterBottom>
                     Summary
                   </Typography>
-                  <Typography variant='body1' sx={{ lineHeight: 1.8, textAlign: 'justify', mb: 2 }}>
+                  <Typography
+                    variant='body1'
+                    sx={{ lineHeight: 1.8, textAlign: 'justify', mb: 2 }}
+                  >
                     {selectedArticle.summary}
                   </Typography>
                 </Box>
@@ -1754,7 +2037,10 @@ const Topics: React.FC = () => {
                   <Typography variant='h6' gutterBottom>
                     Content
                   </Typography>
-                  <Typography variant='body1' sx={{ lineHeight: 1.8, textAlign: 'justify', mb: 2 }}>
+                  <Typography
+                    variant='body1'
+                    sx={{ lineHeight: 1.8, textAlign: 'justify', mb: 2 }}
+                  >
                     {selectedArticle.content.length > 2000
                       ? `${selectedArticle.content.substring(0, 2000)}...`
                       : selectedArticle.content}

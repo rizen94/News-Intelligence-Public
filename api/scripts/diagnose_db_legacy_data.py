@@ -6,12 +6,13 @@ Run from project root: .venv/bin/python api/scripts/diagnose_db_legacy_data.py
 """
 
 import os
-import sys
 import re
+import sys
 from pathlib import Path
 
 try:
     from dotenv import load_dotenv
+
     api_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     load_dotenv(os.path.join(api_dir, ".env"), override=False)
     load_dotenv(os.path.join(api_dir, "..", ".env"), override=False)
@@ -121,7 +122,16 @@ def main():
                 print(f"  {r[0]}: {r[1]} (nullable={r[2]})")
             # Check for naming that app code might expect
             col_names = [r[0] for r in cols]
-            for expected in ("rss_feed_id", "feed_id", "category", "source_domain", "source_name", "entities", "topics", "extracted_entities"):
+            for expected in (
+                "rss_feed_id",
+                "feed_id",
+                "category",
+                "source_domain",
+                "source_name",
+                "entities",
+                "topics",
+                "extracted_entities",
+            ):
                 status = "present" if expected in col_names else "MISSING"
                 print(f"  >> {expected}: {status}")
 
@@ -143,7 +153,9 @@ def main():
                 """
                 row = run_one(conn, q)
                 if row:
-                    print(f"  {schema}: total={row[0]}, created_at present={row[1]}, entities present={row[2]}, topics present={row[3]}, null entities={row[4]}, null topics={row[5]}")
+                    print(
+                        f"  {schema}: total={row[0]}, created_at present={row[1]}, entities present={row[2]}, topics present={row[3]}, null entities={row[4]}, null topics={row[5]}"
+                    )
             except Exception as e:
                 print(f"  {schema}: error - {e}")
 
@@ -165,7 +177,9 @@ def main():
                 """
                 o2 = run_one(conn, q2)
                 if (o1 and o1[0] and int(o1[0]) > 0) or (o2 and o2[0] and int(o2[0]) > 0):
-                    print(f"  {schema}: orphan storyline_articles (bad article_id)={o1[0] if o1 else 0}, (bad storyline_id)={o2[0] if o2 else 0}")
+                    print(
+                        f"  {schema}: orphan storyline_articles (bad article_id)={o1[0] if o1 else 0}, (bad storyline_id)={o2[0] if o2 else 0}"
+                    )
                 else:
                     print(f"  {schema}: no storyline_articles orphans")
             except Exception as e:
@@ -181,9 +195,14 @@ def main():
         ):
             try:
                 total = run_one(conn, f"SELECT COUNT(*) FROM {table}")
-                old = run_one(conn, f"SELECT COUNT(*) FROM {table} WHERE {age_col} < NOW() - INTERVAL '90 days'")
+                old = run_one(
+                    conn,
+                    f"SELECT COUNT(*) FROM {table} WHERE {age_col} < NOW() - INTERVAL '90 days'",
+                )
                 if total and total[0] is not None:
-                    print(f"  {table}: total={total[0]}, older than 90 days={old[0] if old else '?'}")
+                    print(
+                        f"  {table}: total={total[0]}, older than 90 days={old[0] if old else '?'}"
+                    )
             except Exception as e:
                 print(f"  {table}: error - {e}")
 
@@ -192,7 +211,11 @@ def main():
         set_search_path(conn, "public")
         try:
             for tbl in ("articles", "storylines", "rss_feeds"):
-                exists = run_one(conn, "SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = %s", (tbl,))
+                exists = run_one(
+                    conn,
+                    "SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = %s",
+                    (tbl,),
+                )
                 if exists:
                     c = run_one(conn, f"SELECT COUNT(*) FROM public.{tbl}")
                     print(f"  public.{tbl}: {c[0] if c else 0} rows")
@@ -227,7 +250,9 @@ def main():
                 print(f"    - {rel}:{line_no} [{table}] {line}")
 
         print("\n" + "=" * 60)
-        print("Done. No data was modified. See docs/DATA_CLEANUP_AND_COMPATIBILITY.md for cleanup options.")
+        print(
+            "Done. No data was modified. See docs/DATA_CLEANUP_AND_COMPATIBILITY.md for cleanup options."
+        )
         print("=" * 60)
     finally:
         conn.close()

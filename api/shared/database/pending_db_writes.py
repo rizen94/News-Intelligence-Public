@@ -15,7 +15,7 @@ import os
 import threading
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +45,7 @@ def enqueue_automation_run_history(
     started_at: str,
     finished_at: str,
     success: bool,
-    error_message: Optional[str],
+    error_message: str | None,
 ) -> None:
     """Append one automation_run_history-equivalent row for later flush."""
     rec = {
@@ -60,7 +60,7 @@ def enqueue_automation_run_history(
     _append_record(rec)
 
 
-def _append_record(rec: Dict[str, Any]) -> None:
+def _append_record(rec: dict[str, Any]) -> None:
     line = json.dumps(rec, default=str) + "\n"
     path = _queue_file()
     with _lock:
@@ -81,7 +81,7 @@ def pending_line_count() -> int:
         return 0
 
 
-def flush_pending_writes() -> Dict[str, Any]:
+def flush_pending_writes() -> dict[str, Any]:
     """
     Replay queued records. Returns stats dict.
     """
@@ -99,7 +99,7 @@ def flush_pending_writes() -> Dict[str, Any]:
         if not lines:
             return {"flushed": 0, "failed": 0, "skipped": 0}
 
-        remaining: List[str] = []
+        remaining: list[str] = []
         flushed = failed = skipped = 0
 
         try:
@@ -161,7 +161,9 @@ def flush_pending_writes() -> Dict[str, Any]:
 
         try:
             if remaining:
-                path.write_text("\n".join(remaining) + ("\n" if remaining else ""), encoding="utf-8")
+                path.write_text(
+                    "\n".join(remaining) + ("\n" if remaining else ""), encoding="utf-8"
+                )
             else:
                 path.unlink(missing_ok=True)
         except OSError as e:

@@ -11,15 +11,20 @@ batch jobs to normalize existing entity_canonical rows.
 
 import logging
 import re
-from typing import Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
 # Patterns: (anchor_group, relation_group). Anchor is the known person; relation is wife/husband/etc.
 # "X's wife" -> anchor=X, relation=wife
 PERSON_RELATIONAL_PATTERNS = [
-    re.compile(r"^(.+?)'s\s+(wife|husband|spouse|partner|spokesperson|spokesman|spokeswoman)$", re.IGNORECASE),
-    re.compile(r"^(wife|husband|spouse|partner|spokesperson|spokesman|spokeswoman)\s+of\s+(.+)$", re.IGNORECASE),
+    re.compile(
+        r"^(.+?)'s\s+(wife|husband|spouse|partner|spokesperson|spokesman|spokeswoman)$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^(wife|husband|spouse|partner|spokesperson|spokesman|spokeswoman)\s+of\s+(.+)$",
+        re.IGNORECASE,
+    ),
     re.compile(r"^(.+?)'s\s+(daughter|son|mother|father|sister|brother)$", re.IGNORECASE),
     re.compile(r"^(daughter|son|mother|father|sister|brother)\s+of\s+(.+)$", re.IGNORECASE),
 ]
@@ -39,7 +44,7 @@ def is_relational_person_phrase(name: str) -> bool:
     return False
 
 
-def _parse_relational_phrase(name: str) -> Optional[Tuple[str, str]]:
+def _parse_relational_phrase(name: str) -> tuple[str, str] | None:
     """
     If name matches a relational pattern, return (anchor_name, relation).
     E.g. "Zohran Mamdani's wife" -> ("Zohran Mamdani", "wife").
@@ -62,7 +67,7 @@ def _parse_relational_phrase(name: str) -> Optional[Tuple[str, str]]:
     return None
 
 
-def _normalize_llm_name(raw: str) -> Optional[str]:
+def _normalize_llm_name(raw: str) -> str | None:
     """Extract a single full name from LLM response; return None if unknown or invalid."""
     if not raw:
         return None
@@ -87,7 +92,7 @@ async def expand_relational_entity_async(
     entity_type: str,
     llm_call,
     timeout_seconds: float = 8.0,
-) -> Tuple[str, Optional[str]]:
+) -> tuple[str, str | None]:
     """
     If entity_name is a relational phrase (e.g. "Zohran Mamdani's wife"),
     try to resolve it to the actual person's name via LLM.
@@ -113,10 +118,11 @@ async def expand_relational_entity_async(
     prompt = (
         f'What is the full name of the person described as "{name}"?\n'
         f'Reply with ONLY the person\'s full name (e.g. "Jane Smith"). '
-        f'If you do not know or cannot determine, reply with exactly: unknown'
+        f"If you do not know or cannot determine, reply with exactly: unknown"
     )
     try:
         import asyncio
+
         response = await asyncio.wait_for(llm_call(prompt), timeout=timeout_seconds)
         resolved = _normalize_llm_name(response)
         if resolved:
@@ -130,8 +136,8 @@ async def expand_relational_entity_async(
 def try_expand_entity_name_sync(
     entity_name: str,
     entity_type: str,
-    expanded_cache: Optional[dict] = None,
-) -> Tuple[str, Optional[str]]:
+    expanded_cache: dict | None = None,
+) -> tuple[str, str | None]:
     """
     Synchronous helper: if you already have a cache of (phrase -> resolved_name),
     use it. Otherwise returns (entity_name, None) so callers can skip expansion
@@ -152,7 +158,7 @@ def try_expand_entity_name_sync(
 def get_relational_patterns_help() -> str:
     """Return a short description of detected patterns for docs."""
     return (
-        "Relational person phrases: \"X's wife\", \"X's husband\", \"X's spouse\", "
-        "\"X's spokesperson\", \"wife of X\", \"daughter/son/mother/father of X\", etc. "
+        'Relational person phrases: "X\'s wife", "X\'s husband", "X\'s spouse", '
+        '"X\'s spokesperson", "wife of X", "daughter/son/mother/father of X", etc. '
         "Expansion uses the LLM to resolve to the actual person's name."
     )

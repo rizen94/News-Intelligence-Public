@@ -9,6 +9,7 @@ import time
 
 try:
     from config.logging_config import get_component_logger
+
     logger = get_component_logger("finance")
 except Exception:
     logger = logging.getLogger(__name__)
@@ -28,10 +29,12 @@ def fetch(start: str | None = None, end: str | None = None) -> DataResult[list[d
     t0 = time.perf_counter()
     try:
         import requests
+
         r = requests.get(URL, timeout=30)
         duration_ms = (time.perf_counter() - t0) * 1000
         try:
             from shared.logging.activity_logger import log_external_call
+
             log_external_call(
                 url=URL,
                 status="success" if r.status_code == 200 else "error",
@@ -60,18 +63,21 @@ def fetch(start: str | None = None, end: str | None = None) -> DataResult[list[d
                 continue
             if end and date_str > end:
                 continue
-            out.append({
-                "date": date_str,
-                "value": val,
-                "unit": UNIT,
-                "source_id": SOURCE_ID,
-                "metadata": {"raw_source": item.get("source", "")},
-            })
+            out.append(
+                {
+                    "date": date_str,
+                    "value": val,
+                    "unit": UNIT,
+                    "source_id": SOURCE_ID,
+                    "metadata": {"raw_source": item.get("source", "")},
+                }
+            )
         return DataResult.ok(out)
     except Exception as e:
         duration_ms = (time.perf_counter() - t0) * 1000
         try:
             from shared.logging.activity_logger import log_external_call
+
             log_external_call(
                 url=URL,
                 status="error",

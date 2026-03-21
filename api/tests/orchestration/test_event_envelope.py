@@ -1,8 +1,7 @@
 """Unit tests for event envelope and EventType."""
 
-import pytest
-from orchestration.events.types import EventType
 from orchestration.events.envelope import EventEnvelope
+from orchestration.events.types import EventType
 
 
 def test_event_type_values():

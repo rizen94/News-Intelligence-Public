@@ -6,7 +6,7 @@ See docs/CONTEXT_CENTRIC_UPGRADE_PLAN.md.
 
 import json
 import logging
-from typing import Any, Dict, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +22,7 @@ def _schema_for_domain(domain_key: str) -> str:
     return DOMAIN_SCHEMA.get(domain_key, domain_key.replace("-", "_"))
 
 
-def ensure_context_for_article(domain_key: str, article_id: int) -> Optional[int]:
+def ensure_context_for_article(domain_key: str, article_id: int) -> int | None:
     """
     Ensure a context exists for the given domain article. Creates one if missing.
     Returns context_id if created or already present, else None on error.
@@ -70,7 +70,7 @@ def ensure_context_for_article(domain_key: str, article_id: int) -> Optional[int
             content = (content or "")[:500000]
             raw_content = content
 
-            ctx_metadata: Dict[str, Any] = {
+            ctx_metadata: dict[str, Any] = {
                 "url": url,
                 "published_at": str(published_at) if published_at else None,
             }
@@ -192,7 +192,9 @@ def update_context_content_for_article(domain_key: str, article_id: int) -> bool
             )
             conn.commit()
             conn.close()
-            logger.debug(f"Context {context_id} content updated for {domain_key}.articles.{article_id}")
+            logger.debug(
+                f"Context {context_id} content updated for {domain_key}.articles.{article_id}"
+            )
             return True
     except Exception as e:
         logger.warning(f"Context processor: update_context_content_for_article failed: {e}")
@@ -336,7 +338,12 @@ def sync_domain_articles_to_contexts(domain_key: str, limit: int = 100) -> int:
                             title,
                             content,
                             raw_content,
-                            json.dumps({"url": url, "published_at": str(published_at) if published_at else None}),
+                            json.dumps(
+                                {
+                                    "url": url,
+                                    "published_at": str(published_at) if published_at else None,
+                                }
+                            ),
                             created_at,
                         ),
                     )
@@ -372,7 +379,7 @@ def sync_domain_articles_to_contexts(domain_key: str, limit: int = 100) -> int:
         return 0
 
 
-def get_context_entity_mentions_coverage() -> Dict[str, Any]:
+def get_context_entity_mentions_coverage() -> dict[str, Any]:
     """
     Diagnostic: count contexts with vs without context_entity_mentions.
     Use to verify coverage after entity_profile_sync + backfill_context_entity_mentions.
@@ -382,7 +389,13 @@ def get_context_entity_mentions_coverage() -> Dict[str, Any]:
 
     conn = get_db_connection()
     if not conn:
-        return {"error": "no_connection", "total_contexts": 0, "contexts_with_mentions": 0, "contexts_without_mentions": 0, "coverage_pct": 0.0}
+        return {
+            "error": "no_connection",
+            "total_contexts": 0,
+            "contexts_with_mentions": 0,
+            "contexts_without_mentions": 0,
+            "coverage_pct": 0.0,
+        }
     try:
         with conn.cursor() as cur:
             cur.execute("SET LOCAL statement_timeout = '5s'")
@@ -406,7 +419,13 @@ def get_context_entity_mentions_coverage() -> Dict[str, Any]:
             conn.close()
         except Exception:
             pass
-        return {"error": str(e)[:200], "total_contexts": 0, "contexts_with_mentions": 0, "contexts_without_mentions": 0, "coverage_pct": 0.0}
+        return {
+            "error": str(e)[:200],
+            "total_contexts": 0,
+            "contexts_with_mentions": 0,
+            "contexts_without_mentions": 0,
+            "coverage_pct": 0.0,
+        }
 
 
 def backfill_context_entity_mentions_for_domain(domain_key: str, limit: int = 500) -> int:
@@ -438,7 +457,9 @@ def backfill_context_entity_mentions_for_domain(domain_key: str, limit: int = 50
             if n > 0:
                 updated += 1
         if updated > 0:
-            logger.info(f"Context processor: backfill {domain_key} — {updated} contexts got entity mentions")
+            logger.info(
+                f"Context processor: backfill {domain_key} — {updated} contexts got entity mentions"
+            )
         return updated
     except Exception as e:
         logger.debug(f"Context processor backfill_context_entity_mentions: {e}")

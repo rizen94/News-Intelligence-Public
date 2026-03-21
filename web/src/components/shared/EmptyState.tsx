@@ -50,7 +50,11 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
         <Typography variant='h6' color='text.primary'>
           {title}
         </Typography>
-        <Typography variant='body2' color='text.secondary' sx={{ maxWidth: 400 }}>
+        <Typography
+          variant='body2'
+          color='text.secondary'
+          sx={{ maxWidth: 400 }}
+        >
           {message}
         </Typography>
         {actionLabel && onAction && (
@@ -69,4 +73,3 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
 };
 
 export default EmptyState;
-

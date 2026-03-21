@@ -10,12 +10,14 @@ from datetime import datetime, timezone
 
 try:
     from config.logging_config import get_component_logger
+
     logger = get_component_logger("finance")
 except Exception:
     logger = logging.getLogger(__name__)
 
-from config.settings import EDGAR_USER_AGENT, EDGAR_RATE_LIMIT_PER_SECOND
+from config.settings import EDGAR_RATE_LIMIT_PER_SECOND, EDGAR_USER_AGENT
 from shared.data_result import DataResult
+
 from domains.finance.data_sources.base import DataSourceBase
 
 SEC_BASE = "https://www.sec.gov"
@@ -25,8 +27,8 @@ ARCHIVES_BASE = f"{SEC_BASE}/Archives/edgar/data"
 
 # Mining companies: CIK (zero-padded to 10), ticker, name
 MINING_COMPANIES = [
-    ("0000756894", "GOLD", "Barrick Gold"),   # Barrick Gold Corp
-    ("0001164727", "NEM", "Newmont"),         # Newmont
+    ("0000756894", "GOLD", "Barrick Gold"),  # Barrick Gold Corp
+    ("0001164727", "NEM", "Newmont"),  # Newmont
     ("0000831259", "FCX", "Freeport-McMoRan"),
     ("0000001832", "AEM", "Agnico Eagle"),
     ("0001326389", "WPM", "Wheaton Precious Metals"),
@@ -65,10 +67,12 @@ def fetch_filing_index(cik: str, form_filter: str | None = "10-K") -> DataResult
     t0 = time.perf_counter()
     try:
         import requests
+
         r = requests.get(url, headers=_headers(accept_json=True), timeout=30)
         duration_ms = (time.perf_counter() - t0) * 1000
         try:
             from shared.logging.activity_logger import log_external_call
+
             log_external_call(
                 url=url,
                 status="success" if r.status_code == 200 else "error",
@@ -88,6 +92,7 @@ def fetch_filing_index(cik: str, form_filter: str | None = "10-K") -> DataResult
         duration_ms = (time.perf_counter() - t0) * 1000
         try:
             from shared.logging.activity_logger import log_external_call
+
             log_external_call(
                 url=url,
                 status="error",
@@ -120,13 +125,15 @@ def fetch_filing_index(cik: str, form_filter: str | None = "10-K") -> DataResult
             continue
         prim = primaries[i] if i < len(primaries) else ""
         date = dates[i] if i < len(dates) else ""
-        out.append({
-            "accession_number": acc,
-            "filing_date": date,
-            "form": form,
-            "primary_document": prim,
-            "cik": cik_padded,
-        })
+        out.append(
+            {
+                "accession_number": acc,
+                "filing_date": date,
+                "form": form,
+                "primary_document": prim,
+                "cik": cik_padded,
+            }
+        )
     return DataResult.ok(out[:20])  # Limit to 20 most recent
 
 
@@ -142,10 +149,12 @@ def download_filing(cik: str, accession_number: str, primary_document: str) -> D
     t0 = time.perf_counter()
     try:
         import requests
+
         r = requests.get(url, headers=_headers(), timeout=60)
         duration_ms = (time.perf_counter() - t0) * 1000
         try:
             from shared.logging.activity_logger import log_external_call
+
             log_external_call(
                 url=url,
                 status="success" if r.status_code == 200 else "error",
@@ -166,6 +175,7 @@ def download_filing(cik: str, accession_number: str, primary_document: str) -> D
         duration_ms = (time.perf_counter() - t0) * 1000
         try:
             from shared.logging.activity_logger import log_external_call
+
             log_external_call(
                 url=url,
                 status="error",
@@ -184,12 +194,14 @@ def download_filing(cik: str, accession_number: str, primary_document: str) -> D
 def get_filing_index_from_cache(service: str, params: dict):
     """Check api_cache for edgar index. Service='edgar', params={cik, form}."""
     from domains.finance.data.api_cache import get as cache_get
+
     return cache_get(service, params)
 
 
 def set_filing_index_cache(service: str, params: dict, data: list, ttl: int = 3600 * 12):
-    from domains.finance.data.api_cache import set as cache_set
     from domains.finance.data.api_cache import EDGAR_TTL
+    from domains.finance.data.api_cache import set as cache_set
+
     return cache_set(service, params, {"filings": data}, ttl_seconds=EDGAR_TTL)
 
 
@@ -209,8 +221,9 @@ def download_filing_cached(
     cik: str, accession_number: str, primary_document: str
 ) -> DataResult[str]:
     """Download filing with api_cache. Cache under service='edgar_filing'."""
-    from domains.finance.data.api_cache import get as cache_get, set as cache_set
     from domains.finance.data.api_cache import EDGAR_TTL
+    from domains.finance.data.api_cache import get as cache_get
+    from domains.finance.data.api_cache import set as cache_set
 
     params = {"cik": cik, "accession": accession_number, "primary": primary_document}
     cached = cache_get("edgar_filing", params)

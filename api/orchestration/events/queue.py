@@ -8,7 +8,6 @@ import heapq
 import logging
 import threading
 import time
-from typing import Optional
 
 from .envelope import EventEnvelope
 
@@ -24,7 +23,9 @@ class InProcessEventQueue:
         self._maxsize = maxsize  # 0 = unbounded
         self._count = 0
 
-    def put(self, envelope: EventEnvelope, block: bool = True, timeout: Optional[float] = None) -> None:
+    def put(
+        self, envelope: EventEnvelope, block: bool = True, timeout: float | None = None
+    ) -> None:
         """Add event. (priority, count, envelope) for stable ordering."""
         with self._lock:
             if self._maxsize and self._count >= self._maxsize and block:
@@ -43,9 +44,14 @@ class InProcessEventQueue:
                 self._heap,
                 (envelope.priority, ts, self._count, envelope),
             )
-        logger.debug("Queue put: %s (priority=%s, queue_size=%s)", envelope.event_type.value, envelope.priority, self.qsize())
+        logger.debug(
+            "Queue put: %s (priority=%s, queue_size=%s)",
+            envelope.event_type.value,
+            envelope.priority,
+            self.qsize(),
+        )
 
-    def get(self, block: bool = True, timeout: Optional[float] = None) -> Optional[EventEnvelope]:
+    def get(self, block: bool = True, timeout: float | None = None) -> EventEnvelope | None:
         """Remove and return next event. Returns None if non-blocking and empty."""
         with self._lock:
             if not self._heap:

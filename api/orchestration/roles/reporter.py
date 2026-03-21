@@ -7,7 +7,8 @@ and optionally BREAKING_NEWS. Circuit breaker: after N consecutive failures skip
 
 import logging
 import time
-from typing import Any, Callable, Dict
+from collections.abc import Callable
+from typing import Any
 
 from orchestration.events.envelope import EventEnvelope
 from orchestration.events.types import EventType
@@ -30,7 +31,7 @@ def _is_breaking_news(title: str, summary: str, keywords: list) -> bool:
 def reporter_tick(
     orchestrator: Any,
     get_db_connection: Callable,
-    config: Dict[str, Any],
+    config: dict[str, Any],
 ) -> None:
     """
     Poll each domain's articles for discovered_at in last N minutes; emit ARTICLE_INGESTED
@@ -53,6 +54,7 @@ def reporter_tick(
     domains = ["politics", "finance", "science-tech"]
 
     from orchestration.plugins.rss_source import get_new_articles
+
     articles = get_new_articles(get_db_connection, window_minutes=window_minutes, domains=domains)
     try:
         emitted = 0
@@ -62,7 +64,12 @@ def reporter_tick(
             title = a["title"]
             summary = a.get("summary", "")
             dedup = f"{domain_key}:{article_id}"
-            payload = {"domain_key": domain_key, "article_id": article_id, "title": title, "summary": summary}
+            payload = {
+                "domain_key": domain_key,
+                "article_id": article_id,
+                "title": title,
+                "summary": summary,
+            }
             orchestrator.emit(
                 EventEnvelope(
                     event_type=EventType.ARTICLE_INGESTED,

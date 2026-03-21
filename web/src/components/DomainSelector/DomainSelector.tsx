@@ -24,7 +24,10 @@ const DomainSelector: React.FC<DomainSelectorProps> = ({
   const { domain, setDomain, availableDomains } = useDomain();
   const { switchDomain } = useDomainNavigation();
 
-  const handleDomainChange = (_event: React.SyntheticEvent, newDomain: string) => {
+  const handleDomainChange = (
+    _event: React.SyntheticEvent,
+    newDomain: string
+  ) => {
     if (isValidDomain(newDomain) && newDomain !== domain) {
       setDomain(newDomain as DomainKey);
       // Navigate to the same path in the new domain
@@ -48,9 +51,13 @@ const DomainSelector: React.FC<DomainSelectorProps> = ({
 
   if (variant === 'tabs') {
     return (
-      <Box className="domain-selector">
+      <Box className='domain-selector'>
         {showLabel && (
-          <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block' }}>
+          <Typography
+            variant='caption'
+            color='text.secondary'
+            sx={{ mb: 1, display: 'block' }}
+          >
             Domain
           </Typography>
         )}
@@ -58,7 +65,7 @@ const DomainSelector: React.FC<DomainSelectorProps> = ({
           value={domain}
           onChange={handleDomainChange}
           orientation={orientation}
-          variant="fullWidth"
+          variant='fullWidth'
           sx={{
             borderBottom: 1,
             borderColor: 'divider',
@@ -71,7 +78,7 @@ const DomainSelector: React.FC<DomainSelectorProps> = ({
             },
           }}
         >
-          {availableDomains.map((d) => (
+          {availableDomains.map(d => (
             <Tab
               key={d.key}
               label={d.name}
@@ -91,14 +98,14 @@ const DomainSelector: React.FC<DomainSelectorProps> = ({
 
   if (variant === 'chips') {
     return (
-      <Box className="domain-selector domain-selector-chips">
+      <Box className='domain-selector domain-selector-chips'>
         {showLabel && (
-          <Typography variant="caption" color="text.secondary" sx={{ mr: 1 }}>
+          <Typography variant='caption' color='text.secondary' sx={{ mr: 1 }}>
             Domain:
           </Typography>
         )}
         <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-          {availableDomains.map((d) => (
+          {availableDomains.map(d => (
             <Chip
               key={d.key}
               label={d.name}
@@ -118,15 +125,19 @@ const DomainSelector: React.FC<DomainSelectorProps> = ({
 
   // Select variant (dropdown)
   return (
-    <Box className="domain-selector">
+    <Box className='domain-selector'>
       {showLabel && (
-        <Typography variant="caption" color="text.secondary" sx={{ mb: 0.5, display: 'block' }}>
+        <Typography
+          variant='caption'
+          color='text.secondary'
+          sx={{ mb: 0.5, display: 'block' }}
+        >
           Domain
         </Typography>
       )}
       <select
         value={domain}
-        onChange={(e) => handleSelectChange(e.target.value)}
+        onChange={e => handleSelectChange(e.target.value)}
         style={{
           padding: '8px 12px',
           borderRadius: '4px',
@@ -135,7 +146,7 @@ const DomainSelector: React.FC<DomainSelectorProps> = ({
           minWidth: '150px',
         }}
       >
-        {availableDomains.map((d) => (
+        {availableDomains.map(d => (
           <option key={d.key} value={d.key}>
             {d.name}
           </option>
@@ -146,4 +157,3 @@ const DomainSelector: React.FC<DomainSelectorProps> = ({
 };
 
 export default DomainSelector;
-

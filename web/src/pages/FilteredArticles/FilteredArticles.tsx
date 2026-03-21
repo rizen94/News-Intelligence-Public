@@ -85,15 +85,20 @@ interface AnalysisData {
 
 const FilteredArticles: React.FC = () => {
   const { domain } = useDomainRoute();
-  const { showSuccess, showError, showWarning, NotificationComponent } = useNotification();
+  const { showSuccess, showError, showWarning, NotificationComponent } =
+    useNotification();
 
   // State
   const [loading, setLoading] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [analysisData, setAnalysisData] = useState<AnalysisData | null>(null);
-  const [filteredArticles, setFilteredArticles] = useState<FilteredArticle[]>([]);
-  const [selectedArticles, setSelectedArticles] = useState<Set<number>>(new Set());
+  const [filteredArticles, setFilteredArticles] = useState<FilteredArticle[]>(
+    []
+  );
+  const [selectedArticles, setSelectedArticles] = useState<Set<number>>(
+    new Set()
+  );
   const [deleting, setDeleting] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
 
@@ -104,7 +109,7 @@ const FilteredArticles: React.FC = () => {
   const [rowsPerPage, setRowsPerPage] = useState(25);
 
   // Load analysis
-  const loadAnalysis = useCallback(async() => {
+  const loadAnalysis = useCallback(async () => {
     setAnalyzing(true);
     setError(null);
     try {
@@ -153,7 +158,7 @@ const FilteredArticles: React.FC = () => {
   };
 
   // Delete articles
-  const handleDeleteSelected = async() => {
+  const handleDeleteSelected = async () => {
     if (selectedArticles.size === 0) {
       showWarning('No articles selected');
       return;
@@ -162,7 +167,7 @@ const FilteredArticles: React.FC = () => {
     setDeleteDialogOpen(true);
   };
 
-  const confirmDelete = async() => {
+  const confirmDelete = async () => {
     setDeleting(true);
     try {
       const articleIds = Array.from(selectedArticles);
@@ -201,15 +206,20 @@ const FilteredArticles: React.FC = () => {
     }
   };
 
-  const handleDeleteSingle = async(article: FilteredArticle) => {
+  const handleDeleteSingle = async (article: FilteredArticle) => {
     try {
       const domainKey = article.schema.replace('_', '-');
-      const response = await apiService.deleteArticle(article.article_id, domainKey);
+      const response = await apiService.deleteArticle(
+        article.article_id,
+        domainKey
+      );
 
       if (response.success) {
         showSuccess('Article deleted successfully');
         // Remove from list
-        setFilteredArticles(prev => prev.filter(a => a.article_id !== article.article_id));
+        setFilteredArticles(prev =>
+          prev.filter(a => a.article_id !== article.article_id)
+        );
         // Reload analysis
         await loadAnalysis();
       } else {
@@ -246,18 +256,24 @@ const FilteredArticles: React.FC = () => {
 
   return (
     <Box>
-      <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
+      <Box
+        display='flex'
+        justifyContent='space-between'
+        alignItems='center'
+        mb={3}
+      >
         <Box>
-          <Typography variant="h4" component="h1" sx={{ fontWeight: 'bold' }}>
+          <Typography variant='h4' component='h1' sx={{ fontWeight: 'bold' }}>
             Filtered Articles Review
           </Typography>
-          <Typography variant="body1" color="text.secondary">
-            Review and manage articles that would be filtered by current criteria
+          <Typography variant='body1' color='text.secondary'>
+            Review and manage articles that would be filtered by current
+            criteria
           </Typography>
         </Box>
-        <Box display="flex" gap={2}>
+        <Box display='flex' gap={2}>
           <Button
-            variant="outlined"
+            variant='outlined'
             startIcon={<Refresh />}
             onClick={loadAnalysis}
             disabled={analyzing}
@@ -266,8 +282,8 @@ const FilteredArticles: React.FC = () => {
           </Button>
           {selectedArticles.size > 0 && (
             <Button
-              variant="contained"
-              color="error"
+              variant='contained'
+              color='error'
               startIcon={<DeleteSweep />}
               onClick={handleDeleteSelected}
               disabled={deleting}
@@ -281,17 +297,17 @@ const FilteredArticles: React.FC = () => {
       {/* Filters */}
       <Card sx={{ mb: 3 }}>
         <CardContent>
-          <Grid container spacing={2} alignItems="center">
+          <Grid container spacing={2} alignItems='center'>
             <Grid item xs={12} md={4}>
               <TextField
                 fullWidth
-                label="Filter by Source"
+                label='Filter by Source'
                 value={sourceFilter}
-                onChange={(e) => setSourceFilter(e.target.value)}
-                placeholder="e.g., telegraph"
+                onChange={e => setSourceFilter(e.target.value)}
+                placeholder='e.g., telegraph'
                 InputProps={{
                   startAdornment: (
-                    <InputAdornment position="start">
+                    <InputAdornment position='start'>
                       <Search />
                     </InputAdornment>
                   ),
@@ -301,20 +317,22 @@ const FilteredArticles: React.FC = () => {
             <Grid item xs={12} md={4}>
               <TextField
                 fullWidth
-                label="Limit per Domain"
-                type="number"
+                label='Limit per Domain'
+                type='number'
                 value={limit}
-                onChange={(e) => setLimit(parseInt(e.target.value) || 1000)}
+                onChange={e => setLimit(parseInt(e.target.value) || 1000)}
                 inputProps={{ min: 1, max: 10000 }}
               />
             </Grid>
             <Grid item xs={12} md={4}>
               <Button
                 fullWidth
-                variant="contained"
+                variant='contained'
                 onClick={loadAnalysis}
                 disabled={analyzing}
-                startIcon={analyzing ? <CircularProgress size={20} /> : <FilterList />}
+                startIcon={
+                  analyzing ? <CircularProgress size={20} /> : <FilterList />
+                }
               >
                 {analyzing ? 'Analyzing...' : 'Run Analysis'}
               </Button>
@@ -329,10 +347,10 @@ const FilteredArticles: React.FC = () => {
           <Grid item xs={12} md={3}>
             <Card>
               <CardContent>
-                <Typography variant="h6" color="text.secondary">
+                <Typography variant='h6' color='text.secondary'>
                   Total Articles
                 </Typography>
-                <Typography variant="h4" sx={{ fontWeight: 'bold' }}>
+                <Typography variant='h4' sx={{ fontWeight: 'bold' }}>
                   {analysisData.summary.total_articles.toLocaleString()}
                 </Typography>
               </CardContent>
@@ -341,24 +359,26 @@ const FilteredArticles: React.FC = () => {
           <Grid item xs={12} md={3}>
             <Card sx={{ bgcolor: 'error.light', color: 'error.contrastText' }}>
               <CardContent>
-                <Typography variant="h6">Filtered Articles</Typography>
-                <Typography variant="h4" sx={{ fontWeight: 'bold' }}>
+                <Typography variant='h6'>Filtered Articles</Typography>
+                <Typography variant='h4' sx={{ fontWeight: 'bold' }}>
                   {analysisData.summary.total_filtered.toLocaleString()}
                 </Typography>
-                <Typography variant="body2">
+                <Typography variant='body2'>
                   {analysisData.summary.filtered_percentage}% of total
                 </Typography>
               </CardContent>
             </Card>
           </Grid>
           <Grid item xs={12} md={3}>
-            <Card sx={{ bgcolor: 'success.light', color: 'success.contrastText' }}>
+            <Card
+              sx={{ bgcolor: 'success.light', color: 'success.contrastText' }}
+            >
               <CardContent>
-                <Typography variant="h6">Passing Articles</Typography>
-                <Typography variant="h4" sx={{ fontWeight: 'bold' }}>
+                <Typography variant='h6'>Passing Articles</Typography>
+                <Typography variant='h4' sx={{ fontWeight: 'bold' }}>
                   {analysisData.summary.total_passing.toLocaleString()}
                 </Typography>
-                <Typography variant="body2">
+                <Typography variant='body2'>
                   {analysisData.summary.passing_percentage}% of total
                 </Typography>
               </CardContent>
@@ -367,13 +387,13 @@ const FilteredArticles: React.FC = () => {
           <Grid item xs={12} md={3}>
             <Card>
               <CardContent>
-                <Typography variant="h6" color="text.secondary">
+                <Typography variant='h6' color='text.secondary'>
                   Sample Size
                 </Typography>
-                <Typography variant="h4" sx={{ fontWeight: 'bold' }}>
+                <Typography variant='h4' sx={{ fontWeight: 'bold' }}>
                   {filteredArticles.length}
                 </Typography>
-                <Typography variant="body2">
+                <Typography variant='body2'>
                   Showing sample of filtered articles
                 </Typography>
               </CardContent>
@@ -386,11 +406,11 @@ const FilteredArticles: React.FC = () => {
       {analysisData && analysisData.top_sources.length > 0 && (
         <Card sx={{ mb: 3 }}>
           <CardContent>
-            <Typography variant="h6" gutterBottom>
+            <Typography variant='h6' gutterBottom>
               Top Sources with Filtered Articles
             </Typography>
-            <Box display="flex" flexWrap="wrap" gap={1}>
-              {analysisData.top_sources.slice(0, 10).map((source) => (
+            <Box display='flex' flexWrap='wrap' gap={1}>
+              {analysisData.top_sources.slice(0, 10).map(source => (
                 <Chip
                   key={source.source}
                   label={`${source.source}: ${source.count}`}
@@ -405,7 +425,7 @@ const FilteredArticles: React.FC = () => {
 
       {/* Error */}
       {error && (
-        <Alert severity="error" sx={{ mb: 3 }} onClose={() => setError(null)}>
+        <Alert severity='error' sx={{ mb: 3 }} onClose={() => setError(null)}>
           {error}
         </Alert>
       )}
@@ -414,7 +434,11 @@ const FilteredArticles: React.FC = () => {
       {analyzing && (
         <Box sx={{ mb: 3 }}>
           <LinearProgress />
-          <Typography variant="body2" color="text.secondary" sx={{ mt: 1, textAlign: 'center' }}>
+          <Typography
+            variant='body2'
+            color='text.secondary'
+            sx={{ mt: 1, textAlign: 'center' }}
+          >
             Analyzing articles... This may take a moment.
           </Typography>
         </Box>
@@ -425,7 +449,7 @@ const FilteredArticles: React.FC = () => {
         <>
           {filteredArticles.length === 0 ? (
             <EmptyState
-              title="No Filtered Articles Found"
+              title='No Filtered Articles Found'
               message={
                 sourceFilter
                   ? `No filtered articles found for source "${sourceFilter}". Try a different source or remove the filter.`
@@ -438,11 +462,17 @@ const FilteredArticles: React.FC = () => {
                 <Table>
                   <TableHead>
                     <TableRow>
-                      <TableCell padding="checkbox">
+                      <TableCell padding='checkbox'>
                         <Checkbox
-                          checked={selectedArticles.size === filteredArticles.length && filteredArticles.length > 0}
-                          indeterminate={selectedArticles.size > 0 && selectedArticles.size < filteredArticles.length}
-                          onChange={(e) => handleSelectAll(e.target.checked)}
+                          checked={
+                            selectedArticles.size === filteredArticles.length &&
+                            filteredArticles.length > 0
+                          }
+                          indeterminate={
+                            selectedArticles.size > 0 &&
+                            selectedArticles.size < filteredArticles.length
+                          }
+                          onChange={e => handleSelectAll(e.target.checked)}
                         />
                       </TableCell>
                       <TableCell>Title</TableCell>
@@ -451,13 +481,16 @@ const FilteredArticles: React.FC = () => {
                       <TableCell>Quality</TableCell>
                       <TableCell>Impact</TableCell>
                       <TableCell>Domain</TableCell>
-                      <TableCell align="right">Actions</TableCell>
+                      <TableCell align='right'>Actions</TableCell>
                     </TableRow>
                   </TableHead>
                   <TableBody>
                     {filteredArticles
-                      .slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage)
-                      .map((article) => (
+                      .slice(
+                        page * rowsPerPage,
+                        page * rowsPerPage + rowsPerPage
+                      )
+                      .map(article => (
                         <TableRow
                           key={article.article_id}
                           hover
@@ -467,17 +500,20 @@ const FilteredArticles: React.FC = () => {
                               : 'inherit',
                           }}
                         >
-                          <TableCell padding="checkbox">
+                          <TableCell padding='checkbox'>
                             <Checkbox
                               checked={selectedArticles.has(article.article_id)}
-                              onChange={(e) =>
-                                handleSelectArticle(article.article_id, e.target.checked)
+                              onChange={e =>
+                                handleSelectArticle(
+                                  article.article_id,
+                                  e.target.checked
+                                )
                               }
                             />
                           </TableCell>
                           <TableCell>
                             <Typography
-                              variant="body2"
+                              variant='body2'
                               sx={{
                                 fontWeight: 'medium',
                                 maxWidth: 400,
@@ -490,8 +526,8 @@ const FilteredArticles: React.FC = () => {
                             </Typography>
                             {article.url && (
                               <Typography
-                                variant="caption"
-                                color="text.secondary"
+                                variant='caption'
+                                color='text.secondary'
                                 sx={{
                                   display: 'block',
                                   maxWidth: 400,
@@ -504,14 +540,16 @@ const FilteredArticles: React.FC = () => {
                               </Typography>
                             )}
                           </TableCell>
-                          <TableCell>{article.source || article.source_domain || '—'}</TableCell>
                           <TableCell>
-                            <Box display="flex" flexWrap="wrap" gap={0.5}>
-                              {article.reasons.map((reason) => (
+                            {article.source || article.source_domain || '—'}
+                          </TableCell>
+                          <TableCell>
+                            <Box display='flex' flexWrap='wrap' gap={0.5}>
+                              {article.reasons.map(reason => (
                                 <Chip
                                   key={reason}
                                   label={getReasonLabel(reason)}
-                                  size="small"
+                                  size='small'
                                   color={getReasonColor(reason) as any}
                                 />
                               ))}
@@ -519,26 +557,34 @@ const FilteredArticles: React.FC = () => {
                           </TableCell>
                           <TableCell>
                             <Typography
-                              variant="body2"
-                              color={article.quality_score < 0.4 ? 'error' : 'text.secondary'}
+                              variant='body2'
+                              color={
+                                article.quality_score < 0.4
+                                  ? 'error'
+                                  : 'text.secondary'
+                              }
                             >
                               {article.quality_score.toFixed(2)}
                             </Typography>
                           </TableCell>
                           <TableCell>
                             <Typography
-                              variant="body2"
-                              color={article.impact_score < 0.4 ? 'error' : 'text.secondary'}
+                              variant='body2'
+                              color={
+                                article.impact_score < 0.4
+                                  ? 'error'
+                                  : 'text.secondary'
+                              }
                             >
                               {article.impact_score.toFixed(2)}
                             </Typography>
                           </TableCell>
                           <TableCell>{article.schema}</TableCell>
-                          <TableCell align="right">
-                            <Tooltip title="Delete Article">
+                          <TableCell align='right'>
+                            <Tooltip title='Delete Article'>
                               <IconButton
-                                size="small"
-                                color="error"
+                                size='small'
+                                color='error'
                                 onClick={() => handleDeleteSingle(article)}
                               >
                                 <Delete />
@@ -551,12 +597,12 @@ const FilteredArticles: React.FC = () => {
                 </Table>
               </TableContainer>
               <TablePagination
-                component="div"
+                component='div'
                 count={filteredArticles.length}
                 page={page}
                 onPageChange={(_, newPage) => setPage(newPage)}
                 rowsPerPage={rowsPerPage}
-                onRowsPerPageChange={(e) => {
+                onRowsPerPageChange={e => {
                   setRowsPerPage(parseInt(e.target.value, 10));
                   setPage(0);
                 }}
@@ -568,22 +614,28 @@ const FilteredArticles: React.FC = () => {
       )}
 
       {/* Delete Confirmation Dialog */}
-      <Dialog open={deleteDialogOpen} onClose={() => setDeleteDialogOpen(false)}>
+      <Dialog
+        open={deleteDialogOpen}
+        onClose={() => setDeleteDialogOpen(false)}
+      >
         <DialogTitle>Confirm Deletion</DialogTitle>
         <DialogContent>
           <Typography>
-            Are you sure you want to delete {selectedArticles.size} article(s)? This action
-            cannot be undone.
+            Are you sure you want to delete {selectedArticles.size} article(s)?
+            This action cannot be undone.
           </Typography>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setDeleteDialogOpen(false)} disabled={deleting}>
+          <Button
+            onClick={() => setDeleteDialogOpen(false)}
+            disabled={deleting}
+          >
             Cancel
           </Button>
           <Button
             onClick={confirmDelete}
-            color="error"
-            variant="contained"
+            color='error'
+            variant='contained'
             disabled={deleting}
             startIcon={deleting ? <CircularProgress size={20} /> : <Delete />}
           >
@@ -598,4 +650,3 @@ const FilteredArticles: React.FC = () => {
 };
 
 export default FilteredArticles;
-

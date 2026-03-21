@@ -14,7 +14,7 @@ import logging
 import re
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from shared.database.connection import get_db_connection
 
@@ -35,23 +35,38 @@ SOURCE_RELIABILITY_TIERS = {
     "tier_1": {
         "score": 0.95,
         "patterns": [
-            "reuters", "associated press", "ap news", "bbc",
-            "npr", "pbs", "c-span",
+            "reuters",
+            "associated press",
+            "ap news",
+            "bbc",
+            "npr",
+            "pbs",
+            "c-span",
         ],
     },
     "tier_2": {
         "score": 0.85,
         "patterns": [
-            "new york times", "washington post", "wall street journal",
-            "financial times", "the economist", "bloomberg",
-            "the guardian", "politico",
+            "new york times",
+            "washington post",
+            "wall street journal",
+            "financial times",
+            "the economist",
+            "bloomberg",
+            "the guardian",
+            "politico",
         ],
     },
     "tier_3": {
         "score": 0.70,
         "patterns": [
-            "cnn", "abc news", "cbs news", "nbc news", "fox news",
-            "usa today", "los angeles times",
+            "cnn",
+            "abc news",
+            "cbs news",
+            "nbc news",
+            "fox news",
+            "usa today",
+            "los angeles times",
         ],
     },
     "tier_4": {
@@ -89,7 +104,8 @@ Respond with ONLY a JSON object:
 # Source reliability scoring
 # ---------------------------------------------------------------------------
 
-def score_source_reliability(source_domain: str) -> Dict[str, Any]:
+
+def score_source_reliability(source_domain: str) -> dict[str, Any]:
     """
     Score a source domain's reliability based on known tiers.
     Returns {score: 0.0-1.0, tier: str, source: str}.
@@ -107,10 +123,14 @@ def score_source_reliability(source_domain: str) -> Dict[str, Any]:
                     "source": source_domain,
                 }
 
-    return {"score": SOURCE_RELIABILITY_TIERS["tier_4"]["score"], "tier": "tier_4", "source": source_domain}
+    return {
+        "score": SOURCE_RELIABILITY_TIERS["tier_4"]["score"],
+        "tier": "tier_4",
+        "source": source_domain,
+    }
 
 
-def score_source_reliability_batch(source_domains: List[str]) -> Dict[str, Dict[str, Any]]:
+def score_source_reliability_batch(source_domains: list[str]) -> dict[str, dict[str, Any]]:
     """Score reliability for multiple sources."""
     return {s: score_source_reliability(s) for s in set(source_domains)}
 
@@ -119,12 +139,13 @@ def score_source_reliability_batch(source_domains: List[str]) -> Dict[str, Dict[
 # Multi-source corroboration
 # ---------------------------------------------------------------------------
 
+
 def corroborate_claim(
     claim_text: str,
     domain_key: str,
     hours: int = 72,
-    claim_id: Optional[int] = None,
-) -> Dict[str, Any]:
+    claim_id: int | None = None,
+) -> dict[str, Any]:
     """
     Check if a claim is corroborated by multiple independent sources.
 
@@ -191,32 +212,39 @@ def corroborate_claim(
             }
 
         # Aggregate by source
-        source_articles: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+        source_articles: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for aid, title, source, pub_at, excerpt in articles:
-            source_articles[source or "unknown"].append({
-                "article_id": aid,
-                "title": title or "",
-                "published_at": pub_at.isoformat() if pub_at else None,
-                "excerpt": (excerpt or "")[:200],
-            })
+            source_articles[source or "unknown"].append(
+                {
+                    "article_id": aid,
+                    "title": title or "",
+                    "published_at": pub_at.isoformat() if pub_at else None,
+                    "excerpt": (excerpt or "")[:200],
+                }
+            )
 
         sources = []
         for source, arts in source_articles.items():
             rel = score_source_reliability(source)
-            sources.append({
-                "source": source,
-                "reliability_score": rel["score"],
-                "tier": rel["tier"],
-                "article_count": len(arts),
-                "articles": arts[:3],
-            })
+            sources.append(
+                {
+                    "source": source,
+                    "reliability_score": rel["score"],
+                    "tier": rel["tier"],
+                    "article_count": len(arts),
+                    "articles": arts[:3],
+                }
+            )
 
         sources.sort(key=lambda s: s["reliability_score"], reverse=True)
         source_count = len(sources)
         article_count = len(articles)
 
         # Determine status
-        if source_count >= MIN_CORROBORATION_SOURCES and article_count >= MIN_CORROBORATION_ARTICLES:
+        if (
+            source_count >= MIN_CORROBORATION_SOURCES
+            and article_count >= MIN_CORROBORATION_ARTICLES
+        ):
             status = "corroborated"
             avg_reliability = sum(s["reliability_score"] for s in sources) / len(sources)
             confidence = min(1.0, avg_reliability * (0.5 + 0.5 * min(source_count / 5, 1.0)))
@@ -247,19 +275,96 @@ def corroborate_claim(
         return {"status": "error", "error": str(e)}
 
 
-def _extract_key_terms(text: str) -> List[str]:
+def _extract_key_terms(text: str) -> list[str]:
     """Extract significant terms from a claim for full-text search."""
     stop_words = {
-        "the", "a", "an", "is", "are", "was", "were", "has", "have", "had",
-        "be", "been", "being", "do", "does", "did", "will", "would", "could",
-        "should", "may", "might", "shall", "can", "to", "of", "in", "for",
-        "on", "with", "at", "by", "from", "up", "about", "into", "through",
-        "during", "before", "after", "above", "below", "between", "out",
-        "that", "this", "these", "those", "it", "its", "he", "she", "they",
-        "we", "his", "her", "their", "our", "my", "your", "and", "but",
-        "or", "nor", "not", "no", "so", "if", "than", "too", "very",
-        "said", "says", "according", "also", "just", "more", "some", "any",
-        "other", "new", "been", "who", "which", "when", "where", "how",
+        "the",
+        "a",
+        "an",
+        "is",
+        "are",
+        "was",
+        "were",
+        "has",
+        "have",
+        "had",
+        "be",
+        "been",
+        "being",
+        "do",
+        "does",
+        "did",
+        "will",
+        "would",
+        "could",
+        "should",
+        "may",
+        "might",
+        "shall",
+        "can",
+        "to",
+        "of",
+        "in",
+        "for",
+        "on",
+        "with",
+        "at",
+        "by",
+        "from",
+        "up",
+        "about",
+        "into",
+        "through",
+        "during",
+        "before",
+        "after",
+        "above",
+        "below",
+        "between",
+        "out",
+        "that",
+        "this",
+        "these",
+        "those",
+        "it",
+        "its",
+        "he",
+        "she",
+        "they",
+        "we",
+        "his",
+        "her",
+        "their",
+        "our",
+        "my",
+        "your",
+        "and",
+        "but",
+        "or",
+        "nor",
+        "not",
+        "no",
+        "so",
+        "if",
+        "than",
+        "too",
+        "very",
+        "said",
+        "says",
+        "according",
+        "also",
+        "just",
+        "more",
+        "some",
+        "any",
+        "other",
+        "new",
+        "been",
+        "who",
+        "which",
+        "when",
+        "where",
+        "how",
     }
     words = re.findall(r"[a-zA-Z]+", text.lower())
     terms = [w for w in words if w not in stop_words and len(w) >= 3]
@@ -277,12 +382,13 @@ def _extract_key_terms(text: str) -> List[str]:
 # Contradiction detection
 # ---------------------------------------------------------------------------
 
+
 def detect_contradictions(
     domain_key: str,
-    claim_ids: Optional[List[int]] = None,
+    claim_ids: list[int] | None = None,
     hours: int = 48,
     limit: int = 50,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Find contradicting claims within a domain's recent extracted_claims.
     Groups claims by subject, then checks pairs for contradiction using
@@ -332,7 +438,7 @@ def detect_contradictions(
             return {"success": True, "contradictions": [], "claims_checked": len(claims)}
 
         # Group by subject for efficient comparison
-        subject_groups: Dict[str, List[Tuple]] = defaultdict(list)
+        subject_groups: dict[str, list[tuple]] = defaultdict(list)
         for claim in claims:
             subject = (claim[1] or "").lower().strip()
             if subject:
@@ -357,28 +463,33 @@ def detect_contradictions(
                     obj_b = (cb[3] or "").lower()
 
                     contradiction = _check_contradiction_heuristic(
-                        pred_a, obj_a, pred_b, obj_b,
+                        pred_a,
+                        obj_a,
+                        pred_b,
+                        obj_b,
                     )
 
                     if contradiction:
-                        contradictions.append({
-                            "claim_a": {
-                                "id": ca[0],
-                                "subject": ca[1],
-                                "predicate": ca[2],
-                                "object": ca[3],
-                                "confidence": float(ca[4]) if ca[4] else None,
-                            },
-                            "claim_b": {
-                                "id": cb[0],
-                                "subject": cb[1],
-                                "predicate": cb[2],
-                                "object": cb[3],
-                                "confidence": float(cb[4]) if cb[4] else None,
-                            },
-                            "explanation": contradiction["explanation"],
-                            "confidence": contradiction["confidence"],
-                        })
+                        contradictions.append(
+                            {
+                                "claim_a": {
+                                    "id": ca[0],
+                                    "subject": ca[1],
+                                    "predicate": ca[2],
+                                    "object": ca[3],
+                                    "confidence": float(ca[4]) if ca[4] else None,
+                                },
+                                "claim_b": {
+                                    "id": cb[0],
+                                    "subject": cb[1],
+                                    "predicate": cb[2],
+                                    "object": cb[3],
+                                    "confidence": float(cb[4]) if cb[4] else None,
+                                },
+                                "explanation": contradiction["explanation"],
+                                "confidence": contradiction["confidence"],
+                            }
+                        )
 
                         if len(contradictions) >= limit:
                             break
@@ -399,16 +510,27 @@ def detect_contradictions(
 
 
 def _check_contradiction_heuristic(
-    pred_a: str, obj_a: str,
-    pred_b: str, obj_b: str,
-) -> Optional[Dict[str, Any]]:
+    pred_a: str,
+    obj_a: str,
+    pred_b: str,
+    obj_b: str,
+) -> dict[str, Any] | None:
     """Heuristic contradiction detection between two claims about the same subject."""
     negation_pairs = [
-        ("support", "oppose"), ("approve", "reject"), ("increase", "decrease"),
-        ("rise", "fall"), ("gain", "lose"), ("win", "lose"),
-        ("confirm", "deny"), ("agree", "disagree"), ("accept", "reject"),
-        ("pass", "fail"), ("allow", "ban"), ("expand", "shrink"),
-        ("strengthen", "weaken"), ("advance", "retreat"),
+        ("support", "oppose"),
+        ("approve", "reject"),
+        ("increase", "decrease"),
+        ("rise", "fall"),
+        ("gain", "lose"),
+        ("win", "lose"),
+        ("confirm", "deny"),
+        ("agree", "disagree"),
+        ("accept", "reject"),
+        ("pass", "fail"),
+        ("allow", "ban"),
+        ("expand", "shrink"),
+        ("strengthen", "weaken"),
+        ("advance", "retreat"),
     ]
 
     for pos, neg in negation_pairs:
@@ -452,12 +574,13 @@ def _check_contradiction_heuristic(
 # Completeness assessment
 # ---------------------------------------------------------------------------
 
+
 def assess_completeness(
     domain_key: str,
-    topic: Optional[str] = None,
-    storyline_id: Optional[int] = None,
+    topic: str | None = None,
+    storyline_id: int | None = None,
     hours: int = 72,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Assess how completely a topic or storyline is covered:
     - Number of distinct sources
@@ -528,12 +651,14 @@ def assess_completeness(
                     (article_ids,),
                 )
                 for row in cur.fetchall():
-                    claims.append({
-                        "subject": row[0] or "",
-                        "predicate": row[1] or "",
-                        "object": row[2] or "",
-                        "confidence": float(row[3]) if row[3] is not None else None,
-                    })
+                    claims.append(
+                        {
+                            "subject": row[0] or "",
+                            "predicate": row[1] or "",
+                            "object": row[2] or "",
+                            "confidence": float(row[3]) if row[3] is not None else None,
+                        }
+                    )
 
         conn.close()
 
@@ -596,15 +721,18 @@ def assess_completeness(
         llm_assessment = None
         if topic and claims:
             llm_assessment = _llm_completeness_check(
-                topic, source_count, len(articles), claims,
+                topic,
+                source_count,
+                len(articles),
+                claims,
             )
 
         # Composite score
         completeness_score = (
-            source_diversity_score * 0.35 +
-            temporal_score * 0.25 +
-            sentiment_score * 0.2 +
-            (1.0 - min(len(gaps) / 5, 1.0)) * 0.2
+            source_diversity_score * 0.35
+            + temporal_score * 0.25
+            + sentiment_score * 0.2
+            + (1.0 - min(len(gaps) / 5, 1.0)) * 0.2
         )
 
         assessment_text = llm_assessment.get("assessment", "") if llm_assessment else ""
@@ -621,12 +749,18 @@ def assess_completeness(
             "source_diversity": {
                 "unique_sources": source_count,
                 "sources": list(sources),
-                "average_reliability": round(sum(source_reliabilities) / len(source_reliabilities), 2) if source_reliabilities else 0,
+                "average_reliability": round(
+                    sum(source_reliabilities) / len(source_reliabilities), 2
+                )
+                if source_reliabilities
+                else 0,
                 "score": round(source_diversity_score, 2),
             },
             "temporal_coverage": {
                 "article_count": len(articles),
-                "date_range_hours": round((max(dates) - min(dates)).total_seconds() / 3600, 1) if len(dates) >= 2 else 0,
+                "date_range_hours": round((max(dates) - min(dates)).total_seconds() / 3600, 1)
+                if len(dates) >= 2
+                else 0,
                 "score": round(temporal_score, 2),
             },
             "sentiment_spread": {
@@ -653,16 +787,14 @@ def _llm_completeness_check(
     topic: str,
     source_count: int,
     article_count: int,
-    claims: List[Dict[str, Any]],
-) -> Optional[Dict[str, Any]]:
+    claims: list[dict[str, Any]],
+) -> dict[str, Any] | None:
     """Use LLM to assess completeness (optional enhancement)."""
-    claims_text = "\n".join(
-        f"- {c['subject']} {c['predicate']} {c['object']}"
-        for c in claims[:10]
-    )
+    claims_text = "\n".join(f"- {c['subject']} {c['predicate']} {c['object']}" for c in claims[:10])
 
     try:
         from shared.services.llm_service import LLMService
+
         llm = LLMService()
         prompt = COMPLETENESS_PROMPT.format(
             topic=topic,
@@ -686,11 +818,12 @@ def _llm_completeness_check(
 # Verify a specific claim (full pipeline)
 # ---------------------------------------------------------------------------
 
+
 def verify_claim(
     claim_id: int,
     domain_key: str,
     hours: int = 72,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Full verification pipeline for a single extracted claim:
       1. Load claim from DB
@@ -750,7 +883,8 @@ def verify_claim(
         # 2. Contradictions
         contradictions = detect_contradictions(domain_key, hours=hours, limit=10)
         related_contradictions = [
-            c for c in contradictions.get("contradictions", [])
+            c
+            for c in contradictions.get("contradictions", [])
             if c["claim_a"]["id"] == claim_id or c["claim_b"]["id"] == claim_id
         ]
 
@@ -762,8 +896,8 @@ def verify_claim(
             verification_status = "contested"
             verification_confidence = max(
                 0.3,
-                corroboration.get("confidence", 0) -
-                max(c["confidence"] for c in related_contradictions) * 0.3,
+                corroboration.get("confidence", 0)
+                - max(c["confidence"] for c in related_contradictions) * 0.3,
             )
         elif corroboration.get("status") == "corroborated":
             verification_status = "corroborated"
@@ -796,11 +930,12 @@ def verify_claim(
 # Batch verification
 # ---------------------------------------------------------------------------
 
+
 def verify_recent_claims(
     domain_key: str,
     hours: int = 24,
     limit: int = 20,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Verify the most recent high-confidence claims in a domain.
     Returns summary statistics and per-claim verification results.
@@ -831,20 +966,22 @@ def verify_recent_claims(
             return {"success": True, "claims_verified": 0, "results": []}
 
         results = []
-        status_counts: Dict[str, int] = defaultdict(int)
+        status_counts: dict[str, int] = defaultdict(int)
 
         for cid in claim_ids:
             r = verify_claim(cid, domain_key, hours=hours * 3)
             status = r.get("verification_status", "error")
             status_counts[status] += 1
-            results.append({
-                "claim_id": cid,
-                "claim_text": f"{r.get('claim', {}).get('subject', '')} {r.get('claim', {}).get('predicate', '')} {r.get('claim', {}).get('object', '')}",
-                "status": status,
-                "confidence": r.get("verification_confidence", 0),
-                "source_count": r.get("corroboration", {}).get("source_count", 0),
-                "contradiction_count": len(r.get("contradictions", [])),
-            })
+            results.append(
+                {
+                    "claim_id": cid,
+                    "claim_text": f"{r.get('claim', {}).get('subject', '')} {r.get('claim', {}).get('predicate', '')} {r.get('claim', {}).get('object', '')}",
+                    "status": status,
+                    "confidence": r.get("verification_confidence", 0),
+                    "source_count": r.get("corroboration", {}).get("source_count", 0),
+                    "contradiction_count": len(r.get("contradictions", [])),
+                }
+            )
 
         return {
             "success": True,

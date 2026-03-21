@@ -41,24 +41,37 @@ export default function TaskTraceViewer() {
     if (!taskId) return;
     financeAnalysisApi
       .getTaskTrace(taskId, domain)
-      .then((res: { success?: boolean; spans?: []; decisions?: []; llm_interactions?: [] }) => {
-        if (res?.success) {
-          setTrace({
-            spans: res.spans || [],
-            decisions: res.decisions || [],
-            llm_interactions: res.llm_interactions || [],
-          });
-        } else {
-          setError('Trace not found');
+      .then(
+        (res: {
+          success?: boolean;
+          spans?: [];
+          decisions?: [];
+          llm_interactions?: [];
+        }) => {
+          if (res?.success) {
+            setTrace({
+              spans: res.spans || [],
+              decisions: res.decisions || [],
+              llm_interactions: res.llm_interactions || [],
+            });
+          } else {
+            setError('Trace not found');
+          }
         }
-      })
-      .catch((e) => setError(e?.message || 'Failed to load trace'))
+      )
+      .catch(e => setError(e?.message || 'Failed to load trace'))
       .finally(() => setLoading(false));
   }, [taskId, domain]);
 
   if (loading) {
     return (
-      <Box p={3} display="flex" justifyContent="center" alignItems="center" minHeight={200}>
+      <Box
+        p={3}
+        display='flex'
+        justifyContent='center'
+        alignItems='center'
+        minHeight={200}
+      >
         <CircularProgress />
       </Box>
     );
@@ -67,8 +80,12 @@ export default function TaskTraceViewer() {
   if (error || !trace) {
     return (
       <Box p={3}>
-        <Typography color="error">{error || 'Trace not found'}</Typography>
-        <Button startIcon={<ArrowBackIcon />} onClick={() => navigate(-1)} sx={{ mt: 2 }}>
+        <Typography color='error'>{error || 'Trace not found'}</Typography>
+        <Button
+          startIcon={<ArrowBackIcon />}
+          onClick={() => navigate(-1)}
+          sx={{ mt: 2 }}
+        >
           Back
         </Button>
       </Box>
@@ -77,25 +94,41 @@ export default function TaskTraceViewer() {
 
   return (
     <Box p={3}>
-      <Button startIcon={<ArrowBackIcon />} onClick={() => navigate(-1)} sx={{ mb: 2 }}>
+      <Button
+        startIcon={<ArrowBackIcon />}
+        onClick={() => navigate(-1)}
+        sx={{ mb: 2 }}
+      >
         Back
       </Button>
-      <Typography variant="h5" gutterBottom>
+      <Typography variant='h5' gutterBottom>
         Task Trace: {taskId}
       </Typography>
-      <Box display="flex" gap={1} mb={2}>
-        <Chip label={`${trace.spans.length} spans`} color="primary" size="small" />
-        <Chip label={`${trace.decisions.length} decisions`} color="secondary" size="small" />
-        <Chip label={`${trace.llm_interactions.length} LLM calls`} color="info" size="small" />
+      <Box display='flex' gap={1} mb={2}>
+        <Chip
+          label={`${trace.spans.length} spans`}
+          color='primary'
+          size='small'
+        />
+        <Chip
+          label={`${trace.decisions.length} decisions`}
+          color='secondary'
+          size='small'
+        />
+        <Chip
+          label={`${trace.llm_interactions.length} LLM calls`}
+          color='info'
+          size='small'
+        />
       </Box>
 
       {trace.spans.length > 0 && (
         <Card sx={{ mb: 2 }}>
           <CardContent>
-            <Typography variant="h6" gutterBottom>
+            <Typography variant='h6' gutterBottom>
               Spans
             </Typography>
-            <Table size="small">
+            <Table size='small'>
               <TableHead>
                 <TableRow>
                   <TableCell>Name</TableCell>
@@ -109,11 +142,13 @@ export default function TaskTraceViewer() {
                   <TableRow key={i}>
                     <TableCell>{String(s.name || '-')}</TableCell>
                     <TableCell>{String(s.span_type || '-')}</TableCell>
-                    <TableCell>{Number(s.duration_ms ?? 0).toFixed(0)} ms</TableCell>
+                    <TableCell>
+                      {Number(s.duration_ms ?? 0).toFixed(0)} ms
+                    </TableCell>
                     <TableCell>
                       <Chip
                         label={String(s.status || 'unknown')}
-                        size="small"
+                        size='small'
                         color={s.status === 'success' ? 'success' : 'error'}
                       />
                     </TableCell>
@@ -128,7 +163,7 @@ export default function TaskTraceViewer() {
       {trace.decisions.length > 0 && (
         <Card sx={{ mb: 2 }}>
           <CardContent>
-            <Typography variant="h6" gutterBottom>
+            <Typography variant='h6' gutterBottom>
               Orchestrator Decisions
             </Typography>
             {trace.decisions.map((d, i) => (
@@ -140,18 +175,24 @@ export default function TaskTraceViewer() {
                   {d.outcome_status && (
                     <Chip
                       label={String(d.outcome_status)}
-                      size="small"
+                      size='small'
                       sx={{ ml: 1 }}
-                      color={d.outcome_status === 'success' ? 'success' : 'default'}
+                      color={
+                        d.outcome_status === 'success' ? 'success' : 'default'
+                      }
                     />
                   )}
                 </AccordionSummary>
                 <AccordionDetails>
-                  <Typography variant="body2" color="text.secondary">
+                  <Typography variant='body2' color='text.secondary'>
                     {String(d.rationale)}
                   </Typography>
                   {d.available_options && (
-                    <Typography variant="caption" display="block" sx={{ mt: 1 }}>
+                    <Typography
+                      variant='caption'
+                      display='block'
+                      sx={{ mt: 1 }}
+                    >
                       Options: {(d.available_options as string[]).join(', ')}
                     </Typography>
                   )}
@@ -165,10 +206,10 @@ export default function TaskTraceViewer() {
       {trace.llm_interactions.length > 0 && (
         <Card>
           <CardContent>
-            <Typography variant="h6" gutterBottom>
+            <Typography variant='h6' gutterBottom>
               LLM Interactions
             </Typography>
-            <Table size="small">
+            <Table size='small'>
               <TableHead>
                 <TableRow>
                   <TableCell>Phase</TableCell>
@@ -182,9 +223,12 @@ export default function TaskTraceViewer() {
                   <TableRow key={i}>
                     <TableCell>{String(llm.phase || '-')}</TableCell>
                     <TableCell>{String(llm.model || '-')}</TableCell>
-                    <TableCell>{Number(llm.latency_ms ?? 0).toFixed(0)} ms</TableCell>
                     <TableCell>
-                      {String(llm.input_token_count ?? '-')} / {String(llm.output_token_count ?? '-')}
+                      {Number(llm.latency_ms ?? 0).toFixed(0)} ms
+                    </TableCell>
+                    <TableCell>
+                      {String(llm.input_token_count ?? '-')} /{' '}
+                      {String(llm.output_token_count ?? '-')}
                     </TableCell>
                   </TableRow>
                 ))}
@@ -197,7 +241,9 @@ export default function TaskTraceViewer() {
       {trace.spans.length === 0 &&
         trace.decisions.length === 0 &&
         trace.llm_interactions.length === 0 && (
-          <Typography color="text.secondary">No trace data for this task yet.</Typography>
+          <Typography color='text.secondary'>
+            No trace data for this task yet.
+          </Typography>
         )}
     </Box>
   );

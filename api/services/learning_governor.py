@@ -6,11 +6,12 @@ recorded in decision_history by the coordinator.
 
 import logging
 from collections import defaultdict
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 try:
     from config.logging_config import get_component_logger
+
     logger = get_component_logger("orchestrator")
 except Exception:
     logger = logging.getLogger(__name__)
@@ -26,6 +27,7 @@ class LearningGovernor:
         if config is None:
             try:
                 from config.orchestrator_governance import get_orchestrator_governance_config
+
                 config = get_orchestrator_governance_config()
             except Exception as e:
                 logger.warning("LearningGovernor: config load failed: %s", e)
@@ -42,6 +44,7 @@ class LearningGovernor:
         """
         try:
             from . import orchestrator_state
+
             since = (
                 datetime.now(timezone.utc) - timedelta(days=self._pattern_detection_window_days)
             ).isoformat()
@@ -68,21 +71,24 @@ class LearningGovernor:
                 "window_days": self._pattern_detection_window_days,
             }
             success_count = sum(
-                c for dec, out_dict in decision_outcomes.items()
+                c
+                for dec, out_dict in decision_outcomes.items()
                 for out, c in out_dict.items()
                 if out not in ("error", "idle", "no_handler")
             )
-            error_count = sum(
-                out_dict.get("error", 0) for out_dict in decision_outcomes.values()
-            )
+            error_count = sum(out_dict.get("error", 0) for out_dict in decision_outcomes.values())
             source_pattern["success_count"] = success_count
             source_pattern["error_count"] = error_count
             if (success_count + error_count) > 0:
-                source_pattern["success_rate"] = round(success_count / (success_count + error_count), 3)
+                source_pattern["success_rate"] = round(
+                    success_count / (success_count + error_count), 3
+                )
             else:
                 source_pattern["success_rate"] = 0.0
 
-            confidence = self._min_confidence_threshold if (success_count + error_count) >= 10 else 0.5
+            confidence = (
+                self._min_confidence_threshold if (success_count + error_count) >= 10 else 0.5
+            )
             orchestrator_state.save_learned_pattern(
                 pattern_type="source_patterns",
                 pattern_data=source_pattern,
@@ -103,13 +109,19 @@ class LearningGovernor:
         """Stats for API: pattern counts by type, last analysis summary."""
         try:
             from . import orchestrator_state
+
             counts = orchestrator_state.get_learned_pattern_counts_by_type()
             patterns = orchestrator_state.get_learned_patterns(limit=5)
             return {
                 "pattern_counts_by_type": counts,
                 "total_patterns": sum(counts.values()),
                 "recent_patterns_sample": [
-                    {"id": p["id"], "pattern_type": p["pattern_type"], "confidence": p["confidence"], "updated_at": p["updated_at"]}
+                    {
+                        "id": p["id"],
+                        "pattern_type": p["pattern_type"],
+                        "confidence": p["confidence"],
+                        "updated_at": p["updated_at"],
+                    }
                     for p in patterns
                 ],
             }
@@ -124,7 +136,8 @@ class LearningGovernor:
         """
         try:
             from . import orchestrator_state
-            from .collection_governor import SOURCE_RSS, SOURCE_GOLD
+            from .collection_governor import SOURCE_GOLD, SOURCE_RSS
+
             now = datetime.now(timezone.utc)
             next_updates: dict[str, str | None] = {}
             for source_id in (SOURCE_RSS, SOURCE_GOLD):

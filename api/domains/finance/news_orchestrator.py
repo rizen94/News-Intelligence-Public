@@ -6,11 +6,12 @@ so analysis gets a relevant shortlist in addition to price data.
 
 import logging
 import re
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 try:
     from config.logging_config import get_component_logger
+
     logger = get_component_logger("finance")
 except Exception:
     logger = logging.getLogger(__name__)
@@ -31,8 +32,9 @@ def _get_topic_keywords(topic: str) -> list[str]:
     """Topic keywords from registry if commodity, else fallback dict."""
     cid = (topic or "").lower()
     try:
-        from domains.finance.commodity_registry import get_topic_keywords as reg_keywords
         from domains.finance.commodity_registry import get_commodity_ids
+        from domains.finance.commodity_registry import get_topic_keywords as reg_keywords
+
         if cid in [x.lower() for x in get_commodity_ids()]:
             kw = reg_keywords(cid)
             if kw:
@@ -45,8 +47,9 @@ def _get_topic_keywords(topic: str) -> list[str]:
 def _get_word_boundary_terms(topic: str) -> frozenset[str]:
     """Word-boundary terms from registry if commodity, else fallback."""
     try:
-        from domains.finance.commodity_registry import get_word_boundary_terms as reg_boundary
         from domains.finance.commodity_registry import get_commodity_ids
+        from domains.finance.commodity_registry import get_word_boundary_terms as reg_boundary
+
         cid = (topic or "").lower()
         if cid in [x.lower() for x in get_commodity_ids()]:
             terms = reg_boundary(cid)
@@ -97,7 +100,8 @@ def _matches_non_financial_exclude(text: str | None, commodity: str) -> bool:
     if not text or not commodity:
         return False
     try:
-        from domains.finance.commodity_registry import get_non_financial_exclude, get_commodity_ids
+        from domains.finance.commodity_registry import get_commodity_ids, get_non_financial_exclude
+
         cid = (commodity or "").lower()
         if cid not in [x.lower() for x in get_commodity_ids()]:
             return False
@@ -118,7 +122,8 @@ def _financial_score(text: str | None, commodity: str) -> float:
     if not text or not commodity:
         return 0.0
     try:
-        from domains.finance.commodity_registry import get_financial_signals, get_commodity_ids
+        from domains.finance.commodity_registry import get_commodity_ids, get_financial_signals
+
         cid = (commodity or "").lower()
         if cid not in [x.lower() for x in get_commodity_ids()]:
             return 0.0
@@ -164,6 +169,7 @@ def get_shortlist(
     topic_lower = (topic or "").lower()
     try:
         from domains.finance.commodity_registry import get_commodity_ids
+
         is_registry_commodity = topic_lower in [x.lower() for x in get_commodity_ids()]
     except Exception:
         is_registry_commodity = False
@@ -171,6 +177,7 @@ def get_shortlist(
     # 1) Finance-domain articles (RSS-derived)
     try:
         from domains.news_aggregation.services.article_service import ArticleService
+
         article_svc = ArticleService(domain="finance")
         published_after = datetime.now(timezone.utc) - timedelta(hours=hours)
         res = article_svc.get_articles(
@@ -187,21 +194,28 @@ def get_shortlist(
             combined = f"{title} {snippet}"
             if is_registry_commodity and _matches_non_financial_exclude(combined, topic_lower):
                 continue
-            topic_score = _score_text(title, terms, topic=topic) * 2.0 + _score_text(snippet, terms, topic=topic)
+            topic_score = _score_text(title, terms, topic=topic) * 2.0 + _score_text(
+                snippet, terms, topic=topic
+            )
             financial = _financial_score(combined, topic_lower)
             if is_registry_commodity and topic_score >= 1 and financial < 1:
                 continue
             score = topic_score * 2.0 + financial
             pub = a.get("published_at") or a.get("published_date")
             published_at = pub.isoformat() if hasattr(pub, "isoformat") else str(pub) if pub else ""
-            shortlist.append((score, {
-                "id": a.get("id"),
-                "title": title,
-                "snippet": snippet,
-                "url": a.get("url") or "",
-                "source": a.get("source_domain") or a.get("source") or "finance",
-                "published_at": published_at,
-            }))
+            shortlist.append(
+                (
+                    score,
+                    {
+                        "id": a.get("id"),
+                        "title": title,
+                        "snippet": snippet,
+                        "url": a.get("url") or "",
+                        "source": a.get("source_domain") or a.get("source") or "finance",
+                        "published_at": published_at,
+                    },
+                )
+            )
     except Exception as e:
         logger.warning("News orchestrator articles fetch failed: %s", e)
 
@@ -209,6 +223,7 @@ def get_shortlist(
     if include_contexts and terms:
         try:
             from shared.database.connection import get_db_connection
+
             conn = get_db_connection()
             if conn:
                 with conn.cursor() as cur:
@@ -230,21 +245,34 @@ def get_shortlist(
                     title = (title or "")[:500]
                     snippet = (content or "")[:400]
                     combined = f"{title} {snippet}"
-                    if is_registry_commodity and _matches_non_financial_exclude(combined, topic_lower):
+                    if is_registry_commodity and _matches_non_financial_exclude(
+                        combined, topic_lower
+                    ):
                         continue
-                    topic_score = _score_text(title, terms, topic=topic) * 2.0 + _score_text(snippet, terms, topic=topic)
+                    topic_score = _score_text(title, terms, topic=topic) * 2.0 + _score_text(
+                        snippet, terms, topic=topic
+                    )
                     financial = _financial_score(combined, topic_lower)
                     if is_registry_commodity and topic_score >= 1 and financial < 1:
                         continue
                     score = topic_score * 2.0 + financial
-                    shortlist.append((score, {
-                        "id": f"ctx-{ctx_id}",
-                        "title": title,
-                        "snippet": snippet,
-                        "url": "",
-                        "source": "context",
-                        "published_at": created_at.isoformat() if hasattr(created_at, "isoformat") else str(created_at) if created_at else "",
-                    }))
+                    shortlist.append(
+                        (
+                            score,
+                            {
+                                "id": f"ctx-{ctx_id}",
+                                "title": title,
+                                "snippet": snippet,
+                                "url": "",
+                                "source": "context",
+                                "published_at": created_at.isoformat()
+                                if hasattr(created_at, "isoformat")
+                                else str(created_at)
+                                if created_at
+                                else "",
+                            },
+                        )
+                    )
         except Exception as e:
             logger.debug("News orchestrator contexts fetch failed: %s", e)
 
@@ -252,8 +280,13 @@ def get_shortlist(
     shortlist.sort(key=lambda x: -x[0])
     out = [item for _, item in shortlist[:max_items]]
     if terms and shortlist:
-        logger.info("News orchestrator shortlist: topic=%s terms=%d items=%d top_score=%.0f",
-                    topic, len(terms), len(out), shortlist[0][0] if shortlist else 0)
+        logger.info(
+            "News orchestrator shortlist: topic=%s terms=%d items=%d top_score=%.0f",
+            topic,
+            len(terms),
+            len(out),
+            shortlist[0][0] if shortlist else 0,
+        )
     return out
 
 
@@ -272,12 +305,14 @@ def get_supply_chain_items(
     terms = _terms_for_topic_and_query(topic_lower, None)
     try:
         from domains.finance.commodity_registry import get_commodity_ids
+
         is_registry_commodity = topic_lower in [x.lower() for x in get_commodity_ids()]
     except Exception:
         is_registry_commodity = False
     shortlist: list[tuple[float, dict[str, Any]]] = []
     try:
         from shared.database.connection import get_db_connection
+
         conn = get_db_connection()
         if not conn:
             return []
@@ -302,19 +337,30 @@ def get_supply_chain_items(
             combined = f"{title} {snippet}"
             if is_registry_commodity and _matches_non_financial_exclude(combined, topic_lower):
                 continue
-            topic_score = _score_text(title, terms, topic=topic_lower) * 2.0 + _score_text(snippet, terms, topic=topic_lower)
+            topic_score = _score_text(title, terms, topic=topic_lower) * 2.0 + _score_text(
+                snippet, terms, topic=topic_lower
+            )
             financial = _financial_score(combined, topic_lower)
             if is_registry_commodity and topic_score >= 1 and financial < 1:
                 continue
             score = topic_score * 2.0 + financial
-            shortlist.append((score, {
-                "id": f"ctx-{ctx_id}",
-                "title": title,
-                "snippet": snippet,
-                "url": "",
-                "source": "context",
-                "published_at": created_at.isoformat() if hasattr(created_at, "isoformat") else str(created_at) if created_at else "",
-            }))
+            shortlist.append(
+                (
+                    score,
+                    {
+                        "id": f"ctx-{ctx_id}",
+                        "title": title,
+                        "snippet": snippet,
+                        "url": "",
+                        "source": "context",
+                        "published_at": created_at.isoformat()
+                        if hasattr(created_at, "isoformat")
+                        else str(created_at)
+                        if created_at
+                        else "",
+                    },
+                )
+            )
     except Exception as e:
         logger.debug("Supply chain contexts fetch failed: %s", e)
         return []

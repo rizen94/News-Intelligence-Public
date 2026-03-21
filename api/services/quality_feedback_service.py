@@ -5,8 +5,7 @@ See docs/DATA_PIPELINE_ENHANCEMENTS_ROADMAP.md.
 """
 
 import logging
-from datetime import datetime, timezone, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from shared.database.connection import get_db_connection
 
@@ -14,9 +13,9 @@ logger = logging.getLogger(__name__)
 
 
 def get_latest_claim_validations(
-    claim_ids: List[int],
-    conn: Optional[Any] = None,
-) -> Dict[int, str]:
+    claim_ids: list[int],
+    conn: Any | None = None,
+) -> dict[int, str]:
     """Return latest validation_status per claim_id (for use when listing claims). Ids with no validation are omitted."""
     if not claim_ids:
         return {}
@@ -47,9 +46,9 @@ def get_latest_claim_validations(
 
 
 def get_latest_event_validations(
-    event_ids: List[int],
-    conn: Optional[Any] = None,
-) -> Dict[int, str]:
+    event_ids: list[int],
+    conn: Any | None = None,
+) -> dict[int, str]:
     """Return latest validation_status per event_id (for use when listing events). Ids with no validation are omitted."""
     if not event_ids:
         return {}
@@ -82,13 +81,16 @@ def get_latest_event_validations(
 def submit_claim_feedback(
     claim_id: int,
     validation_status: str,
-    accuracy_score: Optional[float] = None,
-    corrected_text: Optional[str] = None,
-    validated_by: Optional[str] = None,
-) -> Dict[str, Any]:
+    accuracy_score: float | None = None,
+    corrected_text: str | None = None,
+    validated_by: str | None = None,
+) -> dict[str, Any]:
     """Persist claim validation feedback. Returns { success, validation_id?, error? }."""
     if validation_status not in ("accurate", "corrected", "rejected"):
-        return {"success": False, "error": "validation_status must be accurate, corrected, or rejected"}
+        return {
+            "success": False,
+            "error": "validation_status must be accurate, corrected, or rejected",
+        }
     conn = get_db_connection()
     if not conn:
         return {"success": False, "error": "Database connection failed"}
@@ -119,12 +121,16 @@ def submit_claim_feedback(
 def submit_event_validation(
     event_id: int,
     validation_status: str,
-    corrections: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
+    corrections: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Persist event validation feedback. Returns { success, validation_id?, error? }."""
     if validation_status not in ("accurate", "corrected", "rejected"):
-        return {"success": False, "error": "validation_status must be accurate, corrected, or rejected"}
+        return {
+            "success": False,
+            "error": "validation_status must be accurate, corrected, or rejected",
+        }
     import json
+
     conn = get_db_connection()
     if not conn:
         return {"success": False, "error": "Database connection failed"}
@@ -155,7 +161,7 @@ def submit_source_feedback(
     source_name: str,
     metric: str,
     value: float,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Update source_reliability with a single metric (accuracy, exclusive, correction). Returns { success, error? }."""
     if metric not in ("accuracy", "exclusive", "correction"):
         return {"success": False, "error": "metric must be accuracy, exclusive, or correction"}
@@ -212,9 +218,9 @@ def submit_source_feedback(
 
 
 def get_source_rankings(
-    domain: Optional[str] = None,
+    domain: str | None = None,
     limit: int = 50,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Return sources ranked by reliability (accuracy_score, then exclusive_stories_count)."""
     conn = get_db_connection()
     if not conn:
@@ -252,17 +258,17 @@ def get_source_rankings(
 
 
 def get_extraction_metrics(
-    source: Optional[str] = None,
-    phase: Optional[str] = None,
-    since_days: Optional[int] = None,
-) -> Dict[str, Any]:
+    source: str | None = None,
+    phase: str | None = None,
+    since_days: int | None = None,
+) -> dict[str, Any]:
     """Per-source and per-phase quality scores from claim_validations (and optionally event_validations)."""
     conn = get_db_connection()
     if not conn:
         return {"success": False, "metrics": [], "error": "Database connection failed"}
     try:
         since_clause = ""
-        args: List[Any] = []
+        args: list[Any] = []
         if since_days is not None:
             since_clause = "AND cv.validated_at >= NOW() - INTERVAL '1 day' * %s"
             args.append(since_days)
@@ -277,7 +283,8 @@ def get_extraction_metrics(
                     AVG(cv.accuracy_score) FILTER (WHERE cv.accuracy_score IS NOT NULL) AS avg_accuracy
                 FROM intelligence.claim_validations cv
                 WHERE 1=1
-                """ + since_clause,
+                """
+                + since_clause,
                 tuple(args),
             )
             row = cur.fetchone()

@@ -6,6 +6,7 @@ import sys
 
 try:
     from dotenv import load_dotenv
+
     api_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     load_dotenv(os.path.join(api_dir, ".env"), override=False)
     load_dotenv(os.path.join(api_dir, "..", ".env"), override=False)
@@ -30,6 +31,7 @@ def main():
 
     try:
         from shared.migration_sql_paths import resolve_migration_sql_file
+
         migration_path = resolve_migration_sql_file("157_anomaly_investigations.sql")
     except FileNotFoundError as e:
         print(f"ERROR: {e}")

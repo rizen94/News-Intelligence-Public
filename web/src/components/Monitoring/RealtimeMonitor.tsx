@@ -94,14 +94,14 @@ const RealtimeMonitor: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [tabValue, setTabValue] = useState(0);
   const [autoRefresh, setAutoRefresh] = useState(true);
-  const [refreshInterval, setRefreshInterval] = useState<NodeJS.Timeout | null>(
-    null,
-  );
+  const [refreshInterval, setRefreshInterval] = useState<ReturnType<
+    typeof setTimeout
+  > | null>(null);
 
   // Data states
   const [realtimeLogs, setRealtimeLogs] = useState<LogEntry[]>([]);
   const [systemHealth, setSystemHealth] = useState<SystemHealthMetrics | null>(
-    null,
+    null
   );
   const [logStats, setLogStats] = useState<any>(null);
   const [systemMetrics, setSystemMetrics] = useState<any>(null);
@@ -115,7 +115,7 @@ const RealtimeMonitor: React.FC = () => {
   const [logDetailDialog, setLogDetailDialog] = useState(false);
   const [selectedLog, setSelectedLog] = useState<LogEntry | null>(null);
 
-  const loadRealtimeData = useCallback(async() => {
+  const loadRealtimeData = useCallback(async () => {
     try {
       setRefreshing(true);
       setError(null);
@@ -132,7 +132,11 @@ const RealtimeMonitor: React.FC = () => {
         ]);
 
       // Process results
-      if (logsData.status === 'fulfilled' && logsData.value?.success && logsData.value?.data?.entries) {
+      if (
+        logsData.status === 'fulfilled' &&
+        logsData.value?.success &&
+        logsData.value?.data?.entries
+      ) {
         setRealtimeLogs(logsData.value.data.entries as LogEntry[]);
       }
       if (healthData.status === 'fulfilled' && healthData.value?.success) {
@@ -143,7 +147,8 @@ const RealtimeMonitor: React.FC = () => {
             error_rate_last_hour: statusData.alerts?.recent_errors || 0,
             total_errors_last_24h: statusData.alerts?.recent_errors || 0,
             hourly_error_trend: [],
-            system_health_score: statusData.overall_status === 'healthy' ? 100 : 50,
+            system_health_score:
+              statusData.overall_status === 'healthy' ? 100 : 50,
             timestamp: healthData.value.timestamp || new Date().toISOString(),
           });
           // Prefer status for current system metrics (includes GPU)
@@ -153,8 +158,14 @@ const RealtimeMonitor: React.FC = () => {
       if (statsData.status === 'fulfilled' && statsData.value?.success) {
         setLogStats(statsData.value);
       }
-      if (metricsData.status === 'fulfilled' && metricsData.value && !healthData.value?.data?.system) {
-        setSystemMetrics(metricsData.value?.data?.metrics?.[0] ?? metricsData.value);
+      if (
+        metricsData.status === 'fulfilled' &&
+        metricsData.value &&
+        !healthData.value?.data?.system
+      ) {
+        setSystemMetrics(
+          metricsData.value?.data?.metrics?.[0] ?? metricsData.value
+        );
       }
 
       Logger.info('Real-time monitoring data loaded successfully');
@@ -197,7 +208,7 @@ const RealtimeMonitor: React.FC = () => {
     setLogDetailDialog(true);
   };
 
-  const handleExportLogs = async() => {
+  const handleExportLogs = async () => {
     try {
       // Use log statistics endpoint for export
       const logs = await apiService.getLogStatistics();
@@ -235,31 +246,31 @@ const RealtimeMonitor: React.FC = () => {
 
   const getLogLevelColor = (level: string) => {
     switch (level?.toUpperCase()) {
-    case 'ERROR':
-      return 'error';
-    case 'WARNING':
-      return 'warning';
-    case 'INFO':
-      return 'info';
-    case 'DEBUG':
-      return 'default';
-    default:
-      return 'default';
+      case 'ERROR':
+        return 'error';
+      case 'WARNING':
+        return 'warning';
+      case 'INFO':
+        return 'info';
+      case 'DEBUG':
+        return 'default';
+      default:
+        return 'default';
     }
   };
 
   const getLogLevelIcon = (level: string) => {
     switch (level?.toUpperCase()) {
-    case 'ERROR':
-      return <ErrorIcon />;
-    case 'WARNING':
-      return <WarningIcon />;
-    case 'INFO':
-      return <InfoIcon />;
-    case 'DEBUG':
-      return <BugReportIcon />;
-    default:
-      return <InfoIcon />;
+      case 'ERROR':
+        return <ErrorIcon />;
+      case 'WARNING':
+        return <WarningIcon />;
+      case 'INFO':
+        return <InfoIcon />;
+      case 'DEBUG':
+        return <BugReportIcon />;
+      default:
+        return <InfoIcon />;
     }
   };
 
@@ -448,7 +459,7 @@ const RealtimeMonitor: React.FC = () => {
                       <ListItemText
                         primary={log.message}
                         secondary={`${log.logger} - ${new Date(
-                          log.timestamp,
+                          log.timestamp
                         ).toLocaleString()}`}
                       />
                     </ListItem>
@@ -474,7 +485,7 @@ const RealtimeMonitor: React.FC = () => {
                     <Typography
                       variant='h2'
                       color={getHealthScoreColor(
-                        systemHealth.system_health_score,
+                        systemHealth.system_health_score
                       )}
                     >
                       {systemHealth.system_health_score.toFixed(1)}
@@ -483,7 +494,7 @@ const RealtimeMonitor: React.FC = () => {
                       variant='determinate'
                       value={systemHealth.system_health_score}
                       color={getHealthScoreColor(
-                        systemHealth.system_health_score,
+                        systemHealth.system_health_score
                       )}
                       sx={{ mt: 2 }}
                     />
@@ -594,37 +605,82 @@ const RealtimeMonitor: React.FC = () => {
                 </Card>
               </Grid>
               {/* GPU: show when metrics available; highlight overwork (≥85% warning, ≥95% error) */}
-              {(systemMetrics.gpu_utilization_percent != null || systemMetrics.gpu_vram_percent != null) && (
+              {(systemMetrics.gpu_utilization_percent != null ||
+                systemMetrics.gpu_vram_percent != null) && (
                 <>
                   <Grid item xs={12} md={4}>
                     <Card
                       sx={{
-                        borderLeft: systemMetrics.gpu_utilization_percent != null && systemMetrics.gpu_utilization_percent >= 95
-                          ? '4px solid'
-                          : systemMetrics.gpu_utilization_percent != null && systemMetrics.gpu_utilization_percent >= 85
+                        borderLeft:
+                          systemMetrics.gpu_utilization_percent != null &&
+                          systemMetrics.gpu_utilization_percent >= 95
+                            ? '4px solid'
+                            : systemMetrics.gpu_utilization_percent != null &&
+                              systemMetrics.gpu_utilization_percent >= 85
                             ? '4px solid'
                             : undefined,
-                        borderColor: systemMetrics.gpu_utilization_percent != null && systemMetrics.gpu_utilization_percent >= 95
-                          ? 'error.main'
-                          : systemMetrics.gpu_utilization_percent != null && systemMetrics.gpu_utilization_percent >= 85
+                        borderColor:
+                          systemMetrics.gpu_utilization_percent != null &&
+                          systemMetrics.gpu_utilization_percent >= 95
+                            ? 'error.main'
+                            : systemMetrics.gpu_utilization_percent != null &&
+                              systemMetrics.gpu_utilization_percent >= 85
                             ? 'warning.main'
                             : undefined,
                       }}
                     >
                       <CardContent>
-                        <Typography variant='h6' gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                          <VideogameAssetIcon fontSize='small' /> GPU Utilization
-                          {systemMetrics.gpu_utilization_percent != null && systemMetrics.gpu_utilization_percent >= 85 && (
-                            <Chip size='small' label={systemMetrics.gpu_utilization_percent >= 95 ? 'Overwork' : 'High'} color={systemMetrics.gpu_utilization_percent >= 95 ? 'error' : 'warning'} sx={{ ml: 0.5 }} />
-                          )}
+                        <Typography
+                          variant='h6'
+                          gutterBottom
+                          sx={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 0.5,
+                          }}
+                        >
+                          <VideogameAssetIcon fontSize='small' /> GPU
+                          Utilization
+                          {systemMetrics.gpu_utilization_percent != null &&
+                            systemMetrics.gpu_utilization_percent >= 85 && (
+                              <Chip
+                                size='small'
+                                label={
+                                  systemMetrics.gpu_utilization_percent >= 95
+                                    ? 'Overwork'
+                                    : 'High'
+                                }
+                                color={
+                                  systemMetrics.gpu_utilization_percent >= 95
+                                    ? 'error'
+                                    : 'warning'
+                                }
+                                sx={{ ml: 0.5 }}
+                              />
+                            )}
                         </Typography>
                         <Typography variant='h4' color='primary'>
-                          {systemMetrics.gpu_utilization_percent != null ? `${systemMetrics.gpu_utilization_percent.toFixed(1)}%` : '—'}
+                          {systemMetrics.gpu_utilization_percent != null
+                            ? `${systemMetrics.gpu_utilization_percent.toFixed(
+                                1
+                              )}%`
+                            : '—'}
                         </Typography>
                         <LinearProgress
                           variant='determinate'
-                          value={Math.min(systemMetrics.gpu_utilization_percent ?? 0, 100)}
-                          color={systemMetrics.gpu_utilization_percent != null && systemMetrics.gpu_utilization_percent >= 95 ? 'error' : systemMetrics.gpu_utilization_percent != null && systemMetrics.gpu_utilization_percent >= 85 ? 'warning' : 'primary'}
+                          value={Math.min(
+                            systemMetrics.gpu_utilization_percent ?? 0,
+                            100
+                          )}
+                          color={
+                            systemMetrics.gpu_utilization_percent != null &&
+                            systemMetrics.gpu_utilization_percent >= 95
+                              ? 'error'
+                              : systemMetrics.gpu_utilization_percent != null &&
+                                systemMetrics.gpu_utilization_percent >= 85
+                              ? 'warning'
+                              : 'primary'
+                          }
                           sx={{ mt: 2 }}
                         />
                       </CardContent>
@@ -633,37 +689,84 @@ const RealtimeMonitor: React.FC = () => {
                   <Grid item xs={12} md={4}>
                     <Card
                       sx={{
-                        borderLeft: systemMetrics.gpu_vram_percent != null && systemMetrics.gpu_vram_percent >= 95
-                          ? '4px solid'
-                          : systemMetrics.gpu_vram_percent != null && systemMetrics.gpu_vram_percent >= 85
+                        borderLeft:
+                          systemMetrics.gpu_vram_percent != null &&
+                          systemMetrics.gpu_vram_percent >= 95
+                            ? '4px solid'
+                            : systemMetrics.gpu_vram_percent != null &&
+                              systemMetrics.gpu_vram_percent >= 85
                             ? '4px solid'
                             : undefined,
-                        borderColor: systemMetrics.gpu_vram_percent != null && systemMetrics.gpu_vram_percent >= 95
-                          ? 'error.main'
-                          : systemMetrics.gpu_vram_percent != null && systemMetrics.gpu_vram_percent >= 85
+                        borderColor:
+                          systemMetrics.gpu_vram_percent != null &&
+                          systemMetrics.gpu_vram_percent >= 95
+                            ? 'error.main'
+                            : systemMetrics.gpu_vram_percent != null &&
+                              systemMetrics.gpu_vram_percent >= 85
                             ? 'warning.main'
                             : undefined,
                       }}
                     >
                       <CardContent>
-                        <Typography variant='h6' gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                        <Typography
+                          variant='h6'
+                          gutterBottom
+                          sx={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 0.5,
+                          }}
+                        >
                           <MemoryIcon fontSize='small' /> GPU VRAM
-                          {systemMetrics.gpu_vram_percent != null && systemMetrics.gpu_vram_percent >= 85 && (
-                            <Chip size='small' label={systemMetrics.gpu_vram_percent >= 95 ? 'Overwork' : 'High'} color={systemMetrics.gpu_vram_percent >= 95 ? 'error' : 'warning'} sx={{ ml: 0.5 }} />
-                          )}
+                          {systemMetrics.gpu_vram_percent != null &&
+                            systemMetrics.gpu_vram_percent >= 85 && (
+                              <Chip
+                                size='small'
+                                label={
+                                  systemMetrics.gpu_vram_percent >= 95
+                                    ? 'Overwork'
+                                    : 'High'
+                                }
+                                color={
+                                  systemMetrics.gpu_vram_percent >= 95
+                                    ? 'error'
+                                    : 'warning'
+                                }
+                                sx={{ ml: 0.5 }}
+                              />
+                            )}
                         </Typography>
                         <Typography variant='h4' color='primary'>
-                          {systemMetrics.gpu_vram_percent != null ? `${systemMetrics.gpu_vram_percent.toFixed(1)}%` : '—'}
+                          {systemMetrics.gpu_vram_percent != null
+                            ? `${systemMetrics.gpu_vram_percent.toFixed(1)}%`
+                            : '—'}
                         </Typography>
-                        {(systemMetrics.gpu_memory_used_mb != null && systemMetrics.gpu_memory_total_mb != null) && (
-                          <Typography variant='body2' color='text.secondary' sx={{ mt: 0.5 }}>
-                            {systemMetrics.gpu_memory_used_mb} / {systemMetrics.gpu_memory_total_mb} MB
-                          </Typography>
-                        )}
+                        {systemMetrics.gpu_memory_used_mb != null &&
+                          systemMetrics.gpu_memory_total_mb != null && (
+                            <Typography
+                              variant='body2'
+                              color='text.secondary'
+                              sx={{ mt: 0.5 }}
+                            >
+                              {systemMetrics.gpu_memory_used_mb} /{' '}
+                              {systemMetrics.gpu_memory_total_mb} MB
+                            </Typography>
+                          )}
                         <LinearProgress
                           variant='determinate'
-                          value={Math.min(systemMetrics.gpu_vram_percent ?? 0, 100)}
-                          color={systemMetrics.gpu_vram_percent != null && systemMetrics.gpu_vram_percent >= 95 ? 'error' : systemMetrics.gpu_vram_percent != null && systemMetrics.gpu_vram_percent >= 85 ? 'warning' : 'primary'}
+                          value={Math.min(
+                            systemMetrics.gpu_vram_percent ?? 0,
+                            100
+                          )}
+                          color={
+                            systemMetrics.gpu_vram_percent != null &&
+                            systemMetrics.gpu_vram_percent >= 95
+                              ? 'error'
+                              : systemMetrics.gpu_vram_percent != null &&
+                                systemMetrics.gpu_vram_percent >= 85
+                              ? 'warning'
+                              : 'primary'
+                          }
                           sx={{ mt: 2 }}
                         />
                       </CardContent>

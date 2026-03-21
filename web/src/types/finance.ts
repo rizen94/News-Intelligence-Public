@@ -46,8 +46,22 @@ export interface VerificationResult {
 
 export interface FinancialAnalysisResult {
   task_id: string;
-  status: 'queued' | 'planning' | 'executing' | 'evaluating' | 'revising' | 'complete' | 'failed';
-  phase?: 'planning' | 'fetching' | 'synthesizing' | 'verifying' | 'revising' | 'complete' | 'failed';
+  status:
+    | 'queued'
+    | 'planning'
+    | 'executing'
+    | 'evaluating'
+    | 'revising'
+    | 'complete'
+    | 'failed';
+  phase?:
+    | 'planning'
+    | 'fetching'
+    | 'synthesizing'
+    | 'verifying'
+    | 'revising'
+    | 'complete'
+    | 'failed';
   analysis_text?: string;
   confidence_score?: number;
   confidence?: number;

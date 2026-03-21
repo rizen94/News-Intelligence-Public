@@ -5,9 +5,9 @@ See docs/CONTENT_QUALITY_STANDARDS.md.
 """
 
 import json
-import re
 import logging
-from typing import Dict, Any, List, Optional
+import re
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +26,7 @@ QUALITY_CONFIG = {
 class ContentQualityService:
     """Analyze article quality: clickbait, fact density, source quality, emotional manipulation."""
 
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
+    def __init__(self, config: dict[str, Any] | None = None):
         self.config = {**QUALITY_CONFIG, **(config or {})}
         self.clickbait_patterns = {
             "headline_triggers": [
@@ -69,7 +69,7 @@ class ContentQualityService:
             ],
         }
 
-    def analyze_content_quality(self, article: Dict[str, Any]) -> Dict[str, Any]:
+    def analyze_content_quality(self, article: dict[str, Any]) -> dict[str, Any]:
         """
         Comprehensive quality analysis including clickbait detection.
         article: dict with title, content (or summary), source_domain/source, url (optional).
@@ -78,7 +78,7 @@ class ContentQualityService:
         title = (article.get("title") or "").strip()
         content = (article.get("content") or article.get("summary") or "").strip()
         source = (article.get("source_domain") or article.get("source") or "").strip()
-        url = (article.get("url") or "").strip()
+        (article.get("url") or "").strip()
 
         scores = {
             "clickbait_score": self._detect_clickbait(title, content),
@@ -117,7 +117,9 @@ class ContentQualityService:
         try:
             from collectors.rss_collector import is_clickbait_title
         except Exception:
-            is_clickbait_title = lambda t: False
+
+            def is_clickbait_title(t):
+                return False
 
         score = 0.0
         content_lower = (content or "").lower()
@@ -135,7 +137,9 @@ class ContentQualityService:
 
         words = (content or "").split()
         if words:
-            emotional_count = sum(1 for w in self.clickbait_patterns["emotional_words"] if w in content_lower)
+            emotional_count = sum(
+                1 for w in self.clickbait_patterns["emotional_words"] if w in content_lower
+            )
             score += min(0.25, (emotional_count / max(len(words) / 100, 1)) * 0.5)
 
         word_count = len((content or "").split())
@@ -148,7 +152,7 @@ class ContentQualityService:
         """Heuristic fact density: named sources, numbers, dates, quotes."""
         if not content:
             return 0.0
-        text = content.lower()
+        content.lower()
         words = content.split()
         if not words:
             return 0.0
@@ -182,13 +186,35 @@ class ContentQualityService:
         source_lower = (source or "").lower()
 
         tier1_sources = [
-            "reuters", "ap news", "associated press", "bbc", "bloomberg",
-            "financial times", "wall street journal", "wsj", "economist",
-            "new york times", "washington post", "npr", "ap", "afp",
+            "reuters",
+            "ap news",
+            "associated press",
+            "bbc",
+            "bloomberg",
+            "financial times",
+            "wall street journal",
+            "wsj",
+            "economist",
+            "new york times",
+            "washington post",
+            "npr",
+            "ap",
+            "afp",
         ]
         tier2_sources = [
-            "guardian", "cnn", "fox news", "nbc", "abc", "cbs", "pbs",
-            "marketwatch", "cnbc", "forbes", "fortune", "politico", "axios",
+            "guardian",
+            "cnn",
+            "fox news",
+            "nbc",
+            "abc",
+            "cbs",
+            "pbs",
+            "marketwatch",
+            "cnbc",
+            "forbes",
+            "fortune",
+            "politico",
+            "axios",
         ]
         if any(s in source_lower for s in tier1_sources):
             score = 0.9
@@ -243,9 +269,11 @@ class ContentQualityService:
             specificity += 0.3
         return min(1.0, specificity)
 
-    def _assign_quality_tier(self, quality_score: float, scores: Dict[str, float]) -> int:
+    def _assign_quality_tier(self, quality_score: float, scores: dict[str, float]) -> int:
         """Map 0-1 score to tier 1-4. Tier 4 = low-value/clickbait."""
-        if scores.get("clickbait_score", 0) >= self.config.get("auto_reject_clickbait_threshold", 0.8):
+        if scores.get("clickbait_score", 0) >= self.config.get(
+            "auto_reject_clickbait_threshold", 0.8
+        ):
             return 4
         if quality_score >= 0.8:
             return 1
@@ -255,11 +283,13 @@ class ContentQualityService:
             return 3
         return 4
 
-    def _generate_quality_flags(self, scores: Dict[str, float]) -> List[str]:
+    def _generate_quality_flags(self, scores: dict[str, float]) -> list[str]:
         flags = []
         if scores.get("clickbait_score", 0) >= 0.5:
             flags.append("clickbait_risk")
-        if scores.get("emotional_manipulation", 0) >= self.config.get("emotion_word_density_threshold", 0.3):
+        if scores.get("emotional_manipulation", 0) >= self.config.get(
+            "emotion_word_density_threshold", 0.3
+        ):
             flags.append("high_emotion")
         if scores.get("fact_density", 0) < 0.2:
             flags.append("low_fact_density")
@@ -269,7 +299,7 @@ class ContentQualityService:
             flags.append("shallow")
         return flags
 
-    def _generate_recommendation(self, tier: int, scores: Dict[str, float]) -> str:
+    def _generate_recommendation(self, tier: int, scores: dict[str, float]) -> str:
         if tier == 1:
             return "intelligence_grade"
         if tier == 2:
@@ -279,7 +309,7 @@ class ContentQualityService:
         return "low_value_demote"
 
 
-def get_content_quality_service(config: Optional[Dict[str, Any]] = None) -> ContentQualityService:
+def get_content_quality_service(config: dict[str, Any] | None = None) -> ContentQualityService:
     """Return a new ContentQualityService instance."""
     return ContentQualityService(config=config)
 
@@ -287,7 +317,7 @@ def get_content_quality_service(config: Optional[Dict[str, Any]] = None) -> Cont
 def update_article_quality_in_db(
     article_id: int,
     schema: str,
-    result: Dict[str, Any],
+    result: dict[str, Any],
 ) -> bool:
     """
     Persist quality result to articles.quality_tier, quality_scores, etc.
@@ -295,6 +325,7 @@ def update_article_quality_in_db(
     """
     try:
         from shared.database.connection import get_db_connection
+
         conn = get_db_connection()
         if not conn:
             return False

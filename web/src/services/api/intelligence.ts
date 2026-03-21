@@ -11,7 +11,7 @@ export const intelligenceApi = {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(
         `/api/${domainKey}/intelligence/rag/${storylineId}`,
-        { params: query ? { query } : {} },
+        { params: query ? { query } : {} }
       );
       return response.data;
     } catch (error) {
@@ -25,7 +25,7 @@ export const intelligenceApi = {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().post(
         `/api/${domainKey}/intelligence/rag/query`,
-        { query },
+        { query }
       );
       return response.data;
     } catch (error) {
@@ -38,7 +38,7 @@ export const intelligenceApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(
-        `/api/${domainKey}/intelligence/quality/${storylineId}`,
+        `/api/${domainKey}/intelligence/quality/${storylineId}`
       );
       return response.data;
     } catch (error) {
@@ -52,7 +52,7 @@ export const intelligenceApi = {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().post(
         `/api/${domainKey}/intelligence/quality/batch`,
-        { storyline_ids: storylineIds },
+        { storyline_ids: storylineIds }
       );
       return response.data;
     } catch (error) {
@@ -66,7 +66,7 @@ export const intelligenceApi = {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(
         `/api/${domainKey}/intelligence/anomalies`,
-        { params: { limit } },
+        { params: { limit } }
       );
       return response.data;
     } catch (error) {
@@ -80,7 +80,7 @@ export const intelligenceApi = {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().post(
         `/api/${domainKey}/intelligence/anomalies/watch`,
-        { anomaly_id: anomalyId },
+        { anomaly_id: anomalyId }
       );
       return response.data;
     } catch (error) {
@@ -93,7 +93,7 @@ export const intelligenceApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(
-        `/api/${domainKey}/intelligence/impact/${storylineId}`,
+        `/api/${domainKey}/intelligence/impact/${storylineId}`
       );
       return response.data;
     } catch (error) {
@@ -107,7 +107,7 @@ export const intelligenceApi = {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(
         `/api/${domainKey}/intelligence/impact/trending`,
-        { params: { limit } },
+        { params: { limit } }
       );
       return response.data;
     } catch (error) {
@@ -120,7 +120,7 @@ export const intelligenceApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(
-        `/api/${domainKey}/intelligence/dashboard`,
+        `/api/${domainKey}/intelligence/dashboard`
       );
       return response.data;
     } catch (error) {
@@ -131,13 +131,13 @@ export const intelligenceApi = {
 
   async getEventStorylineClaimConsistency(
     params: { limit_events?: number; min_claim_confidence?: number } = {},
-    domain?: string,
+    domain?: string
   ) {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(
         `/api/${domainKey}/intelligence/consistency`,
-        { params },
+        { params }
       );
       return response.data;
     } catch (error) {
@@ -148,13 +148,13 @@ export const intelligenceApi = {
 
   async getParticipantPositionDeltas(
     params: { days?: number } = {},
-    domain?: string,
+    domain?: string
   ) {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(
         `/api/${domainKey}/intelligence/participant_deltas`,
-        { params },
+        { params }
       );
       return response.data;
     } catch (error) {
@@ -164,13 +164,12 @@ export const intelligenceApi = {
   },
 
   async getCausalChains(
-    params: { days?: number; min_strength?: number; limit?: number } = {},
+    params: { days?: number; min_strength?: number; limit?: number } = {}
   ) {
     try {
-      const response = await getApi().get(
-        '/api/intelligence/causal_chains',
-        { params },
-      );
+      const response = await getApi().get('/api/intelligence/causal_chains', {
+        params,
+      });
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to get causal chains', error as Error);
@@ -181,13 +180,13 @@ export const intelligenceApi = {
   async getNarrativeDivergenceMap(
     eventId: number,
     params: { min_contexts_per_cluster?: number } = {},
-    domain?: string,
+    domain?: string
   ) {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(
         `/api/${domainKey}/intelligence/narrative_divergence/${eventId}`,
-        { params },
+        { params }
       );
       return response.data;
     } catch (error) {
@@ -198,14 +197,14 @@ export const intelligenceApi = {
 
   async runWatchlistThemeBridge(
     params: { create_alerts?: boolean; max_items?: number } = {},
-    domain?: string,
+    domain?: string
   ) {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().post(
         `/api/${domainKey}/intelligence/watchlist_theme_bridge`,
         null,
-        { params },
+        { params }
       );
       return response.data;
     } catch (error) {
@@ -216,32 +215,39 @@ export const intelligenceApi = {
 
   async runDocumentIntelligenceIntegration(
     params: { days?: number; persist_links?: boolean; limit?: number } = {},
-    domain?: string,
+    domain?: string
   ) {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().post(
         `/api/${domainKey}/intelligence/document_integration`,
         null,
-        { params },
+        { params }
       );
       return response.data;
     } catch (error) {
-      Logger.apiError('Failed to run document intelligence integration', error as Error);
+      Logger.apiError(
+        'Failed to run document intelligence integration',
+        error as Error
+      );
       return { success: false, error: (error as any).message };
     }
   },
 
   async getDomainEvents(
-    params: { limit?: number; offset?: number; event_type?: string; ongoing_only?: boolean } = {},
-    domain?: string,
+    params: {
+      limit?: number;
+      offset?: number;
+      event_type?: string;
+      ongoing_only?: boolean;
+    } = {},
+    domain?: string
   ) {
     try {
       const domainKey = domain || getCurrentDomain();
-      const response = await getApi().get(
-        `/api/${domainKey}/events`,
-        { params },
-      );
+      const response = await getApi().get(`/api/${domainKey}/events`, {
+        params,
+      });
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to fetch domain events', error as Error);
@@ -252,13 +258,13 @@ export const intelligenceApi = {
   async synthesizeStoryline(
     storylineId: string | number,
     depth: string = 'full',
-    domain?: string,
+    domain?: string
   ) {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().post(
         `/api/${domainKey}/synthesis/storyline/${storylineId}`,
-        { depth },
+        { depth }
       );
       return response.data;
     } catch (error) {
@@ -271,13 +277,13 @@ export const intelligenceApi = {
     storylineId: string | number,
     depth: string = 'full',
     format: 'markdown' | 'html' = 'markdown',
-    domain?: string,
+    domain?: string
   ) {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(
         `/api/${domainKey}/synthesis/storyline/${storylineId}/${format}`,
-        { params: { depth } },
+        { params: { depth } }
       );
       return response.data;
     } catch (error) {
@@ -289,14 +295,14 @@ export const intelligenceApi = {
   async bulkSynthesizeStorylines(
     storylineIds: number[],
     depth?: string,
-    domain?: string,
+    domain?: string
   ) {
     try {
       const domainKey = domain || getCurrentDomain();
-      const response = await getApi().post(
-        `/api/${domainKey}/synthesis/bulk`,
-        { storyline_ids: storylineIds, depth },
-      );
+      const response = await getApi().post(`/api/${domainKey}/synthesis/bulk`, {
+        storyline_ids: storylineIds,
+        depth,
+      });
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to bulk synthesize', error as Error);
@@ -308,7 +314,7 @@ export const intelligenceApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(
-        `/api/${domainKey}/synthesis/tasks/${taskId}`,
+        `/api/${domainKey}/synthesis/tasks/${taskId}`
       );
       return response.data;
     } catch (error) {
@@ -322,7 +328,7 @@ export const intelligenceApi = {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(
         `/api/${domainKey}/intelligence/digests`,
-        { params: { limit: count } },
+        { params: { limit: count } }
       );
       return response.data;
     } catch (error) {
@@ -335,7 +341,7 @@ export const intelligenceApi = {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().post(
-        `/api/${domainKey}/intelligence/digests/weekly`,
+        `/api/${domainKey}/intelligence/digests/weekly`
       );
       return response.data;
     } catch (error) {
@@ -349,7 +355,7 @@ export const intelligenceApi = {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().post(
         `/api/${domainKey}/intelligence/briefings/daily`,
-        { date },
+        { date }
       );
       return response.data;
     } catch (error) {
@@ -363,7 +369,7 @@ export const intelligenceApi = {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(
         `/api/${domainKey}/content_analysis/topics/trending`,
-        { params: { hours: days * 24, limit: 50 } },
+        { params: { hours: days * 24, limit: 50 } }
       );
       return response.data;
     } catch (error) {
@@ -375,7 +381,7 @@ export const intelligenceApi = {
   async getStoryDossier(
     storyId: string,
     includeRag: boolean = false,
-    domain?: string,
+    domain?: string
   ) {
     try {
       const domainKey = domain || getCurrentDomain();
@@ -384,7 +390,7 @@ export const intelligenceApi = {
         {
           query: `Generate a comprehensive dossier for story: ${storyId}`,
           include_rag: includeRag,
-        },
+        }
       );
       return response.data;
     } catch (error) {
@@ -397,27 +403,45 @@ export const intelligenceApi = {
   async getReport(domain?: string, leadLimit: number = 10) {
     try {
       const domainKey = domain || getCurrentDomain();
-      const response = await getApi().get<{ success: boolean; data: import('../../types').ReportPayload | null; message: string | null }>(
-        `/api/${domainKey}/report`,
-        { params: { lead_limit: leadLimit } },
-      );
+      const response = await getApi().get<{
+        success: boolean;
+        data: import('../../types').ReportPayload | null;
+        message: string | null;
+      }>(`/api/${domainKey}/report`, { params: { lead_limit: leadLimit } });
       if (response.data.success && response.data.data) {
         return { success: true as const, data: response.data.data };
       }
-      return { success: false as const, data: null, message: response.data.message || 'No data' };
+      return {
+        success: false as const,
+        data: null,
+        message: response.data.message || 'No data',
+      };
     } catch (error) {
       Logger.apiError('Failed to get report', error as Error);
-      return { success: false as const, data: null, message: (error as Error).message };
+      return {
+        success: false as const,
+        data: null,
+        message: (error as Error).message,
+      };
     }
   },
 
   /** Briefing feed: articles and storylines reordered (not interested excluded, sports/celebrity demoted). */
-  async getBriefingFeed(domain?: string, articlesLimit: number = 10, storylinesLimit: number = 6) {
+  async getBriefingFeed(
+    domain?: string,
+    articlesLimit: number = 10,
+    storylinesLimit: number = 6
+  ) {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(
         `/api/${domainKey}/intelligence/briefing_feed`,
-        { params: { articles_limit: articlesLimit, storylines_limit: storylinesLimit } },
+        {
+          params: {
+            articles_limit: articlesLimit,
+            storylines_limit: storylinesLimit,
+          },
+        }
       );
       return response.data;
     } catch (error) {
@@ -428,14 +452,19 @@ export const intelligenceApi = {
 
   /** Submit usefulness (1-5) or not interested for an article, storyline, or whole briefing. */
   async submitContentFeedback(
-    payload: { item_type: 'article' | 'storyline' | 'briefing'; item_id?: number; rating?: number; not_interested?: boolean },
-    domain?: string,
+    payload: {
+      item_type: 'article' | 'storyline' | 'briefing';
+      item_id?: number;
+      rating?: number;
+      not_interested?: boolean;
+    },
+    domain?: string
   ) {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().post(
         `/api/${domainKey}/intelligence/feedback`,
-        payload,
+        payload
       );
       return response.data;
     } catch (error) {

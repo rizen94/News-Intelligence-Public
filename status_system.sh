@@ -13,6 +13,7 @@ NC='\033[0m' # No Color
 
 # Configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+API_UVICORN_PGREP='uvicorn.*(main|main_v4):app'
 PYTHON_BIN="$SCRIPT_DIR/.venv/bin/python"
 [ -x "$PYTHON_BIN" ] || PYTHON_BIN="python3"
 
@@ -51,8 +52,8 @@ echo ""
 
 # Check API Server
 echo -e "${CYAN}API Server:${NC}"
-if is_running "uvicorn.*main_v4"; then
-    API_PID=$(pgrep -f "uvicorn.*main_v4" | head -1)
+if is_running "$API_UVICORN_PGREP"; then
+    API_PID=$(pgrep -f "$API_UVICORN_PGREP" | head -1)
     if curl -s http://localhost:8000/api/system_monitoring/health > /dev/null 2>&1; then
         echo -e "  ${GREEN}✅ API Server: Running${NC} (PID: $API_PID, http://localhost:8000)"
         echo -e "  ${GREEN}   - AutomationManager: Active${NC}"

@@ -5,7 +5,7 @@ Used by system_monitoring health and by automation_manager for temperature-based
 
 import logging
 import subprocess
-from typing import Any, Dict
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -16,13 +16,13 @@ GPU_TEMP_THROTTLE_C = 82
 GPU_THROTTLE_SLEEP_SECONDS = 60
 
 
-def get_gpu_metrics() -> Dict[str, Any]:
+def get_gpu_metrics() -> dict[str, Any]:
     """
     Get GPU utilization, VRAM, and temperature. Tries nvidia-smi first, then GPUtil.
     Returns dict with gpu_utilization_percent, gpu_vram_percent, gpu_temperature_c, etc.
     All keys may be None if unavailable.
     """
-    result: Dict[str, Any] = {
+    result: dict[str, Any] = {
         "gpu_utilization_percent": None,
         "gpu_vram_percent": None,
         "gpu_temperature_c": None,
@@ -66,6 +66,7 @@ def get_gpu_metrics() -> Dict[str, Any]:
         pass
     try:
         import GPUtil
+
         gpus = GPUtil.getGPUs()
         if gpus:
             gpu = gpus[0]

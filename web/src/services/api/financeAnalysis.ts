@@ -8,15 +8,21 @@ import Logger from '../../utils/logger';
 const financeAnalysisApi = {
   async submitAnalysis(
     query: string,
-    options?: { topic?: string; date_range?: { start: string; end: string }; wait?: boolean },
+    options?: {
+      topic?: string;
+      date_range?: { start: string; end: string };
+      wait?: boolean;
+    },
     domain?: string
   ) {
     try {
       const domainKey = domain || getCurrentDomain();
       const params = new URLSearchParams({ query });
       if (options?.topic) params.set('topic', options.topic);
-      if (options?.date_range?.start) params.set('start_date', options.date_range.start);
-      if (options?.date_range?.end) params.set('end_date', options.date_range.end);
+      if (options?.date_range?.start)
+        params.set('start_date', options.date_range.start);
+      if (options?.date_range?.end)
+        params.set('end_date', options.date_range.end);
       if (options?.wait !== undefined) params.set('wait', String(options.wait));
       const response = await getApi().post(
         `/api/${domainKey}/finance/analyze?${params.toString()}`
@@ -81,7 +87,12 @@ const financeAnalysisApi = {
   },
 
   async listTasks(
-    filters?: { status?: string; task_type?: string; limit?: number; offset?: number },
+    filters?: {
+      status?: string;
+      task_type?: string;
+      limit?: number;
+      offset?: number;
+    },
     domain?: string
   ) {
     try {
@@ -176,9 +187,7 @@ const financeAnalysisApi = {
   async getRefreshSchedule(domain?: string) {
     try {
       const domainKey = domain || getCurrentDomain();
-      const response = await getApi().get(
-        `/api/${domainKey}/finance/schedule`
-      );
+      const response = await getApi().get(`/api/${domainKey}/finance/schedule`);
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to get refresh schedule', error as Error);
@@ -215,7 +224,8 @@ const financeAnalysisApi = {
       const searchParams = new URLSearchParams();
       if (params?.limit) searchParams.set('limit', String(params.limit));
       if (params?.offset) searchParams.set('offset', String(params.offset));
-      if (params?.last_refined_task_id) searchParams.set('last_refined_task_id', params.last_refined_task_id);
+      if (params?.last_refined_task_id)
+        searchParams.set('last_refined_task_id', params.last_refined_task_id);
       const qs = searchParams.toString();
       const response = await getApi().get(
         `/api/${domainKey}/finance/research-topics${qs ? `?${qs}` : ''}`
@@ -241,7 +251,13 @@ const financeAnalysisApi = {
   },
 
   async createResearchTopic(
-    payload: { task_id: string; name: string; query: string; topic?: string; date_range?: { start: string; end: string } },
+    payload: {
+      task_id: string;
+      name: string;
+      query: string;
+      topic?: string;
+      date_range?: { start: string; end: string };
+    },
     domain?: string
   ) {
     const domainKey = domain || getCurrentDomain();
@@ -254,7 +270,10 @@ const financeAnalysisApi = {
       ...(payload.date_range && { date_range: payload.date_range }),
     };
     try {
-      Logger.debug('Create research topic', { url, body: { ...body, query: body.query?.slice(0, 50) } });
+      Logger.debug('Create research topic', {
+        url,
+        body: { ...body, query: body.query?.slice(0, 50) },
+      });
       const response = await getApi().post(url, body);
       return response.data;
     } catch (error) {
@@ -289,7 +308,10 @@ const financeAnalysisApi = {
       );
       return response.data;
     } catch (error) {
-      Logger.apiError('Failed to update research topic from task', error as Error);
+      Logger.apiError(
+        'Failed to update research topic from task',
+        error as Error
+      );
       throw error;
     }
   },

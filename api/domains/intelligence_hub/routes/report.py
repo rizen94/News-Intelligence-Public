@@ -4,10 +4,9 @@ Returns lead storylines with 5W1H editorial and key_actors, investigations, rece
 """
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from fastapi import APIRouter, Path, Query
-
 from shared.database.connection import get_db_connection
 
 logger = logging.getLogger(__name__)
@@ -15,7 +14,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["Report"])
 
 
-def _get_schema_for_domain(domain: str) -> Optional[str]:
+def _get_schema_for_domain(domain: str) -> str | None:
     conn = get_db_connection()
     if not conn:
         return None
@@ -33,6 +32,7 @@ def _get_schema_for_domain(domain: str) -> Optional[str]:
 
 def _time_of_day() -> str:
     from datetime import datetime
+
     h = datetime.now().hour
     d = datetime.now().weekday()
     if d >= 5:
@@ -48,7 +48,7 @@ def _time_of_day() -> str:
 def get_report(
     domain: str = Path(..., description="Domain key (e.g. politics, finance, science-tech)"),
     lead_limit: int = Query(10, ge=1, le=30, description="Max lead storylines to return"),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Assemble report payload: lead storylines (5W1H + key_actors), investigations, recent events, daily_brief."""
     schema = _get_schema_for_domain(domain)
     if not schema:
@@ -60,7 +60,7 @@ def get_report(
 
     try:
         domain_key = domain
-        lead_storylines: List[Dict[str, Any]] = []
+        lead_storylines: list[dict[str, Any]] = []
         with conn.cursor() as cur:
             cur.execute(
                 f"""
@@ -89,7 +89,7 @@ def get_report(
                 }
 
             storyline_ids = [r[0] for r in storyline_rows]
-            article_ids_by_storyline: Dict[int, List[int]] = {}
+            article_ids_by_storyline: dict[int, list[int]] = {}
             cur.execute(
                 f"""
                 SELECT storyline_id, article_id FROM {schema}.storyline_articles
@@ -101,11 +101,17 @@ def get_report(
                 article_ids_by_storyline.setdefault(sid, []).append(aid)
 
             for row in storyline_rows:
-                sid, title, description, updated_at, article_count, status, editorial_document = (
-                    row[0], row[1], row[2], row[3], row[4], row[5], row[6]
+                sid, title, _description, updated_at, article_count, status, editorial_document = (
+                    row[0],
+                    row[1],
+                    row[2],
+                    row[3],
+                    row[4],
+                    row[5],
+                    row[6],
                 )
                 article_ids = article_ids_by_storyline.get(sid) or []
-                key_actors: List[Dict[str, Any]] = []
+                key_actors: list[dict[str, Any]] = []
                 if article_ids:
                     cur.execute(
                         f"""
@@ -121,7 +127,7 @@ def get_report(
                     )
                     entity_rows = cur.fetchall()
                     canonical_ids = [r[0] for r in entity_rows]
-                    profile_map: Dict[int, int] = {}
+                    profile_map: dict[int, int] = {}
                     if canonical_ids:
                         cur.execute(
                             """
@@ -140,16 +146,18 @@ def get_report(
                         role_in_story = ""
                         for w in who_list:
                             if isinstance(w, dict) and (w.get("name") or "").strip() == name:
-                                role_in_story = (w.get("role") or w.get("background") or "")
+                                role_in_story = w.get("role") or w.get("background") or ""
                                 break
-                        key_actors.append({
-                            "name": name,
-                            "type": r[2] or "subject",
-                            "description": r[3] or "",
-                            "role_in_story": role_in_story,
-                            "profile_id": profile_map.get(r[0]),
-                            "canonical_entity_id": r[0],
-                        })
+                        key_actors.append(
+                            {
+                                "name": name,
+                                "type": r[2] or "subject",
+                                "description": r[3] or "",
+                                "role_in_story": role_in_story,
+                                "profile_id": profile_map.get(r[0]),
+                                "canonical_entity_id": r[0],
+                            }
+                        )
                 ed = editorial_document
                 if ed and isinstance(ed, dict):
                     pass
@@ -158,15 +166,19 @@ def get_report(
                 phase = (status or "Developing").capitalize()
                 if phase not in ("Breaking", "Developing", "Analysis"):
                     phase = "Developing"
-                lead_storylines.append({
-                    "id": sid,
-                    "title": title or "",
-                    "editorial_document": ed,
-                    "key_actors": key_actors,
-                    "phase": phase,
-                    "source_count": article_count or 0,
-                    "updated_at": updated_at.isoformat() if hasattr(updated_at, "isoformat") else str(updated_at),
-                })
+                lead_storylines.append(
+                    {
+                        "id": sid,
+                        "title": title or "",
+                        "editorial_document": ed,
+                        "key_actors": key_actors,
+                        "phase": phase,
+                        "source_count": article_count or 0,
+                        "updated_at": updated_at.isoformat()
+                        if hasattr(updated_at, "isoformat")
+                        else str(updated_at),
+                    }
+                )
 
         investigations = _fetch_investigations(conn, domain_key)
         recent_events = _fetch_recent_events(conn, domain_key)
@@ -194,8 +206,8 @@ def get_report(
         return {"success": False, "data": None, "message": str(e)}
 
 
-def _fetch_investigations(conn, domain_key: str) -> List[Dict[str, Any]]:
-    out: List[Dict[str, Any]] = []
+def _fetch_investigations(conn, domain_key: str) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
     try:
         with conn.cursor() as cur:
             cur.execute(
@@ -209,20 +221,22 @@ def _fetch_investigations(conn, domain_key: str) -> List[Dict[str, Any]]:
                 (domain_key,),
             )
             for r in cur.fetchall():
-                out.append({
-                    "id": r[0],
-                    "name": r[1] or "",
-                    "type": r[2] or "",
-                    "status": r[3] or "active",
-                    "briefing": r[4],
-                })
+                out.append(
+                    {
+                        "id": r[0],
+                        "name": r[1] or "",
+                        "type": r[2] or "",
+                        "status": r[3] or "active",
+                        "briefing": r[4],
+                    }
+                )
     except Exception as e:
         logger.debug("_fetch_investigations: %s", e)
     return out
 
 
-def _fetch_recent_events(conn, domain_key: str) -> List[Dict[str, Any]]:
-    out: List[Dict[str, Any]] = []
+def _fetch_recent_events(conn, domain_key: str) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
     try:
         with conn.cursor() as cur:
             cur.execute(
@@ -236,18 +250,24 @@ def _fetch_recent_events(conn, domain_key: str) -> List[Dict[str, Any]]:
                 (domain_key,),
             )
             for r in cur.fetchall():
-                out.append({
-                    "id": r[0],
-                    "title": r[1] or "",
-                    "date": r[2].isoformat() if hasattr(r[2], "isoformat") else str(r[2]) if r[2] else "",
-                    "type": r[3] or "",
-                })
+                out.append(
+                    {
+                        "id": r[0],
+                        "title": r[1] or "",
+                        "date": r[2].isoformat()
+                        if hasattr(r[2], "isoformat")
+                        else str(r[2])
+                        if r[2]
+                        else "",
+                        "type": r[3] or "",
+                    }
+                )
     except Exception as e:
         logger.debug("_fetch_recent_events: %s", e)
     return out
 
 
-def _fetch_daily_brief(conn, domain_key: str) -> Optional[str]:
+def _fetch_daily_brief(conn, domain_key: str) -> str | None:
     """Return latest daily brief content if table exists; otherwise None."""
     try:
         with conn.cursor() as cur:

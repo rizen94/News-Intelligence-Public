@@ -7,7 +7,6 @@ See docs/CONTEXT_CENTRIC_UPGRADE_PLAN.md.
 import json
 import logging
 import re
-from typing import List, Optional, Tuple
 
 from shared.database.connection import get_db_connection
 from shared.services.llm_service import LLMService, ModelType
@@ -25,7 +24,7 @@ _DOMAIN_KEY_TO_SCHEMA = {
 _SCHEMAS = ("politics", "finance", "science_tech")
 
 
-def _parse_claims_response(raw: str) -> List[Tuple[str, str, str, float]]:
+def _parse_claims_response(raw: str) -> list[tuple[str, str, str, float]]:
     """Parse LLM response into (subject, predicate, object, confidence) list."""
     out = []
     try:
@@ -142,7 +141,7 @@ Rules: subject and predicate required; object optional. confidence 0.0-1.0. Keep
         return 0
 
 
-def get_context_ids_without_claims(limit: int = 50) -> List[int]:
+def get_context_ids_without_claims(limit: int = 50) -> list[int]:
     """Return context IDs that have no rows in extracted_claims, for batch processing."""
     conn = get_db_connection()
     if not conn:
@@ -175,7 +174,9 @@ async def run_claim_extraction_batch(limit: int = 50) -> int:
         n = await extract_claims_for_context(context_id)
         total += n
     if total > 0:
-        logger.info(f"Claim extraction batch: {len(ids)} contexts processed, {total} claims inserted")
+        logger.info(
+            f"Claim extraction batch: {len(ids)} contexts processed, {total} claims inserted"
+        )
     return total
 
 
@@ -184,14 +185,29 @@ async def run_claim_extraction_batch(limit: int = 50) -> int:
 # ---------------------------------------------------------------------------
 
 _PREDICATE_TO_FACT_TYPE = {
-    "stated": "STATEMENT", "said": "STATEMENT", "announced": "STATEMENT",
-    "declared": "STATEMENT", "claimed": "STATEMENT", "argued": "STATEMENT",
-    "voted": "ACTION", "signed": "ACTION", "launched": "ACTION",
-    "approved": "ACTION", "rejected": "ACTION", "imposed": "ACTION",
-    "appointed": "ACTION", "resigned": "ACTION", "arrested": "ACTION",
-    "holds": "POSITION", "supports": "POSITION", "opposes": "POSITION",
-    "leads": "RELATIONSHIP", "allied with": "RELATIONSHIP",
-    "is": "ATTRIBUTE", "was": "ATTRIBUTE", "has": "ATTRIBUTE",
+    "stated": "STATEMENT",
+    "said": "STATEMENT",
+    "announced": "STATEMENT",
+    "declared": "STATEMENT",
+    "claimed": "STATEMENT",
+    "argued": "STATEMENT",
+    "voted": "ACTION",
+    "signed": "ACTION",
+    "launched": "ACTION",
+    "approved": "ACTION",
+    "rejected": "ACTION",
+    "imposed": "ACTION",
+    "appointed": "ACTION",
+    "resigned": "ACTION",
+    "arrested": "ACTION",
+    "holds": "POSITION",
+    "supports": "POSITION",
+    "opposes": "POSITION",
+    "leads": "RELATIONSHIP",
+    "allied with": "RELATIONSHIP",
+    "is": "ATTRIBUTE",
+    "was": "ATTRIBUTE",
+    "has": "ATTRIBUTE",
 }
 
 
@@ -243,7 +259,16 @@ def promote_claims_to_versioned_facts(
             if not claims:
                 return 0
 
-            for claim_id, context_id, subject, predicate, obj, confidence, valid_from, valid_to in claims:
+            for (
+                claim_id,
+                context_id,
+                subject,
+                predicate,
+                obj,
+                confidence,
+                valid_from,
+                valid_to,
+            ) in claims:
                 entity_profile_id = _resolve_claim_to_entity_profile(cur, subject, context_id)
                 if not entity_profile_id:
                     continue
@@ -297,8 +322,8 @@ def _normalize_claim_subject(subject_text: str) -> str:
 def _resolve_claim_to_entity_profile(
     cur,
     subject_text: str,
-    context_id: Optional[int] = None,
-) -> Optional[int]:
+    context_id: int | None = None,
+) -> int | None:
     """
     Resolve claim subject_text to intelligence.entity_profiles.id.
 
@@ -318,7 +343,7 @@ def _resolve_claim_to_entity_profile(
 
     norm_lower = subject.lower()
 
-    def _one_int(sql: str, params: tuple) -> Optional[int]:
+    def _one_int(sql: str, params: tuple) -> int | None:
         try:
             cur.execute(sql, params)
             row = cur.fetchone()
@@ -416,7 +441,14 @@ def _resolve_claim_to_entity_profile(
                       )
                     LIMIT 1
                     """,
-                    (dk, dk.replace("_", "-"), dk.replace("-", "_"), article_id, norm_lower, norm_lower),
+                    (
+                        dk,
+                        dk.replace("_", "-"),
+                        dk.replace("-", "_"),
+                        article_id,
+                        norm_lower,
+                        norm_lower,
+                    ),
                 )
                 if pid:
                     return pid

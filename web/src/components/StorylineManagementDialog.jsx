@@ -70,9 +70,9 @@ const StorylineManagementDialog = ({
       setError(null);
       setSuccess(null);
     }
-  }, [open, storyline]);
+  }, [open, storyline, domain]);
 
-  const loadStorylineArticles = async() => {
+  const loadStorylineArticles = async () => {
     if (!storyline?.id) return;
 
     try {
@@ -90,7 +90,7 @@ const StorylineManagementDialog = ({
     }
   };
 
-  const loadAvailableArticles = async() => {
+  const loadAvailableArticles = async () => {
     if (!storyline?.id) return;
 
     try {
@@ -115,7 +115,7 @@ const StorylineManagementDialog = ({
     setFormData(prev => ({ ...prev, [field]: value }));
   };
 
-  const handleCreateStoryline = async() => {
+  const handleCreateStoryline = async () => {
     if (!formData.title.trim()) {
       setError('Title is required');
       return;
@@ -128,10 +128,10 @@ const StorylineManagementDialog = ({
       let response;
       if (storyline?.id) {
         // Update existing storyline
-        response = await apiService.updateStoryline(storyline.id, formData);
+        response = await apiService.updateStoryline(storyline.id, formData, domain);
       } else {
         // Create new storyline
-        response = await apiService.createStoryline(formData);
+        response = await apiService.createStoryline(formData, domain);
       }
 
       if (response.success) {
@@ -144,13 +144,13 @@ const StorylineManagementDialog = ({
       } else {
         setError(
           response.message ||
-            `Failed to ${storyline?.id ? 'update' : 'create'} storyline`,
+            `Failed to ${storyline?.id ? 'update' : 'create'} storyline`
         );
       }
     } catch (err) {
       console.error(
         `Error ${storyline?.id ? 'updating' : 'creating'} storyline:`,
-        err,
+        err
       );
       setError(`Failed to ${storyline?.id ? 'update' : 'create'} storyline`);
     } finally {
@@ -158,12 +158,12 @@ const StorylineManagementDialog = ({
     }
   };
 
-  const handleDeleteStoryline = async() => {
+  const handleDeleteStoryline = async () => {
     if (!storyline?.id) return;
 
     if (
       !window.confirm(
-        `Are you sure you want to delete "${storyline.title}"? This action cannot be undone.`,
+        `Are you sure you want to delete "${storyline.title}"? This action cannot be undone.`
       )
     ) {
       return;
@@ -173,7 +173,7 @@ const StorylineManagementDialog = ({
       setLoading(true);
       setError(null);
 
-      const response = await apiService.deleteStoryline(storyline.id);
+      const response = await apiService.deleteStoryline(storyline.id, domain);
       if (response.success) {
         setSuccess('Storyline deleted successfully!');
         setTimeout(() => {
@@ -181,7 +181,11 @@ const StorylineManagementDialog = ({
           onClose();
         }, 1500);
       } else {
-        setError(response.message || 'Failed to delete storyline');
+        setError(
+          response.message ||
+            response.error ||
+            'Failed to delete storyline'
+        );
       }
     } catch (err) {
       console.error('Error deleting storyline:', err);
@@ -201,6 +205,7 @@ const StorylineManagementDialog = ({
       const response = await apiService.removeArticleFromStoryline(
         storyline.id,
         articleId,
+        domain
       );
       if (response.success) {
         setArticles(prev => prev.filter(article => article.id !== articleId));
@@ -217,7 +222,7 @@ const StorylineManagementDialog = ({
     }
   };
 
-  const handleAddSelectedArticles = async() => {
+  const handleAddSelectedArticles = async () => {
     if (!storyline?.id || selectedArticles.length === 0) return;
 
     try {
@@ -225,7 +230,7 @@ const StorylineManagementDialog = ({
       setError(null);
 
       const promises = selectedArticles.map(articleId =>
-        apiService.addArticleToStoryline(storyline.id, articleId),
+        apiService.addArticleToStoryline(storyline.id, articleId, domain)
       );
 
       await Promise.all(promises);
@@ -249,7 +254,7 @@ const StorylineManagementDialog = ({
   const filteredAvailableArticles = availableArticles.filter(
     article =>
       article.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      article.source_domain.toLowerCase().includes(searchTerm.toLowerCase()),
+      article.source_domain.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   const isEditing = !!storyline;
@@ -353,7 +358,7 @@ const StorylineManagementDialog = ({
                           <ListItemText
                             primary={article.title}
                             secondary={`${article.source_domain} • ${new Date(
-                              article.published_at,
+                              article.published_at
                             ).toLocaleDateString()}`}
                           />
                           <ListItemSecondaryAction>
@@ -432,7 +437,7 @@ const StorylineManagementDialog = ({
                                 secondary={`${
                                   article.source_domain
                                 } • ${new Date(
-                                  article.published_at,
+                                  article.published_at
                                 ).toLocaleDateString()}`}
                               />
                               <ListItemSecondaryAction>
@@ -447,7 +452,7 @@ const StorylineManagementDialog = ({
                                     setSelectedArticles(prev =>
                                       prev.includes(article.id)
                                         ? prev.filter(id => id !== article.id)
-                                        : [...prev, article.id],
+                                        : [...prev, article.id]
                                     );
                                   }}
                                 >

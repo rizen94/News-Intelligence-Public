@@ -5,31 +5,30 @@ Routes: cross_domain_synthesis, correlations, unified_timeline, meta_storylines;
 See docs/DATA_PIPELINE_ENHANCEMENTS_ROADMAP.md.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
-from fastapi import APIRouter, Query, Body, Path
-
+from fastapi import APIRouter, Body, Path, Query
 from services.cross_domain_service import (
-    run_cross_domain_synthesis,
     get_cross_domain_correlations,
-    get_unified_timeline,
     get_meta_storylines,
+    get_unified_timeline,
+    run_cross_domain_synthesis,
 )
 from services.relationship_extraction_service import (
     extract_relationships_from_contexts,
     get_network_subgraph,
 )
-from services.trend_predictions_service import get_trend_analysis, get_predictions
+from services.trend_predictions_service import get_predictions, get_trend_analysis
 
 router = APIRouter(prefix="/api/intelligence", tags=["Cross-domain & relationships"])
 
 
 @router.post("/cross_domain_synthesis")
 def post_cross_domain_synthesis(
-    domains: Optional[List[str]] = Body(None, embed=True),
+    domains: list[str] | None = Body(None, embed=True),
     time_window_days: int = Body(7, embed=True),
     correlation_threshold: float = Body(0.8, embed=True),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Run cross-domain correlation job; persist to cross_domain_correlations. Returns correlation_id and correlations."""
     result = run_cross_domain_synthesis(
         domains=domains,
@@ -51,11 +50,11 @@ def post_cross_domain_synthesis(
 
 @router.get("/cross_domain_correlations")
 def get_intelligence_cross_domain_correlations(
-    domain_1: Optional[str] = Query(None),
-    domain_2: Optional[str] = Query(None),
-    since: Optional[int] = Query(None, description="Only correlations discovered in last N days"),
+    domain_1: str | None = Query(None),
+    domain_2: str | None = Query(None),
+    since: int | None = Query(None, description="Only correlations discovered in last N days"),
     limit: int = Query(50, ge=1, le=200),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """List cross-domain correlation rows with optional filters."""
     result = get_cross_domain_correlations(
         domain_1=domain_1,
@@ -65,16 +64,20 @@ def get_intelligence_cross_domain_correlations(
     )
     if not result.get("success"):
         return {"success": False, "data": None, "message": result.get("error", "Unknown error")}
-    return {"success": True, "data": {"correlations": result.get("correlations", [])}, "message": None}
+    return {
+        "success": True,
+        "data": {"correlations": result.get("correlations", [])},
+        "message": None,
+    }
 
 
 @router.get("/meta_storylines")
 def get_intelligence_meta_storylines(
-    domain_1: Optional[str] = Query(None),
-    domain_2: Optional[str] = Query(None),
-    since: Optional[int] = Query(None, description="Only storylines discovered in last N days"),
+    domain_1: str | None = Query(None),
+    domain_2: str | None = Query(None),
+    since: int | None = Query(None, description="Only storylines discovered in last N days"),
     limit: int = Query(50, ge=1, le=200),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Meta-storylines that span or correlate multiple domains (from cross_domain_correlations)."""
     result = get_meta_storylines(
         domain_1=domain_1,
@@ -84,15 +87,21 @@ def get_intelligence_meta_storylines(
     )
     if not result.get("success"):
         return {"success": False, "data": None, "message": result.get("error", "Unknown error")}
-    return {"success": True, "data": {"meta_storylines": result.get("meta_storylines", [])}, "message": None}
+    return {
+        "success": True,
+        "data": {"meta_storylines": result.get("meta_storylines", [])},
+        "message": None,
+    }
 
 
 @router.get("/unified_timeline")
 def get_intelligence_unified_timeline(
-    domains: Optional[str] = Query(None, description="Comma-separated domain keys, e.g. politics,finance"),
-    since: Optional[int] = Query(None, description="Only events since N days ago"),
+    domains: str | None = Query(
+        None, description="Comma-separated domain keys, e.g. politics,finance"
+    ),
+    since: int | None = Query(None, description="Only events since N days ago"),
     limit: int = Query(100, ge=1, le=500),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Chronological events across domains with domain_key, event_type, entity links."""
     domain_list = [d.strip() for d in domains.split(",")] if domains else None
     result = get_unified_timeline(domains=domain_list, since_days=since, limit=limit)
@@ -103,10 +112,10 @@ def get_intelligence_unified_timeline(
 
 @router.post("/extract_relationships")
 def post_extract_relationships(
-    context_ids: Optional[List[int]] = Body(None, embed=True),
-    domain: Optional[str] = Body(None, embed=True),
+    context_ids: list[int] | None = Body(None, embed=True),
+    domain: str | None = Body(None, embed=True),
     limit: int = Body(50, embed=True),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Extract entity relationships from contexts (co-mentions -> entity_relationships). Returns extracted count and relationship_ids."""
     result = extract_relationships_from_contexts(
         context_ids=context_ids,
@@ -127,12 +136,14 @@ def post_extract_relationships(
 
 @router.post("/trend_analysis")
 def post_trend_analysis(
-    domain: Optional[str] = Body(None, embed=True),
+    domain: str | None = Body(None, embed=True),
     time_window_days: int = Body(14, embed=True),
-    indicators: Optional[List[str]] = Body(None, embed=True),
-) -> Dict[str, Any]:
+    indicators: list[str] | None = Body(None, embed=True),
+) -> dict[str, Any]:
     """Trend detection over context/event data; returns trends and leading_indicators (P3)."""
-    result = get_trend_analysis(domain=domain, time_window_days=time_window_days, indicators=indicators)
+    result = get_trend_analysis(
+        domain=domain, time_window_days=time_window_days, indicators=indicators
+    )
     if not result.get("success"):
         return {"success": False, "data": None, "message": result.get("error", "Unknown error")}
     return {
@@ -148,9 +159,9 @@ def post_trend_analysis(
 @router.get("/predictions/{domain}")
 def get_intelligence_predictions(
     domain: str = Path(..., description="politics, finance, or science-tech"),
-    entity_id: Optional[int] = Query(None),
-    horizon_days: Optional[int] = Query(None),
-) -> Dict[str, Any]:
+    entity_id: int | None = Query(None),
+    horizon_days: int | None = Query(None),
+) -> dict[str, Any]:
     """Predictions for domain (and optionally entity). Stub extended by Learning Governor (P3)."""
     result = get_predictions(domain=domain, entity_id=entity_id, horizon_days=horizon_days)
     if not result.get("success"):
@@ -172,9 +183,9 @@ def get_network_graph(
     domain: str = Path(..., description="Domain of the entity (e.g. politics, finance)"),
     entity_id: int = Path(..., description="entity_canonical id in that domain"),
     depth: int = Query(2, ge=1, le=5),
-    relationship_types: Optional[str] = Query(None, description="Comma-separated types or 'all'"),
+    relationship_types: str | None = Query(None, description="Comma-separated types or 'all'"),
     limit_per_layer: int = Query(50, ge=1, le=200),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Subgraph around entity: nodes = (domain, entity_id), edges = entity_relationships."""
     types_list = [t.strip() for t in relationship_types.split(",")] if relationship_types else None
     result = get_network_subgraph(

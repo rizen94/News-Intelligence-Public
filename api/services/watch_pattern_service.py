@@ -6,31 +6,71 @@ See docs/RAG_ENHANCEMENT_ROADMAP.md.
 """
 
 import logging
-from datetime import datetime, timezone, timedelta
-from typing import Any, Dict, List, Optional, Tuple
+from datetime import datetime, timedelta, timezone
+from typing import Any
 
 from shared.database.connection import get_db_connection
 
 logger = logging.getLogger(__name__)
 
 # Default keywords by story_type for keyword pattern matching
-PATTERN_KEYWORDS_BY_STORY_TYPE: Dict[str, List[str]] = {
+PATTERN_KEYWORDS_BY_STORY_TYPE: dict[str, list[str]] = {
     "court_case": [
-        "verdict", "ruling", "decision", "convict", "acquit", "sentence",
-        "testify", "testimony", "hearing", "filing", "brief", "motion",
-        "appeal", "indictment", "settlement", "trial",
+        "verdict",
+        "ruling",
+        "decision",
+        "convict",
+        "acquit",
+        "sentence",
+        "testify",
+        "testimony",
+        "hearing",
+        "filing",
+        "brief",
+        "motion",
+        "appeal",
+        "indictment",
+        "settlement",
+        "trial",
     ],
     "election": [
-        "poll", "polls", "debate", "primary", "convention", "endorsement",
-        "endorse", "announce", "candidate", "vote", "ballot", "result",
+        "poll",
+        "polls",
+        "debate",
+        "primary",
+        "convention",
+        "endorsement",
+        "endorse",
+        "announce",
+        "candidate",
+        "vote",
+        "ballot",
+        "result",
     ],
     "person_tenure": [
-        "resign", "resignation", "appoint", "appointment", "nominate",
-        "confirm", "oust", "remove", "replace", "successor",
+        "resign",
+        "resignation",
+        "appoint",
+        "appointment",
+        "nominate",
+        "confirm",
+        "oust",
+        "remove",
+        "replace",
+        "successor",
     ],
     "economic_event": [
-        "merger", "acquisition", "bankruptcy", "earnings", "forecast",
-        "guidance", "layoff", "cut", "rate", "fed", "interest",
+        "merger",
+        "acquisition",
+        "bankruptcy",
+        "earnings",
+        "forecast",
+        "guidance",
+        "layoff",
+        "cut",
+        "rate",
+        "fed",
+        "interest",
     ],
 }
 
@@ -39,7 +79,7 @@ SIGNIFICANCE_THRESHOLD_ALERT = 0.5
 MATCH_LOOKBACK_HOURS = 24
 
 
-def _match_keywords(text: str, keywords: List[str]) -> List[Tuple[str, float]]:
+def _match_keywords(text: str, keywords: list[str]) -> list[tuple[str, float]]:
     """Return list of (matched_phrase, significance) for keywords found in text (case-insensitive)."""
     if not text or not keywords:
         return []
@@ -54,22 +94,26 @@ def _match_keywords(text: str, keywords: List[str]) -> List[Tuple[str, float]]:
     return results
 
 
-def match_content(text: str, story_type: str) -> List[Tuple[str, str, float]]:
+def match_content(text: str, story_type: str) -> list[tuple[str, str, float]]:
     """
     Match text against default keywords for story_type.
     Returns list of (pattern_type, matched_text, significance_score).
     """
-    keywords = PATTERN_KEYWORDS_BY_STORY_TYPE.get(story_type) or PATTERN_KEYWORDS_BY_STORY_TYPE.get(DEFAULT_STORY_TYPE) or []
+    keywords = (
+        PATTERN_KEYWORDS_BY_STORY_TYPE.get(story_type)
+        or PATTERN_KEYWORDS_BY_STORY_TYPE.get(DEFAULT_STORY_TYPE)
+        or []
+    )
     matches = _match_keywords(text, keywords)
     return [("keyword", m[0], m[1]) for m in matches]
 
 
 def run_pattern_matching(
     domain_key: str,
-    storyline_id: Optional[int] = None,
+    storyline_id: int | None = None,
     limit: int = 50,
     significance_threshold: float = SIGNIFICANCE_THRESHOLD_ALERT,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Fetch recent content (contexts or versioned_facts) for domain (and optional storyline),
     run keyword matching by story_type, persist pattern_matches, and create watchlist_alerts
@@ -78,11 +122,23 @@ def run_pattern_matching(
     """
     conn = get_db_connection()
     if not conn:
-        return {"contexts_checked": 0, "matches_stored": 0, "alerts_created": 0, "errors": ["no_db"]}
+        return {
+            "contexts_checked": 0,
+            "matches_stored": 0,
+            "alerts_created": 0,
+            "errors": ["no_db"],
+        }
 
-    result: Dict[str, Any] = {"contexts_checked": 0, "matches_stored": 0, "alerts_created": 0, "errors": []}
+    result: dict[str, Any] = {
+        "contexts_checked": 0,
+        "matches_stored": 0,
+        "alerts_created": 0,
+        "errors": [],
+    }
     try:
-        schema = {"politics": "politics", "finance": "finance", "science-tech": "science_tech"}.get(domain_key, domain_key.replace("-", "_"))
+        schema = {"politics": "politics", "finance": "finance", "science-tech": "science_tech"}.get(
+            domain_key, domain_key.replace("-", "_")
+        )
         since = (datetime.now(timezone.utc) - timedelta(hours=MATCH_LOOKBACK_HOURS)).isoformat()
 
         with conn.cursor() as cur:
@@ -101,7 +157,7 @@ def run_pattern_matching(
         result["contexts_checked"] = len(rows)
 
         story_type = DEFAULT_STORY_TYPE
-        for (ctx_id, title, content, _domain) in rows:
+        for ctx_id, title, content, _domain in rows:
             storyline_ids = _resolve_context_to_storylines(conn, schema, domain_key, ctx_id)
             if not storyline_ids and storyline_id is not None:
                 storyline_ids = [storyline_id]
@@ -127,7 +183,9 @@ def run_pattern_matching(
                             mid = cur.fetchone()[0]
                         result["matches_stored"] += 1
                         if score >= significance_threshold and sid is not None:
-                            created = _create_watchlist_alert_for_storyline(conn, domain_key, sid, matched_text, score)
+                            created = _create_watchlist_alert_for_storyline(
+                                conn, domain_key, sid, matched_text, score
+                            )
                             if created:
                                 result["alerts_created"] += 1
                                 with conn.cursor() as cur2:
@@ -152,9 +210,11 @@ def run_pattern_matching(
     return result
 
 
-def _resolve_context_to_storylines(conn, schema: str, domain_key: str, context_id: int) -> List[Optional[int]]:
+def _resolve_context_to_storylines(
+    conn, schema: str, domain_key: str, context_id: int
+) -> list[int | None]:
     """Resolve context_id -> article_id -> storyline_ids via article_to_context and schema.storyline_articles."""
-    out: List[Optional[int]] = []
+    out: list[int | None] = []
     try:
         with conn.cursor() as cur:
             cur.execute(
@@ -208,7 +268,7 @@ def _create_watchlist_alert_for_storyline(
         return False
 
 
-def run_pattern_matching_all_domains(limit_per_domain: int = 30) -> Dict[str, Any]:
+def run_pattern_matching_all_domains(limit_per_domain: int = 30) -> dict[str, Any]:
     """Run pattern matching for each domain. Returns combined counts and per-domain results."""
     combined = {"contexts_checked": 0, "matches_stored": 0, "alerts_created": 0, "by_domain": {}}
     for domain in ("politics", "finance", "science-tech"):

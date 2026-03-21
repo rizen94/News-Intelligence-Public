@@ -4,14 +4,13 @@ Uses real data where possible (gold fetch, plan logic). No mocked/fake values.
 """
 
 import pytest
-
 from domains.finance.orchestrator import FinanceOrchestrator
 from domains.finance.orchestrator_types import (
-    TaskType,
-    TaskPriority,
-    TaskStatus,
     Task,
     TaskContext,
+    TaskPriority,
+    TaskStatus,
+    TaskType,
 )
 
 

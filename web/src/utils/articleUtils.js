@@ -8,7 +8,7 @@
  * @param {string|number} content - Article content or word count
  * @returns {number} Reading time in minutes (rounded up)
  */
-export const calculateReadingTime = (content) => {
+export const calculateReadingTime = content => {
   if (!content) return 0;
 
   let wordCount;
@@ -33,7 +33,7 @@ export const calculateReadingTime = (content) => {
  * @param {number} minutes - Reading time in minutes
  * @returns {string} Formatted reading time (e.g., "3 min read")
  */
-export const formatReadingTime = (minutes) => {
+export const formatReadingTime = minutes => {
   if (!minutes || minutes < 1) return '1 min read';
   if (minutes === 1) return '1 min read';
   return `${minutes} min read`;
@@ -44,7 +44,7 @@ export const formatReadingTime = (minutes) => {
  * @param {object} article - Article object
  * @returns {number} Reading time in minutes
  */
-export const getArticleReadingTime = (article) => {
+export const getArticleReadingTime = article => {
   if (article.reading_time) {
     return article.reading_time;
   }
@@ -62,7 +62,7 @@ export const getArticleReadingTime = (article) => {
  * @param {string} dateString - ISO date string
  * @returns {string} Formatted date
  */
-export const formatArticleDate = (dateString) => {
+export const formatArticleDate = dateString => {
   if (!dateString) return 'No date';
   try {
     const date = new Date(dateString);
@@ -74,7 +74,8 @@ export const formatArticleDate = (dateString) => {
 
     if (diffMins < 1) return 'Just now';
     if (diffMins < 60) return `${diffMins} min ago`;
-    if (diffHours < 24) return `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`;
+    if (diffHours < 24)
+      return `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`;
     if (diffDays < 7) return `${diffDays} day${diffDays > 1 ? 's' : ''} ago`;
 
     return date.toLocaleDateString('en-US', {
@@ -86,4 +87,3 @@ export const formatArticleDate = (dateString) => {
     return 'Invalid date';
   }
 };
-

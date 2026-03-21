@@ -7,10 +7,8 @@ Used by `api/scripts/run_migration_*.py` so runners keep working after archival.
 
 from __future__ import annotations
 
-import os
 import re
 from pathlib import Path
-from typing import List, Optional, Tuple
 
 # api/ (parent of shared/)
 _API_ROOT = Path(__file__).resolve().parent.parent
@@ -48,7 +46,7 @@ def find_migration_sql_by_prefix(migration_id: str) -> str:
     """
     if not re.match(r"^\d{3}$", migration_id):
         raise ValueError(f"migration_id must be three digits, got {migration_id!r}")
-    matches: List[Path] = []
+    matches: list[Path] = []
     for base in (_MIGRATIONS, _ARCHIVE_HISTORICAL):
         if not base.is_dir():
             continue
@@ -57,19 +55,17 @@ def find_migration_sql_by_prefix(migration_id: str) -> str:
     if not matches:
         raise FileNotFoundError(f"No {migration_id}_*.sql in migrations or archive/historical")
     if len(matches) > 1:
-        raise FileNotFoundError(
-            f"Ambiguous migration {migration_id}: {matches!r}"
-        )
+        raise FileNotFoundError(f"Ambiguous migration {migration_id}: {matches!r}")
     return str(matches[0])
 
 
-def list_sql_migrations(include_archive: bool = True) -> List[Tuple[str, Path]]:
+def list_sql_migrations(include_archive: bool = True) -> list[tuple[str, Path]]:
     """
     Return sorted (filename, path) for NNN_*.sql under active and optionally archive.
     Active files are listed before archive when both exist (dedupe by filename: prefer active).
     """
     seen: dict[str, Path] = {}
-    dirs: List[Path] = [_MIGRATIONS]
+    dirs: list[Path] = [_MIGRATIONS]
     if include_archive and _ARCHIVE_HISTORICAL.is_dir():
         dirs.append(_ARCHIVE_HISTORICAL)
     for base in dirs:

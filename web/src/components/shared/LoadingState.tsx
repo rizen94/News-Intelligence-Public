@@ -4,7 +4,12 @@
  */
 
 import React from 'react';
-import { Box, CircularProgress, Typography, LinearProgress } from '@mui/material';
+import {
+  Box,
+  CircularProgress,
+  Typography,
+  LinearProgress,
+} from '@mui/material';
 
 interface LoadingStateProps {
   message?: string;
@@ -65,4 +70,3 @@ export const LoadingState: React.FC<LoadingStateProps> = ({
 };
 
 export default LoadingState;
-

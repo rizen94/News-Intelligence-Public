@@ -106,7 +106,9 @@ export default function SqlExplorerPage() {
         setColumns([]);
         setRows([]);
         setQueryError(
-          'error' in res && res.error ? res.error : (res as { detail?: string }).detail || 'Query failed',
+          'error' in res && res.error
+            ? res.error
+            : (res as { detail?: string }).detail || 'Query failed'
         );
         return;
       }
@@ -127,35 +129,50 @@ export default function SqlExplorerPage() {
 
   return (
     <Box sx={{ p: 2, maxWidth: 1400, mx: 'auto' }}>
-      <Typography variant="h5" sx={{ mb: 1 }}>
+      <Typography variant='h5' sx={{ mb: 1 }}>
         SQL explorer
       </Typography>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-        Read-only queries against your Postgres (SELECT / WITH / TABLE / EXPLAIN). For heavier work,{' '}
-        <Link href="https://www.pgadmin.org/" target="_blank" rel="noopener noreferrer">
+      <Typography variant='body2' color='text.secondary' sx={{ mb: 2 }}>
+        Read-only queries against your Postgres (SELECT / WITH / TABLE /
+        EXPLAIN). For heavier work,{' '}
+        <Link
+          href='https://www.pgadmin.org/'
+          target='_blank'
+          rel='noopener noreferrer'
+        >
           pgAdmin
         </Link>
         ,{' '}
-        <Link href="https://dbeaver.io/" target="_blank" rel="noopener noreferrer">
+        <Link
+          href='https://dbeaver.io/'
+          target='_blank'
+          rel='noopener noreferrer'
+        >
           DBeaver
         </Link>
         , or <code>psql</code> are safer and more capable.
       </Typography>
 
-      <Alert severity="warning" sx={{ mb: 2 }}>
-        Enabling this on an API reachable from untrusted networks exposes all data the DB user can read. Use{' '}
-        <code>NEWS_INTEL_SQL_EXPLORER=true</code> only on trusted hosts or VPN.
+      <Alert severity='warning' sx={{ mb: 2 }}>
+        Enabling this on an API reachable from untrusted networks exposes all
+        data the DB user can read. Use <code>NEWS_INTEL_SQL_EXPLORER=true</code>{' '}
+        only on trusted hosts or VPN.
       </Alert>
 
       {enabled === false && (
-        <Alert severity="info" sx={{ mb: 2 }}>
-          SQL explorer is off. Set environment variable <code>NEWS_INTEL_SQL_EXPLORER=true</code> on the API server and restart,
-          then reload this page.
+        <Alert severity='info' sx={{ mb: 2 }}>
+          SQL explorer is off. Set environment variable{' '}
+          <code>NEWS_INTEL_SQL_EXPLORER=true</code> on the API server and
+          restart, then reload this page.
         </Alert>
       )}
 
       <Box sx={{ mb: 1 }}>
-        <Link component={RouterLink} to={`/${domain}/monitor`} underline="hover">
+        <Link
+          component={RouterLink}
+          to={`/${domain}/monitor`}
+          underline='hover'
+        >
           ← Back to Monitor
         </Link>
       </Box>
@@ -165,37 +182,78 @@ export default function SqlExplorerPage() {
           title={
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
               <span>Tables &amp; columns</span>
-              <IconButton size="small" onClick={() => setSchemaOpen(!schemaOpen)} aria-label="toggle schema">
+              <IconButton
+                size='small'
+                onClick={() => setSchemaOpen(!schemaOpen)}
+                aria-label='toggle schema'
+              >
                 {schemaOpen ? <ExpandLessIcon /> : <ExpandMoreIcon />}
               </IconButton>
               {loadingSchema && <CircularProgress size={20} />}
             </Box>
           }
-          subheader="pg_catalog / information_schema hidden"
+          subheader='pg_catalog / information_schema hidden'
         />
         <Collapse in={schemaOpen}>
           <CardContent>
             {schemaError && (
-              <Alert severity="error" sx={{ mb: 1 }}>
+              <Alert severity='error' sx={{ mb: 1 }}>
                 {schemaError}
               </Alert>
             )}
-            {tables.length === 0 && !loadingSchema && enabled && !schemaError && (
-              <Typography color="text.secondary">No tables returned.</Typography>
-            )}
-            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, maxHeight: 360, overflow: 'auto' }}>
-              {tables.map((t) => (
-                <Paper key={`${t.schema}.${t.table}`} variant="outlined" sx={{ p: 1.5 }}>
-                  <Typography variant="subtitle2" sx={{ fontFamily: 'monospace', mb: 0.5 }}>
+            {tables.length === 0 &&
+              !loadingSchema &&
+              enabled &&
+              !schemaError && (
+                <Typography color='text.secondary'>
+                  No tables returned.
+                </Typography>
+              )}
+            <Box
+              sx={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 2,
+                maxHeight: 360,
+                overflow: 'auto',
+              }}
+            >
+              {tables.map(t => (
+                <Paper
+                  key={`${t.schema}.${t.table}`}
+                  variant='outlined'
+                  sx={{ p: 1.5 }}
+                >
+                  <Typography
+                    variant='subtitle2'
+                    sx={{ fontFamily: 'monospace', mb: 0.5 }}
+                  >
                     {t.schema}.{t.table}
                   </Typography>
-                  <Typography variant="caption" component="div" color="text.secondary" sx={{ fontFamily: 'monospace' }}>
-                    {t.columns.map((c) => `${c.name} (${c.data_type}${c.nullable ? '' : ' NOT NULL'})`).join(', ')}
+                  <Typography
+                    variant='caption'
+                    component='div'
+                    color='text.secondary'
+                    sx={{ fontFamily: 'monospace' }}
+                  >
+                    {t.columns
+                      .map(
+                        c =>
+                          `${c.name} (${c.data_type}${
+                            c.nullable ? '' : ' NOT NULL'
+                          })`
+                      )
+                      .join(', ')}
                   </Typography>
                 </Paper>
               ))}
             </Box>
-            <Button size="small" onClick={() => void loadSchema()} disabled={!enabled || loadingSchema} sx={{ mt: 1 }}>
+            <Button
+              size='small'
+              onClick={() => void loadSchema()}
+              disabled={!enabled || loadingSchema}
+              sx={{ mt: 1 }}
+            >
               Refresh schema
             </Button>
           </CardContent>
@@ -203,32 +261,54 @@ export default function SqlExplorerPage() {
       </Card>
 
       <Card sx={{ mb: 2 }}>
-        <CardHeader title="Query" />
+        <CardHeader title='Query' />
         <CardContent>
           <TextField
             fullWidth
             multiline
             minRows={8}
             value={sql}
-            onChange={(e) => setSql(e.target.value)}
+            onChange={e => setSql(e.target.value)}
             disabled={!enabled}
             sx={{ fontFamily: 'monospace', mb: 2 }}
-            InputProps={{ sx: { fontFamily: 'monospace', fontSize: '0.85rem' } }}
+            InputProps={{
+              sx: { fontFamily: 'monospace', fontSize: '0.85rem' },
+            }}
           />
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
+          <Box
+            sx={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 2,
+              flexWrap: 'wrap',
+            }}
+          >
             <TextField
-              label="Max rows"
-              type="number"
-              size="small"
+              label='Max rows'
+              type='number'
+              size='small'
               value={maxRows}
-              onChange={(e) => setMaxRows(Math.min(2000, Math.max(1, parseInt(e.target.value, 10) || 500)))}
+              onChange={e =>
+                setMaxRows(
+                  Math.min(
+                    2000,
+                    Math.max(1, parseInt(e.target.value, 10) || 500)
+                  )
+                )
+              }
               disabled={!enabled}
               inputProps={{ min: 1, max: 2000 }}
               sx={{ width: 120 }}
             />
             <Button
-              variant="contained"
-              startIcon={running ? <CircularProgress size={18} color="inherit" /> : <PlayArrowIcon />}
+              variant='contained'
+              startIcon={
+                running ? (
+                  <CircularProgress size={18} color='inherit' />
+                ) : (
+                  <PlayArrowIcon />
+                )
+              }
               onClick={() => void runQuery()}
               disabled={!enabled || running}
             >
@@ -236,12 +316,12 @@ export default function SqlExplorerPage() {
             </Button>
           </Box>
           {queryError && (
-            <Alert severity="error" sx={{ mt: 2 }}>
+            <Alert severity='error' sx={{ mt: 2 }}>
               {queryError}
             </Alert>
           )}
           {resultMeta && (
-            <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+            <Typography variant='body2' color='text.secondary' sx={{ mt: 1 }}>
               {resultMeta}
             </Typography>
           )}
@@ -249,12 +329,23 @@ export default function SqlExplorerPage() {
       </Card>
 
       {columns.length > 0 && (
-        <TableContainer component={Paper} variant="outlined" sx={{ maxHeight: 560 }}>
-          <Table size="small" stickyHeader>
+        <TableContainer
+          component={Paper}
+          variant='outlined'
+          sx={{ maxHeight: 560 }}
+        >
+          <Table size='small' stickyHeader>
             <TableHead>
               <TableRow>
-                {columns.map((c) => (
-                  <TableCell key={c} sx={{ fontWeight: 700, fontFamily: 'monospace', fontSize: '0.75rem' }}>
+                {columns.map(c => (
+                  <TableCell
+                    key={c}
+                    sx={{
+                      fontWeight: 700,
+                      fontFamily: 'monospace',
+                      fontSize: '0.75rem',
+                    }}
+                  >
                     {c}
                   </TableCell>
                 ))}
@@ -264,7 +355,15 @@ export default function SqlExplorerPage() {
               {rows.map((r, i) => (
                 <TableRow key={i}>
                   {r.map((cell, j) => (
-                    <TableCell key={j} sx={{ fontFamily: 'monospace', fontSize: '0.75rem', whiteSpace: 'pre-wrap', maxWidth: 360 }}>
+                    <TableCell
+                      key={j}
+                      sx={{
+                        fontFamily: 'monospace',
+                        fontSize: '0.75rem',
+                        whiteSpace: 'pre-wrap',
+                        maxWidth: 360,
+                      }}
+                    >
                       {cell === null || cell === undefined ? '' : String(cell)}
                     </TableCell>
                   ))}
@@ -276,8 +375,9 @@ export default function SqlExplorerPage() {
       )}
 
       {truncated && columns.length > 0 && (
-        <Alert severity="warning" sx={{ mt: 2 }}>
-          Result limited by max rows; narrow the query or increase the cap (max 2000).
+        <Alert severity='warning' sx={{ mt: 2 }}>
+          Result limited by max rows; narrow the query or increase the cap (max
+          2000).
         </Alert>
       )}
     </Box>

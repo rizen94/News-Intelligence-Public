@@ -6,17 +6,21 @@ prioritization: watchlist > high importance > scheduled.
 """
 
 import logging
+from collections.abc import Callable
 from datetime import datetime, timezone
-from typing import Any, Callable
+from typing import Any
 
 try:
     from config.logging_config import get_component_logger
+
     logger = get_component_logger("orchestrator")
 except Exception:
     logger = logging.getLogger(__name__)
 
 
-def _processing_state_key(phase: str, domain: str | None = None, storyline_id: int | None = None) -> str:
+def _processing_state_key(
+    phase: str, domain: str | None = None, storyline_id: int | None = None
+) -> str:
     """Key for last_processing_times: phase, phase:domain, or phase:storyline:id."""
     if storyline_id is not None:
         return f"{phase}:storyline:{storyline_id}"
@@ -79,8 +83,13 @@ class ProcessingGovernor:
             orch = self._get_finance_orchestrator()
             if not orch:
                 return None
-            from domains.finance.orchestrator_types import TaskType, TaskPriority
-            priority_map = {"high": TaskPriority.high, "medium": TaskPriority.medium, "low": TaskPriority.low}
+            from domains.finance.orchestrator_types import TaskPriority, TaskType
+
+            priority_map = {
+                "high": TaskPriority.high,
+                "medium": TaskPriority.medium,
+                "low": TaskPriority.low,
+            }
             p = priority_map.get(priority, TaskPriority.medium)
             task_id = orch.submit_task(
                 TaskType.analysis,
@@ -108,6 +117,7 @@ class ProcessingGovernor:
             return None
         try:
             from config.orchestrator_governance import get_orchestrator_governance_config
+
             config = get_orchestrator_governance_config()
             phases_cfg = (config.get("processing") or {}).get("phases") or {}
             if not phases_cfg:
@@ -121,10 +131,13 @@ class ProcessingGovernor:
         if get_db_connection:
             try:
                 from services.user_guidance_service import get_user_guidance
+
                 user_guidance = get_user_guidance(get_db_connection)
             except Exception as e:
                 logger.debug("ProcessingGovernor user_guidance failed: %s", e)
-        watchlist_ids = [(d, int(sid)) for d, sid in user_guidance.get("watchlist_storyline_ids", [])]
+        watchlist_ids = [
+            (d, int(sid)) for d, sid in user_guidance.get("watchlist_storyline_ids", [])
+        ]
         automation_storylines = user_guidance.get("automation_storylines", [])
 
         candidates: list[tuple[float, str, dict[str, Any]]] = []  # (priority_sort, key, action)
@@ -146,9 +159,21 @@ class ProcessingGovernor:
                         except (ValueError, TypeError):
                             pass
                     priority = 1.0
-                    candidates.append((priority, key, {"phase": phase_name, "domain": domain, "storyline_id": None, "priority": "scheduled"}))
+                    candidates.append(
+                        (
+                            priority,
+                            key,
+                            {
+                                "phase": phase_name,
+                                "domain": domain,
+                                "storyline_id": None,
+                                "priority": "scheduled",
+                            },
+                        )
+                    )
             elif scope == "storyline":
                 from services.user_guidance_service import compute_storyline_importance
+
                 for s in automation_storylines:
                     sid = s.get("id")
                     domain = s.get("domain")
@@ -167,9 +192,27 @@ class ProcessingGovernor:
                             pass
                     if not due:
                         continue
-                    imp = compute_storyline_importance(sid, domain, watchlist_ids=watchlist_ids, automation_storylines=automation_storylines)
+                    imp = compute_storyline_importance(
+                        sid,
+                        domain,
+                        watchlist_ids=watchlist_ids,
+                        automation_storylines=automation_storylines,
+                    )
                     priority = 2.0 if (domain, sid) in watchlist_ids else (1.0 + imp)
-                    candidates.append((priority, key, {"phase": phase_name, "domain": domain, "storyline_id": sid, "priority": "watchlist" if (domain, sid) in watchlist_ids else "scheduled"}))
+                    candidates.append(
+                        (
+                            priority,
+                            key,
+                            {
+                                "phase": phase_name,
+                                "domain": domain,
+                                "storyline_id": sid,
+                                "priority": "watchlist"
+                                if (domain, sid) in watchlist_ids
+                                else "scheduled",
+                            },
+                        )
+                    )
             else:
                 key = _processing_state_key(phase_name)
                 last = last_times.get(key)
@@ -180,13 +223,25 @@ class ProcessingGovernor:
                             continue
                     except (ValueError, TypeError):
                         pass
-                candidates.append((1.0, key, {"phase": phase_name, "domain": None, "storyline_id": None, "priority": "scheduled"}))
+                candidates.append(
+                    (
+                        1.0,
+                        key,
+                        {
+                            "phase": phase_name,
+                            "domain": None,
+                            "storyline_id": None,
+                            "priority": "scheduled",
+                        },
+                    )
+                )
 
         if not candidates:
             return None
         # Optional: boost priority for phases with higher extraction quality (from extraction_metrics)
         try:
             from services.quality_feedback_service import get_extraction_metrics
+
             metrics_result = get_extraction_metrics(since_days=30)
             if metrics_result.get("success") and metrics_result.get("metrics"):
                 phase_quality: dict[str, float] = {}
@@ -216,6 +271,7 @@ class ProcessingGovernor:
         """Update last_processing_times in orchestrator state and persist."""
         try:
             from . import orchestrator_state
+
             state = orchestrator_state.get_controller_state()
             last_times = state.get("last_processing_times") or {}
             key = _processing_state_key(phase, domain=domain, storyline_id=storyline_id)

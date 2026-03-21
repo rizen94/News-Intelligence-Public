@@ -38,7 +38,10 @@ import TrendingDownIcon from '@mui/icons-material/TrendingDown';
 import { useDomain } from '../../contexts/DomainContext';
 import apiService from '../../services/apiService';
 
-const STATUS_COLORS: Record<string, 'success' | 'warning' | 'info' | 'error' | 'default'> = {
+const STATUS_COLORS: Record<
+  string,
+  'success' | 'warning' | 'info' | 'error' | 'default'
+> = {
   active: 'success',
   watching: 'info',
   dormant: 'warning',
@@ -98,7 +101,9 @@ const Watchlist: React.FC = () => {
     }
   }, []);
 
-  useEffect(() => { loadAll(); }, [loadAll]);
+  useEffect(() => {
+    loadAll();
+  }, [loadAll]);
 
   const handleRemove = async (storylineId: number) => {
     await apiService.removeFromWatchlist(storylineId);
@@ -120,37 +125,41 @@ const Watchlist: React.FC = () => {
 
   return (
     <Box sx={{ p: 3 }}>
-      <Typography variant="h4" gutterBottom>
+      <Typography variant='h4' gutterBottom>
         Watchlist & Monitoring
       </Typography>
-      {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+      {error && (
+        <Alert severity='error' sx={{ mb: 2 }}>
+          {error}
+        </Alert>
+      )}
 
       <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{ mb: 2 }}>
         <Tab label={`Watched (${watchlist.length})`} />
         <Tab
           label={
-            <Badge badgeContent={unreadCount} color="error">
+            <Badge badgeContent={unreadCount} color='error'>
               Alerts
             </Badge>
           }
         />
-        <Tab label="Activity Feed" />
-        <Tab label="Monitoring" />
+        <Tab label='Activity Feed' />
+        <Tab label='Monitoring' />
       </Tabs>
 
       {/* Tab 0: Watched Storylines */}
       <TabPanel value={tab} index={0}>
         <TableContainer component={Paper}>
-          <Table size="small">
+          <Table size='small'>
             <TableHead>
               <TableRow>
                 <TableCell>Storyline</TableCell>
                 <TableCell>Label</TableCell>
                 <TableCell>Status</TableCell>
-                <TableCell align="center">Events</TableCell>
+                <TableCell align='center'>Events</TableCell>
                 <TableCell>Last Event</TableCell>
-                <TableCell align="center">Unread</TableCell>
-                <TableCell align="right">Actions</TableCell>
+                <TableCell align='center'>Unread</TableCell>
+                <TableCell align='right'>Actions</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
@@ -158,36 +167,62 @@ const Watchlist: React.FC = () => {
                 <TableRow key={w.watchlist_id} hover>
                   <TableCell>
                     <Typography
-                      variant="body2"
-                      sx={{ cursor: 'pointer', '&:hover': { textDecoration: 'underline' } }}
-                      onClick={() => navigate(`/${domain}/storylines/${w.storyline_id}/timeline`)}
+                      variant='body2'
+                      sx={{
+                        cursor: 'pointer',
+                        '&:hover': { textDecoration: 'underline' },
+                      }}
+                      onClick={() =>
+                        navigate(
+                          `/${domain}/storylines/${w.storyline_id}/timeline`
+                        )
+                      }
                     >
                       {w.storyline_title}
                     </Typography>
                   </TableCell>
                   <TableCell>{w.user_label || '—'}</TableCell>
                   <TableCell>
-                    <Chip label={w.storyline_status} size="small" color={STATUS_COLORS[w.storyline_status] || 'default'} />
+                    <Chip
+                      label={w.storyline_status}
+                      size='small'
+                      color={STATUS_COLORS[w.storyline_status] || 'default'}
+                    />
                   </TableCell>
-                  <TableCell align="center">{w.total_events}</TableCell>
+                  <TableCell align='center'>{w.total_events}</TableCell>
                   <TableCell>
-                    {w.last_event_at ? new Date(w.last_event_at).toLocaleDateString() : '—'}
+                    {w.last_event_at
+                      ? new Date(w.last_event_at).toLocaleDateString()
+                      : '—'}
                   </TableCell>
-                  <TableCell align="center">
+                  <TableCell align='center'>
                     {w.unread_alerts > 0 ? (
-                      <Badge badgeContent={w.unread_alerts} color="error">
-                        <NotificationsIcon fontSize="small" />
+                      <Badge badgeContent={w.unread_alerts} color='error'>
+                        <NotificationsIcon fontSize='small' />
                       </Badge>
-                    ) : '—'}
+                    ) : (
+                      '—'
+                    )}
                   </TableCell>
-                  <TableCell align="right">
-                    <Tooltip title="View timeline">
-                      <IconButton size="small" onClick={() => navigate(`/${domain}/storylines/${w.storyline_id}/timeline`)}>
+                  <TableCell align='right'>
+                    <Tooltip title='View timeline'>
+                      <IconButton
+                        size='small'
+                        onClick={() =>
+                          navigate(
+                            `/${domain}/storylines/${w.storyline_id}/timeline`
+                          )
+                        }
+                      >
                         <TimelineIcon />
                       </IconButton>
                     </Tooltip>
-                    <Tooltip title="Remove from watchlist">
-                      <IconButton size="small" color="error" onClick={() => handleRemove(w.storyline_id)}>
+                    <Tooltip title='Remove from watchlist'>
+                      <IconButton
+                        size='small'
+                        color='error'
+                        onClick={() => handleRemove(w.storyline_id)}
+                      >
                         <DeleteIcon />
                       </IconButton>
                     </Tooltip>
@@ -196,8 +231,11 @@ const Watchlist: React.FC = () => {
               ))}
               {watchlist.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={7} align="center" sx={{ py: 4 }}>
-                    <Typography color="text.secondary">No watched storylines. Add storylines from the Storylines page.</Typography>
+                  <TableCell colSpan={7} align='center' sx={{ py: 4 }}>
+                    <Typography color='text.secondary'>
+                      No watched storylines. Add storylines from the Storylines
+                      page.
+                    </Typography>
                   </TableCell>
                 </TableRow>
               )}
@@ -209,7 +247,11 @@ const Watchlist: React.FC = () => {
       {/* Tab 1: Alerts */}
       <TabPanel value={tab} index={1}>
         <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 2 }}>
-          <Button startIcon={<DoneAllIcon />} onClick={handleMarkAllRead} disabled={unreadCount === 0}>
+          <Button
+            startIcon={<DoneAllIcon />}
+            onClick={handleMarkAllRead}
+            disabled={unreadCount === 0}
+          >
             Mark all read
           </Button>
         </Box>
@@ -223,30 +265,44 @@ const Watchlist: React.FC = () => {
                 }}
                 onClick={async () => {
                   if (!a.is_read) await apiService.markAlertRead(a.id);
-                  if (a.storyline_id) navigate(`/${domain}/storylines/${a.storyline_id}/timeline`);
+                  if (a.storyline_id)
+                    navigate(
+                      `/${domain}/storylines/${a.storyline_id}/timeline`
+                    );
                 }}
               >
                 <ListItemIcon>
-                  <NotificationsIcon color={a.is_read ? 'disabled' : 'primary'} />
+                  <NotificationsIcon
+                    color={a.is_read ? 'disabled' : 'primary'}
+                  />
                 </ListItemIcon>
                 <ListItemText
                   primary={a.title}
                   secondary={
                     <>
-                      {a.body && <Typography variant="body2" color="text.secondary">{a.body}</Typography>}
-                      <Typography variant="caption" color="text.disabled">
-                        {a.alert_type.replace('_', ' ')} · {a.storyline_title} · {new Date(a.created_at).toLocaleString()}
+                      {a.body && (
+                        <Typography variant='body2' color='text.secondary'>
+                          {a.body}
+                        </Typography>
+                      )}
+                      <Typography variant='caption' color='text.disabled'>
+                        {a.alert_type.replace('_', ' ')} · {a.storyline_title} ·{' '}
+                        {new Date(a.created_at).toLocaleString()}
                       </Typography>
                     </>
                   }
                 />
-                <Chip label={a.alert_type.replace('_', ' ')} size="small" variant="outlined" />
+                <Chip
+                  label={a.alert_type.replace('_', ' ')}
+                  size='small'
+                  variant='outlined'
+                />
               </ListItem>
               <Divider />
             </React.Fragment>
           ))}
           {alerts.length === 0 && (
-            <Typography color="text.secondary" align="center" sx={{ py: 4 }}>
+            <Typography color='text.secondary' align='center' sx={{ py: 4 }}>
               No alerts yet.
             </Typography>
           )}
@@ -261,29 +317,55 @@ const Watchlist: React.FC = () => {
               <ListItem
                 sx={{ cursor: 'pointer' }}
                 onClick={() => {
-                  if (item.storyline_id) navigate(`/${domain}/storylines/${item.storyline_id}/timeline`);
+                  if (item.storyline_id)
+                    navigate(
+                      `/${domain}/storylines/${item.storyline_id}/timeline`
+                    );
                 }}
               >
                 <ListItemIcon>
-                  <VisibilityIcon color="action" />
+                  <VisibilityIcon color='action' />
                 </ListItemIcon>
                 <ListItemText
                   primary={item.event_title}
                   secondary={
                     <>
-                      <Chip label={item.event_type?.replace('_', ' ')} size="small" sx={{ mr: 1 }} />
-                      {item.storyline_title && <Typography variant="caption" color="text.secondary">in {item.storyline_title}</Typography>}
-                      {item.event_date && <Typography variant="caption" display="block" color="text.disabled">{item.event_date}</Typography>}
+                      <Chip
+                        label={item.event_type?.replace('_', ' ')}
+                        size='small'
+                        sx={{ mr: 1 }}
+                      />
+                      {item.storyline_title && (
+                        <Typography variant='caption' color='text.secondary'>
+                          in {item.storyline_title}
+                        </Typography>
+                      )}
+                      {item.event_date && (
+                        <Typography
+                          variant='caption'
+                          display='block'
+                          color='text.disabled'
+                        >
+                          {item.event_date}
+                        </Typography>
+                      )}
                     </>
                   }
                 />
-                {item.source_count > 1 && <Chip label={`${item.source_count} sources`} size="small" color="info" variant="outlined" />}
+                {item.source_count > 1 && (
+                  <Chip
+                    label={`${item.source_count} sources`}
+                    size='small'
+                    color='info'
+                    variant='outlined'
+                  />
+                )}
               </ListItem>
               <Divider />
             </React.Fragment>
           ))}
           {activityFeed.length === 0 && (
-            <Typography color="text.secondary" align="center" sx={{ py: 4 }}>
+            <Typography color='text.secondary' align='center' sx={{ py: 4 }}>
               No recent activity.
             </Typography>
           )}
@@ -292,24 +374,45 @@ const Watchlist: React.FC = () => {
 
       {/* Tab 3: Monitoring Dashboard */}
       <TabPanel value={tab} index={3}>
-        <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' }, gap: 3 }}>
+        <Box
+          sx={{
+            display: 'grid',
+            gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' },
+            gap: 3,
+          }}
+        >
           {/* Dormant Stories */}
-          <Card variant="outlined">
+          <Card variant='outlined'>
             <CardContent>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
-                <TrendingDownIcon color="warning" />
-                <Typography variant="h6">Dormant Watched Stories</Typography>
+              <Box
+                sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}
+              >
+                <TrendingDownIcon color='warning' />
+                <Typography variant='h6'>Dormant Watched Stories</Typography>
               </Box>
               {dormantStories.length === 0 ? (
-                <Typography color="text.secondary">All watched stories are active.</Typography>
+                <Typography color='text.secondary'>
+                  All watched stories are active.
+                </Typography>
               ) : (
                 <List dense>
                   {dormantStories.map(ds => (
-                    <ListItem key={ds.storyline_id} sx={{ cursor: 'pointer' }}
-                      onClick={() => navigate(`/${domain}/storylines/${ds.storyline_id}/timeline`)}>
+                    <ListItem
+                      key={ds.storyline_id}
+                      sx={{ cursor: 'pointer' }}
+                      onClick={() =>
+                        navigate(
+                          `/${domain}/storylines/${ds.storyline_id}/timeline`
+                        )
+                      }
+                    >
                       <ListItemText
                         primary={ds.title}
-                        secondary={`Dormant since ${ds.dormant_since ? new Date(ds.dormant_since).toLocaleDateString() : 'unknown'} · ${ds.total_events} events`}
+                        secondary={`Dormant since ${
+                          ds.dormant_since
+                            ? new Date(ds.dormant_since).toLocaleDateString()
+                            : 'unknown'
+                        } · ${ds.total_events} events`}
                       />
                     </ListItem>
                   ))}
@@ -319,25 +422,43 @@ const Watchlist: React.FC = () => {
           </Card>
 
           {/* Coverage Gaps */}
-          <Card variant="outlined">
+          <Card variant='outlined'>
             <CardContent>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
-                <WarningIcon color="error" />
-                <Typography variant="h6">Coverage Gaps</Typography>
+              <Box
+                sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}
+              >
+                <WarningIcon color='error' />
+                <Typography variant='h6'>Coverage Gaps</Typography>
               </Box>
-              <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1 }}>
+              <Typography
+                variant='caption'
+                color='text.secondary'
+                display='block'
+                sx={{ mb: 1 }}
+              >
                 Active stories with no new sources in 7+ days
               </Typography>
               {coverageGaps.length === 0 ? (
-                <Typography color="text.secondary">No coverage gaps detected.</Typography>
+                <Typography color='text.secondary'>
+                  No coverage gaps detected.
+                </Typography>
               ) : (
                 <List dense>
                   {coverageGaps.map(cg => (
-                    <ListItem key={cg.storyline_id} sx={{ cursor: 'pointer' }}
-                      onClick={() => navigate(`/${domain}/storylines/${cg.storyline_id}`)}>
+                    <ListItem
+                      key={cg.storyline_id}
+                      sx={{ cursor: 'pointer' }}
+                      onClick={() =>
+                        navigate(`/${domain}/storylines/${cg.storyline_id}`)
+                      }
+                    >
                       <ListItemText
                         primary={cg.title}
-                        secondary={`Last event: ${cg.last_event_at ? new Date(cg.last_event_at).toLocaleDateString() : 'never'}`}
+                        secondary={`Last event: ${
+                          cg.last_event_at
+                            ? new Date(cg.last_event_at).toLocaleDateString()
+                            : 'never'
+                        }`}
                       />
                     </ListItem>
                   ))}
@@ -347,33 +468,68 @@ const Watchlist: React.FC = () => {
           </Card>
 
           {/* Cross-Domain Connections */}
-          <Card variant="outlined" sx={{ gridColumn: { md: '1 / -1' } }}>
+          <Card variant='outlined' sx={{ gridColumn: { md: '1 / -1' } }}>
             <CardContent>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
-                <LinkIcon color="primary" />
-                <Typography variant="h6">Cross-Domain Connections</Typography>
+              <Box
+                sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}
+              >
+                <LinkIcon color='primary' />
+                <Typography variant='h6'>Cross-Domain Connections</Typography>
               </Box>
-              <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1 }}>
+              <Typography
+                variant='caption'
+                color='text.secondary'
+                display='block'
+                sx={{ mb: 1 }}
+              >
                 Storylines sharing core entities across different topics
               </Typography>
               {crossDomain.length === 0 ? (
-                <Typography color="text.secondary">No cross-domain connections found yet.</Typography>
+                <Typography color='text.secondary'>
+                  No cross-domain connections found yet.
+                </Typography>
               ) : (
                 <List dense>
                   {crossDomain.map((cd, i) => (
                     <ListItem key={i}>
-                      <ListItemIcon><LinkIcon /></ListItemIcon>
+                      <ListItemIcon>
+                        <LinkIcon />
+                      </ListItemIcon>
                       <ListItemText
                         primary={
-                          <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
-                            <Chip label={cd.storyline_a.title} size="small" variant="outlined"
-                              onClick={() => navigate(`/${domain}/storylines/${cd.storyline_a.id}`)} />
-                            <Typography variant="caption">↔</Typography>
-                            <Chip label={cd.storyline_b.title} size="small" variant="outlined"
-                              onClick={() => navigate(`/${domain}/storylines/${cd.storyline_b.id}`)} />
+                          <Box
+                            sx={{
+                              display: 'flex',
+                              gap: 1,
+                              alignItems: 'center',
+                            }}
+                          >
+                            <Chip
+                              label={cd.storyline_a.title}
+                              size='small'
+                              variant='outlined'
+                              onClick={() =>
+                                navigate(
+                                  `/${domain}/storylines/${cd.storyline_a.id}`
+                                )
+                              }
+                            />
+                            <Typography variant='caption'>↔</Typography>
+                            <Chip
+                              label={cd.storyline_b.title}
+                              size='small'
+                              variant='outlined'
+                              onClick={() =>
+                                navigate(
+                                  `/${domain}/storylines/${cd.storyline_b.id}`
+                                )
+                              }
+                            />
                           </Box>
                         }
-                        secondary={`Shared entities: ${(cd.shared_entities || []).join(', ')}`}
+                        secondary={`Shared entities: ${(
+                          cd.shared_entities || []
+                        ).join(', ')}`}
                       />
                     </ListItem>
                   ))}

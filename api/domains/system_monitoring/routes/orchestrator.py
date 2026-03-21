@@ -6,7 +6,7 @@ Used by OrchestratorCoordinator and governors. See docs/ORCHESTRATOR_DEVELOPMENT
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Request, Query, Body
+from fastapi import APIRouter, Body, Query, Request
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +39,7 @@ async def orchestrator_metrics(
             get_recent_metrics,
             get_recent_resource_usage,
         )
+
         metrics = get_recent_metrics(metric_name=metric_name, limit=limit)
         usage = get_recent_resource_usage(resource_type=resource_type, limit=limit)
         return {
@@ -60,6 +61,7 @@ async def orchestrator_decision_log(
     """Paginated decision history from orchestrator state."""
     try:
         from services.orchestrator_state import get_decision_log
+
         return get_decision_log(limit=limit, offset=offset, since=since)
     except Exception as e:
         logger.warning("Orchestrator decision_log failed: %s", e)
@@ -73,6 +75,7 @@ async def orchestrator_learning_stats(request: Request) -> dict[str, Any]:
     if coordinator is None or not hasattr(coordinator, "_learning_governor"):
         try:
             from services.learning_governor import LearningGovernor
+
             lg = LearningGovernor()
             return lg.get_learning_stats()
         except Exception as e:
@@ -88,6 +91,7 @@ async def orchestrator_predictions(request: Request) -> dict[str, Any]:
         return coordinator._learning_governor.get_predictions()
     try:
         from services.learning_governor import LearningGovernor
+
         return LearningGovernor().get_predictions()
     except Exception as e:
         return {"next_source_updates": {}, "breaking_news_likelihood": 0.0, "error": str(e)}
@@ -100,11 +104,20 @@ async def orchestrator_dashboard(
 ) -> dict[str, Any]:
     """Single payload for dashboard: status, decision_log excerpt, learning_stats, predictions, recent metrics."""
     try:
-        from services.orchestrator_state import get_decision_log, get_recent_metrics, get_recent_resource_usage
         from services.learning_governor import LearningGovernor
+        from services.orchestrator_state import (
+            get_decision_log,
+            get_recent_metrics,
+            get_recent_resource_usage,
+        )
+
         coordinator = getattr(request.app.state, "orchestrator_coordinator", None)
         status = coordinator.get_status() if coordinator else {"running": False}
-        lg = coordinator._learning_governor if (coordinator and hasattr(coordinator, "_learning_governor")) else LearningGovernor()
+        lg = (
+            coordinator._learning_governor
+            if (coordinator and hasattr(coordinator, "_learning_governor"))
+            else LearningGovernor()
+        )
         return {
             "status": status,
             "decision_log": get_decision_log(limit=decision_log_limit, offset=0),
@@ -132,6 +145,7 @@ async def orchestrator_manual_override(
         return {"success": False, "error": "action required"}
     try:
         from services import orchestrator_state
+
         if action == "pause_learning":
             state = orchestrator_state.get_controller_state()
             state["pause_learning"] = True
@@ -148,26 +162,41 @@ async def orchestrator_manual_override(
             overrides = body.get("config_overrides")
             if not isinstance(overrides, dict):
                 return {"success": False, "error": "config_overrides must be a dict"}
-            allowed = {"min_fetch_interval_seconds", "max_fetch_interval_seconds", "empty_fetch_penalty"}
+            allowed = {
+                "min_fetch_interval_seconds",
+                "max_fetch_interval_seconds",
+                "empty_fetch_penalty",
+            }
             overrides = {k: v for k, v in overrides.items() if k in allowed}
             state = orchestrator_state.get_controller_state()
             state["config_overrides"] = {**(state.get("config_overrides") or {}), **overrides}
             orchestrator_state.save_controller_state(state)
-            orchestrator_state.append_decision_log("manual_override", outcome="set_config_override", factors=overrides)
-            return {"success": True, "message": "Config overrides updated", "config_overrides": state["config_overrides"]}
+            orchestrator_state.append_decision_log(
+                "manual_override", outcome="set_config_override", factors=overrides
+            )
+            return {
+                "success": True,
+                "message": "Config overrides updated",
+                "config_overrides": state["config_overrides"],
+            }
         if action == "force_collect_now":
             source = (body.get("source") or "rss").strip().lower()
             try:
                 from services.collection_governor import get_collection_source_ids
+
                 allowed_sources = get_collection_source_ids()
             except Exception:
                 allowed_sources = ["rss", "gold", "silver", "platinum"]
             if source not in allowed_sources:
-                return {"success": False, "error": f"source must be one of: {', '.join(allowed_sources)}"}
+                return {
+                    "success": False,
+                    "error": f"source must be one of: {', '.join(allowed_sources)}",
+                }
             # Report to activity feed so Monitor shows "Current activity" during collection
             activity_id = f"force_collect_{source}_{int(__import__('time').time())}"
             try:
                 from services.activity_feed_service import get_activity_feed
+
                 get_activity_feed().add_current(
                     activity_id,
                     f"Running {source.upper()} collection (manual trigger)",
@@ -181,6 +210,7 @@ async def orchestrator_manual_override(
                     result = await coordinator.run_manual_collect(source)
                     try:
                         from services.activity_feed_service import get_activity_feed
+
                         get_activity_feed().complete(activity_id, success=True)
                     except Exception:
                         pass
@@ -188,18 +218,28 @@ async def orchestrator_manual_override(
                 # Fallback: run collect directly and record
                 if source == "rss":
                     from collectors.rss_collector import collect_rss_feeds
+
                     count = collect_rss_feeds()
-                    orchestrator_state.append_decision_log("manual_override", outcome=f"force_rss_{count}")
+                    orchestrator_state.append_decision_log(
+                        "manual_override", outcome=f"force_rss_{count}"
+                    )
                     try:
                         from services.activity_feed_service import get_activity_feed
+
                         get_activity_feed().complete(activity_id, success=True)
                     except Exception:
                         pass
-                    return {"success": True, "result": {"source": "rss", "articles_collected": count}}
+                    return {
+                        "success": True,
+                        "result": {"source": "rss", "articles_collected": count},
+                    }
             except Exception as e:
                 try:
                     from services.activity_feed_service import get_activity_feed
-                    get_activity_feed().complete(activity_id, success=False, error_message=str(e)[:200])
+
+                    get_activity_feed().complete(
+                        activity_id, success=False, error_message=str(e)[:200]
+                    )
                 except Exception:
                     pass
                 raise
@@ -208,15 +248,26 @@ async def orchestrator_manual_override(
                 if not orch:
                     try:
                         from services.activity_feed_service import get_activity_feed
-                        get_activity_feed().complete(activity_id, success=False, error_message="Finance orchestrator not available")
+
+                        get_activity_feed().complete(
+                            activity_id,
+                            success=False,
+                            error_message="Finance orchestrator not available",
+                        )
                     except Exception:
                         pass
                     return {"success": False, "error": "Finance orchestrator not available"}
-                from domains.finance.orchestrator_types import TaskType, TaskPriority
-                task_id = orch.submit_task(TaskType.refresh, {"topic": source}, priority=TaskPriority.high)
-                orchestrator_state.append_decision_log("manual_override", outcome=f"force_{source}_{task_id}")
+                from domains.finance.orchestrator_types import TaskPriority, TaskType
+
+                task_id = orch.submit_task(
+                    TaskType.refresh, {"topic": source}, priority=TaskPriority.high
+                )
+                orchestrator_state.append_decision_log(
+                    "manual_override", outcome=f"force_{source}_{task_id}"
+                )
                 try:
                     from services.activity_feed_service import get_activity_feed
+
                     get_activity_feed().complete(activity_id, success=True)
                 except Exception:
                     pass

@@ -31,6 +31,7 @@ __pycache__/
 .env
 .env.local
 .env.production
+configs/ddns.env
 config/.secrets
 api/config/.secrets
 

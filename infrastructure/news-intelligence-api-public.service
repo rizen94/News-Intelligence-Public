@@ -1,0 +1,36 @@
+# News Intelligence — FastAPI for nginx reverse proxy (bind localhost only).
+# DEPRECATED for normal ops: AutomationManager should run only on the main GPU host.
+# Prefer PUBLIC_API_UPSTREAM=<main-pc>:8000 on Widow nginx and: scripts/widow_disable_public_api.sh
+#
+# Enable this unit only when Widow is the sole API instance (no second AutomationManager elsewhere).
+#
+# Install on Widow:
+#   sudo cp infrastructure/news-intelligence-api-public.service /etc/systemd/system/
+#   sudo sed -i 's|/opt/news-intelligence|/opt/news-intelligence|g' /etc/systemd/system/news-intelligence-api-public.service
+#   (edit User= and paths if your deploy dir differs)
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now news-intelligence-api-public
+#
+# Requires: /opt/news-intelligence/.env with DB_* and /opt/news-intelligence/.env.public_demo (optional overlay).
+
+[Unit]
+Description=News Intelligence API (localhost, behind nginx)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pete
+Group=pete
+WorkingDirectory=/opt/news-intelligence/api
+Environment=PYTHONPATH=/opt/news-intelligence/api
+EnvironmentFile=-/opt/news-intelligence/.env
+EnvironmentFile=-/opt/news-intelligence/.env.public_demo
+ExecStartPre=/bin/mkdir -p /opt/news-intelligence/api/logs /opt/news-intelligence/logs
+ExecStart=/opt/news-intelligence/.venv/bin/python -m uvicorn main:app --host 127.0.0.1 --port 8000
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=120
+
+[Install]
+WantedBy=multi-user.target

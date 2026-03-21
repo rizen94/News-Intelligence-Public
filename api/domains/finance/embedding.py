@@ -7,17 +7,17 @@ import logging
 
 try:
     from config.logging_config import get_component_logger
+
     logger = get_component_logger("finance")
 except Exception:
     logger = logging.getLogger(__name__)
 
 from config.settings import (
-    FINANCE_MODELS,
-    EMBEDDING_DIMENSION,
-    CHUNK_SIZE_TOKENS,
     CHUNK_OVERLAP_TOKENS,
+    CHUNK_SIZE_TOKENS,
+    FINANCE_MODELS,
+    OLLAMA_HOST,
 )
-from config.settings import OLLAMA_HOST
 
 # Approximate: 1 token ~ 4 chars for English
 CHARS_PER_TOKEN = 4
@@ -25,7 +25,9 @@ CHUNK_SIZE_CHARS = CHUNK_SIZE_TOKENS * CHARS_PER_TOKEN
 CHUNK_OVERLAP_CHARS = CHUNK_OVERLAP_TOKENS * CHARS_PER_TOKEN
 
 
-def chunk_text(text: str, chunk_size: int = CHUNK_SIZE_CHARS, overlap: int = CHUNK_OVERLAP_CHARS) -> list[str]:
+def chunk_text(
+    text: str, chunk_size: int = CHUNK_SIZE_CHARS, overlap: int = CHUNK_OVERLAP_CHARS
+) -> list[str]:
     """Split text into overlapping chunks. Simple word-boundary aware."""
     if not text or not text.strip():
         return []
@@ -54,6 +56,7 @@ def _get_sentence_transformer_model():
     """Lazy load bge-large. Returns None if unavailable."""
     try:
         from sentence_transformers import SentenceTransformer
+
         model_name = FINANCE_MODELS.get("embedding", "BAAI/bge-large-en-v1.5")
         return SentenceTransformer(model_name)
     except ImportError:
@@ -108,8 +111,8 @@ def ingest_evidence_chunks(
     if not chunks:
         return 0, []
     try:
-        from domains.finance.data.vector_store import add as vs_add
         from domains.finance.data.evidence_ledger import record as ledger_record
+        from domains.finance.data.vector_store import add as vs_add
     except ImportError as e:
         logger.warning("Evidence ingestion unavailable: %s", e)
         return 0, []
@@ -117,7 +120,9 @@ def ingest_evidence_chunks(
     texts = [c.text for c in chunks]
     embeddings = embed_texts(texts)
     if not embeddings or len(embeddings) != len(chunks):
-        logger.warning("Embedding count mismatch: %d chunks, %d embeddings", len(chunks), len(embeddings) or 0)
+        logger.warning(
+            "Embedding count mismatch: %d chunks, %d embeddings", len(chunks), len(embeddings) or 0
+        )
         return 0, []
 
     ids = [c.chunk_id() for c in chunks]
@@ -137,6 +142,7 @@ def ingest_evidence_chunks(
 
     if record_ledger:
         from datetime import datetime, timezone
+
         report_id = f"evidence_ingest_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
         for c in chunks:
             ledger_record(
@@ -164,6 +170,7 @@ def embed_with_ollama_fallback(text: str) -> tuple[list[float], str] | None:
         return (vec, model)
     try:
         import requests
+
         r = requests.post(
             f"{OLLAMA_HOST}/api/embeddings",
             json={"model": "nomic-embed-text", "prompt": text[:4000]},

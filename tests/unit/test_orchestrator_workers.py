@@ -1,9 +1,8 @@
 """Unit tests for orchestrator worker dispatch and normalization layer."""
 
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
-
 from domains.finance.orchestrator import FinanceOrchestrator
 from domains.finance.orchestrator_types import TaskType
 
@@ -11,6 +10,7 @@ from domains.finance.orchestrator_types import TaskType
 @pytest.mark.asyncio
 async def test_refresh_exception_stores_normalized_error_in_context():
     """When a worker raises, context.errors gets normalized error with error_type."""
+
     def failing_fetch(*, start=None, end=None, store=True):
         raise ConnectionError("network unreachable")
 
@@ -38,7 +38,10 @@ async def test_ledger_called_for_each_refresh_worker():
         record_calls.append({"source_id": source_id, "evidence_data": evidence_data})
 
     with patch("domains.finance.data.evidence_ledger.record", side_effect=capture_record):
-        with patch("domains.finance.gold_amalgamator.fetch_all", return_value={"freegoldapi": [{"date": "2024-01-01", "value": 2000}]}):
+        with patch(
+            "domains.finance.gold_amalgamator.fetch_all",
+            return_value={"freegoldapi": [{"date": "2024-01-01", "value": 2000}]},
+        ):
             orch = FinanceOrchestrator(evidence_ledger=MagicMock())
             task_id = orch.submit_task(TaskType.refresh, {"topic": "gold"})
             await orch.run_task(task_id)
@@ -58,7 +61,9 @@ async def test_ledger_records_failure_when_worker_raises():
         record_calls.append({"source_id": source_id, "status": evidence_data.get("status")})
 
     with patch("domains.finance.data.evidence_ledger.record", side_effect=capture_record):
-        with patch("domains.finance.gold_amalgamator.fetch_all", side_effect=ValueError("rate limit")):
+        with patch(
+            "domains.finance.gold_amalgamator.fetch_all", side_effect=ValueError("rate limit")
+        ):
             orch = FinanceOrchestrator(evidence_ledger=MagicMock())
             task_id = orch.submit_task(TaskType.refresh, {"topic": "gold"})
             await orch.run_task(task_id)
@@ -75,7 +80,10 @@ async def test_ingest_records_ledger_on_success_and_failure():
         record_calls.append({"source_id": source_id, "status": evidence_data.get("status")})
 
     with patch("domains.finance.data.evidence_ledger.record", side_effect=capture_record):
-        with patch("domains.finance.data_sources.edgar.ingest_edgar_10ks", return_value=(5, ["chunk1", "chunk2"])):
+        with patch(
+            "domains.finance.data_sources.edgar.ingest_edgar_10ks",
+            return_value=(5, ["chunk1", "chunk2"]),
+        ):
             orch = FinanceOrchestrator(evidence_ledger=MagicMock())
             task_id = orch.submit_task(TaskType.ingest, {"filings_per_company": 1})
             await orch.run_task(task_id)
@@ -84,7 +92,10 @@ async def test_ingest_records_ledger_on_success_and_failure():
 
     record_calls.clear()
     with patch("domains.finance.data.evidence_ledger.record", side_effect=capture_record):
-        with patch("domains.finance.data_sources.edgar.ingest_edgar_10ks", side_effect=RuntimeError("EDGAR down")):
+        with patch(
+            "domains.finance.data_sources.edgar.ingest_edgar_10ks",
+            side_effect=RuntimeError("EDGAR down"),
+        ):
             orch = FinanceOrchestrator(evidence_ledger=MagicMock())
             task_id = orch.submit_task(TaskType.ingest, {})
             result = await orch.run_task(task_id)

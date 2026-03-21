@@ -5,7 +5,11 @@
 
 import { useLocation, useParams } from 'react-router-dom';
 import { useDomain } from '../contexts/DomainContext';
-import { isValidDomain, DomainKey, getPathAfterDomain } from '../utils/domainHelper';
+import {
+  isValidDomain,
+  DomainKey,
+  getPathAfterDomain,
+} from '../utils/domainHelper';
 
 export const useDomainRoute = () => {
   const { domain: urlDomain } = useParams<{ domain: string }>();
@@ -13,14 +17,16 @@ export const useDomainRoute = () => {
   const { pathname } = useLocation();
 
   // Use URL domain if available, otherwise fall back to context
-  const effectiveDomain = (urlDomain && isValidDomain(urlDomain))
-    ? urlDomain as DomainKey
-    : contextDomain;
+  const effectiveDomain =
+    urlDomain && isValidDomain(urlDomain)
+      ? (urlDomain as DomainKey)
+      : contextDomain;
 
   /**
    * Get the current path without the domain prefix
    */
-  const getCurrentPathWithoutDomain = (): string => getPathAfterDomain(pathname);
+  const getCurrentPathWithoutDomain = (): string =>
+    getPathAfterDomain(pathname);
 
   /**
    * Get a domain-qualified path
