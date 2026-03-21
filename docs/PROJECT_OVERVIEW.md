@@ -68,11 +68,40 @@ See [CORE_ARCHITECTURE_PRINCIPLES.md](CORE_ARCHITECTURE_PRINCIPLES.md) and [DATA
 
 ---
 
-## 5. Where to go next
+## 5. Capabilities snapshot (technical)
 
-- **Operations and setup:** [ARCHITECTURE_AND_OPERATIONS.md](ARCHITECTURE_AND_OPERATIONS.md), [SETUP_AND_DEPLOYMENT.md](SETUP_AND_DEPLOYMENT.md)
+| Layer | Technology |
+|-------|------------|
+| Backend | Python 3, FastAPI, uvicorn |
+| Frontend | React 18, TypeScript, Vite, Material-UI v5 |
+| Database | PostgreSQL (per-domain schemas + `intelligence`); single access path `shared.database.connection` |
+| Cache | Redis (optional Docker) |
+| LLM | Ollama — local models (e.g. Llama 3.1 8B primary, Mistral 7B secondary, embeddings) |
+
+**Domains:** `politics`, `finance`, `science-tech` (URL key `science-tech`, schema `science_tech`) with shared patterns: articles, storylines, topics, rss_feeds, events, entity pipeline. **Cross-domain:** `intelligence.*` (contexts, claims, tracked events, dossiers, documents, patterns). **Global:** watchlist, system_monitoring, health.
+
+**Major capabilities:** RSS + document ingestion; ML enrichment on `articles.ml_data`; entity resolution and merges; storyline CRUD, automation, RAG discovery, editorial documents; intelligence hub (RAG, synthesis, briefings, fact verification); Finance orchestrator (market data, evidence, ChromaDB); in-process `AutomationManager` driving phased analysis (v8 collect-then-analyze). Full feature lists and automation intervals are preserved in [_archive/consolidated/PROJECT_CAPABILITIES_BRIEF.md](_archive/consolidated/PROJECT_CAPABILITIES_BRIEF.md).
+
+---
+
+## 6. Scope and development status
+
+- **Current line:** v8 collect-then-analyze (ordered analysis pipeline after collection cycles); flat API paths `/api/...` (no version prefix).
+- **Stack map:** Web (React `/:domain/*`) → FastAPI (`api/main_v4.py`) → PostgreSQL (+ Finance SQLite/Chroma, optional Redis). See [SYSTEM_OVERVIEW.md](SYSTEM_OVERVIEW.md) for route/service map and [ARCHITECTURE_AND_OPERATIONS.md](ARCHITECTURE_AND_OPERATIONS.md) for hosts and ops.
+- **Connectivity:** News aggregation, content analysis, storylines, intelligence hub, entity resolution, fact verification, PDF/document processing, finance, and system monitoring are wired DB → API → web; user-management UI is partial.
+
+Detailed matrices (domain × layer), v6 quality-first notes, and gap discussion remain in [_archive/consolidated/PROJECT_SCOPE_AND_DEVELOPMENT_STATUS.md](_archive/consolidated/PROJECT_SCOPE_AND_DEVELOPMENT_STATUS.md).
+
+---
+
+## 7. Where to go next
+
+- **Code navigation:** [CODEBASE_MAP.md](CODEBASE_MAP.md), [PIPELINE_AND_ORDER_OF_OPERATIONS.md](PIPELINE_AND_ORDER_OF_OPERATIONS.md), [CODE_REVIEW_AND_RUN_CAVEATS.md](CODE_REVIEW_AND_RUN_CAVEATS.md)
+- **Setup and runtime:** [SETUP_ENV_AND_RUNTIME.md](SETUP_ENV_AND_RUNTIME.md)
+- **Operations:** [ARCHITECTURE_AND_OPERATIONS.md](ARCHITECTURE_AND_OPERATIONS.md)
 - **Database:** [DATABASE.md](DATABASE.md) (schema and data I/O)
 - **API:** [API_REFERENCE.md](API_REFERENCE.md) (endpoints and integrations)
+- **Security (ops + API):** [SECURITY_OPERATIONS.md](SECURITY_OPERATIONS.md)
 - **Documentation index:** [DOCS_INDEX.md](DOCS_INDEX.md)
 
 Planning and development history are in [archive/planning/](archive/planning/) for historic reference.

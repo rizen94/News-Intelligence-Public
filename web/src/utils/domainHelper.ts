@@ -3,7 +3,7 @@
  * Provides domain context and helper functions for v5.0 multi-domain architecture
  */
 
-export type DomainKey = 'politics' | 'finance' | 'science-tech';
+export type DomainKey = 'politics' | 'finance' | 'science-tech' | 'legal';
 
 export interface Domain {
   key: DomainKey;
@@ -15,9 +15,25 @@ export const AVAILABLE_DOMAINS: Domain[] = [
   { key: 'politics', name: 'Politics', schema: 'politics' },
   { key: 'finance', name: 'Finance', schema: 'finance' },
   { key: 'science-tech', name: 'Science & Technology', schema: 'science_tech' },
+  { key: 'legal', name: 'Legal', schema: 'legal' },
 ];
 
+/** Alternation for first path segment after `/` (domain keys). Keep in sync with AVAILABLE_DOMAINS. */
+export const DOMAIN_ROUTE_ALTERNATION = AVAILABLE_DOMAINS.map((d) => d.key).join('|');
+
+/** Keys in nav/API order — use for forms and filters that list all domains. */
+export const DOMAIN_KEYS_LIST: DomainKey[] = AVAILABLE_DOMAINS.map((d) => d.key);
+
 const DEFAULT_DOMAIN: DomainKey = 'politics';
+
+/**
+ * Path after the domain segment: `/politics/storylines` → `/storylines`; `/legal` → `/dashboard`.
+ */
+export function getPathAfterDomain(pathname: string): string {
+  const re = new RegExp(`^/(?:${DOMAIN_ROUTE_ALTERNATION})(/.*)?$`);
+  const m = pathname.match(re);
+  return m?.[1] || '/dashboard';
+}
 
 /**
  * Get current domain from localStorage or return default

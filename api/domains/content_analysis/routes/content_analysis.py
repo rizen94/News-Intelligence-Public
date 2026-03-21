@@ -5,6 +5,7 @@ Handles sentiment analysis, entity extraction, summarization, and bias detection
 
 from fastapi import APIRouter, HTTPException, BackgroundTasks, Path, Query, Body
 from typing import List, Dict, Any, Optional
+from shared.domain_registry import DOMAIN_PATH_PATTERN
 import asyncio
 from datetime import datetime, timedelta
 import logging
@@ -546,7 +547,7 @@ async def process_batch_analysis(articles: List[tuple]):
 
 @router.get("/{domain}/content_analysis/topics")
 async def get_topics(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     limit: int = Query(50, ge=1, le=100),  # Max 100 for performance
     offset: int = Query(0, ge=0),
     search: Optional[str] = Query(None),
@@ -657,7 +658,7 @@ async def get_topics(
 
 @router.get("/{domain}/content_analysis/topics/merge_suggestions")
 async def get_topic_merge_suggestions(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     min_score: float = Query(0.35, ge=0.1, le=1.0),
     limit: int = Query(50, ge=1, le=100)
 ):
@@ -711,7 +712,7 @@ async def get_topic_merge_suggestions(
 
 @router.post("/{domain}/content_analysis/topics/merge_clusters")
 async def merge_topic_clusters(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     body: Dict[str, Any] = Body(...)
 ):
     """Merge a topic cluster into another (secondary -> primary). Keeps primary, moves all articles."""
@@ -794,7 +795,7 @@ async def merge_topic_clusters(
 
 @router.post("/{domain}/content_analysis/topics/cluster")
 async def cluster_articles(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     request: Dict[str, Any] = Body(...),
     background_tasks: BackgroundTasks = BackgroundTasks()
 ):
@@ -837,7 +838,7 @@ async def cluster_articles(
 
 @router.get("/{domain}/content_analysis/topics/cluster/status")
 async def get_clustering_status(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$")
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN)
 ):
     """Get the status of topic clustering - returns recent topic count and queue status"""
     try:
@@ -919,7 +920,7 @@ async def get_clustering_status(
 
 @router.get("/{domain}/content_analysis/topics/{cluster_name}/articles")
 async def get_topic_articles(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     cluster_name: str = Path(...),
     limit: int = Query(20, ge=1, le=100),  # Max 100 for performance
     offset: int = Query(0, ge=0)
@@ -1006,7 +1007,7 @@ async def get_topic_articles(
 
 @router.get("/{domain}/content_analysis/topics/{cluster_name}/summary")
 async def get_topic_summary(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     cluster_name: str = Path(...)
 ):
     """Get AI-generated summary for a topic in a specific domain"""
@@ -1101,7 +1102,7 @@ async def get_topic_summary(
 
 @router.post("/{domain}/content_analysis/topics/{cluster_name}/convert_to_storyline")
 async def convert_topic_to_storyline(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     cluster_name: str = Path(...),
     request: Dict[str, Any] = Body(...),
     background_tasks: BackgroundTasks = None
@@ -1265,7 +1266,7 @@ async def get_category_stats():
 
 @router.get("/{domain}/content_analysis/topics/word_cloud")
 async def get_word_cloud_data(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     time_period_hours: int = Query(24, ge=1, le=720),
     min_frequency: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=200)
@@ -1716,7 +1717,7 @@ def _augment_word_cloud_with_entity_signals(
 
 @router.get("/{domain}/content_analysis/topics/banned")
 async def get_banned_topics(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$")
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN)
 ):
     """List all banned topics for a domain."""
     try:
@@ -1744,7 +1745,7 @@ async def get_banned_topics(
 
 @router.post("/{domain}/content_analysis/topics/banned")
 async def ban_topic(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     body: Dict[str, Any] = Body(...)
 ):
     """Add a topic to the banned list."""
@@ -1781,7 +1782,7 @@ async def ban_topic(
 
 @router.delete("/{domain}/content_analysis/topics/banned/{topic_name:path}")
 async def unban_topic(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     topic_name: str = Path(...)
 ):
     """Remove a topic from the banned list."""
@@ -1813,7 +1814,7 @@ async def unban_topic(
 
 @router.get("/{domain}/content_analysis/topics/big_picture")
 async def get_big_picture_analysis(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     time_period_hours: int = Query(24, ge=1, le=720)
 ):
     """Get big picture analysis of current topics and trends for a specific domain"""
@@ -1954,7 +1955,7 @@ async def get_big_picture_analysis(
 
 @router.get("/{domain}/content_analysis/topics/trending")
 async def get_trending_topics(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     time_period_hours: int = Query(24, ge=1, le=720),
     limit: int = Query(20, ge=1, le=100)
 ):

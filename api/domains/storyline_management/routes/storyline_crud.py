@@ -6,6 +6,7 @@ Core create, read, update, delete operations for storylines
 
 from fastapi import APIRouter, HTTPException, Path, Query, Depends
 from typing import List, Optional
+from shared.domain_registry import DOMAIN_PATH_PATTERN
 from datetime import datetime
 import logging
 import math
@@ -37,7 +38,7 @@ router = APIRouter(
 # Dependencies
 # ============================================================================
 
-async def validate_domain_dependency(domain: str = Path(..., pattern="^(politics|finance|science-tech)$")):
+async def validate_domain_dependency(domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN)):
     """Dependency to validate domain"""
     if not validate_domain(domain):
         raise HTTPException(status_code=400, detail=f"Invalid or inactive domain: {domain}")
@@ -253,7 +254,11 @@ async def get_domain_storyline(
                            context_last_updated,
                            COALESCE(ml_processing_status, 'completed') as ml_processing_status,
                            editorial_document, document_version, document_status, last_refinement,
-                           key_entities
+                           key_entities,
+                           canonical_narrative, narrative_finisher_model, narrative_finisher_at,
+                           narrative_finisher_meta,
+                           timeline_narrative_chronological, timeline_narrative_briefing,
+                           timeline_narrative_chronological_at, timeline_narrative_briefing_at
                     FROM {schema}.storylines 
                     WHERE id = %s
                 """, (storyline_id,))
@@ -342,8 +347,18 @@ async def get_domain_storyline(
                         key_entities = key_entities_raw if isinstance(key_entities_raw, (dict, list)) else json.loads(key_entities_raw)
                     except Exception:
                         pass
-                
-                # storyline row: [0]id ... [17]last_refinement [18]key_entities
+
+                nf_meta = storyline[22] if len(storyline) > 22 else None
+                if nf_meta is not None and isinstance(nf_meta, str):
+                    try:
+                        nf_meta = json.loads(nf_meta)
+                    except Exception:
+                        pass
+
+                from services.content_refinement_queue_service import list_pending_job_types
+
+                refinement_pending = list_pending_job_types(domain, storyline_id)
+
                 return StorylineDetailResponse(
                     id=storyline[0],
                     title=storyline[1],
@@ -366,6 +381,15 @@ async def get_domain_storyline(
                     last_refinement=storyline[17] if len(storyline) > 17 else None,
                     key_entities=key_entities,
                     entities=entity_list,
+                    canonical_narrative=storyline[19] if len(storyline) > 19 else None,
+                    narrative_finisher_model=storyline[20] if len(storyline) > 20 else None,
+                    narrative_finisher_at=storyline[21] if len(storyline) > 21 else None,
+                    narrative_finisher_meta=nf_meta if isinstance(nf_meta, dict) else None,
+                    timeline_narrative_chronological=storyline[23] if len(storyline) > 23 else None,
+                    timeline_narrative_briefing=storyline[24] if len(storyline) > 24 else None,
+                    timeline_narrative_chronological_at=storyline[25] if len(storyline) > 25 else None,
+                    timeline_narrative_briefing_at=storyline[26] if len(storyline) > 26 else None,
+                    refinement_jobs_pending=refinement_pending,
                 )
                 
         finally:

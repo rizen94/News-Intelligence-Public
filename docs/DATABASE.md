@@ -119,7 +119,7 @@ Cross-domain and context-centric data. Entity IDs in intelligence tables refer t
 
 ## 5. Migrations and schema source
 
-- **Migrations:** `api/database/migrations/*.sql` (numbered). Domain silos: 122, 125; entity/article_entities: 138; intelligence: 141, 142, 143, 144; orchestration: 140; events: 133; documents: 160; tracked_events.storyline_id: 171; etc.
+- **Migrations:** **Active** `api/database/migrations/*.sql` (tip-of-repo upgrades; currently **176+**). **Archived** `api/database/migrations/archive/historical/*.sql` (older numbered DDL; runners still resolve these). Ledger: `public.applied_migrations` (after 176) — record applies with `api/scripts/register_applied_migration.py`, compare with `api/scripts/migration_ledger_report.py`. Domain silos: 122, 125; entity/article_entities: 138; intelligence: 141–144; orchestration: 140; events: 133; documents: 160; tracked_events.storyline_id: 171; etc.
 - **Unified schema (logical):** `schema/unified_schema.json` describes tables and columns for reference; actual DDL is in migrations.
 - **Connection:** Single source of truth is `api/shared/database/connection.py` (`get_db_config`, `get_db_connection`). Config from `.env` / `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_PASSWORD` (e.g. from `.db_password_widow` on Widow).
 

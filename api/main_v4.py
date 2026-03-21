@@ -1,6 +1,21 @@
 """
-News Intelligence System v5.0 - Domain-Driven FastAPI Application
-Uses Llama 3.1 8B (primary) and Mistral 7B (secondary) models
+News Intelligence — FastAPI application entry (domain-driven).
+
+What this file does:
+  - Loads project-root ``.env`` early so DB and API keys match ops scripts.
+  - Builds the FastAPI app: ``lifespan`` starts DB pool checks and background
+    automation; middleware order is CORS → TrustedHost → optional SecurityMiddleware
+    (see ``config.settings`` ``news_intel_*`` helpers for production tightening).
+  - Mounts domain routers (news_aggregation, content_analysis, storyline_management,
+    intelligence_hub + context_centric, finance, user_management, system_monitoring)
+    and the v3 ``compatibility_router``.
+
+Where to read next:
+  - DB access: ``shared.database.connection`` (single source of truth; never ad-hoc psycopg2).
+  - Background work: ``services.automation_manager`` (v8 collection_cycle + scheduled phases).
+  - Reviewer docs: repo ``docs/CODEBASE_MAP.md``, ``docs/PIPELINE_AND_ORDER_OF_OPERATIONS.md``.
+
+LLM routing uses Ollama (see ``config.settings`` and ``shared.services.ollama_model_caller``).
 """
 
 # Dump all thread tracebacks on SIGUSR1 for debugging hung processes
@@ -56,6 +71,16 @@ except Exception as e:
     logger = logging.getLogger(__name__)
     logger.warning("Centralized logging unavailable, using basicConfig: %s", e)
 
+from config.settings import (
+    news_intel_is_production,
+    news_intel_cors_allow_origins,
+    news_intel_trusted_hosts,
+    news_intel_api_docs_enabled,
+    news_intel_expose_error_detail_to_client,
+    news_intel_security_middleware_enabled,
+    news_intel_rate_limit_per_minute,
+)
+
 # Import domain routers (consolidated — one per domain)
 from domains.news_aggregation.routes import router as news_aggregation_router
 from domains.content_analysis.routes import router as content_analysis_router
@@ -83,6 +108,13 @@ async def lifespan(app: FastAPI):
     """Application lifespan manager"""
     # Startup
     logger.info("Starting News Intelligence System v5.0")
+    if news_intel_is_production():
+        logger.info("NEWS_INTEL_ENV=production — see docs/SECURITY_OPERATIONS.md for CORS, hosts, and OpenAPI")
+        if not news_intel_cors_allow_origins():
+            logger.warning(
+                "NEWS_INTEL_CORS_ORIGINS is empty: browsers on another origin cannot call the API with CORS. "
+                "Set comma-separated origins (e.g. https://app.example.com) if you expose the UI separately."
+            )
 
     # Initialize database connection pool early (persistent connection)
     try:
@@ -523,6 +555,14 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Error stopping Newsroom Orchestrator: {e}")
 
+# OpenAPI / docs — disabled in production unless NEWS_INTEL_ENABLE_API_DOCS=true
+_api_docs_on = news_intel_api_docs_enabled()
+_docs_url = "/docs" if _api_docs_on else None
+_redoc_url = "/redoc" if _api_docs_on else None
+_openapi_url = "/openapi.json" if _api_docs_on else None
+_cors_origins = news_intel_cors_allow_origins()
+_cors_credentials = "*" not in _cors_origins
+
 # Create FastAPI application
 app = FastAPI(
     title="News Intelligence System v5.0",
@@ -553,17 +593,17 @@ app = FastAPI(
     - **Resource Usage**: 9.3GB total storage (vs 109GB+ with previous models)
     
     ### Authentication
-    Currently in development mode - no authentication required.
-    Production deployment will include JWT-based authentication.
+    No per-user JWT on routes by default — use network isolation or a reverse proxy for access control.
     
-    ### Rate Limiting
-    Currently no rate limiting in development mode.
-    Production deployment will include rate limiting.
+    ### Rate limiting and hardening
+    Set `NEWS_INTEL_ENV=production` for stricter CORS, Host header checks, disabled OpenAPI by default,
+    generic 500 responses, and in-app rate limiting (see `docs/SECURITY_OPERATIONS.md`).
     """,
     version="5.0.0",
     lifespan=lifespan,
-    docs_url="/docs",
-    redoc_url="/redoc",
+    docs_url=_docs_url,
+    redoc_url=_redoc_url,
+    openapi_url=_openapi_url,
     openapi_tags=[
         {
             "name": "News Aggregation",
@@ -651,37 +691,46 @@ async def request_tracker_middleware(request: Request, call_next):
     response.headers["X-Request-ID"] = request_id
     return response
 
-# Add middleware
+# Add middleware (last added = outermost)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure appropriately for production
-    allow_credentials=True,
+    allow_origins=_cors_origins,
+    allow_credentials=_cors_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 app.add_middleware(
     TrustedHostMiddleware,
-    allowed_hosts=["*"]  # Configure appropriately for production
+    allowed_hosts=news_intel_trusted_hosts(),
 )
+
+if news_intel_security_middleware_enabled():
+    from middleware.security import SecurityMiddleware
+
+    app.add_middleware(
+        SecurityMiddleware,
+        rate_limit_per_minute=news_intel_rate_limit_per_minute(),
+    )
 
 # Global exception handler
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     """Global exception handler for comprehensive error handling"""
     logger.error(f"Unhandled exception: {exc}", exc_info=True)
-    
+    expose = news_intel_expose_error_detail_to_client()
+    err_text = str(exc) if expose else "Internal server error"
     return JSONResponse(
         status_code=500,
         content={
             "success": False,
             "data": None,
             "message": "Internal server error",
-            "error": str(exc),
-            "error_type": "InternalServerError",
+            "error": err_text,
+            "error_type": exc.__class__.__name__ if expose else "InternalServerError",
             "recoverable": False,
-            "timestamp": datetime.now().isoformat()
-        }
+            "timestamp": datetime.now().isoformat(),
+        },
     )
 
 # Include domain routers

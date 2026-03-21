@@ -234,6 +234,66 @@ export const monitoringApi = {
     }
   },
 
+  /** Read-only SQL explorer (requires NEWS_INTEL_SQL_EXPLORER=true on API). */
+  async getSqlExplorerEnabled() {
+    try {
+      const response = await getApi().get('/api/system_monitoring/sql_explorer/enabled');
+      return response.data as { success?: boolean; enabled?: boolean };
+    } catch (error) {
+      Logger.apiError('SQL explorer enabled check failed', error as Error);
+      return { success: false, enabled: false, error: (error as any).message };
+    }
+  },
+
+  async getSqlExplorerSchema() {
+    try {
+      const response = await getApi().get('/api/system_monitoring/sql_explorer/schema', { timeout: 60000 });
+      return response.data as {
+        success?: boolean;
+        tables?: Array<{ schema: string; table: string; columns: Array<{ name: string; data_type: string; nullable: boolean }> }>;
+        error?: string;
+      };
+    } catch (error) {
+      Logger.apiError('SQL explorer schema failed', error as Error);
+      return { success: false, tables: [], error: (error as any).message };
+    }
+  },
+
+  async postSqlExplorerQuery(sql: string, maxRows: number = 500) {
+    try {
+      const response = await getApi().post(
+        '/api/system_monitoring/sql_explorer/query',
+        { sql, max_rows: maxRows },
+        { timeout: 120000 }
+      );
+      return response.data as {
+        success?: boolean;
+        columns?: string[];
+        rows?: unknown[][];
+        row_count_returned?: number;
+        truncated?: boolean;
+        cursor_rowcount?: number | null;
+        detail?: string;
+      };
+    } catch (error: unknown) {
+      Logger.apiError('SQL explorer query failed', error as Error);
+      const ax = error as { response?: { data?: { detail?: unknown } }; message?: string };
+      const detail = ax?.response?.data?.detail;
+      const msg =
+        typeof detail === 'string'
+          ? detail
+          : Array.isArray(detail)
+            ? detail.map((d: { msg?: string }) => d?.msg).filter(Boolean).join('; ')
+            : ax?.message ?? 'Request failed';
+      return {
+        success: false,
+        columns: [],
+        rows: [],
+        error: msg || 'Request failed',
+      };
+    }
+  },
+
   async getDuplicateStats() {
     try {
       const response = await getApi().get('/api/articles/duplicates/stats');

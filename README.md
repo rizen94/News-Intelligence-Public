@@ -17,6 +17,28 @@ All AI runs **locally via Ollama** — no cloud LLM required. The system is desi
 
 ---
 
+## For code reviewers (start here)
+
+**Goal:** Understand the architecture and pipelines without assuming a turnkey local run.
+
+| Step | Doc / file |
+|------|------------|
+| 1 | **[docs/CODEBASE_MAP.md](docs/CODEBASE_MAP.md)** — where code lives, high-interest files. |
+| 2 | **[docs/CODE_REVIEW_AND_RUN_CAVEATS.md](docs/CODE_REVIEW_AND_RUN_CAVEATS.md)** — honest requirements; **why casual clone-and-run is not recommended** without Postgres/Ollama/env work. |
+| 3 | **[docs/PIPELINE_AND_ORDER_OF_OPERATIONS.md](docs/PIPELINE_AND_ORDER_OF_OPERATIONS.md)** — v8 **collect-then-analyze**, phase map, link into `automation_manager.py`. |
+| 4 | **[AGENTS.md](AGENTS.md)** — terminology and canonical entry points. |
+| 5 | **[docs/DOCS_INDEX.md](docs/DOCS_INDEX.md)** — full doc catalog. |
+
+**Architecture and data flow (read next):**
+
+- [docs/PROJECT_OVERVIEW.md](docs/PROJECT_OVERVIEW.md) — what the system does end-to-end.
+- [docs/DATA_FLOW_ARCHITECTURE.md](docs/DATA_FLOW_ARCHITECTURE.md) — intelligence cascade (ingestion → editorial).
+- [docs/SYSTEM_OVERVIEW.md](docs/SYSTEM_OVERVIEW.md) — routes, UI map, services (long reference).
+
+**If you try to run it:** [docs/SETUP_ENV_AND_RUNTIME.md](docs/SETUP_ENV_AND_RUNTIME.md) + caveats doc above. **Security:** [docs/SECURITY_OPERATIONS.md](docs/SECURITY_OPERATIONS.md).
+
+---
+
 ## Features
 
 ### For readers and analysts
@@ -56,10 +78,10 @@ All AI runs **locally via Ollama** — no cloud LLM required. The system is desi
 ```
 
 - **Web UI:** http://localhost:3000  
-- **API docs:** http://localhost:8000/docs  
+- **API docs:** http://localhost:8000/docs (may be disabled when `NEWS_INTEL_ENV=production` — see [docs/SECURITY_OPERATIONS.md](docs/SECURITY_OPERATIONS.md))  
 - **Health:** http://localhost:8000/api/system_monitoring/health  
 
-See [Setup and Deployment](docs/SETUP_AND_DEPLOYMENT.md) for full installation and environment setup.
+See [Setup, environment, and runtime](docs/SETUP_ENV_AND_RUNTIME.md) for installation and configuration.
 
 ### Using the web interface
 
@@ -104,6 +126,8 @@ Full reference: [API Reference](docs/API_REFERENCE.md). Interactive docs: http:/
 
 ## Project documentation
 
+**Reviewers:** [docs/CODEBASE_MAP.md](docs/CODEBASE_MAP.md), [docs/PIPELINE_AND_ORDER_OF_OPERATIONS.md](docs/PIPELINE_AND_ORDER_OF_OPERATIONS.md), [docs/CODE_REVIEW_AND_RUN_CAVEATS.md](docs/CODE_REVIEW_AND_RUN_CAVEATS.md).
+
 **Start here**
 
 - **[Documentation index](docs/DOCS_INDEX.md)** — Full list of docs.
@@ -114,7 +138,8 @@ Full reference: [API Reference](docs/API_REFERENCE.md). Interactive docs: http:/
 
 - **[Database](docs/DATABASE.md)** — Schema and data I/O.
 - **[API reference](docs/API_REFERENCE.md)** — Endpoints and integrations.
-- **[Setup and deployment](docs/SETUP_AND_DEPLOYMENT.md)** — Installation and configuration.
+- **[Setup and runtime](docs/SETUP_ENV_AND_RUNTIME.md)** — Installation, Ollama, GPU, `.env`.
+- **[Security operations](docs/SECURITY_OPERATIONS.md)** — Exposure, CORS, secrets, hardening.
 - **[Troubleshooting](docs/TROUBLESHOOTING.md)** — Common issues and fixes.
 
 **Standards and design**

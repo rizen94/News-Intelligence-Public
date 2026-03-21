@@ -8,10 +8,10 @@ cd "$(dirname "$0")/.."
 
 echo "=== 1. Migrations and runners ==="
 git add \
-  api/database/migrations/142_context_centric_foundation.sql \
-  api/database/migrations/143_context_centric_entity_claims.sql \
-  api/database/migrations/144_v6_events_entity_dossiers.sql \
-  api/database/migrations/145_context_entity_mentions.sql \
+  api/database/migrations/archive/historical/142_context_centric_foundation.sql \
+  api/database/migrations/archive/historical/143_context_centric_entity_claims.sql \
+  api/database/migrations/archive/historical/144_v6_events_entity_dossiers.sql \
+  api/database/migrations/archive/historical/145_context_entity_mentions.sql \
   api/scripts/run_migration_142_143_144.py \
   api/scripts/run_migration_145.py
 git status --short

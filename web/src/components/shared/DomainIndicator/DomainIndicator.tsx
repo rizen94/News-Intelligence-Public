@@ -41,6 +41,13 @@ const DomainIndicator: React.FC<DomainIndicatorProps> = ({
           icon: '🔬',
           name: 'Science & Technology',
         };
+      case 'legal':
+        return {
+          color: '#455a64',
+          bg: '#eceff1',
+          icon: '⚖️',
+          name: 'Legal',
+        };
       default:
         return {
           color: '#616161',

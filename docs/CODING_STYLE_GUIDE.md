@@ -618,7 +618,7 @@ News Intelligence/
 │   ├── domains/                  # Domain-scoped routes and services
 │   │   └── {domain}/routes/      # e.g. storyline_management, system_monitoring
 │   ├── services/                 # Business logic
-│   └── database/migrations/     # SQL migrations
+│   └── database/migrations/     # SQL migrations (active); archive/historical/ for pre-176 DDL
 ├── web/                          # Frontend (React + Vite + MUI)
 │   ├── src/
 │   │   ├── App.tsx               # Routes, DomainProvider, MainLayout
@@ -688,9 +688,8 @@ configs/.env
 
 ### **Keep docs in sync with code**
 When you make a **major change** (e.g. API path scheme, versioning, removal of a feature, or a new system boundary), **retroactively update all affected docs** so they stay accurate. Check at least:
-- Release notes (e.g. `RELEASE_v5.0_STABLE.md`)
-- Capabilities brief (`PROJECT_CAPABILITIES_BRIEF.md`)
-- Controller/architecture docs (`CONTROLLER_ARCHITECTURE.md`, `PROJECT_SCOPE_AND_DEVELOPMENT_STATUS.md`)
+- [DOCS_INDEX.md](DOCS_INDEX.md), [PROJECT_OVERVIEW.md](PROJECT_OVERVIEW.md), current `RELEASE_v*.md` (older notes in `_archive/releases/`)
+- Architecture trio: [SYSTEM_OVERVIEW.md](SYSTEM_OVERVIEW.md), [ARCHITECTURE_AND_OPERATIONS.md](ARCHITECTURE_AND_OPERATIONS.md), [SECURITY_OPERATIONS.md](SECURITY_OPERATIONS.md) when exposure or ops change
 - API reference or route tables in any of the above
 
 Avoid leaving references to old paths, versions, or behavior (e.g. `/api/` when the code uses flat `/api/`).

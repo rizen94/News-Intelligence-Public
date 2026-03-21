@@ -140,7 +140,7 @@ Curated list of reliable **no-subscription** APIs and feeds (PubMed, bioRxiv, BL
 | [OFFICIAL_GOVERNMENT_FEEDS.md](./OFFICIAL_GOVERNMENT_FEEDS.md) | Government RSS URLs and rationale |
 | [FINANCE_REFERENCE_SOURCES.md](./FINANCE_REFERENCE_SOURCES.md) | Finance reference material |
 | [RAG_V8_AND_DISCOVERY.md](./RAG_V8_AND_DISCOVERY.md) | RAG and discovery behavior |
-| [OLLAMA_SETUP.md](./OLLAMA_SETUP.md) | Local LLM setup |
+| [SETUP_ENV_AND_RUNTIME.md](./SETUP_ENV_AND_RUNTIME.md) | Local LLM (Ollama), venv, GPU |
 
 ---
 

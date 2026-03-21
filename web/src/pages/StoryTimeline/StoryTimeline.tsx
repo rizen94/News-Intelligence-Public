@@ -132,6 +132,7 @@ const StoryTimeline: React.FC = () => {
   const [narrative, setNarrative] = useState<string>('');
   const [loading, setLoading] = useState(true);
   const [narrativeLoading, setNarrativeLoading] = useState(false);
+  const [narrativeJobPending, setNarrativeJobPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [expandedEvents, setExpandedEvents] = useState<Set<number>>(new Set());
   const [narrativeMode, setNarrativeMode] = useState<'chronological' | 'briefing'>('chronological');
@@ -158,20 +159,37 @@ const StoryTimeline: React.FC = () => {
     loadTimeline();
   }, [loadTimeline]);
 
-  const loadNarrative = async () => {
+  const loadNarrativeFromStore = useCallback(async () => {
     if (!id || !domain) return;
     setNarrativeLoading(true);
     try {
       const result = await apiService.getStorylineNarrative(id, narrativeMode, domain);
-      if (result?.success) {
+      if (result?.success && result.data) {
         setNarrative(result.data.narrative || result.data.briefing || '');
+        setNarrativeJobPending(!!result.data.job_pending);
+      } else {
+        setNarrative('');
+        setNarrativeJobPending(false);
       }
     } catch {
-      setNarrative('Failed to generate narrative.');
+      setNarrative('');
+      setNarrativeJobPending(false);
     } finally {
       setNarrativeLoading(false);
     }
-  };
+  }, [id, domain, narrativeMode]);
+
+  useEffect(() => {
+    loadNarrativeFromStore();
+  }, [loadNarrativeFromStore]);
+
+  useEffect(() => {
+    if (!narrativeJobPending || !id || !domain) return;
+    const t = setInterval(() => {
+      loadNarrativeFromStore();
+    }, 15000);
+    return () => clearInterval(t);
+  }, [narrativeJobPending, id, domain, loadNarrativeFromStore]);
 
   const toggleEvent = (eventId: number) => {
     setExpandedEvents(prev => {
@@ -205,6 +223,23 @@ const StoryTimeline: React.FC = () => {
 
   const eventsEmpty =
     (timeline.events?.length ?? 0) === 0 || timeline.timeline_empty === true;
+
+  const queueNarrativeRefresh = async () => {
+    if (!id || !domain || eventsEmpty) return;
+    setNarrativeLoading(true);
+    try {
+      const jobType =
+        narrativeMode === 'briefing'
+          ? 'timeline_narrative_briefing'
+          : 'timeline_narrative_chronological';
+      const res = await apiService.enqueueStorylineRefinement(id, jobType, domain);
+      if (res && (res as { success?: boolean }).success !== false) {
+        setNarrativeJobPending(true);
+      }
+    } finally {
+      setNarrativeLoading(false);
+    }
+  };
 
   return (
     <Box sx={{ maxWidth: 900, mx: 'auto', p: 3 }}>
@@ -272,33 +307,54 @@ const StoryTimeline: React.FC = () => {
             exclusive
             onChange={(_, v) => v && setNarrativeMode(v)}
             size="small"
-            disabled={eventsEmpty}
           >
             <ToggleButton value="chronological">Full</ToggleButton>
             <ToggleButton value="briefing">Briefing</ToggleButton>
           </ToggleButtonGroup>
           <Button
+            variant="outlined"
+            size="small"
+            onClick={() => loadNarrativeFromStore()}
+            disabled={narrativeLoading}
+          >
+            Refresh from store
+          </Button>
+          <Button
             variant="contained"
             size="small"
-            onClick={loadNarrative}
+            onClick={queueNarrativeRefresh}
             disabled={eventsEmpty || narrativeLoading}
           >
-            {narrativeLoading ? 'Generating...' : 'Generate'}
+            {narrativeLoading ? 'Working…' : 'Queue refresh'}
           </Button>
+          {narrativeJobPending && (
+            <Chip size="small" color="warning" label="Queued / processing" />
+          )}
         </Box>
         {eventsEmpty && (
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-            Add chronological events to this storyline to enable narrative generation.
+            Add chronological events to this storyline before queueing a new narrative (workers need timeline data).
+          </Typography>
+        )}
+        {!eventsEmpty && (
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Shows the latest stored narrative. Requesting a refresh adds a background job — no on-demand LLM on this page.
           </Typography>
         )}
         {narrativeLoading && <LinearProgress sx={{ mb: 2 }} />}
-        {narrative && (
+        {narrative ? (
           <Typography
             variant="body1"
             sx={{ whiteSpace: 'pre-wrap', lineHeight: 1.8 }}
           >
             {narrative}
           </Typography>
+        ) : (
+          !narrativeLoading && (
+            <Typography variant="body2" color="text.secondary">
+              No stored narrative for this mode yet. Queue a refresh to generate in the background.
+            </Typography>
+          )
         )}
       </Paper>
 

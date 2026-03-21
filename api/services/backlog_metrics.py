@@ -28,6 +28,7 @@ BATCH_SIZE_PER_TASK: Dict[str, int] = {
     "entity_profile_build": 25,  # v8
     "investigation_report_refresh": 8,
     "document_processing": 10,
+    "content_refinement_queue": 4,
 }
 
 
@@ -48,6 +49,7 @@ def _get_raw_pending_counts() -> Dict[str, int]:
             raw["pending_db_flush"] = pending_line_count()
         except Exception:
             raw["pending_db_flush"] = 0
+        raw["content_refinement_queue"] = _count_content_refinement_queue_pending()
     except Exception as e:
         logger.warning("backlog_metrics _get_raw_pending_counts: %s", e)
     return raw
@@ -281,6 +283,30 @@ def _count_investigation_report_backlog() -> int:
             pass
 
 
+def _count_content_refinement_queue_pending() -> int:
+    """Rows in intelligence.content_refinement_queue waiting for workers (migration 181)."""
+    conn = _get_conn()
+    if not conn:
+        return 0
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT COUNT(*) FROM intelligence.content_refinement_queue
+                WHERE status = 'pending'
+                """
+            )
+            return int(cur.fetchone()[0] or 0)
+    except Exception as e:
+        logger.debug("backlog content_refinement_queue count: %s", e)
+        return 0
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
 def _count_document_processing_backlog() -> int:
     """Documents with source_url but not yet extracted (PDF download + section/entity extraction)."""
     conn = _get_conn()
@@ -317,6 +343,7 @@ SKIP_WHEN_EMPTY = frozenset({
     "entity_profile_build",
     "investigation_report_refresh",
     "pending_db_flush",
+    "content_refinement_queue",
 })
 
 # When backlog exceeds this, use backlog-mode interval so we run more often

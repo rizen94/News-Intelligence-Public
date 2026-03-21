@@ -5,7 +5,7 @@
 
 import { useNavigate } from 'react-router-dom';
 import { useDomain } from '../contexts/DomainContext';
-import { isValidDomain, DomainKey } from '../utils/domainHelper';
+import { isValidDomain, DomainKey, getPathAfterDomain } from '../utils/domainHelper';
 
 export const useDomainNavigation = () => {
   const { domain } = useDomain();
@@ -35,8 +35,7 @@ export const useDomainNavigation = () => {
     if (preservePath) {
       // Get current path without domain
       const currentPath = window.location.pathname;
-      const pathMatch = currentPath.match(/^\/(?:politics|finance|science-tech)(\/.*)?$/);
-      const pathWithoutDomain = pathMatch?.[1] || '/dashboard';
+      const pathWithoutDomain = getPathAfterDomain(currentPath);
       navigate(`/${newDomain}${pathWithoutDomain}`);
     } else {
       navigate(`/${newDomain}/dashboard`);

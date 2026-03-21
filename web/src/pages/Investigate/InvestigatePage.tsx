@@ -24,6 +24,7 @@ import {
 import Add from '@mui/icons-material/Add';
 import { contextCentricApi, type TrackedEvent } from '@/services/api/contextCentric';
 import { useDomain } from '@/contexts/DomainContext';
+import { DOMAIN_KEYS_LIST } from '@/utils/domainHelper';
 
 const EVENT_TYPE_COLORS: Record<string, 'error' | 'warning' | 'info' | 'success' | 'default'> = {
   conflict: 'error',
@@ -37,7 +38,7 @@ const EVENT_TYPE_COLORS: Record<string, 'error' | 'warning' | 'info' | 'success'
   market_event: 'warning',
 };
 
-const DOMAIN_KEYS = ['politics', 'finance', 'science-tech'];
+const DOMAIN_KEYS = DOMAIN_KEYS_LIST;
 const EVENT_TYPES = ['election', 'legislation', 'investigation', 'policy', 'economic', 'diplomatic', 'conflict', 'disaster', 'market_event'];
 
 const emptyForm = {

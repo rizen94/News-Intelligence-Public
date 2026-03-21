@@ -16,6 +16,8 @@ const Header: React.FC = () => {
       return { bg: '#2e7d32', text: '#fff' }; // Green
     case 'science-tech':
       return { bg: '#7b1fa2', text: '#fff' }; // Purple
+    case 'legal':
+      return { bg: '#455a64', text: '#fff' }; // Blue-grey
     default:
       return { bg: '#616161', text: '#fff' }; // Gray
     }

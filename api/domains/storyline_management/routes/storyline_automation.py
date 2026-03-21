@@ -5,6 +5,7 @@ API endpoints for managing RAG-enhanced article discovery and automation control
 
 from fastapi import APIRouter, HTTPException, BackgroundTasks, Path, Query, Body
 from typing import List, Dict, Any, Optional
+from shared.domain_registry import DOMAIN_PATH_PATTERN
 from datetime import datetime, timedelta
 import logging
 import json
@@ -26,7 +27,7 @@ router = APIRouter(
 
 @router.get("/{domain}/storylines/{storyline_id}/automation/settings")
 async def get_domain_automation_settings(
-    domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     storyline_id: int = Path(..., description="Storyline ID")
 ):
     """Get automation settings for a storyline in a specific domain"""
@@ -95,7 +96,7 @@ async def get_domain_automation_settings(
 
 @router.put("/{domain}/storylines/{storyline_id}/automation/settings")
 async def update_domain_automation_settings(
-    domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     storyline_id: int = Path(..., description="Storyline ID"),
     settings: Dict[str, Any] = Body(...)
 ):
@@ -172,7 +173,7 @@ async def update_domain_automation_settings(
 
 @router.post("/{domain}/storylines/{storyline_id}/automation/discover")
 async def discover_domain_articles(
-    domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     storyline_id: int = Path(..., description="Storyline ID"),
     force_refresh: bool = Query(False)
 ):
@@ -199,7 +200,7 @@ async def discover_domain_articles(
 
 @router.get("/{domain}/storylines/{storyline_id}/automation/suggestions")
 async def get_domain_article_suggestions(
-    domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     storyline_id: int = Path(..., description="Storyline ID"),
     status: Optional[str] = Query(None)
 ):
@@ -286,7 +287,7 @@ async def get_domain_article_suggestions(
 
 @router.post("/{domain}/storylines/{storyline_id}/automation/suggestions/{suggestion_id}/approve")
 async def approve_domain_suggestion(
-    domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     storyline_id: int = Path(..., description="Storyline ID"),
     suggestion_id: int = Path(..., description="Suggestion ID")
 ):
@@ -372,7 +373,7 @@ async def approve_domain_suggestion(
 
 @router.post("/{domain}/storylines/{storyline_id}/automation/suggestions/{suggestion_id}/reject")
 async def reject_domain_suggestion(
-    domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     storyline_id: int = Path(..., description="Storyline ID"),
     suggestion_id: int = Path(..., description="Suggestion ID"),
     reason: Optional[str] = Body(None)

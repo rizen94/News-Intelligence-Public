@@ -5,6 +5,7 @@ Handles RSS feed processing, article ingestion, and content quality assessment
 
 from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks, Path, Query, Body
 from typing import List, Dict, Any, Optional
+from shared.domain_registry import DOMAIN_PATH_PATTERN
 from datetime import datetime, timedelta
 import logging
 import time
@@ -64,7 +65,7 @@ async def health_check():
 
 @router.get("/{domain}/rss_feeds")
 async def get_domain_rss_feeds(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$")
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN)
 ):
     """Get all configured RSS feeds for a specific domain"""
     try:
@@ -167,7 +168,7 @@ def _get_schema_for_domain(conn, domain: str):
 
 @router.post("/{domain}/rss_feeds")
 async def create_domain_rss_feed(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     feed_data: Dict[str, Any] = Body(...),
 ):
     """Create a new RSS feed in the given domain with duplicate prevention."""
@@ -218,7 +219,7 @@ async def create_domain_rss_feed(
 
 @router.put("/{domain}/rss_feeds/{feed_id}")
 async def update_domain_rss_feed(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     feed_id: int = Path(..., description="Feed ID"),
     feed_data: Dict[str, Any] = Body(...),
 ):
@@ -282,7 +283,7 @@ async def update_domain_rss_feed(
 
 @router.delete("/{domain}/rss_feeds/{feed_id}")
 async def delete_domain_rss_feed(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     feed_id: int = Path(..., description="Feed ID"),
 ):
     """Delete an RSS feed from the given domain."""
@@ -323,7 +324,7 @@ async def create_rss_feed(feed_data: Dict[str, Any] = Body(...)):
 
 @router.post("/{domain}/rss_feeds/collect_now")
 async def collect_rss_feeds_now(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$")
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN)
 ):
     """Trigger immediate RSS feed collection and wait for completion"""
     try:
@@ -379,7 +380,7 @@ async def fetch_articles_from_feeds(background_tasks: BackgroundTasks):
 
 @router.get("/{domain}/articles")
 async def get_domain_articles(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$", description="Domain key"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN, description="Domain key"),
     limit: int = Query(50, ge=1, le=100, description="Maximum number of articles (max 100 for performance)"),
     offset: int = Query(0, ge=0, description="Number of articles to skip"),
     hours: Optional[int] = Query(None, ge=1, description="Filter articles from last N hours"),
@@ -446,7 +447,7 @@ async def get_domain_articles(
 
 @router.get("/{domain}/articles/{article_id}")
 async def get_domain_article(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     article_id: int = Path(..., description="Article ID")
 ):
     """Get a single article by ID from a specific domain"""
@@ -480,7 +481,7 @@ async def get_domain_article(
 
 @router.delete("/{domain}/articles/{article_id}")
 async def delete_domain_article(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     article_id: int = Path(..., description="Article ID")
 ):
     """Delete an article from a specific domain"""
@@ -522,7 +523,7 @@ async def delete_domain_article(
 
 @router.delete("/{domain}/articles")
 async def delete_domain_articles_bulk(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     article_ids: List[int] = Body(..., description="List of article IDs to delete")
 ):
     """Bulk delete articles from a specific domain"""

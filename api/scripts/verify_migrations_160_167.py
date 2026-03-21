@@ -19,6 +19,7 @@ Checks:
   177  politics.articles.timeline_processed + politics.article_entities (domain event/entity pipeline)
   178  politics.articles.timeline_events_generated (event_extraction article UPDATE)
   179  politics (sample) story_entity_index for story_continuation matching
+  180  legal.* core tables — only when public.domains.domain_key = 'legal' exists (optional domain)
 """
 
 import os
@@ -208,7 +209,7 @@ def main():
         conn.close()
 
     print("=" * 60)
-    print("Migration verification (133, 160–172, 176, 177, 178, 179)")
+    print("Migration verification (133, 160–172, 176, 177, 178, 179, 180 if legal registered)")
     print("=" * 60)
     for s in ok:
         print(f"  OK   {s}")
@@ -216,7 +217,10 @@ def main():
         print(f"  MISS {s}")
     print("=" * 60)
     if missing:
-        print("Apply missing migrations under api/database/migrations/, then run this script again.")
+        print(
+            "Apply missing migrations (active: api/database/migrations/; "
+            "archived: api/database/migrations/archive/historical/), then run this script again."
+        )
         sys.exit(1)
     print("All checked migrations are present.")
     return 0

@@ -1,7 +1,15 @@
 /**
- * News Intelligence — Intelligence Dashboard (rebuild).
- * React + Vite + MUI. Layout: Hero status bar + sidebar nav (Discover, Investigate, Monitor, Analyze).
- * See docs/WEB_PRODUCT_DISPLAY_PLAN.md.
+ * News Intelligence — web SPA entry (React + Vite + MUI).
+ *
+ * Routing: React Router wraps the app; routes live under `/:domain/*` (e.g.
+ * `/politics/dashboard`) via MainLayout. Valid domains: politics | finance |
+ * science-tech | legal (see `utils/domainHelper` and AGENTS.md).
+ *
+ * API calls: `apiConnectionManager` sets base URL and domain for `/api/{domain}/...`
+ * and global `/api/...` routes (see docs/WEB_API_CONNECTIONS.md).
+ *
+ * Layout: Hero status bar + sidebar (Discover, Investigate, Monitor, Analyze).
+ * See docs/WEB_PRODUCT_DISPLAY_PLAN.md for product notes.
  */
 import React, { useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
@@ -30,6 +38,7 @@ import ProcessedDocumentDetailPage from './pages/Investigate/ProcessedDocumentDe
 import NarrativeThreadsPage from './pages/Investigate/NarrativeThreadsPage';
 import EntityDossierPage from './pages/Investigate/EntityDossierPage';
 import MonitorPage from './pages/Monitor/MonitorPage';
+import SqlExplorerPage from './pages/Monitor/SqlExplorerPage';
 import AnalyzePage from './pages/Analyze/AnalyzePage';
 import AuditChecklistPage from './pages/Audit/AuditChecklistPage';
 import CommodityDashboard from './pages/Finance/CommodityDashboard';
@@ -117,6 +126,7 @@ function App() {
                   <Route path="investigate/documents/:documentId" element={<ProcessedDocumentDetailPage />} />
                   <Route path="investigate/narrative-threads" element={<NarrativeThreadsPage />} />
                   <Route path="monitor" element={<MonitorPage />} />
+                  <Route path="monitor/sql-explorer" element={<SqlExplorerPage />} />
                   <Route path="audit-checklist" element={<AuditChecklistPage />} />
                   <Route path="analyze" element={<AnalyzePage />} />
                   <Route path="analysis" element={<FinancialAnalysis />} />

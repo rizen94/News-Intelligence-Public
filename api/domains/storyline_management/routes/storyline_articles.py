@@ -6,6 +6,7 @@ Managing articles within storylines (add, remove, list available)
 
 from fastapi import APIRouter, HTTPException, BackgroundTasks, Path, Query, Depends
 from typing import List, Optional
+from shared.domain_registry import DOMAIN_PATH_PATTERN
 from datetime import datetime
 import logging
 import math
@@ -23,7 +24,7 @@ router = APIRouter(
 )
 
 
-async def validate_domain_dependency(domain: str = Path(..., pattern="^(politics|finance|science-tech)$")) -> str:
+async def validate_domain_dependency(domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN)) -> str:
     """Dependency to validate domain"""
     if not validate_domain(domain):
         raise HTTPException(status_code=400, detail=f"Invalid or inactive domain: {domain}")

@@ -12,6 +12,7 @@ Features:
 
 from fastapi import APIRouter, HTTPException, Path, Query, Body
 from typing import Dict, Any, List, Optional
+from shared.domain_registry import DOMAIN_PATH_PATTERN
 from pydantic import BaseModel, Field
 import logging
 
@@ -79,7 +80,7 @@ class KnowledgeSearchRequest(BaseModel):
 @router.post("/{domain}/rag/query", response_model=RAGQueryResponse)
 async def rag_query(
     request: RAGQueryRequest,
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$")
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN)
 ):
     """
     Execute a domain-aware RAG query.
@@ -140,7 +141,7 @@ async def rag_query(
 
 @router.get("/{domain}/rag/quick", response_model=Dict[str, Any])
 async def rag_quick_query(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     q: str = Query(..., min_length=5, max_length=500, description="Quick query"),
     hours: int = Query(48, ge=1, le=168)
 ):
@@ -177,7 +178,7 @@ async def rag_quick_query(
 async def analyze_storyline_with_rag(
     storyline_id: int = Path(..., gt=0),
     request: StorylineAnalysisRequest = Body(...),
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$")
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN)
 ):
     """
     Analyze a storyline using RAG with domain knowledge.
@@ -245,7 +246,7 @@ async def analyze_storyline_with_rag(
 @router.get("/{domain}/rag/topic/{topic_name}", response_model=TopicContextResponse)
 async def get_topic_context(
     topic_name: str = Path(..., min_length=2),
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$")
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN)
 ):
     """
     Get enriched context for a topic.
@@ -275,7 +276,7 @@ async def get_topic_context(
 @router.post("/{domain}/rag/knowledge/search", response_model=Dict[str, Any])
 async def search_knowledge_base(
     request: KnowledgeSearchRequest,
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$")
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN)
 ):
     """
     Search the domain knowledge base.
@@ -305,7 +306,7 @@ async def search_knowledge_base(
 
 @router.get("/{domain}/rag/knowledge/entities", response_model=Dict[str, Any])
 async def list_domain_entities(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     entity_type: Optional[str] = Query(None, description="Filter by entity type")
 ):
     """
@@ -347,7 +348,7 @@ async def list_domain_entities(
 
 @router.get("/{domain}/rag/knowledge/terminology", response_model=Dict[str, Any])
 async def get_domain_terminology(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$")
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN)
 ):
     """
     Get all terminology definitions for a domain.
@@ -372,7 +373,7 @@ async def get_domain_terminology(
 
 @router.get("/{domain}/rag/knowledge/sources", response_model=Dict[str, Any])
 async def get_domain_sources(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     source_type: Optional[str] = Query(None, description="Filter by source type")
 ):
     """
@@ -468,7 +469,7 @@ Synthesize these perspectives into a cohesive cross-domain insight:"""
 @router.get("/{domain}/rag/entity/{entity_name}", response_model=Dict[str, Any])
 async def get_entity_details(
     entity_name: str = Path(..., min_length=2),
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$")
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN)
 ):
     """
     Get detailed information about a specific entity.

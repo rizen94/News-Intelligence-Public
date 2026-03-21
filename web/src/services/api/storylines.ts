@@ -109,6 +109,35 @@ export const storylinesApi = {
     }
   },
 
+  /**
+   * Queue storyline refinement (RAG analysis, ~70B finisher, timeline narrative). Workers drain the DB queue.
+   */
+  async enqueueStorylineRefinement(
+    id: string | number,
+    jobType:
+      | 'comprehensive_rag'
+      | 'narrative_finisher'
+      | 'timeline_narrative_chronological'
+      | 'timeline_narrative_briefing',
+    domain?: string,
+    priority: 'high' | 'medium' | 'low' = 'medium',
+  ) {
+    try {
+      const domainKey = domain || getCurrentDomain();
+      const response = await getApi().post(
+        `/api/${domainKey}/storylines/${id}/refinement_jobs`,
+        { job_type: jobType, priority },
+      );
+      return response.data;
+    } catch (error) {
+      Logger.apiError('Failed to enqueue storyline refinement', error as Error);
+      return {
+        success: false,
+        error: (error as any)?.response?.data?.detail || (error as Error).message,
+      };
+    }
+  },
+
   async createStoryline(
     storylineData: { title: string; description?: string; status?: string; article_ids?: number[] },
     domain?: string,

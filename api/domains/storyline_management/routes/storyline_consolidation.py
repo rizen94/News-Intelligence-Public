@@ -7,6 +7,7 @@ API endpoints for managing the background storyline consolidation service.
 import logging
 from typing import Dict, Any
 from fastapi import APIRouter, HTTPException, Path, Query, BackgroundTasks
+from shared.domain_registry import DOMAIN_PATH_PATTERN
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -64,7 +65,7 @@ async def run_consolidation_all_domains(background_tasks: BackgroundTasks):
 
 @router.post("/{domain}/storylines/consolidation/run")
 async def run_consolidation_domain(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     background: bool = Query(False, description="Run in background")
 ):
     """
@@ -101,7 +102,7 @@ async def run_consolidation_domain(
 
 @router.get("/{domain}/storylines/hierarchy")
 async def get_storyline_hierarchy(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     include_merged: bool = Query(False, description="Include merged storylines"),
     mega_only: bool = Query(False, description="Only show mega-storylines")
 ):
@@ -186,7 +187,7 @@ async def get_storyline_hierarchy(
 
 @router.get("/{domain}/storylines/mega")
 async def get_mega_storylines(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     limit: int = Query(20, ge=1, le=100)
 ):
     """
@@ -259,7 +260,7 @@ async def get_mega_storylines(
 
 @router.post("/{domain}/storylines/merge/{primary_id}/{secondary_id}")
 async def manual_merge_storylines(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     primary_id: int = Path(..., description="ID of the primary storyline to keep"),
     secondary_id: int = Path(..., description="ID of the storyline to merge into primary")
 ):
@@ -334,7 +335,7 @@ async def manual_merge_storylines(
 
 @router.get("/{domain}/storylines/{storyline_id}/related")
 async def get_related_storylines(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     storyline_id: int = Path(..., description="Storyline ID"),
     min_similarity: float = Query(0.3, ge=0.1, le=0.99)
 ):

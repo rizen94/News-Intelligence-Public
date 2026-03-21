@@ -40,9 +40,7 @@ FILES = [
 
 def main():
     from shared.database.connection import get_db_connection
-
-    api_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    migrations_dir = os.path.join(api_dir, "database", "migrations")
+    from shared.migration_sql_paths import resolve_migration_sql_file
 
     conn = get_db_connection()
     if not conn:
@@ -50,8 +48,9 @@ def main():
         sys.exit(1)
 
     for name in FILES:
-        path = os.path.join(migrations_dir, name)
-        if not os.path.exists(path):
+        try:
+            path = resolve_migration_sql_file(name)
+        except FileNotFoundError:
             print(f"SKIP (file missing): {name}")
             continue
         with open(path, encoding="utf-8") as f:

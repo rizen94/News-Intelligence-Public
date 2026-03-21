@@ -5,7 +5,8 @@ New routes should be added to feature-specific files (storyline_crud.py, storyli
 """
 
 from fastapi import APIRouter, HTTPException, BackgroundTasks, Path, Query, Body
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
+from shared.domain_registry import DOMAIN_PATH_PATTERN
 from datetime import datetime
 import logging
 
@@ -58,7 +59,7 @@ async def health_check():
 
 @router.get("/{domain}/storylines/emerging")
 async def get_domain_emerging_storylines(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     hours: int = Query(24, ge=1, le=168),
     min_articles: int = Query(3, ge=2, le=20)
 ):
@@ -83,7 +84,7 @@ async def get_domain_emerging_storylines(
 
 @router.get("/{domain}/storylines")
 async def get_domain_storylines(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     limit: int = Query(100, ge=1, le=200, description="Maximum number of storylines (max 200 for performance)"),
     offset: int = Query(0, ge=0, description="Number of storylines to skip"),
     status: Optional[str] = Query(None, description="Filter by status")
@@ -165,7 +166,7 @@ async def get_domain_storylines(
 
 @router.post("/{domain}/storylines")
 async def create_domain_storyline(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     storyline_data: Dict[str, Any] = None
 ):
     """Create a new storyline in a specific domain"""
@@ -203,7 +204,7 @@ async def create_domain_storyline(
 
 @router.put("/{domain}/storylines/{storyline_id}")
 async def update_domain_storyline(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     storyline_id: int = Path(..., description="Storyline ID"),
     storyline_data: Dict[str, Any] = None
 ):
@@ -268,7 +269,7 @@ async def update_domain_storyline(
 
 @router.delete("/{domain}/storylines/{storyline_id}")
 async def delete_domain_storyline(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     storyline_id: int = Path(..., description="Storyline ID")
 ):
     """Delete a storyline and all its associated articles in a specific domain"""
@@ -319,7 +320,7 @@ async def delete_domain_storyline(
 
 @router.delete("/{domain}/storylines/{storyline_id}/articles/{article_id}")
 async def remove_article_from_domain_storyline(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     storyline_id: int = Path(..., description="Storyline ID"),
     article_id: int = Path(..., description="Article ID"),
     background_tasks: BackgroundTasks = None
@@ -390,7 +391,7 @@ async def remove_article_from_domain_storyline(
 
 @router.post("/{domain}/storylines/{storyline_id}/articles/{article_id}")
 async def add_article_to_domain_storyline(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     storyline_id: int = Path(..., description="Storyline ID"),
     article_id: int = Path(..., description="Article ID"),
     request: Dict[str, Any] = None,
@@ -476,7 +477,7 @@ async def add_article_to_domain_storyline(
 
 @router.get("/{domain}/storylines/{storyline_id}/available_articles")
 async def get_domain_available_articles_for_storyline(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     storyline_id: int = Path(..., description="Storyline ID"),
     limit: int = Query(50, ge=1, le=100),  # Max 100 for performance
     search: Optional[str] = Query(None)
@@ -549,7 +550,7 @@ async def get_domain_available_articles_for_storyline(
 
 @router.get("/{domain}/storylines/{storyline_id}")
 async def get_domain_storyline(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     storyline_id: int = Path(..., description="Storyline ID")
 ):
     """Get a single storyline with all its articles from a specific domain"""
@@ -636,7 +637,7 @@ async def get_domain_storyline(
 
 @router.post("/{domain}/storylines/{storyline_id}/add_article")
 async def add_article_to_domain_storyline_by_id(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     storyline_id: int = Path(..., description="Storyline ID"),
     request: Dict[str, Any] = None
 ):
@@ -705,7 +706,7 @@ async def add_article_to_domain_storyline_by_id(
 
 @router.post("/{domain}/storylines/{storyline_id}/analyze")
 async def analyze_domain_storyline(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     storyline_id: int = Path(..., description="Storyline ID"),
     background_tasks: BackgroundTasks = None
 ):
@@ -747,16 +748,30 @@ async def analyze_domain_storyline(
                 
                 if not articles:
                     raise HTTPException(status_code=400, detail="No articles in storyline")
-                
-                # Start RAG analysis
-                background_tasks.add_task(process_storyline_rag_analysis, domain, storyline_id, storyline, articles)
-                
+
+                from services.content_refinement_queue_service import (
+                    enqueue_content_refinement,
+                    JOB_COMPREHENSIVE_RAG,
+                )
+
+                enq = enqueue_content_refinement(
+                    domain, storyline_id, JOB_COMPREHENSIVE_RAG, priority="medium"
+                )
+                if not enq.get("success"):
+                    raise HTTPException(
+                        status_code=500,
+                        detail=enq.get("error", "Failed to queue analysis"),
+                    )
+                _ = background_tasks
+
                 return {
                     "success": True,
-                    "message": "Storyline RAG analysis started",
+                    "message": enq.get("message", "Queued for background processing"),
                     "storyline_id": storyline_id,
                     "articles_count": len(articles),
-                    "timestamp": datetime.now().isoformat()
+                    "queue_id": enq.get("queue_id"),
+                    "already_queued": enq.get("already_queued", False),
+                    "timestamp": datetime.now().isoformat(),
                 }
                 
         finally:
@@ -768,7 +783,7 @@ async def analyze_domain_storyline(
 
 @router.get("/{domain}/storylines/{storyline_id}/timeline")
 async def get_domain_storyline_timeline(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     storyline_id: int = Path(..., description="Storyline ID")
 ):
     """Get chronological timeline for a storyline in a specific domain"""
@@ -856,7 +871,7 @@ async def get_domain_storyline_timeline(
 
 @router.get("/{domain}/storylines/{storyline_id}/suggestions")
 async def get_domain_storyline_suggestions(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     storyline_id: int = Path(..., description="Storyline ID")
 ):
     """Get AI-powered storyline suggestions in a specific domain"""
@@ -934,7 +949,7 @@ async def get_domain_storyline_suggestions(
 
 @router.post("/{domain}/storylines/{storyline_id}/evolve")
 async def evolve_domain_storyline(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     storyline_id: int = Path(..., description="Storyline ID"),
     new_article_ids: Optional[List[int]] = Body(None),
     force_evolution: bool = Query(False)
@@ -962,7 +977,7 @@ async def evolve_domain_storyline(
 
 @router.post("/{domain}/storylines/{storyline_id}/assess_quality")
 async def assess_domain_storyline_quality(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     storyline_id: int = Path(..., description="Storyline ID")
 ):
     """Assess storyline quality"""
@@ -986,7 +1001,7 @@ async def assess_domain_storyline_quality(
 
 @router.get("/{domain}/storylines/{storyline_id}/validate_accuracy")
 async def validate_domain_storyline_accuracy(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     storyline_id: int = Path(..., description="Storyline ID")
 ):
     """Validate factual accuracy of storyline"""
@@ -1010,7 +1025,7 @@ async def validate_domain_storyline_accuracy(
 
 @router.get("/{domain}/storylines/{storyline_id}/suggestions_improvements")
 async def get_domain_storyline_improvements(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     storyline_id: int = Path(..., description="Storyline ID")
 ):
     """Get improvement suggestions for storyline"""
@@ -1034,7 +1049,7 @@ async def get_domain_storyline_improvements(
 
 @router.get("/{domain}/storylines/{storyline_id}/report")
 async def get_domain_storyline_report(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     storyline_id: int = Path(..., description="Storyline ID"),
     report_type: str = Query("comprehensive", regex="^(comprehensive|executive|summary)$")
 ):
@@ -1059,7 +1074,7 @@ async def get_domain_storyline_report(
 
 @router.post("/{domain}/storylines/{storyline_id}/rag_analysis")
 async def perform_domain_rag_analysis(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     storyline_id: int = Path(..., description="Storyline ID"),
     background_tasks: BackgroundTasks = None
 ):
@@ -1067,25 +1082,28 @@ async def perform_domain_rag_analysis(
     try:
         if not validate_domain(domain):
             raise HTTPException(status_code=400, detail=f"Invalid domain: {domain}")
-        
-        rag_service = RAGAnalysisService(domain=domain)
-        
-        # Run in background for long-running analysis
-        if background_tasks:
-            background_tasks.add_task(
-                perform_rag_analysis_background, domain, storyline_id
+
+        from services.content_refinement_queue_service import (
+            enqueue_content_refinement,
+            JOB_COMPREHENSIVE_RAG,
+        )
+
+        enq = enqueue_content_refinement(
+            domain, storyline_id, JOB_COMPREHENSIVE_RAG, priority="medium"
+        )
+        if not enq.get("success"):
+            raise HTTPException(
+                status_code=500,
+                detail=enq.get("error", "Failed to queue analysis"),
             )
-            return {
-                "success": True,
-                "message": "RAG analysis started in background",
-                "storyline_id": storyline_id
-            }
-        else:
-            result = await rag_service.perform_comprehensive_analysis(storyline_id)
-            if result.get("success"):
-                return result
-            else:
-                raise HTTPException(status_code=500, detail=result.get("error", "Analysis failed"))
+        _ = background_tasks
+        return {
+            "success": True,
+            "message": enq.get("message", "Queued for background processing"),
+            "storyline_id": storyline_id,
+            "queue_id": enq.get("queue_id"),
+            "already_queued": enq.get("already_queued", False),
+        }
             
     except HTTPException:
         raise
@@ -1094,16 +1112,27 @@ async def perform_domain_rag_analysis(
         raise HTTPException(status_code=500, detail=str(e))
 
 async def perform_rag_analysis_background(domain: str, storyline_id: int):
-    """Background task for RAG analysis"""
+    """Enqueue storyline analysis for workers (replaces ad-hoc background LLM)."""
     try:
-        rag_service = RAGAnalysisService(domain=domain)
-        result = await rag_service.perform_comprehensive_analysis(storyline_id)
-        if result.get("success"):
-            logger.info(f"RAG analysis completed for storyline {storyline_id}")
+        from services.content_refinement_queue_service import (
+            enqueue_content_refinement,
+            JOB_COMPREHENSIVE_RAG,
+        )
+
+        enq = enqueue_content_refinement(
+            domain, storyline_id, JOB_COMPREHENSIVE_RAG, priority="medium"
+        )
+        if enq.get("success"):
+            logger.info(
+                "Queued comprehensive_rag for storyline %s domain=%s queue_id=%s",
+                storyline_id,
+                domain,
+                enq.get("queue_id"),
+            )
         else:
-            logger.warning(f"RAG analysis failed: {result.get('error')}")
+            logger.warning("enqueue comprehensive_rag failed: %s", enq.get("error"))
     except Exception as e:
-        logger.error(f"Error in background RAG analysis: {e}")
+        logger.error(f"Error enqueueing RAG analysis: {e}")
 
 async def trigger_storyline_evolution(domain: str, storyline_id: int, new_article_ids: Optional[List[int]] = None):
     """
@@ -1132,7 +1161,7 @@ async def trigger_storyline_evolution(domain: str, storyline_id: int, new_articl
 
 @router.get("/{domain}/storylines/{storyline_id}/correlations")
 async def get_domain_storyline_correlations(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     storyline_id: int = Path(..., description="Storyline ID")
 ):
     """Find correlations with other storylines"""
@@ -1156,7 +1185,7 @@ async def get_domain_storyline_correlations(
 
 @router.post("/{domain}/storylines/detect")
 async def detect_domain_storylines(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     hours: int = Query(24, ge=1, le=168),
     min_articles: int = Query(3, ge=2, le=20)
 ):
@@ -1181,7 +1210,7 @@ async def detect_domain_storylines(
 
 @router.get("/{domain}/storylines/correlations")
 async def get_domain_storyline_correlations_all(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$")
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN)
 ):
     """Get all storyline correlations"""
     try:
@@ -1204,7 +1233,7 @@ async def get_domain_storyline_correlations_all(
 
 @router.get("/{domain}/storylines/{storyline_id}/predict")
 async def predict_domain_storyline_developments(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     storyline_id: int = Path(..., description="Storyline ID")
 ):
     """Predict potential future developments in storyline"""
@@ -1227,6 +1256,49 @@ async def predict_domain_storyline_developments(
         raise HTTPException(status_code=500, detail=str(e))
 
 # Background task functions
+def load_rag_analysis_inputs_for_queue(
+    domain: str, storyline_id: int,
+) -> Optional[Tuple[tuple, List[tuple]]]:
+    """
+    Load (storyline_row, articles_rows) for process_storyline_rag_analysis.
+    storyline_row: (title, description, analysis_summary). Returns None if missing/no articles.
+    """
+    schema = domain.replace("-", "_")
+    conn = get_db_connection()
+    if not conn:
+        return None
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT s.title, s.description, s.analysis_summary
+                FROM {schema}.storylines s
+                WHERE s.id = %s
+                """,
+                (storyline_id,),
+            )
+            storyline = cur.fetchone()
+            if not storyline:
+                return None
+            cur.execute(
+                f"""
+                SELECT a.id, a.title, a.content, a.summary, a.published_at, a.source_domain, a.url
+                FROM {schema}.articles a
+                JOIN {schema}.storyline_articles sa ON a.id = sa.article_id
+                WHERE sa.storyline_id = %s
+                  AND (a.enrichment_status IS NULL OR a.enrichment_status != 'removed')
+                ORDER BY a.published_at ASC
+                """,
+                (storyline_id,),
+            )
+            articles = cur.fetchall()
+            if not articles:
+                return None
+            return (storyline, articles)
+    finally:
+        conn.close()
+
+
 async def process_storyline_rag_analysis(domain: str, storyline_id: int, storyline: tuple, articles: List[tuple]):
     """Background task for RAG-enhanced storyline analysis"""
     try:

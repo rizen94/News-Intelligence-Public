@@ -281,3 +281,76 @@ domains:
       models, new materials) enable or constrain others. When inferring connections
       across fields, only do so when the article or well-known public facts support
       them; otherwise say unknown or not stated.
+
+  legal:
+    focus_areas:
+      - Newton and Greater Boston local ordinances, municipal law, and city/county proceedings
+      - Massachusetts state legislation, regulations, and appellate decisions when reported in news
+      - Massachusetts courts and agencies (Trial Court, SJC when in public reporting, AG office)
+      - Federal statutes, regulations, and federal court outcomes as covered in general news
+      - New and amended laws: effective dates, scope, and implementation milestones
+      - Court proceedings and docket-style developments when the article provides enough detail
+      - Stakeholder effects: who benefits, who bears costs, and documented opposition or support
+      - Pros and cons as balanced tradeoffs stated in or implied by sources—not legal advice
+
+    event_type_priorities:
+      - legislation
+      - court_ruling
+      - regulatory
+      - policy_change
+      - policy_decision
+      - investigation
+      - public_statement
+      - appointment
+      - agreement
+      - report_release
+      - diplomatic
+
+    entity_type_weights:
+      organization: 1.0   # courts, agencies, firms, municipalities
+      person: 0.85        # judges, legislators, parties when named
+      location: 0.75      # Newton, Boston, Massachusetts, federal circuits
+      legislation_id: 1.0 # bills, docket references when present in text
+      case_number: 0.95
+
+    storyline_patterns:
+      - bill-to-law arcs (introduction, committee, vote, signature, effective date)
+      - litigation arcs (filing, hearing, ruling, appeal when reported)
+      - regulatory rulemaking (proposal, comment period, final rule, enforcement)
+      - local ordinance cycles (hearing, vote, implementation)
+      - federal–state interaction (preemption, funding, enforcement shifts)
+
+    editorial_sections:
+      - What Changed
+      - Jurisdiction and Authority
+      - Effective Dates and Scope
+      - Stakeholder Impacts
+      - Support and Opposition
+      - Open Questions and Next Steps
+
+    topic_filter:
+      exclude_keywords:
+        - super bowl
+        - world series
+        - nba finals
+        - celebrity gossip
+        - red carpet
+        - fantasy football
+        - unboxing
+        - phone case
+      exclude_categories:
+        - entertainment
+        - sports
+        - celebrity
+
+    llm_context: >
+      You are analyzing legal and law-related news for readers who care about
+      Newton and West Newton, Greater Boston, Massachusetts state law and courts,
+      and federal law—in that order of priority when geographic relevance is unclear.
+      Emphasize court proceedings, new or amended statutes and regulations, and how
+      measures are applied in practice (enforcement, compliance deadlines, local
+      implementation). When summarizing or comparing positions, frame pros and cons
+      as stakeholder effects and tradeoffs grounded in the article; do not provide
+      legal advice or invent citations, docket numbers, or statutory sections not
+      present in the text. Distinguish holdings from commentary when the source does.
+      Prefer neutral, factual reporting; flag uncertainty when sources conflict.

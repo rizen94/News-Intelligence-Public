@@ -32,18 +32,17 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 def main():
     from shared.database.connection import get_db_connection
-
-    api_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    migrations_dir = os.path.join(api_dir, "database", "migrations")
+    from shared.migration_sql_paths import resolve_migration_sql_file
 
     for name in (
         "142_context_centric_foundation.sql",
         "143_context_centric_entity_claims.sql",
         "144_v6_events_entity_dossiers.sql",
     ):
-        migration_path = os.path.join(migrations_dir, name)
-        if not os.path.exists(migration_path):
-            print(f"ERROR: Migration file not found: {migration_path}")
+        try:
+            migration_path = resolve_migration_sql_file(name)
+        except FileNotFoundError as e:
+            print(f"ERROR: {e}")
             sys.exit(1)
 
         with open(migration_path, encoding="utf-8") as f:

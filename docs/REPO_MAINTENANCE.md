@@ -8,7 +8,7 @@ Keep the repo and Cursor context manageable so Git and the AI use resources resp
 
 ## What’s ignored (and why)
 
-- **`.gitignore`** — Git does not track: venvs (`.venv/`, `.venv.backup/`), `node_modules/`, logs, `data/`, `archive/`, secrets, backups, `scripts/pi_reports/`, and the usual Python/IDE/OS cruft. See project root `.gitignore` for the full list.
+- **`.gitignore`** — Git does not track: venvs (`.venv/`, `.venv.backup/`), `node_modules/`, logs, `data/`, `archive/`, `.env`, `.db_password_widow`, `api/config/.secrets`, backups, `scripts/pi_reports/`, and the usual Python/IDE/OS cruft. See project root `.gitignore` for the full list. Periodically run `git grep -iE 'password|api_key|secret' -- ':!docs/_archive' ':!archive'` to spot accidental literals (triage; many hits will be docs or env var *names*).
 - **`.cursorignore`** — Cursor skips the same heavy/generated dirs when building context, plus `docs/_archive/`, `uv.lock`, and a few very large single files (`tests/unit/test_finance_market_data_store.py`, `web/DEVELOPMENT_SETUP.md`, `api/_archived/`) to avoid overloading indexing. That keeps the context window focused and can reduce crashes.
 
 ## Commit in smaller, logical chunks
@@ -52,9 +52,29 @@ Smaller commits mean smaller diffs, faster operations, and easier history.
 - **`.venv.backup`** — If you no longer need it, remove it to free several GB: `rm -rf .venv.backup` (it’s ignored by Git and Cursor).
 - **Old docs** — Keep superseded plans in `docs/_archive/`; they’re ignored by Cursor but still in Git for reference.
 
+## Where to put retired material (archive layout)
+
+| Location | Use for |
+|----------|---------|
+| **`archive/`** (repo root) | Planning packs, exports, non-markdown history, large attachments. Listed in [DOCS_INDEX.md](DOCS_INDEX.md) § Archived. Git may ignore per `.gitignore` — confirm before relying on Git history for these paths. |
+| **`docs/_archive/`** | Superseded **Markdown** guides, old release notes (`_archive/releases/`), consolidated copies of merged docs (`_archive/consolidated/`). Still versioned unless excluded. |
+| **`scripts/archive/`** | Retired **scripts** (one-off migrations, deprecated daemons). Do not delete without checking `SCRIPTS_INDEX.md`. |
+| **`api/_archived/`**, **`web/_archived_duplicates/`** | Retired **code** only; follow “reuse before create” — restore from here before re-implementing. |
+| **`docs/generated/`** | Pointer [generated/README.md](generated/README.md) — documents script-emitted reports; reports may still live as `docs/*_REPORT.md` at repo root for tooling compatibility. |
+
+When you **merge** two docs, move the superseded file under `docs/_archive/consolidated/` with a one-line “Status: superseded by …” banner and update [DOCS_INDEX.md](DOCS_INDEX.md) (prefer updating the index over leaving stale top-level paths).
+
+## Documentation inventory (quick)
+
+- **Canonical index:** [DOCS_INDEX.md](DOCS_INDEX.md)
+- **Orientation:** [PROJECT_OVERVIEW.md](PROJECT_OVERVIEW.md) (includes capabilities + scope summaries; full matrices in `_archive/consolidated/`)
+- **Setup:** [SETUP_ENV_AND_RUNTIME.md](SETUP_ENV_AND_RUNTIME.md)
+- **Security:** [SECURITY_OPERATIONS.md](SECURITY_OPERATIONS.md)
+- **Generated reports:** [generated/README.md](generated/README.md)
+
 ## Merging branches and resolving conflicts
 
-- **Current branches:** `master`, `production`, `production-rtx5090-optimized` (and feature branches). Prefer merging into `master` first, then `production` when ready.
+- **Branches:** Prefer **one mainline** (`master`) for day-to-day work; use tags for frozen snapshots (see § Single main branch above).
 - **Before merge:** Commit (or stash) all local changes. Run `./status_system.sh` and a quick API health check so the tree you merge is known-good.
 - **Conflict resolution:** If `git merge` reports conflicts:
   1. `git status` — lists conflicted files (e.g. `api/main_v4.py`, `start_system.sh`).

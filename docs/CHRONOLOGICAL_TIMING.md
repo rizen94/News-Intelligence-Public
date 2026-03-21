@@ -38,4 +38,4 @@ Run migration **161** so `automation_run_history` exists:
 PYTHONPATH=api .venv/bin/python3 api/scripts/run_migrations_155_to_160.py
 ```
 
-(See SETUP_AND_DEPLOYMENT.md for full migration steps.)
+(See [SETUP_ENV_AND_RUNTIME.md](SETUP_ENV_AND_RUNTIME.md) and [DATABASE.md](DATABASE.md) for migration pointers.)

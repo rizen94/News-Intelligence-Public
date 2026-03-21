@@ -5,6 +5,7 @@ Handles topic extraction, assignment, and iterative learning feedback
 
 from fastapi import APIRouter, HTTPException, BackgroundTasks, Query, Body, Path
 from typing import List, Dict, Any, Optional
+from shared.domain_registry import DOMAIN_PATH_PATTERN
 from pydantic import BaseModel
 import logging
 from datetime import datetime
@@ -119,7 +120,7 @@ async def health_check():
 
 @router.get("/{domain}/topics")
 async def get_domain_topics(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     limit: int = Query(50, ge=1, le=100),  # Max 100 for performance
     offset: int = Query(0, ge=0),
     category: Optional[str] = None,
@@ -459,7 +460,7 @@ async def update_topic(
 
 @router.get("/{domain}/articles/{article_id}/topics")
 async def get_domain_article_topics(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     article_id: int = Path(..., description="Article ID")
 ):
     """Get all topics assigned to an article in a specific domain"""

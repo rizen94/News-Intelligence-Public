@@ -3,6 +3,11 @@ Shared Database Connection Module for News Intelligence System v7
 With connection pooling for improved performance over SSH tunnel.
 Single source of truth for all DB connections (psycopg2 + SQLAlchemy).
 
+Reviewers: all application and script DB access should go through
+``get_db_connection`` / ``get_db_connection_context`` here — not raw ``psycopg2.connect``
+or duplicate env parsing. Config is **only** ``DB_*`` environment variables
+(see ``get_db_config``). Docker samples that use ``DATABASE_URL`` are not authoritative.
+
 Pool architecture (3 independent pools, same PostgreSQL instance):
   - Worker pool (psycopg2): background processing — DB_POOL_WORKER_MIN/MAX (default 4/48)
   - UI pool     (psycopg2): page loads & monitoring — DB_POOL_UI_MIN/MAX     (default 2/16)

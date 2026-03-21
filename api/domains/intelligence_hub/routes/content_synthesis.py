@@ -5,6 +5,7 @@ Provides endpoints for creating comprehensive, Wikipedia-style synthesized conte
 
 from fastapi import APIRouter, HTTPException, Path, Query, Body, BackgroundTasks
 from typing import Dict, Any, List, Optional
+from shared.domain_registry import DOMAIN_PATH_PATTERN
 from pydantic import BaseModel, Field
 from datetime import datetime
 import logging
@@ -64,7 +65,7 @@ class StorylineSynthesisResponse(BaseModel):
 async def synthesize_storyline(
     storyline_id: int = Path(..., gt=0),
     request: SynthesisRequest = Body(...),
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$")
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN)
 ):
     """
     Create comprehensive, Wikipedia-style content for a storyline.
@@ -111,7 +112,7 @@ async def synthesize_storyline(
 @router.get("/{domain}/synthesis/storyline/{storyline_id}/markdown")
 async def get_storyline_markdown(
     storyline_id: int = Path(..., gt=0),
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     depth: str = Query("comprehensive"),
     regenerate: bool = Query(False, description="Force regeneration even if cached")
 ):
@@ -163,7 +164,7 @@ async def get_storyline_markdown(
 @router.get("/{domain}/synthesis/storyline/{storyline_id}/cached", response_model=Dict[str, Any])
 async def get_cached_synthesis(
     storyline_id: int = Path(..., gt=0),
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$")
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN)
 ):
     """
     Get cached synthesized content if available.
@@ -205,7 +206,7 @@ async def get_cached_synthesis(
 @router.post("/{domain}/synthesis/topic", response_model=Dict[str, Any])
 async def synthesize_topic(
     request: TopicSynthesisRequest,
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$")
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN)
 ):
     """
     Create comprehensive, Wikipedia-style content about a topic.
@@ -251,7 +252,7 @@ async def synthesize_topic(
 @router.get("/{domain}/synthesis/topic/{topic_name}")
 async def get_topic_synthesis(
     topic_name: str = Path(..., min_length=3),
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     hours: int = Query(168, ge=24, le=720),
     depth: str = Query("standard"),
     format: str = Query("json")
@@ -294,7 +295,7 @@ async def get_topic_synthesis(
 
 @router.get("/{domain}/synthesis/breaking", response_model=Dict[str, Any])
 async def synthesize_breaking_news(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     hours: int = Query(24, ge=1, le=72),
     min_articles: int = Query(3, ge=2, le=10),
     format: str = Query("json")
@@ -346,7 +347,7 @@ synthesis_tasks: Dict[str, Dict[str, Any]] = {}
 async def bulk_synthesize_storylines(
     storyline_ids: List[int] = Body(..., min_items=1, max_items=20),
     depth: str = Body("standard"),
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     background_tasks: BackgroundTasks = None
 ):
     """
@@ -408,7 +409,7 @@ async def bulk_synthesize_storylines(
 @router.get("/{domain}/synthesis/tasks/{task_id}", response_model=Dict[str, Any])
 async def get_synthesis_task_status(
     task_id: str = Path(...),
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$")
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN)
 ):
     """
     Check status of a bulk synthesis task.
@@ -430,7 +431,7 @@ async def get_synthesis_task_status(
 @router.get("/{domain}/synthesis/quality/{storyline_id}", response_model=Dict[str, Any])
 async def check_synthesis_quality(
     storyline_id: int = Path(..., gt=0),
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$")
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN)
 ):
     """
     Analyze storyline and suggest improvements for synthesis quality.
@@ -502,7 +503,7 @@ async def check_synthesis_quality(
 @router.post("/{domain}/synthesis/mega/{mega_storyline_id}", response_model=Dict[str, Any])
 async def synthesize_mega_storyline(
     mega_storyline_id: int = Path(..., gt=0),
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     request: SynthesisRequest = Body(...)
 ):
     """

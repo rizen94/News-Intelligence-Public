@@ -38,6 +38,7 @@ import {
   type EntityProfile,
 } from '@/services/api/contextCentric';
 import { useDomain } from '@/contexts/DomainContext';
+import { isValidDomain, type DomainKey } from '@/utils/domainHelper';
 import ProvenancePanel, { entityDossierProvenanceRows } from '@/components/ProvenancePanel/ProvenancePanel';
 
 function entityIcon(type: string) {
@@ -74,7 +75,8 @@ export default function EntityDossierPage() {
   const navigate = useNavigate();
   const { domain: domainFromContext } = useDomain();
   // Use domain from URL so the entity is always fetched for the domain in the route (fixes "not found in domain" when context was a different domain)
-  const domainKey = domain && /^politics|finance|science-tech$/.test(domain) ? domain : domainFromContext;
+  const domainKey: DomainKey =
+    domain && isValidDomain(domain) ? (domain as DomainKey) : domainFromContext;
   const [synthesis, setSynthesis] = useState<EntitySynthesis | null>(null);
   const [profile, setProfile] = useState<EntityProfile | null>(null);
   const [loading, setLoading] = useState(true);

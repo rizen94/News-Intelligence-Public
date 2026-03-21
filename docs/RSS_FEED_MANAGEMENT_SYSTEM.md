@@ -194,7 +194,7 @@ python -m spacy download en_core_web_sm
 ### Database Migration
 ```sql
 -- Run the enhanced RSS feed registry migration
-\i api/database/migrations/013_enhanced_rss_feed_registry.sql
+\i api/database/migrations/archive/historical/013_enhanced_rss_feed_registry.sql
 ```
 
 ### Configuration

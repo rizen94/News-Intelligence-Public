@@ -6,6 +6,7 @@ Intelligent storyline evolution and quality assessment
 
 from fastapi import APIRouter, HTTPException, Path, Query, Depends
 from typing import Optional
+from shared.domain_registry import DOMAIN_PATH_PATTERN
 import logging
 
 from shared.services.domain_aware_service import validate_domain
@@ -25,7 +26,7 @@ router = APIRouter(
 )
 
 
-async def validate_domain_dependency(domain: str = Path(..., pattern="^(politics|finance|science-tech)$")) -> str:
+async def validate_domain_dependency(domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN)) -> str:
     """Dependency to validate domain"""
     if not validate_domain(domain):
         raise HTTPException(status_code=400, detail=f"Invalid domain: {domain}")

@@ -189,6 +189,16 @@ export interface StorylineDetail extends Storyline {
     has_dossier: boolean;
     profile_id: number | null;
   }>;
+  /** ~70B finisher + stored timeline narratives (migration 181) */
+  canonical_narrative?: string | null;
+  narrative_finisher_model?: string | null;
+  narrative_finisher_at?: string | null;
+  narrative_finisher_meta?: Record<string, unknown> | null;
+  timeline_narrative_chronological?: string | null;
+  timeline_narrative_briefing?: string | null;
+  timeline_narrative_chronological_at?: string | null;
+  timeline_narrative_briefing_at?: string | null;
+  refinement_jobs_pending?: string[];
 }
 
 export interface StorylineListItem extends Storyline {

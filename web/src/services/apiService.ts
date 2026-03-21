@@ -82,6 +82,7 @@ class APIService {
   getStorylineTimeline = storylinesApi.getStorylineTimeline;
   getStorylineAudit = storylinesApi.getStorylineAudit;
   getStorylineNarrative = storylinesApi.getStorylineNarrative;
+  enqueueStorylineRefinement = storylinesApi.enqueueStorylineRefinement;
   createStoryline = storylinesApi.createStoryline;
   updateStoryline = storylinesApi.updateStoryline;
   deleteStoryline = storylinesApi.deleteStoryline;
@@ -189,6 +190,9 @@ class APIService {
   getLogStatistics = monitoringApi.getLogStatistics;
   getRealtimeLogs = monitoringApi.getRealtimeLogs;
   getAPIStatus = monitoringApi.getAPIStatus;
+  getSqlExplorerEnabled = monitoringApi.getSqlExplorerEnabled;
+  getSqlExplorerSchema = monitoringApi.getSqlExplorerSchema;
+  postSqlExplorerQuery = monitoringApi.postSqlExplorerQuery;
   getDuplicateStats = monitoringApi.getDuplicateStats;
   detectDuplicates = monitoringApi.detectDuplicates;
   getURLDuplicates = monitoringApi.getURLDuplicates;

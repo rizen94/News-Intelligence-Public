@@ -6,6 +6,7 @@ RAG analysis, proactive detection, and advanced analysis features
 
 from fastapi import APIRouter, HTTPException, BackgroundTasks, Path, Query, Depends
 from typing import Optional
+from shared.domain_registry import DOMAIN_PATH_PATTERN
 import logging
 
 from shared.services.domain_aware_service import validate_domain
@@ -21,7 +22,7 @@ router = APIRouter(
 )
 
 
-async def validate_domain_dependency(domain: str = Path(..., pattern="^(politics|finance|science-tech)$")) -> str:
+async def validate_domain_dependency(domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN)) -> str:
     """Dependency to validate domain"""
     if not validate_domain(domain):
         raise HTTPException(status_code=400, detail=f"Invalid domain: {domain}")
@@ -125,77 +126,67 @@ async def get_domain_storyline_report(
 async def analyze_domain_storyline(
     domain: str = Depends(validate_domain_dependency),
     storyline_id: int = Path(..., description="Storyline ID", ge=1),
-    background_tasks: BackgroundTasks = None
+    background_tasks: BackgroundTasks = None,
 ):
-    """Generate comprehensive storyline analysis using RAG in a specific domain"""
+    """Queue comprehensive storyline analysis (RAG-style pipeline); workers process the queue — not ad-hoc HTTP LLM."""
     try:
-        from shared.database.connection import get_db_connection
         from datetime import datetime
-        
-        schema = domain.replace('-', '_')
-        
+        from shared.database.connection import get_db_connection
+        from services.content_refinement_queue_service import (
+            enqueue_content_refinement,
+            JOB_COMPREHENSIVE_RAG,
+        )
+
+        schema = domain.replace("-", "_")
+
         conn = get_db_connection()
         if not conn:
             raise HTTPException(status_code=500, detail="Database connection failed")
-        
+
         try:
             with conn.cursor() as cur:
-                # Get storyline and articles from domain schema
-                cur.execute(f"""
-                    SELECT s.title, s.description, s.analysis_summary
-                    FROM {schema}.storylines s
-                    WHERE s.id = %s
-                """, (storyline_id,))
-                
-                storyline = cur.fetchone()
-                if not storyline:
+                cur.execute(
+                    f"SELECT 1 FROM {schema}.storylines WHERE id = %s",
+                    (storyline_id,),
+                )
+                if not cur.fetchone():
                     raise HTTPException(status_code=404, detail="Storyline not found")
-                
-                cur.execute(f"""
-                    SELECT a.id, a.title, a.content, a.summary, a.published_at, a.source_domain, a.url
-                    FROM {schema}.articles a
-                    JOIN {schema}.storyline_articles sa ON a.id = sa.article_id
+                cur.execute(
+                    f"""
+                    SELECT COUNT(*) FROM {schema}.storyline_articles sa
+                    JOIN {schema}.articles a ON a.id = sa.article_id
                     WHERE sa.storyline_id = %s
                       AND (a.enrichment_status IS NULL OR a.enrichment_status != 'removed')
-                    ORDER BY a.published_at ASC
-                """, (storyline_id,))
-                
-                articles = cur.fetchall()
-                
-                if not articles:
+                    """,
+                    (storyline_id,),
+                )
+                article_count = int(cur.fetchone()[0] or 0)
+                if article_count == 0:
                     raise HTTPException(status_code=400, detail="No articles in storyline")
-                
-                # Start comprehensive analysis in background
-                if background_tasks:
-                    # Import the background task function
-                    from ..routes.storyline_management import process_storyline_rag_analysis
-                    
-                    # Trigger comprehensive processing (summary + timeline + breakdown)
-                    background_tasks.add_task(
-                        process_storyline_rag_analysis,
-                        domain,
-                        storyline_id,
-                        storyline,
-                        articles
-                    )
-                else:
-                    # Run synchronously if no background tasks
-                    rag_service = RAGAnalysisService(domain=domain)
-                    result = await rag_service.perform_comprehensive_analysis(storyline_id)
-                    if not result.get("success"):
-                        raise HTTPException(status_code=500, detail=result.get("error", "Analysis failed"))
-                
-                return {
-                    "success": True,
-                    "message": "Storyline RAG analysis started",
-                    "storyline_id": storyline_id,
-                    "articles_count": len(articles),
-                    "timestamp": datetime.now().isoformat()
-                }
-                
         finally:
             conn.close()
-            
+
+        enq = enqueue_content_refinement(
+            domain, storyline_id, JOB_COMPREHENSIVE_RAG, priority="medium"
+        )
+        if not enq.get("success"):
+            raise HTTPException(
+                status_code=500,
+                detail=enq.get("error", "Failed to queue analysis"),
+            )
+
+        _ = background_tasks  # legacy param; queue replaces FastAPI BackgroundTasks
+
+        return {
+            "success": True,
+            "message": enq.get("message", "Queued for background processing"),
+            "storyline_id": storyline_id,
+            "articles_count": article_count,
+            "queue_id": enq.get("queue_id"),
+            "already_queued": enq.get("already_queued", False),
+            "timestamp": datetime.now().isoformat(),
+        }
+
     except HTTPException:
         raise
     except Exception as e:
@@ -207,28 +198,48 @@ async def analyze_domain_storyline(
 async def perform_domain_rag_analysis(
     domain: str = Depends(validate_domain_dependency),
     storyline_id: int = Path(..., description="Storyline ID", ge=1),
-    background_tasks: BackgroundTasks = None
+    background_tasks: BackgroundTasks = None,
 ):
-    """Perform comprehensive RAG analysis"""
+    """Queue comprehensive storyline analysis (same worker job as POST .../analyze)."""
     try:
-        rag_service = RAGAnalysisService(domain=domain)
-        
-        # Run in background for long-running analysis
-        if background_tasks:
-            from ..routes.storyline_management import perform_rag_analysis_background
-            background_tasks.add_task(perform_rag_analysis_background, domain, storyline_id)
-            return {
-                "success": True,
-                "message": "RAG analysis started in background",
-                "storyline_id": storyline_id
-            }
-        else:
-            result = await rag_service.perform_comprehensive_analysis(storyline_id)
-            if result.get("success"):
-                return result
-            else:
-                raise HTTPException(status_code=500, detail=result.get("error", "RAG analysis failed"))
-            
+        from shared.database.connection import get_db_connection
+        from services.content_refinement_queue_service import (
+            enqueue_content_refinement,
+            JOB_COMPREHENSIVE_RAG,
+        )
+
+        schema = domain.replace("-", "_")
+        conn = get_db_connection()
+        if not conn:
+            raise HTTPException(status_code=500, detail="Database connection failed")
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"SELECT 1 FROM {schema}.storylines WHERE id = %s",
+                    (storyline_id,),
+                )
+                if not cur.fetchone():
+                    raise HTTPException(status_code=404, detail="Storyline not found")
+        finally:
+            conn.close()
+
+        enq = enqueue_content_refinement(
+            domain, storyline_id, JOB_COMPREHENSIVE_RAG, priority="medium"
+        )
+        if not enq.get("success"):
+            raise HTTPException(
+                status_code=500,
+                detail=enq.get("error", "Failed to queue analysis"),
+            )
+        _ = background_tasks
+        return {
+            "success": True,
+            "message": enq.get("message", "Queued for background processing"),
+            "storyline_id": storyline_id,
+            "queue_id": enq.get("queue_id"),
+            "already_queued": enq.get("already_queued", False),
+        }
+
     except HTTPException:
         raise
     except Exception as e:

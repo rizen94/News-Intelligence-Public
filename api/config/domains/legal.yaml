@@ -1,0 +1,45 @@
+# Legal intelligence silo — enable only after migration 180 + verify (see template doc).
+# domain_registry loads this only when is_active: true.
+
+domain_key: legal
+schema_name: legal
+display_name: Legal
+description: >-
+  Court decisions, legislation, regulatory enforcement, and legal news with
+  emphasis on Newton/West Newton and Greater Boston, Massachusetts state law,
+  and federal law — including implementation, proceedings, and stakeholder tradeoffs.
+display_order: 4
+is_active: false
+
+_instructions: |
+  After public.domains + schema legal exist, set is_active: true and ensure
+  web/src/utils/domainHelper.ts includes 'legal'. See docs/LEGAL_DOMAIN_DEPLOYMENT.md.
+
+data_sources:
+  rss:
+    seed_feed_urls:
+      # Verify each URL returns RSS/Atom before adding to legal.rss_feeds in DB.
+      - "https://www.federalregister.gov/documents/search.rss"
+      - "https://www.scotusblog.com/feed/"
+      - "https://www.universalhub.com/rss.xml"
+
+focus_areas:
+  - Newton, West Newton, and Greater Boston municipal and metro legal news
+  - Massachusetts state legislation, regulations, and courts (when reported in news)
+  - Federal statutes, regulations, and federal courts
+  - Court proceedings and docket-style developments in public reporting
+  - New and amended laws: effective dates, scope, and implementation
+  - Balanced stakeholder pros/cons and tradeoffs (from sources; not legal advice)
+
+llm_prompt_guidance: |
+  Prioritize geography: Newton/West Newton and Greater Boston, then Massachusetts,
+  then federal. Cover court proceedings, new or changing laws, and how they are
+  applied. For competing views, summarize pros and cons as stakeholder effects
+  grounded in the article. Do not invent citations, docket numbers, or statutory
+  references. This is not legal advice. Prefer neutral legal summarization;
+  distinguish holdings from dicta or opinion when the source allows.
+
+workload_assumptions:
+  expected_active_feeds: 8
+  rough_new_articles_per_day: 120
+  llm_heavy_phases_enabled: true

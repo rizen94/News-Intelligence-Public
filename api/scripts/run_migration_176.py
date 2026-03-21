@@ -32,11 +32,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 def main():
     from shared.database.connection import get_db_connection
+    from shared.migration_sql_paths import resolve_migration_sql_file
 
-    api_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    path = os.path.join(api_dir, "database", "migrations", "176_applied_migrations_ledger.sql")
-    if not os.path.isfile(path):
-        print(f"ERROR: {path} not found")
+    try:
+        path = resolve_migration_sql_file("176_applied_migrations_ledger.sql")
+    except FileNotFoundError as e:
+        print(f"ERROR: {e}")
         sys.exit(1)
 
     conn = get_db_connection()

@@ -31,10 +31,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 def main():
     from shared.database.connection import get_db_connection
 
-    api_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    migration_path = os.path.join(api_dir, "database", "migrations", "148_add_finance_rss_feeds.sql")
-    if not os.path.exists(migration_path):
-        print(f"ERROR: Migration file not found: {migration_path}")
+    try:
+        from shared.migration_sql_paths import resolve_migration_sql_file
+        migration_path = resolve_migration_sql_file("148_add_finance_rss_feeds.sql")
+    except FileNotFoundError as e:
+        print(f"ERROR: {e}")
         sys.exit(1)
 
     with open(migration_path, encoding="utf-8") as f:

@@ -3,6 +3,8 @@
 **Version:** v8.0 (stable)  
 **Last updated:** 2026-03-16
 
+**Related:** [SYSTEM_OVERVIEW.md](SYSTEM_OVERVIEW.md) (routes and UI map) · [DATA_FLOW_ARCHITECTURE.md](DATA_FLOW_ARCHITECTURE.md) (pipeline stages) · [SETUP_ENV_AND_RUNTIME.md](SETUP_ENV_AND_RUNTIME.md) · [SECURITY_OPERATIONS.md](SECURITY_OPERATIONS.md)
+
 ---
 
 ## Architecture Overview

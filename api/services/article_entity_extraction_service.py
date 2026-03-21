@@ -12,8 +12,11 @@ import re
 from datetime import datetime
 from typing import Dict, List, Any, Optional, Union
 
+from config.settings import OLLAMA_HOST
 from shared.database.connection import get_db_connection
-from shared.services.llm_service import LLMService, ModelType
+from shared.services.llm_service import LLMService
+from shared.services.ollama_model_caller import OllamaModelCaller
+from shared.services.ollama_model_policy import InvocationKind
 from services.entity_resolution_service import resolve_to_canonical, _add_alias
 from services.wikipedia_knowledge_service import lookup_entity
 from services.entity_relational_expansion_service import expand_relational_entity_async
@@ -108,8 +111,21 @@ Rules:
 - dates/times/countries: Store in their arrays only
 """
 
-        response = await self.llm._call_ollama(ModelType.LLAMA_8B, prompt)
-        return response
+        result = await self._caller.generate(
+            prompt,
+            kind=InvocationKind.STRUCTURED_EXTRACTION,
+            approx_prompt_chars=len(prompt),
+        )
+        return result.text
+
+    async def _relational_llm_invoke(self, prompt: str) -> str:
+        """Small LLM pass for relational person phrases (policy: STRUCTURED_EXTRACTION)."""
+        r = await self._caller.generate(
+            prompt,
+            kind=InvocationKind.STRUCTURED_EXTRACTION,
+            approx_prompt_chars=len(prompt),
+        )
+        return r.text
 
     def _parse_response(self, raw: str, headline: str) -> Dict[str, List[Dict]]:
         """Parse LLM JSON response with fallbacks."""
@@ -181,9 +197,8 @@ Rules:
                     original_phrase = None
                     if entity_type == "person":
                         try:
-                            llm_call = lambda p: self.llm._call_ollama(ModelType.LLAMA_8B, p)
                             name_to_use, original_phrase = await expand_relational_entity_async(
-                                name, entity_type, llm_call, timeout_seconds=8.0
+                                name, entity_type, self._relational_llm_invoke, timeout_seconds=8.0
                             )
                         except Exception as e:
                             logger.debug("Relational expansion skip for %s: %s", name, e)

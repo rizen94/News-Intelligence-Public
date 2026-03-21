@@ -80,4 +80,4 @@ Discovery can suggest related articles/contexts from:
 - RAG base (enhance/save/get): `api/services/rag/base.py`
 - Storyline automation and discovery: `api/services/storyline_automation_service.py` (`_rag_discover_articles`, `discover_articles_for_storyline`)
 - Automation manager: `api/services/automation_manager.py` (`_execute_storyline_automation`, `_execute_storyline_enrichment`, `_execute_rag_enhancement`)
-- Migration: `api/database/migrations/169_storyline_rag_context_by_domain.sql`
+- Migration: `api/database/migrations/archive/historical/169_storyline_rag_context_by_domain.sql`

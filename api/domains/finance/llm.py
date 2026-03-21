@@ -14,6 +14,7 @@ except Exception:
 from config.settings import FINANCE_MODELS, OLLAMA_HOST
 from shared.services.llm_service import LLMService
 from shared.services.llm_service import ModelType
+from shared.services.ollama_model_policy import InvocationKind, resolve_model_for_invocation
 
 
 _llm_service: LLMService | None = None
@@ -28,7 +29,9 @@ def get_llm() -> LLMService:
 
 
 def _model_key_to_type(key: str) -> ModelType:
-    """Map finance model key to shared ModelType."""
+    """Map finance model key to shared ModelType (central policy + FINANCE_MODELS names)."""
+    if key == "generation_high":
+        return resolve_model_for_invocation(InvocationKind.FINANCE_GENERATION_HIGH)
     name = FINANCE_MODELS.get(key, "llama3.1:8b")
     if "mistral" in str(name).lower():
         return ModelType.MISTRAL_7B

@@ -3,10 +3,13 @@ Storyline Timeline & Narrative Routes (v5.0 Phase 4)
 Endpoints for building timelines and generating narrative summaries.
 """
 
-from fastapi import APIRouter, HTTPException, Path, Query
+from fastapi import APIRouter, HTTPException, Path, Query, Depends
+from shared.domain_registry import DOMAIN_PATH_PATTERN
 import logging
 
 from shared.database.connection import get_db_connection
+from .storyline_crud import validate_domain_dependency
+from ..schemas.storyline_schemas import StorylineRefinementEnqueueRequest
 
 logger = logging.getLogger(__name__)
 
@@ -213,13 +216,16 @@ async def get_storyline_audit(
 
 @router.get("/{domain}/storylines/{storyline_id}/narrative")
 async def get_storyline_narrative(
-    domain: str = Path(...),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     storyline_id: int = Path(...),
     mode: str = Query("chronological", regex="^(chronological|briefing)$"),
 ):
-    """Generate a journalist-quality narrative from the storyline's timeline."""
-    from services.timeline_builder_service import TimelineBuilderService
-    from services.narrative_synthesis_service import NarrativeSynthesisService
+    """Return stored timeline narrative (if any). Generation runs via POST .../refinement_jobs (queue)."""
+    from services.content_refinement_queue_service import (
+        JOB_TIMELINE_BRIEFING,
+        JOB_TIMELINE_CHRONO,
+        list_pending_job_types,
+    )
 
     schema = domain.replace("-", "_")
     if schema not in {"politics", "finance", "science_tech"}:
@@ -230,36 +236,105 @@ async def get_storyline_narrative(
         raise HTTPException(status_code=503, detail="Database unavailable")
 
     try:
-        tb = TimelineBuilderService(conn, schema_name=schema)
-        timeline = tb.build_timeline(storyline_id)
-        if not timeline.get("events"):
-            raise HTTPException(status_code=404, detail="No events found for this storyline")
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT timeline_narrative_chronological, timeline_narrative_briefing,
+                       timeline_narrative_chronological_at, timeline_narrative_briefing_at
+                FROM {schema}.storylines
+                WHERE id = %s
+                """,
+                (storyline_id,),
+            )
+            row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Storyline not found")
 
-        ns = NarrativeSynthesisService()
-        try:
-            if mode == "briefing":
-                result = await ns.generate_briefing(timeline)
-            else:
-                result = await ns.generate_chronological_narrative(timeline)
-        finally:
-            await ns.close()
+        chrono_text, briefing_text, chrono_at, briefing_at = row
+        pending = list_pending_job_types(domain, storyline_id)
+        if mode == "briefing":
+            text = (briefing_text or "").strip()
+            generated_at = briefing_at.isoformat() if briefing_at else None
+            job_pending = JOB_TIMELINE_BRIEFING in pending
+        else:
+            text = (chrono_text or "").strip()
+            generated_at = chrono_at.isoformat() if chrono_at else None
+            job_pending = JOB_TIMELINE_CHRONO in pending
 
-        if not result.get("success"):
-            raise HTTPException(status_code=500, detail=result.get("error", "Generation failed"))
+        refinement_pending = [
+            j
+            for j in pending
+            if j in (JOB_TIMELINE_CHRONO, JOB_TIMELINE_BRIEFING)
+        ]
 
-        return {"success": True, "data": result}
+        return {
+            "success": True,
+            "data": {
+                "narrative": text if mode == "chronological" else "",
+                "briefing": text if mode == "briefing" else "",
+                "mode": mode,
+                "source": "stored" if text else "empty",
+                "generated_at": generated_at,
+                "refinement_pending": refinement_pending,
+                "job_pending": job_pending,
+            },
+        }
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Narrative generation failed for storyline {storyline_id}: {e}")
+        logger.error("Narrative read failed for storyline %s: %s", storyline_id, e)
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         conn.close()
 
 
+@router.post("/{domain}/storylines/{storyline_id}/refinement_jobs")
+async def enqueue_storyline_refinement_job(
+    domain: str = Depends(validate_domain_dependency),
+    storyline_id: int = Path(..., ge=1),
+    body: StorylineRefinementEnqueueRequest,
+):
+    """Queue a refinement job (processed by automation `content_refinement_queue` phase)."""
+    from services.content_refinement_queue_service import (
+        VALID_JOB_TYPES,
+        enqueue_content_refinement,
+    )
+
+    if body.job_type not in VALID_JOB_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid job_type; allowed: {sorted(VALID_JOB_TYPES)}",
+        )
+
+    schema = domain.replace("-", "_")
+    conn = get_db_connection()
+    if not conn:
+        raise HTTPException(status_code=503, detail="Database unavailable")
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT 1 FROM {schema}.storylines WHERE id = %s",
+                (storyline_id,),
+            )
+            if not cur.fetchone():
+                raise HTTPException(status_code=404, detail="Storyline not found")
+    finally:
+        conn.close()
+
+    result = enqueue_content_refinement(
+        domain,
+        storyline_id,
+        body.job_type,
+        priority=body.priority,
+    )
+    if not result.get("success"):
+        raise HTTPException(status_code=500, detail=result.get("error", "enqueue failed"))
+    return result
+
+
 @router.get("/{domain}/events")
 async def list_domain_events(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     event_type: str = Query(None),

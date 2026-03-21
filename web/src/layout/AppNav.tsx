@@ -18,6 +18,7 @@ import LabelIcon from '@mui/icons-material/Label';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import EventNoteIcon from '@mui/icons-material/EventNote';
 import ChecklistIcon from '@mui/icons-material/Checklist';
+import TableChartIcon from '@mui/icons-material/TableChart';
 
 export const APP_NAV_WIDTH = 220;
 
@@ -73,6 +74,7 @@ const NAV_SECTIONS: NavSection[] = [
     label: 'Operations',
     items: [
       { path: 'monitor', label: 'Monitor', icon: <MonitorHeartIcon /> },
+      { path: 'monitor/sql-explorer', label: 'SQL explorer', icon: <TableChartIcon /> },
       { path: 'audit-checklist', label: 'Audit checklist', icon: <ChecklistIcon /> },
       { path: 'analyze', label: 'Analyze (planned)', icon: <AnalyticsIcon /> },
     ],
@@ -91,8 +93,6 @@ export function AppNav() {
   const [mobileOpen, setMobileOpen] = useState(false);
 
   const base = `/${domain ?? 'politics'}`;
-  const currentPath = location.pathname.replace(new RegExp(`^/${domain ?? 'politics'}`), '') || '/';
-  const activePath = currentPath.split('/')[1] || 'dashboard';
 
   const sections = NAV_SECTIONS.map((section) => ({
     ...section,
@@ -114,10 +114,20 @@ export function AppNav() {
             </ListSubheader>
           }
         >
-          {section.items.map(({ path, label, icon }) => (
+          {section.items.map(({ path, label, icon }) => {
+            const fullPath = `${base}/${path}`;
+            const monitorExact = `${base}/monitor`;
+            let navSelected = location.pathname === fullPath;
+            if (!navSelected && !path.includes('/')) {
+              navSelected = location.pathname.startsWith(`${fullPath}/`);
+              if (path === 'monitor' && location.pathname.startsWith(`${base}/monitor/`) && location.pathname !== monitorExact) {
+                navSelected = false;
+              }
+            }
+            return (
             <ListItemButton
               key={path}
-              selected={activePath === path || activePath === path.split('/')[0] || location.pathname === `${base}/${path}`}
+              selected={navSelected}
               onClick={() => {
                 navigate(`${base}/${path}`);
                 setMobileOpen(false);
@@ -126,7 +136,8 @@ export function AppNav() {
               <ListItemIcon sx={{ minWidth: 40 }}>{icon}</ListItemIcon>
               <ListItemText primary={label} />
             </ListItemButton>
-          ))}
+            );
+          })}
         </List>
       ))}
     </Box>

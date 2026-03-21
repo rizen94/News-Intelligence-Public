@@ -14,6 +14,15 @@ new scheduled enqueues, continuous batch re-queues, and dependency-chain request
 except phases in AUTOMATION_QUEUE_PAUSE_ALLOW (default: collection_cycle, health_check) so the backlog can drain.
 Dependency settle time after a phase completes is capped by AUTOMATION_DEPENDENCY_SETTLE_CAP_SEC (default 180s)
 so long estimated_duration values (e.g. collection_cycle) do not block dependents such as storyline_discovery.
+
+Reader's guide:
+  - For a **ordered map** of phases (v8 collect-then-analyze), start at
+    ``docs/PIPELINE_AND_ORDER_OF_OPERATIONS.md``, then search this file for
+    ``self.schedules`` (task name → interval, ``depends_on``, ``phase``).
+  - Task execution branches on task name in the main scheduler loop (e.g.
+    ``_execute_collection_cycle``); grep ``_execute_`` for implementations.
+  - Governance overrides may come from ``api/config/orchestrator_governance.yaml``
+    (analysis pipeline budgets, collection interval).
 """
 
 import asyncio
@@ -111,6 +120,7 @@ BATCH_PHASES_CONTINUOUS = {
     "timeline_generation",
     "topic_clustering",
     "event_extraction",
+    "content_refinement_queue",
 }
 MAX_REQUEUE_PER_WINDOW = 3  # v8: cap re-enqueues per analysis window so one task cannot monopolize
 _SCHEMAS = ("politics", "finance", "science_tech")
@@ -168,6 +178,7 @@ ANALYSIS_PIPELINE_STEPS: Tuple[Tuple[str, ...], ...] = (
         "event_extraction", "event_deduplication", "timeline_generation", "editorial_document_generation",
         "editorial_briefing_generation", "entity_dossier_compile", "entity_position_tracker",
         "storyline_synthesis", "daily_briefing_synthesis", "digest_generation", "watchlist_alerts",
+        "content_refinement_queue",
         "cache_cleanup", "data_cleanup",
     ),
 )
@@ -262,6 +273,7 @@ PHASE_ESTIMATED_DURATION_SECONDS = {
     "collection_cycle": 1800,  # 30 min; RSS + drain enrichment + doc collection + drain doc processing + pending queue
     "proactive_detection": 300,  # v8: emerging storylines per domain
     "fact_verification": 120,  # v8: verify_recent_claims per domain
+    "content_refinement_queue": 420,  # storyline RAG / timeline narrative / ~70B finisher (queued user jobs)
 }
 
 class AutomationManager:
@@ -687,6 +699,16 @@ class AutomationManager:
                 'phase': 9,
                 'depends_on': [],
                 'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['story_enhancement'],
+            },
+            # User-requested storyline refinement (DB queue; no ad-hoc HTTP LLM)
+            'content_refinement_queue': {
+                'interval': 120,  # 2 min when idle; workload-driven when pending > 0
+                'last_run': None,
+                'enabled': True,
+                'priority': TaskPriority.NORMAL,
+                'phase': 9,
+                'depends_on': [],
+                'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['content_refinement_queue'],
             },
             
             # PHASE 10: Cache Cleanup (Every hour)
@@ -1605,7 +1627,9 @@ class AutomationManager:
             'quality_scoring', 'timeline_generation',
             'claim_extraction', 'event_tracking', 'entity_profile_build', 'entity_position_tracker',
             'editorial_document_generation', 'editorial_briefing_generation', 'story_enhancement',
-            'storyline_synthesis', 'daily_briefing_synthesis', 'document_processing',  # v7
+            'content_refinement_queue',
+            'storyline_synthesis', 'daily_briefing_synthesis',             'document_processing',  # v7
+            'content_refinement_queue',
         }
         if task.name in _OLLAMA_TASKS:
             try:
@@ -1737,6 +1761,8 @@ class AutomationManager:
                 await self._execute_watchlist_alerts_v5(task)
             elif task.name == 'story_enhancement':
                 await self._execute_story_enhancement(task)
+            elif task.name == 'content_refinement_queue':
+                await self._execute_content_refinement_queue(task)
             elif task.name == 'entity_enrichment':
                 await self._execute_entity_enrichment(task)
             elif task.name == 'pattern_matching':
@@ -2451,6 +2477,21 @@ class AutomationManager:
                 logger.warning("Story enhancement errors: %s", result["errors"])
         except Exception as e:
             logger.warning(f"Story enhancement failed: {e}")
+
+    async def _execute_content_refinement_queue(self, task: Task):
+        """Drain intelligence.content_refinement_queue (storyline RAG, timeline narratives, ~70B finisher)."""
+        from services.content_refinement_queue_service import process_content_refinement_queue_batch
+        try:
+            stats = await process_content_refinement_queue_batch()
+            if stats.get("processed", 0) > 0 or stats.get("failed", 0) > 0:
+                logger.info(
+                    "Content refinement queue: processed=%s failed=%s by_type=%s",
+                    stats.get("processed"),
+                    stats.get("failed"),
+                    stats.get("by_type"),
+                )
+        except Exception as e:
+            logger.warning("Content refinement queue failed: %s", e)
 
     async def _execute_entity_enrichment(self, task: Task):
         """Phase 3 RAG: Run entity enrichment batch (Wikipedia -> entity_profiles + versioned_facts)."""
@@ -3955,6 +3996,16 @@ class AutomationManager:
                         )
                         if cur.fetchone():
                             return True
+                elif phase_name == "content_refinement_queue":
+                    cur.execute(
+                        """
+                        SELECT 1 FROM intelligence.content_refinement_queue
+                        WHERE status = 'pending'
+                        LIMIT 1
+                        """
+                    )
+                    if cur.fetchone():
+                        return True
             finally:
                 cur.close()
                 conn.close()

@@ -12,6 +12,8 @@ from enum import Enum
 import httpx
 from datetime import datetime
 
+from config.settings import NARRATIVE_FINISHER_MODEL, OLLAMA_HOST
+
 logger = logging.getLogger(__name__)
 
 # v7: Global cap. Burst (48h catch-up): 6; revert to 5 after
@@ -25,10 +27,12 @@ def _get_ollama_semaphore() -> asyncio.Semaphore:
         _ollama_semaphore = asyncio.Semaphore(OLLAMA_CONCURRENCY)
     return _ollama_semaphore
 
-class ModelType(Enum):
-    """Available LLM models"""
+class ModelType(str, Enum):
+    """Ollama text models. LLAMA_70B tag comes from settings.NARRATIVE_FINISHER_MODEL."""
+
     LLAMA_8B = "llama3.1:8b"
     MISTRAL_7B = "mistral:7b"
+    LLAMA_70B = NARRATIVE_FINISHER_MODEL
 
 class TaskType(Enum):
     """Task types for model selection"""
@@ -43,8 +47,8 @@ class LLMService:
     Optimized for Llama 3.1 8B (primary) and Mistral 7B (secondary)
     """
     
-    def __init__(self, ollama_base_url: str = "http://localhost:11434"):
-        self.ollama_base_url = ollama_base_url
+    def __init__(self, ollama_base_url: Optional[str] = None):
+        self.ollama_base_url = (ollama_base_url or OLLAMA_HOST).rstrip("/")
         self.client = httpx.AsyncClient(timeout=180.0)  # Increased timeout to 180s for comprehensive analysis
         self.model_performance = {
             ModelType.LLAMA_8B: {
@@ -61,23 +65,26 @@ class LLMService:
             }
         }
     
-    def select_model(self, task_type: TaskType, urgency: str = "standard") -> ModelType:
+    def select_model(
+        self,
+        task_type: TaskType,
+        urgency: str = "standard",
+        approx_prompt_chars: int = 0,
+    ) -> ModelType:
         """
-        Smart model selection based on task type and urgency
+        Model selection via shared policy (ollama_model_policy).
+        approx_prompt_chars: large background prompts may route to secondary (Mistral).
         """
-        if urgency == "real_time" or task_type == TaskType.REAL_TIME:
-            return ModelType.LLAMA_8B  # 2.93 seconds - BEST PERFORMANCE
-        elif task_type == TaskType.BATCH_PROCESSING:
-            return ModelType.MISTRAL_7B  # 4.17 seconds - GOOD ALTERNATIVE
-        else:
-            return ModelType.LLAMA_8B  # 2.93 seconds - DEFAULT CHOICE
+        from shared.services.ollama_model_policy import resolve_model_for_llm_task
+
+        return resolve_model_for_llm_task(task_type, urgency, approx_prompt_chars)
     
     async def generate_summary(self, content: str, task_type: TaskType = TaskType.QUICK_SUMMARY) -> Dict[str, Any]:
         """
         Generate article summary using appropriate model
         """
-        model = self.select_model(task_type)
-        
+        model = self.select_model(task_type, approx_prompt_chars=len(content or ""))
+
         prompt = f"""
         Write a professional, journalistic summary of the following news article. 
         Focus on the key facts, main points, and important context. 
@@ -304,7 +311,7 @@ class LLMService:
             + context[:2500]
         )
         try:
-            model = self.select_model(TaskType.QUICK_SUMMARY)
+            model = self.select_model(TaskType.QUICK_SUMMARY, approx_prompt_chars=len(context or ""))
             response = await self._call_ollama(model, prompt)
             return {"success": True, "summary": (response or "").strip()}
         except Exception as e:
@@ -378,13 +385,16 @@ class LLMService:
                 models = response.json().get("models", [])
                 available_models = [model["name"] for model in models]
                 
+                finisher = ModelType.LLAMA_70B.value
                 return {
                     "success": True,
                     "available_models": available_models,
                     "primary_model": ModelType.LLAMA_8B.value,
                     "secondary_model": ModelType.MISTRAL_7B.value,
+                    "narrative_finisher_model": finisher,
                     "primary_available": ModelType.LLAMA_8B.value in available_models,
                     "secondary_available": ModelType.MISTRAL_7B.value in available_models,
+                    "narrative_finisher_available": finisher in available_models,
                     "timestamp": datetime.now().isoformat()
                 }
             else:

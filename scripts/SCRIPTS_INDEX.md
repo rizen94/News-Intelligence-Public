@@ -52,6 +52,8 @@
 | `api/scripts/run_migration_177.py` | Migration **177**: `{domain}.articles.timeline_processed` + ensure `article_entities` / `entity_canonical` per active domain. `PYTHONPATH=api uv run python api/scripts/run_migration_177.py` |
 | `api/scripts/run_migration_178.py` | Migration **178**: `{domain}.articles.timeline_events_generated` (required for event_extraction UPDATE). `PYTHONPATH=api uv run python api/scripts/run_migration_178.py` |
 | `api/scripts/register_applied_migration.py` | Record an applied migration in the ledger: `PYTHONPATH=api uv run python api/scripts/register_applied_migration.py 176 --env dev --notes "..." [--file path.sql]` |
+| `api/scripts/migration_ledger_report.py` | Compare `public.applied_migrations` to SQL on disk (active + archive): `PYTHONPATH=api uv run python api/scripts/migration_ledger_report.py` (`--json`, `--active-only` for 176+ gaps only) |
+| `api/scripts/refresh_ollama_models.py` | **`ollama pull`** for each model in `settings.ollama_pull_model_names()` (refresh weights for same tags). `PYTHONPATH=api uv run python api/scripts/refresh_ollama_models.py` — see `docs/SETUP_ENV_AND_RUNTIME.md`. |
 
 ## Utilities
 

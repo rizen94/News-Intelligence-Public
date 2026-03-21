@@ -35,7 +35,7 @@ class APIConnectionManager {
           const match = config.url.match(/\/api\/(.+)$/);
           const firstSegment = match ? match[1].split('/')[0] : '';
           const globalRoutes = [
-            'politics', 'finance', 'science-tech', 'system_monitoring', 'route_supervisor', 'watchlist', 'monitoring',
+            'politics', 'finance', 'science-tech', 'legal', 'system_monitoring', 'route_supervisor', 'watchlist', 'monitoring',
             'orchestrator', 'context_centric', 'entity_profiles', 'contexts', 'tracked_events', 'claims', 'pattern_discoveries',
             'processed_documents', 'entity_dossiers', 'entity_positions', 'narrative_threads', 'synthesis', 'entities',
           ];

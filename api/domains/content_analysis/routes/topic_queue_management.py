@@ -5,6 +5,7 @@ Manages the queue of articles waiting for LLM topic extraction
 
 from fastapi import APIRouter, HTTPException, Path, Query, BackgroundTasks
 from typing import Dict, Any, Optional
+from shared.domain_registry import DOMAIN_PATH_PATTERN
 from datetime import datetime
 import logging
 import asyncio
@@ -27,7 +28,7 @@ worker_tasks: Dict[str, asyncio.Task] = {}
 
 @router.get("/{domain}/content_analysis/topics/queue/status")
 async def get_queue_status(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$")
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN)
 ):
     """Get status of the topic extraction queue"""
     try:
@@ -83,7 +84,7 @@ async def get_queue_status(
 
 @router.post("/{domain}/content_analysis/topics/queue/start")
 async def start_queue_worker(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     background_tasks: BackgroundTasks = BackgroundTasks()
 ):
     """Start the topic extraction queue worker for a domain"""
@@ -123,7 +124,7 @@ async def start_queue_worker(
 
 @router.post("/{domain}/content_analysis/topics/queue/stop")
 async def stop_queue_worker(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$")
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN)
 ):
     """Stop the topic extraction queue worker for a domain"""
     try:
@@ -163,7 +164,7 @@ async def stop_queue_worker(
 
 @router.post("/{domain}/content_analysis/topics/queue/queue_unprocessed")
 async def queue_unprocessed_articles(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     limit: int = Query(100, ge=1, le=1000, description="Maximum number of articles to queue")
 ):
     """Queue all unprocessed articles for LLM topic extraction"""
@@ -218,7 +219,7 @@ async def queue_unprocessed_articles(
 
 @router.post("/{domain}/content_analysis/topics/queue/process")
 async def process_queue_manually(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     batch_size: int = Query(10, ge=1, le=50)
 ):
     """Manually trigger processing of queued articles"""

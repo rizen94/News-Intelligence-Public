@@ -10,6 +10,7 @@ Provides endpoints for:
 
 from fastapi import APIRouter, HTTPException, Path, Query, BackgroundTasks
 from typing import Dict, Any, List, Optional
+from shared.domain_registry import DOMAIN_PATH_PATTERN
 from datetime import datetime
 import logging
 from dataclasses import asdict
@@ -41,7 +42,7 @@ def service() -> IntelligenceAnalysisService:
 
 @router.get("/{domain}/intelligence/rag/{storyline_id}", response_model=Dict[str, Any])
 async def get_rag_context(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     storyline_id: int = Path(..., ge=1),
     query: Optional[str] = Query(None, description="Custom query for context retrieval"),
     max_articles: int = Query(20, ge=5, le=50),
@@ -87,7 +88,7 @@ async def get_rag_context(
 
 @router.post("/{domain}/intelligence/rag/query", response_model=Dict[str, Any])
 async def query_rag_context(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     query: str = Query(..., min_length=3, description="Query for context retrieval"),
     max_articles: int = Query(20, ge=5, le=50),
 ):
@@ -127,7 +128,7 @@ async def query_rag_context(
 
 @router.get("/{domain}/intelligence/quality/{storyline_id}", response_model=Dict[str, Any])
 async def assess_storyline_quality(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     storyline_id: int = Path(..., ge=1),
 ):
     """
@@ -166,7 +167,7 @@ async def assess_storyline_quality(
 
 @router.get("/{domain}/intelligence/quality/batch", response_model=Dict[str, Any])
 async def batch_quality_assessment(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     limit: int = Query(10, ge=1, le=50),
     min_articles: int = Query(3, ge=1),
 ):
@@ -242,7 +243,7 @@ def _score_to_grade(score: float) -> str:
 
 @router.get("/{domain}/intelligence/anomalies", response_model=Dict[str, Any])
 async def detect_anomalies(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     hours: int = Query(24, ge=1, le=168, description="Time window to analyze"),
     sensitivity: float = Query(2.0, ge=1.0, le=3.0, description="Detection sensitivity (std devs)"),
 ):
@@ -295,7 +296,7 @@ async def detect_anomalies(
 
 @router.get("/{domain}/intelligence/anomalies/watch", response_model=Dict[str, Any])
 async def get_anomaly_watchlist(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
 ):
     """
     Get current anomaly watchlist - entities being monitored for unusual behavior.
@@ -331,7 +332,7 @@ async def get_anomaly_watchlist(
 
 @router.get("/{domain}/intelligence/impact/{storyline_id}", response_model=Dict[str, Any])
 async def assess_storyline_impact(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     storyline_id: int = Path(..., ge=1),
 ):
     """
@@ -371,7 +372,7 @@ async def assess_storyline_impact(
 
 @router.get("/{domain}/intelligence/impact/trending", response_model=Dict[str, Any])
 async def get_high_impact_storylines(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     limit: int = Query(10, ge=1, le=50),
     min_impact: float = Query(0.5, ge=0.0, le=1.0),
 ):
@@ -461,7 +462,7 @@ def _score_to_level(score: float) -> str:
 
 @router.get("/{domain}/intelligence/dashboard", response_model=Dict[str, Any])
 async def get_intelligence_dashboard(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
 ):
     """
     Combined intelligence dashboard with all key metrics.
@@ -550,7 +551,7 @@ async def get_intelligence_dashboard(
 
 @router.get("/{domain}/intelligence/consistency", response_model=Dict[str, Any])
 async def get_event_storyline_claim_consistency(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     limit_events: int = Query(25, ge=5, le=100),
     min_claim_confidence: float = Query(0.55, ge=0.0, le=1.0),
 ):
@@ -575,7 +576,7 @@ async def get_event_storyline_claim_consistency(
 
 @router.get("/{domain}/intelligence/participant_deltas", response_model=Dict[str, Any])
 async def get_participant_position_deltas(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     days: int = Query(30, ge=1, le=180),
 ):
     """
@@ -611,7 +612,7 @@ async def get_cross_domain_causal_chains(
 
 @router.get("/{domain}/intelligence/narrative_divergence/{event_id}", response_model=Dict[str, Any])
 async def get_narrative_divergence_map(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     event_id: int = Path(..., ge=1),
     min_contexts_per_cluster: int = Query(1, ge=1, le=10),
 ):
@@ -636,7 +637,7 @@ async def get_narrative_divergence_map(
 
 @router.post("/{domain}/intelligence/watchlist_theme_bridge", response_model=Dict[str, Any])
 async def post_watchlist_theme_trigger_bridge(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     create_alerts: bool = Query(False, description="Persist watchlist_alerts for matched triggers"),
     max_items: int = Query(25, ge=1, le=100),
 ):
@@ -659,7 +660,7 @@ async def post_watchlist_theme_trigger_bridge(
 
 @router.post("/{domain}/intelligence/document_integration", response_model=Dict[str, Any])
 async def post_document_intelligence_integration(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     days: int = Query(30, ge=1, le=180),
     persist_links: bool = Query(False, description="Persist links into intelligence.document_intelligence"),
     limit: int = Query(30, ge=1, le=100),

@@ -125,6 +125,29 @@ class StorylineDetailResponse(StorylineResponse):
     last_refinement: Optional[datetime] = None
     key_entities: Optional[Dict[str, Any]] = None  # legacy column from storylines.key_entities
     entities: List[StorylineEntitySummary] = Field(default_factory=list)
+    # Migration 181: durable narratives + refinement queue (optional until columns exist)
+    canonical_narrative: Optional[str] = None
+    narrative_finisher_model: Optional[str] = None
+    narrative_finisher_at: Optional[datetime] = None
+    narrative_finisher_meta: Optional[Dict[str, Any]] = None
+    timeline_narrative_chronological: Optional[str] = None
+    timeline_narrative_briefing: Optional[str] = None
+    timeline_narrative_chronological_at: Optional[datetime] = None
+    timeline_narrative_briefing_at: Optional[datetime] = None
+    refinement_jobs_pending: List[str] = Field(
+        default_factory=list,
+        description="job_type values queued in intelligence.content_refinement_queue",
+    )
+
+
+class StorylineRefinementEnqueueRequest(BaseModel):
+    """POST body to queue storyline refinement (processed by automation workers)."""
+
+    job_type: str = Field(
+        ...,
+        description="comprehensive_rag | narrative_finisher | timeline_narrative_chronological | timeline_narrative_briefing",
+    )
+    priority: str = Field("medium", pattern="^(high|medium|low)$")
 
 
 class StorylineListItem(BaseModel):

@@ -1,7 +1,14 @@
 #!/usr/bin/env python3
 """
-Storyline Management Routes
-Consolidated router including all storyline route modules
+Storyline management — aggregated FastAPI router (pattern for other domains).
+
+Mounts sub-routers under ``prefix="/api"`` so paths align with the flat ``/api/...``
+convention. **Include order matters** where two routes could match the same path
+(e.g. timeline_router before helpers_router — see comments below).
+
+Each ``storyline_*.py`` module defines endpoints for one concern (CRUD, discovery,
+automation, articles, timeline, watchlist, …). For domain terminology, see repo
+``AGENTS.md`` (``storylines`` not ``stories``).
 """
 
 from fastapi import APIRouter

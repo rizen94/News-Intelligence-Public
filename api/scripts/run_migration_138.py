@@ -9,15 +9,15 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 def main():
     from shared.database.connection import get_db_connection, get_db_config
-    
+    from shared.migration_sql_paths import resolve_migration_sql_file
+
     config = get_db_config()
-    migration_path = os.path.join(
-        os.path.dirname(os.path.dirname(__file__)),
-        "database", "migrations", "138_article_entities_full_system.sql"
-    )
-    
-    if not os.path.exists(migration_path):
-        print(f"ERROR: Migration file not found: {migration_path}")
+    try:
+        migration_path = resolve_migration_sql_file(
+            "138_article_entities_full_system.sql"
+        )
+    except FileNotFoundError as e:
+        print(f"ERROR: {e}")
         sys.exit(1)
     
     with open(migration_path) as f:

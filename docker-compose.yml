@@ -1,3 +1,7 @@
+# Illustrative stack — not guaranteed to match the canonical API DB config.
+# The running FastAPI app uses DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD
+# (see api/shared/database/connection.py), not DATABASE_URL. Align env vars before
+# relying on this file for local bring-up. See docs/CODE_REVIEW_AND_RUN_CAVEATS.md.
 services:
   postgres:
     image: postgres:15-alpine

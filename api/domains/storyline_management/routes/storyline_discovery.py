@@ -6,6 +6,7 @@ AI-powered endpoints for discovering storylines from article similarity
 import logging
 from typing import Optional, List
 from fastapi import APIRouter, HTTPException, Path, Query, BackgroundTasks
+from shared.domain_registry import DOMAIN_PATH_PATTERN
 from datetime import datetime
 import numpy as np
 
@@ -23,7 +24,7 @@ router = APIRouter(tags=["Storyline Discovery"])
 
 @router.post("/{domain}/storylines/discover")
 async def discover_storylines(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     hours: int = Query(24, ge=1, le=168, description="Hours of articles to analyze"),
     save: bool = Query(True, description="Save discovered storylines to database"),
     min_similarity: float = Query(0.75, ge=0.5, le=0.99, description="Minimum similarity threshold")
@@ -61,7 +62,7 @@ async def discover_storylines(
 @router.post("/{domain}/storylines/discover_async")
 async def discover_storylines_async(
     background_tasks: BackgroundTasks,
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     hours: int = Query(24, ge=1, le=168)
 ):
     """
@@ -90,7 +91,7 @@ async def discover_storylines_async(
 
 @router.get("/{domain}/storylines/breaking_news")
 async def get_breaking_news(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     hours: int = Query(6, ge=1, le=48, description="Hours to look back"),
     limit: int = Query(10, ge=1, le=50)
 ):
@@ -126,7 +127,7 @@ async def get_breaking_news(
 
 @router.get("/{domain}/articles/similarity")
 async def get_article_similarity(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     article_id: int = Query(..., description="Article ID to find similar articles for"),
     limit: int = Query(10, ge=1, le=50)
 ):
@@ -211,7 +212,7 @@ async def get_article_similarity(
 
 @router.post("/{domain}/storylines/analyze_cluster")
 async def analyze_cluster(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     article_ids: list[int] = Query(..., description="List of article IDs to analyze")
 ):
     """
@@ -301,7 +302,7 @@ JSON:"""
 
 @router.get("/{domain}/storylines/compare")
 async def compare_storylines_endpoint(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     hours: int = Query(48, description="Hours of storylines to analyze"),
     min_similarity: float = Query(0.3, description="Minimum similarity threshold")
 ):
@@ -357,7 +358,7 @@ async def compare_storylines_endpoint(
 
 @router.get("/{domain}/storylines/evolution")
 async def detect_storyline_evolution(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     hours: int = Query(72, description="Hours to analyze for evolution"),
     time_window: int = Query(48, description="Max hours between evolution steps")
 ):
@@ -411,7 +412,7 @@ async def detect_storyline_evolution(
 
 @router.post("/{domain}/storylines/merge_check")
 async def check_merge_candidates(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     storyline_ids: List[int] = Query(..., description="Storyline IDs to check for merge")
 ):
     """

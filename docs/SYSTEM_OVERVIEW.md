@@ -4,6 +4,8 @@
 
 This document maps the full system: API route structure, web interface structure, data flow, and key services. Use it as the single reference for "what exists and where."
 
+**Related:** [ARCHITECTURE_AND_OPERATIONS.md](ARCHITECTURE_AND_OPERATIONS.md) (hosts, ops, scripts) · [DATA_FLOW_ARCHITECTURE.md](DATA_FLOW_ARCHITECTURE.md) (intelligence cascade) · [PROJECT_OVERVIEW.md](PROJECT_OVERVIEW.md) (stakeholder summary)
+
 ---
 
 ## 1. High-Level Architecture

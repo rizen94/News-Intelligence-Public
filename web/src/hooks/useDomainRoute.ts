@@ -5,7 +5,7 @@
 
 import { useLocation, useParams } from 'react-router-dom';
 import { useDomain } from '../contexts/DomainContext';
-import { isValidDomain, DomainKey } from '../utils/domainHelper';
+import { isValidDomain, DomainKey, getPathAfterDomain } from '../utils/domainHelper';
 
 export const useDomainRoute = () => {
   const { domain: urlDomain } = useParams<{ domain: string }>();
@@ -20,10 +20,7 @@ export const useDomainRoute = () => {
   /**
    * Get the current path without the domain prefix
    */
-  const getCurrentPathWithoutDomain = (): string => {
-    const match = pathname.match(/^\/(?:politics|finance|science-tech)(\/.*)?$/);
-    return match?.[1] || '/dashboard';
-  };
+  const getCurrentPathWithoutDomain = (): string => getPathAfterDomain(pathname);
 
   /**
    * Get a domain-qualified path

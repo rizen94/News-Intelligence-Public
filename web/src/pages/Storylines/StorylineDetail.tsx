@@ -428,51 +428,56 @@ const StorylineDetail = () => {
     try {
       setAnalyzing(true);
       setError(null);
-      console.log(`Starting analysis for storyline ${id} in domain ${domain}`);
       const response = await apiService.analyzeStoryline(id, effectiveDomain);
-      console.log('Analyze response:', response);
-      if (response && response.success) {
-        // Show success message
+      if (response && response.success !== false) {
         setError(null);
         setIsProcessing(true);
-        setProcessingStatus('Analysis started! Generating comprehensive summary, timeline, and breakdown...');
-        // Don't show alert - let the processing status indicator handle it
+        const msg = (response as { already_queued?: boolean; message?: string }).already_queued
+          ? 'Deep analysis is already queued for workers. The page shows the best current data until it finishes.'
+          : 'Deep analysis queued for background workers. The UI keeps showing the latest stored summary and articles; refresh later for new analysis.';
+        setProcessingStatus(msg);
 
-        // Poll for updated analysis summary (check every 5 seconds for up to 2 minutes)
+        // Poll until comprehensive_rag leaves the pending queue (or cap wait)
         let attempts = 0;
-        const maxAttempts = 24; // 2 minutes max
+        const maxAttempts = 50;
         const pollInterval = setInterval(async() => {
           attempts++;
           try {
-            const response = await apiService.getStoryline(id, effectiveDomain);
-            if (
-              response.success &&
-              response.data?.storyline?.analysis_summary
-            ) {
+            const raw = await apiService.getStoryline(id, effectiveDomain);
+            const data =
+              raw && (raw as { id?: number }).id
+                ? raw
+                : (raw as { data?: { storyline?: { refinement_jobs_pending?: string[] } } })?.data
+                    ?.storyline ?? raw;
+            const pending = (data as { refinement_jobs_pending?: string[] })?.refinement_jobs_pending || [];
+            const ragDone = !pending.includes('comprehensive_rag');
+            if (ragDone) {
               clearInterval(pollInterval);
-              await loadStoryline(); // Reload to show the new summary and timeline
-              alert('Analysis complete! Summary and timeline are now available.');
+              setIsProcessing(false);
+              setProcessingStatus('');
+              await loadStoryline();
             } else if (attempts >= maxAttempts) {
               clearInterval(pollInterval);
-              alert(
-                'Analysis is taking longer than expected. Please refresh the page later to see the summary.',
-              );
+              setIsProcessing(false);
+              setProcessingStatus('');
             }
-          } catch (err) {
-            console.error('Error polling for analysis:', err);
+          } catch {
             if (attempts >= maxAttempts) {
               clearInterval(pollInterval);
+              setIsProcessing(false);
+              setProcessingStatus('');
             }
           }
-        }, 5000);
+        }, 12000);
       } else {
-        const errorMsg = response?.error || response?.message || 'Failed to start analysis';
-        console.error('Analysis failed:', errorMsg, response);
+        const errorMsg = (response as { error?: string })?.error || (response as { message?: string })?.message || 'Failed to queue analysis';
         setError(errorMsg);
       }
-    } catch (err) {
-      console.error('Error analyzing storyline:', err);
-      const errorMsg = err?.response?.data?.detail || err?.message || 'Failed to analyze storyline';
+    } catch (err: unknown) {
+      const errorMsg =
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
+        (err as Error)?.message ||
+        'Failed to queue analysis';
       setError(errorMsg);
     } finally {
       setAnalyzing(false);
@@ -668,8 +673,15 @@ const StorylineDetail = () => {
           onClick={handleAnalyzeStoryline}
           disabled={analyzing || articles.length === 0}
         >
-          {analyzing ? 'Analyzing...' : 'Analyze Storyline'}
+          {analyzing ? 'Queuing…' : 'Queue deep analysis'}
         </Button>
+        {(storyline.refinement_jobs_pending || []).length > 0 && (
+          <Chip
+            size='small'
+            color='warning'
+            label={`Queued: ${(storyline.refinement_jobs_pending || []).join(', ')}`}
+          />
+        )}
         <Button
           startIcon={<SettingsIcon />}
           variant='outlined'
@@ -875,7 +887,7 @@ const StorylineDetail = () => {
                       </Typography>
                     </Box>
                     <Typography variant='caption' color='text.secondary' sx={{ ml: 4.5 }}>
-                      Estimated time: {getEstimatedProcessingTime(articles.length || storyline?.article_count)} (based on {articles.length || storyline?.article_count || 0} articles)
+                      Background workers run when GPU/queue allows — this page always shows the latest stored data. Typical batch: ~{getEstimatedProcessingTime(articles.length || storyline?.article_count)} for {articles.length || storyline?.article_count || 0} articles (not a live timer).
                     </Typography>
                     {processingStartTime && (
                       <Typography variant='caption' color='text.secondary' sx={{ ml: 4.5 }}>
@@ -885,6 +897,34 @@ const StorylineDetail = () => {
                   </Box>
                 </Alert>
               )}
+
+              {storyline.canonical_narrative ? (
+                <Box
+                  sx={{
+                    mb: 2,
+                    p: 3,
+                    bgcolor: 'action.hover',
+                    borderRadius: 1,
+                    border: '1px solid',
+                    borderColor: 'primary.main',
+                  }}
+                >
+                  <Typography variant='h6' gutterBottom>
+                    Canonical narrative
+                  </Typography>
+                  <Typography variant='caption' color='text.secondary' display='block' sx={{ mb: 1 }}>
+                    {(storyline.narrative_finisher_at &&
+                      `Updated ${new Date(storyline.narrative_finisher_at).toLocaleString()}`) ||
+                      ''}
+                    {storyline.narrative_finisher_model
+                      ? ` · ${storyline.narrative_finisher_model}`
+                      : ''}
+                  </Typography>
+                  <Typography variant='body1' sx={{ whiteSpace: 'pre-wrap', lineHeight: 1.8 }}>
+                    {storyline.canonical_narrative}
+                  </Typography>
+                </Box>
+              ) : null}
 
               {/* Analysis Summary Section */}
               {storyline.analysis_summary ? (
@@ -978,8 +1018,8 @@ const StorylineDetail = () => {
               ) : (
                 <Alert severity='info' sx={{ mb: 2 }}>
                   <Typography variant='body2'>
-                    No analysis summary available. Click "Analyze Storyline" to
-                    generate an AI-powered summary of this storyline's articles.
+                    No analysis summary stored yet. Use &quot;Queue deep analysis&quot; to enqueue
+                    workers — results appear here when processing finishes (refresh or wait for auto-reload).
                   </Typography>
                 </Alert>
               )}

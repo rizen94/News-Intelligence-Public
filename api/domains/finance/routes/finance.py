@@ -13,6 +13,7 @@ Domain validation rule:
 from fastapi import APIRouter, HTTPException, Path, Query, Request, Body
 from fastapi.responses import JSONResponse
 from typing import Dict, Any, Optional
+from shared.domain_registry import ACTIVE_DOMAIN_KEYS_SET, DOMAIN_PATH_PATTERN
 from datetime import datetime, timedelta, timezone, date
 import logging
 from collections import Counter
@@ -74,12 +75,9 @@ router = APIRouter(
     responses={404: {"description": "Not found"}}
 )
 
-_VALID_DOMAINS = {"politics", "finance", "science-tech"}
-
-
 def _check_domain(domain: str) -> None:
     """Validate domain; finance infrastructure endpoints work without main DB."""
-    if domain not in _VALID_DOMAINS:
+    if domain not in ACTIVE_DOMAIN_KEYS_SET:
         raise HTTPException(status_code=400, detail=f"Invalid domain: {domain}")
 
 
@@ -90,7 +88,7 @@ def _check_domain(domain: str) -> None:
 @router.get("/{domain}/finance/tasks")  # List tasks with filters
 async def list_finance_tasks(
     request: Request,
-    domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     status: str | None = Query(None, description="Filter by status: queued, planning, executing, evaluating, revising, complete, failed"),
     task_type: str | None = Query(None, description="Filter by type: refresh, ingest, analysis, report, scheduled_refresh"),
     limit: int = Query(50, ge=1, le=200),
@@ -108,7 +106,7 @@ async def list_finance_tasks(
 @router.get("/{domain}/finance/tasks/{task_id}")  # Task status and result (polling)
 async def get_finance_task(
     request: Request,
-    domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     task_id: str = Path(..., description="Orchestrator task ID (e.g. fin-abc123)"),
 ):
     """Poll task status. Returns result if complete."""
@@ -156,7 +154,7 @@ async def get_finance_task(
 @router.get("/{domain}/finance/evidence/preview")  # On-demand evidence bundle (RSS + optional API summary + RAG)
 async def finance_evidence_preview(
     request: Request,
-    domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     query: str | None = Query(None, description="Optional query for RAG"),
     topic: str = Query("gold", description="Topic (e.g. gold) for API summary"),
     hours: int = Query(168, ge=1, le=720, description="RSS lookback hours"),
@@ -187,7 +185,7 @@ async def finance_evidence_preview(
 @router.get("/{domain}/finance/evidence")  # Paginated evidence index (provenance from completed tasks)
 async def list_finance_evidence(
     request: Request,
-    domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     source: str | None = Query(None, description="Filter by source: gold, fred, edgar_10k"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
@@ -204,7 +202,7 @@ async def list_finance_evidence(
 @router.get("/{domain}/finance/verification")  # Paginated verification history
 async def list_finance_verification(
     request: Request,
-    domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ):
@@ -220,7 +218,7 @@ async def list_finance_verification(
 @router.get("/{domain}/finance/trace/{task_id}")  # Task execution trace (spans, decisions, LLM calls)
 async def get_finance_trace(
     request: Request,
-    domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     task_id: str = Path(..., description="Orchestrator task ID"),
 ):
     """Reconstruct task trace: spans, orchestrator decisions, LLM interactions."""
@@ -272,7 +270,7 @@ async def get_finance_trace(
 @router.get("/{domain}/finance/tasks/{task_id}/ledger")  # Ledger entries for this task (activity log)
 async def get_finance_task_ledger(
     request: Request,
-    domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     task_id: str = Path(..., description="Orchestrator task ID"),
 ):
     """Get evidence ledger entries for a task. Used for live activity log during processing."""
@@ -290,7 +288,7 @@ async def get_finance_task_ledger(
 @router.get("/{domain}/finance/tasks/{task_id}/status")  # Status only (for polling)
 async def get_finance_task_status(
     request: Request,
-    domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     task_id: str = Path(..., description="Orchestrator task ID"),
 ):
     """Get task status only. Use GET /tasks/{id} for status + result when complete."""
@@ -307,7 +305,7 @@ async def get_finance_task_status(
 @router.get("/{domain}/finance/schedule")  # Schedule status
 async def get_finance_schedule(
     request: Request,
-    domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
 ):
     """Get scheduled task status: next run times, last run results."""
     _check_domain(domain)
@@ -325,7 +323,7 @@ async def get_finance_schedule(
 @router.get("/{domain}/finance/sources/status")  # Source health with last success/failure
 async def get_finance_source_status(
     request: Request,
-    domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
 ):
     """Get source health status: last success, last failure, next scheduled refresh."""
     _check_domain(domain)
@@ -405,7 +403,7 @@ async def get_finance_source_status(
 
 @router.get("/{domain}/finance/data-sources")  # Infrastructure: YAML only
 async def get_finance_data_sources(
-    domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
 ):
     """List available data sources and their configured symbols (from sources.yaml)."""
     _check_domain(domain)
@@ -435,7 +433,7 @@ async def get_finance_data_sources(
 
 @router.get("/{domain}/finance/market-data")  # Infrastructure: SQLite market store
 async def get_finance_market_data(
-    domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     source: str = Query("fred", description="Data source (fred)"),
     symbol: str | None = Query(None, description="Symbol filter"),
     start_date: str | None = Query(None, description="Start date YYYY-MM-DD"),
@@ -459,7 +457,7 @@ async def get_finance_market_data(
 
 @router.get("/{domain}/finance/gold")  # Infrastructure: gold amalgam + SQLite
 async def get_gold_data(
-    domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     source: str | None = Query(None, description="Source: freegoldapi, fred_iq12260, or omit for unified"),
     start_date: str | None = Query(None, description="Start date YYYY-MM-DD"),
     end_date: str | None = Query(None, description="End date YYYY-MM-DD"),
@@ -494,7 +492,7 @@ async def get_gold_data(
 @router.post("/{domain}/finance/gold/fetch")  # Infrastructure: gold sources via orchestrator
 async def trigger_gold_fetch(
     request: Request,
-    domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     start_date: str | None = Query(None, description="Start date YYYY-MM-DD"),
     end_date: str | None = Query(None, description="End date YYYY-MM-DD"),
 ):
@@ -529,7 +527,7 @@ async def trigger_gold_fetch(
 
 @router.get("/{domain}/finance/gold/history")
 async def get_gold_history(
-    domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     days: int = Query(90, ge=1, le=1825, description="Number of days of history"),
     fetch_if_empty: bool = Query(True, description="Fetch from sources if stored data empty"),
 ):
@@ -550,7 +548,7 @@ async def get_gold_history(
 
 @router.get("/{domain}/finance/gold/spot")
 async def get_gold_spot(
-    domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
 ):
     """Current gold spot price (bid/ask/high/low/change). From metals.dev when key set, else amalgamator unified."""
     _check_domain(domain)
@@ -580,7 +578,7 @@ async def get_gold_spot(
 
 @router.get("/{domain}/finance/gold/authority")
 async def get_gold_authority(
-    domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     authorities: str | None = Query("lbma,mcx,ibja", description="Comma-separated: lbma, mcx, ibja"),
 ):
     """Regional authority gold prices (LBMA London, MCX India, IBJA India) for geographic comparison."""
@@ -603,7 +601,7 @@ async def get_gold_authority(
 
 @router.get("/{domain}/finance/gold/geo-events")
 async def get_gold_geo_events(
-    domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     limit: int = Query(50, ge=1, le=200),
 ):
     """Finance-domain tracked events relevant to gold (event_name/scope matched to gold topic keywords)."""
@@ -670,7 +668,7 @@ async def get_gold_geo_events(
 
 @router.post("/{domain}/finance/gold/fetch-history")
 async def trigger_gold_fetch_history(
-    domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     days: int = Query(90, ge=1, le=1825),
 ):
     """Trigger historical gold data fetch from metals.dev and amalgamator (admin)."""
@@ -697,7 +695,7 @@ async def trigger_gold_fetch_history(
 
 @router.get("/{domain}/finance/commodities")
 async def get_commodities_list(
-    domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
 ):
     """Return commodity list from registry for dashboard/nav (id, label)."""
     _check_domain(domain)
@@ -715,7 +713,7 @@ async def get_commodities_list(
 
 @router.get("/{domain}/finance/commodity/{commodity}/news")
 async def get_commodity_news(
-    domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     commodity: str = Path(..., description="Commodity id (e.g. gold, silver, platinum)"),
     hours: int = Query(168, ge=24, le=720),
     max_items: int = Query(20, ge=1, le=50),
@@ -740,7 +738,7 @@ async def get_commodity_news(
 
 @router.get("/{domain}/finance/commodity/{commodity}/supply-chain")
 async def get_commodity_supply_chain(
-    domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     commodity: str = Path(..., description="Commodity id (e.g. gold, silver, platinum)"),
     hours: int = Query(168, ge=24, le=720),
     max_items: int = Query(15, ge=1, le=50),
@@ -765,7 +763,7 @@ async def get_commodity_supply_chain(
 
 @router.get("/{domain}/finance/commodity/{commodity}/history")
 async def get_commodity_history(
-    domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     commodity: str = Path(..., description="Commodity id (e.g. gold, silver, platinum)"),
     days: int = Query(90, ge=1, le=1825),
     fetch_if_empty: bool = Query(True),
@@ -807,7 +805,7 @@ async def get_commodity_history(
 
 @router.get("/{domain}/finance/commodity/{commodity}/spot")
 async def get_commodity_spot(
-    domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     commodity: str = Path(..., description="Commodity id (e.g. gold, silver, platinum, oil, gas)"),
 ):
     """Current spot price. FRED from registry first; metals use metals.dev; gold also amalgamator. Unit from registry."""
@@ -879,7 +877,7 @@ async def get_commodity_spot(
 
 @router.get("/{domain}/finance/commodity/{commodity}/authority")
 async def get_commodity_authority(
-    domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     commodity: str = Path(..., description="Commodity id (e.g. gold, silver, platinum)"),
     authorities: str | None = Query("lbma,mcx,ibja"),
 ):
@@ -907,7 +905,7 @@ async def get_commodity_authority(
 
 @router.get("/{domain}/finance/commodity/geo-events")
 async def get_commodity_geo_events(
-    domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     limit: int = Query(50, ge=1, le=200),
     commodity: str | None = Query(
         None,
@@ -991,7 +989,7 @@ REGULATORY_EVENT_TYPES = ("regulatory", "policy", "government_bond")
 
 @router.get("/{domain}/finance/commodity/regulatory-events")
 async def get_commodity_regulatory_events(
-    domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     limit: int = Query(20, ge=1, le=100),
     commodity: str | None = Query(
         None,
@@ -1062,7 +1060,7 @@ async def get_commodity_regulatory_events(
 @router.post("/{domain}/finance/edgar/ingest")  # Infrastructure: EDGAR 10-K via orchestrator
 async def trigger_edgar_ingest(
     request: Request,
-    domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     filings_per_company: int = Query(1, ge=1, le=5, description="10-K filings per company"),
 ):
     """Fetch 10-K filings for mining companies via orchestrator. Refresh+ingest task."""
@@ -1095,7 +1093,7 @@ async def trigger_edgar_ingest(
 @router.post("/{domain}/finance/analyze")  # Analysis task via orchestrator
 async def trigger_analysis(
     request: Request,
-    domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     query: str = Query(..., description="Analysis query (e.g. gold price trend)"),
     topic: str = Query("gold", description="Data topic: gold, all, fred"),
     start_date: str | None = Query(None, description="Date range start YYYY-MM-DD"),
@@ -1155,7 +1153,7 @@ async def trigger_analysis(
 @router.post("/{domain}/finance/analyze/enhance")
 async def trigger_analysis_enhance(
     request: Request,
-    domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     query: str = Query(..., description="Same analysis query to run with more context"),
     topic: str = Query("gold", description="Data topic: gold, silver, platinum, all, fred"),
     start_date: str | None = Query(None, description="Date range start YYYY-MM-DD"),
@@ -1205,7 +1203,7 @@ async def trigger_analysis_enhance(
 
 @router.get("/{domain}/finance/research-topics")
 async def list_research_topics(
-    domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     last_refined_task_id: str | None = Query(None, description="Return topic whose last refinement is this task"),
@@ -1254,7 +1252,7 @@ async def list_research_topics(
 
 @router.get("/{domain}/finance/research-topics/{topic_id}")
 async def get_research_topic(
-    domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     topic_id: int = Path(..., ge=1),
 ):
     """Get a single research topic by id."""
@@ -1288,7 +1286,7 @@ async def get_research_topic(
 @router.post("/{domain}/finance/research-topics")
 async def create_research_topic(
     request: Request,
-    domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     body: dict = Body(...),
 ):
     """
@@ -1375,7 +1373,7 @@ async def create_research_topic(
 @router.post("/{domain}/finance/research-topics/{topic_id}/refine")
 async def refine_research_topic(
     request: Request,
-    domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     topic_id: int = Path(..., ge=1),
 ):
     """
@@ -1466,7 +1464,7 @@ async def refine_research_topic(
 @router.patch("/{domain}/finance/research-topics/{topic_id}")
 async def update_research_topic_from_task(
     request: Request,
-    domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     topic_id: int = Path(..., ge=1),
     body: dict = Body(...),
 ):
@@ -1528,7 +1526,7 @@ async def update_research_topic_from_task(
 @router.post("/{domain}/finance/fetch-fred")  # Infrastructure: FRED via orchestrator
 async def trigger_fred_fetch(
     request: Request,
-    domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     symbol: str = Query(..., description="FRED series ID (e.g. IQ12260, DCOILWTICO)"),
     start_date: str | None = Query(None, description="Start date YYYY-MM-DD"),
     end_date: str | None = Query(None, description="End date YYYY-MM-DD"),
@@ -1561,7 +1559,7 @@ async def trigger_fred_fetch(
 
 @router.get("/{domain}/finance/market-trends")  # PostgreSQL: validate_domain
 async def get_market_trends(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     timeframe: str | None = Query("7d", description="Timeframe: 1d, 7d, 30d, 90d, 1y"),
     sector: str | None = Query(None, description="Filter by sector")
 ):
@@ -1630,7 +1628,7 @@ _STOP = frozenset("a an the and or but in on at to for of with by from as is was
 
 @router.get("/{domain}/finance/market-patterns")
 async def get_market_patterns(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     pattern_type: str | None = Query(None, description="Pattern type filter"),
     min_confidence: float | None = Query(0.5, ge=0.0, le=1.0, description="Minimum confidence score"),
     limit: int = Query(50, ge=1, le=100),
@@ -1701,7 +1699,7 @@ _ANNOUNCEMENT_KEYWORDS = [
 
 @router.get("/{domain}/finance/corporate-announcements")
 async def get_corporate_announcements(
-    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     company: str | None = Query(None, description="Filter by company name"),
     announcement_type: str | None = Query(None, description="Filter by announcement type"),
     limit: int = Query(50, ge=1, le=100),

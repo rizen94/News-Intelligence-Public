@@ -4,6 +4,8 @@
  * Industry best practices for feature validation
  */
 
+import { DOMAIN_KEYS_LIST } from './domainHelper';
+
 interface TestResult {
   name: string;
   passed: boolean;
@@ -206,7 +208,7 @@ export const registerDefaultTests = () => {
     critical: true,
     test: () => {
       const domain = localStorage.getItem('currentDomain');
-      return domain !== null && ['politics', 'finance', 'science-tech'].includes(domain);
+      return domain !== null && DOMAIN_KEYS_LIST.includes(domain as (typeof DOMAIN_KEYS_LIST)[number]);
     },
   });
 

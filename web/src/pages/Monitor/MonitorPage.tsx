@@ -4,6 +4,7 @@
  * pipeline status, phase timeline (last run / next due), decision log, and optional phase trigger.
  */
 import React, { useEffect, useState, useCallback } from 'react';
+import { Link as RouterLink, useParams } from 'react-router-dom';
 import {
   Card,
   CardHeader,
@@ -28,6 +29,7 @@ import {
   Select,
   MenuItem,
   Button,
+  Link,
 } from '@mui/material';
 import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
 import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
@@ -81,6 +83,8 @@ type DbSession = {
 };
 
 export default function MonitorPage() {
+  const { domain: routeDomain } = useParams<{ domain: string }>();
+  const navDomain = routeDomain ?? 'politics';
   const [overview, setOverview] = useState<{
     success?: boolean;
     connections?: Record<string, unknown>;
@@ -356,6 +360,12 @@ export default function MonitorPage() {
     <Box>
       <Typography variant="h5" sx={{ mb: 2, fontWeight: 600 }}>
         Monitor
+      </Typography>
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+        <Link component={RouterLink} to={`/${navDomain}/monitor/sql-explorer`} underline="hover">
+          SQL explorer
+        </Link>{' '}
+        (read-only; enable with <code>NEWS_INTEL_SQL_EXPLORER=true</code> on the API)
       </Typography>
       {error && (
         <Alert severity="warning" sx={{ mb: 2 }} onClose={() => setError(null)}>
