@@ -14,6 +14,10 @@ After **migration 176**, record every successful apply in **`public.applied_migr
 ```bash
 PYTHONPATH=api uv run python api/scripts/register_applied_migration.py 182 --notes "run_migration_182.py" \
   --file api/database/migrations/182_add_domain_foreign_keys_skip_missing_topic_learning.sql
+
+PYTHONPATH=api uv run python api/scripts/run_migration_185.py
+PYTHONPATH=api uv run python api/scripts/register_applied_migration.py 185 --notes "run_migration_185.py" \
+  --file api/database/migrations/185_storylines_master_summary.sql
 ```
 
 Compare the database to files on disk:
