@@ -21,7 +21,7 @@
 
 ---
 
-## 2. Environment variables (`api/main_v4.py` + `config/settings.py`)
+## 2. Environment variables (`api/main.py` + `config/settings.py`)
 
 | Variable | Values | Effect |
 |----------|--------|--------|
@@ -33,6 +33,7 @@
 | `NEWS_INTEL_RATE_LIMIT_PER_MINUTE` | Integer (default `120`) | Per-IP in-process limit when middleware is on. |
 | `NEWS_INTEL_SQL_EXPLORER` | `true` | Read-only SQL explorer in Monitor — **high impact**; anyone who can reach the API can read the DB. Keep off outside trusted networks. |
 | `LOG_LLM_FULL_TEXT` | `true` | Logs full prompts/responses — may contain PII or article text; keep **off** in shared log sinks. |
+| `CRON_HEARTBEAT_KEY` | Long random string | **Optional.** When set, `POST /api/system_monitoring/cron_heartbeat` with header **`X-Cron-Heartbeat-Key`** matching this value can append a row to **`automation_run_history`** (e.g. phase `cron_rss`) so cron runs are visible without log files. If unset, the endpoint returns **501** (not configured). Treat like any shared secret; restrict network access to the API. |
 
 Copy examples into project-root `.env` from [configs/env.example](../configs/env.example).
 
