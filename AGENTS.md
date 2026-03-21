@@ -32,7 +32,7 @@ Context for AI assistants. Use project terminology consistently.
 
 | Role | Path |
 |------|------|
-| API | `api/main_v4.py` |
+| API | `api/main.py` |
 | Frontend | `web/src/App.tsx` |
 | API client | `web/src/services/api/` + `apiService.ts` |
 | DB (single source) | `api/shared/database/connection.py` |
@@ -77,6 +77,12 @@ Context for AI assistants. Use project terminology consistently.
 - **Web interface and monitoring are independent of the data pipeline.** The site and health/status endpoints always respond with currently available data; they do not wait for background processing (enrichment, entity extraction, synthesis).
 - **Health checks and statuses** (e.g. `/api/system_monitoring/health`, `/automation/status`) are ready at any time; automation status uses a short timeout so the UI never blocks on the pipeline.
 - **Pipeline work** (RSS, content enrichment, entity extraction, pattern matching, etc.) runs as background tasks; it may yield when the user loads a non-monitoring page so the UI stays responsive. Polling paths (Monitor, health, status, backlog) do not trigger that yield so the pipeline can keep running while the user views the dashboard.
+
+### Automation and pipeline visibility (where runs are recorded)
+
+- **Phase completions:** `public.automation_run_history` — inserts via `shared.services.automation_run_history_writer.persist_automation_run_history` (AutomationManager completions; optional **`POST /api/system_monitoring/cron_heartbeat`** with **`CRON_HEARTBEAT_KEY`** + **`X-Cron-Heartbeat-Key`** for cron markers such as `cron_rss`).
+- **Pipeline DB rows:** `pipeline_traces` / `pipeline_checkpoints` — `shared.services.pipeline_trace_writer.log_pipeline_trace` (Monitoring **Trigger pipeline**; OrchestratorCoordinator RSS uses stage **`orchestrator_rss_collection`**).
+- **Operator report:** `scripts/run_last_24h_report.sh` → `scripts/last_24h_activity_report.py`; narrative: **`docs/AUTOMATION_AND_LAST_24H_ACTIVITY.md`**.
 
 ---
 
@@ -146,7 +152,7 @@ When you change the **API** (routes, path segments, response shape) or **core be
 1. **Update docs in the same change** (or the next commit): `AGENTS.md`, `docs/CODING_STYLE_GUIDE.md`, `docs/ARCHITECTURE_AND_OPERATIONS.md`, `docs/SECURITY_OPERATIONS.md` (if exposure, CORS, or error-handling changes), and any domain or feature doc that references the change.
 2. **Paths:** Use flat `/api` (no version in path). Route path segments: `snake_case` (e.g. `system_monitoring`, `rss_feeds`). Domain-scoped: `/api/{domain}/...` with domain `politics` | `finance` | `science-tech`.
 3. **Code and tests:** Keep test URLs and frontend API calls in sync with the real routes (no `/api/v4/`, no kebab-case route segments).
-4. **Single source:** Entry points and file layout in `AGENTS.md` and the “Project structure” in `CODING_STYLE_GUIDE.md` must match the repo (e.g. `main_v4.py`, `api/domains/*/routes/`, `MainLayout.tsx`).
+4. **Single source:** Entry points and file layout in `AGENTS.md` and the “Project structure” in `CODING_STYLE_GUIDE.md` must match the repo (e.g. `main.py`, `api/domains/*/routes/`, `MainLayout.tsx`).
 
 ---
 

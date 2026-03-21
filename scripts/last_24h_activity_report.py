@@ -12,11 +12,28 @@ Minimal deps: psycopg2-binary only. On externally-managed Python (PEP 668), use 
 That creates .venv-report (once), installs psycopg2-binary there, and runs this script. .env is read from project root.
 """
 
+import importlib.util
 import os
 import sys
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+
+
+def _load_schedule_interval_seconds():
+    """Single source: scripts/automation_run_analysis.py SCHEDULE_INTERVAL_SECONDS."""
+    path = os.path.join(PROJECT_ROOT, "scripts", "automation_run_analysis.py")
+    if not os.path.isfile(path):
+        return {}
+    try:
+        spec = importlib.util.spec_from_file_location("_automation_run_analysis", path)
+        if spec is None or spec.loader is None:
+            return {}
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return dict(getattr(mod, "SCHEDULE_INTERVAL_SECONDS", {}) or {})
+    except Exception:
+        return {}
 
 
 def _get_db_config():
@@ -69,9 +86,66 @@ def main():
         return 1
 
     gaps = []
+    schedule = _load_schedule_interval_seconds()
 
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # --- Automation phases (DB: survives API restart) ---
+            print("\n--- Automation phases (automation_run_history, last 24h) ---")
+            automation_rows = []
+            try:
+                cur.execute(
+                    """
+                    SELECT phase_name,
+                           COUNT(*) AS runs,
+                           COUNT(*) FILTER (WHERE success) AS ok_runs,
+                           MAX(finished_at) FILTER (WHERE success) AS last_ok,
+                           MAX(finished_at) FILTER (WHERE NOT success) AS last_fail
+                    FROM public.automation_run_history
+                    WHERE finished_at >= %s
+                    GROUP BY phase_name
+                    ORDER BY phase_name
+                    """,
+                    (since,),
+                )
+                automation_rows = cur.fetchall()
+            except Exception as e:
+                print(f"  (could not read automation_run_history: {e})")
+            if not automation_rows:
+                print("  None (no phase completions in last 24h, or table missing)")
+                gaps.append(
+                    "  No rows in automation_run_history in last 24h — automation may be off or DB unreachable during runs"
+                )
+            else:
+                for r in automation_rows:
+                    ok = r["ok_runs"] or 0
+                    tot = r["runs"] or 0
+                    print(
+                        f"  {r['phase_name']}: {tot} runs ({ok} ok), last success: {r['last_ok'] or '—'}"
+                    )
+                    if r["last_fail"] and (not r["last_ok"] or r["last_fail"] > r["last_ok"]):
+                        print(f"    (last failure: {r['last_fail']})")
+
+            # Phases scheduled at most once per 24h should have at least one successful run in the window
+            phases_ok = {r["phase_name"] for r in automation_rows if (r["ok_runs"] or 0) > 0}
+            expected_24h = {
+                name
+                for name, sec in schedule.items()
+                if sec and sec <= 86400 and name not in ("cron_rss",)
+            }
+            missing_ok = sorted(expected_24h - phases_ok)
+            if missing_ok:
+                print("\n--- Phases with schedule interval ≤ 24h and no successful run in last 24h ---")
+                for name in missing_ok[:40]:
+                    intv = schedule.get(name, 0)
+                    print(f"  {name} (interval {intv // 60}m)")
+                if len(missing_ok) > 40:
+                    print(f"  ... and {len(missing_ok) - 40} more")
+                gaps.append(
+                    f"  {len(missing_ok)} automation phase(s) with interval ≤ 24h had no successful run "
+                    "in last 24h (see list above; phases may be disabled or blocked by dependencies)"
+                )
+
             # --- Articles collected (last 24h) per domain ---
             print("\n--- Articles collected (last 24h) ---")
             for schema in ["politics", "finance", "science_tech"]:
@@ -122,8 +196,11 @@ def main():
             )
             rows = cur.fetchall()
             if not rows:
-                print("  None (no pipeline runs recorded in last 24h)")
-                gaps.append("  No pipeline_traces in last 24h (only recorded when 'Trigger pipeline' is used from Monitoring)")
+                print("  None (no pipeline trace rows in last 24h)")
+                gaps.append(
+                    "  No pipeline_traces in last 24h — use Monitoring 'Trigger pipeline', or rely on "
+                    "orchestrator_rss_collection checkpoints if OrchestratorCoordinator RSS is enabled"
+                )
             else:
                 for r in rows:
                     status = "ok" if r["success"] else "error"
@@ -145,6 +222,12 @@ def main():
                 print("\n--- Pipeline checkpoints by stage (last 24h) ---")
                 for r in cp_rows:
                     print(f"  {r['stage']}: {r['status']} = {r['c']}")
+            orch_n = sum(r["c"] for r in cp_rows if r.get("stage") == "orchestrator_rss_collection")
+            print("\n--- Orchestrator RSS (pipeline checkpoints) ---")
+            print(
+                f"  orchestrator_rss_collection: {orch_n} checkpoint row(s) in last 24h "
+                "(from OrchestratorCoordinator RSS; cron-only installs may show 0)"
+            )
 
             # --- System alerts (last 24h) ---
             print("\n--- System alerts (last 24h) ---")
@@ -176,8 +259,8 @@ def main():
     state_path = os.path.join(PROJECT_ROOT, "data", "orchestrator_state.db")
     if os.path.exists(state_path):
         try:
-            import sqlite3
             import json
+            import sqlite3
             db = sqlite3.connect(state_path)
             row = db.execute("SELECT state_json, updated_at FROM orchestrator_controller_state WHERE id = 1").fetchone()
             db.close()
@@ -206,7 +289,7 @@ def main():
             with open(log_path) as f:
                 lines = f.readlines()
             # show last N lines that are from last 24h (by timestamp in log)
-            recent = [l for l in lines if l.strip()][-50:]
+            recent = [ln for ln in lines if ln.strip()][-50:]
             print(f"  Log file: {log_path} (showing last {len(recent)} lines)")
             for line in recent[-15:]:
                 print("   ", line.rstrip())
@@ -227,9 +310,9 @@ def main():
             print(g)
     print("\nNote:")
     print("  - RSS collection can run via: (1) Cron 6am/6pm, (2) OrchestratorCoordinator loop, (3) Manual 'Trigger pipeline'.")
-    print("  - pipeline_traces are only written when 'Trigger pipeline' is used from the Monitoring UI (or equivalent API).")
-    print("  - AutomationManager (health_check, consolidation, topic clustering) runs in-process; last_run is not persisted to DB.")
-    print("  - To see AutomationManager activity, check API process logs (stdout / logs/api_server.log).")
+    print("  - pipeline_traces: Monitoring 'Trigger pipeline', plus orchestrator_rss_collection when the coordinator runs RSS.")
+    print("  - Task completions are persisted to automation_run_history; Monitor and GET /api/system_monitoring/automation_status expose last_run per phase.")
+    print("  - Optional: POST /api/system_monitoring/cron_heartbeat (header X-Cron-Heartbeat-Key) records cron_rss in automation_run_history when CRON_HEARTBEAT_KEY is set.")
     return 0
 
 if __name__ == "__main__":

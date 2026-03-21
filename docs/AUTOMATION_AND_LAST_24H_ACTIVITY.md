@@ -19,13 +19,15 @@ The script prints:
 
 - **Articles collected** in the last 24h per domain (politics, finance, science_tech)
 - **RSS feeds** — how many were fetched in 24h vs not (stale)
-- **Pipeline traces** — runs recorded when someone uses "Trigger pipeline" (Monitoring UI or API)
-- **Pipeline checkpoints** — stages (rss_collection, topic_clustering, ai_analysis) and status
+- **Automation phases** — `automation_run_history` aggregates (runs per phase, last success); phases with schedule interval ≤ 24h and **no** successful run in the window (see `scripts/automation_run_analysis.py` for the same schedule table)
+- **Pipeline traces** — `pipeline_traces` rows (Monitoring **Trigger pipeline** and any other writer that logs a trace)
+- **Pipeline checkpoints** — stages and statuses, including **`orchestrator_rss_collection`** when OrchestratorCoordinator runs RSS
+- **Orchestrator RSS** — count of `orchestrator_rss_collection` checkpoint rows (0 is normal if you use cron-only RSS)
 - **System alerts** — last 24h
 - **Orchestrator state** — `last_collection_times` from the coordinator (SQLite)
 - **Cron RSS log** — last lines from `~/logs/news_intelligence/rss_collection.log` (or `logs/rss_collection.log`)
 
-It also lists **potential gaps** (e.g. no new articles in a domain, no pipeline_traces, no orchestrator last_collection_times, missing log file).
+It also lists **potential gaps** (e.g. no new articles in a domain, no `pipeline_traces` rows, phases with no successful run in 24h, missing cron log file).
 
 ---
 
@@ -33,35 +35,37 @@ It also lists **potential gaps** (e.g. no new articles in a domain, no pipeline_
 
 | What | How it runs | Where it’s recorded |
 |------|-------------|----------------------|
-| **RSS collection** | (1) **Cron** 6am / 6pm via `scripts/rss_collection_with_health_check.sh` (if installed). (2) **OrchestratorCoordinator** loop (when API is up) — recommends RSS fetch, calls `collect_rss_feeds()`. (3) **Manual** “Trigger pipeline” from Monitoring UI. | **Cron:** `~/logs/news_intelligence/rss_collection.log`. **Coordinator:** `data/orchestrator_state.db` → `last_collection_times.rss`. **DB:** `politics/finance/science_tech.rss_feeds.last_fetched_at` and `.articles.created_at`. **Trigger pipeline only:** `pipeline_traces` + `pipeline_checkpoints`. |
-| **OrchestratorCoordinator** | Started with API in `main_v4.py`. Loop: assess state → plan (CollectionGovernor) → execute one task (e.g. RSS) → learn → sleep (~60s). | **SQLite:** `data/orchestrator_state.db` — `orchestrator_controller_state` (state_json: `last_collection_times`, `current_cycle`, etc.), `orchestrator_source_profiles`. |
-| **AutomationManager** (in-process) | Started with API. Runs: collection_cycle, context_sync, claim_extraction, claims_to_facts, event_tracking, topic_clustering, storyline_discovery, digest_generation, and many other phases on their intervals. | **Persisted:** Each task completion is written to `automation_run_history` (phase_name, started_at, finished_at, success). Last run times are also in memory and exposed via GET `/api/system_monitoring/automation_status` (phases with last_run, next due). Check **API process logs** (stdout or `logs/api_server.log`) for activity. |
-| **Pipeline (full run)** | Only when **“Trigger pipeline”** is used (Monitoring UI or API). Stages: rss_collection → topic_clustering → ai_analysis. | **PostgreSQL:** `pipeline_traces`, `pipeline_checkpoints`. |
-| **Storyline consolidation** | AutomationManager runs it on a schedule (in-process). | **Not in pipeline_traces.** Service keeps `_last_run` in memory. DB is updated (storyline merges, etc.) but “last run” is not in DB. |
-| **Topic clustering** | AutomationManager or “Trigger pipeline” (topic_clustering stage). | **Trigger pipeline only:** `pipeline_checkpoints` (stage = topic_clustering). AutomationManager runs are not written to pipeline tables. |
-| **Health check** | AutomationManager every ~2 min; also GET `/api/system_monitoring/health`. | **Not persisted.** Health endpoint returns current status; no “last 24h history” of health checks. |
-| **Health Monitor Orchestrator** | Started with API. Polls health feeds (config); creates system_alerts on failure. | **PostgreSQL:** `system_alerts` (alert_type, severity, title, created_at). |
+| **RSS collection** | (1) **Cron** (e.g. 6am / 6pm) via `scripts/rss_collection_with_health_check.sh` if installed. (2) **OrchestratorCoordinator** (when API is up) — recommends RSS fetch, calls `collect_rss_feeds()`. (3) **Manual** “Trigger pipeline” from Monitoring UI. | **Cron:** log file under `~/logs/news_intelligence/` or project `logs/`. **Per-feed:** `rss_feeds.last_fetched_at` / `last_success`. **Coordinator RSS:** SQLite `orchestrator_state.db` (`last_collection_times`), plus **`pipeline_traces` / `pipeline_checkpoints`** with stage **`orchestrator_rss_collection`** (same mechanism as Trigger pipeline, different trace id). **Trigger pipeline:** `pipeline_traces` + `pipeline_checkpoints` (e.g. rss_collection → topic_clustering → ai_analysis). |
+| **OrchestratorCoordinator** | Started with API in `api/main.py`. Loop: assess → plan (CollectionGovernor) → execute one task → learn → sleep (~60s). | **SQLite:** `data/orchestrator_state.db`. **PostgreSQL:** pipeline rows when RSS collection runs (see above). |
+| **AutomationManager** | In-process with the API. Phases include `collection_cycle`, `context_sync`, `claim_extraction`, `claims_to_facts`, `topic_clustering`, `storyline_processing`, `health_check`, etc. | **PostgreSQL:** each completed phase is written to **`automation_run_history`** (`phase_name`, `started_at`, `finished_at`, `success`). **API:** GET `/api/system_monitoring/automation_status` merges in-memory last_run with DB. **Logs:** stdout / `logs/api_server.log` for detail. |
+| **Pipeline (Monitoring “Trigger pipeline”)** | Only when **Trigger pipeline** is used (UI or API). | **PostgreSQL:** `pipeline_traces`, `pipeline_checkpoints` (stages such as rss_collection, topic_clustering, ai_analysis). |
+| **Storyline work (scheduled)** | AutomationManager phases (e.g. `storyline_processing`, `storyline_automation`, `storyline_discovery`). | **Phase completion:** `automation_run_history`. **Not** the same rows as Trigger pipeline unless you also ran a manual pipeline that touches those stages. Domain tables (storylines, merges) reflect effects; there is no separate “merge audit” table in this doc. |
+| **Topic clustering** | AutomationManager phase and/or Trigger pipeline stage. | **AutomationManager path:** `automation_run_history` (`topic_clustering`). **Trigger pipeline path:** `pipeline_checkpoints` with stage `topic_clustering`. |
+| **health_check** | AutomationManager on an interval. | **`automation_run_history`** when the task completes successfully or fails (same persistence path as other phases). |
+| **Health Monitor Orchestrator** | Started with API; polls configured feeds. | **PostgreSQL:** `system_alerts`. |
 
 ---
 
-## Areas that are not (or barely) recorded
+## What is still thin or optional
 
-1. **AutomationManager task runs** — health_check, consolidation, topic clustering, etc. **Last run** is only in memory. To know “did consolidation run in the last 24h?” you’d need to either (a) add writes to a DB table or `pipeline_automation_status` when each task runs, or (b) rely on API logs. **Update (v8.1):** Task completions are now written to `automation_run_history`; the Monitor and GET `/api/system_monitoring/automation_status` expose last_run per phase (e.g. claims_to_facts).
-2. **Pipeline traces** — Only created when **“Trigger pipeline”** is used. Cron and OrchestratorCoordinator RSS runs do **not** write to `pipeline_traces` unless the code path is extended.
-3. **Cron RSS** — Only in a log file. If the log is rotated or missing, there’s no DB record of cron runs.
-4. **RSS “who fetched when”** — Per-feed `last_fetched_at` (and `last_success`) in `rss_feeds` is updated by the fetcher; the report script uses this to count “fetched in 24h” vs “stale”.
+1. **Cron RSS in the database** — By default, cron is visible in the **log file** and indirectly via **`rss_feeds`** and new **articles**. For a durable “cron ran at” row without relying on logs, configure **`POST /api/system_monitoring/cron_heartbeat`** (header `X-Cron-Heartbeat-Key`, env **`CRON_HEARTBEAT_KEY`**) so the wrapper can record a phase such as **`cron_rss`** in **`automation_run_history`**.
+2. **Trigger pipeline vs coordinator** — Full Monitoring pipeline runs and coordinator RSS runs both use **`pipeline_traces`**; distinguish them by **`trace_id`** prefix (e.g. `orch_rss_*` vs UI-triggered) and by checkpoint stage names.
+3. **RSS “who fetched when”** — Per-feed **`last_fetched_at`** (and **`last_success`**) in **`rss_feeds`**; the report script uses this for “fetched in 24h” vs stale counts.
 
 ---
 
-## Connecting automation to visibility (recommendations)
+## Related scripts and endpoints
 
-- **Persist AutomationManager last_run**  
-  When a task (e.g. consolidation, topic_clustering, health_check) completes, update a table (e.g. `pipeline_automation_status` or a small `automation_run_log`) with task name, last_run timestamp, and optionally success/failure. Then the last-24h report (or a dashboard) can show “last consolidation run”, etc.
+| Item | Purpose |
+|------|---------|
+| `scripts/last_24h_activity_report.py` | Report (invoked by `run_last_24h_report.sh`). |
+| `scripts/automation_run_analysis.py` | Deeper schedule vs actuals per phase (`SCHEDULE_INTERVAL_SECONDS`). |
+| `GET /api/system_monitoring/automation_status` | Last run / next due per phase (DB-backed where available). |
+| `POST /api/system_monitoring/cron_heartbeat` | Optional cron heartbeat into **`automation_run_history`**. |
 
-- **Record coordinator RSS runs in pipeline_traces**  
-  When OrchestratorCoordinator runs RSS collection, call the same `_log_pipeline_trace` (or a small helper) so that RSS runs from the coordinator appear in `pipeline_traces` / `pipeline_checkpoints`. That way “what ran in the last 24h” is visible in one place.
+---
 
-- **Optional: cron run log to DB**  
-  Have the cron wrapper script call a tiny API endpoint (or a one-off script) that writes “cron_rss_run at &lt;timestamp&gt;” to a table or `pipeline_automation_status`, so cron runs are visible even if the log file is gone.
+## Implementation notes (for code readers)
 
-After those are in place, the same `last_24h_activity_report.py` (or a small extension) can query the new data and list any automation that did **not** run in the last 24 hours.
+- **Automation persistence:** `api/shared/services/automation_run_history_writer.py` → **`persist_automation_run_history`**.
+- **Pipeline logging:** `api/shared/services/pipeline_trace_writer.py` → **`log_pipeline_trace`** (used by Monitoring routes and **`OrchestratorCoordinator`** RSS).

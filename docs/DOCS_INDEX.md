@@ -19,7 +19,7 @@ Use this index to find the right document. **Project-facing** docs (overview, da
 | Doc | Purpose |
 |-----|---------|
 | [PROJECT_OVERVIEW.md](PROJECT_OVERVIEW.md) | **How the project works** — end-to-end flow, pipeline, concepts, **capabilities snapshot**, **scope/status** (replaces separate brief/scope docs) |
-| [DATABASE.md](DATABASE.md) | **Database reference** — schema layout (domain + intelligence), data I/O, who writes/reads what |
+| [DATABASE.md](DATABASE.md) | **Database reference (canonical)** — schema layout (domain + intelligence), data I/O, who writes/reads what. **Start here** for current schema. |
 | [DB_FULL_ASSESSMENT.md](DB_FULL_ASSESSMENT.md) | **Full DB assessment** — four-surface matrix, persistence gates, baseline snapshots, expert checklist |
 | [DB_CLEANUP_BUNDLES.md](DB_CLEANUP_BUNDLES.md) | **Cleanup bundles A/B/C** — non-destructive vs archive vs destructive (pre-delete checklist) |
 | [DB_PRODUCTION_MAINTENANCE_RUNBOOK.md](DB_PRODUCTION_MAINTENANCE_RUNBOOK.md) | **Prod/staging DB maintenance** — ordered steps, rollback, applied_migrations ledger |
@@ -68,7 +68,7 @@ Use this index to find the right document. **Project-facing** docs (overview, da
 | Doc | Purpose |
 |-----|---------|
 | [CODING_STYLE_GUIDE.md](CODING_STYLE_GUIDE.md) | **Coding standards** — naming, patterns, project layout |
-| [DATABASE_SCHEMA_DOCUMENTATION.md](DATABASE_SCHEMA_DOCUMENTATION.md) | Legacy schema reference (v3-era); see [DATABASE.md](DATABASE.md) for current. |
+| [DATABASE_SCHEMA_DOCUMENTATION.md](DATABASE_SCHEMA_DOCUMENTATION.md) | **Legacy snapshot** (v3-era naming and layout). **Do not update** for new work; use [DATABASE.md](DATABASE.md) as the single source of truth. |
 | [API_ALIGNMENT.md](API_ALIGNMENT.md) | API–frontend routes and article fields alignment |
 | [UI_PIPELINE_AUDIT_GUIDE.md](UI_PIPELINE_AUDIT_GUIDE.md) | **Audit UI** — pipeline layer checklist, storyline/timeline reliability, cross-entity checks, synthesis provenance |
 | [CONTENT_QUALITY_STANDARDS.md](CONTENT_QUALITY_STANDARDS.md) | **Content quality** — 4-tier quality, content_quality_service, briefing prioritization |
@@ -129,12 +129,14 @@ Superseded full copies of the old setup/Ollama/GPU pages: [_archive/consolidated
 
 ---
 
-## Archived
+## Archived documentation (policy)
+
+Use **one mental model** so “where is the old doc?” has a clear answer:
 
 | Location | Purpose |
 |----------|---------|
-| [archive/planning/](archive/planning/) | **Planning and development history** — roadmaps, build plans, TODOs, assessments, domain planning docs. Kept for historic record-keeping. |
-| [_archive/](_archive/) | **Obsolete and legacy docs** — older versions, deprecated guides, previous consolidations. |
+| [_archive/](_archive/) | **Canonical archive** — git-tracked obsolete material: older release notes, deprecated guides, v4/v6 planning copies, consolidated legacy pages. **Prefer adding or moving obsolete docs here** when they are replaced by current project-facing docs. |
+| [archive/](archive/) | **Optional tree** (e.g. [archive/planning/](archive/planning/)) — local or historical planning markdowns that are **not** merged into `_archive/`. Same spirit: record-keeping, not the live API/DB contract. If you add new archival material, either put it under `_archive/` **or** under `archive/` consistently, and link it from the index if others should find it. |
 
 ---
 

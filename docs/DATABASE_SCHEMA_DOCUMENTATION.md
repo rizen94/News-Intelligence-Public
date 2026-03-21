@@ -1,5 +1,7 @@
 # 🗄️ News Intelligence System v3.0 - Database Schema Documentation
 
+> **Status:** Legacy snapshot (v3-era naming, e.g. `news_system`). **Canonical reference for current work:** [DATABASE.md](./DATABASE.md). Do not treat this file as the live schema contract.
+
 ## 📋 **OVERVIEW**
 
 This document provides comprehensive documentation of the News Intelligence System database schema, following the standards established in [CODING_STYLE_GUIDE.md](./CODING_STYLE_GUIDE.md).

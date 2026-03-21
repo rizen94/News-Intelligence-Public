@@ -6,26 +6,30 @@ tracking, pattern analysis, manual override.
 
 import asyncio
 import logging
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
-from typing import Any, Callable
+from typing import Any
 
 try:
     from config.logging_config import get_component_logger
+
     logger = get_component_logger("orchestrator")
 except Exception:
     logger = logging.getLogger(__name__)
 
-from .collection_governor import CollectionGovernor, SOURCE_RSS, get_collection_source_ids
-from .resource_governor import ResourceGovernor, RESOURCE_API_CALLS
+from shared.services.pipeline_trace_writer import log_pipeline_trace
+
+from .collection_governor import SOURCE_RSS, CollectionGovernor, get_collection_source_ids
 from .learning_governor import LearningGovernor
 from .processing_governor import ProcessingGovernor
+from .resource_governor import RESOURCE_API_CALLS, ResourceGovernor
 
 # Run pattern analysis every this many cycles (~30 min at 60s)
 PATTERN_ANALYSIS_INTERVAL_CYCLES = 30
 
 # Throttle decision log so we don't flood with repeated idle / process_phase entries
-DECISION_LOG_IDLE_THROTTLE_SECONDS = 300   # Log "no_action"/"idle" at most every 5 min
+DECISION_LOG_IDLE_THROTTLE_SECONDS = 300  # Log "no_action"/"idle" at most every 5 min
 DECISION_LOG_PHASE_THROTTLE_SECONDS = 120  # Log same "process_phase"/"queued" at most every 2 min
 
 
@@ -53,6 +57,7 @@ class OrchestratorCoordinator:
         if config is None:
             try:
                 from config.orchestrator_governance import get_orchestrator_governance_config
+
                 config = get_orchestrator_governance_config()
             except Exception as e:
                 logger.warning("OrchestratorCoordinator: config load failed: %s", e)
@@ -87,7 +92,9 @@ class OrchestratorCoordinator:
             return
         self._stop.clear()
         self._task = asyncio.create_task(self._run_loop())
-        logger.info("OrchestratorCoordinator loop started (interval=%ss)", self._loop_interval_seconds)
+        logger.info(
+            "OrchestratorCoordinator loop started (interval=%ss)", self._loop_interval_seconds
+        )
 
     def stop_loop(self) -> None:
         """Stop the coordination loop."""
@@ -107,6 +114,7 @@ class OrchestratorCoordinator:
             try:
                 # 1. Assess current state
                 from . import orchestrator_state
+
                 state = orchestrator_state.get_controller_state()
                 current_cycle = (state.get("current_cycle") or 0) + 1
                 state["current_cycle"] = current_cycle
@@ -123,22 +131,58 @@ class OrchestratorCoordinator:
                     outcome = "skipped"
                     try:
                         if source == SOURCE_RSS and self._collect_rss_feeds_fn:
-                            loop = asyncio.get_event_loop()
-                            observations_count = await loop.run_in_executor(
-                                self._executor,
-                                self._collect_rss_feeds_fn,
+                            orch_trace = (
+                                f"orch_rss_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')}_{current_cycle}"
                             )
+                            log_pipeline_trace(
+                                orch_trace, "orchestrator_rss_collection", "started"
+                            )
+                            try:
+                                loop = asyncio.get_event_loop()
+                                observations_count = await loop.run_in_executor(
+                                    self._executor,
+                                    self._collect_rss_feeds_fn,
+                                )
+                            except Exception as rss_exc:
+                                logger.warning(
+                                    "Orchestrator RSS collect failed: %s", rss_exc
+                                )
+                                log_pipeline_trace(
+                                    orch_trace,
+                                    "orchestrator_rss_collection",
+                                    "error",
+                                    {
+                                        "error": str(rss_exc),
+                                        "source": source,
+                                        "cycle": current_cycle,
+                                    },
+                                )
+                                raise
                             # Only treat RSS as "successful" if it actually adds new articles.
                             # If dedup rejects everything (adds=0), we want adaptive backoff.
                             success = (observations_count or 0) > 0
                             outcome = f"rss_collected_{observations_count}"
+                            log_pipeline_trace(
+                                orch_trace,
+                                "orchestrator_rss_collection",
+                                "completed",
+                                {
+                                    "articles_added": observations_count,
+                                    "source": source,
+                                    "cycle": current_cycle,
+                                },
+                            )
                         else:
                             # Finance (gold, silver, platinum) or other handlers from config
                             handler, topic = self._collection_handler_and_topic(source)
                             if handler == "finance" and self._get_finance_orchestrator:
                                 orch = self._get_finance_orchestrator()
                                 if orch:
-                                    from domains.finance.orchestrator_types import TaskType, TaskPriority
+                                    from domains.finance.orchestrator_types import (
+                                        TaskPriority,
+                                        TaskType,
+                                    )
+
                                     task_id = orch.submit_task(
                                         TaskType.refresh,
                                         {"topic": topic or source},
@@ -180,7 +224,8 @@ class OrchestratorCoordinator:
                         now_ts = datetime.now(timezone.utc)
                         if (
                             self._last_idle_log_at is None
-                            or (now_ts - self._last_idle_log_at).total_seconds() >= DECISION_LOG_IDLE_THROTTLE_SECONDS
+                            or (now_ts - self._last_idle_log_at).total_seconds()
+                            >= DECISION_LOG_IDLE_THROTTLE_SECONDS
                         ):
                             orchestrator_state.append_decision_log(
                                 "no_action",
@@ -193,7 +238,11 @@ class OrchestratorCoordinator:
 
                 # Processing: recommend and run one phase (importance + user guidance)
                 state = orchestrator_state.get_controller_state()
-                resource_ok = self._resource_governor.can_run("processing") if self._resource_governor else True
+                resource_ok = (
+                    self._resource_governor.can_run("processing")
+                    if self._resource_governor
+                    else True
+                )
                 processing_action = self._processing_governor.recommend_next_processing(
                     state, resource_ok, get_db_connection=self._get_db_connection
                 )
@@ -247,7 +296,9 @@ class OrchestratorCoordinator:
 
                 state["current_cycle"] = current_cycle
                 state["last_collection_times"] = state.get("last_collection_times") or {}
-                state["last_finance_interest_analysis"] = state.get("last_finance_interest_analysis") or {}
+                state["last_finance_interest_analysis"] = (
+                    state.get("last_finance_interest_analysis") or {}
+                )
 
                 # Finance areas of interest: trigger one background analysis per due topic per cycle
                 areas = (self._config or {}).get("finance_areas_of_interest") or []
@@ -307,14 +358,19 @@ class OrchestratorCoordinator:
                     if last_ts:
                         try:
                             last_dt = datetime.fromisoformat(last_ts.replace("Z", "+00:00"))
-                            if (datetime.now(timezone.utc) - last_dt).total_seconds() < interval_sec:
+                            if (
+                                datetime.now(timezone.utc) - last_dt
+                            ).total_seconds() < interval_sec:
                                 due = False
                         except (ValueError, TypeError):
                             pass
                     if due:
                         max_events = int(event_tracking.get("max_events_per_cycle") or 3)
                         try:
-                            from .event_chronicle_builder_service import _run_scheduled_chronicle_updates
+                            from .event_chronicle_builder_service import (
+                                _run_scheduled_chronicle_updates,
+                            )
+
                             loop = asyncio.get_event_loop()
                             updated = await loop.run_in_executor(
                                 self._executor,
@@ -322,22 +378,31 @@ class OrchestratorCoordinator:
                                 max_events,
                                 self._get_db_connection,
                             )
-                            state["last_event_chronicle_update"] = datetime.now(timezone.utc).isoformat()
+                            state["last_event_chronicle_update"] = datetime.now(
+                                timezone.utc
+                            ).isoformat()
                             if updated:
-                                logger.info("Orchestrator ran event chronicle updates for %s event(s)", updated)
+                                logger.info(
+                                    "Orchestrator ran event chronicle updates for %s event(s)",
+                                    updated,
+                                )
                         except Exception as e:
                             logger.debug("Orchestrator event chronicle updates failed: %s", e)
 
                 # Phase 5: dossier compilation (when entity_tracking enabled and interval due)
                 entity_tracking = (self._config or {}).get("entity_tracking") or {}
                 if entity_tracking.get("enabled") and self._get_db_connection:
-                    interval_sec = int(entity_tracking.get("dossier_compile_interval_seconds") or 86400)
+                    interval_sec = int(
+                        entity_tracking.get("dossier_compile_interval_seconds") or 86400
+                    )
                     last_ts = state.get("last_dossier_compile_run")
                     due = True
                     if last_ts:
                         try:
                             last_dt = datetime.fromisoformat(last_ts.replace("Z", "+00:00"))
-                            if (datetime.now(timezone.utc) - last_dt).total_seconds() < interval_sec:
+                            if (
+                                datetime.now(timezone.utc) - last_dt
+                            ).total_seconds() < interval_sec:
                                 due = False
                         except (ValueError, TypeError):
                             pass
@@ -345,6 +410,7 @@ class OrchestratorCoordinator:
                         max_dossiers = int(entity_tracking.get("max_dossiers_per_cycle") or 2)
                         try:
                             from .dossier_compiler_service import _run_scheduled_dossier_compiles
+
                             loop = asyncio.get_event_loop()
                             compiled = await loop.run_in_executor(
                                 self._executor,
@@ -352,9 +418,14 @@ class OrchestratorCoordinator:
                                 max_dossiers,
                                 self._get_db_connection,
                             )
-                            state["last_dossier_compile_run"] = datetime.now(timezone.utc).isoformat()
+                            state["last_dossier_compile_run"] = datetime.now(
+                                timezone.utc
+                            ).isoformat()
                             if compiled:
-                                logger.info("Orchestrator ran dossier compilation for %s entity(ies)", compiled)
+                                logger.info(
+                                    "Orchestrator ran dossier compilation for %s entity(ies)",
+                                    compiled,
+                                )
                         except Exception as e:
                             logger.debug("Orchestrator dossier compile failed: %s", e)
 
@@ -364,7 +435,9 @@ class OrchestratorCoordinator:
                     logger.warning("Orchestrator save_controller_state failed: %s", e)
 
                 # Periodic pattern analysis (every N cycles, unless pause_learning)
-                if current_cycle % PATTERN_ANALYSIS_INTERVAL_CYCLES == 0 and not state.get("pause_learning"):
+                if current_cycle % PATTERN_ANALYSIS_INTERVAL_CYCLES == 0 and not state.get(
+                    "pause_learning"
+                ):
                     try:
                         self._learning_governor.run_pattern_analysis()
                     except Exception as e:
@@ -376,6 +449,7 @@ class OrchestratorCoordinator:
                 logger.exception("Orchestrator loop iteration failed: %s", e)
                 try:
                     from . import orchestrator_state
+
                     orchestrator_state.append_decision_log(
                         "loop_error",
                         outcome=str(e)[:200],
@@ -385,7 +459,9 @@ class OrchestratorCoordinator:
 
             # 5. Sleep until next cycle
             try:
-                await asyncio.wait_for(self._stop.wait(), timeout=float(self._loop_interval_seconds))
+                await asyncio.wait_for(
+                    self._stop.wait(), timeout=float(self._loop_interval_seconds)
+                )
             except asyncio.TimeoutError:
                 pass
 
@@ -405,6 +481,7 @@ class OrchestratorCoordinator:
         """Current status for API: cycle, last_collection_times, collection_sources, next run hint, budget hint."""
         try:
             from . import orchestrator_state
+
             state = orchestrator_state.get_controller_state()
             out = {
                 "current_cycle": state.get("current_cycle", 0),
@@ -426,7 +503,9 @@ class OrchestratorCoordinator:
         if source == SOURCE_RSS and self._collect_rss_feeds_fn:
             loop = asyncio.get_event_loop()
             count = await loop.run_in_executor(self._executor, self._collect_rss_feeds_fn)
-            self._collection_governor.record_fetch_result(SOURCE_RSS, success=True, observations_count=count)
+            self._collection_governor.record_fetch_result(
+                SOURCE_RSS, success=True, observations_count=count
+            )
             self._resource_governor.record_usage(RESOURCE_API_CALLS, 1.0)
             return {"source": "rss", "articles_collected": count}
         handler, topic = self._collection_handler_and_topic(source)
@@ -434,7 +513,8 @@ class OrchestratorCoordinator:
             orch = self._get_finance_orchestrator()
             if not orch:
                 return {"source": source, "error": "Finance orchestrator not available"}
-            from domains.finance.orchestrator_types import TaskType, TaskPriority
+            from domains.finance.orchestrator_types import TaskPriority, TaskType
+
             task_id = orch.submit_task(
                 TaskType.refresh,
                 {"topic": topic or source},
