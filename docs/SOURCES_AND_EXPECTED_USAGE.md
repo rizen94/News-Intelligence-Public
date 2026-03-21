@@ -39,7 +39,7 @@ Master inventory of **where data comes from** and **what in the system consumes 
 | `platinum` | `finance` | `platinum` | Commodity spot/history for platinum. |
 | `edgar` | `finance` | `edgar` | SEC filing pipeline. |
 
-**Runner:** `OrchestratorCoordinator` (see `main_v4` lifespan) rotates sources using `CollectionGovernor` and the YAML intervals.
+**Runner:** `OrchestratorCoordinator` (see `main` lifespan) rotates sources using `CollectionGovernor` and the YAML intervals.
 
 **Commodity news (headlines)** is intentionally **not** these handlers — it comes from **finance-domain RSS** (e.g. Kitco, Mining.com, Reuters, MarketWatch, Bloomberg, Yahoo — see migration `148_add_finance_rss_feeds.sql`).
 

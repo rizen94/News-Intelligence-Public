@@ -77,7 +77,7 @@
 
 **Proposed:** `intelligence_routes.py` — Single consolidated router.
 
-### 2.4 Reduce `main_v4.py` router imports
+### 2.4 Reduce `main.py` router imports
 
 **Current:** 18+ `include_router` calls.
 
@@ -89,7 +89,7 @@ router = APIRouter(...)
 # Include all storyline sub-routers internally
 ```
 
-`main_v4.py` then only imports:
+`main.py` then only imports:
 
 - news_aggregation
 - content_analysis
@@ -200,7 +200,7 @@ Create `PROJECT_MAP.md` (or `.cursor/PROJECT_MAP.md`):
 # News Intelligence — Project Map
 
 ## Entry points
-- API: api/main_v4.py
+- API: api/main.py
 - Frontend: web/src/App.tsx
 - API client: web/src/services/api/
 
@@ -238,7 +238,7 @@ Update this as the project evolves.
 |--------|--------|----------------|
 | Archive in project | 27GB, 508k files | 0 (moved external) |
 | API route files | ~30 | ~8 |
-| main_v4 router imports | 18+ | ~8 |
+| main router imports | 18+ | ~8 |
 | apiService | 1 file, 1911 lines | Split into ~8 domain files |
 | Scripts (active) | 151 | ~20–30 |
 | Docs (active) | Mixed | Single tree, ~10–15 essential |

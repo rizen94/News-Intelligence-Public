@@ -8,7 +8,7 @@ Keep the repo and Cursor context manageable so Git and the AI use resources resp
 
 ## What’s ignored (and why)
 
-- **`.gitignore`** — Git does not track: venvs (`.venv/`, `.venv.backup/`), `node_modules/`, logs, `data/`, **`/archive/`** (repo-root external archive only — **not** `api/database/migrations/archive/`), `.env`, `.db_password_widow`, `api/config/.secrets`, backups, `scripts/pi_reports/`, and the usual Python/IDE/OS cruft. See project root `.gitignore` for the full list. Periodically run `git grep -iE 'password|api_key|secret' -- ':!docs/_archive' ':!archive'` to spot accidental literals (triage; many hits will be docs or env var *names*).
+- **`.gitignore`** — Git does not track: venvs (`.venv/`, `.venv.backup/`), `node_modules/`, logs, `data/`, **`/archive/`** (repo-root external archive only — **not** `api/database/migrations/archive/`), `.env`, `.db_password_widow`, `api/config/.secrets`, **`configs/doc_obfuscation.local.yaml`**, **`docs/_local_expanded/`** (expanded docs with real IPs), backups, `scripts/pi_reports/`, and the usual Python/IDE/OS cruft. See project root `.gitignore` for the full list. Periodically run `git grep -iE 'password|api_key|secret' -- ':!docs/_archive' ':!archive'` to spot accidental literals (triage; many hits will be docs or env var *names*). For public clones, see [OBFUSCATION.md](OBFUSCATION.md) (placeholders + local mapping file).
 - **`.cursorignore`** — Cursor skips the same heavy/generated dirs when building context, plus `docs/_archive/`, `uv.lock`, and a few very large single files (`tests/unit/test_finance_market_data_store.py`, `web/DEVELOPMENT_SETUP.md`, `api/_archived/`) to avoid overloading indexing. That keeps the context window focused and can reduce crashes.
 
 ## Commit in smaller, logical chunks
@@ -77,7 +77,7 @@ When you **merge** two docs, move the superseded file under `docs/_archive/conso
 - **Branches:** Prefer **one mainline** (`master`) for day-to-day work; use tags for frozen snapshots (see § Single main branch above).
 - **Before merge:** Commit (or stash) all local changes. Run `./status_system.sh` and a quick API health check so the tree you merge is known-good.
 - **Conflict resolution:** If `git merge` reports conflicts:
-  1. `git status` — lists conflicted files (e.g. `api/main_v4.py`, `start_system.sh`).
+  1. `git status` — lists conflicted files (e.g. `api/main.py`, `start_system.sh`).
   2. Open each file; fix markers `<<<<<<<`, `=======`, `>>>>>>>` by keeping the correct version or combining both sides.
   3. `git add <file>` for each resolved file, then `git commit` to complete the merge.
 - **Large change sets:** Commit in logical chunks (see “Commit in smaller, logical chunks” above) so merges produce smaller, reviewable conflict sets.

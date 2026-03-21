@@ -1,7 +1,7 @@
 # Database Schema — v6 Planning Reference
 
 > **Purpose:** Consolidated schema summary in Claude-readable format for v6 project planning.  
-> **Database:** `news_intel` on PostgreSQL 16 (Widow: 192.168.93.101)  
+> **Database:** `news_intel` on PostgreSQL 16 (Widow: <WIDOW_HOST_IP>)  
 > **User:** `newsapp`
 
 ---

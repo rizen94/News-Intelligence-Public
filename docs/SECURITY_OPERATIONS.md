@@ -27,7 +27,7 @@
 |----------|--------|--------|
 | `NEWS_INTEL_ENV` | `development` (default) or `production` | Production tightens CORS, hosts, OpenAPI, errors, and enables security middleware. |
 | `NEWS_INTEL_CORS_ORIGINS` | Comma URLs, e.g. `http://localhost:3000,https://app.example.com` | **Required** for browser SPAs on another origin in production. |
-| `NEWS_INTEL_TRUSTED_HOSTS` | Comma hostnames/IPs matching `Host` header | **Set** for LAN access by IP or hostname (e.g. `192.168.93.99,myserver`). |
+| `NEWS_INTEL_TRUSTED_HOSTS` | Comma hostnames/IPs matching `Host` header | **Set** for LAN access by IP or hostname (e.g. `<PRIMARY_HOST_IP>,myserver`). |
 | `NEWS_INTEL_ENABLE_API_DOCS` | `true` / `1` | Re-enable `/docs`, `/redoc`, `/openapi.json` in production (avoid on the public internet). |
 | `NEWS_INTEL_SECURITY_MIDDLEWARE` | `true` / `1` | Force security middleware in **development** (optional). |
 | `NEWS_INTEL_RATE_LIMIT_PER_MINUTE` | Integer (default `120`) | Per-IP in-process limit when middleware is on. |

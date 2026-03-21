@@ -12,7 +12,7 @@ Database moved from NAS to Widow (secondary machine). NAS is now storage-only. T
 
 | Phase | Description |
 |-------|-------------|
-| 1 | Secondary discovery — Widow (192.168.93.101), SSH, specs |
+| 1 | Secondary discovery — Widow (<WIDOW_HOST_IP>), SSH, specs |
 | 2 | PostgreSQL 16 on Widow |
 | 3 | DB migration from NAS (146 tables, ~335 total) |
 | 4 | App code — Widow as default DB, NAS rollback support |
@@ -48,7 +48,7 @@ Database moved from NAS to Widow (secondary machine). NAS is now storage-only. T
 ## Breaking Changes
 
 - **NAS PostgreSQL** — Stopped and disabled. NAS is storage-only.
-- **DB connection** — Default is Widow (192.168.93.101:5432, `news_intel`).
+- **DB connection** — Default is Widow (<WIDOW_HOST_IP>:5432, `news_intel`).
 - **SSH tunnel** — No longer required for normal operation (only for NAS rollback).
 
 ---

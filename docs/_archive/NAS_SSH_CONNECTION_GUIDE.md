@@ -7,7 +7,7 @@
 
 ## 🔐 Connection Details
 
-- **Host**: 192.168.93.100
+- **Host**: <NAS_HOST_IP>
 - **SSH Port**: 9222
 - **Username**: Admin
 - **Password**: Pooter@STORAGE2024
@@ -17,7 +17,7 @@
 ## 🚀 Quick Connection
 
 ```bash
-ssh -p 9222 Admin@192.168.93.100
+ssh -p 9222 Admin@<NAS_HOST_IP>
 ```
 
 Enter password when prompted: `Pooter@STORAGE2024`
@@ -103,8 +103,8 @@ sudo apt-get install sshpass
 ## 🔍 Troubleshooting
 
 ### SSH Connection Fails
-- Verify NAS is accessible: `ping 192.168.93.100`
-- Check port is open: `nc -zv 192.168.93.100 9222`
+- Verify NAS is accessible: `ping <NAS_HOST_IP>`
+- Check port is open: `nc -zv <NAS_HOST_IP> 9222`
 - Verify credentials are correct
 
 ### Container Not Found

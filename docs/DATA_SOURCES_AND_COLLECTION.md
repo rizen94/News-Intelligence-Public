@@ -16,7 +16,7 @@ How the system uses each data source and what runs routinely.
 
 ## How collection is triggered
 
-- **OrchestratorCoordinator** (started in `main_v4` lifespan): Every ~60s it asks CollectionGovernor for the next source to run (rss, gold, silver, platinum, edgar). Whichever source has waited longest since its last run (within min/max interval) gets run. So all five sources rotate.
+- **OrchestratorCoordinator** (started in `main` lifespan): Every ~60s it asks CollectionGovernor for the next source to run (rss, gold, silver, platinum, edgar). Whichever source has waited longest since its last run (within min/max interval) gets run. So all five sources rotate.
 - **AutomationManager** (background thread): Runs scheduled tasks including `rss_processing` (hourly), which calls `collect_rss_feeds()` so **the same domain RSS feeds** are used. Other tasks: context_sync, event_tracking, claim_extraction, investigation_report_refresh, etc.
 
 ## Configuration

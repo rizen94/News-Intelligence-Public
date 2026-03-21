@@ -6,7 +6,7 @@ Use **Widow** for the database and all processing; use the **NAS** for backups, 
 
 ## Overview
 
-| Role | Widow (192.168.93.101) | NAS (192.168.93.100) |
+| Role | Widow (<WIDOW_HOST_IP>) | NAS (<NAS_HOST_IP>) |
 |------|------------------------|------------------------|
 | **Database** | PostgreSQL (live, all queries) | — |
 | **Processing** | API, RSS collector, cron jobs | — |
@@ -28,7 +28,7 @@ Backups and archives go to NAS only if Widow has the NAS mounted. Do this **on W
 # On Widow
 sudo mkdir -p /mnt/nas
 # Add to /etc/fstab (adjust share path to your NAS):
-# 192.168.93.100:/share/news-platform  /mnt/nas  nfs  defaults,soft,timeo=150,retrans=3,_netdev  0  0
+# <NAS_HOST_IP>:/share/news-platform  /mnt/nas  nfs  defaults,soft,timeo=150,retrans=3,_netdev  0  0
 sudo mount -a
 ```
 
@@ -43,7 +43,7 @@ sudo apt-get install -y cifs-utils
 # echo "password=YourNASPass" | sudo tee -a /etc/nas-credentials
 # sudo chmod 600 /etc/nas-credentials
 # Add to /etc/fstab:
-# //192.168.93.100/share-name  /mnt/nas  cifs  credentials=/etc/nas-credentials,uid=$(id -u),gid=$(id -g),iocharset=utf8,_netdev  0  0
+# //<NAS_HOST_IP>/share-name  /mnt/nas  cifs  credentials=/etc/nas-credentials,uid=$(id -u),gid=$(id -g),iocharset=utf8,_netdev  0  0
 sudo mount -a
 ```
 

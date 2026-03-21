@@ -20,7 +20,7 @@
 
 - [x] Add `api/services/orchestrator_coordinator.py` with class `OrchestratorCoordinator`.
 - [x] Implement primary loop: assess state → plan → execute highest-priority task → learn → update metrics → sleep (`loop_interval_seconds`). Use asyncio; non-blocking.
-- [x] Implement `start()` / `stop()` (or `start_loop()` / `stop_loop()`) and wire into `main_v4.py` lifespan (start after FinanceOrchestrator, stop on shutdown).
+- [x] Implement `start()` / `stop()` (or `start_loop()` / `stop_loop()`) and wire into `main.py` lifespan (start after FinanceOrchestrator, stop on shutdown).
 - [x] Load `orchestrator_governance.yaml` inside coordinator (or inject config); no hardcoded intervals.
 
 ### CollectionGovernor (basic)
@@ -33,7 +33,7 @@
 ### API and visibility
 
 - [x] Add routes for status and metrics: e.g. `GET /api/orchestrator/status`, `GET /api/orchestrator/metrics`. Implement in `api/domains/system_monitoring/routes/orchestrator.py` (or new domain `api/domains/orchestrator/routes.py`) with prefix `/api/orchestrator`.
-- [x] Include router in `main_v4.py` so endpoints are reachable (included via system_monitoring router).
+- [x] Include router in `main.py` so endpoints are reachable (included via system_monitoring router).
 
 ### Documentation and hygiene
 

@@ -22,7 +22,7 @@
 
 #### **Ollama Service Ports**
 - **Default**: `localhost:11434` (most ML modules)
-- **Custom IP**: `192.168.93.92:11434` (summarization_service.py, background_processor.py)
+- **Custom IP**: `<OLLAMA_LAN_IP>:11434` (summarization_service.py, background_processor.py)
 - **Status**: ⚠️ **INCONSISTENT** - Some modules use localhost, others use custom IP
 
 #### **Database Connection Strings**

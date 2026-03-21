@@ -41,7 +41,7 @@ To avoid double execution when running parallel to AutomationManager, ownership 
 
 - **Env:** `NEWSROOM_ORCHESTRATOR_ENABLED` (default `false` for Phase 1 until validated).
 - **Config:** Optional in `newsroom.yaml`: `newsroom.enabled: true/false`. Env overrides file.
-- If disabled, `main_v4.py` does **not** start the orchestrator (no thread, no subscription).
+- If disabled, `main.py` does **not** start the orchestrator (no thread, no subscription).
 
 ### 2.2 Config path
 
@@ -175,7 +175,7 @@ Keep and use `api/orchestration/events/types.py` EventType enum (ARTICLE_INGESTE
 
 ---
 
-## 7. Lifecycle and main_v4 integration
+## 7. Lifecycle and main integration
 
 ### 7.1 Startup (in lifespan, after AutomationManager)
 
@@ -264,7 +264,7 @@ Use this order when implementing.
    - Retry with backoff on handler failure; after max retries write to `orchestration.events_failed`.  
    - Circuit breaker for DataSource (per-feed or per-plugin): skip fetch for recovery window after N failures.
 
-8. **Lifecycle in main_v4**  
+8. **Lifecycle in main**  
    - After AutomationManager start: if enabled, create NewsroomOrchestrator, start in daemon thread, store on app.state.  
    - On shutdown: set stop flag, join thread (timeout 5s).
 

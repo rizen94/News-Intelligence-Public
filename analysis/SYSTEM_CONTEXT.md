@@ -21,7 +21,7 @@ Reference document for log analysis. Describes the system architecture, route in
                          └─────────┘            └─────────┘   └───────────┘
 ```
 
-- **Database:** PostgreSQL on Widow (192.168.93.101:5432), DB `news_intel`.
+- **Database:** PostgreSQL on Widow (<WIDOW_HOST_IP>:5432), DB `news_intel`.
 - **LLM:** Ollama on localhost:11434. Used for entity extraction, topic clustering, intelligence analysis.
 - **External APIs:** FRED (economic data), EDGAR (SEC filings), FreeGoldAPI.
 

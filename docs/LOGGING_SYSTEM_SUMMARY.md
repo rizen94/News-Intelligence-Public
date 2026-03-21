@@ -69,7 +69,7 @@ The project uses multiple logging layers: a centralized component-based logger (
 | feed_pull       | rss        | Every RSS fetch               |
 | queue_decision  | orchestrator | Every task submitted        |
 
-**Wired:** main_v4 middleware, news_aggregation process_rss_feeds, services/rss/fetching, collectors/rss_collector, finance orchestrator submit_task.
+**Wired:** main middleware, news_aggregation process_rss_feeds, services/rss/fetching, collectors/rss_collector, finance orchestrator submit_task.
 
 ### 2.3 Pipeline Logger
 

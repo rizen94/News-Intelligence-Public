@@ -8,7 +8,7 @@
 
 ## 1. Controllers (in-process, started with API)
 
-These run automatically when the API starts (`main_v4.py` lifespan).
+These run automatically when the API starts (`main.py` lifespan).
 
 | Controller | What it does | Trigger / interval |
 |------------|--------------|--------------------|
@@ -37,8 +37,8 @@ So RSS is **not** under a single owner; AutomationManager, OrchestratorCoordinat
 | Trigger | Schedule | What runs | Notes |
 |---------|----------|-----------|--------|
 | **Cron (Primary)** | Only if user ran `./scripts/setup_rss_cron_with_health_check.sh` | `rss_collection_with_health_check.sh` → checks API health → `collect_rss_feeds()` | 6 AM, 6 PM. Health URL in generated wrapper must be `http://localhost:8000/api/system_monitoring/health` (no `v4`). |
-| **Cron (Primary)** | Only if user ran `./scripts/setup_morning_data_pipeline.sh` | `morning_data_pipeline.sh` → `api/scripts/run_rss_and_process_all.py` (RSS + queue articles + topic extraction) | Default env in script: `DB_HOST=localhost`, `DB_PORT=5433` (NAS tunnel). For Widow, set `DB_HOST=192.168.93.101`, `DB_PORT=5432` or use `.env`. |
-| **systemd (Widow)** | Continuous (service runs forever) | `newsplatform-secondary.service` → `scripts/run_secondary_worker.py` → `collect_rss_feeds()` every 10 min | Runs on **Widow** (192.168.93.101). Not an orphan; documented in ARCHITECTURE_AND_OPERATIONS.md. |
+| **Cron (Primary)** | Only if user ran `./scripts/setup_morning_data_pipeline.sh` | `morning_data_pipeline.sh` → `api/scripts/run_rss_and_process_all.py` (RSS + queue articles + topic extraction) | Default env in script: `DB_HOST=localhost`, `DB_PORT=5433` (NAS tunnel). For Widow, set `DB_HOST=<WIDOW_HOST_IP>`, `DB_PORT=5432` or use `.env`. |
+| **systemd (Widow)** | Continuous (service runs forever) | `newsplatform-secondary.service` → `scripts/run_secondary_worker.py` → `collect_rss_feeds()` every 10 min | Runs on **Widow** (<WIDOW_HOST_IP>). Not an orphan; documented in ARCHITECTURE_AND_OPERATIONS.md. |
 | **Cron (Widow)** | 03:00 daily, 04:00 Sun | `db_backup.sh`, `db_backup_weekly.sh` | Backups only; not ingestion. |
 
 **Orphan / optional:** The **morning data pipeline** and **RSS cron** are **optional**. If you never run `setup_rss_cron_with_health_check.sh` or `setup_morning_data_pipeline.sh`, no cron is installed. Then RSS on Primary is only from AutomationManager (1h), OrchestratorCoordinator (~5–120 min), and manual API calls.
@@ -60,7 +60,7 @@ So RSS is **not** under a single owner; AutomationManager, OrchestratorCoordinat
 
 ## 4. Standalone scripts (not started by API)
 
-These are **not** started from `main_v4.py`. They only run if invoked manually or by cron/systemd.
+These are **not** started from `main.py`. They only run if invoked manually or by cron/systemd.
 
 | Script | Purpose | Orphan? | How to run |
 |--------|---------|--------|------------|
@@ -72,8 +72,8 @@ These are **not** started from `main_v4.py`. They only run if invoked manually o
 | **api/scripts/utilities/scheduler.py** | Loop: run_rss_collection, run_article_pruning on intervals. | **Yes** — not started by API or any standard cron. | Manual: run as standalone process if you want a separate scheduler. |
 | **api/scripts/automated_collection.py** | RSS + optional ML trigger. | **Yes** — manual/script only. | `python automated_collection.py` (from api dir). |
 | **api/scripts/daily_batch_processor.py** | Daily batch processing (log path, batch logic). | **Yes** — no `setup_daily_batch.sh` in repo; not wired to cron in this codebase. | Manual or add your own cron. |
-| **api/scripts/automated_cleanup.py** (AutomatedCleanupSystem) | Logs, temp, docker cleanup. | **Yes** — documented as not started from main_v4. | Manual or custom cron: `AutomatedCleanupSystem.run_cleanup(...)`. |
-| **FeedScheduler** (`api/modules/data_collection/feed_scheduler.py`) | Feed scheduling logic. | **Yes** — not referenced from main_v4 or any started service. | Only if some code path instantiates it; currently unused in startup flow. |
+| **api/scripts/automated_cleanup.py** (AutomatedCleanupSystem) | Logs, temp, docker cleanup. | **Yes** — documented as not started from main. | Manual or custom cron: `AutomatedCleanupSystem.run_cleanup(...)`. |
+| **FeedScheduler** (`api/modules/data_collection/feed_scheduler.py`) | Feed scheduling logic. | **Yes** — not referenced from main or any started service. | Only if some code path instantiates it; currently unused in startup flow. |
 
 ---
 
@@ -100,7 +100,7 @@ These are **not** started from `main_v4.py`. They only run if invoked manually o
 
 1. **Single source of truth for “when to collect” (optional):** If you want one place to decide when RSS runs, consider making OrchestratorCoordinator the only driver for RSS and disabling AutomationManager’s `rss_processing` (or gating it behind the coordinator). Then keep cron/Widow as backup or remove them.
 2. **Fix cron health check URL:** In `scripts/setup_rss_cron_with_health_check.sh`, the generated wrapper uses `http://localhost:8000/api/v4/system_monitoring/health`. Change to `http://localhost:8000/api/system_monitoring/health` so the health check succeeds.
-3. **Morning pipeline env:** If using Widow, ensure `morning_data_pipeline.sh` (or cron that runs it) has `DB_HOST=192.168.93.101` and `DB_PORT=5432`, or that `.env` is sourced.
+3. **Morning pipeline env:** If using Widow, ensure `morning_data_pipeline.sh` (or cron that runs it) has `DB_HOST=<WIDOW_HOST_IP>` and `DB_PORT=5432`, or that `.env` is sourced.
 4. **Orphans to wire (if desired):**  
    - **AutomatedCleanupSystem** — add a scheduled task (e.g. daily) in AutomationManager or a small cron that runs `automated_cleanup.py`.  
    - **daily_batch_processor** — add `scripts/setup_daily_batch.sh` and cron, or a task in AutomationManager.  

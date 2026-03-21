@@ -14,13 +14,13 @@
 
 Primary: `api/shared/database/connection.py` — `get_db_connection()`, `get_db_config()`
 Uses env: `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`
-Current: SSH tunnel localhost:5433 → NAS 192.168.93.100:5432
+Current: SSH tunnel localhost:5433 → NAS <NAS_HOST_IP>:5432
 
-## NAS (192.168.93.100) References in App Code
+## NAS (<NAS_HOST_IP>) References in App Code
 
 | File | Purpose |
 |------|---------|
-| `api/main_v4.py` | SSH tunnel pgrep check, tunnel verification |
+| `api/main.py` | SSH tunnel pgrep check, tunnel verification |
 | `api/shared/database/connection.py` | Tunnel docs, blocking direct NAS |
 | `api/collectors/rss_collector.py` | Fallback DB_HOST default |
 | `api/scripts/add_official_feeds.py` | Default DB_HOST |

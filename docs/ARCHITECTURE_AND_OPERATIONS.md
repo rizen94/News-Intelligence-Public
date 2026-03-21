@@ -13,9 +13,9 @@ Three-machine setup:
 
 | Machine | IP | Role |
 |---------|-----|------|
-| **Primary** | 192.168.93.99 | API, ML, Ollama, Redis, Frontend |
-| **Widow** | 192.168.93.101 | PostgreSQL, RSS worker, DB backups |
-| **NAS** | 192.168.93.100 | Storage only (no PostgreSQL) |
+| **Primary** | <PRIMARY_HOST_IP> | API, ML, Ollama, Redis, Frontend |
+| **Widow** | <WIDOW_HOST_IP> | PostgreSQL, RSS worker, DB backups |
+| **NAS** | <NAS_HOST_IP> | Storage only (no PostgreSQL) |
 
 ### Data Flow
 
@@ -46,7 +46,7 @@ Three-machine setup:
 
 **Primary config (Widow):**
 
-- Host: 192.168.93.101
+- Host: <WIDOW_HOST_IP>
 - Port: 5432
 - Database: news_intel
 - User: newsapp
@@ -72,7 +72,7 @@ Three-machine setup:
 **SSH**
 
 ```bash
-ssh widow   # or ssh pete@192.168.93.101
+ssh widow   # or ssh user@<WIDOW_HOST_IP>
 ```
 
 **Common commands**
@@ -137,13 +137,13 @@ When the API is running (`./start_system.sh`), the following run **without manua
 
 **DB connection fails**
 
-- Confirm Widow is on (ping 192.168.93.101)
+- Confirm Widow is on (ping <WIDOW_HOST_IP>)
 - If Widow sleeps: run `scripts/configure_widow_no_sleep.sh` on Widow
 
 **API won’t start**
 
 - Check `.env` has `DB_PASSWORD` or `.db_password_widow` exists
-- Confirm DB: `pg_isready -h 192.168.93.101 -p 5432 -U newsapp`
+- Confirm DB: `pg_isready -h <WIDOW_HOST_IP> -p 5432 -U newsapp`
 
 **Widow RSS worker stopped**
 

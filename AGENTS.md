@@ -121,7 +121,7 @@ Context for AI assistants. Use project terminology consistently.
 
 - **Single module:** `shared.database.connection` — pooled psycopg2 + SQLAlchemy.
 - **Shim:** `config.database` re-exports for backward compatibility.
-- **Primary config:** Widow at `192.168.93.101:5432`, DB `news_intel`. Rollback: NAS via `DB_HOST=localhost`, `DB_PORT=5433` + `setup_nas_ssh_tunnel.sh`.
+- **Primary config:** Widow at `<WIDOW_HOST_IP>:5432`, DB `news_intel`. Rollback: NAS via `DB_HOST=localhost`, `DB_PORT=5433` + `setup_nas_ssh_tunnel.sh`.
 
 ### Database Connection Rules (MUST FOLLOW)
 
@@ -149,7 +149,7 @@ Context for AI assistants. Use project terminology consistently.
 
 When you change the **API** (routes, path segments, response shape) or **core behaviour** (entry points, DB config, domain layout):
 
-1. **Update docs in the same change** (or the next commit): `AGENTS.md`, `docs/CODING_STYLE_GUIDE.md`, `docs/ARCHITECTURE_AND_OPERATIONS.md`, `docs/SECURITY_OPERATIONS.md` (if exposure, CORS, or error-handling changes), and any domain or feature doc that references the change.
+1. **Update docs in the same change** (or the next commit): `AGENTS.md`, `docs/CODING_STYLE_GUIDE.md`, `docs/ARCHITECTURE_AND_OPERATIONS.md`, `docs/SECURITY_OPERATIONS.md` (if exposure, CORS, or error-handling changes), and any domain or feature doc that references the change. For **public repos**, use LAN placeholders (`<WIDOW_HOST_IP>`, etc.) in markdown per `docs/OBFUSCATION.md`; never commit `configs/doc_obfuscation.local.yaml`.
 2. **Paths:** Use flat `/api` (no version in path). Route path segments: `snake_case` (e.g. `system_monitoring`, `rss_feeds`). Domain-scoped: `/api/{domain}/...` with domain `politics` | `finance` | `science-tech`.
 3. **Code and tests:** Keep test URLs and frontend API calls in sync with the real routes (no `/api/v4/`, no kebab-case route segments).
 4. **Single source:** Entry points and file layout in `AGENTS.md` and the “Project structure” in `CODING_STYLE_GUIDE.md` must match the repo (e.g. `main.py`, `api/domains/*/routes/`, `MainLayout.tsx`).

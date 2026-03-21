@@ -20,7 +20,7 @@ Primary Machine (local workstation):
   - Connects to PostgreSQL on NAS over network
 
 
-NAS (192.168.93.100):
+NAS (<NAS_HOST_IP>):
   - Role: PostgreSQL database server + file storage
   - Specs: 4 CPU cores, 2 GB RAM (critically low, actively swapping)
   - Running PostgreSQL under severe memory pressure
@@ -42,7 +42,7 @@ Secondary Machine (new Linux PC):
   - IP: Will be discovered during Phase 1
 
 
-NAS (192.168.93.100):
+NAS (<NAS_HOST_IP>):
   - Role: Pure storage appliance (NFS/SMB) for backups, log archives,
     and bulk file storage
   - No PostgreSQL, no application logic
@@ -195,9 +195,9 @@ sudo mkdir -p /mnt/nas/logs
 
 
 Add to /etc/fstab:
-192.168.93.100:/share/news-platform/backups  /mnt/nas/backups  nfs  defaults,soft,timeo=150,retrans=3  0  0
-192.168.93.100:/share/news-platform/archives /mnt/nas/archives nfs  defaults,soft,timeo=150,retrans=3  0  0
-192.168.93.100:/share/news-platform/logs     /mnt/nas/logs     nfs  defaults,soft,timeo=150,retrans=3  0  0
+<NAS_HOST_IP>:/share/news-platform/backups  /mnt/nas/backups  nfs  defaults,soft,timeo=150,retrans=3  0  0
+<NAS_HOST_IP>:/share/news-platform/archives /mnt/nas/archives nfs  defaults,soft,timeo=150,retrans=3  0  0
+<NAS_HOST_IP>:/share/news-platform/logs     /mnt/nas/logs     nfs  defaults,soft,timeo=150,retrans=3  0  0
 
 
 NOTE: The NFS share paths above assume specific share names on the NAS. These will need to
@@ -214,9 +214,9 @@ sudo apt install -y cifs-utils
 
 
 Replace the fstab entries with:
-//192.168.93.100/news-platform/backups  /mnt/nas/backups  cifs  credentials=/etc/nas-credentials,iocharset=utf8,uid=1000,gid=1000  0  0
-//192.168.93.100/news-platform/archives /mnt/nas/archives cifs  credentials=/etc/nas-credentials,iocharset=utf8,uid=1000,gid=1000  0  0
-//192.168.93.100/news-platform/logs     /mnt/nas/logs     cifs  credentials=/etc/nas-credentials,iocharset=utf8,uid=1000,gid=1000  0  0
+//<NAS_HOST_IP>/news-platform/backups  /mnt/nas/backups  cifs  credentials=/etc/nas-credentials,iocharset=utf8,uid=1000,gid=1000  0  0
+//<NAS_HOST_IP>/news-platform/archives /mnt/nas/archives cifs  credentials=/etc/nas-credentials,iocharset=utf8,uid=1000,gid=1000  0  0
+//<NAS_HOST_IP>/news-platform/logs     /mnt/nas/logs     cifs  credentials=/etc/nas-credentials,iocharset=utf8,uid=1000,gid=1000  0  0
 
 
 With /etc/nas-credentials containing:
@@ -443,12 +443,12 @@ ________________
 
 
 Phase 3: Database Migration from NAS to Secondary Machine
-This phase moves the existing database from the NAS (192.168.93.100) to the secondary
+This phase moves the existing database from the NAS (<NAS_HOST_IP>) to the secondary
 machine. The existing database must remain operational until the migration is validated.
 3.1 — Assess Current Database on NAS
 From the primary machine (which currently has connectivity to the NAS database):
 # Determine current database name, size, and table list
-psql -h 192.168.93.100 -U CURRENT_DB_USER -d CURRENT_DB_NAME <<'SQL'
+psql -h <NAS_HOST_IP> -U CURRENT_DB_USER -d CURRENT_DB_NAME <<'SQL'
 SELECT pg_database.datname,
        pg_size_pretty(pg_database_size(pg_database.datname)) AS size
 FROM pg_database
@@ -472,9 +472,9 @@ Common locations to check:
    * config/.yaml or config/.yml
    * src/config.py or similar
    * docker-compose.yml if using Docker
-   * Any file containing "192.168.93.100" or "postgresql://"
+   * Any file containing "<NAS_HOST_IP>" or "postgresql://"
 # Run on primary machine, in the project directory
-grep -r "192.168.93.100" --include="*.py" --include="*.yaml" --include="*.yml" --include="*.env" --include="*.json" --include="*.toml" .
+grep -r "<NAS_HOST_IP>" --include="*.py" --include="*.yaml" --include="*.yml" --include="*.env" --include="*.json" --include="*.toml" .
 grep -r "postgresql://" --include="*.py" --include="*.yaml" --include="*.yml" --include="*.env" --include="*.json" --include="*.toml" .
 
 
@@ -482,7 +482,7 @@ grep -r "postgresql://" --include="*.py" --include="*.yaml" --include="*.yml" --
 Run this from the secondary machine, pulling data directly from the NAS:
 # Run on secondary machine
 # Replace placeholders with actual values discovered in 3.1
-pg_dump -h 192.168.93.100 \
+pg_dump -h <NAS_HOST_IP> \
   -U CURRENT_DB_USER \
   -d CURRENT_DB_NAME \
   -F custom \
@@ -498,7 +498,7 @@ ls -lh /tmp/nas_database_dump.pgdump
 If pg_dump cannot connect (version mismatch, network issues), try from the primary machine
 and then transfer:
 # Run on primary machine
-pg_dump -h 192.168.93.100 \
+pg_dump -h <NAS_HOST_IP> \
   -U CURRENT_DB_USER \
   -d CURRENT_DB_NAME \
   -F custom \
@@ -617,7 +617,7 @@ machines:
 
   nas:
     description: "Pure storage — backups, archives, logs"
-    host: "192.168.93.100"
+    host: "<NAS_HOST_IP>"
 
 
 # Database connection (hosted on secondary machine)
@@ -800,13 +800,13 @@ NEWS_PLATFORM_DB_PASSWORD="THE_PASSWORD_FROM_PHASE_2.4"
 
 
 CRITICAL: Search for and replace ALL references to the old NAS database connection. Every
-occurrence of "192.168.93.100" in database connection contexts must point to SECONDARY_IP.
+occurrence of "<NAS_HOST_IP>" in database connection contexts must point to SECONDARY_IP.
 Any reference that remains pointing to the NAS will break once PostgreSQL is stopped there.
 # Verify no old references remain after changes
-grep -rn "192.168.93.100" --include="*.py" --include="*.yaml" --include="*.yml" --include="*.env" .
+grep -rn "<NAS_HOST_IP>" --include="*.py" --include="*.yaml" --include="*.yml" --include="*.env" .
 
 
-Any remaining references to 192.168.93.100 should ONLY be for NAS file storage paths, not
+Any remaining references to <NAS_HOST_IP> should ONLY be for NAS file storage paths, not
 database connections.
 4.4 — Add Machine Role Startup Logic
 The application needs to know which role it's playing when it starts up. Modify the main
@@ -1256,7 +1256,7 @@ sudo -u postgres psql -d news_intel -c 'CREATE EXTENSION IF NOT EXISTS "uuid-oss
 
 
 # Fresh dump from NAS and restore
-pg_dump -h 192.168.93.100 -U CURRENT_DB_USER -d CURRENT_DB_NAME -F custom -Z 5 -f /tmp/final_dump.pgdump
+pg_dump -h <NAS_HOST_IP> -U CURRENT_DB_USER -d CURRENT_DB_NAME -F custom -Z 5 -f /tmp/final_dump.pgdump
 pg_restore -h 127.0.0.1 -U newsapp -d news_intel --no-owner --no-privileges /tmp/final_dump.pgdump
 rm /tmp/final_dump.pgdump
 
@@ -1302,7 +1302,7 @@ sudo -u postgres psql -c \
 7.5 — Decommission PostgreSQL on NAS
 Once you've confirmed the system is running correctly with the database on the secondary
 machine for at least one full processing cycle:
-# Run on NAS (192.168.93.100)
+# Run on NAS (<NAS_HOST_IP>)
 # Stop PostgreSQL
 sudo systemctl stop postgresql
 sudo systemctl disable postgresql
@@ -1472,7 +1472,7 @@ Rollback Plan
 If any phase fails and cannot be resolved, the rollback path is straightforward because
 the NAS PostgreSQL instance is not modified until Phase 7.5.
 Before Phase 7.5: Simply revert the application configuration on the primary machine to
-point back to 192.168.93.100 and restart. The NAS database is still running and has all
+point back to <NAS_HOST_IP> and restart. The NAS database is still running and has all
 the data.
 After Phase 7.5 (NAS PostgreSQL disabled): Re-enable PostgreSQL on the NAS, restore from
 the most recent backup on the NAS, revert the application configuration, and restart. The
@@ -1489,7 +1489,7 @@ sudo systemctl start postgresql
 
 
 # On primary machine:
-# Revert database connection string to 192.168.93.100
+# Revert database connection string to <NAS_HOST_IP>
 # Restart application
 
 

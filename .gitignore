@@ -116,3 +116,8 @@ infrastructure/migration-state.local.json
 # Local / machine-specific notes (do not commit)
 my_docker.txt
 my_pihole.txt
+
+# Documentation obfuscation: real LAN IPs / paths (never commit)
+configs/doc_obfuscation.local.yaml
+configs/doc_obfuscation.local.yml
+docs/_local_expanded/

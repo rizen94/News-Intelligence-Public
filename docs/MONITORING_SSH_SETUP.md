@@ -8,10 +8,10 @@ The resource dashboard (Monitoring tab) can collect **disk usage** and **process
 
 | Machine   | IP            | Role                          |
 |-----------|---------------|-------------------------------|
-| **Legion** (API host) | 192.168.93.99 (or your dev machine) | Where the API runs; must be able to `ssh user@remote` without password |
-| **Widow** | 192.168.93.101 | Database server               |
-| **NAS**   | 192.168.93.100 | Storage / legacy DB target    |
-| **Pi**    | 192.168.93.104 | Raspberry Pi (monitoring, etc.) |
+| **Legion** (API host) | <PRIMARY_HOST_IP> (or your dev machine) | Where the API runs; must be able to `ssh user@remote` without password |
+| **Widow** | <WIDOW_HOST_IP> | Database server               |
+| **NAS**   | <NAS_HOST_IP> | Storage / legacy DB target    |
+| **Pi**    | <MONITORING_PI_IP> | Raspberry Pi (monitoring, etc.) |
 
 The API uses:
 
@@ -20,7 +20,7 @@ The API uses:
 
 ---
 
-## 2. Set up SSH keys on the Pi (192.168.93.104)
+## 2. Set up SSH keys on the Pi (<MONITORING_PI_IP>)
 
 These steps are for the **Pi**; the same idea applies to Widow and NAS.
 
@@ -37,20 +37,20 @@ These steps are for the **Pi**; the same idea applies to Widow and NAS.
 2. **Copy the public key to the Pi** (one-time; you’ll need the Pi’s password this time):
 
    ```bash
-   ssh-copy-id -i ~/.ssh/monitoring_ed25519.pub pi@192.168.93.104
+   ssh-copy-id -i ~/.ssh/monitoring_ed25519.pub pi@<MONITORING_PI_IP>
    ```
 
-   If the Pi uses a different user, replace `pi` (e.g. `newsapp@192.168.93.104`).  
+   If the Pi uses a different user, replace `pi` (e.g. `newsapp@<MONITORING_PI_IP>`).  
    If you use a non-default key:
 
    ```bash
-   ssh-copy-id -i ~/.ssh/monitoring_ed25519.pub -o IdentitiesOnly=yes pi@192.168.93.104
+   ssh-copy-id -i ~/.ssh/monitoring_ed25519.pub -o IdentitiesOnly=yes pi@<MONITORING_PI_IP>
    ```
 
 3. **Test passwordless login**:
 
    ```bash
-   ssh -i ~/.ssh/monitoring_ed25519 -o BatchMode=yes pi@192.168.93.104 "echo ok"
+   ssh -i ~/.ssh/monitoring_ed25519 -o BatchMode=yes pi@<MONITORING_PI_IP> "echo ok"
    ```
 
    You should see `ok` with no password prompt.
@@ -66,12 +66,12 @@ The API runs as a user (e.g. the same user you use on Legion, or `newsapp`). Tha
   If you use a key like `~/.ssh/monitoring_ed25519`, configure SSH to use it for the Pi (and optionally Widow/NAS). As the user that runs the API, create or edit `~/.ssh/config`:
 
   ```
-  Host 192.168.93.104
+  Host <MONITORING_PI_IP>
       User pi
       IdentityFile ~/.ssh/monitoring_ed25519
       IdentitiesOnly yes
 
-  Host 192.168.93.101
+  Host <WIDOW_HOST_IP>
       User newsapp
       IdentityFile ~/.ssh/monitoring_ed25519
       IdentitiesOnly yes
@@ -80,20 +80,22 @@ The API runs as a user (e.g. the same user you use on Legion, or `newsapp`). Tha
   Then test again:
 
   ```bash
-  ssh 192.168.93.104 "echo ok"
+  ssh <MONITORING_PI_IP> "echo ok"
   ```
 
 ### 2.3 Configure the monitoring config for the Pi
 
-In `api/config/monitoring_devices.yaml` the Pi is already listed with `host: "192.168.93.104"`. If the Pi user is not the same as `MONITORING_SSH_USER` or the API user, set `ssh_user` for the Pi:
+In `api/config/monitoring_devices.yaml`, set the Pi `host` to the same LAN IP you use above (the Overview table uses placeholders like `<MONITORING_PI_IP>` in docs; the YAML file must contain a **real routable IP** for SSH). If the Pi user is not the same as `MONITORING_SSH_USER` or the API user, set `ssh_user` for the Pi:
 
 ```yaml
   - name: Pi
     type: remote
-    host: "192.168.93.104"
+    host: "192.0.2.3"
     description: "Raspberry Pi (monitoring, document source, etc.)"
     ssh_user: pi
 ```
+
+Use your Pi’s actual IP instead of the documentation example `192.0.2.3`.
 
 Restart the API (or wait for the next dashboard request). The Monitoring tab should show disk and processes for the Pi.
 
@@ -104,8 +106,8 @@ Restart the API (or wait for the next dashboard request). The Monitoring tab sho
 Same idea:
 
 1. On the API host, ensure you have a key and copy it to Widow/NAS:
-   - Widow: `ssh-copy-id -i ~/.ssh/monitoring_ed25519.pub newsapp@192.168.93.101` (or whatever user runs there).
-   - NAS: `ssh-copy-id ... user@192.168.93.100` (user depends on NAS OS).
+   - Widow: `ssh-copy-id -i ~/.ssh/monitoring_ed25519.pub newsapp@<WIDOW_HOST_IP>` (or whatever user runs there).
+   - NAS: `ssh-copy-id ... user@<NAS_HOST_IP>` (user depends on NAS OS).
 
 2. Add `Host` entries in `~/.ssh/config` if you use a non-default key.
 
@@ -117,9 +119,9 @@ Same idea:
 
 | Symptom | What to check |
 |--------|----------------|
-| Dashboard shows Pi (or other remote) as **error** / **unavailable** | From the API host, run `ssh -o BatchMode=yes pi@192.168.93.104 "df -B1"`. If it prompts for a password, key-based login is not in place. |
+| Dashboard shows Pi (or other remote) as **error** / **unavailable** | From the API host, run `ssh -o BatchMode=yes pi@<MONITORING_PI_IP> "df -B1"`. If it prompts for a password, key-based login is not in place. |
 | Permission denied (publickey) | `ssh-copy-id` not done for that user/host, or wrong key in `~/.ssh/config`, or wrong `ssh_user` in config. |
-| Connection timed out | Firewall, or host down, or wrong IP. Ping `192.168.93.104`. |
+| Connection timed out | Firewall, or host down, or wrong IP. Ping `<MONITORING_PI_IP>`. |
 | `df` or `ps` not found on remote | API uses `df -B1` and `ps -o pid,comm,%mem,%cpu` (Linux). BusyBox/small distros may have different `df`; the code has a fallback. If `ps` format differs, parsing may need adjustment. |
 
 ---

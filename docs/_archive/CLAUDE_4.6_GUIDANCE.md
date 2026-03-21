@@ -62,7 +62,7 @@ Report pipeline queries through hierarchy; evidence ledger records which source 
 
 ### 5. load_dotenv() at API Startup
 
-**Add it.** First call in `main_v4.py`, before any settings/config imports.
+**Add it.** First call in `main.py`, before any settings/config imports.
 
 ```python
 load_dotenv(override=False)  # Shell/env takes precedence over .env
@@ -186,7 +186,7 @@ bge-large = 1024 dims, nomic-embed = 768 dims. Encode model name into collection
 ## Updated Implementation Checklist
 
 **Quick wins (single session):** ✅
-1. ~~`load_dotenv(override=False)` in main_v4.py~~ — Done.
+1. ~~`load_dotenv(override=False)` in main.py~~ — Done.
 2. ~~Remove duplicate FRED caching in fred_gold.py~~ — Done; delegates to FRED adapter.
 3. ~~Create `api/config/paths.py`~~ — Done; settings imports from it.
 

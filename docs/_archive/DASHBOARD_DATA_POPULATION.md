@@ -35,10 +35,10 @@ Start the API so the **AutomationManager** can run its scheduled tasks:
 
 ```bash
 cd api
-uvicorn main_v4:app --host 0.0.0.0 --port 8000
+uvicorn main:app --host 0.0.0.0 --port 8000
 ```
 
-With `main_v4`, the app loads the automation manager and runs:
+With `main`, the app loads the automation manager and runs:
 
 - **context_sync** (e.g. every 20 min): backfills `intelligence.contexts` from domain articles (`sync_domain_articles_to_contexts`).
 - **event_tracking** (e.g. every 1 h): discovers events from contexts (`discover_events_from_contexts`).
@@ -90,7 +90,7 @@ If you already have articles but few or no contexts/entities/events:
 
 ## Quick checklist for a populated dashboard
 
-1. **API running** (`uvicorn main_v4:app ...`) so automation (context sync, event tracking, entity sync, etc.) runs.
+1. **API running** (`uvicorn main:app ...`) so automation (context sync, event tracking, entity sync, etc.) runs.
 2. **RSS collection** running on a schedule (cron + `rss_collection_with_health_check.sh`) so new articles (and thus new contexts) keep appearing.
 3. **One-off:** If Entity Browser is empty, run **Sync entities** in the UI (or call sync_entity_profiles) after articles and entity extraction exist.
 4. **One-off (optional):** If you want events immediately, trigger **discover_events** once; otherwise wait for the next event_tracking run.

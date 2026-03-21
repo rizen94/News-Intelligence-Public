@@ -13,8 +13,8 @@ On Widow:
 
 ```bash
 sudo apt-get install -y nfs-common
-# Add to /etc/fstab (adjust 192.168.93.100 and share path to your NAS):
-# 192.168.93.100:/share/news-platform  /mnt/nas  nfs  defaults,soft,timeo=150,retrans=3,_netdev  0  0
+# Add to /etc/fstab (adjust <NAS_HOST_IP> and share path to your NAS):
+# <NAS_HOST_IP>:/share/news-platform  /mnt/nas  nfs  defaults,soft,timeo=150,retrans=3,_netdev  0  0
 sudo mount -a
 ```
 
@@ -29,7 +29,7 @@ echo "username=YourNASUser" | sudo tee /etc/nas-credentials
 echo "password=YourNASPass" | sudo tee -a /etc/nas-credentials
 sudo chmod 600 /etc/nas-credentials
 # Add to /etc/fstab (adjust share path):
-# //192.168.93.100/share-name  /mnt/nas  cifs  credentials=/etc/nas-credentials,uid=$(id -u pete),gid=$(id -g pete),iocharset=utf8,_netdev  0  0
+# //<NAS_HOST_IP>/share-name  /mnt/nas  cifs  credentials=/etc/nas-credentials,uid=$(id -u),gid=$(id -g),iocharset=utf8,_netdev  0  0
 sudo mount -a
 ```
 

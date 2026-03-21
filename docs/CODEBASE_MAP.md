@@ -19,7 +19,7 @@
 
 | Path | Role |
 |------|------|
-| [`api/main_v4.py`](../api/main_v4.py) | FastAPI app: lifespan, middleware, mounts all domain routers. |
+| [`api/main.py`](../api/main.py) | FastAPI app: lifespan, middleware, mounts all domain routers. |
 | [`api/domains/`](../api/domains/) | **Domain-driven** packages: each has `routes/` (HTTP) and often `services/`. |
 | [`api/services/`](../api/services/) | Cross-cutting services: **AutomationManager**, collectors, orchestration helpers. |
 | [`api/shared/`](../api/shared/) | DB pool, LLM helpers, logging, GPU metrics, migration path helpers. |
@@ -35,7 +35,7 @@
 
 | Topic | File(s) | Notes |
 |-------|---------|--------|
-| HTTP entry | `api/main_v4.py` | Router include order; `lifespan` starts background automation. |
+| HTTP entry | `api/main.py` | Router include order; `lifespan` starts background automation. |
 | Database | `api/shared/database/connection.py` | **Only** supported way to connect (pools + `get_db_config`). |
 | Background pipeline | `api/services/automation_manager.py` | v8 **collection_cycle** + scheduled phases; large file — use [PIPELINE_AND_ORDER_OF_OPERATIONS.md](PIPELINE_AND_ORDER_OF_OPERATIONS.md) first. |
 | RSS / ingestion | `api/collectors/`, `api/services/rss/` | Feed fetch, article writes per domain schema. |

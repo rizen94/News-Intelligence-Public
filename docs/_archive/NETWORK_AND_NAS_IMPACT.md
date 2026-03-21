@@ -1,6 +1,6 @@
 # Network Traffic & NAS Impact
 
-**TL;DR:** With the default setup, News Intelligence uses **Widow (192.168.93.101)** for the database, **not the NAS**. So normal app traffic does not go to the NAS and won’t compete with Plex on the NAS.
+**TL;DR:** With the default setup, News Intelligence uses **Widow (<WIDOW_HOST_IP>)** for the database, **not the NAS**. So normal app traffic does not go to the NAS and won’t compete with Plex on the NAS.
 
 ---
 
@@ -8,7 +8,7 @@
 
 | Component        | Default target      | Hits NAS? |
 |-----------------|---------------------|-----------|
-| **Database**    | Widow 192.168.93.101:5432 | **No** (only if you use NAS rollback) |
+| **Database**    | Widow <WIDOW_HOST_IP>:5432 | **No** (only if you use NAS rollback) |
 | **Redis**       | localhost (or Docker)     | No |
 | **API / Frontend** | localhost              | No |
 
@@ -18,7 +18,7 @@ So under default config, **no** News Intelligence traffic goes to the NAS. Plex 
 
 ## When *does* the NAS get used?
 
-The NAS (192.168.93.100) is only involved if you do one of the following:
+The NAS (<NAS_HOST_IP>) is only involved if you do one of the following:
 
 1. **NAS database rollback**  
    You set `DB_HOST=localhost` and `DB_PORT=5433` and run the SSH tunnel to NAS. Then all DB traffic goes over the tunnel to the NAS. **Avoid this** if you want to keep NAS load low; stick with Widow.
@@ -40,7 +40,7 @@ The NAS (192.168.93.100) is only involved if you do one of the following:
 
 1. **Use Widow for the database**  
    Don’t use the NAS DB rollback unless you need it. Default:  
-   `DB_HOST=192.168.93.101` (or unset, so start_system.sh uses Widow).
+   `DB_HOST=<WIDOW_HOST_IP>` (or unset, so start_system.sh uses Widow).
 
 2. **Don’t run the NAS SSH tunnel**  
    If you’re not doing NAS rollback, don’t start `setup_nas_ssh_tunnel.sh`. That way no News Intelligence process will talk to the NAS over SSH/PostgreSQL.
@@ -59,7 +59,7 @@ The NAS (192.168.93.100) is only involved if you do one of the following:
 ## Quick check: is News Intelligence using the NAS?
 
 - **start_system.sh**  
-  If it prints “Using **Widow** database (direct) at 192.168.93.101:5432”, the app is **not** using the NAS for DB.
+  If it prints “Using **Widow** database (direct) at <WIDOW_HOST_IP>:5432”, the app is **not** using the NAS for DB.
 
 - **Tunnel**  
   If you don’t run `setup_nas_ssh_tunnel.sh` and don’t set `DB_HOST=localhost` / `DB_PORT=5433`, there is no NAS DB traffic.

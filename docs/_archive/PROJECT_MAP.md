@@ -8,7 +8,7 @@ Quick reference for AI/agent context. Update as the project evolves.
 
 | Role | Path |
 |------|------|
-| API | `api/main_v4.py` |
+| API | `api/main.py` |
 | Frontend | `web/src/App.tsx` |
 | API client | `web/src/services/api/` (articles, watchlist) + `apiService.ts` |
 | Domain routing | `web/src/components/shared/DomainLayout/DomainLayout.tsx` |
@@ -40,7 +40,7 @@ Expanded election tracker for politics domain: maps, election updates, politicia
 
 ---
 
-## Router imports (main_v4.py)
+## Router imports (main.py)
 
 - news_aggregation
 - content_analysis

@@ -22,7 +22,7 @@
 
 | Service | Target | Status | Latency |
 |---------|--------|--------|---------|
-| PostgreSQL | 192.168.93.101:5432 | Connected | 0.5ms avg |
+| PostgreSQL | <WIDOW_HOST_IP>:5432 | Connected | 0.5ms avg |
 | Ollama | localhost:11434 | Connected | <1ms |
 | Redis | localhost:6379 | **Not installed** | N/A |
 

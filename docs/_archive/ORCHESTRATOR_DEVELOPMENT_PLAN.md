@@ -104,7 +104,7 @@ Load via a small helper in `api/config/` (e.g. `get_orchestrator_governance_conf
 
 - **Cycle:** 1–5 minutes (configurable via `loop_interval_seconds`).
 - **Steps:** (1) Assess current state, (2) Plan next actions, (3) Execute highest-priority task, (4) Learn from results, (5) Update models/metrics, (6) Sleep until next cycle.
-- **Implementation:** asyncio loop in `OrchestratorCoordinator.run_loop()`; non-blocking, concurrent with FastAPI. Start from `main_v4.py` lifespan (same pattern as FinanceOrchestrator scheduler / queue worker).
+- **Implementation:** asyncio loop in `OrchestratorCoordinator.run_loop()`; non-blocking, concurrent with FastAPI. Start from `main.py` lifespan (same pattern as FinanceOrchestrator scheduler / queue worker).
 
 ### 4.2 Background loops (can be same coordinator, different intervals)
 

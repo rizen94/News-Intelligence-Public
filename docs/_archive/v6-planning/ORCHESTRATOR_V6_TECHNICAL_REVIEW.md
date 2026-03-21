@@ -149,9 +149,9 @@ Addressing these before build will reduce rework and align the orchestrator with
 
 **Add to plan:** “Reporter Phase 1: Poll domain.articles for rows with discovered_at in last N minutes; emit ARTICLE_INGESTED per article. Optionally run breaking-news keyword check on title/summary and emit BREAKING_NEWS.” This keeps RSS ownership with AutomationManager while still feeding the event bus.
 
-### 4.3 Integration point in main_v4 lifespan
+### 4.3 Integration point in main lifespan
 
-**Missing:** Exact place and pattern to start/stop the orchestrator in `main_v4.py`.
+**Missing:** Exact place and pattern to start/stop the orchestrator in `main.py`.
 
 **Add to plan:** “In lifespan, after AutomationManager start: instantiate NewsroomOrchestrator with get_db_connection, config path, optional Redis URL; start in a daemon thread; store on app.state. On shutdown, stop orchestrator and join thread (timeout 5s).”
 

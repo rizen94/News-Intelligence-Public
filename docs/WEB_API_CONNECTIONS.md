@@ -59,7 +59,7 @@ route structure, where every router mounts at `/api`.
 
 - **Disconnected** in the bar → API not reachable.
   - **Dev (Vite on 3000):** Start the API on port 8000, e.g.
-    `cd api && python3 -m uvicorn main_v4:app --host 0.0.0.0 --port 8000`
+    `cd api && python3 -m uvicorn main:app --host 0.0.0.0 --port 8000`
   - **Custom URL:** Ensure that host/port is correct and the API is running there.
 - **Connected but empty lists** → API is up; data may be empty (e.g. no finance feeds) or a specific endpoint may be failing. Check Network tab and API logs.
 - **`ECONNREFUSED` in Vite terminal** → API server is not running on port 8000. Start it.

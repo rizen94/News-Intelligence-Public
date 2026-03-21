@@ -127,15 +127,15 @@ def get_db_config() -> Dict[str, Any]:
     if db_host in ["localhost", "127.0.0.1", "::1"] and db_port == 5433:
         import subprocess
         tunnel_check = subprocess.run(
-            ["pgrep", "-f", "ssh -L 5433:localhost:5432.*192.168.93.100"],
-            capture_output=True
+            ["pgrep", "-f", "ssh -L 5433:localhost:5432"],
+            capture_output=True,
         )
         if tunnel_check.returncode != 0:
             raise ValueError(
                 "SSH TUNNEL NOT RUNNING: DB_HOST=localhost:5433 requires tunnel. "
                 "Run: ./scripts/setup_nas_ssh_tunnel.sh"
             )
-        logger.info("Using SSH tunnel to NAS (localhost:5433 -> 192.168.93.100:5432)")
+        logger.info("Using SSH tunnel to NAS (localhost:5433 -> NAS host:5432)")
     else:
         logger.info("Using direct connection to database: %s:%s", db_host, db_port)
     

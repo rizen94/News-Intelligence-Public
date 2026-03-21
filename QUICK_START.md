@@ -4,7 +4,7 @@
 
 The News Intelligence System consists of multiple services that need to run concurrently:
 
-1. **PostgreSQL** - Database on Widow (192.168.93.101:5432)
+1. **PostgreSQL** - Database on Widow (<WIDOW_HOST_IP>:5432)
 2. **API Server** - FastAPI backend (port 8000)
    - Auto-starts AutomationManager (RSS processing, Article processing, ML processing, Topic clustering)
    - Auto-starts MLProcessingService
@@ -32,7 +32,7 @@ The startup script and API load `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, and 
 From the project directory:
 
 ```bash
-cd "/home/pete/Documents/projects/Projects/News Intelligence"
+cd "<EXAMPLE_PROJECT_ROOT>"
 ./start_system.sh
 ```
 
@@ -40,7 +40,7 @@ cd "/home/pete/Documents/projects/Projects/News Intelligence"
 
 ```bash
 mkdir -p ~/bin
-ln -sf "/home/pete/Documents/projects/Projects/News Intelligence/start-news-intelligence.sh" ~/bin/start-news-intelligence
+ln -sf "<EXAMPLE_PROJECT_ROOT>/start-news-intelligence.sh" ~/bin/start-news-intelligence
 ```
 
 Ensure `~/bin` is in your PATH (many distros add it automatically). If not, add to `~/.bashrc`:
@@ -106,7 +106,7 @@ docker-compose up -d redis
 ```bash
 cd api
 source venv/bin/activate  # or ../.venv/bin/activate
-python3 -m uvicorn main_v4:app --host 0.0.0.0 --port 8000 --reload
+python3 -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 #### Frontend
@@ -169,19 +169,19 @@ kill -9 <PID>
 
 ### Database Connection Issues
 
-Database runs on Widow (192.168.93.101). Ensure Widow is reachable.
+Database runs on Widow (<WIDOW_HOST_IP>). Ensure Widow is reachable.
 
 ```bash
 # Check Widow reachability
-ping 192.168.93.101
+ping <WIDOW_HOST_IP>
 
 # Check PostgreSQL on Widow
-pg_isready -h 192.168.93.101 -p 5432 -U newsapp
+pg_isready -h <WIDOW_HOST_IP> -p 5432 -U newsapp
 ```
 
 ## System Requirements
 
-- **PostgreSQL** 16 (on Widow 192.168.93.101:5432)
+- **PostgreSQL** 16 (on Widow <WIDOW_HOST_IP>:5432)
 - **Docker** (for Redis)
 - **Python** 3.9+ (with virtual environment)
 - **Node.js** 16+ (with npm)

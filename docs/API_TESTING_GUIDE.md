@@ -8,7 +8,7 @@
 ## ✅ **Code Verification Complete**
 
 ### **1. Route Definitions** ✅
-- ✅ All routes properly defined in `main_v4.py`
+- ✅ All routes properly defined in `main.py`
 - ✅ Domain routes use correct path parameters
 - ✅ Pagination parameters implemented correctly
 - ✅ Response formats standardized
@@ -32,13 +32,13 @@
 1. **Start API Server**:
    ```bash
    cd api
-   python3 main_v4.py
-   # Or: uvicorn main_v4:app --host 0.0.0.0 --port 8000
+   python3 main.py
+   # Or: uvicorn main:app --host 0.0.0.0 --port 8000
    ```
 
 2. **Set Database Environment Variables** (if needed):
    ```bash
-   export DB_HOST=localhost  # or 192.168.93.100 for NAS
+   export DB_HOST=localhost  # or <NAS_HOST_IP> for NAS
    export DB_PORT=5433        # or 5432
    export DB_NAME=news_intelligence
    export DB_USER=newsapp

@@ -9,7 +9,7 @@ This system **MUST** use the NAS database for all data storage. Local storage is
 ## 📋 Policy
 
 ### ✅ REQUIRED
-- **Database Host**: `192.168.93.100` (NAS)
+- **Database Host**: `<NAS_HOST_IP>` (NAS)
 - **Storage Location**: Remote NAS storage only
 - **Default Behavior**: System fails to start if NAS is not available
 
@@ -34,7 +34,7 @@ export DB_HOST=localhost
 ### Default Configuration (NAS Required)
 
 ```bash
-export DB_HOST=192.168.93.100
+export DB_HOST=<NAS_HOST_IP>
 export DB_PORT=5432
 export DB_NAME=news_intelligence
 export DB_USER=newsapp
@@ -43,7 +43,7 @@ export DB_PASSWORD=newsapp_password
 
 ### NAS Credentials
 
-- **NAS Host**: `192.168.93.100`
+- **NAS Host**: `<NAS_HOST_IP>`
 - **NAS Share**: `public`
 - **NAS User**: `Admin`
 - **NAS Password**: `Pooter@STORAGE2024`
@@ -100,15 +100,15 @@ export DB_HOST=localhost
 echo $DB_HOST
 ```
 
-Should show: `192.168.93.100`
+Should show: `<NAS_HOST_IP>`
 
 ### Test NAS Connection
 
 ```bash
-nc -zv 192.168.93.100 5432
+nc -zv <NAS_HOST_IP> 5432
 ```
 
-Should show: `Connection to 192.168.93.100 5432 port [tcp/postgresql] succeeded!`
+Should show: `Connection to <NAS_HOST_IP> 5432 port [tcp/postgresql] succeeded!`
 
 ### Verify Database Location
 
@@ -118,7 +118,7 @@ config = get_db_config()
 print(f"Database Host: {config['host']}")
 ```
 
-Should show: `Database Host: 192.168.93.100`
+Should show: `Database Host: <NAS_HOST_IP>`
 
 ---
 
@@ -137,7 +137,7 @@ Should show: `Database Host: 192.168.93.100`
 
 ```
 [ERROR] Local database connection is BLOCKED.
-[ERROR] System requires NAS database (192.168.93.100) for storage.
+[ERROR] System requires NAS database (<NAS_HOST_IP>) for storage.
 [ERROR] Local storage has insufficient space.
 [INFO] To override (EMERGENCY ONLY), set: ALLOW_LOCAL_DB=true
 ```
@@ -145,7 +145,7 @@ Should show: `Database Host: 192.168.93.100`
 ### If NAS Unreachable
 
 ```
-[ERROR] Cannot connect to NAS database at 192.168.93.100:5432
+[ERROR] Cannot connect to NAS database at <NAS_HOST_IP>:5432
 [ERROR] Please ensure NAS is accessible and PostgreSQL is running.
 ```
 
@@ -153,7 +153,7 @@ Should show: `Database Host: 192.168.93.100`
 
 ```
 ValueError: DB_HOST environment variable is REQUIRED.
-System must use NAS database (192.168.93.100).
+System must use NAS database (<NAS_HOST_IP>).
 Local storage is not permitted due to insufficient space.
 ```
 

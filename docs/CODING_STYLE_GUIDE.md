@@ -353,7 +353,7 @@ CREATE INDEX idx_articles_category_idx ON articles(category);
 The project uses **flat `/api`** — no version segment in the path (e.g. `/api/{domain}/finance/...`, not `/api/...`).
 
 ```python
-# ✅ CORRECT - Main domain routers (included directly in main_v4.py)
+# ✅ CORRECT - Main domain routers (included directly in main.py)
 # Use prefix /api; no version in path
 router = APIRouter(
     prefix="/api",
@@ -386,7 +386,7 @@ parent_router.include_router(child_router)  # Results in /api/...
 
 ### **Router Inclusion Pattern**
 ```python
-# ✅ CORRECT - In api/main_v4.py:
+# ✅ CORRECT - In api/main.py:
 from domains.storyline_management.routes import router as storyline_management_router
 app.include_router(storyline_management_router)  # Router has prefix="/api"
 
@@ -594,7 +594,7 @@ The automation manager caps at `max_concurrent_tasks = 3`.
 
 ```bash
 # Send SIGUSR1 to dump all thread tracebacks to api_server.log
-kill -SIGUSR1 $(pgrep -f "uvicorn.*main_v4")
+kill -SIGUSR1 $(pgrep -f "uvicorn.*main:app")
 tail -100 logs/api_server.log
 ```
 
@@ -608,7 +608,7 @@ The main thread's stack trace will show exactly where it is blocked.
 ```
 News Intelligence/
 ├── api/                          # Backend API
-│   ├── main_v4.py                # Application entry point
+│   ├── main.py                # Application entry point
 │   ├── config/
 │   │   ├── database.py           # Re-exports shared.database.connection
 │   │   └── paths.py               # Path management
@@ -804,6 +804,35 @@ docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}"
 
 ---
 
+## **Automation and tooling**
+
+These commands align the repo with this guide. **CI** (`.github/workflows/ci.yml`) runs Ruff + a small pytest smoke suite + frontend lint/format/tsc.
+
+**Python (from repository root, with `uv`):**
+
+```bash
+uv sync --extra dev
+uv run ruff format api tests          # apply formatting
+uv run ruff check api tests           # lint
+uv run pytest tests/unit/test_orchestrator_types.py tests/unit/test_orchestrator_utils.py -q
+```
+
+**Optional — Git hooks:** install [pre-commit](https://pre-commit.com/) and run `pre-commit install` to run Ruff on commit (see `.pre-commit-config.yaml`).
+
+**Frontend (`web/`):**
+
+```bash
+cd web && npm ci && npm run lint && npm run format:check
+```
+
+Release builds run **`npm run build`** (TypeScript + Vite). Standalone **`npx tsc --noEmit`** is not yet clean across the whole tree; use it locally when touching types.
+
+**Editor:** root `.editorconfig` sets **4 spaces** for `*.py` and **2 spaces** for JS/TS/JSON/YAML.
+
+**Ruff:** Rules and ignores live in `pyproject.toml` under `[tool.ruff]` — expand `select` and trim `ignore` over time.
+
+---
+
 ## 📋 **IMPLEMENTATION CHECKLIST**
 
 ### **Before Writing New Code**
@@ -840,7 +869,7 @@ When you change the **API** (routes, path segments, response shape) or **core be
 1. **Update docs in the same change (or next commit):** `AGENTS.md`, this guide, `ARCHITECTURE_AND_OPERATIONS.md`, and any domain/feature doc that references the change.
 2. **Paths:** Flat `/api` (no version in path). Route segments: `snake_case` (e.g. `system_monitoring`, `rss_feeds`). Domain-scoped: `/api/{domain}/...` with domain `politics` | `finance` | `science-tech`.
 3. **Code and tests:** Keep test URLs and frontend API calls in sync with real routes (no `/api/v4/`, no kebab-case route segments).
-4. **Single source:** Entry points and file layout in `AGENTS.md` and “Project structure” in this guide must match the repo (`main_v4.py`, `api/domains/*/routes/`, `MainLayout.tsx`).
+4. **Single source:** Entry points and file layout in `AGENTS.md` and “Project structure” in this guide must match the repo (`main.py`, `api/domains/*/routes/`, `MainLayout.tsx`).
 
 ---
 

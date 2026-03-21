@@ -15,7 +15,7 @@ This document maps the full system: API route structure, web interface structure
 │  Web Frontend (React 18 + TypeScript + Vite + MUI v5)              │
 │  localhost:5173 → Nginx → localhost:8000                           │
 ├─────────────────────────────────────────────────────────────────────┤
-│  API (FastAPI, Python) — api/main_v4.py                            │
+│  API (FastAPI, Python) — api/main.py                            │
 │  Domains: politics | finance | science-tech                        │
 │  Routes: /api/{domain}/... and /api/...                            │
 ├──────────────┬──────────────┬───────────────┬───────────────────────┤
@@ -25,7 +25,7 @@ This document maps the full system: API route structure, web interface structure
 └──────────────┴──────────────┴───────────────┴───────────────────────┘
 ```
 
-**Database:** PostgreSQL on Widow (192.168.93.101:5432), DB `news_intel`. Domain data lives in schemas (`politics`, `finance`, `science_tech`); shared tables in `public` and `intelligence`.
+**Database:** PostgreSQL on Widow (<WIDOW_HOST_IP>:5432), DB `news_intel`. Domain data lives in schemas (`politics`, `finance`, `science_tech`); shared tables in `public` and `intelligence`.
 
 ---
 
@@ -33,7 +33,7 @@ This document maps the full system: API route structure, web interface structure
 
 | Role | Path |
 |------|------|
-| API server | `api/main_v4.py` |
+| API server | `api/main.py` |
 | Frontend app | `web/src/App.tsx` |
 | API client layer | `web/src/services/api/` + `web/src/services/apiService.ts` |
 | Database (single source) | `api/shared/database/connection.py` |
@@ -44,7 +44,7 @@ This document maps the full system: API route structure, web interface structure
 
 ## 3. API Route Structure
 
-All routes are mounted from `api/main_v4.py`. Each domain router defines its own prefix. The API pattern is `/api/{domain}/resource` for domain-scoped data and `/api/resource` for global endpoints.
+All routes are mounted from `api/main.py`. Each domain router defines its own prefix. The API pattern is `/api/{domain}/resource` for domain-scoped data and `/api/resource` for global endpoints.
 
 ### 3.1 News Aggregation
 
@@ -576,7 +576,7 @@ RSS Sources / External APIs
 
 ```
 api/
-├── main_v4.py                    # FastAPI app, router mounting
+├── main.py                    # FastAPI app, router mounting
 ├── domains/
 │   ├── news_aggregation/routes/  # RSS feeds, articles
 │   ├── content_analysis/routes/  # Topics, LLM analysis, deduplication

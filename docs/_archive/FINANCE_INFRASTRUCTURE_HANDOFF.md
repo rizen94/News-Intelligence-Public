@@ -55,7 +55,7 @@
 | Item | Effort | Notes |
 |------|--------|-------|
 | Fix deprecated GOLDAMGBD228NLBM in fetch-fred docstring | Trivial | Use IQ12260 or DCOILWTICO |
-| Add startup logging for embedding model/collection | Trivial | Log in main_v4 or finance init |
+| Add startup logging for embedding model/collection | Trivial | Log in main or finance init |
 | Implement dynamic data source loader | Small | Read sources.yaml, importlib, registry dict |
 | Add FRED adapter unit tests (mocked HTTP) | Small | Use responses/respx or unittest.mock |
 | Improve embed_with_ollama_fallback → return (vec, model_name) | Small | Tuple or dataclass; update vector_store.add to accept model_name |
@@ -130,7 +130,7 @@ api/config/settings.py
 api/config/paths.py
 api/config/sources.yaml
 api/config/logging_config.py
-api/main_v4.py
+api/main.py
 api/domains/finance/
   data/api_cache.py
   data/market_data_store.py
@@ -170,7 +170,7 @@ docs/FINANCE_INFRASTRUCTURE_PLAN.md
 All self-service items implemented (2026-02-21):
 
 1. ~~Fix deprecated GOLDAMGBD228NLBM in fetch-fred~~ — Example updated to IQ12260, DCOILWTICO
-2. ~~Add startup logging for embedding model/collection~~ — `get_embedding_collection_info()` in vector_store; logged in main_v4 lifespan
+2. ~~Add startup logging for embedding model/collection~~ — `get_embedding_collection_info()` in vector_store; logged in main lifespan
 3. ~~Implement dynamic data source loader~~ — `data_sources/__init__.py`: `get_source()`, `get_all_sources()`, `list_source_ids()`
 4. ~~Add FRED adapter unit tests~~ — `tests/unit/test_finance_fred_adapter.py` (mocked HTTP)
 5. ~~Improve embed_with_ollama_fallback~~ — Returns `(vec, model_name)`; `vector_store.add(model_name=...)` added

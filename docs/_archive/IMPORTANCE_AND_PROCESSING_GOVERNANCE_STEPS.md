@@ -82,7 +82,7 @@
 | 3 | Importance scoring (per storyline) | ✅ Inline in `user_guidance_service.compute_storyline_importance` |
 | 4 | ProcessingGovernor.recommend_next_processing + record_processing_result | ✅ `api/services/processing_governor.py` |
 | 5 | AutomationManager.request_phase + storyline_automation phase; handlers accept metadata | ✅ `api/services/automation_manager.py` (_phase_request_queue, _execute_storyline_automation) |
-| 6 | Coordinator: get_automation, get_db_connection, ask ProcessingGovernor, request_phase, record | ✅ `api/services/orchestrator_coordinator.py`, `api/main_v4.py` |
+| 6 | Coordinator: get_automation, get_db_connection, ask ProcessingGovernor, request_phase, record | ✅ `api/services/orchestrator_coordinator.py`, `api/main.py` |
 
 ---
 

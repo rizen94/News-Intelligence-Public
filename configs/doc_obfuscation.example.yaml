@@ -1,0 +1,27 @@
+# Copy to doc_obfuscation.local.yaml (gitignored) and fill `private` with your real values.
+# Never commit doc_obfuscation.local.yaml.
+#
+# Public docs in the repo use the `public` tokens (angle brackets). Locally you can:
+#   PYTHONPATH=api uv run python scripts/doc_obfuscation.py expand --paths docs AGENTS.md
+# to write docs/_local_expanded/ with private values for reading (still gitignored).
+#
+# Or run scrub (before sharing a snippet) if you pasted real IPs into a temp file:
+#   python scripts/doc_obfuscation.py scrub --in draft.md --out safe.md
+#
+# Order: longer private strings are applied first to avoid partial replacements.
+
+substitutions:
+  # `private` values here are placeholders — put your real LAN values only in doc_obfuscation.local.yaml
+  - public: "<PRIMARY_HOST_IP>"
+    private: "10.0.0.10"
+  - public: "<WIDOW_HOST_IP>"
+    private: "10.0.0.11"
+  - public: "<NAS_HOST_IP>"
+    private: "10.0.0.12"
+  - public: "<MONITORING_PI_IP>"
+    private: "10.0.0.13"
+  - public: "<OLLAMA_LAN_IP>"
+    private: "10.0.0.14"
+  # Optional: home directory path in examples (set in .local only)
+  - public: "<EXAMPLE_PROJECT_ROOT>"
+    private: "/home/youruser/Documents/projects/News Intelligence"

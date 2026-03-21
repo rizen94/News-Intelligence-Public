@@ -306,4 +306,4 @@ api/
 3. Implement Base Orchestrator (1.2)
 4. Add database migrations for `orchestration` and `intelligence` schemas
 5. Implement Reporter Module with DataSource interface (1.3)
-6. Wire orchestrator to run parallel to AutomationManager in `main_v4.py` lifespan
+6. Wire orchestrator to run parallel to AutomationManager in `main.py` lifespan

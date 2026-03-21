@@ -326,7 +326,7 @@ class StorylineAnalysisLoop:
 
 #### **4.1 Main Application Integration**
 ```python
-# api/main_v4.py
+# api/main.py
 from fastapi import FastAPI
 from domains.news_aggregation import NewsAggregationDomain
 from domains.content_analysis import ContentAnalysisDomain
@@ -391,7 +391,7 @@ async def health_check():
 # tests/test_v4_integration.py
 import pytest
 from fastapi.testclient import TestClient
-from api.main_v4 import app
+from api.main import app
 
 client = TestClient(app)
 

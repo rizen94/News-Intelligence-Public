@@ -8,7 +8,7 @@
 ## 1. Overview
 
 - **Assessment & alignment:** See [DB_FULL_ASSESSMENT.md](DB_FULL_ASSESSMENT.md) (four-surface matrix, persistence gates, baselines), [DB_CLEANUP_BUNDLES.md](DB_CLEANUP_BUNDLES.md), and [DB_PRODUCTION_MAINTENANCE_RUNBOOK.md](DB_PRODUCTION_MAINTENANCE_RUNBOOK.md).
-- **Primary database:** PostgreSQL (default: Widow at `192.168.93.101:5432`, database `news_intel`, user `newsapp`).
+- **Primary database:** PostgreSQL (default: Widow at `<WIDOW_HOST_IP>:5432`, database `news_intel`, user `newsapp`).
 - **Domain silos:** Per-domain schemas `politics`, `finance`, `science_tech` hold articles, storylines, topics, RSS feeds, and entity tables.
 - **Shared intelligence:** Schema `intelligence` holds cross-domain entities, contexts, claims, events, dossiers, and related tables. Schema `orchestration` holds investigations and optional run history.
 - **Finance auxiliary:** SQLite files in `data/finance/` (market data, evidence ledger, orchestrator state) and ChromaDB for vector search. See §4.

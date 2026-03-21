@@ -10,7 +10,7 @@ You can understand most of the architecture **without** a running stack:
 
 1. [README.md](../README.md) → [CODEBASE_MAP.md](CODEBASE_MAP.md) → [PIPELINE_AND_ORDER_OF_OPERATIONS.md](PIPELINE_AND_ORDER_OF_OPERATIONS.md)
 2. [DATA_FLOW_ARCHITECTURE.md](DATA_FLOW_ARCHITECTURE.md) + [SYSTEM_OVERVIEW.md](SYSTEM_OVERVIEW.md)
-3. Skim `api/main_v4.py`, then `api/services/automation_manager.py` (schedules / phase names), then one domain under `api/domains/*/routes/`.
+3. Skim `api/main.py`, then `api/services/automation_manager.py` (schedules / phase names), then one domain under `api/domains/*/routes/`.
 
 Optional: `uv sync` and static checks without PostgreSQL if your goal is only code navigation.
 

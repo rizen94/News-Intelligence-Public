@@ -40,7 +40,7 @@
 | **Route files total** | 13,677 |
 | storyline routes (11 files) | 4,385 |
 | apiService.ts | 1,911 |
-| main_v4.py | 510 |
+| main.py | 510 |
 
 ### Structure
 
@@ -48,7 +48,7 @@
 |------|-------|
 | apiService methods | ~124 |
 | Frontend pages | 26 |
-| main_v4 router imports | 18 |
+| main router imports | 18 |
 
 ---
 
@@ -64,7 +64,7 @@
 
 | Loaded | Lines | Tokens (≈) |
 |--------|-------|-------------|
-| main_v4.py | 510 | 2,040 |
+| main.py | 510 | 2,040 |
 | 11 storyline route files | 4,385 | 17,540 |
 | 1–2 service files | 600 | 2,400 |
 | **Total** | **~5,500** | **~22,000** |

@@ -1,6 +1,6 @@
 # NAS — Legacy & Storage
 
-**NAS (192.168.93.100)** is now **storage-only**. PostgreSQL was migrated to Widow in v5.0.
+**NAS (<NAS_HOST_IP>)** is now **storage-only**. PostgreSQL was migrated to Widow in v5.0.
 
 ---
 
@@ -18,4 +18,4 @@ If using NAS for backups/archives, typical mounts:
 - `/share/news-platform/archives`
 - `/share/news-platform/logs`
 
-SSH: `ssh -p 9222 Admin@192.168.93.100` (credentials in secure location).
+SSH: `ssh -p 9222 Admin@<NAS_HOST_IP>` (credentials in secure location).

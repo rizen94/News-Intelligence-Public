@@ -5,7 +5,7 @@
 ### Configuration Summary
 
 1. **System Configuration:**
-   - `start_system.sh`: Defaults to NAS (192.168.93.100:5432)
+   - `start_system.sh`: Defaults to NAS (<NAS_HOST_IP>:5432)
    - Blocks localhost connections unless using SSH tunnel (localhost:5433)
    - Validates NAS connectivity before starting services
 
@@ -15,7 +15,7 @@
    - Enforces NAS database requirement
 
 3. **Network Setup:**
-   - Direct NAS connection: BLOCKED by firewall (192.168.93.100:5432)
+   - Direct NAS connection: BLOCKED by firewall (<NAS_HOST_IP>:5432)
    - SSH tunnel: REQUIRED (localhost:5433 -> NAS:5432)
    - Tunnel port: 5433 (to avoid conflict with local PostgreSQL on 5432)
 
@@ -34,7 +34,7 @@ DB_PORT=5433
 
 #### Option 2: Direct Connection (If firewall allows)
 ```bash
-export DB_HOST=192.168.93.100
+export DB_HOST=<NAS_HOST_IP>
 export DB_PORT=5432
 ```
 
@@ -47,7 +47,7 @@ Run the setup script:
 
 Or manually:
 ```bash
-ssh -L 5433:localhost:5432 -N -f -p 9222 Admin@192.168.93.100
+ssh -L 5433:localhost:5432 -N -f -p 9222 Admin@<NAS_HOST_IP>
 ```
 
 ### Verification
@@ -74,7 +74,7 @@ version = cursor.fetchone()[0]
    - **ACTION REQUIRED**: Update to use `localhost:5433` for NAS via SSH tunnel
 
 2. **SSH Tunnel**: Must be running before starting the application
-   - Check: `ps aux | grep "ssh.*5433.*192.168.93.100"`
+   - Check: `ps aux | grep "ssh.*5433.*<NAS_HOST_IP>"`
    - Auto-setup: `start_system.sh` will attempt to create tunnel if missing
 
 3. **Local PostgreSQL**: Still running on port 5432

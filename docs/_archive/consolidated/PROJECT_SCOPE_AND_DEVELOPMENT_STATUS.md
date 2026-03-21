@@ -11,7 +11,7 @@
 ## 1. What We Have: Version and Naming
 
 - **Product:** News Intelligence — AI-powered news aggregation, analysis, and intelligence.
-- **Backend:** FastAPI app in `api/main_v4.py`; **version string is v8.0** — "News Intelligence System v8.0".
+- **Backend:** FastAPI app in `api/main.py`; **version string is v8.0** — "News Intelligence System v8.0".
 - **API:** **Flat paths** — `/api/...` (no version in path).
 - **v8 Collect-then-Analyze:** Current. Collection cycle every 2h; pipeline-ordered analysis (Foundation → Extraction → Intelligence → Output); full-history data scopes; storyline discovery dedup and automation; document/topic/dossier bridges.
 - **v6 Quality-First Upgrade:** Completed. Intelligence-first architecture: entity resolution, editorial documents, fact verification, PDF processing, content synthesis, event tracking, entity dossiers.
@@ -30,7 +30,7 @@
                                       │
                                       ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
-│  API (FastAPI, main_v4.py)                                              │
+│  API (FastAPI, main.py)                                              │
 │  Domains: news_aggregation, content_analysis, storyline_management,     │
 │           intelligence_hub, finance, user_management, system_monitoring │
 │  + OrchestratorCoordinator, AutomationManager, FinanceOrchestrator     │

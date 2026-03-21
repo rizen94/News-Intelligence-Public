@@ -22,7 +22,7 @@
 |-------|------------|
 | Backend | Python 3, FastAPI, uvicorn |
 | Frontend | React 18, TypeScript (migration in progress), Vite, Material-UI v5 |
-| Database | PostgreSQL (Widow at 192.168.93.101:5432; rollback: NAS via SSH tunnel) |
+| Database | PostgreSQL (Widow at <WIDOW_HOST_IP>:5432; rollback: NAS via SSH tunnel) |
 | Schemas | Per-domain (politics, finance, science_tech) + intelligence (cross-domain) |
 | Cache | Redis (Docker) |
 | LLM | Ollama — Llama 3.1 8B (primary), Mistral 7B (secondary), nomic-embed-text |
@@ -171,7 +171,7 @@ Three content domains with shared schemas and per-domain tables:
 
 | Purpose | Path |
 |---------|------|
-| API entry | `api/main_v4.py` |
+| API entry | `api/main.py` |
 | DB connection | `api/shared/database/connection.py` |
 | Frontend entry | `web/src/App.tsx` |
 | Domain layout | `web/src/layout/MainLayout.tsx` |
@@ -188,7 +188,7 @@ Three content domains with shared schemas and per-domain tables:
 
 ## 8. Constraints & Conventions
 
-- **DB:** Default Widow at `192.168.93.101:5432`; rollback to NAS via SSH tunnel `localhost:5433`
+- **DB:** Default Widow at `<WIDOW_HOST_IP>:5432`; rollback to NAS via SSH tunnel `localhost:5433`
 - **Ports:** DB 5432 (Widow) or 5433 (tunnel), API 8000, frontend 3000
 - **Naming:** snake_case (Python, routes, DB); PascalCase (React components)
 - **Config:** Use documented values; avoid inventing new ports/hosts

@@ -33,7 +33,7 @@ This will:
 ### 3. Auto-Mount (fstab)
 Entry in `/etc/fstab`:
 ```
-//192.168.93.100/public /mnt/nas cifs credentials=/etc/nas-credentials,uid=1000,gid=1000,iocharset=utf8,file_mode=0777,dir_mode=0777,vers=3.0,_netdev,auto,user,noauto 0 0
+//<NAS_HOST_IP>/public /mnt/nas cifs credentials=/etc/nas-credentials,uid=1000,gid=1000,iocharset=utf8,file_mode=0777,dir_mode=0777,vers=3.0,_netdev,auto,user,noauto 0 0
 ```
 
 ### 4. Systemd Services
@@ -104,7 +104,7 @@ sudo journalctl -u nas-mount-monitor.service -f
 ### Database Storage
 Update `start_system.sh` to use NAS for PostgreSQL data:
 ```bash
-export DB_HOST=192.168.93.100
+export DB_HOST=<NAS_HOST_IP>
 export DB_PORT=5432
 ```
 
@@ -117,7 +117,7 @@ Backups can be stored in `/mnt/nas/news-intelligence/backups/`
 ## Troubleshooting
 
 ### Mount Fails on Boot
-1. Check network is up: `ping 192.168.93.100`
+1. Check network is up: `ping <NAS_HOST_IP>`
 2. Check credentials: `sudo cat /etc/nas-credentials`
 3. Check fstab entry: `cat /etc/fstab | grep nas`
 4. Check service logs: `sudo journalctl -u nas-mount.service`
@@ -153,7 +153,7 @@ sudo mount /mnt/nas
 ## Configuration Details
 
 ### NAS Connection
-- **Host**: 192.168.93.100
+- **Host**: <NAS_HOST_IP>
 - **Share**: public
 - **User**: Admin
 - **Domain**: LAKEHOUSE
@@ -181,7 +181,7 @@ After setting up persistent mount:
    - Follow `QUICK_START.md` in migration backup directory
 
 3. **Update system configuration**:
-   - Set `DB_HOST=192.168.93.100` in environment
+   - Set `DB_HOST=<NAS_HOST_IP>` in environment
    - Update `start_system.sh` to use NAS database
 
 4. **Verify everything works**:

@@ -2,7 +2,7 @@
 
 ## Summary
 
-Phase 5 deploys the News Intelligence application to Widow (192.168.93.101) as the secondary machine. Widow runs:
+Phase 5 deploys the News Intelligence application to Widow (<WIDOW_HOST_IP>) as the secondary machine. Widow runs:
 
 - **RSS collector** — Every 10 minutes (systemd worker)
 - **Database backups** — Daily at 3 AM, weekly on Sundays at 4 AM (cron)
@@ -13,7 +13,7 @@ The primary machine keeps running the full stack (API, ML, Ollama, Redis, fronte
 ## Prerequisites
 
 - Phase 1–4 complete
-- SSH to Widow (`ssh widow` or `ssh pete@192.168.93.101`)
+- SSH to Widow (`ssh widow` or `ssh pete@<WIDOW_HOST_IP>`)
 - `.db_password_widow` present in project root on primary
 
 ## Deploy
@@ -26,7 +26,7 @@ From the **primary** machine, in the project directory:
 
 This will:
 
-1. Rsync code to `pete@192.168.93.101:/opt/news-intelligence`
+1. Rsync code to `pete@<WIDOW_HOST_IP>:/opt/news-intelligence`
 2. Copy `.db_password_widow` to Widow
 3. Run `setup_widow_app.sh` on Widow (venv, pip, .env, systemd, cron)
 

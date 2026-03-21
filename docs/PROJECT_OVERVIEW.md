@@ -87,7 +87,7 @@ See [CORE_ARCHITECTURE_PRINCIPLES.md](CORE_ARCHITECTURE_PRINCIPLES.md) and [DATA
 ## 6. Scope and development status
 
 - **Current line:** v8 collect-then-analyze (ordered analysis pipeline after collection cycles); flat API paths `/api/...` (no version prefix).
-- **Stack map:** Web (React `/:domain/*`) → FastAPI (`api/main_v4.py`) → PostgreSQL (+ Finance SQLite/Chroma, optional Redis). See [SYSTEM_OVERVIEW.md](SYSTEM_OVERVIEW.md) for route/service map and [ARCHITECTURE_AND_OPERATIONS.md](ARCHITECTURE_AND_OPERATIONS.md) for hosts and ops.
+- **Stack map:** Web (React `/:domain/*`) → FastAPI (`api/main.py`) → PostgreSQL (+ Finance SQLite/Chroma, optional Redis). See [SYSTEM_OVERVIEW.md](SYSTEM_OVERVIEW.md) for route/service map and [ARCHITECTURE_AND_OPERATIONS.md](ARCHITECTURE_AND_OPERATIONS.md) for hosts and ops.
 - **Connectivity:** News aggregation, content analysis, storylines, intelligence hub, entity resolution, fact verification, PDF/document processing, finance, and system monitoring are wired DB → API → web; user-management UI is partial.
 
 Detailed matrices (domain × layer), v6 quality-first notes, and gap discussion remain in [_archive/consolidated/PROJECT_SCOPE_AND_DEVELOPMENT_STATUS.md](_archive/consolidated/PROJECT_SCOPE_AND_DEVELOPMENT_STATUS.md).

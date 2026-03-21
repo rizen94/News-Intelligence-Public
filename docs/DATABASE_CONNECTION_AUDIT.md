@@ -12,7 +12,7 @@
 | **Connections (pooled)** | `api/shared/database/connection.py` → `get_db_connection()` |
 | **Re-export (compat)** | `api/config/database.py` re-exports the above; use either. |
 
-`get_db_config()` reads **only** from `os.environ`: `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`. Defaults: host `192.168.93.101`, port `5432`, database `news_intel`, user `newsapp`, password `""`. So **if the process is started without `DB_PASSWORD` in the environment** (e.g. API started from an IDE or before `.env` is loaded), every path that uses this config gets an empty password and connections fail.
+`get_db_config()` reads **only** from `os.environ`: `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`. Defaults: host `<WIDOW_HOST_IP>`, port `5432`, database `news_intel`, user `newsapp`, password `""`. So **if the process is started without `DB_PASSWORD` in the environment** (e.g. API started from an IDE or before `.env` is loaded), every path that uses this config gets an empty password and connections fail.
 
 ---
 
@@ -28,7 +28,7 @@
 
 - **Code:** Service is constructed with `db_config = get_db_config()` (or a dict); later it does `psycopg2.connect(**self.db_config)`.
 - **Used by:** AutomationManager, StorylineConsolidationService, ML queue manager, background_processor, RAG base, topic clustering, ai_storyline_discovery, etc.
-- **Behaviour:** Config is **snapshotted when the service is created** (usually at app startup in `main_v4.py`). So they use the same env as the pool **if** they get `db_config` from `get_db_config()` at startup. If the process had no `DB_PASSWORD` at startup, that snapshot has empty password and every `connect()` fails.
+- **Behaviour:** Config is **snapshotted when the service is created** (usually at app startup in `main.py`). So they use the same env as the pool **if** they get `db_config` from `get_db_config()` at startup. If the process had no `DB_PASSWORD` at startup, that snapshot has empty password and every `connect()` fails.
 
 **Problem:** Some services or scripts build their own config with **different defaults** (e.g. host `postgres` or `localhost`, password `newsapp_password` or `Database@NEWSINT2025`). Those defaults were for Docker/NAS; after migration to Widow they are wrong or stale, and they bypass the single source of truth.
 

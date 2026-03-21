@@ -98,7 +98,7 @@ An **evidence collector** now aggregates RSS (finance-domain articles), optional
 ### 3.2 Finance Controller (Implemented)
 
 - **Component:** `FinanceOrchestrator` in `api/domains/finance/orchestrator.py`.
-- **Started in:** `main_v4.py` lifespan: constructed with source_loader, market_data_store, vector_store, evidence_ledger, embedding_module, stats_module, llm_wrapper; then `start_scheduler()` and `start_queue_worker()`.
+- **Started in:** `main.py` lifespan: constructed with source_loader, market_data_store, vector_store, evidence_ledger, embedding_module, stats_module, llm_wrapper; then `start_scheduler()` and `start_queue_worker()`.
 - **Stopped in:** lifespan shutdown calls `finance_orchestrator.stop_scheduler()` (which also stops the queue worker).
 - **Schedule:** Driven by `api/config/finance_schedule.yaml` (e.g. gold_refresh 24h, edgar_ingest 168h). Scheduler loop runs ~60s; checks due tasks and submits low-priority tasks.
 - **Queue worker:** Processes queued tasks (e.g. analysis with `wait=false`): picks by priority then FIFO, runs `run_task(task_id)`.
@@ -109,14 +109,14 @@ An **evidence collector** now aggregates RSS (finance-domain articles), optional
 ### 3.3 Data Processing Controller (AutomationManager + Others)
 
 - **Components:** AutomationManager (`api/services/automation_manager.py`), RSS collector (`api/collectors/rss_collector.py`), topic queue workers, ML processing, storyline consolidation (separate thread), etc.
-- **Started in:** `main_v4.py`: AutomationManager started in a background thread; topic extraction queue workers started in another background thread.
+- **Started in:** `main.py`: AutomationManager started in a background thread; topic extraction queue workers started in another background thread.
 - **Behavior:** AutomationManager polls on an interval (e.g. 10s); runs phases such as rss_processing, article_processing, ml_processing, topic_clustering, storyline_processing, rag_enhancement, etc. RSS is also triggered by cron (e.g. 6 AM, 6 PM) and by API (`collect_now`, `fetch_articles`, pipeline `run_all`).
 - **Overlap:** Multiple entry points for RSS and topic clustering (AutomationManager, cron, pipeline route, manual API). No single “evidence collector” that feeds finance.
 
 ### 3.4 Review & Cleanup Controller
 
-- **Components:** StorylineConsolidationService (e.g. 30 min interval from main_v4), AutomationManager’s data_cleanup (e.g. 24h), cache_cleanup, cron log archive, dedup APIs.
-- **Note:** AutomatedCleanupSystem (standalone script) is not started from main_v4.
+- **Components:** StorylineConsolidationService (e.g. 30 min interval from main), AutomationManager’s data_cleanup (e.g. 24h), cache_cleanup, cron log archive, dedup APIs.
+- **Note:** AutomatedCleanupSystem (standalone script) is not started from main.
 
 ### 3.5 API and Path Conventions
 
@@ -134,7 +134,7 @@ An **evidence collector** now aggregates RSS (finance-domain articles), optional
 | Pipeline trigger       | `api/domains/system_monitoring/routes/system_monitoring.py` (e.g. execute_pipeline_orchestration) |
 | Storyline consolidation | `api/services/storyline_consolidation_service.py` |
 | Topic queue worker    | `api/domains/content_analysis/.../topic_extraction_queue_worker.py` |
-| App lifespan          | `api/main_v4.py` |
+| App lifespan          | `api/main.py` |
 
 ---
 

@@ -46,7 +46,7 @@ curl http://localhost:80
 **Quick diagnostic:**
 ```bash
 # 1. Is the process running?
-pgrep -fa "uvicorn.*main_v4"
+pgrep -fa "uvicorn.*main:app"
 
 # 2. Is the port open?
 ss -tlnp | grep 8000
@@ -55,7 +55,7 @@ ss -tlnp | grep 8000
 curl -s --max-time 5 http://localhost:8000/api/system_monitoring/health
 
 # 4. Dump all thread stacks (output goes to logs/api_server.log)
-kill -SIGUSR1 $(pgrep -f "uvicorn.*main_v4")
+kill -SIGUSR1 $(pgrep -f "uvicorn.*main:app")
 tail -80 logs/api_server.log
 ```
 
@@ -287,31 +287,26 @@ netstat -tlnp | grep 80
 **Symptoms**: "Request failed with status code 503" or "Database unavailable" when saving a research topic (or any endpoint that uses PostgreSQL).
 
 **How the API connects** (see `api/shared/database/connection.py`):
-- **Default (Widow)**: `DB_HOST=192.168.93.101`, `DB_PORT=5432`, `DB_NAME=news_intel`. Direct TCP to the Widow machine.
+- **Default (Widow)**: `DB_HOST=<WIDOW_HOST_IP>`, `DB_PORT=5432`, `DB_NAME=news_intel`. Direct TCP to the Widow machine.
 - **NAS rollback**: `DB_HOST=localhost`, `DB_PORT=5433`, `DB_NAME=news_intelligence`. Requires an SSH tunnel; the API checks that the tunnel process is running.
 
 **Common causes**:
-1. **Widow unreachable** — You're not on the same network as 192.168.93.101, or Widow is off, or a firewall blocks port 5432.
-2. **API started without DB env** — If you start the API from an IDE or `uvicorn` without going through `./start_system.sh`, ensure `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, and `DB_PASSWORD` are set (e.g. in `.env` or exported). The API defaults to 192.168.93.101:5432; if that host is unreachable, every DB call returns 503.
+1. **Widow unreachable** — You're not on the same network as <WIDOW_HOST_IP>, or Widow is off, or a firewall blocks port 5432.
+2. **API started without DB env** — If you start the API from an IDE or `uvicorn` without going through `./start_system.sh`, ensure `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, and `DB_PASSWORD` are set (e.g. in `.env` or exported). The API defaults to <WIDOW_HOST_IP>:5432; if that host is unreachable, every DB call returns 503.
 3. **NAS tunnel not running** — If you use `DB_HOST=localhost` and `DB_PORT=5433`, the tunnel must be up: `./scripts/setup_nas_ssh_tunnel.sh`. If the tunnel dies, the API gets no connection.
 4. **Wrong or missing password** — Store the PostgreSQL password in the project-root **`.env`** file as `DB_PASSWORD=your_password`. The API and `start_system.sh` read it from there. If `DB_PASSWORD` is missing or wrong, connections fail. (`.env` is in `.gitignore`; copy from `configs/env.example` if needed.)
 
-**Quick checks**:
+**Quick checks** (run from project root; ensure `DB_HOST` is set in `.env` — default in code is documented in [DATABASE.md](DATABASE.md)):
 ```bash
-# 1) See what the API is using (from project root, with same .env as API)
 source .env 2>/dev/null || true
-echo "DB_HOST=${DB_HOST:-192.168.93.101} DB_PORT=${DB_PORT:-5432} DB_NAME=${DB_NAME:-news_intel}"
+echo "DB_HOST=${DB_HOST} DB_PORT=${DB_PORT:-5432} DB_NAME=${DB_NAME:-news_intel}"
+test -n "${DB_HOST}" || { echo "Set DB_HOST in .env"; exit 1; }
 
-# 2) Widow reachable?
-ping -c 1 "${DB_HOST:-192.168.93.101}"
-
-# 3) PostgreSQL accepting connections?
-pg_isready -h "${DB_HOST:-192.168.93.101}" -p "${DB_PORT:-5432}" -U "${DB_USER:-newsapp}"
-
-# 4) Full connection test (requires PGPASSWORD or .pgpass)
-PGPASSWORD="${DB_PASSWORD}" psql -h "${DB_HOST:-192.168.93.101}" -p "${DB_PORT:-5432}" -U "${DB_USER:-newsapp}" -d "${DB_NAME:-news_intel}" -c "SELECT 1;" 2>&1
+ping -c 1 "${DB_HOST}"
+pg_isready -h "${DB_HOST}" -p "${DB_PORT:-5432}" -U "${DB_USER:-newsapp}"
+PGPASSWORD="${DB_PASSWORD}" psql -h "${DB_HOST}" -p "${DB_PORT:-5432}" -U "${DB_USER:-newsapp}" -d "${DB_NAME:-news_intel}" -c "SELECT 1;" 2>&1
 ```
-If (2) or (3) fails, fix network/Widow/PostgreSQL. If (4) fails with "password authentication failed", fix `DB_PASSWORD`. Restart the API after changing env so the connection pool picks up the new config.
+If `ping` or `pg_isready` fails, fix network or PostgreSQL. If `psql` fails with "password authentication failed", fix `DB_PASSWORD`. Restart the API after changing env so the connection pool picks up the new config.
 
 ### **Common log errors (logs/api_server.log, logs/app.log)**
 
@@ -347,7 +342,7 @@ Interpret `status`, `degraded_reasons`, and `services.database` to see why it’
 **Symptoms**: Submit works then result page shows "Network Error", or submit fails with "Cannot reach API".
 **Causes**: (1) Backend not running or wrong API URL; (2) Finance orchestrator failed to start.
 **Solutions**:
-- **API reachable?** From the same host as the frontend: `curl -s http://localhost:8000/api/system_monitoring/health` (or your API base URL). If you get connection refused, start the API (e.g. from `api/`: `uvicorn main_v4:app --host 0.0.0.0 --port 8000`).
+- **API reachable?** From the same host as the frontend: `curl -s http://localhost:8000/api/system_monitoring/health` (or your API base URL). If you get connection refused, start the API (e.g. from `api/`: `uvicorn main:app --host 0.0.0.0 --port 8000`).
 - **Proxy/API URL**: With Vite dev server, `/api` is proxied to `http://localhost:8000`. If the app is built or served elsewhere, set the API base URL (e.g. `VITE_API_URL` or the in-app API URL setting).
 - **Finance orchestrator**: If the backend starts but Finance Orchestrator fails to init, all finance analyze/task requests return **503** with detail "Finance orchestrator not available". Check API startup logs (stdout/stderr) for: `❌ Failed to initialize Finance Orchestrator: …`. Fix the underlying cause (e.g. missing ChromaDB, FRED key, or import error) then restart the API.
 - **Recent request in logs**: The API logs each finance analyze request (e.g. `Finance analyze request: domain=finance query='...' topic=...`). Logs go to stdout and, if file logging is enabled, to `api/logs/` (see `api/config/logging_config.py` and `LOG_DIR` in `api/config/settings.py`). Run the API in a terminal to see recent requests and any 503/orchestrator messages.

@@ -23,9 +23,9 @@ All LLM work runs on local models (Ollama).
 
 | Machine | IP | Role |
 |---------|-----|------|
-| **Primary** | 192.168.93.99 | API (FastAPI), ML, Ollama, Redis, Frontend |
-| **Widow** | 192.168.93.101 | PostgreSQL, RSS worker, DB backups |
-| **NAS** | 192.168.93.100 | Storage only (no PostgreSQL) |
+| **Primary** | <PRIMARY_HOST_IP> | API (FastAPI), ML, Ollama, Redis, Frontend |
+| **Widow** | <WIDOW_HOST_IP> | PostgreSQL, RSS worker, DB backups |
+| **NAS** | <NAS_HOST_IP> | Storage only (no PostgreSQL) |
 
 ### Data Flow
 
