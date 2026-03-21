@@ -66,7 +66,7 @@ export default function Dashboard() {
       setStatusOrchLoading(true);
 
       // Wave 1: light endpoints so "System Intelligence" appears quickly
-      const stRes = contextCentricApi.getStatus().catch(() => null);
+      const stRes = contextCentricApi.getStatus(domain).catch(() => null);
       const oRes = (async () => {
         try {
           const fn = apiService.getOrchestratorDashboard;
@@ -203,7 +203,7 @@ export default function Dashboard() {
                     <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mb: 2 }}>
                       <Chip size="small" label={`Contexts: ${status.contexts}`} />
                       <Chip size="small" label={`Entity Profiles: ${status.entity_profiles}`} />
-                      <Chip size="small" label={`Events: ${status.tracked_events}`} />
+                      <Chip size="small" label={`Events: ${status.extracted_events ?? status.tracked_events}`} />
                     </Box>
                   )}
                   <Typography variant="body2" color="text.secondary" gutterBottom>

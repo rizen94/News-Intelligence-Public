@@ -109,7 +109,7 @@ QUEUE_PAUSE_ALLOW_SCHEDULED = frozenset(
     x.strip()
     for x in os.environ.get(
         "AUTOMATION_QUEUE_PAUSE_ALLOW",
-        "collection_cycle,health_check,pending_db_flush",
+        "collection_cycle,health_check,pending_db_flush,content_refinement_queue",
     ).split(",")
     if x.strip()
 )

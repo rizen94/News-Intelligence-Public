@@ -336,6 +336,8 @@ def _count_document_processing_backlog() -> int:
 
 # Phases that should be skipped when backlog is 0 (avoid empty cycles)
 # document_processing omitted so it runs on interval even if backlog count is wrong (e.g. DB timeout)
+# content_refinement_queue omitted: must run on interval when idle so automation history updates;
+# empty queue completes in milliseconds.
 SKIP_WHEN_EMPTY = frozenset({
     "context_sync",
     "event_tracking",
@@ -343,7 +345,6 @@ SKIP_WHEN_EMPTY = frozenset({
     "entity_profile_build",
     "investigation_report_refresh",
     "pending_db_flush",
-    "content_refinement_queue",
 })
 
 # When backlog exceeds this, use backlog-mode interval so we run more often

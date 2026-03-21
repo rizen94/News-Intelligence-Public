@@ -47,6 +47,70 @@ def _safe_count(cur, sql: str, default: int = 0) -> int:
         return default
 
 
+def _safe_count_params(cur, sql: str, params: tuple, default: int = 0) -> int:
+    """Parameterized COUNT; return default if relation/column does not exist."""
+    try:
+        cur.execute(sql, params)
+        row = cur.fetchone()
+        return row[0] if row is not None else default
+    except Exception:
+        return default
+
+
+def _count_extracted_events_for_status(cur, domain_key: str | None) -> int:
+    """
+    Same scope as GET /api/{domain}/events — rows in public.chronological_events whose
+    source_article_id exists in that domain's articles. When domain_key is None, count events
+    tied to any built-in domain (no double-counting).
+    """
+    try:
+        cur.execute(
+            """
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = 'chronological_events'
+            """
+        )
+        cols = {r[0] for r in cur.fetchall()}
+        if "source_article_id" not in cols:
+            return 0
+    except Exception:
+        return 0
+
+    if domain_key:
+        schema_map = {"politics": "politics", "finance": "finance", "science-tech": "science_tech"}
+        schema = schema_map.get(domain_key)
+        if not schema:
+            return 0
+        try:
+            cur.execute(
+                f"""
+                SELECT COUNT(*) FROM public.chronological_events ce
+                WHERE EXISTS (
+                    SELECT 1 FROM {schema}.articles a WHERE a.id = ce.source_article_id
+                )
+                """
+            )
+            row = cur.fetchone()
+            return int(row[0]) if row and row[0] is not None else 0
+        except Exception:
+            return 0
+
+    try:
+        cur.execute(
+            """
+            SELECT COUNT(*) FROM public.chronological_events ce
+            WHERE EXISTS (SELECT 1 FROM politics.articles a WHERE a.id = ce.source_article_id)
+               OR EXISTS (SELECT 1 FROM finance.articles a WHERE a.id = ce.source_article_id)
+               OR EXISTS (SELECT 1 FROM science_tech.articles a WHERE a.id = ce.source_article_id)
+            """
+        )
+        row = cur.fetchone()
+        return int(row[0]) if row and row[0] is not None else 0
+    except Exception:
+        return 0
+
+
 @router.post("/context_centric/sync_entity_profiles", response_model=dict)
 def sync_entity_profiles(domain_key: Optional[str] = Query(None, description="Sync this domain only; omit to sync all")) -> dict:
     """
@@ -241,31 +305,73 @@ async def review_event_coherence_api(
 
 
 @router.get("/context_centric/status", response_model=dict)
-def context_centric_status() -> dict:
+def context_centric_status(
+    domain_key: Optional[str] = Query(
+        None,
+        description="When set (politics|finance|science-tech), contexts/entity_profiles/extracted_events "
+        "are scoped to this domain. Omit for aggregate totals (e.g. Monitor page).",
+    ),
+) -> dict:
     """Return counts for context-centric pipeline (Phase 3.2 quality validation)."""
+    if domain_key is not None and domain_key not in ("politics", "finance", "science-tech"):
+        raise HTTPException(
+            status_code=400,
+            detail="domain_key must be one of politics, finance, science-tech, or omitted",
+        )
+
     conn = get_db_connection()
     if not conn:
         raise HTTPException(status_code=503, detail="Database unavailable")
     try:
         with conn.cursor() as cur:
-            contexts = _safe_count(cur, "SELECT COUNT(*) FROM intelligence.contexts")
-            article_links = _safe_count(cur, "SELECT COUNT(*) FROM intelligence.article_to_context")
-            entity_profiles = _safe_count(cur, "SELECT COUNT(*) FROM intelligence.entity_profiles")
+            if domain_key:
+                contexts = _safe_count_params(
+                    cur,
+                    "SELECT COUNT(*) FROM intelligence.contexts WHERE domain_key = %s",
+                    (domain_key,),
+                )
+                article_links = _safe_count_params(
+                    cur,
+                    "SELECT COUNT(*) FROM intelligence.article_to_context WHERE domain_key = %s",
+                    (domain_key,),
+                )
+                entity_profiles = _safe_count_params(
+                    cur,
+                    "SELECT COUNT(*) FROM intelligence.entity_profiles WHERE domain_key = %s",
+                    (domain_key,),
+                )
+                mentions = _safe_count_params(
+                    cur,
+                    """
+                    SELECT COUNT(*) FROM intelligence.context_entity_mentions cem
+                    JOIN intelligence.contexts c ON c.id = cem.context_id
+                    WHERE c.domain_key = %s
+                    """,
+                    (domain_key,),
+                )
+            else:
+                contexts = _safe_count(cur, "SELECT COUNT(*) FROM intelligence.contexts")
+                article_links = _safe_count(cur, "SELECT COUNT(*) FROM intelligence.article_to_context")
+                entity_profiles = _safe_count(cur, "SELECT COUNT(*) FROM intelligence.entity_profiles")
+                mentions = _safe_count(cur, "SELECT COUNT(*) FROM intelligence.context_entity_mentions")
+
             entity_mappings = _safe_count(cur, "SELECT COUNT(*) FROM intelligence.old_entity_to_new")
-            mentions = _safe_count(cur, "SELECT COUNT(*) FROM intelligence.context_entity_mentions")
             claims = _safe_count(cur, "SELECT COUNT(*) FROM intelligence.extracted_claims")
-            events = _safe_count(cur, "SELECT COUNT(*) FROM intelligence.tracked_events")
+            intel_tracked = _safe_count(cur, "SELECT COUNT(*) FROM intelligence.tracked_events")
+            extracted_events = _count_extracted_events_for_status(cur, domain_key)
             chronicles = _safe_count(cur, "SELECT COUNT(*) FROM intelligence.event_chronicles")
             pattern_discoveries = _safe_count(cur, "SELECT COUNT(*) FROM intelligence.pattern_discoveries")
         conn.close()
         return {
+            "domain_key": domain_key,
             "contexts": contexts,
             "article_to_context_links": article_links,
             "entity_profiles": entity_profiles,
             "old_entity_to_new_mappings": entity_mappings,
             "context_entity_mentions": mentions,
             "extracted_claims": claims,
-            "tracked_events": events,
+            "tracked_events": intel_tracked,
+            "extracted_events": extracted_events,
             "event_chronicles": chronicles,
             "pattern_discoveries": pattern_discoveries,
         }

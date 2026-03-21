@@ -122,6 +122,7 @@ export interface ContextGroupingFeedbackItem {
 }
 
 export interface ContextCentricStatus {
+  domain_key?: string | null;
   contexts: number;
   article_to_context_links: number;
   entity_profiles: number;
@@ -129,6 +130,8 @@ export interface ContextCentricStatus {
   context_entity_mentions: number;
   extracted_claims: number;
   tracked_events: number;
+  /** Same scope as Extracted Events page — chronological_events per domain articles. */
+  extracted_events?: number;
   event_chronicles: number;
   pattern_discoveries: number;
 }
@@ -241,9 +244,15 @@ const handleError = (message: string, error: unknown): never => {
 };
 
 export const contextCentricApi = {
-  async getStatus(): Promise<ContextCentricStatus> {
+  async getStatus(domainKey?: string | null): Promise<ContextCentricStatus> {
     try {
-      const response = await getApi().get<ContextCentricStatus>(apiPath('/api/context_centric/status'), contextCentricConfig());
+      const response = await getApi().get<ContextCentricStatus>(apiPath('/api/context_centric/status'), {
+        ...contextCentricConfig(),
+        params:
+          domainKey != null && domainKey !== ''
+            ? { domain_key: domainKey }
+            : undefined,
+      });
       return response.data;
     } catch (error) {
       return handleError('Failed to fetch context-centric status', error);

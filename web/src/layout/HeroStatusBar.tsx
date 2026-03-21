@@ -3,6 +3,7 @@
  * Aligned with WEB_PRODUCT_DISPLAY_PLAN (Intelligence Dashboard).
  */
 import React, { useEffect, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import { Box, Typography, Chip } from '@mui/material';
 import { contextCentricApi, type ContextCentricStatus } from '../services/api/contextCentric';
 import apiService from '../services/apiService';
@@ -11,6 +12,8 @@ import APIConnectionStatus from '../components/APIConnectionStatus/APIConnection
 
 export const HeroStatusBar: React.FC = () => {
   const { domain } = useDomain();
+  const location = useLocation();
+  const statusScopeAllDomains = location.pathname.split('/').includes('monitor');
   const [health, setHealth] = useState<{ status?: string; services?: Record<string, string> } | null>(null);
   const [orchStatus, setOrchStatus] = useState<{
     running?: boolean;
@@ -38,7 +41,9 @@ export const HeroStatusBar: React.FC = () => {
         const [h, o, c] = await Promise.all([
           apiService.getHealth().catch(() => null),
           orchPromise,
-          contextCentricApi.getStatus().catch(() => null),
+          contextCentricApi
+            .getStatus(statusScopeAllDomains ? null : domain)
+            .catch(() => null),
         ]);
         if (cancelled) return;
         if (h && typeof h === 'object') setHealth(h);
@@ -55,7 +60,7 @@ export const HeroStatusBar: React.FC = () => {
       cancelled = true;
       clearInterval(t);
     };
-  }, []);
+  }, [domain, statusScopeAllDomains]);
 
   const systemHealthy = health?.status === 'healthy';
   const sourcesCount = orchStatus?.collection_sources?.length ?? 0;
@@ -103,7 +108,10 @@ export const HeroStatusBar: React.FC = () => {
               Entity Profiles: <strong>{ctxStatus.entity_profiles.toLocaleString()}</strong>
             </Typography>
             <Typography variant="body2" color="text.secondary">
-              Events: <strong>{ctxStatus.tracked_events.toLocaleString()}</strong>
+              Events:{' '}
+              <strong>
+                {(ctxStatus.extracted_events ?? ctxStatus.tracked_events).toLocaleString()}
+              </strong>
             </Typography>
           </>
         )}
