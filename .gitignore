@@ -101,8 +101,9 @@ news-system-export*.zip
 # PID files
 *.pid
 
-# Relocated archive (27GB, 508k files - kept external)
-archive/
+# Relocated archive (27GB, 508k files - kept external) — repo root only; do not use
+# bare `archive/` (that would ignore api/database/migrations/archive/).
+/archive/
 
 # Generated pi reports (scripts/pi_*.sh output)
 scripts/pi_reports/
