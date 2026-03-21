@@ -13,6 +13,7 @@ import logging
 import os
 import re
 import time
+from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
@@ -68,6 +69,29 @@ def _make_fast_config():
 
 
 _FAST_CONFIG = _make_fast_config()
+
+
+def _make_on_demand_config():
+    """Slightly longer timeouts for user-triggered fetches (article reader)."""
+    try:
+        from trafilatura.settings import DEFAULT_CONFIG
+
+        cfg = configparser.ConfigParser()
+        cfg.read_dict(DEFAULT_CONFIG)
+        cfg.set("DEFAULT", "download_timeout", "25")
+        cfg.set("DEFAULT", "extraction_timeout", "25")
+        return cfg
+    except Exception:
+        return _FAST_CONFIG
+
+
+_ONDEMAND_CONFIG = _make_on_demand_config()
+
+# Browser-like UA: some publishers return stub HTML to library/default clients (e.g. BBC).
+_BROWSER_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+)
 
 # Phrases that indicate the extracted "content" is a paywall/subscription block instead of the article
 _PAYWALL_PHRASES = (
@@ -138,6 +162,30 @@ def _extract_from_html(html: str) -> str:
         return text
     except Exception as e:
         logger.debug("trafilatura extract from HTML failed: %s", e)
+        return ""
+
+
+def _fetch_live_with_browser_ua(url: str) -> str:
+    """Fetch HTML with a common browser User-Agent, then extract text (fallback when trafilatura fetch is empty)."""
+    if not url or not url.strip():
+        return ""
+    try:
+        req = Request(
+            url.strip(),
+            headers={
+                "User-Agent": _BROWSER_UA,
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.9",
+            },
+        )
+        with urlopen(req, timeout=25) as resp:
+            html = resp.read().decode("utf-8", errors="replace")
+        text = _extract_from_html(html)
+        if text:
+            logger.debug("Browser-UA live fetch succeeded for %s", url[:80])
+        return text
+    except (URLError, HTTPError, OSError, ValueError) as e:
+        logger.debug("Browser-UA live fetch failed for %s: %s", url[:80], e)
         return ""
 
 
@@ -391,6 +439,11 @@ def _fetch_full_text(url: str, config=None) -> str:
     except Exception as e:
         logger.debug("trafilatura fetch failed for %s: %s", url[:80], e)
 
+    # 1b. Same live URL with browser User-Agent (some CDNs block non-browser clients)
+    text = _fetch_live_with_browser_ua(url)
+    if text:
+        return text
+
     # 2. Browser (headless)
     text = _fetch_via_browser(url)
     if text:
@@ -414,3 +467,92 @@ def enrich_article_content(url: str) -> tuple:
     Returns (content, success). content is full text or empty string; success is True iff content is non-empty."""
     text = _fetch_full_text(url)
     return (text[:MAX_CONTENT_CHARS] if text else "", bool(text))
+
+
+def fetch_full_content_for_article(domain_key: str, article_id: int) -> dict[str, Any]:
+    """
+    On-demand full text for the article reader UI. Persists content and queues re-processing on success.
+    Unlike batch enrichment, does not soft-delete the article when extraction fails.
+    """
+    try:
+        import trafilatura  # noqa: F401
+    except ImportError:
+        return {
+            "success": False,
+            "not_found": False,
+            "message": "Content extraction is not available (trafilatura missing).",
+            "content": None,
+        }
+
+    from shared.database.connection import get_ui_db_connection_context
+
+    from services.context_processor_service import update_context_content_for_article
+
+    schema_name = domain_key.replace("-", "_")
+
+    try:
+        with get_ui_db_connection_context() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"SELECT url, content FROM {schema_name}.articles WHERE id = %s",
+                    (article_id,),
+                )
+                row = cur.fetchone()
+            if not row:
+                return {
+                    "success": False,
+                    "not_found": True,
+                    "message": "Article not found",
+                    "content": None,
+                }
+            url, existing = row[0], (row[1] or "")
+            if not url or not str(url).strip():
+                return {
+                    "success": False,
+                    "not_found": False,
+                    "message": "Article has no source URL",
+                    "content": existing.strip() or None,
+                }
+
+            text = _fetch_full_text(str(url).strip(), config=_ONDEMAND_CONFIG)
+            if not text:
+                return {
+                    "success": False,
+                    "not_found": False,
+                    "message": (
+                        "Could not download article text. The site may block automated access, "
+                        "require JavaScript, or use a paywall. Try opening the original link."
+                    ),
+                    "content": existing.strip() or None,
+                }
+            text = text[:MAX_CONTENT_CHARS]
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""UPDATE {schema_name}.articles SET content = %s, enrichment_status = 'enriched',
+                        updated_at = NOW() WHERE id = %s""",
+                    (text, article_id),
+                )
+                cur.execute(
+                    f"UPDATE {schema_name}.articles SET entities = NULL WHERE id = %s",
+                    (article_id,),
+                )
+                cur.execute(
+                    f"""
+                    INSERT INTO {schema_name}.topic_extraction_queue (article_id, status, priority, created_at)
+                    VALUES (%s, 'pending', 3, NOW())
+                    ON CONFLICT (article_id) DO UPDATE SET status = 'pending', priority = 3, created_at = NOW()
+                    """,
+                    (article_id,),
+                )
+            conn.commit()
+
+        update_context_content_for_article(domain_key, article_id)
+        return {"success": True, "not_found": False, "message": None, "content": text}
+    except Exception as e:
+        logger.warning("fetch_full_content_for_article failed: %s", e, exc_info=True)
+        return {
+            "success": False,
+            "not_found": False,
+            "message": "Failed to update article content.",
+            "content": None,
+        }

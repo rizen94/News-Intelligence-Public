@@ -97,11 +97,24 @@ const ArticleReader = ({
       // Only attempt full-content fetch when we have a valid article id.
       if (article.id) {
         const response = await api.post(
-          `/article-processing/fetch-full-content/${article.id}`
+          `/api/${domain}/articles/${article.id}/fetch-full-content`,
+          {},
+          { timeout: 90000 }
         );
-        if (response.data?.success && response.data.data?.content) {
-          setFullContent(response.data.data.content);
+        const remoteContent = response.data?.data?.content;
+        if (response.data?.success && remoteContent) {
+          setFullContent(remoteContent);
           return;
+        }
+        if (remoteContent) {
+          setFullContent(remoteContent);
+          if (response.data?.success === false && response.data?.message) {
+            setError(response.data.message);
+          }
+          return;
+        }
+        if (response.data?.success === false && response.data?.message) {
+          setError(response.data.message);
         }
         if (response.data?.content) {
           setFullContent(response.data.content);

@@ -3,9 +3,11 @@ Domain 1: News Aggregation Routes
 Handles RSS feed processing, article ingestion, and content quality assessment
 """
 
+import asyncio
 import logging
 import time
 from datetime import datetime, timedelta
+from functools import partial
 from typing import Any
 
 from domains.news_aggregation.services.article_service import ArticleService
@@ -516,6 +518,52 @@ async def get_domain_article(
     except Exception as e:
         logger.error(
             f"Error fetching article {article_id} from domain {domain}: {e}", exc_info=True
+        )
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/{domain}/articles/{article_id}/fetch-full-content")
+async def post_fetch_article_full_content(
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
+    article_id: int = Path(..., description="Article ID"),
+):
+    """Fetch full article body from the source URL, persist it, and return it for the article reader."""
+    try:
+        if not validate_domain(domain):
+            raise HTTPException(status_code=400, detail=f"Invalid or inactive domain: {domain}")
+
+        from services.article_content_enrichment_service import fetch_full_content_for_article
+
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(
+            None, partial(fetch_full_content_for_article, domain, article_id)
+        )
+
+        if result.get("not_found"):
+            raise HTTPException(
+                status_code=404, detail=f"Article {article_id} not found in domain {domain}"
+            )
+
+        if result.get("success"):
+            return {
+                "success": True,
+                "data": {"content": result.get("content") or ""},
+                "domain": domain,
+            }
+
+        return {
+            "success": False,
+            "message": result.get("message") or "Could not fetch article text.",
+            "data": {"content": (result.get("content") or "")},
+            "domain": domain,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            f"Error fetching full content for article {article_id} in domain {domain}: {e}",
+            exc_info=True,
         )
         raise HTTPException(status_code=500, detail=str(e))
 
