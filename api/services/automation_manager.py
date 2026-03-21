@@ -4520,8 +4520,18 @@ class AutomationManager:
                 elif phase_name == "storyline_processing":
                     for schema in _SCHEMAS:
                         cur.execute(
-                            f"""SELECT 1 FROM {schema}.storylines
-                                WHERE master_summary IS NULL OR LENGTH(master_summary) < 100
+                            f"""SELECT 1 FROM {schema}.storylines s
+                                WHERE s.status = 'active'
+                                  AND EXISTS (
+                                      SELECT 1 FROM {schema}.storyline_articles sa
+                                      WHERE sa.storyline_id = s.id
+                                  )
+                                  AND LENGTH(
+                                      TRIM(
+                                          COALESCE(s.analysis_summary, '')
+                                          || COALESCE(s.master_summary, '')
+                                      )
+                                  ) < 100
                                 LIMIT 1"""
                         )
                         if cur.fetchone():
