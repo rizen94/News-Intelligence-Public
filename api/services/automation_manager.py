@@ -30,6 +30,7 @@ Reader's guide:
 """
 
 import asyncio
+import itertools
 import json
 import logging
 import os
@@ -187,6 +188,7 @@ ANALYSIS_PIPELINE_STEPS: tuple[tuple[str, ...], ...] = (
         "storyline_synthesis",
         "daily_briefing_synthesis",
         "digest_generation",
+        "narrative_thread_build",
         "watchlist_alerts",
         "content_refinement_queue",
         "cache_cleanup",
@@ -312,7 +314,9 @@ class AutomationManager:
         self._executor = (
             self.executor
         )  # alias used by entity_dossier_compile, entity_position_tracker, fact_verification
-        self.task_queue = asyncio.Queue()
+        # PriorityQueue: lower TaskPriority.value dequeued first; tie-break FIFO via monotonic counter.
+        self.task_queue: asyncio.PriorityQueue = asyncio.PriorityQueue()
+        self._scheduled_task_queue_seq = itertools.count()
         # User/governor-requested tasks run before scheduled tasks so "Request phase" is not starved
         self._requested_task_queue: asyncio.Queue = asyncio.Queue()
         self.ollama_semaphore = asyncio.Semaphore(MAX_CONCURRENT_OLLAMA_TASKS)
@@ -459,14 +463,14 @@ class AutomationManager:
                 "depends_on": ["context_sync"],
                 "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["event_tracking"],
             },
-            # PHASE 3: Event coherence review (LLM verifies context-event fit)
+            # PHASE 3: Event coherence review (LLM verifies context-event fit; needs tracked_events)
             "event_coherence_review": {
                 "interval": 7200,  # 2 hours
                 "last_run": None,
                 "enabled": True,
                 "priority": TaskPriority.LOW,
                 "phase": 3,
-                "depends_on": [],
+                "depends_on": ["event_tracking"],
                 "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["event_coherence_review"],
             },
             # PHASE 2.4: Refresh investigation reports when events gain new context (after event_tracking)
@@ -642,7 +646,7 @@ class AutomationManager:
                 "depends_on": ["ml_processing", "sentiment_analysis"],
                 "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["storyline_processing"],
             },
-            # Governor-triggered: RAG discovery for one or all automation-enabled storylines
+            # Scheduled batch + governor requests: match incoming articles to automation-enabled storylines
             "storyline_automation": {
                 "interval": 300,  # 5 min: recent incoming → match to existing storylines
                 "last_run": None,
@@ -754,7 +758,7 @@ class AutomationManager:
                 "depends_on": [],
                 "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["cache_cleanup"],
             },
-            # PHASE 10.5: Editorial Document Generation — build/refine editorial_document + editorial_briefing
+            # PHASE 10.5: Editorial document generation — build/refine storyline editorial_document (see editorial_briefing_generation for events)
             "editorial_document_generation": {
                 "interval": 1800,  # 30 minutes
                 "last_run": None,
@@ -928,6 +932,21 @@ class AutomationManager:
             return int(self.task_queue.qsize()) + int(self._requested_task_queue.qsize())
         except Exception:
             return 0
+
+    def _scheduled_queue_tuple(self, task: Task) -> tuple[int, int, Task]:
+        """PriorityQueue entry: lower ``TaskPriority.value`` first, then FIFO."""
+        p = (
+            task.priority.value
+            if isinstance(task.priority, TaskPriority)
+            else int(task.priority)
+        )
+        return (p, next(self._scheduled_task_queue_seq), task)
+
+    async def _enqueue_scheduled_task(self, task: Task) -> None:
+        await self.task_queue.put(self._scheduled_queue_tuple(task))
+
+    def _enqueue_scheduled_task_nowait(self, task: Task) -> None:
+        self.task_queue.put_nowait(self._scheduled_queue_tuple(task))
 
     def _scheduled_enqueue_paused(self) -> bool:
         """When True, skip adding new scheduled / chained / continuous tasks (allowlist still runs)."""
@@ -1135,7 +1154,8 @@ class AutomationManager:
                     task = await asyncio.wait_for(self._requested_task_queue.get(), timeout=0.05)
                     from_requested = True
                 except asyncio.TimeoutError:
-                    task = await asyncio.wait_for(self.task_queue.get(), timeout=1.0)
+                    _pq_item = await asyncio.wait_for(self.task_queue.get(), timeout=1.0)
+                    task = _pq_item[2]
 
                 if task:
                     await self._execute_task(task, worker_id)
@@ -1171,7 +1191,7 @@ class AutomationManager:
                 metadata={"scheduled": True, "phase": schedule.get("phase", 0), "bootstrap": True},
             )
             try:
-                self.task_queue.put_nowait(task)
+                self._enqueue_scheduled_task_nowait(task)
                 schedule["last_run"] = now
                 logger.info("Startup: queued %s so processing begins immediately", task_name)
             except asyncio.QueueFull:
@@ -1548,7 +1568,7 @@ class AutomationManager:
         )
 
         # Add to queue
-        await self.task_queue.put(task)
+        await self._enqueue_scheduled_task(task)
         schedule["last_run"] = current_time
         logger.info(f"Scheduled task: {task_name} (Phase {schedule.get('phase', 0)})")
 
@@ -1801,13 +1821,13 @@ class AutomationManager:
             ):
                 logger.debug("Nightly ingest exclusive window — deferring %s", task.name)
                 task.status = TaskStatus.PENDING
-                await self.task_queue.put(task)
+                await self._enqueue_scheduled_task(task)
                 await asyncio.sleep(3)
                 return
         except Exception as e:
             logger.debug("Nightly ingest exclusive gate: %s", e)
 
-        # Priority hierarchy: yield to web page loads — skip Ollama tasks when API is active
+        # Phases that call Ollama / shared LLM paths (or heavy GPU); yield to API + share ollama_semaphore.
         _OLLAMA_TASKS = {
             "topic_clustering",
             "ml_processing",
@@ -1832,7 +1852,16 @@ class AutomationManager:
             "nightly_enrichment_context",
             "storyline_synthesis",
             "daily_briefing_synthesis",
-            "document_processing",  # v7
+            "document_processing",
+            "storyline_discovery",
+            "proactive_detection",
+            "fact_verification",
+            "narrative_thread_build",
+            "event_coherence_review",
+            "pattern_recognition",
+            "investigation_report_refresh",
+            "entity_enrichment",
+            "storyline_enrichment",
         }
         if task.name in _OLLAMA_TASKS:
             try:
@@ -1843,7 +1872,7 @@ class AutomationManager:
                         f"Yielding to API — deferring {task.name} (web page load takes priority)"
                     )
                     task.status = TaskStatus.PENDING
-                    await self.task_queue.put(task)  # Re-queue for next cycle when API is idle
+                    await self._enqueue_scheduled_task(task)
                     await asyncio.sleep(5)  # Avoid tight loop — wait before worker picks next task
                     return
             except ImportError:
@@ -1869,7 +1898,7 @@ class AutomationManager:
                     if should_throttle_ollama():
                         logger.warning("GPU still hot after pause — deferring %s", task.name)
                         task.status = TaskStatus.PENDING
-                        await self.task_queue.put(task)
+                        await self._enqueue_scheduled_task(task)
                         return
             except ImportError:
                 pass
@@ -1897,7 +1926,7 @@ class AutomationManager:
                             task.name,
                         )
                         task.status = TaskStatus.PENDING
-                        await self.task_queue.put(task)
+                        await self._enqueue_scheduled_task(task)
                         await asyncio.sleep(5)
                         return
             except Exception as e:
@@ -2103,7 +2132,7 @@ class AutomationManager:
                                     "continuous": True,
                                 },
                             )
-                            await self.task_queue.put(next_task)
+                            await self._enqueue_scheduled_task(next_task)
                             self._requeue_counts[task.name] = current + 1
                             logger.debug(
                                 "Queued next %s immediately (pending work remains, requeue %s/%s)",
@@ -2184,7 +2213,7 @@ class AutomationManager:
             if task.retry_count < task.max_retries:
                 task.status = TaskStatus.RETRYING
                 await asyncio.sleep(min(60 * task.retry_count, 300))  # Exponential backoff
-                await self.task_queue.put(task)
+                await self._enqueue_scheduled_task(task)
                 logger.info(f"Retrying task {task.name} (attempt {task.retry_count + 1})")
 
         finally:
@@ -4618,9 +4647,10 @@ class AutomationManager:
                 try:
                     internal = getattr(q, "_queue", None)
                     if internal is not None:
-                        queued_counter.update(
-                            [t.name for t in list(internal) if hasattr(t, "name")]
-                        )
+                        for item in list(internal):
+                            t = item[2] if isinstance(item, tuple) and len(item) >= 3 else item
+                            if hasattr(t, "name"):
+                                queued_counter.update([t.name])
                 except Exception:
                     pass
             out["queued_tasks_by_phase"] = dict(queued_counter)

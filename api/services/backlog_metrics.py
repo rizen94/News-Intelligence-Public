@@ -31,6 +31,18 @@ BATCH_SIZE_PER_TASK: Dict[str, int] = {
     "content_refinement_queue": 4,
     # Unified nightly phase: enrichment + context_sync + refinement queue
     "nightly_enrichment_context": 0,
+    # Per-run throughput (automation_manager batch limits × domain count where applicable)
+    "metadata_enrichment": 15,  # 5 × politics/finance/science_tech
+    "ml_processing": 150,  # 50 × 3 schemas
+    "entity_extraction": 60,  # 20 × 3
+    "sentiment_analysis": 300,  # 100 × 3
+    "quality_scoring": 150,  # 50 × 3
+    "storyline_processing": 24,  # ~8 storylines worth of summary work per full pass
+    "topic_clustering": 60,  # ~20 × 3 standard domains (approximates automation)
+    "timeline_generation": 36,  # 12 × 3
+    "storyline_discovery": 1,  # one heavy phase run; any extra eligible articles → boost priority
+    "rag_enhancement": 9,  # few storylines enhanced per tick per domain
+    "event_extraction": 90,  # 30 × 3
 }
 
 
@@ -52,6 +64,17 @@ def _get_raw_pending_counts() -> Dict[str, int]:
         except Exception:
             raw["pending_db_flush"] = 0
         raw["content_refinement_queue"] = _count_content_refinement_queue_pending()
+        raw["metadata_enrichment"] = _count_metadata_enrichment_pending()
+        raw["ml_processing"] = _count_ml_processing_pending()
+        raw["entity_extraction"] = _count_entity_extraction_pending()
+        raw["sentiment_analysis"] = _count_sentiment_analysis_pending()
+        raw["quality_scoring"] = _count_quality_scoring_pending()
+        raw["storyline_processing"] = _count_storyline_processing_pending()
+        raw["topic_clustering"] = _count_topic_clustering_pending()
+        raw["timeline_generation"] = _count_timeline_generation_pending()
+        raw["storyline_discovery"] = _count_storyline_discovery_pending()
+        raw["rag_enhancement"] = _count_rag_enhancement_pending()
+        raw["event_extraction"] = _count_event_extraction_pending()
         raw["nightly_enrichment_context"] = (
             int(raw.get("content_enrichment", 0) or 0)
             + int(raw.get("context_sync", 0) or 0)
@@ -347,6 +370,377 @@ def _count_document_processing_backlog() -> int:
             pass
 
 
+_SCHEMAS = ("politics", "finance", "science_tech")
+
+
+def _count_metadata_enrichment_pending() -> int:
+    """Articles pending metadata batch (matches run_metadata_enrichment_batch_for_domains)."""
+    conn = _get_conn()
+    if not conn:
+        return 0
+    total = 0
+    try:
+        for schema in _SCHEMAS:
+            with conn.cursor() as cur:
+                cur.execute("SET LOCAL statement_timeout = '3s'")
+                cur.execute(
+                    f"""
+                    SELECT COUNT(*) FROM {schema}.articles
+                    WHERE content IS NOT NULL AND LENGTH(content) > 50
+                      AND (metadata IS NULL OR (metadata->>'enrichment_done') IS NULL)
+                    """
+                )
+                total += int(cur.fetchone()[0] or 0)
+        return total
+    except Exception as e:
+        logger.debug("backlog metadata_enrichment count: %s", e)
+        return 0
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _count_ml_processing_pending() -> int:
+    """Articles not yet through ML background queue (ml_processed)."""
+    conn = _get_conn()
+    if not conn:
+        return 0
+    total = 0
+    try:
+        for schema in _SCHEMAS:
+            with conn.cursor() as cur:
+                cur.execute("SET LOCAL statement_timeout = '3s'")
+                cur.execute(
+                    f"""
+                    SELECT COUNT(*) FROM {schema}.articles
+                    WHERE ml_processed = FALSE
+                      AND content IS NOT NULL
+                      AND LENGTH(content) > 100
+                    """
+                )
+                total += int(cur.fetchone()[0] or 0)
+        return total
+    except Exception as e:
+        logger.debug("backlog ml_processing count: %s", e)
+        return 0
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _count_entity_extraction_pending() -> int:
+    """Articles eligible for entity extraction (matches automation_manager join filter)."""
+    conn = _get_conn()
+    if not conn:
+        return 0
+    total = 0
+    try:
+        for schema in _SCHEMAS:
+            with conn.cursor() as cur:
+                cur.execute("SET LOCAL statement_timeout = '3s'")
+                cur.execute(
+                    f"""
+                    SELECT COUNT(*) FROM {schema}.articles a
+                    LEFT JOIN {schema}.article_entities ae ON ae.article_id = a.id
+                    WHERE ae.id IS NULL
+                      AND a.content IS NOT NULL
+                      AND LENGTH(a.content) > 100
+                      AND (
+                          LENGTH(a.content) >= 500
+                          OR a.created_at < NOW() - INTERVAL '2 hours'
+                      )
+                    """
+                )
+                total += int(cur.fetchone()[0] or 0)
+        return total
+    except Exception as e:
+        logger.debug("backlog entity_extraction count: %s", e)
+        return 0
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _count_sentiment_analysis_pending() -> int:
+    conn = _get_conn()
+    if not conn:
+        return 0
+    total = 0
+    try:
+        for schema in _SCHEMAS:
+            with conn.cursor() as cur:
+                cur.execute("SET LOCAL statement_timeout = '3s'")
+                cur.execute(
+                    f"""
+                    SELECT COUNT(*) FROM {schema}.articles
+                    WHERE sentiment_score IS NULL
+                      AND content IS NOT NULL
+                      AND LENGTH(content) > 50
+                    """
+                )
+                total += int(cur.fetchone()[0] or 0)
+        return total
+    except Exception as e:
+        logger.debug("backlog sentiment_analysis count: %s", e)
+        return 0
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _count_quality_scoring_pending() -> int:
+    conn = _get_conn()
+    if not conn:
+        return 0
+    total = 0
+    try:
+        for schema in _SCHEMAS:
+            with conn.cursor() as cur:
+                cur.execute("SET LOCAL statement_timeout = '3s'")
+                cur.execute(
+                    f"""
+                    SELECT COUNT(*) FROM {schema}.articles
+                    WHERE quality_score IS NULL
+                      AND content IS NOT NULL
+                      AND LENGTH(content) > 100
+                    """
+                )
+                total += int(cur.fetchone()[0] or 0)
+        return total
+    except Exception as e:
+        logger.debug("backlog quality_scoring count: %s", e)
+        return 0
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _count_storyline_processing_pending() -> int:
+    """Active storylines with articles but short/absent analysis summary (matches storyline_processing)."""
+    conn = _get_conn()
+    if not conn:
+        return 0
+    total = 0
+    try:
+        for schema in _SCHEMAS:
+            with conn.cursor() as cur:
+                cur.execute("SET LOCAL statement_timeout = '3s'")
+                cur.execute(
+                    f"""
+                    SELECT COUNT(*) FROM {schema}.storylines s
+                    WHERE s.status = 'active'
+                      AND EXISTS (
+                          SELECT 1 FROM {schema}.storyline_articles sa
+                          WHERE sa.storyline_id = s.id
+                      )
+                      AND LENGTH(
+                          TRIM(COALESCE(s.analysis_summary, '') || COALESCE(s.master_summary, ''))
+                      ) < 100
+                    """
+                )
+                total += int(cur.fetchone()[0] or 0)
+        return total
+    except Exception as e:
+        logger.debug("backlog storyline_processing count: %s", e)
+        return 0
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _count_topic_clustering_pending() -> int:
+    """Articles not fully graduated in topic assignments (matches topic_clustering priority filter)."""
+    conn = _get_conn()
+    if not conn:
+        return 0
+    total = 0
+    conf = 0.93
+    try:
+        for schema in _SCHEMAS:
+            with conn.cursor() as cur:
+                cur.execute("SET LOCAL statement_timeout = '3s'")
+                cur.execute(
+                    f"""
+                    SELECT COUNT(*) FROM (
+                        SELECT a.id
+                        FROM {schema}.articles a
+                        LEFT JOIN {schema}.article_topic_assignments ata
+                          ON a.id = ata.article_id
+                        WHERE a.content IS NOT NULL
+                          AND LENGTH(a.content) > 100
+                        GROUP BY a.id
+                        HAVING COUNT(ata.id) = 0
+                            OR COALESCE(AVG(ata.confidence_score), 0) < %s
+                    ) t
+                    """,
+                    (conf,),
+                )
+                total += int(cur.fetchone()[0] or 0)
+        return total
+    except Exception as e:
+        logger.debug("backlog topic_clustering count: %s", e)
+        return 0
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _count_timeline_generation_pending() -> int:
+    conn = _get_conn()
+    if not conn:
+        return 0
+    total = 0
+    try:
+        for schema in _SCHEMAS:
+            with conn.cursor() as cur:
+                cur.execute("SET LOCAL statement_timeout = '3s'")
+                cur.execute(
+                    f"""
+                    SELECT COUNT(*) FROM {schema}.storylines s
+                    WHERE s.status = 'active'
+                      AND EXISTS (
+                          SELECT 1 FROM {schema}.storyline_articles sa
+                          WHERE sa.storyline_id = s.id
+                      )
+                      AND (
+                          s.timeline_summary IS NULL
+                          OR LENGTH(COALESCE(s.timeline_summary, '')) < 100
+                      )
+                    """
+                )
+                total += int(cur.fetchone()[0] or 0)
+        return total
+    except Exception as e:
+        logger.debug("backlog timeline_generation count: %s", e)
+        return 0
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _count_storyline_discovery_pending() -> int:
+    """Per-domain count of newest articles eligible for discovery cap (proxy for clustering load)."""
+    try:
+        from services.ai_storyline_discovery import STORYLINE_DISCOVERY_ARTICLE_LIMIT as cap
+    except Exception:
+        cap = 10000
+    conn = _get_conn()
+    if not conn:
+        return 0
+    total = 0
+    try:
+        for schema in _SCHEMAS:
+            with conn.cursor() as cur:
+                cur.execute("SET LOCAL statement_timeout = '3s'")
+                cur.execute(
+                    f"""
+                    SELECT COUNT(*) FROM (
+                        SELECT 1 FROM {schema}.articles
+                        WHERE content IS NOT NULL AND LENGTH(content) > 100
+                        ORDER BY created_at DESC
+                        LIMIT %s
+                    ) sub
+                    """,
+                    (cap,),
+                )
+                total += int(cur.fetchone()[0] or 0)
+        return total
+    except Exception as e:
+        logger.debug("backlog storyline_discovery count: %s", e)
+        return 0
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _count_rag_enhancement_pending() -> int:
+    """Storylines due for RAG enhancement (stale or never enhanced)."""
+    conn = _get_conn()
+    if not conn:
+        return 0
+    total = 0
+    try:
+        for schema in _SCHEMAS:
+            with conn.cursor() as cur:
+                cur.execute("SET LOCAL statement_timeout = '3s'")
+                cur.execute(
+                    f"""
+                    SELECT COUNT(*) FROM {schema}.storylines s
+                    WHERE s.status = 'active'
+                      AND EXISTS (
+                          SELECT 1 FROM {schema}.storyline_articles sa
+                          WHERE sa.storyline_id = s.id
+                      )
+                      AND (
+                          s.rag_enhanced_at IS NULL
+                          OR s.rag_enhanced_at < NOW() - INTERVAL '1 hour'
+                      )
+                    """
+                )
+                total += int(cur.fetchone()[0] or 0)
+        return total
+    except Exception as e:
+        logger.debug("backlog rag_enhancement count: %s", e)
+        return 0
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _count_event_extraction_pending() -> int:
+    """Articles eligible for v5 event extraction (timeline_processed)."""
+    conn = _get_conn()
+    if not conn:
+        return 0
+    total = 0
+    try:
+        for schema in _SCHEMAS:
+            with conn.cursor() as cur:
+                cur.execute("SET LOCAL statement_timeout = '3s'")
+                cur.execute(
+                    f"""
+                    SELECT COUNT(*) FROM {schema}.articles a
+                    WHERE a.timeline_processed = false
+                      AND a.content IS NOT NULL
+                      AND LENGTH(a.content) > 100
+                      AND (
+                          a.processing_status = 'completed'
+                          OR a.enrichment_status IN ('completed', 'enriched')
+                      )
+                    """
+                )
+                total += int(cur.fetchone()[0] or 0)
+        return total
+    except Exception as e:
+        logger.debug("backlog event_extraction count: %s", e)
+        return 0
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
 # Phases that should be skipped when backlog is 0 (avoid empty cycles)
 # document_processing omitted so it runs on interval even if backlog count is wrong (e.g. DB timeout)
 # content_refinement_queue omitted: must run on interval when idle so automation history updates;
@@ -359,6 +753,17 @@ SKIP_WHEN_EMPTY = frozenset({
     "investigation_report_refresh",
     "pending_db_flush",
     "nightly_enrichment_context",
+    "metadata_enrichment",
+    "ml_processing",
+    "entity_extraction",
+    "sentiment_analysis",
+    "quality_scoring",
+    "storyline_processing",
+    "topic_clustering",
+    "timeline_generation",
+    "storyline_discovery",
+    "rag_enhancement",
+    "event_extraction",
 })
 
 # When backlog exceeds this, use backlog-mode interval so we run more often
