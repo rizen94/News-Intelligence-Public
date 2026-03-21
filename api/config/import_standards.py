@@ -28,7 +28,8 @@ IMPORT_PATHS = {
     # Services
     'services': 'services',
     'services.article_processing_service': 'services.article_processing_service',
-    'services.storyline_service': 'services.storyline_service',
+    # Storylines: use domain-scoped StorylineService (legacy services.storyline_service removed).
+    'services.storyline_service': 'domains.storyline_management.services.storyline_service',
     'services.rss_service': 'services.rss_service',
     'services.log_storage_service': 'services.log_storage_service',
     'services.deduplication_integration_service': 'services.deduplication_integration_service',

@@ -2,6 +2,8 @@
 
 How the system uses each data source and what runs routinely.
 
+**Full source inventory:** [SOURCES_AND_EXPECTED_USAGE.md](./SOURCES_AND_EXPECTED_USAGE.md) (all sources and expected usages in one place).
+
 ## Sources in routine use
 
 | Source | Used by | What runs | Feeds into |

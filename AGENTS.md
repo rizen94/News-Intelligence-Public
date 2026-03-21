@@ -63,6 +63,9 @@ Context for AI assistants. Use project terminology consistently.
 1. **Article:** RSS → processing → storyline linking → event extraction.
 2. **Storyline:** create → add articles → analyze → timeline → watchlist.
 3. **Events (v5):** extract → deduplicate → story continuation → alerts.
+4. **Narrative bootstrap:** `proactive_detection` clusters unlinked articles → can promote to domain **`storylines`** + **`storyline_articles`** + **`story_entity_index`** (see `docs/NARRATIVE_BOOTSTRAP_AND_DB_OUTAGE.md`). DB down: **`AUTOMATION_PAUSE_WHEN_DB_DOWN`** pauses scheduling; failed **`automation_run_history`** writes spill to **`.local/db_pending_writes`** and **`pending_db_flush`** replays.
+5. **Claims → facts:** `promote_claims_to_versioned_facts` resolves claim subjects to **`intelligence.entity_profiles`** (context mentions, article entities, canonicals, metadata) before inserting **`intelligence.versioned_facts`**; see `docs/CLAIMS_TO_FACTS_ENTITY_RESOLUTION.md`.
+6. **Source credibility:** **`api/config/orchestrator_governance.yaml`** section **`source_credibility`** drives tier multipliers at RSS ingest (`quality_score` + **`articles.metadata`**), copied to **`intelligence.contexts.metadata`**, and scales stored claim confidence; see `docs/SOURCE_CREDIBILITY.md`.
 
 ---
 
@@ -110,6 +113,17 @@ Context for AI assistants. Use project terminology consistently.
 - **Single module:** `shared.database.connection` — pooled psycopg2 + SQLAlchemy.
 - **Shim:** `config.database` re-exports for backward compatibility.
 - **Primary config:** Widow at `192.168.93.101:5432`, DB `news_intel`. Rollback: NAS via `DB_HOST=localhost`, `DB_PORT=5433` + `setup_nas_ssh_tunnel.sh`.
+
+### Database Connection Rules (MUST FOLLOW)
+
+1. **Always close connections.** Use `get_db_connection_context()` (preferred) or `try/finally` with `conn = None` before the `try`. Never put `conn.close()` only inside `try` — exceptions will skip it and leak the connection.
+2. **Three pools exist** — Worker (psycopg2, background), UI (psycopg2, page loads), SQLAlchemy (ORM services). Don't mix them or create direct `psycopg2.connect()` calls in services.
+3. **Don't hold connections across slow I/O** — close before LLM calls, HTTP requests, or sleeps; reopen afterward.
+4. **Pool env vars** — `DB_POOL_WORKER_MIN/MAX`, `DB_POOL_UI_MIN/MAX`, `DB_POOL_SA_SIZE/OVERFLOW`. Total must stay under PostgreSQL `max_connections`.
+5. **Checkout timeouts** — Worker: 30 s, UI: 3 s. A timeout error means connections are leaking; find and fix the leak.
+6. See `docs/CODING_STYLE_GUIDE.md` § "Database connection lifecycle" and "Connection Pool Architecture" for full details and code examples.
+7. **Migration verification** — After applying SQL under `api/database/migrations/`, run `PYTHONPATH=api uv run python api/scripts/verify_migrations_160_167.py` (checks **133**, **160–172**, **176** `applied_migrations`, **177–178** domain event pipeline columns/tables). Exit code **0** means all listed objects exist; **1** lists what to apply. Record applies with `api/scripts/register_applied_migration.py`. Full assessment workflow: `docs/DB_FULL_ASSESSMENT.md`. Manual event extraction test: `scripts/run_event_pipeline_manual.py`.
+8. **Timeline generation** — The legacy ML queue module **`TimelineGenerator`** (`timeline_events` / unscoped `articles`) is **removed**. Use automation task **`timeline_generation`** (`TimelineBuilderService` + **`public.chronological_events`**) or **`GET /api/{domain}/storylines/{id}/timeline`**. `TaskType.TIMELINE_GENERATION` in the ML queue completes with **0 events** and a deprecation message.
 
 ---
 

@@ -18,7 +18,9 @@ import {
   ToggleButton,
   ToggleButtonGroup,
   LinearProgress,
+  Link,
 } from '@mui/material';
+import { Link as RouterLink } from 'react-router-dom';
 import {
   Timeline,
   TimelineItem,
@@ -37,6 +39,7 @@ import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import WarningIcon from '@mui/icons-material/Warning';
 import AutoStoriesIcon from '@mui/icons-material/AutoStories';
 import apiService from '../../services/apiService';
+import ProvenancePanel, { timelineProvenanceRows } from '../../components/ProvenancePanel/ProvenancePanel';
 
 interface TimelineEvent {
   id: number;
@@ -51,6 +54,11 @@ interface TimelineEvent {
   source_count: number;
   is_ongoing: boolean;
   outcome: string;
+  extraction_method?: string | null;
+  extraction_confidence?: number | null;
+  source_article_id?: number | null;
+  canonical_event_id?: number | null;
+  timeline_row_role?: string;
   source?: {
     article_title: string;
     domain: string;
@@ -80,6 +88,10 @@ interface TimelineData {
   event_count: number;
   time_span: { start: string; end: string; days: number } | null;
   source_count: number;
+  built_at?: string;
+  merged_duplicate_events_count?: number;
+  timeline_status?: string;
+  timeline_empty?: boolean;
 }
 
 const EVENT_TYPE_COLORS: Record<string, string> = {
@@ -191,8 +203,18 @@ const StoryTimeline: React.FC = () => {
     );
   }
 
+  const eventsEmpty =
+    (timeline.events?.length ?? 0) === 0 || timeline.timeline_empty === true;
+
   return (
     <Box sx={{ maxWidth: 900, mx: 'auto', p: 3 }}>
+      {domain && id && (
+        <ProvenancePanel
+          title="Timeline provenance"
+          subtitle="Built from public.chronological_events for this storyline"
+          rows={timelineProvenanceRows(timeline, domain, id)}
+        />
+      )}
       {/* Header */}
       <Paper sx={{ p: 3, mb: 3 }}>
         <Typography variant="h4" gutterBottom>
@@ -230,6 +252,16 @@ const StoryTimeline: React.FC = () => {
         )}
       </Paper>
 
+      {eventsEmpty && (
+        <Alert severity="info" sx={{ mb: 3 }}>
+          No chronological events are linked to this storyline yet (or all rows are merged as duplicates).
+          {timeline.merged_duplicate_events_count ? ` ${timeline.merged_duplicate_events_count} merged duplicate row(s) exist in the database.` : ''}{' '}
+          <Link component={RouterLink} to={`/${domain}/storylines/${id}`}>
+            Back to storyline
+          </Link>
+        </Alert>
+      )}
+
       {/* Narrative section */}
       <Paper sx={{ p: 3, mb: 3 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
@@ -240,6 +272,7 @@ const StoryTimeline: React.FC = () => {
             exclusive
             onChange={(_, v) => v && setNarrativeMode(v)}
             size="small"
+            disabled={eventsEmpty}
           >
             <ToggleButton value="chronological">Full</ToggleButton>
             <ToggleButton value="briefing">Briefing</ToggleButton>
@@ -248,11 +281,16 @@ const StoryTimeline: React.FC = () => {
             variant="contained"
             size="small"
             onClick={loadNarrative}
-            disabled={narrativeLoading}
+            disabled={eventsEmpty || narrativeLoading}
           >
             {narrativeLoading ? 'Generating...' : 'Generate'}
           </Button>
         </Box>
+        {eventsEmpty && (
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Add chronological events to this storyline to enable narrative generation.
+          </Typography>
+        )}
         {narrativeLoading && <LinearProgress sx={{ mb: 2 }} />}
         {narrative && (
           <Typography
@@ -265,6 +303,7 @@ const StoryTimeline: React.FC = () => {
       </Paper>
 
       {/* Timeline */}
+      {!eventsEmpty && (
       <Timeline position="right">
         {timeline.events.map((evt) => {
           const isMilestone = milestoneSet.has(evt.id);
@@ -316,6 +355,32 @@ const StoryTimeline: React.FC = () => {
                           </Typography>
                           <Box sx={{ display: 'flex', gap: 0.5, mt: 0.5, flexWrap: 'wrap' }}>
                             <Chip label={evt.event_type.replace('_', ' ')} size="small" sx={{ bgcolor: color, color: '#fff', fontSize: '0.7rem' }} />
+                            {evt.extraction_method && (
+                              <Chip
+                                label={`via ${evt.extraction_method}`}
+                                size="small"
+                                variant="outlined"
+                                title="How this event was extracted into the timeline"
+                              />
+                            )}
+                            {evt.extraction_confidence != null && (
+                              <Chip
+                                label={`conf ${Math.round(evt.extraction_confidence * 100)}%`}
+                                size="small"
+                                variant="outlined"
+                              />
+                            )}
+                            {evt.source_article_id && domain && (
+                              <Button
+                                component={RouterLink}
+                                to={`/${domain}/articles/${evt.source_article_id}`}
+                                size="small"
+                                variant="outlined"
+                                sx={{ minHeight: 24, py: 0, textTransform: 'none' }}
+                              >
+                                Article #{evt.source_article_id}
+                              </Button>
+                            )}
                             {evt.is_ongoing && <Chip label="ongoing" size="small" color="warning" variant="outlined" />}
                             {evt.source_count > 1 && (
                               <Chip label={`${evt.source_count} sources`} size="small" color="info" variant="outlined" />
@@ -332,6 +397,12 @@ const StoryTimeline: React.FC = () => {
 
                       <Collapse in={expanded}>
                         <Box sx={{ mt: 2 }}>
+                          <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1 }}>
+                            Event row id: {evt.id}
+                            {evt.date_precision && ` · date precision: ${evt.date_precision}`}
+                            {evt.timeline_row_role && ` · row role: ${evt.timeline_row_role}`}
+                            {evt.canonical_event_id != null && ` · canonical_event_id: ${evt.canonical_event_id}`}
+                          </Typography>
                           {evt.description && (
                             <Typography variant="body2" sx={{ mb: 1 }}>
                               {evt.description}
@@ -388,6 +459,7 @@ const StoryTimeline: React.FC = () => {
           );
         })}
       </Timeline>
+      )}
     </Box>
   );
 };

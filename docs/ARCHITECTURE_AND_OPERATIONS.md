@@ -1,6 +1,6 @@
 # News Intelligence — Architecture & Operations
 
-**Version:** v7.0 (stable)  
+**Version:** v8.0 (stable)  
 **Last updated:** 2026-03-16
 
 ---
@@ -121,6 +121,13 @@ When the API is running (`./start_system.sh`), the following run **without manua
 **Cron / external:** Optional. `scripts/rss_collection_with_health_check.sh` can be used as a fallback (e.g. if API is down); when the API is up, RSS is driven by the coordinator and AutomationManager.
 
 **Confidence:** The data pipeline is fully connected for normal operation: start the system and collection, processing, digest, and downstream phases run on their schedules and governor recommendations. No manual trigger is required so long as the system is on and DB/LLM are available.
+
+### Monitor page and pipeline (v8.1)
+
+- **Migration 171** — `intelligence.tracked_events` has an optional `storyline_id` (VARCHAR 255) so tracked events can be linked to storylines for synthesis. Run once: `PYTHONPATH=api .venv/bin/python api/scripts/run_migration_171.py`.
+- **Claims→facts task** — AutomationManager runs `claims_to_facts` (after `claim_extraction`, interval 1h). It promotes high-confidence extracted claims to `versioned_facts`, which fires the story-state trigger chain (`fact_change_log` → storyline_states). Visible in the Monitor **Phase timeline** and in the **Run phase now** dropdown.
+- **Domain synthesis & enrichment card** — The Monitor page shows a card "Domain synthesis & enrichment" with domain configs (politics, finance, science-tech), GDELT enrichment status, and the last run of the claims→facts bridge.
+- **Backlog priority removed** — The previous "enrichment backlog first" behaviour (gate other phases when content_enrichment backlog &gt; 0) is disabled; the pipeline cycle runs all phases on their intervals without that gate.
 
 ---
 

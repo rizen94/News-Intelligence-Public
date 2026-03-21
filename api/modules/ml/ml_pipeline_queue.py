@@ -13,7 +13,6 @@ from shared.database.connection import get_db_connection
 import json
 
 from .ml_queue_manager import MLQueueManager, MLTask, TaskType, TaskPriority
-from .timeline_generator import TimelineGenerator
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +22,6 @@ class MLPipelineQueue:
     def __init__(self, db_config: Dict[str, str]):
         self.db_config = db_config
         self.queue_manager = MLQueueManager(db_config)
-        self.timeline_generator = TimelineGenerator(db_config)
         
         # Start the queue manager
         self.queue_manager.start()
@@ -132,42 +130,21 @@ class MLPipelineQueue:
             raise
     
     async def generate_timeline_intelligently(self, storyline_id: str, priority: TaskPriority = TaskPriority.NORMAL) -> str:
-        """Generate timeline events intelligently using the queue system"""
-        try:
-            # Get storyline data
-            storyline_data = await self._get_storyline_data(storyline_id)
-            if not storyline_data:
-                raise ValueError(f"Storyline {storyline_id} not found")
-            
-            # Create timeline generation task
-            timeline_task = MLTask(
-                task_id=f"timeline_generation_{storyline_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
-                task_type=TaskType.TIMELINE_GENERATION,
-                priority=priority,
-                storyline_id=storyline_id,
-                payload={
-                    "storyline_data": storyline_data,
-                    "generation_type": "intelligent",
-                    "max_events": 50,
-                    "use_llm": True
-                },
-                estimated_duration=120,  # 2 minutes for timeline generation
-                resource_requirements={
-                    "max_cpu_usage": 80.0,
-                    "max_memory_usage": 85.0,
-                    "max_gpu_usage": 70.0
-                }
-            )
-            
-            # Submit task
-            task_id = self.queue_manager.submit_task(timeline_task)
-            
-            logger.info(f"Timeline generation task submitted for storyline {storyline_id}")
-            return f"Timeline generation task submitted for storyline {storyline_id}"
-            
-        except Exception as e:
-            logger.error(f"Error generating timeline intelligently for {storyline_id}: {e}")
-            raise
+        """
+        Retired: does not enqueue work.
+
+        Use automation ``timeline_generation`` or ``GET /api/{domain}/storylines/{id}/timeline``
+        (``TimelineBuilderService`` + ``public.chronological_events``).
+        """
+        logger.warning(
+            "generate_timeline_intelligently(%s) called but ML queue timeline is retired; "
+            "use automation timeline_generation or timeline API",
+            storyline_id,
+        )
+        return (
+            "Retired: ML queue timeline generation removed. "
+            "Use automation task 'timeline_generation' or GET /api/{domain}/storylines/{id}/timeline."
+        )
     
     async def process_storyline_intelligently(self, storyline_id: str, priority: TaskPriority = TaskPriority.HIGH) -> str:
         """Process a storyline intelligently with comprehensive analysis"""

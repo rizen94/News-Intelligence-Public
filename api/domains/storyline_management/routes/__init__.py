@@ -37,8 +37,10 @@ router.include_router(crud_router)
 router.include_router(articles_router)
 router.include_router(evolution_router)
 router.include_router(analysis_router)
-router.include_router(helpers_router)
+# Chronological timeline (public.chronological_events) must register before helpers_router,
+# which also defines GET .../timeline (legacy domain.timeline_events) — first match wins.
 router.include_router(timeline_router)
+router.include_router(helpers_router)
 router.include_router(watchlist_router)
 
 # Export background tasks for use in other modules

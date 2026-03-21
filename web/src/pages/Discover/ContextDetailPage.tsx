@@ -5,12 +5,15 @@ import React, { useEffect, useState, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Card, CardHeader, CardContent, Typography, Button, Box, Skeleton, Chip, Divider, Link,
-  Table, TableBody, TableRow, TableCell,
+  Table, TableBody, TableRow, TableCell, List, ListItem, ListItemText,
 } from '@mui/material';
+import { Link as RouterLink } from 'react-router-dom';
 import ArrowBack from '@mui/icons-material/ArrowBack';
 import OpenInNew from '@mui/icons-material/OpenInNew';
 import { contextCentricApi, type Context } from '@/services/api/contextCentric';
 import OrchestratorTagsEditor from '@/components/shared/OrchestratorTagsEditor/OrchestratorTagsEditor';
+import ProvenancePanel, { contextProvenanceRows } from '@/components/ProvenancePanel/ProvenancePanel';
+import ContextGroupingFeedbackCard from '@/components/ContextGroupingFeedback/ContextGroupingFeedbackCard';
 
 interface LinkedArticle {
   id: number;
@@ -22,7 +25,12 @@ interface LinkedArticle {
   content: string | null;
 }
 
-type ContextWithArticle = Context & { article?: LinkedArticle | null };
+type RelatedBundle = {
+  topics: { id: number; name: string }[];
+  storylines: { id: number; title: string | null }[];
+};
+
+type ContextWithArticle = Context & { article?: LinkedArticle | null; related?: RelatedBundle };
 
 function stripHtml(html: string): string {
   const doc = new DOMParser().parseFromString(html, 'text/html');
@@ -142,6 +150,61 @@ export default function ContextDetailPage() {
 
       {!loading && context && (
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+          <ProvenancePanel
+            title="Provenance & pipeline"
+            subtitle="How this context is grounded in the corpus"
+            rows={contextProvenanceRows(context, article ?? null, domain)}
+          />
+
+          {context.related && (context.related.topics?.length > 0 || context.related.storylines?.length > 0) && (
+            <Card variant="outlined">
+              <CardHeader
+                title="Cross-entity links (same article)"
+                subheader="Topics and storylines that reference the linked article — for manual consistency checks"
+                titleTypographyProps={{ variant: 'subtitle1', fontWeight: 600 }}
+              />
+              <Divider />
+              <CardContent sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                {context.related.topics?.length > 0 && (
+                  <Box>
+                    <Typography variant="subtitle2" gutterBottom>Topics</Typography>
+                    <List dense disablePadding>
+                      {context.related.topics.map((t) => (
+                        <ListItem key={t.id} disablePadding sx={{ py: 0.25 }}>
+                          <ListItemText
+                            primary={
+                              <Link component={RouterLink} to={`/${domain}/topics`} underline="hover">
+                                #{t.id} — {t.name}
+                              </Link>
+                            }
+                          />
+                        </ListItem>
+                      ))}
+                    </List>
+                  </Box>
+                )}
+                {context.related.storylines?.length > 0 && (
+                  <Box>
+                    <Typography variant="subtitle2" gutterBottom>Storylines</Typography>
+                    <List dense disablePadding>
+                      {context.related.storylines.map((s) => (
+                        <ListItem key={s.id} disablePadding sx={{ py: 0.25 }}>
+                          <ListItemText
+                            primary={
+                              <Link component={RouterLink} to={`/${domain}/storylines/${s.id}`} underline="hover">
+                                #{s.id} — {s.title || '(untitled)'}
+                              </Link>
+                            }
+                          />
+                        </ListItem>
+                      ))}
+                    </List>
+                  </Box>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
           {/* Context card */}
           <Card variant="outlined">
             <CardHeader
@@ -208,6 +271,8 @@ export default function ContextDetailPage() {
               </CardContent>
             </Card>
           )}
+
+          {context.id != null && <ContextGroupingFeedbackCard contextId={context.id} />}
 
           {/* Orchestrator tags */}
           {context.id && (

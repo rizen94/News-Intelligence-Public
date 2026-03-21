@@ -5,7 +5,7 @@ Provides domain context and schema management for all domain-aware services.
 All services that work with domain-specific data should inherit from this class.
 """
 
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Tuple
 import psycopg2
 from psycopg2.extras import RealDictCursor
 import logging
@@ -206,4 +206,70 @@ def get_all_domains() -> list:
             return cur.fetchall()
     finally:
         conn.close()
+
+
+# Schema names for per-domain tables (articles, storylines, rss_feeds, …) — not public.
+DOMAIN_DATA_SCHEMAS: Tuple[str, ...] = ("politics", "finance", "science_tech")
+
+
+def normalize_domain_to_schema(domain_key: str) -> str:
+    """Map route/domain key to DB schema (e.g. science-tech → science_tech)."""
+    return (domain_key or "").replace("-", "_")
+
+
+def resolve_article_id_to_schema(article_id: int) -> Optional[str]:
+    """Return which domain schema contains this article id, or None."""
+    conn = get_db_connection()
+    if not conn:
+        return None
+    try:
+        with conn.cursor() as cur:
+            for sch in DOMAIN_DATA_SCHEMAS:
+                cur.execute(
+                    f"SELECT 1 FROM {sch}.articles WHERE id = %s LIMIT 1",
+                    (article_id,),
+                )
+                if cur.fetchone():
+                    return sch
+        return None
+    except Exception as e:
+        logger.debug("resolve_article_id_to_schema(%s): %s", article_id, e)
+        return None
+    finally:
+        conn.close()
+
+
+def resolve_storyline_id_to_schema(storyline_id: int) -> Optional[str]:
+    """Return which domain schema contains this storyline id, or None."""
+    conn = get_db_connection()
+    if not conn:
+        return None
+    try:
+        with conn.cursor() as cur:
+            for sch in DOMAIN_DATA_SCHEMAS:
+                cur.execute(
+                    f"SELECT 1 FROM {sch}.storylines WHERE id = %s LIMIT 1",
+                    (storyline_id,),
+                )
+                if cur.fetchone():
+                    return sch
+        return None
+    except Exception as e:
+        logger.debug("resolve_storyline_id_to_schema(%s): %s", storyline_id, e)
+        return None
+    finally:
+        conn.close()
+
+
+def parse_optional_domain_to_schema(domain: Optional[str]) -> Optional[str]:
+    """
+    Validate optional domain string and return schema name.
+    Raises ValueError if domain is non-empty but invalid.
+    """
+    if domain is None or str(domain).strip() == "":
+        return None
+    s = normalize_domain_to_schema(domain.strip())
+    if s not in DOMAIN_DATA_SCHEMAS:
+        raise ValueError(f"Invalid domain: {domain}")
+    return s
 

@@ -80,6 +80,7 @@ class APIService {
   getStorylines = storylinesApi.getStorylines;
   getStoryline = storylinesApi.getStoryline;
   getStorylineTimeline = storylinesApi.getStorylineTimeline;
+  getStorylineAudit = storylinesApi.getStorylineAudit;
   getStorylineNarrative = storylinesApi.getStorylineNarrative;
   createStoryline = storylinesApi.createStoryline;
   updateStoryline = storylinesApi.updateStoryline;
@@ -116,6 +117,12 @@ class APIService {
   getStorylineImpact = intelligenceApi.getStorylineImpact;
   getTrendingImpact = intelligenceApi.getTrendingImpact;
   getIntelligenceDashboard = intelligenceApi.getIntelligenceDashboard;
+  getEventStorylineClaimConsistency = intelligenceApi.getEventStorylineClaimConsistency;
+  getParticipantPositionDeltas = intelligenceApi.getParticipantPositionDeltas;
+  getCausalChains = intelligenceApi.getCausalChains;
+  getNarrativeDivergenceMap = intelligenceApi.getNarrativeDivergenceMap;
+  runWatchlistThemeBridge = intelligenceApi.runWatchlistThemeBridge;
+  runDocumentIntelligenceIntegration = intelligenceApi.runDocumentIntelligenceIntegration;
   getDomainEvents = intelligenceApi.getDomainEvents;
   synthesizeStoryline = intelligenceApi.synthesizeStoryline;
   getSynthesizedContent = intelligenceApi.getSynthesizedContent;
@@ -125,6 +132,7 @@ class APIService {
   generateWeeklyDigest = intelligenceApi.generateWeeklyDigest;
   generateDailyBriefing = intelligenceApi.generateDailyBriefing;
   getBriefingFeed = intelligenceApi.getBriefingFeed;
+  getReport = intelligenceApi.getReport;
   submitContentFeedback = intelligenceApi.submitContentFeedback;
   getTopicCloud = intelligenceApi.getTopicCloud;
   getStoryDossier = intelligenceApi.getStoryDossier;
@@ -172,6 +180,7 @@ class APIService {
   getProcessRunSummary = monitoringApi.getProcessRunSummary;
   getAutomationStatus = monitoringApi.getAutomationStatus;
   getBacklogStatus = monitoringApi.getBacklogStatus;
+  getDatabaseConnections = monitoringApi.getDatabaseConnections;
   triggerPhase = monitoringApi.triggerPhase;
   triggerPipeline = monitoringApi.triggerPipeline;
   getSystemHealth = monitoringApi.getSystemHealth;

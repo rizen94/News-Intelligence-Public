@@ -39,6 +39,7 @@ import ScheduleIcon from '@mui/icons-material/Schedule';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import apiService from '@/services/apiService';
 import { contextCentricApi } from '@/services/api/contextCentric';
+import { safeServiceCall } from '@/utils/safeServiceCall';
 
 const POLL_INTERVAL_MS = 4500;
 
@@ -53,22 +54,31 @@ function timeAgo(iso: string): string {
   return `${Math.floor(h / 24)}d ago`;
 }
 
-function formatDueIn(lastRunIso: string | null, intervalSeconds: number): string {
-  if (!intervalSeconds || intervalSeconds <= 0) return '—';
-  if (!lastRunIso) return 'due now';
-  const last = new Date(lastRunIso).getTime();
-  const next = last + intervalSeconds * 1000;
-  const now = Date.now();
-  if (next <= now) return 'due now';
-  const sec = Math.floor((next - now) / 1000);
-  if (sec < 60) return `in ${sec}s`;
-  const min = Math.floor(sec / 60);
-  if (min < 60) return `in ${min}m`;
-  return `in ${Math.floor(min / 60)}h`;
-}
-
-type PhaseRow = { name: string; last_run: string | null; interval_seconds?: number; enabled?: boolean; phase?: number; phase_group_label?: string; parallel_group?: string };
+type PhaseRow = {
+  name: string;
+  last_run: string | null;
+  enabled?: boolean;
+  phase?: number;
+  phase_group_label?: string;
+  parallel_group?: string;
+  stage_order?: number;
+  queued_tasks?: number;
+  running_tasks?: number;
+  runs_last_60m?: number;
+};
 type DecisionEntry = { decision?: string; outcome?: string; factors?: Record<string, unknown>; timestamp?: string };
+type DbSession = {
+  pid: number;
+  user?: string;
+  application_name?: string;
+  client_addr?: string;
+  state?: string;
+  wait_event_type?: string | null;
+  wait_event?: string | null;
+  query_text?: string;
+  open_seconds?: number;
+  long_running?: boolean;
+};
 
 export default function MonitorPage() {
   const [overview, setOverview] = useState<{
@@ -90,10 +100,13 @@ export default function MonitorPage() {
       queue_size?: number;
       is_running?: boolean;
       active_workers?: number;
-      enrichment_backlog_first_active?: boolean;
-      content_enrichment_backlog?: number;
     };
   } | null>(null);
+  // Stabilize the Phase timeline list:
+  // - keep a fixed ordering of phase names once we have a non-empty payload
+  // - keep showing the last known phase metrics if the next poll returns an empty/failed payload
+  const [phaseTimelineOrder, setPhaseTimelineOrder] = useState<string[]>([]);
+  const [lastNonEmptyPhases, setLastNonEmptyPhases] = useState<PhaseRow[]>([]);
   const [sourcesCollected, setSourcesCollected] = useState<{
     success?: boolean;
     data?: {
@@ -131,10 +144,34 @@ export default function MonitorPage() {
         net_per_day?: number;
         backlog_trend?: string;
       };
-      documents?: { backlog: number; per_hour: number; eta_hours: number; eta_utc: string | null };
+      documents?: {
+        backlog: number;
+        per_hour: number;
+        eta_hours: number;
+        eta_utc: string | null;
+        processed_last_1h?: number;
+        processed_last_24h?: number;
+        attempted_last_1h?: number;
+        attempted_last_24h?: number;
+        failed_last_1h?: number;
+        failed_last_24h?: number;
+        permanent_failed_total?: number;
+        top_failure_reasons_24h?: Array<{ reason: string; count: number }>;
+      };
       storylines?: { backlog: number; per_hour: number; eta_hours: number; eta_utc: string | null };
       overall_eta_hours?: number;
       overall_eta_utc?: string | null;
+    };
+    error?: string;
+  } | null>(null);
+  const [dbConnections, setDbConnections] = useState<{
+    success?: boolean;
+    data?: {
+      total_sessions?: number;
+      long_running_threshold_seconds?: number;
+      long_running_sessions?: number;
+      state_counts?: Record<string, number>;
+      sessions?: DbSession[];
     };
     error?: string;
   } | null>(null);
@@ -155,20 +192,29 @@ export default function MonitorPage() {
 
   useEffect(() => {
     let cancelled = false;
+    let pollTick = 0;
+    const svc = apiService as unknown as Record<string, unknown>;
     const load = async () => {
       setLoading(true);
       setError(null);
       try {
         await loadOverview();
         if (cancelled) return;
-        const [o, q, pipe, auto, sources, summary, backlog] = await Promise.all([
-          apiService.getOrchestratorDashboard?.({ decision_log_limit: 25 }).then((d: unknown) => d as { status?: Record<string, unknown>; decision_log?: { entries?: DecisionEntry[] } }).catch(() => null),
+        const [o, q, pipe, auto, sources, summary, backlog, dbConns] = await Promise.all([
+          safeServiceCall<{ status?: Record<string, unknown>; decision_log?: { entries?: DecisionEntry[] } }>(
+            svc,
+            'getOrchestratorDashboard',
+            [{ decision_log_limit: 25 }],
+          ),
           contextCentricApi.getQuality().catch(() => null),
-          apiService.getPipelineStatus?.().then((r: unknown) => r as { success?: boolean; data?: Record<string, unknown> }).catch(() => null),
-          apiService.getAutomationStatus?.().then((r: unknown) => r as { success?: boolean; data?: { phases?: PhaseRow[] } }).catch(() => null),
-          apiService.getSourcesCollected?.(30).then((r: unknown) => r as typeof sourcesCollected).catch(() => null),
-          apiService.getProcessRunSummary?.(24, 60).then((r: unknown) => r as typeof runSummary).catch(() => null),
-          apiService.getBacklogStatus?.().then((r: unknown) => r as typeof backlogStatus).catch(() => null),
+          safeServiceCall<{ success?: boolean; data?: Record<string, unknown> }>(svc, 'getPipelineStatus'),
+          safeServiceCall<{ success?: boolean; data?: { phases?: PhaseRow[] } }>(svc, 'getAutomationStatus'),
+          safeServiceCall<typeof sourcesCollected>(svc, 'getSourcesCollected', [30]),
+          safeServiceCall<typeof runSummary>(svc, 'getProcessRunSummary', [24, 60]),
+          safeServiceCall<typeof backlogStatus>(svc, 'getBacklogStatus'),
+          safeServiceCall<typeof dbConnections>(svc, 'getDatabaseConnections', [
+            { limit: 80, long_running_seconds: 60 },
+          ]),
         ]);
         if (cancelled) return;
         setOrchDashboard(o ?? null);
@@ -178,6 +224,7 @@ export default function MonitorPage() {
         setSourcesCollected(sources ?? null);
         setRunSummary(summary ?? null);
         setBacklogStatus(backlog ?? null);
+        setDbConnections(dbConns ?? null);
       } catch (e) {
         if (!cancelled) setError((e as Error).message);
       } finally {
@@ -186,19 +233,45 @@ export default function MonitorPage() {
     };
     load();
     const t = setInterval(() => {
+      pollTick += 1;
+      const heavyPoll = pollTick % 3 === 0; // ~13.5s at 4.5s base interval
       loadOverview();
-      apiService.getAutomationStatus?.().then((r: unknown) => setAutomation(r as typeof automation)).catch(() => {});
-      apiService.getPipelineStatus?.().then((r: unknown) => setPipeline(r as typeof pipeline)).catch(() => {});
-      apiService.getOrchestratorDashboard?.({ decision_log_limit: 25 }).then((d: unknown) => setOrchDashboard(d as typeof orchDashboard)).catch(() => {});
-      apiService.getSourcesCollected?.(30).then((r: unknown) => setSourcesCollected(r as typeof sourcesCollected)).catch(() => {});
-      apiService.getProcessRunSummary?.(24, 60).then((r: unknown) => setRunSummary(r as typeof runSummary)).catch(() => {});
-      apiService.getBacklogStatus?.().then((r: unknown) => setBacklogStatus(r as typeof backlogStatus)).catch(() => {});
+      void safeServiceCall(svc, 'getAutomationStatus').then((r) => r && setAutomation(r as typeof automation));
+      void safeServiceCall(svc, 'getPipelineStatus').then((r) => r && setPipeline(r as typeof pipeline));
+      void safeServiceCall(svc, 'getOrchestratorDashboard', [{ decision_log_limit: 25 }]).then((d) =>
+        d && setOrchDashboard(d as typeof orchDashboard),
+      );
+      void safeServiceCall(svc, 'getSourcesCollected', [30]).then((r) => r && setSourcesCollected(r as typeof sourcesCollected));
+      void safeServiceCall(svc, 'getProcessRunSummary', [24, 60]).then((r) => r && setRunSummary(r as typeof runSummary));
+      if (heavyPoll) {
+        void safeServiceCall(svc, 'getBacklogStatus').then((r) => r && setBacklogStatus(r as typeof backlogStatus));
+        void safeServiceCall(svc, 'getDatabaseConnections', [{ limit: 80, long_running_seconds: 60 }]).then((r) =>
+          r && setDbConnections(r as typeof dbConnections),
+        );
+      }
     }, POLL_INTERVAL_MS);
     return () => {
       cancelled = true;
       clearInterval(t);
     };
   }, [loadOverview]);
+
+  // Stabilize the phase timeline ordering + cached metrics:
+  // - keep a fixed ordering once we first get a non-empty payload
+  // - if a later poll returns empty, the timeline continues to use cached metrics
+  useEffect(() => {
+    const incoming = (automation?.data?.phases ?? []) as PhaseRow[];
+    if (!incoming || incoming.length === 0) return;
+
+    setLastNonEmptyPhases(incoming);
+    setPhaseTimelineOrder((prev) => {
+      const incomingNames = incoming.filter((p) => p.enabled !== false).map((p) => p.name);
+      if (prev.length === 0) return incomingNames;
+      const prevSet = new Set(prev);
+      const appended = incomingNames.filter((n) => !prevSet.has(n));
+      return [...prev, ...appended];
+    });
+  }, [automation?.data?.phases]);
 
   const handleTriggerPhase = async () => {
     if (!triggerPhaseName || !apiService.triggerPhase) return;
@@ -242,13 +315,23 @@ export default function MonitorPage() {
   const byDomain = quality?.by_domain as Record<string, { context_coverage_pct?: number; entity_coverage_pct?: number }> | undefined;
   const decisionLog = orchDashboard?.decision_log as { entries?: DecisionEntry[] } | undefined;
   const decisionEntries = decisionLog?.entries ?? [];
+  const dbSessions = dbConnections?.data?.sessions ?? [];
+  const dbLongRunning = dbConnections?.data?.long_running_sessions ?? 0;
+  const dbTotalSessions = dbConnections?.data?.total_sessions ?? dbSessions.length;
+  const dbLongThreshold = dbConnections?.data?.long_running_threshold_seconds ?? 60;
   const pipelineData = pipeline?.data ?? {};
   const pipelineStatus = pipelineData?.pipeline_status as string | undefined;
-  const phases: PhaseRow[] = automation?.data?.phases ?? [];
+  const phasesLatest: PhaseRow[] = (automation?.data?.phases && automation.data.phases.length > 0)
+    ? (automation.data.phases as PhaseRow[])
+    : lastNonEmptyPhases;
+  const phases: PhaseRow[] = phaseTimelineOrder.length
+    ? phaseTimelineOrder.map((name) => {
+        const found = phasesLatest.find((p) => p.name === name);
+        return found ?? ({ name, last_run: null, enabled: true } as PhaseRow);
+      })
+    : phasesLatest;
   const queueSize = automation?.data?.queue_size as number | undefined;
   const automationRunning = automation?.data?.is_running as boolean | undefined;
-  const enrichmentBacklogFirstActive = automation?.data?.enrichment_backlog_first_active === true;
-  const contentEnrichmentBacklog = (automation?.data?.content_enrichment_backlog as number) ?? 0;
 
   const statusChip = (status: string | undefined, label: string) => {
     const ok = status === 'ok' || status === 'healthy' || status === 'HEALTHY';
@@ -277,15 +360,6 @@ export default function MonitorPage() {
       {error && (
         <Alert severity="warning" sx={{ mb: 2 }} onClose={() => setError(null)}>
           {error}
-        </Alert>
-      )}
-
-      {/* Enrichment backlog priority: pipeline is draining enrichment first */}
-      {enrichmentBacklogFirstActive && (
-        <Alert severity="info" sx={{ mb: 2 }} icon={<ScheduleIcon />}>
-          <Typography variant="body2" component="span">
-            <strong>Enrichment backlog priority:</strong> The pipeline is draining the article enrichment backlog first ({contentEnrichmentBacklog.toLocaleString()} articles). Entity extraction, pattern matching, and synthesis will run automatically when the backlog is clear.
-          </Typography>
         </Alert>
       )}
 
@@ -591,38 +665,102 @@ export default function MonitorPage() {
                   <TableRow>
                     <TableCell>Documents (extract)</TableCell>
                     <TableCell align="right">{(backlogStatus.data.documents?.backlog ?? 0).toLocaleString()}</TableCell>
-                    <TableCell align="right">~{(backlogStatus.data.documents?.per_hour ?? 0)}/hr</TableCell>
+                    <TableCell align="right">
+                      ~{(backlogStatus.data.documents?.per_hour ?? 0)}/hr
+                      {(backlogStatus.data.documents?.processed_last_1h ?? 0) >= 0 && (
+                        <Typography component="span" variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+                          (success: {backlogStatus.data.documents?.processed_last_1h ?? 0} last 1h
+                          {((backlogStatus.data.documents?.attempted_last_1h ?? 0) > 0 || (backlogStatus.data.documents?.failed_last_1h ?? 0) > 0)
+                            ? ` · attempts: ${backlogStatus.data.documents?.attempted_last_1h ?? 0} · failed: ${backlogStatus.data.documents?.failed_last_1h ?? 0}`
+                            : ''}
+                          )
+                        </Typography>
+                      )}
+                    </TableCell>
                     <TableCell>
                       {(backlogStatus.data.documents?.backlog ?? 0) > 0
-                        ? `~${backlogStatus.data.documents?.eta_hours ?? 0}h (${backlogStatus.data.documents?.eta_utc ? new Date(backlogStatus.data.documents.eta_utc).toLocaleString() : '—'})`
+                        ? `~${backlogStatus.data.documents?.eta_hours ?? 0}h (${backlogStatus.data.documents?.eta_utc ? new Date(backlogStatus.data.documents.eta_utc).toLocaleString() : '—'})${(backlogStatus.data.documents as { iterations_to_baseline?: number })?.iterations_to_baseline != null ? ` · ${(backlogStatus.data.documents as { iterations_to_baseline: number }).iterations_to_baseline} iters` : ''}`
                         : '—'}
                     </TableCell>
                   </TableRow>
+                  {backlogStatus.data.contexts && (
+                    <TableRow>
+                      <TableCell>Contexts (claims)</TableCell>
+                      <TableCell align="right">{(backlogStatus.data.contexts.backlog ?? 0).toLocaleString()} / {(backlogStatus.data.contexts.total ?? 0).toLocaleString()}</TableCell>
+                      <TableCell align="right">
+                        ~{(backlogStatus.data.contexts.per_hour ?? 0)}/hr
+                        {(backlogStatus.data.contexts.processed_last_1h ?? 0) > 0 && (
+                          <Typography component="span" variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+                            ({(backlogStatus.data.contexts.processed_last_1h ?? 0)} last 1h)
+                          </Typography>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        {(backlogStatus.data.contexts.backlog ?? 0) > 0
+                          ? `~${backlogStatus.data.contexts.eta_hours ?? 0}h · ${backlogStatus.data.contexts.iterations_to_baseline ?? '—'} iters`
+                          : '—'}
+                      </TableCell>
+                    </TableRow>
+                  )}
+                  {backlogStatus.data.entity_profiles && (
+                    <TableRow>
+                      <TableCell>Entity profiles</TableCell>
+                      <TableCell align="right">{(backlogStatus.data.entity_profiles.backlog ?? 0).toLocaleString()} / {(backlogStatus.data.entity_profiles.total ?? 0).toLocaleString()}</TableCell>
+                      <TableCell align="right">
+                        ~{(backlogStatus.data.entity_profiles.per_hour ?? 0)}/hr
+                        {(backlogStatus.data.entity_profiles.processed_last_1h ?? 0) > 0 && (
+                          <Typography component="span" variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+                            ({(backlogStatus.data.entity_profiles.processed_last_1h ?? 0)} last 1h)
+                          </Typography>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        {(backlogStatus.data.entity_profiles.backlog ?? 0) > 0
+                          ? `~${backlogStatus.data.entity_profiles.eta_hours ?? 0}h · ${backlogStatus.data.entity_profiles.iterations_to_baseline ?? '—'} iters`
+                          : '—'}
+                      </TableCell>
+                    </TableRow>
+                  )}
                   <TableRow>
                     <TableCell>Storylines (synthesis)</TableCell>
                     <TableCell align="right">{(backlogStatus.data.storylines?.backlog ?? 0).toLocaleString()}</TableCell>
                     <TableCell align="right">~{(backlogStatus.data.storylines?.per_hour ?? 0)}/hr</TableCell>
                     <TableCell>
                       {(backlogStatus.data.storylines?.backlog ?? 0) > 0
-                        ? `~${backlogStatus.data.storylines?.eta_hours ?? 0}h (${backlogStatus.data.storylines?.eta_utc ? new Date(backlogStatus.data.storylines.eta_utc).toLocaleString() : '—'})`
+                        ? `~${backlogStatus.data.storylines?.eta_hours ?? 0}h (${backlogStatus.data.storylines?.eta_utc ? new Date(backlogStatus.data.storylines.eta_utc).toLocaleString() : '—'})${(backlogStatus.data.storylines as { iterations_to_baseline?: number })?.iterations_to_baseline != null ? ` · ${(backlogStatus.data.storylines as { iterations_to_baseline: number }).iterations_to_baseline} iters` : ''}`
                         : '—'}
                     </TableCell>
                   </TableRow>
                 </TableBody>
               </Table>
-              {(backlogStatus.data.overall_eta_utc != null && (backlogStatus.data.articles?.backlog ?? 0) + (backlogStatus.data.documents?.backlog ?? 0) + (backlogStatus.data.storylines?.backlog ?? 0) > 0) && (
+              {(backlogStatus.data.storylines as { synthesis_per_domain_last_1h?: Record<string, number> })?.synthesis_per_domain_last_1h && (
+                <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5 }}>
+                  Synthesis last 1h by domain: {Object.entries((backlogStatus.data.storylines as { synthesis_per_domain_last_1h: Record<string, number> }).synthesis_per_domain_last_1h).map(([d, n]) => `${d}: ${n}`).join(', ')}
+                </Typography>
+              )}
+              {(backlogStatus.data.documents?.permanent_failed_total ?? 0) > 0 && (
+                <Typography variant="caption" color="warning.main" display="block" sx={{ mt: 0.5 }}>
+                  Documents excluded from retries (permanent failure): {(backlogStatus.data.documents?.permanent_failed_total ?? 0).toLocaleString()}
+                </Typography>
+              )}
+              {(backlogStatus.data.documents?.top_failure_reasons_24h?.length ?? 0) > 0 && (
+                <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5 }}>
+                  Top document failures (24h): {(backlogStatus.data.documents?.top_failure_reasons_24h ?? [])
+                    .map((x) => `${x.reason}: ${x.count}`)
+                    .join(' · ')}
+                </Typography>
+              )}
+              {(backlogStatus.data.overall_eta_utc != null && ((backlogStatus.data.articles?.backlog ?? 0) + (backlogStatus.data.documents?.backlog ?? 0) + (backlogStatus.data.storylines?.backlog ?? 0) + (backlogStatus.data.contexts?.backlog ?? 0) + (backlogStatus.data.entity_profiles?.backlog ?? 0) > 0)) && (
                 <Typography variant="body2" color="text.secondary">
                   Overall catch-up: ~{backlogStatus.data.overall_eta_hours ?? 0}h → {new Date(backlogStatus.data.overall_eta_utc!).toLocaleString()}
+                  {(backlogStatus.data as { overall_iterations_to_baseline?: number }).overall_iterations_to_baseline != null && (
+                    <> · {(backlogStatus.data as { overall_iterations_to_baseline: number }).overall_iterations_to_baseline} iterations (2h cycles)</>
+                  )}
                 </Typography>
               )}
-              {(backlogStatus.data.articles?.backlog ?? 0) + (backlogStatus.data.documents?.backlog ?? 0) + (backlogStatus.data.storylines?.backlog ?? 0) === 0 && (
+              {((backlogStatus.data.articles?.backlog ?? 0) + (backlogStatus.data.documents?.backlog ?? 0) + (backlogStatus.data.storylines?.backlog ?? 0) + (backlogStatus.data.contexts?.backlog ?? 0) + (backlogStatus.data.entity_profiles?.backlog ?? 0)) === 0 && (
                 <Typography variant="body2" color="success.main">
                   No backlog — all queues current.
-                </Typography>
-              )}
-              {enrichmentBacklogFirstActive && (
-                <Typography variant="caption" color="info.main" sx={{ display: 'block' }}>
-                  Pipeline is prioritizing article enrichment until this backlog is clear; entity extraction and synthesis will resume automatically.
                 </Typography>
               )}
               {backlogStatus.data.articles && (backlogStatus.data.articles.created_last_24h != null || backlogStatus.data.articles.backlog_trend) && (
@@ -655,6 +793,71 @@ export default function MonitorPage() {
             <Typography color="text.secondary" variant="body2">
               Backlog status not available. Check API and database.
             </Typography>
+          )}
+        </CardContent>
+      </Card>
+
+      <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>
+        Database connections
+      </Typography>
+      <Card variant="outlined" sx={{ mb: 3 }}>
+        <CardContent sx={{ py: 1.5, overflowX: 'auto' }}>
+          {loading && dbConnections === null ? (
+            <Skeleton variant="rectangular" height={120} />
+          ) : dbConnections?.success === false ? (
+            <Typography color="text.secondary" variant="body2">
+              Database connection view unavailable: {dbConnections?.error ?? 'Unknown error'}
+            </Typography>
+          ) : (
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+                <Chip size="small" label={`Sessions: ${dbTotalSessions}`} />
+                <Chip
+                  size="small"
+                  color={dbLongRunning > 0 ? 'warning' : 'success'}
+                  label={`Long-running (>${dbLongThreshold}s): ${dbLongRunning}`}
+                />
+              </Box>
+              {dbSessions.length === 0 ? (
+                <Typography color="text.secondary" variant="body2">No active DB sessions.</Typography>
+              ) : (
+                <Table size="small">
+                  <TableHead>
+                    <TableRow>
+                      <TableCell>PID</TableCell>
+                      <TableCell>State</TableCell>
+                      <TableCell>Open</TableCell>
+                      <TableCell>User/App</TableCell>
+                      <TableCell>Wait</TableCell>
+                      <TableCell>Query (preview)</TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {dbSessions.slice(0, 50).map((s) => (
+                      <TableRow key={s.pid} sx={s.long_running ? { bgcolor: 'warning.50' } : undefined}>
+                        <TableCell sx={{ fontFamily: 'monospace' }}>{s.pid}</TableCell>
+                        <TableCell>{s.state ?? '—'}</TableCell>
+                        <TableCell>{s.open_seconds != null ? `${s.open_seconds}s` : '—'}</TableCell>
+                        <TableCell>
+                          <Typography variant="caption" sx={{ display: 'block' }}>{s.user ?? '—'}</Typography>
+                          <Typography variant="caption" color="text.secondary">{s.application_name || s.client_addr || '—'}</Typography>
+                        </TableCell>
+                        <TableCell>
+                          {(s.wait_event_type || s.wait_event)
+                            ? `${s.wait_event_type ?? ''}${s.wait_event ? `/${s.wait_event}` : ''}`
+                            : '—'}
+                        </TableCell>
+                        <TableCell sx={{ maxWidth: 500 }}>
+                          <Typography variant="caption" sx={{ fontFamily: 'monospace', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'block' }}>
+                            {(s.query_text || '').replace(/\s+/g, ' ').trim() || '—'}
+                          </Typography>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+            </Box>
           )}
         </CardContent>
       </Card>
@@ -707,11 +910,31 @@ export default function MonitorPage() {
             )}
           </CardContent>
         </Card>
+        <Card sx={{ minWidth: 260 }}>
+          <CardHeader title="Domain synthesis & enrichment" subheader="Config and pipelines" />
+          <CardContent>
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+              <Typography variant="body2">
+                <strong>Domain configs:</strong> politics, finance, science-tech
+              </Typography>
+              <Typography variant="body2">
+                <strong>GDELT enrichment:</strong> <Chip size="small" color="success" label="Active" variant="outlined" sx={{ verticalAlign: 'middle' }} />
+              </Typography>
+              <Typography variant="body2">
+                <strong>Claims→facts:</strong>{' '}
+                {(() => {
+                  const cf = phases.find((p) => p.name === 'claims_to_facts');
+                  return cf?.last_run ? timeAgo(cf.last_run) : 'scheduled';
+                })()}
+              </Typography>
+            </Box>
+          </CardContent>
+        </Card>
       </Box>
 
       {/* Phase timeline — grouped by related processes, sequential order */}
       <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>
-        Phase timeline (grouped by stage, last run / next due)
+        Phase timeline (grouped by stage, last run / workload)
       </Typography>
       <Card variant="outlined" sx={{ mb: 3 }}>
         <CardContent sx={{ py: 1.5, overflowX: 'auto' }}>
@@ -721,19 +944,19 @@ export default function MonitorPage() {
             <Typography color="text.secondary" variant="body2">No phase data. Automation may not be running.</Typography>
           ) : (() => {
             const enabled = phases.filter(p => p.enabled !== false);
-            const byGroup = enabled.reduce<{ label: string; phaseNum: number; rows: PhaseRow[] }[]>((acc, p) => {
+            const byGroup = enabled.reduce<{ label: string; stageOrder: number; rows: PhaseRow[] }[]>((acc, p) => {
               const label = p.phase_group_label ?? `Phase ${p.phase ?? 0}`;
-              const phaseNum = p.phase ?? 0;
+              const stageOrder = p.stage_order ?? 99;
               const existing = acc.find(g => g.label === label);
               if (existing) {
                 existing.rows.push(p);
-                existing.phaseNum = Math.min(existing.phaseNum, phaseNum);
+                existing.stageOrder = Math.min(existing.stageOrder, stageOrder);
               } else {
-                acc.push({ label, phaseNum, rows: [p] });
+                acc.push({ label, stageOrder, rows: [p] });
               }
               return acc;
             }, []);
-            byGroup.sort((a, b) => a.phaseNum - b.phaseNum);
+            byGroup.sort((a, b) => a.stageOrder - b.stageOrder);
             return (
               <Box>
                 {byGroup.map(({ label, rows }) => (
@@ -746,8 +969,9 @@ export default function MonitorPage() {
                         <TableRow>
                           <TableCell sx={{ width: '40%' }}>Task</TableCell>
                           <TableCell>Last run</TableCell>
-                          <TableCell>Interval</TableCell>
-                          <TableCell>Next due</TableCell>
+                          <TableCell>Running</TableCell>
+                          <TableCell>Queued</TableCell>
+                          <TableCell>Runs / 60m</TableCell>
                         </TableRow>
                       </TableHead>
                       <TableBody>
@@ -762,8 +986,9 @@ export default function MonitorPage() {
                               )}
                             </TableCell>
                             <TableCell>{p.last_run ? timeAgo(p.last_run) : 'never'}</TableCell>
-                            <TableCell>{p.interval_seconds != null ? `${Math.round(p.interval_seconds / 60)}m` : '—'}</TableCell>
-                            <TableCell>{formatDueIn(p.last_run, p.interval_seconds ?? 0)}</TableCell>
+                            <TableCell>{p.running_tasks ?? 0}</TableCell>
+                            <TableCell>{p.queued_tasks ?? 0}</TableCell>
+                            <TableCell>{p.runs_last_60m ?? 0}</TableCell>
                           </TableRow>
                         ))}
                       </TableBody>
@@ -824,7 +1049,7 @@ export default function MonitorPage() {
                     onChange={(e) => setTriggerPhaseName(e.target.value)}
                   >
                     <MenuItem value="">Select…</MenuItem>
-                    {(phases.length > 0 ? phases.map((p) => p.name) : ['rss_processing', 'content_enrichment', 'digest_generation', 'context_sync', 'entity_extraction', 'event_tracking', 'topic_clustering']).map((name) => (
+                    {(phases.length > 0 ? phases.map((p) => p.name) : ['collection_cycle', 'context_sync', 'entity_extraction', 'entity_profile_sync', 'claim_extraction', 'claims_to_facts', 'event_tracking', 'event_extraction', 'topic_clustering', 'storyline_discovery', 'storyline_processing', 'editorial_document_generation', 'editorial_briefing_generation', 'digest_generation', 'daily_briefing_synthesis']).map((name) => (
                       <MenuItem key={name} value={name}>{name}</MenuItem>
                     ))}
                   </Select>
@@ -852,7 +1077,7 @@ export default function MonitorPage() {
                 </Box>
               )}
               <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
-                Enqueues the phase; it will appear under Current activity when it runs. Running phases out of order may process incomplete data (e.g. run rss_processing before event_tracking).
+                Enqueues the phase; it will appear under Current activity when it runs. Running phases out of order may process incomplete data (e.g. run collection_cycle before analysis phases).
               </Typography>
             </CardContent>
           </Card>

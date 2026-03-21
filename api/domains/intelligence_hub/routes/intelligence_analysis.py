@@ -543,3 +543,140 @@ async def get_intelligence_dashboard(
         logger.error(f"Intelligence dashboard failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
+
+# =============================================================================
+# ACTIONABLE KNOWLEDGE ASSEMBLY ENDPOINTS
+# =============================================================================
+
+@router.get("/{domain}/intelligence/consistency", response_model=Dict[str, Any])
+async def get_event_storyline_claim_consistency(
+    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    limit_events: int = Query(25, ge=5, le=100),
+    min_claim_confidence: float = Query(0.55, ge=0.0, le=1.0),
+):
+    """
+    Assemble event-storyline-claim consistency:
+    - contested claims per event cluster
+    - stable participant facts
+    - storyline refresh recommendations
+    """
+    try:
+        svc = service()
+        result = svc.build_event_storyline_claim_consistency(
+            domain=domain,
+            limit_events=limit_events,
+            min_claim_confidence=min_claim_confidence,
+        )
+        return {"success": True, "domain": domain, "data": result}
+    except Exception as e:
+        logger.error(f"Consistency assembly failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{domain}/intelligence/participant_deltas", response_model=Dict[str, Any])
+async def get_participant_position_deltas(
+    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    days: int = Query(30, ge=1, le=180),
+):
+    """
+    Track participant stance/position drift over time.
+    Uses entity_positions first; falls back to versioned_facts.
+    """
+    try:
+        svc = service()
+        result = svc.get_participant_position_deltas(domain=domain, days=days)
+        return {"success": True, "domain": domain, "data": result}
+    except Exception as e:
+        logger.error(f"Participant delta assembly failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/intelligence/causal_chains", response_model=Dict[str, Any])
+async def get_cross_domain_causal_chains(
+    days: int = Query(30, ge=1, le=180),
+    min_strength: float = Query(0.5, ge=0.0, le=1.0),
+    limit: int = Query(20, ge=1, le=100),
+):
+    """
+    Assemble cross-domain causal chain candidates from correlation groups.
+    """
+    try:
+        svc = service()
+        result = svc.assemble_causal_chains(days=days, min_strength=min_strength, limit=limit)
+        return {"success": True, "data": result}
+    except Exception as e:
+        logger.error(f"Causal chain assembly failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{domain}/intelligence/narrative_divergence/{event_id}", response_model=Dict[str, Any])
+async def get_narrative_divergence_map(
+    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    event_id: int = Path(..., ge=1),
+    min_contexts_per_cluster: int = Query(1, ge=1, le=10),
+):
+    """
+    Same-event different-framing map:
+    side-by-side source clusters + entity/lexical framing terms.
+    """
+    try:
+        svc = service()
+        data = svc.build_narrative_divergence_map(
+            domain=domain,
+            event_id=event_id,
+            min_contexts_per_cluster=min_contexts_per_cluster,
+        )
+        return {"success": True, "domain": domain, "data": data}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Narrative divergence map failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/{domain}/intelligence/watchlist_theme_bridge", response_model=Dict[str, Any])
+async def post_watchlist_theme_trigger_bridge(
+    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    create_alerts: bool = Query(False, description="Persist watchlist_alerts for matched triggers"),
+    max_items: int = Query(25, ge=1, le=100),
+):
+    """
+    Auto-bridge watched storylines to emerging themes/events.
+    Optionally persists watchlist alerts.
+    """
+    try:
+        svc = service()
+        data = svc.build_watchlist_theme_trigger_bridge(
+            domain=domain,
+            create_alerts=create_alerts,
+            max_items=max_items,
+        )
+        return {"success": True, "domain": domain, "data": data}
+    except Exception as e:
+        logger.error(f"Watchlist-theme bridge failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/{domain}/intelligence/document_integration", response_model=Dict[str, Any])
+async def post_document_intelligence_integration(
+    domain: str = Path(..., regex="^(politics|finance|science-tech)$"),
+    days: int = Query(30, ge=1, le=180),
+    persist_links: bool = Query(False, description="Persist links into intelligence.document_intelligence"),
+    limit: int = Query(30, ge=1, le=100),
+):
+    """
+    Attach processed PDF document contexts to active themes and event chains.
+    """
+    try:
+        svc = service()
+        data = svc.build_document_intelligence_integration(
+            domain=domain,
+            days=days,
+            persist_links=persist_links,
+            limit=limit,
+        )
+        return {"success": True, "domain": domain, "data": data}
+    except Exception as e:
+        logger.error(f"Document intelligence integration failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+

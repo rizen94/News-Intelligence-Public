@@ -125,30 +125,31 @@ def build_threads_for_domain(domain_key: str, limit: int = 50) -> Dict[str, Any]
     if not schema:
         return {"success": False, "built": 0, "errors": [f"Unknown domain_key: {domain_key}"]}
 
-    conn = get_db_connection()
-    if not conn:
-        return {"success": False, "built": 0, "errors": ["Database unavailable"]}
-
+    conn = None
     built = 0
     errors: List[str] = []
     try:
+        conn = get_db_connection()
         with conn.cursor() as cur:
             cur.execute(
                 f'SELECT id FROM "{schema}".storylines ORDER BY updated_at DESC NULLS LAST LIMIT %s',
                 (limit,),
             )
             storyline_ids = [r[0] for r in cur.fetchall()]
-        conn.close()
-        for sid in storyline_ids:
-            result = ensure_narrative_thread(domain_key, sid)
-            if result.get("success"):
-                built += 1
-            else:
-                errors.append(f"storyline {sid}: {result.get('error', 'unknown')}")
-        return {"success": len(errors) == 0, "built": built, "errors": errors}
     except Exception as e:
         logger.exception("build_threads_for_domain: %s", e)
         return {"success": False, "built": built, "errors": [str(e)]}
+    finally:
+        if conn:
+            conn.close()
+
+    for sid in storyline_ids:
+        result = ensure_narrative_thread(domain_key, sid)
+        if result.get("success"):
+            built += 1
+        else:
+            errors.append(f"storyline {sid}: {result.get('error', 'unknown')}")
+    return {"success": len(errors) == 0, "built": built, "errors": errors}
 
 
 def synthesize_threads(domain_key: Optional[str] = None, thread_ids: Optional[List[int]] = None) -> Dict[str, Any]:
@@ -208,7 +209,7 @@ def synthesize_threads(domain_key: Optional[str] = None, thread_ids: Optional[Li
         domains_represented = list({t["domain_key"] for t in threads if t.get("domain_key")})
         context_parts = []
         for dk in domains_represented[:3]:
-            synthesis_ctx = synthesize_domain_context(dk, hours=48, max_articles=15, max_storylines=8, max_events=5, max_entities=15)
+            synthesis_ctx = synthesize_domain_context(dk, hours=168, max_articles=15, max_storylines=8, max_events=5, max_entities=15)  # v8
             if synthesis_ctx.get("success"):
                 rendered = render_synthesis_for_llm(synthesis_ctx, max_chars=2500)
                 context_parts.append(f"### Domain: {dk}\n{rendered}")

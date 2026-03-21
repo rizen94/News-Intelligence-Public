@@ -78,7 +78,34 @@ So: **plan on at least a few days of continuous operation** before judging insig
 
 ---
 
-## 4. What “stable and running” means day to day
+## 4. When v8.1 changes turn into meaningful data
+
+After migration 171, claims_to_facts, domain synthesis, and Monitor updates:
+
+| Change | When it shows up | Notes |
+|--------|------------------|--------|
+| **claims_to_facts** | **1–2 hours** | Runs hourly after claim_extraction. First meaningful data as soon as claim_extraction has run (every 30 min, 50 contexts/run) and produced high-confidence claims; claims_to_facts then promotes up to 100/run into versioned_facts and the story-state chain. |
+| **Domain synthesis config** | **Immediately** | New editorial, briefing, and synthesis LLM calls use domain-specific prompts and sections. Existing storylines get the new flavour the next time editorial_document_generation or storyline_synthesis runs for them (30 min–1 h intervals). |
+| **Migration 171 (tracked_events.storyline_id)** | **When linking is implemented** | The column exists; populated only when story_continuation or event-coherence logic links tracked events to storylines. Until that step is wired, storyline_id stays null. |
+| **Monitor (phase timeline, domain synthesis card)** | **Immediately** | Visibility only; no processing delay. |
+
+**Baseline: how many cycles to process the whole DB?**
+
+- The **Monitor → Backlog status progression** table is the source of truth: it shows **Remaining**, **Throughput** (~/hr), and **ETA** for (1) articles to enrich, (2) documents to extract, (3) storylines to synthesize.
+- **Overall catch-up** (shown when any backlog &gt; 0) is the time until those three queues are empty at current throughput.
+- **Rough rule:** With default throughput (e.g. ~300–700 articles/hr enriched, ~20 docs/hr, ~12 storylines/hr), a large initial backlog (e.g. 10k articles, 500 docs, 200 storylines) can take **on the order of 1–3 days** of continuous operation to reach “no backlog” for those three. Downstream (contexts → claims → claims_to_facts → versioned_facts) then fills in over the same period as contexts and claims are produced.
+- **Collection cycle** runs every **2 hours** (configurable). So you get about **12 collection cycles per day**; between them the analysis pipeline runs (Foundation → Extraction → Intelligence → Output). There is no single “cycle count” for “entire DB” — use the Monitor ETA and the 24–48 h (first pass) to 3–7 days (useful baseline) guidance above.
+
+---
+
+
+**Hourly throughput and extrapolation**
+
+- The **backlog_status** API returns **measured throughput**: articles/documents/contexts/entity_profiles/storylines each have `processed_last_1h` (and 24h), `per_hour`, and **`iterations_to_baseline`** (one iteration = one 2h cycle). **Storylines** also include **`synthesis_per_domain_last_1h`** and **`synthesis_per_domain_last_2h`** (count per domain). After 1–2 hours, use these to extrapolate: e.g. ~30k contexts and ~30k entity profiles → use `contexts.backlog` and `entity_profiles.backlog` plus their `per_hour`; `processed_last_1h` then reflects actual throughput and ETA/iterations become data-driven.
+
+---
+
+## 5. What “stable and running” means day to day
 
 - **RSS** runs on schedule (e.g. every 30 min when the API is up); **orchestrator** can also trigger collection. Check **Monitor** and (if you use it) the last-24h report to confirm recent collection.
 - **Processing** runs in the background; no need to “trigger pipeline” for normal operation. Use **Monitor** for health and pipeline status.
@@ -90,7 +117,7 @@ If the API is up and the database is healthy, the system will keep collecting an
 
 ---
 
-## 5. Optional checks
+## 6. Optional checks
 
 - **Last-24h report** — Run `./scripts/run_last_24h_report.sh` to see articles collected per domain, RSS fetch status, and any gaps.
 - **Monitor page** — Use it to confirm health, pipeline status, and (if exposed) backlog or last-run info.
@@ -98,7 +125,7 @@ If the API is up and the database is healthy, the system will keep collecting an
 
 ---
 
-## Summary
+## Summary (expectations)
 
 - **No need to clear the DB for v6;** the system is additive and will backfill.
 - **Backlogs drain automatically**; allow **several hours to a day or two** for a large initial backlog.

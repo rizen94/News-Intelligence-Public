@@ -522,11 +522,9 @@ async def synthesize_mega_storyline(
         # Fetch mega-storyline and its children
         conn = service.get_db_connection()
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(f"SET search_path TO {schema}, public")
-            
             # Get mega-storyline
-            cur.execute("""
-                SELECT * FROM storylines 
+            cur.execute(f"""
+                SELECT * FROM {schema}.storylines
                 WHERE id = %s AND is_mega_storyline = TRUE
             """, (mega_storyline_id,))
             mega = cur.fetchone()
@@ -536,8 +534,8 @@ async def synthesize_mega_storyline(
                 raise HTTPException(status_code=404, detail="Mega-storyline not found")
             
             # Get child storylines
-            cur.execute("""
-                SELECT * FROM storylines 
+            cur.execute(f"""
+                SELECT * FROM {schema}.storylines
                 WHERE parent_storyline_id = %s
                 ORDER BY created_at DESC
             """, (mega_storyline_id,))

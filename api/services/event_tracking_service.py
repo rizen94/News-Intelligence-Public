@@ -407,6 +407,108 @@ def backfill_key_participants_for_tracked_events(limit: int = 30) -> int:
     return updated
 
 
+def link_tracked_events_to_storylines(limit: int = 50) -> int:
+    """
+    Set tracked_events.storyline_id by entity overlap: for each event with
+    key_participant_entity_ids but no storyline_id, find a storyline in the same
+    domain whose articles mention the same entities; set storyline_id = 'schema:id'.
+    Returns number of events linked.
+    """
+    from shared.database.connection import get_db_connection
+
+    conn = get_db_connection()
+    if not conn:
+        return 0
+    linked = 0
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, COALESCE(key_participant_entity_ids, '[]'::jsonb) as profile_ids
+                FROM intelligence.tracked_events
+                WHERE storyline_id IS NULL
+                  AND key_participant_entity_ids IS NOT NULL
+                  AND jsonb_array_length(COALESCE(key_participant_entity_ids, '[]'::jsonb)) > 0
+                ORDER BY id DESC
+                LIMIT %s
+            """, (limit,))
+            rows = cur.fetchall()
+        if not rows:
+            conn.close()
+            return 0
+
+        for (event_id, profile_ids_json) in rows:
+            try:
+                profile_ids = json.loads(profile_ids_json) if isinstance(profile_ids_json, str) else (profile_ids_json or [])
+                profile_ids = [int(x) for x in profile_ids if isinstance(x, (int, float))]
+                if not profile_ids:
+                    continue
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT domain_key, canonical_entity_id FROM intelligence.entity_profiles WHERE id = ANY(%s)",
+                        (profile_ids,),
+                    )
+                    domain_canonicals = cur.fetchall()
+                if not domain_canonicals:
+                    continue
+                # Group by domain: domain_key -> set of canonical_entity_id
+                by_domain: Dict[str, List[int]] = {}
+                for dk, cid in domain_canonicals:
+                    if dk not in by_domain:
+                        by_domain[dk] = []
+                    by_domain[dk].append(cid)
+                best_schema = None
+                best_storyline_id = None
+                best_overlap = 0
+                for domain_key, canonical_ids in by_domain.items():
+                    schema = _DOMAIN_TO_SCHEMA.get(domain_key) or domain_key.replace("-", "_")
+                    if schema not in ("politics", "finance", "science_tech"):
+                        continue
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            f"""
+                            SELECT s.id, COUNT(DISTINCT ae.canonical_entity_id) AS overlap
+                            FROM {schema}.storylines s
+                            JOIN {schema}.storyline_articles sa ON sa.storyline_id = s.id
+                            JOIN {schema}.article_entities ae ON ae.article_id = sa.article_id
+                            WHERE ae.canonical_entity_id = ANY(%s)
+                            GROUP BY s.id
+                            ORDER BY overlap DESC
+                            LIMIT 1
+                            """,
+                            (list(set(canonical_ids)),),
+                        )
+                        row = cur.fetchone()
+                    if row and row[1] and row[1] > best_overlap:
+                        best_overlap = row[1]
+                        best_schema = schema
+                        best_storyline_id = row[0]
+                if best_schema and best_storyline_id is not None:
+                    storyline_id_val = f"{best_schema}:{best_storyline_id}"
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            "UPDATE intelligence.tracked_events SET storyline_id = %s WHERE id = %s",
+                            (storyline_id_val, event_id),
+                        )
+                    linked += 1
+                    logger.debug("link_tracked_events_to_storylines: event %s -> %s", event_id, storyline_id_val)
+            except Exception as e:
+                logger.debug("link_tracked_events_to_storylines event %s: %s", event_id, e)
+                continue
+        conn.commit()
+    except Exception as e:
+        logger.debug("link_tracked_events_to_storylines: %s", e)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    return linked
+
+
 async def run_event_tracking_batch(limit: int = 300) -> int:
     """
     Batch wrapper called by the automation manager.
@@ -429,11 +531,13 @@ async def run_event_tracking_batch(limit: int = 300) -> int:
     updated = await _update_existing_event_chronicles(limit=limit)
     # Backfill key_participant_entity_ids for existing events that have none
     backfilled = backfill_key_participants_for_tracked_events(limit=30)
+    # Bridge tracked_events to storylines via entity overlap (Phase 2B)
+    linked = link_tracked_events_to_storylines(limit=50)
     total = created_total + updated
-    if total > 0 or backfilled > 0:
+    if total > 0 or backfilled > 0 or linked > 0:
         logger.info(
-            "run_event_tracking_batch: %d new events, %d chronicle updates, %d participant backfills",
-            created_total, updated, backfilled,
+            "run_event_tracking_batch: %d new events, %d chronicle updates, %d participant backfills, %d storyline links",
+            created_total, updated, backfilled, linked,
         )
     return total
 

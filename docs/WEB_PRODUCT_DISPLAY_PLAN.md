@@ -404,36 +404,31 @@ mobile:
 
 ---
 
-## Project Alignment (This Codebase)
+## Live routes (v8) and product map
 
-**Stack:** React 18, Vite, Material-UI v5, TypeScript (see [AGENTS.md](../AGENTS.md), [CODING_STYLE_GUIDE.md](CODING_STYLE_GUIDE.md)). Use MUI `Grid`, `Card`, `Typography`, and existing theme — not Next.js or Tailwind.
+**Stack:** React 18, Vite, Material-UI v5, TypeScript (see [AGENTS.md](../AGENTS.md), [CODING_STYLE_GUIDE.md](CODING_STYLE_GUIDE.md)). Use MUI components and existing theme.
 
-**Existing pieces:**
+All active web routes are domain-scoped (`/:domain/...`) in `web/src/App.tsx`.
 
-| Plan element | Current implementation |
-|--------------|------------------------|
-| Entity Profiles | `/:domain/intelligence/entity-profiles`, `entity-profiles/:id` — EntityProfiles.tsx, EntityProfileDetail.tsx |
-| Context list | `/:domain/intelligence/contexts` — ContextBrowser.tsx |
-| Tracked Events | `/:domain/intelligence/tracked-events`, `tracked-events/:id` — TrackedEvents.tsx, TrackedEventDetail.tsx |
-| Collection Watch | `/:domain/intelligence/collection-watch` — CollectionWatch.tsx (orchestrator status, pipeline stats) |
-| Context-centric status/quality | contextCentricApi.getStatus(), getQuality() — used by ContextCentricStatus.tsx |
-| Search | `/:domain/intelligence/search` — IntelligenceSearch.tsx (context_centric/search) |
-| Entity management | `/:domain/intelligence/entity-management` — EntityManagement.tsx (importance, merge) |
-| API client | `web/src/services/api/contextCentric.ts` — entity profiles, contexts, events, status, quality, search |
+| Product layer | Live route(s) | Primary UI file(s) | Primary API module(s) |
+|--------------|----------------|--------------------|------------------------|
+| Overview | `/:domain/dashboard` | `web/src/pages/Dashboard/Dashboard.tsx` | `web/src/services/apiService.ts`, `web/src/services/api/monitoring.ts` |
+| Corpus | `/:domain/articles`, `/:domain/articles/:id`, `/:domain/rss_feeds`, `/:domain/investigate/documents` | `Articles.tsx`, `ArticleDetail.jsx`, `RSSFeeds.tsx`, `ProcessedDocumentsPage.tsx` | `apiService.ts`, `web/src/services/api/rss.ts` |
+| Stories | `/:domain/storylines`, `/:domain/storylines/:id`, `/:domain/storylines/:id/timeline`, `/:domain/storylines/discovery`, `/:domain/storylines/synthesized` | `Storylines.tsx`, `StorylineDetail.tsx`, `StoryTimeline.tsx`, `StorylineDiscovery.jsx`, `SynthesizedView.jsx` | `web/src/services/api/storylines.ts` |
+| Signals | `/:domain/topics`, `/:domain/events` | `Topics.tsx`, `Events.tsx` | `apiService.ts`, `web/src/services/api/topics.ts` |
+| Cross-cutting intelligence | `/:domain/discover`, `/:domain/discover/contexts/:id`, `/:domain/investigate/*` | `DiscoverPage.tsx`, `ContextDetailPage.tsx`, `InvestigatePage.tsx`, entity/event/document pages | `web/src/services/api/contextCentric.ts`, `apiService.ts` |
+| Outputs | `/:domain/briefings`, `/:domain/report`, `/:domain/watchlist` | `Briefings.tsx`, `ReportPage.tsx`, `Watchlist.tsx` | `apiService.ts`, `web/src/services/api/watchlist.ts` |
+| Operations | `/:domain/monitor`, `/:domain/audit-checklist`, `/:domain/analyze` | `MonitorPage.tsx`, `AuditChecklistPage.tsx`, `AnalyzePage.tsx` | `apiService.ts`, `web/src/services/api/monitoring.ts` |
+| Finance-specific | `/:domain/commodity/:commodity`, `/:domain/analysis`, `/:domain/analysis/:taskId` | `CommodityDashboard.tsx`, `FinancialAnalysis.tsx`, `FinancialAnalysisResult.tsx` | `web/src/services/api/finance.ts`, `apiService.ts` |
 
-**Gaps to build:**
+## Historical routes note
 
-- **Landing dashboard:** No single “home” 3-column dashboard yet; domain home is currently domain-specific. Add a dashboard route (e.g. `/:domain/dashboard` or global `/dashboard`) with hero bar + 3 columns.
-- **Hero status bar:** New component; data from orchestrator status, context_centric/status, and health API.
-- **Context detail page:** No `/context/:id` view; need route + page + API support if missing (e.g. GET context by id).
-- **Discover / Investigate / Monitor / Analyze nav:** Current nav is domain + sidebar; can regroup or add top-level sections to match this plan.
-- **Trending entities, watched entities:** Need API or derived data (e.g. from pattern_discoveries or entity_profiles with importance).
-- **Export / share:** Not implemented yet.
+References to `/intelligence/...` paths in older docs and archived UI folders are historical and not the live router. Keep those references only for migration context; implement against `/:domain/...` routes and flat `/api/...` endpoints.
 
-**Quick start (aligned with repo):**
+## Current alignment gaps
 
-- **Day 1:** Add a `Dashboard` page (e.g. under `web/src/pages/Dashboard/` or `Intelligence/`) with MUI `Grid` 3-column layout; placeholder cards for Latest Contexts, Tracked Events, Collection Status; wire system health from `apiService.getOrchestratorStatus()` and `contextCentricApi.getStatus()`.
-- **Day 2:** Replace placeholders with real data: latest contexts (contextCentricApi or GET /api/contexts), tracked events (contextCentricApi.getTrackedEvents()), collection status (orchestrator dashboard/status).
-- **Day 3:** Add dashboard to routing (e.g. default landing for a domain or a “Dashboard” nav item); optionally add Context Detail route and page when backend supports it.
+- Navigation is now route-complete but still benefits from pipeline-layer grouping in `AppNav.tsx`.
+- A shared "raw/technical" disclosure pattern should be standardized across high-audit pages.
+- High-traffic JSX pages should be migrated to TSX (`ArticleDetail`, `StorylineDiscovery`, `SynthesizedView`) to reduce drift and improve type safety.
 
-This plan gives a clear path from the current app to a single power-user intelligence dashboard with monitor, investigate, and analyze flows.
+This plan remains the roadmap for keeping UI language, navigation, and audit workflows aligned to the real data pipeline.

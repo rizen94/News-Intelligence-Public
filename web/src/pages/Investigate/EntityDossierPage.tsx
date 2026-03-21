@@ -4,7 +4,7 @@
  * Data: /api/synthesis/entity/{id} + /api/entity_profiles
  */
 import React, { useEffect, useState, useCallback } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Alert,
   Avatar,
@@ -38,6 +38,7 @@ import {
   type EntityProfile,
 } from '@/services/api/contextCentric';
 import { useDomain } from '@/contexts/DomainContext';
+import ProvenancePanel, { entityDossierProvenanceRows } from '@/components/ProvenancePanel/ProvenancePanel';
 
 function entityIcon(type: string) {
   switch (type) {
@@ -69,8 +70,11 @@ function confidenceBar(confidence: number | null) {
 
 export default function EntityDossierPage() {
   const { domain, entityId } = useParams<{ domain: string; entityId: string }>();
+  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const { domain: domainKey } = useDomain();
+  const { domain: domainFromContext } = useDomain();
+  // Use domain from URL so the entity is always fetched for the domain in the route (fixes "not found in domain" when context was a different domain)
+  const domainKey = domain && /^politics|finance|science-tech$/.test(domain) ? domain : domainFromContext;
   const [synthesis, setSynthesis] = useState<EntitySynthesis | null>(null);
   const [profile, setProfile] = useState<EntityProfile | null>(null);
   const [loading, setLoading] = useState(true);
@@ -78,35 +82,70 @@ export default function EntityDossierPage() {
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState(0);
 
-  const numId = entityId ? parseInt(entityId, 10) : NaN;
+  const nameFromUrl = searchParams.get('name') ?? '';
+  const isByName = entityId === 'by-name' && nameFromUrl.trim().length > 0;
+  const numId = !isByName && entityId ? parseInt(entityId, 10) : NaN;
+  const resolvedId = Number.isNaN(numId) ? null : numId;
 
   const load = useCallback(async () => {
-    if (Number.isNaN(numId) || !domainKey) return;
+    if (resolvedId == null || !domainKey) return;
     setLoading(true);
     setError(null);
     try {
-      const data = await contextCentricApi.getEntitySynthesis(numId, domainKey);
-      setSynthesis(data);
-      // Also fetch entity profile for sections
-      const profiles = await contextCentricApi.getEntityProfiles({ domain_key: domainKey, limit: 200, brief: false });
-      const match = (profiles?.items ?? []).find(
-        (p) => p.canonical_entity_id === numId && p.domain_key === domainKey,
-      );
-      setProfile(match ?? null);
+      const data = await contextCentricApi.getEntitySynthesis(resolvedId, domainKey) as EntitySynthesis & { success?: boolean; error?: string };
+      if (data && (data as { success?: boolean }).success === false) {
+        setError((data as { error?: string }).error ?? 'Entity not found in this domain.');
+        setSynthesis(null);
+      } else {
+        setSynthesis(data);
+        const profiles = await contextCentricApi.getEntityProfiles({ domain_key: domainKey, limit: 200, brief: false });
+        const match = (profiles?.items ?? []).find(
+          (p) => p.canonical_entity_id === resolvedId && p.domain_key === domainKey,
+        );
+        setProfile(match ?? null);
+      }
     } catch (e) {
       setError((e as Error)?.message ?? 'Failed to load entity data');
     } finally {
       setLoading(false);
     }
-  }, [numId, domainKey]);
+  }, [resolvedId, domainKey]);
 
-  useEffect(() => { load(); }, [load]);
+  // Resolve by name/alias to main entity, then redirect to canonical id
+  useEffect(() => {
+    if (!isByName || !domainKey) return;
+    let cancelled = false;
+    contextCentricApi
+      .resolveEntity({ domain_key: domainKey, entity_name: nameFromUrl.trim() })
+      .then((res) => {
+        if (cancelled) return;
+        const match = res?.match ?? res?.candidates?.[0];
+        const canonicalId = match?.canonical_entity_id ?? (match as { id?: number })?.id;
+        if (canonicalId != null) {
+          navigate(`/${domain}/investigate/entities/${canonicalId}/dossier`, { replace: true });
+        } else {
+          setError(`No entity found for "${nameFromUrl}"`);
+          setLoading(false);
+        }
+      })
+      .catch((e) => {
+        if (!cancelled) {
+          setError((e as Error)?.message ?? 'Failed to resolve entity by name');
+          setLoading(false);
+        }
+      });
+    return () => { cancelled = true; };
+  }, [isByName, domainKey, nameFromUrl, domain, navigate]);
+
+  useEffect(() => {
+    if (resolvedId != null) load();
+  }, [load, resolvedId]);
 
   const handleCompile = async () => {
-    if (Number.isNaN(numId) || !domainKey) return;
+    if (resolvedId == null || !domainKey) return;
     setCompiling(true);
     try {
-      await contextCentricApi.compileEntityDossier(domainKey, numId);
+      await contextCentricApi.compileEntityDossier(domainKey, resolvedId);
       await load();
     } catch (e) {
       setError((e as Error)?.message ?? 'Compilation failed');
@@ -143,6 +182,11 @@ export default function EntityDossierPage() {
         <Alert severity="warning">Entity not found in this domain.</Alert>
       ) : (
         <>
+          <ProvenancePanel
+            title="Dossier provenance"
+            subtitle="How this view is grounded in the corpus"
+            rows={entityDossierProvenanceRows(synthesis, dossier ?? null, domainKey, resolvedId ?? entity.id)}
+          />
           {/* Header card */}
           <Paper elevation={2} sx={{ p: 3, mb: 3, borderLeft: `4px solid ${entityColor(entity.entity_type)}` }}>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>

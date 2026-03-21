@@ -55,12 +55,33 @@ def _normalize_name(name: str, entity_type: str) -> str:
     return re.sub(r"\s+", " ", n)
 
 
+# Last-word "surname" matching only applies when the last word is not a role/title.
+# Otherwise "DXS International executives" and "Meta's executives" get merged incorrectly.
+LAST_WORD_ROLE_BLOCKLIST = frozenset({
+    "executives", "executive", "chair", "chairs", "board", "team", "teams",
+    "spokesperson", "spokesman", "spokeswoman", "office", "leadership",
+    "management", "staff", "officials", "representatives", "members",
+    "committee", "commission", "division", "department", "unit", "group",
+})
+
+
 def _extract_last_name(name: str) -> Optional[str]:
-    """For person entities, extract the last word as surname."""
+    """For person entities, extract the last word as surname (if not a role word)."""
     parts = name.strip().split()
     if len(parts) >= 2:
-        return parts[-1]
+        last = parts[-1].lower().rstrip("'s")
+        if last not in LAST_WORD_ROLE_BLOCKLIST:
+            return parts[-1]
     return None
+
+
+def _name_ends_with_role_word(name: str) -> bool:
+    """True if name's last word is in the role blocklist (e.g. 'X executives', 'Y chair')."""
+    parts = name.strip().split()
+    if not parts:
+        return False
+    last = parts[-1].lower().rstrip("'s")
+    return last in LAST_WORD_ROLE_BLOCKLIST
 
 
 # ---------------------------------------------------------------------------
@@ -444,9 +465,14 @@ def find_merge_candidates(
     real-world entity (different names, same person/org).
 
     Heuristics:
-      - Title-stripped names match (e.g., "President Biden" ↔ "Joe Biden")
-      - One name is a suffix/substring of the other (e.g., "Biden" ↔ "Joe Biden")
-      - High bigram similarity (≥ 0.7)
+      - Shared name or alias (0.95)
+      - Title-stripped names match (e.g. "King Trump" ↔ "Trump", "President Biden" ↔ "Joe Biden") (0.9)
+      - Last-name match for persons: "Trump" ↔ "Donald Trump" (0.8), other same last name (0.75)
+      - Substring overlap (0.7), bigram similarity ≥ 0.7
+
+    For consolidating variants like Donald Trump / Donald J Trump / Trump / King Trump,
+    use min_confidence=0.6 or 0.75; auto_merge then keeps the primary (full) name and
+    merges others into it (variants become aliases).
 
     Returns {candidates: [{source_id, source_name, target_id, target_name, confidence, reason}]}.
     """
@@ -503,8 +529,14 @@ def find_merge_candidates(
                 elif type_a == "person" and last_a:
                     last_b = _extract_last_name(name_b)
                     if last_a and last_b and last_a.lower() == last_b.lower():
-                        confidence = 0.6
-                        reason = "same_last_name"
+                        # Single word equals other's last name (e.g. "Trump" vs "Donald Trump") -> higher
+                        words_a, words_b = len(name_a.split()), len(name_b.split())
+                        if words_a == 1 or words_b == 1:
+                            confidence = 0.8
+                            reason = "last_name_match"
+                        else:
+                            confidence = 0.75
+                            reason = "same_last_name"
                 if confidence < min_confidence:
                     # Substring check
                     for na in all_a:
@@ -537,6 +569,66 @@ def find_merge_candidates(
     except Exception as e:
         logger.warning("find_merge_candidates %s: %s", domain_key, e)
         return {"success": False, "candidates": [], "error": str(e)}
+
+
+def _choose_primary_entity(
+    domain_key: str,
+    id_a: int,
+    name_a: str,
+    id_b: int,
+    name_b: str,
+    entity_type: str,
+) -> Tuple[int, int]:
+    """
+    Choose which of two same-entity canonicals to keep (primary) vs merge into it.
+    Prefer: (1) longer/full name for persons (e.g. "Donald Trump" over "Trump"),
+    (2) name not starting with a title ("Donald Trump" over "King Trump"),
+    (3) higher article mention count. Returns (keep_id, merge_id).
+    """
+    schema = _schema_for_domain(domain_key)
+    conn = get_db_connection()
+    if not conn:
+        return (id_a, id_b)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT canonical_entity_id, COUNT(*) FROM {schema}.article_entities
+                WHERE canonical_entity_id IN (%s, %s)
+                GROUP BY canonical_entity_id
+                """,
+                (id_a, id_b),
+            )
+            counts = {row[0]: row[1] for row in cur.fetchall()}
+        conn.close()
+    except Exception:
+        try:
+            conn.close()
+        except Exception:
+            pass
+        return (id_a, id_b)
+    count_a = counts.get(id_a, 0)
+    count_b = counts.get(id_b, 0)
+    words_a = len((name_a or "").split())
+    words_b = len((name_b or "").split())
+    stripped_a = _normalize_name(name_a or "", entity_type)
+    stripped_b = _normalize_name(name_b or "", entity_type)
+    # Prefer name that stayed longer after title strip (more "content")
+    len_after_strip_a = len(stripped_a)
+    len_after_strip_b = len(stripped_b)
+    # Prefer the one that looks like a full name (more words) for person
+    if entity_type == "person":
+        if words_a > words_b:
+            return (id_a, id_b)
+        if words_b > words_a:
+            return (id_b, id_a)
+        if len_after_strip_a > len_after_strip_b:
+            return (id_a, id_b)
+        if len_after_strip_b > len_after_strip_a:
+            return (id_b, id_a)
+    if count_a >= count_b:
+        return (id_a, id_b)
+    return (id_b, id_a)
 
 
 def merge_canonical_entities(
@@ -613,8 +705,9 @@ def merge_canonical_entities(
             )
             articles_reassigned = cur.rowcount
 
-            # Update entity_profiles mapping if present
+            # Update entity_profiles mapping if present (optional; use savepoint so failure doesn't abort transaction)
             try:
+                cur.execute("SAVEPOINT sp_merge_old_entity")
                 cur.execute(
                     """
                     UPDATE intelligence.old_entity_to_new
@@ -624,7 +717,16 @@ def merge_canonical_entities(
                     (keep_id, domain_key, merge_id),
                 )
             except Exception:
-                pass
+                try:
+                    cur.execute("ROLLBACK TO SAVEPOINT sp_merge_old_entity")
+                except Exception:
+                    conn.rollback()
+                    raise
+            else:
+                try:
+                    cur.execute("RELEASE SAVEPOINT sp_merge_old_entity")
+                except Exception:
+                    pass
 
             # Delete the merged entity
             cur.execute(
@@ -664,23 +766,31 @@ def auto_merge_high_confidence(
 ) -> Dict[str, Any]:
     """
     Find merge candidates above min_confidence and automatically merge them.
+    Always keeps the "primary" entity (full name, e.g. "Donald Trump") and merges
+    variants (e.g. "Trump", "King Trump") into it; sub-entities are tracked as aliases.
     Returns {merges_performed, details: [...]}.
     """
     result = find_merge_candidates(domain_key, min_confidence=min_confidence, limit=100)
     if not result.get("success"):
         return {"success": False, "merges_performed": 0, "error": result.get("error")}
 
-    details = []
+    details: List[Dict[str, Any]] = []
     for candidate in result.get("candidates", []):
         if candidate["confidence"] >= min_confidence:
-            merge_result = merge_canonical_entities(
+            keep_id, merge_id = _choose_primary_entity(
                 domain_key,
-                keep_id=candidate["source_id"],
-                merge_id=candidate["target_id"],
+                candidate["source_id"],
+                candidate["source_name"],
+                candidate["target_id"],
+                candidate["target_name"],
+                candidate.get("entity_type", "person"),
             )
+            merge_result = merge_canonical_entities(domain_key, keep_id=keep_id, merge_id=merge_id)
+            kept_name = candidate["source_name"] if keep_id == candidate["source_id"] else candidate["target_name"]
+            merged_name = candidate["target_name"] if keep_id == candidate["source_id"] else candidate["source_name"]
             details.append({
-                "kept": candidate["source_name"],
-                "merged": candidate["target_name"],
+                "kept": kept_name,
+                "merged": merged_name,
                 "confidence": candidate["confidence"],
                 "reason": candidate["reason"],
                 "result": merge_result,
@@ -690,6 +800,198 @@ def auto_merge_high_confidence(
         "success": True,
         "merges_performed": len(details),
         "details": details,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Decouple role-word merges (split canonicals incorrectly merged by "same last name")
+# ---------------------------------------------------------------------------
+
+def split_role_merged_canonicals(
+    domain_key: str,
+    dry_run: bool = False,
+    max_splits: Optional[int] = None,
+) -> Dict[str, Any]:
+    """
+    Find entity_canonical rows that have multiple role-word names (e.g. "X executives",
+    "Y executives") and split them: create a new canonical per distinct role name and
+    reassign article_entities by entity_name so each gets its own canonical. Removes
+    the split names from the original canonical's aliases.
+
+    Use after fixing LAST_WORD_ROLE_BLOCKLIST to undo incorrect merges.
+    When dry_run=True, only compute and return what would be done; no DB writes.
+    max_splits: cap splits per domain (None = no cap).
+    Returns {success, split_count, canonicals_processed, details: [...], dry_run: bool}.
+    """
+    schema = _schema_for_domain(domain_key)
+    conn = get_db_connection()
+    if not conn:
+        return {"success": False, "split_count": 0, "error": "Database connection failed", "dry_run": dry_run}
+
+    details: List[Dict[str, Any]] = []
+    split_count = 0
+    canonicals_processed = 0
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT id, canonical_name, entity_type, aliases FROM {schema}.entity_canonical",
+            )
+            rows = cur.fetchall()
+
+        for (canonical_id, canonical_name, entity_type, aliases) in rows:
+            if max_splits is not None and split_count >= max_splits:
+                break
+            all_names = [canonical_name] + list(aliases or [])
+            role_names = [n for n in all_names if n and _name_ends_with_role_word(n)]
+            if len(role_names) < 2:
+                continue
+            canonicals_processed += 1
+            with conn.cursor() as cur:
+                for alias_name in (aliases or []):
+                    if max_splits is not None and split_count >= max_splits:
+                        break
+                    if not alias_name or not _name_ends_with_role_word(alias_name):
+                        continue
+                    cur.execute(
+                        f"""
+                        SELECT COUNT(*) FROM {schema}.article_entities
+                        WHERE canonical_entity_id = %s AND LOWER(TRIM(entity_name)) = LOWER(TRIM(%s))
+                        """,
+                        (canonical_id, alias_name),
+                    )
+                    (cnt,) = cur.fetchone()
+                    if cnt == 0:
+                        continue
+                    if dry_run:
+                        details.append({
+                            "canonical_id": canonical_id,
+                            "canonical_name": canonical_name,
+                            "split_off": alias_name,
+                            "new_canonical_id": None,
+                            "articles_reassigned": cnt,
+                        })
+                        split_count += 1
+                        continue
+                    cur.execute(
+                        f"""
+                        INSERT INTO {schema}.entity_canonical (canonical_name, entity_type, aliases)
+                        VALUES (%s, %s, '{{}}')
+                        ON CONFLICT (canonical_name, entity_type) DO UPDATE SET updated_at = NOW()
+                        RETURNING id
+                        """,
+                        (alias_name[:255], entity_type),
+                    )
+                    new_row = cur.fetchone()
+                    if not new_row:
+                        continue
+                    new_id = new_row[0]
+                    cur.execute(
+                        f"""
+                        UPDATE {schema}.article_entities
+                        SET canonical_entity_id = %s
+                        WHERE canonical_entity_id = %s AND LOWER(TRIM(entity_name)) = LOWER(TRIM(%s))
+                        """,
+                        (new_id, canonical_id, alias_name),
+                    )
+                    reassigned = cur.rowcount
+                    cur.execute(
+                        f"""
+                        UPDATE {schema}.entity_canonical
+                        SET aliases = array_remove(aliases, %s), updated_at = NOW()
+                        WHERE id = %s AND %s = ANY(COALESCE(aliases, '{{}}'))
+                        """,
+                        (alias_name, canonical_id, alias_name),
+                    )
+                    conn.commit()
+                    split_count += 1
+                    details.append({
+                        "canonical_id": canonical_id,
+                        "canonical_name": canonical_name,
+                        "split_off": alias_name,
+                        "new_canonical_id": new_id,
+                        "articles_reassigned": reassigned,
+                    })
+    except Exception as e:
+        logger.warning("split_role_merged_canonicals %s: %s", domain_key, e)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return {"success": False, "split_count": split_count, "canonicals_processed": canonicals_processed, "error": str(e), "details": details, "dry_run": dry_run}
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    return {
+        "success": True,
+        "split_count": split_count,
+        "canonicals_processed": canonicals_processed,
+        "details": details,
+        "dry_run": dry_run,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Entity decouple pipeline — routine bad-merge detection and split
+# ---------------------------------------------------------------------------
+
+DECOUPLE_STEP_ROLE_WORD = "role_word"
+
+DEFAULT_DECOUPLE_STEPS = (DECOUPLE_STEP_ROLE_WORD,)
+
+
+def run_entity_decouple_pipeline(
+    domain_keys: Optional[List[str]] = None,
+    dry_run: bool = False,
+    steps: Optional[List[str]] = None,
+    max_splits_per_domain: Optional[int] = None,
+) -> Dict[str, Any]:
+    """
+    Routine entity decouple: find bad merges and split them so each canonical
+    represents a single real-world entity. Safe to run as part of data_cleanup.
+
+    Steps (all run when steps is None):
+      - role_word: split canonicals that merged distinct entities by shared
+        role-word last name (e.g. "X executives" + "Y executives" → separate).
+
+    Use from automation (data_cleanup), cron, or manual scripts.
+    Returns {success, total_splits, by_domain: {domain: {split_count, canonicals_processed, ...}}, steps_run: [...]}.
+    """
+    domains = list(domain_keys) if domain_keys else list(ALL_DOMAINS)
+    steps_to_run = list(steps) if steps else list(DEFAULT_DECOUPLE_STEPS)
+    by_domain: Dict[str, Dict[str, Any]] = {}
+    total_splits = 0
+
+    for domain_key in domains:
+        if domain_key not in ALL_DOMAINS:
+            continue
+        domain_result: Dict[str, Any] = {"split_count": 0, "canonicals_processed": 0}
+        for step in steps_to_run:
+            if step == DECOUPLE_STEP_ROLE_WORD:
+                out = split_role_merged_canonicals(
+                    domain_key,
+                    dry_run=dry_run,
+                    max_splits=max_splits_per_domain,
+                )
+                if out.get("success"):
+                    domain_result["split_count"] = out.get("split_count", 0)
+                    domain_result["canonicals_processed"] = out.get("canonicals_processed", 0)
+                    total_splits += domain_result["split_count"]
+                else:
+                    domain_result["error"] = out.get("error", "unknown")
+                    logger.warning("Decouple role_word %s: %s", domain_key, domain_result["error"])
+                domain_result["role_word"] = out
+            else:
+                logger.debug("Decouple step %s not implemented, skipping", step)
+        by_domain[domain_key] = domain_result
+
+    return {
+        "success": True,
+        "total_splits": total_splits,
+        "by_domain": by_domain,
+        "steps_run": steps_to_run,
+        "dry_run": dry_run,
     }
 
 

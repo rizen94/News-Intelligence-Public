@@ -72,10 +72,13 @@ LOG_LLM_FULL_TEXT = os.environ.get("LOG_LLM_FULL_TEXT", "false").lower() in ("1"
 # ============================================================
 FRED_API_KEY = os.environ.get("FRED_API_KEY", "")
 FRED_RATE_LIMIT_PER_MINUTE = 120
-# Optional FRED series IDs for commodities (empty = skip FRED for that metal)
+# Optional FRED series IDs for commodities (registry + env; empty = skip FRED for that commodity)
+# Gold default in registry; others override via FRED_{COMMODITY}_SERIES_ID (e.g. FRED_OIL_SERIES_ID, FRED_GAS_SERIES_ID)
 FRED_GOLD_SERIES_ID = os.environ.get("FRED_GOLD_SERIES_ID", "IQ12260")
-FRED_SILVER_SERIES_ID = os.environ.get("FRED_SILVER_SERIES_ID", "")   # e.g. IP7106
-FRED_PLATINUM_SERIES_ID = os.environ.get("FRED_PLATINUM_SERIES_ID", "")  # e.g. IP7110
+FRED_SILVER_SERIES_ID = os.environ.get("FRED_SILVER_SERIES_ID", "")
+FRED_PLATINUM_SERIES_ID = os.environ.get("FRED_PLATINUM_SERIES_ID", "")
+FRED_OIL_SERIES_ID = os.environ.get("FRED_OIL_SERIES_ID", "")
+FRED_GAS_SERIES_ID = os.environ.get("FRED_GAS_SERIES_ID", "")
 BIGQUERY_PROJECT_ID = os.environ.get("BIGQUERY_PROJECT_ID", "")
 EDGAR_RATE_LIMIT_PER_SECOND = 10
 EDGAR_USER_AGENT = os.environ.get("EDGAR_USER_AGENT", "NewsIntelligence research@example.com")

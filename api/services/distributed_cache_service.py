@@ -218,10 +218,8 @@ class DistributedCacheService:
     
     async def _discover_nodes(self):
         """Discover other cache nodes (simplified implementation)"""
+        conn = None
         try:
-            # In production, this would use service discovery (Consul, etcd, etc.)
-            # For now, we'll simulate with database-based discovery
-            
             conn = get_db_connection()
             cursor = conn.cursor(cursor_factory=RealDictCursor)
             
@@ -234,7 +232,6 @@ class DistributedCacheService:
             
             results = cursor.fetchall()
             cursor.close()
-            conn.close()
             
             for row in results:
                 self.cache_nodes[row['node_id']] = CacheNode(
@@ -249,6 +246,9 @@ class DistributedCacheService:
             
         except Exception as e:
             logger.warning(f"Error discovering nodes: {e}")
+        finally:
+            if conn:
+                conn.close()
     
     async def _consistency_check_task(self):
         """Background task to check cache consistency"""

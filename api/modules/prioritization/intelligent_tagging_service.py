@@ -133,6 +133,7 @@ class IntelligentTaggingService:
         """
         Analyze and suggest tags for a story thread based on all its articles.
         """
+        conn = None
         try:
             conn = get_db_connection()
             cursor = conn.cursor()
@@ -197,8 +198,6 @@ class IntelligentTaggingService:
                         'frequency': tag['frequency']
                     })
             
-            conn.close()
-            
             return {
                 'thread_id': thread_id,
                 'analysis_date': datetime.now().isoformat(),
@@ -213,21 +212,24 @@ class IntelligentTaggingService:
         except Exception as e:
             self.logger.error(f"Error analyzing thread tags: {e}")
             return {'error': str(e)}
+        finally:
+            if conn:
+                conn.close()
     
     def update_thread_tags(self, thread_id: int, analysis_result: Dict[str, Any]) -> Dict[str, Any]:
         """
         Update story thread tags based on analysis results.
         """
+        if 'error' in analysis_result:
+            return analysis_result
+        
+        conn = None
         try:
-            if 'error' in analysis_result:
-                return analysis_result
-            
             conn = get_db_connection()
             cursor = conn.cursor()
             
             updates_made = 0
             
-            # Add new tags
             for tag in analysis_result.get('new_tags', []):
                 cursor.execute("""
                     INSERT INTO story_thread_keywords (thread_id, keyword, weight, created_at)
@@ -239,7 +241,6 @@ class IntelligentTaggingService:
                 updates_made += 1
             
             conn.commit()
-            conn.close()
             
             return {
                 'success': True,
@@ -252,11 +253,15 @@ class IntelligentTaggingService:
         except Exception as e:
             self.logger.error(f"Error updating thread tags: {e}")
             return {'error': str(e)}
+        finally:
+            if conn:
+                conn.close()
     
     def get_thread_tag_analytics(self, thread_id: int) -> Dict[str, Any]:
         """
         Get analytics about thread tags.
         """
+        conn = None
         try:
             conn = get_db_connection()
             cursor = conn.cursor()
@@ -294,8 +299,6 @@ class IntelligentTaggingService:
                 'min_weight': float(stats_row[3]) if stats_row[3] else 0
             }
             
-            conn.close()
-            
             return {
                 'thread_id': thread_id,
                 'tags': tags,
@@ -306,3 +309,6 @@ class IntelligentTaggingService:
         except Exception as e:
             self.logger.error(f"Error getting thread tag analytics: {e}")
             return {'error': str(e)}
+        finally:
+            if conn:
+                conn.close()

@@ -122,6 +122,7 @@ class RouteSupervisor:
         error_message = None
         connection_pool_size = None
         active_connections = None
+        conn = None
         
         try:
             conn = get_db_connection()
@@ -129,17 +130,13 @@ class RouteSupervisor:
                 status = ConnectionStatus.DISCONNECTED
                 error_message = "Failed to get database connection"
             else:
-                # Test connection with a simple query
                 with conn.cursor() as cur:
                     if domain:
-                        # Set search path for domain
                         cur.execute(f"SET search_path TO {schema}, public")
                     
-                    # Test query
                     cur.execute("SELECT 1")
                     cur.fetchone()
                     
-                    # Get connection info if available
                     try:
                         cur.execute("""
                             SELECT count(*) 
@@ -151,16 +148,17 @@ class RouteSupervisor:
                     except Exception as _e:
                         logger.debug("pg_stat_activity check skip: %s", _e)
                 
-                conn.close()
-                
                 elapsed_ms = (time.perf_counter() - start_time) * 1000
-                if elapsed_ms > 1000:  # More than 1 second is slow
+                if elapsed_ms > 1000:
                     status = ConnectionStatus.SLOW
         
         except Exception as e:
             status = ConnectionStatus.ERROR
             error_message = str(e)
             logger.error(f"Database connection check failed for {key}: {e}")
+        finally:
+            if conn:
+                conn.close()
         
         response_time_ms = (time.perf_counter() - start_time) * 1000
         

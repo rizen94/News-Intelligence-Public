@@ -293,23 +293,26 @@ class MLQueueManager:
     
     # Task handlers for different ML operations
     def _handle_timeline_generation(self, task: MLTask) -> Dict[str, Any]:
-        """Handle timeline generation task"""
-        from .timeline_generator import TimelineGenerator
-        
-        timeline_generator = TimelineGenerator(self.db_config)
-        storyline_data = task.payload.get('storyline_data', {})
-        
-        events = timeline_generator.generate_timeline_events(
-            storyline_id=task.storyline_id,
-            storyline_data=storyline_data,
-            start_date=task.payload.get('start_date'),
-            end_date=task.payload.get('end_date'),
-            max_events=task.payload.get('max_events', 50)
+        """
+        Legacy ML timeline path retired (was TimelineGenerator + unscoped articles / timeline_events).
+
+        Use automation phase 'timeline_generation' (TimelineBuilderService, public.chronological_events,
+        domain storylines) or GET /api/{domain}/storylines/{id}/timeline.
+        """
+        logger.warning(
+            "Ignoring retired ML queue task TIMELINE_GENERATION task_id=%s storyline_id=%s — "
+            "use automation timeline_generation or timeline API",
+            task.task_id,
+            task.storyline_id,
         )
-        
         return {
-            "events_generated": len(events),
-            "events": [event.__dict__ for event in events] if events else []
+            "events_generated": 0,
+            "events": [],
+            "deprecated": True,
+            "message": (
+                "ML queue timeline_generation is retired. "
+                "Use automation task timeline_generation or GET /api/{domain}/storylines/{id}/timeline."
+            ),
         }
     
     def _handle_article_summarization(self, task: MLTask) -> Dict[str, Any]:
@@ -354,6 +357,7 @@ class MLQueueManager:
     
     def _store_task(self, task: MLTask):
         """Store task in database"""
+        conn = None
         try:
             conn = get_db_connection()
             cur = conn.cursor()
@@ -381,13 +385,16 @@ class MLQueueManager:
             
             conn.commit()
             cur.close()
-            conn.close()
             
         except Exception as e:
             logger.error(f"Error storing task {task.task_id}: {e}")
+        finally:
+            if conn:
+                conn.close()
     
     def _load_pending_tasks(self):
         """Load pending tasks from database on startup"""
+        conn = None
         try:
             conn = get_db_connection()
             cur = conn.cursor()
@@ -402,7 +409,6 @@ class MLQueueManager:
             
             rows = cur.fetchall()
             cur.close()
-            conn.close()
             
             for row in rows:
                 task = MLTask(
@@ -425,9 +431,13 @@ class MLQueueManager:
             
         except Exception as e:
             logger.error(f"Error loading pending tasks: {e}")
+        finally:
+            if conn:
+                conn.close()
     
     def _load_task_from_db(self, task_id: str) -> Optional[MLTask]:
         """Load a specific task from database"""
+        conn = None
         try:
             conn = get_db_connection()
             cur = conn.cursor()
@@ -442,7 +452,6 @@ class MLQueueManager:
             
             row = cur.fetchone()
             cur.close()
-            conn.close()
             
             if row:
                 return MLTask(
@@ -468,9 +477,13 @@ class MLQueueManager:
         except Exception as e:
             logger.error(f"Error loading task {task_id}: {e}")
             return None
+        finally:
+            if conn:
+                conn.close()
     
     def _update_task_status(self, task_id: str, status: TaskStatus):
         """Update task status in database"""
+        conn = None
         try:
             conn = get_db_connection()
             cur = conn.cursor()
@@ -483,13 +496,16 @@ class MLQueueManager:
             
             conn.commit()
             cur.close()
-            conn.close()
             
         except Exception as e:
             logger.error(f"Error updating task status: {e}")
+        finally:
+            if conn:
+                conn.close()
     
     def _update_task_completion(self, task: MLTask):
         """Update task completion in database"""
+        conn = None
         try:
             conn = get_db_connection()
             cur = conn.cursor()
@@ -511,10 +527,12 @@ class MLQueueManager:
             
             conn.commit()
             cur.close()
-            conn.close()
             
         except Exception as e:
             logger.error(f"Error updating task completion: {e}")
+        finally:
+            if conn:
+                conn.close()
     
     def _count_tasks_by_type(self, task_type: TaskType) -> int:
         """Count tasks by type"""

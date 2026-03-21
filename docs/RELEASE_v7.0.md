@@ -75,6 +75,21 @@ v7 adds full-text article enrichment, automated document collection from governm
 
 ---
 
+## When to expect events and storylines
+
+**From a cold start** (orchestrator and RSS running):
+
+| What | When |
+|------|------|
+| **Tracked events** (event_tracking) | **~30–45 min** — After first RSS run, content_enrichment (5 min), then context_sync (15 min), then event_tracking (15 min). |
+| **v5 events** (chronological_events) + **story continuation** | **~30–60 min** — Chain: content_enrichment → entity_extraction (5 min) → event_extraction (5 min) → event_deduplication (10 min) → story_continuation (10 min). Events appear in Briefings/Investigate once this chain has run; story_continuation links them to *existing* storylines. |
+| **Auto-created storylines** | **Up to 4 hours** — `storyline_discovery` runs every **4 hours** and creates new storylines from the last 48 hours of articles (clustering + LLM titles). So the first batch of auto storylines appears at the first 4‑hour boundary after start. |
+| **Manual storylines** | **Immediate** — Create from Story Management or Convert topic → storyline; storyline_automation then adds articles every 5 min. |
+
+So: **events** (and event–storyline linking) typically within about **an hour**; **auto storylines** at the next **4‑hour** discovery run. If RSS or enrichment is delayed (e.g. backlog), events and storylines will shift accordingly.
+
+---
+
 ## Notes
 
 - Storyline synthesis expects `synthesized_content` (and optionally `synthesized_at`) on `storylines`; add columns via migration if missing.

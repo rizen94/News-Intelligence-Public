@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# News Intelligence System v6.0 - Stop Script
+# News Intelligence System v8.0 - Stop Script
 # Stops: API Server, Frontend (keeps PostgreSQL running)
 
 set -e
@@ -91,7 +91,7 @@ stop_frontend() {
 # Main execution
 main() {
     log "=========================================="
-    log "News Intelligence System v6.0 - Stop"
+    log "News Intelligence System v8.0 - Stop"
     log "=========================================="
     log "Stopping services..."
     echo ""

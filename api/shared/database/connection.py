@@ -2,6 +2,17 @@
 Shared Database Connection Module for News Intelligence System v7
 With connection pooling for improved performance over SSH tunnel.
 Single source of truth for all DB connections (psycopg2 + SQLAlchemy).
+
+Pool architecture (3 independent pools, same PostgreSQL instance):
+  - Worker pool (psycopg2): background processing — DB_POOL_WORKER_MIN/MAX (default 4/48)
+  - UI pool     (psycopg2): page loads & monitoring — DB_POOL_UI_MIN/MAX     (default 2/16)
+  - SA pool   (SQLAlchemy): ORM-based services      — DB_POOL_SA_SIZE/OVERFLOW (default 4/12)
+
+RULES (see also CODING_STYLE_GUIDE.md § Database Connection Rules):
+  1. Always use get_db_connection_context() or try/finally conn.close().
+  2. Never hold a connection across an LLM call, HTTP request, or sleep.
+  3. Worker pool has a default checkout timeout (30 s) to surface leaks early.
+  4. UI pool has a 3 s checkout timeout so page loads fail fast.
 """
 
 import os
@@ -16,15 +27,17 @@ from contextlib import contextmanager
 
 logger = logging.getLogger(__name__)
 
-# SQLAlchemy engine (lazy init, shares config with psycopg2 pool)
+# SQLAlchemy engine (lazy init, independent pool from psycopg2)
 _sqlalchemy_engine = None
 _sqlalchemy_session_factory = None
 _sqlalchemy_lock = threading.Lock()
 
-# Global connection pool (thread-safe)
-_connection_pool: Optional[pool.ThreadedConnectionPool] = None
+# Global connection pools (thread-safe)
+_connection_pool: Optional[pool.ThreadedConnectionPool] = None           # Worker/data-processing pool
+_ui_connection_pool: Optional[pool.ThreadedConnectionPool] = None        # UI/monitoring reserved pool
 _pool_lock = threading.Lock()
 _pool_initialized = False
+_ui_pool_initialized = False
 
 
 class PooledConnection:
@@ -50,24 +63,25 @@ class PooledConnection:
         return self._conn.rollback()
     
     def close(self):
-        """Return connection to pool instead of closing it"""
+        """Return connection to pool instead of closing it. Rollback first so the next user doesn't get 'aborted transaction'."""
         if not self._closed:
+            try:
+                self._conn.rollback()
+            except Exception:
+                pass
             if self._pool is not None:
                 try:
-                    # Return to pool (doesn't actually close the connection)
                     self._pool.putconn(self._conn)
                 except Exception as e:
                     logger.warning(f"Error returning connection to pool: {e}")
-                    # If pool error, actually close the connection
                     try:
                         self._conn.close()
-                    except:
+                    except Exception:
                         pass
             else:
-                # No pool, actually close the connection
                 try:
                     self._conn.close()
-                except:
+                except Exception:
                     pass
             self._closed = True
     
@@ -155,27 +169,44 @@ def get_db_connect_kwargs() -> Dict[str, Any]:
     }
 
 
-def _init_pool() -> pool.ThreadedConnectionPool:
-    """Initialize the connection pool (called once). Pool size and timeouts via DB_POOL_MIN, DB_POOL_MAX, DB_STATEMENT_TIMEOUT_MS."""
-    global _connection_pool, _pool_initialized
-    
+def _pool_sizes(pool_kind: str) -> tuple[int, int]:
+    """Return (minconn, maxconn) for worker or ui pool."""
+    # Backward-compatible fallback for worker pool
+    legacy_min = int(os.getenv("DB_POOL_MIN", "2"))
+    legacy_max = int(os.getenv("DB_POOL_MAX", "20"))
+    if pool_kind == "ui":
+        minconn = int(os.getenv("DB_POOL_UI_MIN", "2"))
+        maxconn = int(os.getenv("DB_POOL_UI_MAX", "16"))
+    else:
+        minconn = int(os.getenv("DB_POOL_WORKER_MIN", str(max(legacy_min, 4))))
+        maxconn = int(os.getenv("DB_POOL_WORKER_MAX", str(max(legacy_max, 48))))
+    maxconn = max(minconn, min(maxconn, 100))
+    return minconn, maxconn
+
+
+def _init_pool(pool_kind: str = "worker") -> pool.ThreadedConnectionPool:
+    """Initialize worker/ui connection pools."""
+    global _connection_pool, _ui_connection_pool, _pool_initialized, _ui_pool_initialized
+
     with _pool_lock:
-        if _connection_pool is not None:
-            return _connection_pool
-        
+        if pool_kind == "ui":
+            if _ui_connection_pool is not None:
+                return _ui_connection_pool
+        else:
+            if _connection_pool is not None:
+                return _connection_pool
+
         config = get_db_config()
-        minconn = int(os.getenv("DB_POOL_MIN", "2"))
-        maxconn = int(os.getenv("DB_POOL_MAX", "20"))
-        maxconn = max(minconn, min(maxconn, 50))
+        minconn, maxconn = _pool_sizes(pool_kind)
         timeout_ms = config.get("statement_timeout_ms", 120000)
         options = f"-c statement_timeout={timeout_ms}"
-        
+
         logger.info(
-            "Initializing connection pool: %s:%s/%s (pool %s-%s, statement_timeout=%sms)",
-            config["host"], config["port"], config["database"], minconn, maxconn, timeout_ms,
+            "Initializing %s DB pool: %s:%s/%s (pool %s-%s, statement_timeout=%sms)",
+            pool_kind, config["host"], config["port"], config["database"], minconn, maxconn, timeout_ms,
         )
-        
-        _connection_pool = pool.ThreadedConnectionPool(
+
+        created_pool = pool.ThreadedConnectionPool(
             minconn=minconn,
             maxconn=maxconn,
             host=config["host"],
@@ -186,11 +217,15 @@ def _init_pool() -> pool.ThreadedConnectionPool:
             connect_timeout=config.get("connect_timeout", 5),
             options=options,
         )
-        
-        _pool_initialized = True
-        logger.info("Connection pool initialized: %s-%s connections, %sms statement timeout", minconn, maxconn, timeout_ms)
-        
-        return _connection_pool
+        if pool_kind == "ui":
+            _ui_connection_pool = created_pool
+            _ui_pool_initialized = True
+        else:
+            _connection_pool = created_pool
+            _pool_initialized = True
+
+        logger.info("%s DB pool initialized: %s-%s connections", pool_kind, minconn, maxconn)
+        return created_pool
 
 
 def _validate_connection(conn) -> bool:
@@ -204,34 +239,68 @@ def _validate_connection(conn) -> bool:
         return False
 
 
-def get_db_connection():
-    """
-    Get a live database connection from the pool.
-    Always call conn.close() when done (returns to pool).
-    Raises if the database is unreachable (e.g. turned off); no silent None.
-    """
-    pool_ref = None
-    try:
-        pool_ref = _init_pool()
-        for attempt in range(2):
-            conn = pool_ref.getconn()
-            if _validate_connection(conn):
-                return PooledConnection(conn, pool_ref)
-            try:
-                conn.close()
-            except Exception:
-                pass
-        logger.warning("Pool returned stale connections; trying direct connect")
-    except Exception as e:
-        logger.error(f"Pool getconn failed: {e}")
-    # Fallback only when pool is unusable (e.g. all connections stale); same timeouts
-    try:
-        kwargs = get_db_connect_kwargs()
-        conn = psycopg2.connect(**kwargs)
+def _getconn_from_pool(pool_ref):
+    """Get one connection from pool and validate; used with optional timeout."""
+    for _ in range(2):
+        conn = pool_ref.getconn()
         if _validate_connection(conn):
-            return PooledConnection(conn, None)
+            return PooledConnection(conn, pool_ref)
         try:
             conn.close()
+        except Exception:
+            pass
+    return None
+
+
+def get_db_connection(use_reserved: bool = False):
+    """
+    Get a live database connection from the pool.
+    Always use with get_db_connection_context() or try/finally: conn.close() when done (returns to pool).
+    If DB_GETCONN_TIMEOUT_SECONDS is set (e.g. 30), getconn will raise after that many seconds
+    instead of blocking forever when the pool is exhausted (avoids crashing the process).
+    Raises if the database is unreachable (e.g. turned off); no silent None.
+    """
+    pool_kind = "ui" if use_reserved else "worker"
+    timeout_sec = None
+    # Pool-specific checkout timeout (seconds). Prevents monitor/page-load hangs when pool is saturated.
+    # Priority: DB_UI_GETCONN_TIMEOUT_SECONDS / DB_WORKER_GETCONN_TIMEOUT_SECONDS -> DB_GETCONN_TIMEOUT_SECONDS
+    timeout_env = (
+        "DB_UI_GETCONN_TIMEOUT_SECONDS"
+        if pool_kind == "ui"
+        else "DB_WORKER_GETCONN_TIMEOUT_SECONDS"
+    )
+    default_timeout = "3" if pool_kind == "ui" else "30"
+    timeout_raw = os.getenv(timeout_env, os.getenv("DB_GETCONN_TIMEOUT_SECONDS", default_timeout))
+    try:
+        timeout_sec = int(timeout_raw)
+    except ValueError:
+        timeout_sec = int(default_timeout)
+
+    if timeout_sec <= 0:
+        timeout_sec = int(default_timeout)
+
+    import concurrent.futures
+    pool_ref = _init_pool(pool_kind=pool_kind)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+        fut = ex.submit(_getconn_from_pool, pool_ref)
+        try:
+            conn = fut.result(timeout=timeout_sec)
+        except concurrent.futures.TimeoutError:
+            raise ConnectionError(
+                f"Database {pool_kind} pool timeout after {timeout_sec}s (pool likely exhausted). "
+                "Check for connection leaks: use get_db_connection_context() or conn.close() in finally."
+            ) from None
+    if conn is not None:
+        return conn
+    logger.warning("%s pool returned stale connections; trying direct connect", pool_kind)
+
+    try:
+        kwargs = get_db_connect_kwargs()
+        raw = psycopg2.connect(**kwargs)
+        if _validate_connection(raw):
+            return PooledConnection(raw, None)
+        try:
+            raw.close()
         except Exception:
             pass
     except Exception as e2:
@@ -242,60 +311,81 @@ def get_db_connection():
     )
 
 
-def return_connection(conn: psycopg2.extensions.connection) -> None:
-    """Explicitly return a connection to the pool"""
-    global _connection_pool
-    if _connection_pool is not None and conn is not None:
-        try:
-            _connection_pool.putconn(conn)
-        except Exception as e:
-            logger.warning(f"Error returning connection to pool: {e}")
-            try:
-                conn.close()
-            except:
-                pass
-
-
 def close_pool() -> None:
-    """Close all connections in the pool (call on shutdown)"""
-    global _connection_pool
+    """Close all worker/UI pools (call on shutdown)."""
+    global _connection_pool, _ui_connection_pool
     if _connection_pool is not None:
         _connection_pool.closeall()
         _connection_pool = None
-        logger.info("Connection pool closed")
+        logger.info("Worker connection pool closed")
+    if _ui_connection_pool is not None:
+        _ui_connection_pool.closeall()
+        _ui_connection_pool = None
+        logger.info("UI connection pool closed")
+
+def probe_database_server_reachable(connect_timeout: Optional[int] = None) -> bool:
+    """
+    True if a **new** connection to PostgreSQL succeeds and SELECT 1 works.
+
+    Does **not** use the worker/UI pools. Use this for automation "is DB up?" checks so that
+    **pool exhaustion** (checkout timeout) is not mistaken for an offline database.
+    """
+    raw = None
+    try:
+        kwargs = dict(get_db_connect_kwargs())
+        if connect_timeout is not None:
+            kwargs["connect_timeout"] = int(connect_timeout)
+        else:
+            try:
+                probe_sec = int(os.getenv("DB_AUTOMATION_PROBE_CONNECT_TIMEOUT", "4"))
+            except ValueError:
+                probe_sec = 4
+            kwargs["connect_timeout"] = min(probe_sec, int(kwargs.get("connect_timeout", 5) or 5))
+        # Short session timeout — probe only
+        kwargs["options"] = "-c statement_timeout=3000"
+        raw = psycopg2.connect(**kwargs)
+        with raw.cursor() as cur:
+            cur.execute("SELECT 1")
+            return cur.fetchone() is not None
+    except Exception:
+        return False
+    finally:
+        if raw is not None:
+            try:
+                raw.close()
+            except Exception:
+                pass
+
 
 def check_database_health() -> Dict[str, Any]:
-    """Check database health. Returns success=False only when DB is unreachable."""
+    """Check database health via the **connection pool** (same path as normal app work)."""
     conn = None
     try:
         conn = get_db_connection()
         with conn.cursor() as cur:
             cur.execute("SELECT 1")
             result = cur.fetchone()
-            
-            if result:
-                return {
-                    "success": True,
-                    "status": "healthy",
-                    "message": "Database connection successful"
-                }
-            else:
-                return {
-                    "success": False,
-                    "error": "Database query failed"
-                }
-            
+        if result:
+            return {
+                "success": True,
+                "status": "healthy",
+                "message": "Database connection successful"
+            }
+        return {"success": False, "error": "Database query failed"}
     except ConnectionError as e:
         return {"success": False, "error": str(e)}
     except Exception as e:
         return {"success": False, "error": str(e)}
     finally:
         if conn is not None:
-            conn.close()
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 def _init_sqlalchemy():
-    """Lazy-init SQLAlchemy engine (single source, uses get_db_config). Pool size via DB_POOL_*."""
+    """Lazy-init SQLAlchemy engine (independent pool from psycopg2). Pool size via DB_POOL_SA_*."""
     global _sqlalchemy_engine, _sqlalchemy_session_factory
     with _sqlalchemy_lock:
         if _sqlalchemy_engine is not None:
@@ -309,18 +399,21 @@ def _init_sqlalchemy():
         )
         from sqlalchemy import create_engine
         from sqlalchemy.orm import sessionmaker
-        pool_size = int(os.getenv("DB_POOL_MIN", "2"))
-        max_overflow = max(0, int(os.getenv("DB_POOL_MAX", "20")) - pool_size)
+        sa_pool_size = int(os.getenv("DB_POOL_SA_SIZE", "4"))
+        sa_max_overflow = int(os.getenv("DB_POOL_SA_OVERFLOW", "12"))
+        sa_pool_size = min(sa_pool_size, 10)
+        sa_max_overflow = min(sa_max_overflow, 20)
         _sqlalchemy_engine = create_engine(
             url,
             pool_pre_ping=True,
             pool_recycle=300,
-            pool_size=min(pool_size, 10),
-            max_overflow=min(max_overflow, 20),
+            pool_size=sa_pool_size,
+            max_overflow=sa_max_overflow,
+            pool_timeout=30,
             echo=False,
         )
         _sqlalchemy_session_factory = sessionmaker(autocommit=False, autoflush=False, bind=_sqlalchemy_engine)
-        logger.info("SQLAlchemy engine initialized (pool %s+%s, statement_timeout=%sms)", pool_size, max_overflow, timeout_ms)
+        logger.info("SQLAlchemy engine initialized (pool %s+%s, statement_timeout=%sms)", sa_pool_size, sa_max_overflow, timeout_ms)
 
 
 def get_db() -> Generator:
@@ -337,6 +430,34 @@ def get_db_session():
     """Return a SQLAlchemy session directly (caller must close)"""
     _init_sqlalchemy()
     return _sqlalchemy_session_factory()
+
+
+@contextmanager
+def get_db_connection_context():
+    """
+    Context manager for a pooled DB connection. Always returns the connection to the pool on exit.
+    Use this to avoid leaks: 'with get_db_connection_context() as conn: ...'
+    """
+    conn = get_db_connection()
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+
+def get_ui_db_connection():
+    """Get DB connection from reserved UI/monitoring pool."""
+    return get_db_connection(use_reserved=True)
+
+
+@contextmanager
+def get_ui_db_connection_context():
+    """Context manager for reserved UI/monitoring pool connections."""
+    conn = get_ui_db_connection()
+    try:
+        yield conn
+    finally:
+        conn.close()
 
 
 @contextmanager

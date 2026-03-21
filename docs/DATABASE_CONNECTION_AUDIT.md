@@ -48,8 +48,7 @@
 | `api/services/ai_storyline_discovery.py` | Inline dict: localhost, `newsapp_password` | ✅ Uses shared when None |
 | `api/modules/deduplication/advanced_deduplication_service.py` | Inline dict: `Database@NEWSINT2025` | ✅ Uses shared when None |
 | `api/services/rag/base.py` | Inline dict: localhost, `newsapp_password` | ✅ Uses shared when None |
-| `api/services/storyline_service.py` | Inline dict and getter: `news-system-postgres`, `Database@NEWSINT2025` | ✅ Uses shared |
-| `api/services/progressive_enhancement_service.py` | Inline dict: `news-system-postgres`, `Database@NEWSINT2025` | ✅ Uses shared |
+| `api/domains/storyline_management/services/storyline_service.py` | Domain-scoped storylines/articles | ✅ Uses shared `get_db_connection` |
 | `api/services/intelligence_analysis_service.py` | Inline dict: localhost, `newsapp_password` | ✅ Uses shared when None |
 | `api/services/automation_manager.py` | Fallback dict for topic clustering task: `newsapp_password` | ✅ Uses shared in that task |
 | `api/domains/content_analysis/services/topic_clustering_service.py` | `.get('password', 'newsapp_password')` | ✅ Uses shared when config missing/incomplete |

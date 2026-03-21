@@ -27,6 +27,23 @@ from domains.finance.orchestrator_types import TaskType, TaskPriority
 
 logger = logging.getLogger(__name__)
 
+
+def _validate_commodity(commodity: str) -> None:
+    """Raise HTTP 400 if commodity is not in the registry."""
+    try:
+        from domains.finance.commodity_registry import get_commodity_ids
+        ids = get_commodity_ids()
+        if (commodity or "").lower() not in [x.lower() for x in ids]:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown commodity: {commodity}. Valid: {', '.join(ids)}",
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.warning("Commodity registry check failed: %s", e)
+        raise HTTPException(status_code=500, detail="Commodity registry unavailable")
+
 # Timeframe to timedelta for market endpoints
 _TIMEFRAME_MAP = {"1d": 1, "7d": 7, "30d": 30, "90d": 90, "1y": 365}
 
@@ -678,36 +695,106 @@ async def trigger_gold_fetch_history(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/{domain}/finance/commodities")
+async def get_commodities_list(
+    domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+):
+    """Return commodity list from registry for dashboard/nav (id, label)."""
+    _check_domain(domain)
+    try:
+        from domains.finance.commodity_registry import get_commodity_list_for_api
+        return {
+            "success": True,
+            "data": get_commodity_list_for_api(),
+            "timestamp": datetime.now().isoformat(),
+        }
+    except Exception as e:
+        logger.error("Error fetching commodities list: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{domain}/finance/commodity/{commodity}/news")
+async def get_commodity_news(
+    domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+    commodity: str = Path(..., description="Commodity id (e.g. gold, silver, platinum)"),
+    hours: int = Query(168, ge=24, le=720),
+    max_items: int = Query(20, ge=1, le=50),
+):
+    """Commodity-relevant news and contexts (financial relevance filter applied)."""
+    _check_domain(domain)
+    _validate_commodity(commodity)
+    try:
+        from domains.finance.news_orchestrator import get_shortlist
+        shortlist = get_shortlist(topic=commodity.lower(), hours=hours, max_items=max_items, include_contexts=True)
+        return {
+            "success": True,
+            "data": {"items": shortlist},
+            "timestamp": datetime.now().isoformat(),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Error fetching commodity news for %s: %s", commodity, e, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{domain}/finance/commodity/{commodity}/supply-chain")
+async def get_commodity_supply_chain(
+    domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
+    commodity: str = Path(..., description="Commodity id (e.g. gold, silver, platinum)"),
+    hours: int = Query(168, ge=24, le=720),
+    max_items: int = Query(15, ge=1, le=50),
+):
+    """Commodity-relevant contexts (mining, EDGAR, supply-chain). Financial relevance filter applied."""
+    _check_domain(domain)
+    _validate_commodity(commodity)
+    try:
+        from domains.finance.news_orchestrator import get_supply_chain_items
+        items = get_supply_chain_items(commodity.lower(), hours=hours, max_items=max_items)
+        return {
+            "success": True,
+            "data": {"items": items},
+            "timestamp": datetime.now().isoformat(),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Error fetching commodity supply-chain for %s: %s", commodity, e, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/{domain}/finance/commodity/{commodity}/history")
 async def get_commodity_history(
     domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
-    commodity: str = Path(..., pattern="^(gold|silver|platinum)$"),
+    commodity: str = Path(..., description="Commodity id (e.g. gold, silver, platinum)"),
     days: int = Query(90, ge=1, le=1825),
     fetch_if_empty: bool = Query(True),
 ):
     """Historical daily prices for one commodity.
-    Gold uses amalgamator (FRED preferred, then metals.dev). Silver/platinum: FRED first, then manual store.
+    Gold: amalgamator. Others: FRED from registry first; metals (silver/platinum) fall back to manual store. Oil/gas: FRED only.
     """
     _check_domain(domain)
+    _validate_commodity(commodity)
     try:
-        if commodity == "gold":
+        from domains.finance.commodity_registry import get_metals_dev
+        cid = commodity.lower()
+        if cid == "gold":
             from domains.finance.gold_amalgamator import get_history
-
             obs = get_history(days=days, fetch_if_empty=fetch_if_empty)
         else:
-            # Silver/platinum: try FRED first, then manual store (backfill + spot appends).
             from domains.finance.data_sources.fred_commodity import fetch_commodity_history_from_fred
-            from domains.finance.commodity_store import get_manual_history
-
             end_dt = datetime.now(timezone.utc).date()
             start_dt = end_dt - timedelta(days=max(1, days))
             start = start_dt.strftime("%Y-%m-%d")
             end = end_dt.strftime("%Y-%m-%d")
-            fred_result = fetch_commodity_history_from_fred(commodity, start=start, end=end, store=False)
+            fred_result = fetch_commodity_history_from_fred(cid, start=start, end=end, store=False)
             if fred_result.success and fred_result.data:
                 obs = fred_result.data
+            elif get_metals_dev(cid):
+                from domains.finance.commodity_store import get_manual_history
+                obs = get_manual_history(cid, days=days)
             else:
-                obs = get_manual_history(commodity, days=days)
+                obs = []
         return {
             "success": True,
             "data": {"observations": obs, "days": days},
@@ -721,29 +808,32 @@ async def get_commodity_history(
 @router.get("/{domain}/finance/commodity/{commodity}/spot")
 async def get_commodity_spot(
     domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
-    commodity: str = Path(..., pattern="^(gold|silver|platinum)$"),
+    commodity: str = Path(..., description="Commodity id (e.g. gold, silver, platinum, oil, gas)"),
 ):
-    """Current spot price for one metal. FRED first, then metals.dev (gold uses amalgamator as fallback)."""
+    """Current spot price. FRED from registry first; metals use metals.dev; gold also amalgamator. Unit from registry."""
     _check_domain(domain)
+    _validate_commodity(commodity)
     try:
-        # Silver/platinum: try FRED latest first, then metals.dev
-        if commodity in ("silver", "platinum"):
-            from domains.finance.data_sources.fred_commodity import fetch_commodity_spot_from_fred
+        from domains.finance.commodity_registry import get_unit, get_metals_dev
+        from domains.finance.data_sources.fred_commodity import fetch_commodity_spot_from_fred
+        cid = commodity.lower()
+        default_unit = get_unit(cid)
+        fred_spot = fetch_commodity_spot_from_fred(cid)
+        if fred_spot.success and fred_spot.data:
+            return {
+                "success": True,
+                "data": {
+                    "price": fred_spot.data.get("price"),
+                    "unit": fred_spot.data.get("unit", default_unit),
+                    "source_id": fred_spot.data.get("source_id", "fred"),
+                },
+                "timestamp": datetime.now().isoformat(),
+            }
+        if get_metals_dev(cid):
             from domains.finance.data_sources.metals_dev import fetch_spot
             from domains.finance.commodity_store import upsert_manual_observations
 
-            fred_spot = fetch_commodity_spot_from_fred(commodity)
-            if fred_spot.success and fred_spot.data:
-                return {
-                    "success": True,
-                    "data": {
-                        "price": fred_spot.data.get("price"),
-                        "unit": fred_spot.data.get("unit", "USD/toz"),
-                        "source_id": fred_spot.data.get("source_id", "fred"),
-                    },
-                    "timestamp": datetime.now().isoformat(),
-                }
-            res = fetch_spot(metal=commodity, currency="USD")
+            res = fetch_spot(metal=cid, currency="USD")
             if res.success and res.data:
                 data = res.data
                 date_str = (data.get("timestamp") or datetime.now(timezone.utc).isoformat())[:10]
@@ -752,77 +842,34 @@ async def get_commodity_spot(
                         "date": date_str,
                         "value": data.get("price"),
                         "metadata": {
-                            "unit": data.get("unit", "USD/toz"),
+                            "unit": data.get("unit", default_unit),
                             "source_id": "metals_dev_spot",
                             "raw": data,
                         },
                     }
                 ]
                 try:
-                    upsert_manual_observations(commodity, obs)
+                    upsert_manual_observations(cid, obs)
                 except Exception:
-                    logger.debug("Failed to upsert %s spot into manual store", commodity, exc_info=True)
+                    logger.debug("Failed to upsert %s spot into manual store", cid, exc_info=True)
                 return {"success": True, "data": data, "timestamp": datetime.now().isoformat()}
-            return {
-                "success": True,
-                "data": {"price": None, "unit": "USD/toz"},
-                "timestamp": datetime.now().isoformat(),
-            }
-
-        # Gold: try FRED latest first, then metals.dev, then amalgamator
-        from domains.finance.data_sources.fred_commodity import fetch_commodity_spot_from_fred
-        from domains.finance.data_sources.metals_dev import fetch_spot
-        from domains.finance.commodity_store import upsert_manual_observations
-
-        fred_spot = fetch_commodity_spot_from_fred("gold")
-        if fred_spot.success and fred_spot.data:
-            return {
-                "success": True,
-                "data": {
-                    "price": fred_spot.data.get("price"),
-                    "unit": fred_spot.data.get("unit", "USD/toz"),
-                    "source_id": fred_spot.data.get("source_id", "fred"),
-                },
-                "timestamp": datetime.now().isoformat(),
-            }
-        res = fetch_spot(metal=commodity, currency="USD")
-        if res.success and res.data:
-            data = res.data
-            date_str = (data.get("timestamp") or datetime.now(timezone.utc).isoformat())[:10]
-            obs = [
-                {
-                    "date": date_str,
-                    "value": data.get("price"),
-                    "metadata": {
-                        "unit": data.get("unit", "USD/toz"),
-                        "source_id": "metals_dev_spot",
-                        "raw": data,
-                    },
-                }
-            ]
-            try:
-                upsert_manual_observations(commodity, obs)
-            except Exception:
-                logger.debug("Failed to upsert %s spot into manual store", commodity, exc_info=True)
-            return {"success": True, "data": data, "timestamp": datetime.now().isoformat()}
-        if commodity == "gold":
-            from domains.finance.gold_amalgamator import get_unified
-
-            obs = get_unified(prefer_unit="USD/oz", fetch_if_empty=True)
-            if obs:
-                latest = obs[-1]
-                return {
-                    "success": True,
-                    "data": {
-                        "price": latest.get("value"),
-                        "unit": latest.get("unit", "USD/oz"),
-                        "source_id": latest.get("source_id"),
-                    },
-                    "timestamp": datetime.now().isoformat(),
-                }
+            if cid == "gold":
+                from domains.finance.gold_amalgamator import get_unified
+                unified = get_unified(prefer_unit="USD/oz", fetch_if_empty=True)
+                if unified:
+                    latest = unified[-1]
+                    return {
+                        "success": True,
+                        "data": {
+                            "price": latest.get("value"),
+                            "unit": latest.get("unit", default_unit),
+                            "source_id": latest.get("source_id"),
+                        },
+                        "timestamp": datetime.now().isoformat(),
+                    }
         return {
             "success": True,
-            "data": {"price": None, "unit": "USD/oz"},
+            "data": {"price": None, "unit": default_unit},
             "timestamp": datetime.now().isoformat(),
         }
     except Exception as e:
@@ -833,12 +880,16 @@ async def get_commodity_spot(
 @router.get("/{domain}/finance/commodity/{commodity}/authority")
 async def get_commodity_authority(
     domain: str = Path(..., pattern="^(politics|finance|science-tech)$"),
-    commodity: str = Path(..., pattern="^(gold|silver|platinum)$"),
+    commodity: str = Path(..., description="Commodity id (e.g. gold, silver, platinum)"),
     authorities: str | None = Query("lbma,mcx,ibja"),
 ):
     """Regional authority prices (LBMA, MCX, IBJA). Same endpoint for all metals; API may return metal-specific rates."""
     _check_domain(domain)
+    _validate_commodity(commodity)
     try:
+        from domains.finance.commodity_registry import get_metals_dev
+        if not get_metals_dev(commodity.lower()):
+            return {"success": True, "data": {}, "timestamp": datetime.now().isoformat()}
         from domains.finance.data_sources.metals_dev import fetch_authority
         out = {}
         for auth in (authorities or "lbma,mcx,ibja").split(","):
@@ -873,7 +924,12 @@ async def get_commodity_geo_events(
         raise HTTPException(status_code=503, detail="Database unavailable")
     try:
         # Fetch more rows if we filter by commodity so we still have enough after filtering
-        fetch_limit = limit * 3 if commodity and commodity.lower() in ("gold", "silver", "platinum") else limit
+        try:
+            from domains.finance.commodity_registry import get_commodity_ids
+            valid_ids = [x.lower() for x in get_commodity_ids()]
+        except Exception:
+            valid_ids = ["gold", "silver", "platinum"]
+        fetch_limit = limit * 3 if commodity and (commodity or "").lower() in valid_ids else limit
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -899,7 +955,7 @@ async def get_commodity_geo_events(
             }
             for r in rows
         ]
-        if commodity and commodity.lower() in ("gold", "silver", "platinum"):
+        if commodity and (commodity or "").lower() in valid_ids:
             from domains.finance.news_orchestrator import is_relevant_to_commodity
             combined = [
                 (ev, (ev.get("event_name") or "") + " " + (ev.get("geographic_scope") or ""))
@@ -950,7 +1006,12 @@ async def get_commodity_regulatory_events(
     if not conn:
         raise HTTPException(status_code=503, detail="Database unavailable")
     try:
-        fetch_limit = limit * 3 if commodity and commodity.lower() in ("gold", "silver", "platinum") else limit
+        try:
+            from domains.finance.commodity_registry import get_commodity_ids
+            reg_ids = [x.lower() for x in get_commodity_ids()]
+        except Exception:
+            reg_ids = ["gold", "silver", "platinum"]
+        fetch_limit = limit * 3 if commodity and (commodity or "").lower() in reg_ids else limit
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -977,7 +1038,7 @@ async def get_commodity_regulatory_events(
             }
             for r in rows
         ]
-        if commodity and commodity.lower() in ("gold", "silver", "platinum"):
+        if commodity and (commodity or "").lower() in reg_ids:
             from domains.finance.news_orchestrator import is_relevant_to_commodity
             combined = [
                 (ev, (ev.get("event_name") or "") + " " + (ev.get("geographic_scope") or ""))

@@ -12,7 +12,10 @@ import os
 import sys
 from collections import defaultdict
 
-from shared.database.connection import get_db_connection
+from shared.database.connection import get_db_connection, get_ui_db_connection
+
+# Reserve dedicated pool for monitoring/page-load endpoints in this module
+get_monitoring_db_connection = get_ui_db_connection
 from shared.services.response_cache import cached_response
 
 logger = logging.getLogger(__name__)
@@ -88,7 +91,7 @@ def _get_gpu_metrics() -> Dict[str, Any]:
 
 @router.get("/orchestrator")
 async def orchestrator_status(request: Request):
-    """Newsroom Orchestrator v6 status: enabled, running, last_event_at, queue_depth."""
+    """Newsroom Orchestrator v8 status: enabled, running, last_event_at, queue_depth."""
     orchestrator = getattr(request.app.state, "newsroom_orchestrator", None)
     if orchestrator is None:
         return {"enabled": False, "running": False, "last_event_at": None, "queue_depth": 0}
@@ -121,7 +124,7 @@ async def health_check():
             
             def db_check():
                 try:
-                    conn = get_db_connection()
+                    conn = get_monitoring_db_connection()
                     if conn:
                         with conn.cursor() as cur:
                             cur.execute("SELECT 1")
@@ -245,7 +248,7 @@ def get_monitoring_overview():
 
         def db_check():
             try:
-                conn = get_db_connection()
+                conn = get_monitoring_db_connection()
                 if conn:
                     with conn.cursor() as cur:
                         cur.execute("SELECT 1")
@@ -307,10 +310,112 @@ def get_monitoring_overview():
     }
 
 
+@router.get("/database/connections")
+@cached_response(ttl=5)
+async def get_database_connections(
+    limit: int = Query(80, ge=10, le=300, description="Max sessions to return"),
+    long_running_seconds: int = Query(60, ge=10, le=3600, description="Mark sessions older than this"),
+):
+    """
+    Active DB sessions from pg_stat_activity so Monitor can spot long-lived connections.
+    Uses reserved monitoring pool and short timeout to avoid blocking page load.
+    """
+    import asyncio
+
+    def _collect() -> Dict[str, Any]:
+        conn = None
+        try:
+            conn = get_monitoring_db_connection()
+            with conn.cursor() as cur:
+                cur.execute("SET LOCAL statement_timeout = '3s'")
+                cur.execute(
+                    """
+                    SELECT
+                        pid,
+                        usename,
+                        COALESCE(application_name, '') AS application_name,
+                        COALESCE(client_addr::text, 'local') AS client_addr,
+                        state,
+                        backend_start,
+                        xact_start,
+                        query_start,
+                        wait_event_type,
+                        wait_event,
+                        LEFT(COALESCE(query, ''), 500) AS query_text,
+                        EXTRACT(EPOCH FROM (NOW() - COALESCE(query_start, xact_start, backend_start)))::int AS open_seconds
+                    FROM pg_stat_activity
+                    WHERE datname = current_database()
+                      AND pid <> pg_backend_pid()
+                    ORDER BY open_seconds DESC NULLS LAST, backend_start ASC
+                    LIMIT %s
+                    """,
+                    (limit,),
+                )
+                rows = cur.fetchall()
+
+            sessions: List[Dict[str, Any]] = []
+            state_counts: Dict[str, int] = defaultdict(int)
+            long_running = 0
+            for row in rows:
+                open_seconds = int(row[11] or 0)
+                is_long = open_seconds >= long_running_seconds
+                if is_long:
+                    long_running += 1
+                state = row[4] or "unknown"
+                state_counts[state] += 1
+                sessions.append(
+                    {
+                        "pid": row[0],
+                        "user": row[1],
+                        "application_name": row[2],
+                        "client_addr": row[3],
+                        "state": state,
+                        "backend_start": row[5].isoformat() if hasattr(row[5], "isoformat") else None,
+                        "xact_start": row[6].isoformat() if hasattr(row[6], "isoformat") else None,
+                        "query_start": row[7].isoformat() if hasattr(row[7], "isoformat") else None,
+                        "wait_event_type": row[8],
+                        "wait_event": row[9],
+                        "query_text": row[10],
+                        "open_seconds": open_seconds,
+                        "long_running": is_long,
+                    }
+                )
+
+            return {
+                "success": True,
+                "data": {
+                    "total_sessions": len(sessions),
+                    "long_running_threshold_seconds": long_running_seconds,
+                    "long_running_sessions": long_running,
+                    "state_counts": dict(state_counts),
+                    "sessions": sessions,
+                },
+            }
+        except Exception as e:
+            logger.warning("database/connections failed: %s", e)
+            return {"success": False, "error": str(e)[:200], "data": {"sessions": []}}
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+
+    # UI pool checkout (up to ~3s) + pg_stat_activity (statement_timeout 3s) can approach 6s under load; allow headroom.
+    try:
+        return await asyncio.wait_for(asyncio.to_thread(_collect), timeout=14.0)
+    except asyncio.TimeoutError:
+        return {
+            "success": False,
+            "error": "database connections query timed out",
+            "data": {"sessions": []},
+        }
+
+
 def _get_last_run_from_db(phase_name: str) -> Optional[datetime]:
     """Latest finished_at for this phase from automation_run_history (survives restart)."""
     try:
-        conn = get_db_connection()
+        conn = get_monitoring_db_connection()
         if not conn:
             return None
         try:
@@ -334,8 +439,9 @@ AUTOMATION_STATUS_TIMEOUT_SECONDS = 2.0
 @router.get("/automation/status")
 async def get_automation_status(request: Request) -> Dict[str, Any]:
     """
-    AutomationManager status for monitoring: is_running, queue_size, active_workers,
-    and per-phase last_run + interval so the UI can show phase timeline and next-due.
+    AutomationManager status for monitoring:
+    is_running, queue_size, active_workers, and per-phase last_run plus workload metrics
+    (queued/running counts and how many times it ran in the last 60 minutes).
     last_run is augmented from automation_run_history when in-memory is missing (survives API restart).
     Never blocks on pipeline: uses a short timeout so the web UI always loads with current data.
     """
@@ -358,23 +464,43 @@ async def get_automation_status(request: Request) -> Dict[str, Any]:
             timeout=AUTOMATION_STATUS_TIMEOUT_SECONDS,
         )
         schedules = status.get("schedules") or {}
-        # Phase timeline groupings (aligned with current process names; deprecated phases removed)
-        phase_group_labels = {
-            0: "Monitoring",
-            1: "Collection & enrichment",
-            2: "Context & events",
-            3: "ML processing",
-            4: "ML & entity extraction (parallel)",
-            5: "Topic clustering",
-            6: "Summaries",
-            7: "Storylines & automation",
-            8: "RAG enhancement",
-            9: "Events, timelines & enrichment",
-            10: "Maintenance",
-            11: "Digests",
-            12: "Watchlist & patterns",
-            99: "Maintenance",
-        }
+        queued_by_phase = status.get("queued_tasks_by_phase") or {}
+        active_by_phase = status.get("active_tasks_by_phase") or {}
+        runs_last_60m_by_phase = status.get("runs_last_60m_by_phase") or {}
+        # v8: Group by pipeline stage (Collection → Foundation → Extraction → Intelligence → Output)
+        PIPELINE_STAGE_ORDER = [
+            "Collection cycle",
+            "Foundation",
+            "Extraction",
+            "Intelligence",
+            "Output",
+            "Monitoring",
+            "Other",
+        ]
+        STAGE_BY_TASK = {}
+        STAGE_BY_TASK["collection_cycle"] = "Collection cycle"
+        for t in ("context_sync", "entity_profile_sync", "ml_processing", "entity_extraction", "metadata_enrichment"):
+            STAGE_BY_TASK[t] = "Foundation"
+        for t in ("claim_extraction", "event_tracking", "topic_clustering", "quality_scoring", "sentiment_analysis"):
+            STAGE_BY_TASK[t] = "Extraction"
+        for t in (
+            "entity_profile_build", "entity_organizer", "pattern_recognition", "cross_domain_synthesis",
+            "storyline_discovery", "proactive_detection", "fact_verification", "event_coherence_review",
+            "entity_enrichment", "story_enhancement", "pattern_matching", "research_topic_refinement",
+            "investigation_report_refresh",
+        ):
+            STAGE_BY_TASK[t] = "Intelligence"
+        for t in (
+            "storyline_processing", "rag_enhancement", "storyline_automation", "storyline_enrichment", "story_continuation",
+            "event_extraction", "event_deduplication", "timeline_generation", "editorial_document_generation",
+            "editorial_briefing_generation", "entity_dossier_compile", "entity_position_tracker",
+            "storyline_synthesis", "daily_briefing_synthesis", "digest_generation", "watchlist_alerts",
+            "cache_cleanup", "data_cleanup", "narrative_thread_build",
+        ):
+            STAGE_BY_TASK[t] = "Output"
+        STAGE_BY_TASK["health_check"] = "Monitoring"
+        STAGE_BY_TASK["pending_db_flush"] = "Monitoring"
+
         phases = []
         for name, sched in schedules.items():
             if not isinstance(sched, dict):
@@ -386,19 +512,21 @@ async def get_automation_status(request: Request) -> Dict[str, Any]:
                 if db_last is not None:
                     last_run = db_last
             phase_num = sched.get("phase")
+            stage_label = STAGE_BY_TASK.get(name, "Other")
             phases.append({
                 "name": name,
                 "last_run": last_run.isoformat() if hasattr(last_run, "isoformat") else str(last_run) if last_run else None,
-                "interval_seconds": sched.get("interval"),
                 "enabled": sched.get("enabled", True),
                 "phase": phase_num,
-                "phase_group_label": phase_group_labels.get(phase_num, f"Phase {phase_num}"),
+                "phase_group_label": stage_label,
                 "parallel_group": sched.get("parallel_group"),
+                "stage_order": PIPELINE_STAGE_ORDER.index(stage_label) if stage_label in PIPELINE_STAGE_ORDER else 99,
+                "queued_tasks": queued_by_phase.get(name, 0),
+                "running_tasks": active_by_phase.get(name, 0),
+                "runs_last_60m": runs_last_60m_by_phase.get(name, 0),
             })
-        phases.sort(key=lambda p: (p.get("phase") or 0, p.get("name") or ""))
+        phases.sort(key=lambda p: (p.get("stage_order", 99), p.get("name") or ""))
         backlog_counts = status.get("backlog_counts") or {}
-        content_enrichment_backlog = backlog_counts.get("content_enrichment") or 0
-        enrichment_backlog_first_active = content_enrichment_backlog > 0
         return {
             "success": True,
             "data": {
@@ -406,8 +534,6 @@ async def get_automation_status(request: Request) -> Dict[str, Any]:
                 "queue_size": status.get("queue_size", 0),
                 "active_workers": status.get("active_workers", 0),
                 "phases": phases,
-                "enrichment_backlog_first_active": enrichment_backlog_first_active,
-                "content_enrichment_backlog": content_enrichment_backlog,
                 "backlog_counts": backlog_counts,
             },
         }
@@ -421,8 +547,6 @@ async def get_automation_status(request: Request) -> Dict[str, Any]:
                 "active_workers": 0,
                 "phases": [],
                 "message": "Status temporarily unavailable (pipeline busy); refresh in a moment.",
-                "enrichment_backlog_first_active": False,
-                "content_enrichment_backlog": 0,
             },
         }
     except Exception as e:
@@ -454,7 +578,7 @@ async def get_sources_collected(
     }
 
     # 1) RSS feeds: any feed with last_fetched_at in the window (per-domain tables)
-    conn = get_db_connection()
+    conn = get_monitoring_db_connection()
     if conn:
         try:
             for schema, domain_key in [("politics", "politics"), ("finance", "finance"), ("science_tech", "science-tech")]:
@@ -512,7 +636,7 @@ async def get_sources_collected(
         logger.debug("sources_collected orchestrator_state: %s", e)
 
     # 3) Pipeline stages that ran in the window (e.g. rss_collection)
-    conn2 = get_db_connection()
+    conn2 = get_monitoring_db_connection()
     if conn2:
         try:
             with conn2.cursor() as cur:
@@ -614,7 +738,7 @@ async def get_fast_stats():
     Optimized for quick page loads by using a SINGLE query with UNION ALL.
     """
     try:
-        conn = get_db_connection()
+        conn = get_monitoring_db_connection()
         if not conn:
             raise HTTPException(status_code=500, detail="Database connection failed")
         
@@ -670,7 +794,7 @@ async def get_system_metrics(
 ):
     """Get system metrics"""
     try:
-        conn = get_db_connection()
+        conn = get_monitoring_db_connection()
         if not conn:
             raise HTTPException(status_code=500, detail="Database connection failed")
         
@@ -753,7 +877,7 @@ async def get_system_alerts(
 ):
     """Get system alerts"""
     try:
-        conn = get_db_connection()
+        conn = get_monitoring_db_connection()
         if not conn:
             raise HTTPException(status_code=500, detail="Database connection failed")
         
@@ -824,7 +948,7 @@ async def create_system_alert(request: Dict[str, Any]):
         if not alert_type or not title:
             raise HTTPException(status_code=400, detail="Alert type and title are required")
         
-        conn = get_db_connection()
+        conn = get_monitoring_db_connection()
         if not conn:
             raise HTTPException(status_code=500, detail="Database connection failed")
         
@@ -871,7 +995,7 @@ async def create_system_alert(request: Dict[str, Any]):
 async def resolve_alert(alert_id: int):
     """Resolve a system alert"""
     try:
-        conn = get_db_connection()
+        conn = get_monitoring_db_connection()
         if not conn:
             raise HTTPException(status_code=500, detail="Database connection failed")
         
@@ -939,7 +1063,7 @@ async def get_anomalies(
                 logger.debug("detect_anomalies %s: %s", d, e)
         if not include_investigated and all_anomalies:
             try:
-                conn = get_db_connection()
+                conn = get_monitoring_db_connection()
                 if conn:
                     with conn.cursor() as cur:
                         cur.execute(
@@ -987,7 +1111,7 @@ async def investigate_anomaly(
     if action not in ("investigated", "dismissed", "escalated"):
         raise HTTPException(status_code=400, detail="action must be investigated, dismissed, or escalated")
     try:
-        conn = get_db_connection()
+        conn = get_monitoring_db_connection()
         if not conn:
             raise HTTPException(status_code=503, detail="Database unavailable")
         with conn.cursor() as cur:
@@ -1022,7 +1146,7 @@ async def investigate_anomaly(
 async def get_system_status():
     """Get comprehensive system status"""
     try:
-        conn = get_db_connection()
+        conn = get_monitoring_db_connection()
         if not conn:
             raise HTTPException(status_code=500, detail="Database connection failed")
         
@@ -1179,7 +1303,7 @@ async def get_system_status():
 async def get_dashboard_metrics():
     """Get dashboard-specific database metrics"""
     try:
-        conn = get_db_connection()
+        conn = get_monitoring_db_connection()
         if not conn:
             raise HTTPException(status_code=500, detail="Database connection failed")
         
@@ -1238,7 +1362,7 @@ async def apply_migration_128():
     This adds official government feeds to finance, politics, and science_tech domains
     """
     try:
-        conn = get_db_connection()
+        conn = get_monitoring_db_connection()
         if not conn:
             raise HTTPException(status_code=500, detail="Database connection failed")
         
@@ -1316,7 +1440,7 @@ ON CONFLICT (feed_url) DO NOTHING;
 async def get_performance_metrics():
     """Get performance metrics"""
     try:
-        conn = get_db_connection()
+        conn = get_monitoring_db_connection()
         if not conn:
             raise HTTPException(status_code=500, detail="Database connection failed")
         
@@ -1358,7 +1482,7 @@ async def get_performance_metrics():
 async def process_metric_collection():
     """Background task for collecting system metrics"""
     try:
-        conn = get_db_connection()
+        conn = get_monitoring_db_connection()
         if not conn:
             return
         
@@ -1408,7 +1532,7 @@ async def process_metric_collection():
 async def get_pipeline_status():
     """Get pipeline monitoring status with stage progress tracking"""
     try:
-        conn = get_db_connection()
+        conn = get_monitoring_db_connection()
         if not conn:
             raise HTTPException(status_code=500, detail="Database connection failed")
         
@@ -1561,11 +1685,15 @@ async def run_all_pipeline_processes(background_tasks: BackgroundTasks):
     1. RSS Feed Collection
     2. Topic Clustering
     3. AI Analysis (Sentiment & Entity Extraction)
+    Runs in a dedicated thread so the API event loop stays responsive.
     """
+    import threading
     try:
-        # Start orchestration in background
-        background_tasks.add_task(run_pipeline_orchestration_sync)
-        
+        # Run in a daemon thread so it never blocks the event loop (BackgroundTasks
+        # can still run sync tasks on a pool thread, but explicit thread guarantees isolation)
+        thread = threading.Thread(target=run_pipeline_orchestration_sync, name="pipeline_trigger", daemon=True)
+        thread.start()
+
         return {
             "success": True,
             "message": "Pipeline orchestration started",
@@ -1644,59 +1772,57 @@ def execute_pipeline_orchestration():
         _log_pipeline_trace(trace_id, "ai_analysis", "started")
         
         try:
-            conn = get_db_connection()
+            conn = get_monitoring_db_connection()
             if conn:
                 try:
+                    analyzed_count = 0
                     with conn.cursor() as cur:
-                        # Get recent articles without analysis
-                        cur.execute("""
-                            SELECT id, title, content 
-                            FROM articles 
-                            WHERE created_at >= NOW() - INTERVAL '24 hours'
-                            AND (sentiment_score IS NULL OR LENGTH(COALESCE(content, '')) > 0)
-                            ORDER BY created_at DESC
-                            LIMIT 100
-                        """)
-                        articles = cur.fetchall()
-                        
-                        analyzed_count = 0
-                        
-                        # Use a simple sync sentiment approach for batch processing
-                        # Full LLM analysis can be done per-article later
-                        for article_id, title, content in articles[:50]:  # Limit to 50 for performance
-                            if content and len(content) > 50:
-                                try:
-                                    # Simple sentiment scoring based on keywords (fast batch processing)
-                                    # Full LLM analysis can be triggered per-article
-                                    positive_words = ['good', 'great', 'excellent', 'positive', 'success', 'win', 'improve', 'better']
-                                    negative_words = ['bad', 'worse', 'fail', 'negative', 'crisis', 'problem', 'concern', 'risk']
-                                    
-                                    content_lower = content[:500].lower()
-                                    positive_count = sum(1 for word in positive_words if word in content_lower)
-                                    negative_count = sum(1 for word in negative_words if word in content_lower)
-                                    
-                                    if positive_count > negative_count:
-                                        sentiment_score = 0.6 + min(positive_count * 0.05, 0.3)
-                                    elif negative_count > positive_count:
-                                        sentiment_score = 0.4 - min(negative_count * 0.05, 0.3)
-                                    else:
-                                        sentiment_score = 0.5
-                                    
-                                    sentiment_score = max(0.0, min(1.0, sentiment_score))
-                                    
-                                    
-                                    cur.execute("""
-                                        UPDATE articles 
-                                        SET sentiment_score = %s, 
-                                            analysis_updated_at = NOW()
-                                        WHERE id = %s
-                                    """, (sentiment_score, article_id))
-                                    
-                                    analyzed_count += 1
-                                except Exception as e:
-                                    logger.warning(f"[{trace_id}] Error analyzing article {article_id}: {e}")
-                                    continue
-                        
+                        for schema in ("politics", "finance", "science_tech"):
+                            # Get recent domain articles without sentiment.
+                            cur.execute(f"""
+                                SELECT id, title, content
+                                FROM {schema}.articles
+                                WHERE created_at >= NOW() - INTERVAL '24 hours'
+                                  AND content IS NOT NULL
+                                  AND LENGTH(content) > 50
+                                  AND sentiment_score IS NULL
+                                ORDER BY created_at DESC
+                                LIMIT 50
+                            """)
+                            articles = cur.fetchall()
+
+                            # Use a simple sync sentiment approach for batch processing.
+                            for article_id, title, content in articles:
+                                if content and len(content) > 50:
+                                    try:
+                                        positive_words = ['good', 'great', 'excellent', 'positive', 'success', 'win', 'improve', 'better']
+                                        negative_words = ['bad', 'worse', 'fail', 'negative', 'crisis', 'problem', 'concern', 'risk']
+
+                                        content_lower = content[:500].lower()
+                                        positive_count = sum(1 for word in positive_words if word in content_lower)
+                                        negative_count = sum(1 for word in negative_words if word in content_lower)
+
+                                        if positive_count > negative_count:
+                                            sentiment_score = 0.6 + min(positive_count * 0.05, 0.3)
+                                        elif negative_count > positive_count:
+                                            sentiment_score = 0.4 - min(negative_count * 0.05, 0.3)
+                                        else:
+                                            sentiment_score = 0.5
+
+                                        sentiment_score = max(0.0, min(1.0, sentiment_score))
+
+                                        cur.execute(f"""
+                                            UPDATE {schema}.articles
+                                            SET sentiment_score = %s,
+                                                analysis_updated_at = NOW()
+                                            WHERE id = %s
+                                        """, (sentiment_score, article_id))
+
+                                        analyzed_count += 1
+                                    except Exception as e:
+                                        logger.warning(f"[{trace_id}] Error analyzing article {article_id} ({schema}): {e}")
+                                        continue
+
                         conn.commit()
                         _log_pipeline_trace(trace_id, "ai_analysis", "completed", {"articles_analyzed": analyzed_count})
                         logger.info(f"[{trace_id}] AI Analysis completed: {analyzed_count} articles analyzed")
@@ -1720,7 +1846,7 @@ def _log_pipeline_trace(trace_id: str, stage: str, status: str, metadata: Dict[s
     import json
     import uuid
     try:
-        conn = get_db_connection()
+        conn = get_monitoring_db_connection()
         if not conn:
             return
 
@@ -1824,7 +1950,7 @@ async def get_log_statistics(days: int = 7):
     Returns counts of errors, warnings, info, and total entries
     """
     try:
-        conn = get_db_connection()
+        conn = get_monitoring_db_connection()
         if not conn:
             raise HTTPException(status_code=500, detail="Database connection failed")
         
@@ -1917,7 +2043,7 @@ def get_process_run_summary(
     }
 
     # 1) Automation phases: run recently vs not (from automation_run_history — survives restart)
-    conn = get_db_connection()
+    conn = get_monitoring_db_connection()
     run_in_window = {}  # phase_name -> last finished_at in window
     last_run_ever = {}  # phase_name -> last finished_at (any time)
     if conn:
@@ -2001,7 +2127,7 @@ def get_process_run_summary(
     out["phases_not_run_recently"].sort(key=lambda x: (x.get("phase") or 0, x.get("name") or ""))
 
     # 2) Pipeline checkpoints in the window
-    conn = get_db_connection()
+    conn = get_monitoring_db_connection()
     if conn:
         try:
             with conn.cursor() as cur:
@@ -2069,7 +2195,7 @@ async def get_realtime_logs(limit: int = Query(50, ge=1, le=100)):  # Max 100 fo
     Returns recent log entries in chronological order
     """
     try:
-        conn = get_db_connection()
+        conn = get_monitoring_db_connection()
         if not conn:
             raise HTTPException(status_code=500, detail="Database connection failed")
         
@@ -2168,7 +2294,7 @@ async def analyze_existing_articles(
         raise HTTPException(status_code=503, detail="Filtering functions not available")
     
     try:
-        conn = get_db_connection()
+        conn = get_monitoring_db_connection()
         if not conn:
             raise HTTPException(status_code=500, detail="Database connection failed")
         

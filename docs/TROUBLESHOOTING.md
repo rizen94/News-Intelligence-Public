@@ -4,6 +4,25 @@
 
 ## 🚨 Quick Diagnostics
 
+### **Database assessment & alignment**
+
+For full-stack DB alignment (schema, API, web, automation persistence), baseline scripts, and cleanup bundles:
+
+- [DB_FULL_ASSESSMENT.md](DB_FULL_ASSESSMENT.md) — matrices, gates, expert checklist  
+- [DB_CLEANUP_BUNDLES.md](DB_CLEANUP_BUNDLES.md) — bundles A/B/C and pre-delete rules  
+- Commands: `PYTHONPATH=api uv run python api/scripts/verify_migrations_160_167.py`, `PYTHONPATH=api uv run python scripts/db_full_inventory.py`, `PYTHONPATH=api uv run python scripts/db_persistence_gates.py`
+
+### **`claims_to_facts` runs but `versioned_facts` stays empty**
+
+Automation can report success while **zero rows** are inserted if claim subjects cannot be resolved to `intelligence.entity_profiles.id`. A resolver bug (invalid `display_name` column + wrong `old_entity_to_new` join) caused **all** resolutions to fail until fixed.
+
+- Doc: [CLAIMS_TO_FACTS_ENTITY_RESOLUTION.md](CLAIMS_TO_FACTS_ENTITY_RESOLUTION.md)  
+- Diagnose: `PYTHONPATH=api uv run python scripts/diagnose_claims_to_facts.py`
+
+### **Entity enrichment never updates `entity_profiles`**
+
+If the backlog of profiles missing a Wikipedia section exceeds the old **1000-row** guard, the batch used to **skip entirely**. That guard is relaxed (warn-only above `ENTITY_ENRICHMENT_QUEUE_WARN_THRESHOLD`, default 5000). See `api/services/entity_enrichment_service.py`.
+
 ### **System Health Check**
 ```bash
 # Check if all services are running
@@ -20,7 +39,7 @@ curl http://localhost:80
 
 ## 🔧 Service Issues
 
-### **API Not Responding (current — v7, no Docker)**
+### **API Not Responding (current — v8, no Docker)**
 
 **Symptoms**: `curl` to `localhost:8000` times out; TCP connects but no HTTP response; frontend shows "Cannot connect to API".
 
@@ -57,6 +76,40 @@ tail -80 logs/api_server.log
 
 ---
 
+### **Log review after a crash or restart**
+
+**Where to look:** `logs/api_server.log` (API/uvicorn), `logs/startup.log` (start/stop and SIGKILL), `logs/activity.log` (requests). For errors: `grep -E "Error|Exception|Traceback|failed" logs/api_server.log | tail -80`.
+
+**Common post-crash patterns:**
+
+| Log message | Cause | Fix |
+|-------------|--------|-----|
+| `Entity dossier compile failed: 'AutomationManager' object has no attribute '_executor'` | AutomationManager used `_executor` but only `executor` was set. | Fixed in code: `_executor` alias added in `automation_manager.py`. |
+| `Error in keyword search: the JSON object must be str, bytes or bytearray, not list` | JSONB columns (e.g. `entities`, `topics`, `keywords`) returned as list/dict; code called `json.loads()` on them. | Fixed in `api/services/rag/retrieval.py`: use `_parse_json_column()` so we only parse when value is str/bytes. |
+| `Error discovering articles for storyline X: can't subtract offset-naive and offset-aware datetimes` | Datetime timezone mismatch in storyline discovery. | Ensure all `published_at` / comparison datetimes use timezone-aware values (e.g. `timezone.utc`). |
+| `current transaction is aborted, commands ignored until end of transaction block` | One query failed in a transaction; PostgreSQL aborts the transaction so all later commands on that connection fail until ROLLBACK. | Fix the **first** failing operation (often keyword search, entity search, or a missing table). Restart API to clear pooled connections. |
+| `relation "intelligence.context_entity_mentions" does not exist` | Schema/table not created or wrong `search_path`. | Run migrations for the `intelligence` schema; or disable/guard the feature that uses this table. |
+| `relation "watchlist" does not exist` | Watchlist may live in a domain schema (e.g. `politics.watchlist`). | Use schema-qualified name or set `search_path` in the session. |
+| `Task event_deduplication failed: 'NoneType' object has no attribute 'get'` | Automation task received None where a dict was expected. | Add null checks in the task; ensure config or DB returns a dict. |
+
+After fixing code, restart the API so the connection pool is fresh and automation tasks run with the new logic.
+
+---
+
+### **Web page stops connecting when you run a process from Monitor**
+
+**Symptoms:** You click "Run phase now" (or "Trigger pipeline") on the Monitor/Monitoring page and the site stops loading; API health checks time out.
+
+**Cause:** Long-running or blocking work was running on the same thread as the API event loop, so new requests could not be handled.
+
+**Fixes applied in code:**
+- **AutomationManager** now gets DB connections via `run_in_executor`, so connection acquisition no longer blocks the event loop.
+- **Pipeline trigger** (`POST /api/system_monitoring/pipeline/trigger`) now starts the pipeline in a dedicated daemon thread, so it never blocks the API.
+
+**If it still happens:** Heavy phases (e.g. topic_clustering, collection_cycle) still do sync DB and CPU work on the automation worker. Restart the API to recover. Prefer "Trigger pipeline" from the Monitoring page (runs in a separate thread) or run phases during low traffic. To confirm the process is running, check `logs/api_server.log` and the Monitor "Current activity" section.
+
+---
+
 ### **Statement timeouts killing planned work**
 
 **Symptoms**: Migrations or batch jobs fail with `canceling statement due to statement timeout`; ALTER TABLE or long UPDATE never finishes.
@@ -71,6 +124,30 @@ tail -80 logs/api_server.log
 | Backlog metrics (dashboard) | 3 s | Short `SET LOCAL statement_timeout = '3s'` for quick counts. |
 
 **If a migration still times out**: Another process may be holding a lock (e.g. API or cron). Stop the API/workers, run the migration, then restart. Or run the migration during a quiet window.
+
+---
+
+### **Database connection crashes / pool exhausted**
+
+**Symptoms:** API or automation fails with "Database connection failed (pool and direct)", "connection pool timeout", or "current transaction is aborted, commands ignored until end of transaction block". PostgreSQL may show many idle or idle-in-transaction connections.
+
+**Causes and fixes:**
+
+| Cause | Fix |
+|-------|-----|
+| **Connection leaks** | Every `get_db_connection()` must be closed (returns to pool). Use `with get_db_connection_context() as conn:` or `try: ... finally: conn.close()`. Never leave a connection open on exception paths. |
+| **Pool exhausted** | Set `DB_GETCONN_TIMEOUT_SECONDS=30` in `.env` so the process fails fast instead of blocking forever when the pool is exhausted. Fix leaks and/or increase `DB_POOL_MAX` (default 20) if you have many concurrent workers. |
+| **Aborted transaction** | If one query fails, the connection stays in "aborted transaction" and all further commands fail until rollback. The shared module now does `rollback()` before returning a connection to the pool so the next user gets a clean connection. Ensure code that holds a connection long-lived uses `conn.rollback()` or `conn.commit()` before reusing the same conn for another operation. |
+| **Blocking the event loop** | Async code must not call `get_db_connection()` directly; it blocks the event loop. AutomationManager uses `run_in_executor` for `_get_db_connection()`. Other async callers should do the same or use a sync wrapper in a thread. |
+
+**Connection methods (single source: `api/shared/database/connection.py`):**
+
+- **`get_db_connection()`** — Returns a pooled connection. Caller **must** call `conn.close()` when done (or use the context manager).
+- **`get_db_connection_context()`** — Context manager: `with get_db_connection_context() as conn: ...` — always closes on exit.
+- **`get_db_cursor()`** — Context manager that yields a RealDictCursor and closes both cursor and connection on exit.
+- **`get_db_config()`** / **`get_db_connect_kwargs()`** — For scripts or one-off connections with the same timeouts.
+
+**Recommended:** Prefer `get_db_connection_context()` or `get_db_cursor()` for new code so connections are never leaked. Set `DB_GETCONN_TIMEOUT_SECONDS=30` in production so pool exhaustion fails fast instead of hanging the process.
 
 ---
 
@@ -96,6 +173,45 @@ If all enabled steps return no usable text (or paywalled), the **batch** enrichm
 | `ENABLE_ARCHIVETODAY_ENRICHMENT=1` | Enable step 4 (archive.today). |
 
 Rate limits and timeouts apply to browser and archive fetches so we do not overload external services. Logs indicate which path succeeded (live / browser / wayback / archivetoday) and when an article is removed.
+
+---
+
+### **Finance (or other domain) storylines not showing**
+
+**Symptoms:** You open **Storylines** in the Finance (or Science & Tech) domain and see an empty list, even though Politics has storylines or you expect discovery to have run.
+
+**Cause:** Storylines are **per domain**. Each domain has its own table: `politics.storylines`, `finance.storylines`, `science_tech.storylines`. The UI shows only the storylines for the **current domain** (the one in the URL, e.g. `/finance/storylines`). If no discovery or manual creation has populated that domain’s table, the list is empty.
+
+**What to do:**
+
+1. **Confirm domain** — In the Storylines page, check the domain chip next to the title (e.g. "Finance"). The URL should be `/{domain}/storylines` (e.g. `/finance/storylines`). If you were on Politics before, switch to Finance via the domain switcher and open Storylines again.
+2. **Run discovery for this domain** — On the Storylines page, use **Discover storylines now**. Discovery runs for the **current domain only** and writes to that domain’s `storylines` table. It needs enough recent articles in that domain (e.g. finance RSS articles) and typically 2–5 minutes. After it finishes, refresh the list.
+3. **Scheduled discovery** — The automation manager can run storyline discovery for all domains (politics, finance, science-tech) on a schedule. If the scheduler is enabled and the task runs, new storylines will appear after the next run. Check automation/scheduler configuration and logs to confirm the task runs and that it’s not failing for the finance domain. **Eligibility:** `storyline_discovery` depends on `collection_cycle`; the scheduler only requires a short settle window after collection completes (capped by `AUTOMATION_DEPENDENCY_SETTLE_CAP_SEC`, default 180s), not the full collection estimated duration—so discovery should not stay blocked while collection runs on a timer.
+4. **Auto-created status** — Discovery inserts rows with status `suggested` or `active`. The Storylines list shows all statuses unless you filter by status in the UI.
+5. **Create one manually** — Use **Create Storyline** or go to **Story Management**, create a storyline in the Finance domain, and add articles. It will then appear on the Finance Storylines list.
+
+**Quick check (DB):** To see if any finance storylines exist at all:
+```sql
+SELECT COUNT(*) FROM finance.storylines;
+```
+If this is 0, no storylines have been created for finance yet; run discovery or create one manually.
+
+---
+
+### **Automation queue depth keeps growing (hundreds of tasks)**
+
+**Symptoms:** Monitor shows a very large pending task count vs. worker count; backlog never shrinks.
+
+**Behavior (v8+):** When `AUTOMATION_QUEUE_SOFT_CAP` is set (default **200**, `0` disables), the scheduler stops enqueueing most scheduled phases, stops continuous batch re-queues, and skips dependency-chain `request_phase` bursts while combined depth (`task_queue` + requested queue) is at or above the cap. **`collection_cycle`** and **`health_check`** remain allowlisted so ingestion and liveness continue. Tune with `AUTOMATION_QUEUE_SOFT_CAP`, `AUTOMATION_QUEUE_PAUSE_ALLOW` (comma-separated phase names), and inspect `get_status()` fields `combined_queue_depth`, `queue_soft_cap`, `scheduled_enqueue_paused`.
+
+---
+
+### **Known gaps and tech debt (Entity Intelligence / v8)**
+
+| Gap | Impact | Notes |
+|-----|--------|------|
+| **Timeline builder not domain-scoped** | `TimelineBuilderService` queries `chronological_events` and `storylines` without a schema prefix. If your DB uses per-domain schemas (e.g. `politics`, `finance`, `science_tech`) and `chronological_events` lives in `public`, timeline events may not be scoped to the requested domain. | Route `GET /api/{domain}/storylines/{id}/timeline` receives `domain` but does not pass it to the service. Future fix: pass domain/schema into `TimelineBuilderService` and use `{schema}.chronological_events` (or ensure search_path is set per request). |
+| **Storylines API response shape** | List endpoint returns `{ data: StorylineListItem[], pagination, domain }` with no top-level `success` field. Consumers that only check `response.success` will miss the data. | Fixed in Articles and Briefings: treat `response.data` as the array when present; Briefings fallback also accepts `response.data` as the storyline list. |
 
 ---
 
@@ -280,8 +396,8 @@ grep -E "canceling|statement timeout|Task .* failed|event_tracking failed|story_
 
 **What the logs show (typical)**:
 
-- **Content enrichment (v7)** is the only phase that actually reduces the “short/missing content” backlog (trafilatura full-text fetch).
-- Successful runs log: `Content enrichment (v7): N articles enriched` (N often 55–58 per run when batch=60).
+- **Content enrichment (v8)** is the phase that reduces the “short/missing content” backlog (trafilatura full-text fetch); it runs as part of the collection cycle.
+- Successful runs log: `Content enrichment (v8): N articles enriched` (N often 55–58 per run when batch=60).
 - Failed runs log: `Content enrichment failed: canceling statement due to statement timeout` and complete **0** articles for that run.
 
 **Why the backlog doesn’t drop**:
@@ -303,7 +419,7 @@ grep -E "canceling|statement timeout|Task .* failed|event_tracking failed|story_
 **Check actual enrichment rate from logs**:
 ```bash
 # Successful enrichment counts (each run; duplicate lines are from service + automation_manager)
-grep "Content enrichment (v7):" logs/api_server.log | tail -50
+grep "Content enrichment (v8):" logs/api_server.log | tail -50
 
 # Failures (0 articles that run)
 grep "Content enrichment failed" logs/api_server.log | tail -20

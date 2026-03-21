@@ -10,7 +10,11 @@ import logging
 from pydantic import BaseModel
 from difflib import SequenceMatcher
 
-from config.database import get_db_connection
+from shared.database.connection import get_db_connection
+from shared.services.domain_aware_service import (
+    DOMAIN_DATA_SCHEMAS,
+    resolve_article_id_to_schema,
+)
 from scripts.article_deduplication import ArticleDeduplicationSystem
 
 logger = logging.getLogger(__name__)
@@ -162,9 +166,12 @@ async def merge_duplicates(request: DuplicateMergeRequest):
             # Get article details
             conn = deduplicator.conn
             with conn.cursor() as cur:
-                cur.execute("""
+                sch = resolve_article_id_to_schema(request.keep_article_id)
+                if not sch:
+                    raise HTTPException(status_code=404, detail="Article not found")
+                cur.execute(f"""
                     SELECT url, title
-                    FROM articles 
+                    FROM {sch}.articles 
                     WHERE id = %s
                 """, (request.keep_article_id,))
                 
@@ -268,46 +275,47 @@ async def get_deduplication_stats():
         
         try:
             with conn.cursor() as cur:
-                # Get total articles
-                cur.execute("SELECT COUNT(*) FROM articles")
-                total_articles = cur.fetchone()[0]
-                
-                # Get articles with content hash
-                cur.execute("SELECT COUNT(*) FROM articles WHERE content_hash IS NOT NULL")
-                articles_with_hash = cur.fetchone()[0]
-                
-                # Get URL duplicate count
-                cur.execute("""
-                    SELECT COUNT(*) FROM (
-                        SELECT url, COUNT(*) as count
-                        FROM articles 
-                        GROUP BY url 
-                        HAVING COUNT(*) > 1
-                    ) duplicates
-                """)
-                url_duplicate_count = cur.fetchone()[0]
-                
-                # Get content duplicate count
-                cur.execute("""
-                    SELECT COUNT(*) FROM (
-                        SELECT content_hash, COUNT(*) as count
-                        FROM articles 
-                        WHERE content_hash IS NOT NULL
-                        GROUP BY content_hash 
-                        HAVING COUNT(*) > 1
-                    ) duplicates
-                """)
-                content_duplicate_count = cur.fetchone()[0]
-                
-                # Get articles by date (last 7 days)
-                cur.execute("""
-                    SELECT DATE(created_at) as date, COUNT(*) as count
-                    FROM articles 
-                    WHERE created_at >= NOW() - INTERVAL '7 days'
-                    GROUP BY DATE(created_at)
-                    ORDER BY date DESC
-                """)
-                daily_counts = cur.fetchall()
+                total_articles = 0
+                articles_with_hash = 0
+                url_duplicate_count = 0
+                content_duplicate_count = 0
+                daily_map = {}
+                for sch in DOMAIN_DATA_SCHEMAS:
+                    cur.execute(f"SELECT COUNT(*) FROM {sch}.articles")
+                    total_articles += cur.fetchone()[0] or 0
+                    cur.execute(
+                        f"SELECT COUNT(*) FROM {sch}.articles WHERE content_hash IS NOT NULL"
+                    )
+                    articles_with_hash += cur.fetchone()[0] or 0
+                    cur.execute(f"""
+                        SELECT COUNT(*) FROM (
+                            SELECT url, COUNT(*) as count
+                            FROM {sch}.articles 
+                            GROUP BY url 
+                            HAVING COUNT(*) > 1
+                        ) duplicates
+                    """)
+                    url_duplicate_count += cur.fetchone()[0] or 0
+                    cur.execute(f"""
+                        SELECT COUNT(*) FROM (
+                            SELECT content_hash, COUNT(*) as count
+                            FROM {sch}.articles 
+                            WHERE content_hash IS NOT NULL
+                            GROUP BY content_hash 
+                            HAVING COUNT(*) > 1
+                        ) duplicates
+                    """)
+                    content_duplicate_count += cur.fetchone()[0] or 0
+                    cur.execute(f"""
+                        SELECT DATE(created_at) as date, COUNT(*) as count
+                        FROM {sch}.articles 
+                        WHERE created_at >= NOW() - INTERVAL '7 days'
+                        GROUP BY DATE(created_at)
+                    """)
+                    for date, count in cur.fetchall():
+                        k = str(date)
+                        daily_map[k] = daily_map.get(k, 0) + (count or 0)
+                daily_counts = sorted(daily_map.items(), key=lambda x: x[0], reverse=True)
                 
                 return {
                     "success": True,
@@ -316,7 +324,7 @@ async def get_deduplication_stats():
                         "articles_with_content_hash": articles_with_hash,
                         "url_duplicate_groups": url_duplicate_count,
                         "content_duplicate_groups": content_duplicate_count,
-                        "daily_counts": [{"date": str(date), "count": count} for date, count in daily_counts],
+                        "daily_counts": [{"date": d, "count": c} for d, c in daily_counts],
                         "hash_coverage_percentage": (articles_with_hash / total_articles * 100) if total_articles > 0 else 0
                     },
                     "message": "Deduplication statistics retrieved",
@@ -345,9 +353,12 @@ async def analyze_article_similarity(article_id: int, threshold: float = Query(0
             
             # Get the target article
             with deduplicator.conn.cursor() as cur:
-                cur.execute("""
+                sch = resolve_article_id_to_schema(article_id)
+                if not sch:
+                    raise HTTPException(status_code=404, detail="Article not found")
+                cur.execute(f"""
                     SELECT id, title, content, url, source_domain, created_at
-                    FROM articles 
+                    FROM {sch}.articles 
                     WHERE id = %s
                 """, (article_id,))
                 
@@ -356,9 +367,9 @@ async def analyze_article_similarity(article_id: int, threshold: float = Query(0
                     raise HTTPException(status_code=404, detail="Article not found")
                 
                 # Find similar articles
-                cur.execute("""
+                cur.execute(f"""
                     SELECT id, title, content, url, source_domain, created_at
-                    FROM articles 
+                    FROM {sch}.articles 
                     WHERE id != %s AND content IS NOT NULL AND LENGTH(content) > 200
                     ORDER BY created_at DESC
                     LIMIT 100

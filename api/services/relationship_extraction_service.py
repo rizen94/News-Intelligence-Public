@@ -55,12 +55,12 @@ def extract_relationships_from_contexts(
                     HAVING COUNT(DISTINCT entity_profile_id) >= 2
                     LIMIT %s
                     """,
-                    (*context_ids, limit * 2),
+                    (*context_ids, limit * 5),  # v8: historical depth
                 )
                 rows = cur.fetchall()
         else:
             domain_clause = "AND c.domain_key = %s" if domain_key else ""
-            params: List[Any] = [limit * 2]
+            params: List[Any] = [limit * 5]  # v8: historical depth
             if domain_key:
                 params.insert(0, domain_key)
             with conn.cursor() as cur:

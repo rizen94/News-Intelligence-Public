@@ -4,47 +4,61 @@
 import { getApi } from './client';
 import { getCurrentDomain } from '../../utils/domainHelper';
 import Logger from '../../utils/logger';
+import type { StorylineListResponse, StorylineDetail } from '../../types';
+
+export interface GetStorylinesParams {
+  page?: number;
+  page_size?: number;
+  limit?: number;
+  status?: string;
+}
 
 export const storylinesApi = {
-  async getStorylines(params: any = {}, domain?: string) {
+  async getStorylines(
+    params: GetStorylinesParams = {},
+    domain?: string,
+  ): Promise<StorylineListResponse | { success: false; error: string }> {
     try {
       const domainKey = domain || getCurrentDomain();
-      const apiParams: any = {};
-      // Backend expects page + page_size (storyline_crud)
+      const apiParams: Record<string, number | string> = {};
       if (params.page !== undefined) apiParams.page = params.page;
       if (params.page_size !== undefined) apiParams.page_size = params.page_size;
       else if (params.limit !== undefined) apiParams.page_size = params.limit;
       if (params.status) apiParams.status = params.status;
 
-      const response = await getApi().get(
+      const response = await getApi().get<StorylineListResponse>(
         `/api/${domainKey}/storylines`,
         { params: apiParams },
       );
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to fetch storylines', error as Error);
-      return { success: false, error: (error as any).message };
+      return { success: false, error: (error as Error).message };
     }
   },
 
-  async getStoryline(id: string, domain?: string) {
+  async getStoryline(
+    id: string,
+    domain?: string,
+  ): Promise<StorylineDetail | { success: false; error: string; statusCode?: number | null }> {
     try {
       const domainKey = domain || getCurrentDomain();
-      const response = await getApi().get(
+      const response = await getApi().get<StorylineDetail>(
         `/api/${domainKey}/storylines/${id}`,
       );
       return response.data;
-    } catch (error: any) {
-      Logger.apiError('Failed to fetch storyline', error);
+    } catch (error: unknown) {
+      Logger.apiError('Failed to fetch storyline', error as Error);
       let errorMessage = 'Unknown error';
-      let statusCode = null;
-      if (error.response) {
-        statusCode = error.response.status;
-        errorMessage = error.response.data?.detail || error.response.data?.message || `HTTP ${statusCode}`;
-      } else if (error.request) {
+      let statusCode: number | null = null;
+      const err = error as { response?: { status: number; data?: { detail?: string; message?: string } }; request?: unknown; message?: string };
+      if (err.response) {
+        statusCode = err.response.status;
+        errorMessage = err.response.data?.detail || err.response.data?.message || `HTTP ${statusCode}`;
+      } else if (err.request) {
         errorMessage = 'No response from server. The API may be down or unreachable.';
       } else {
-        errorMessage = error.message || 'Unknown error';
+        errorMessage = err.message || 'Unknown error';
       }
       return { success: false, error: errorMessage, statusCode };
     }
@@ -59,6 +73,20 @@ export const storylinesApi = {
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to fetch storyline timeline', error as Error);
+      return { success: false, error: (error as any).message };
+    }
+  },
+
+  async getStorylineAudit(id: string | number, domain?: string) {
+    try {
+      const domainKey = domain || getCurrentDomain();
+      const response = await getApi().get<{
+        success: boolean;
+        data?: Record<string, unknown>;
+      }>(`/api/${domainKey}/storylines/${id}/audit`);
+      return response.data;
+    } catch (error) {
+      Logger.apiError('Failed to fetch storyline audit', error as Error);
       return { success: false, error: (error as any).message };
     }
   },
@@ -135,9 +163,14 @@ export const storylinesApi = {
   ) {
     try {
       const domainKey = domain || getCurrentDomain();
+      const queryParams: Record<string, string | number | boolean> = {};
+      if (params.hours != null) queryParams.hours = params.hours;
+      if (params.save != null) queryParams.save = params.save;
+      if (params.minSimilarity != null) queryParams.min_similarity = params.minSimilarity;
       const response = await getApi().post(
         `/api/${domainKey}/storylines/discover`,
-        params,
+        {},
+        { params: queryParams },
       );
       return response.data;
     } catch (error) {

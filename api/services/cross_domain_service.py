@@ -18,7 +18,7 @@ DOMAINS = ("politics", "finance", "science_tech")
 
 def run_cross_domain_synthesis(
     domains: Optional[List[str]] = None,
-    time_window_days: int = 7,
+    time_window_days: int = 30,  # v8: full-history
     correlation_threshold: float = 0.5,
 ) -> Dict[str, Any]:
     """
@@ -43,7 +43,7 @@ def run_cross_domain_synthesis(
                 FROM intelligence.tracked_events
                 WHERE (start_date IS NULL OR start_date >= %s)
                 ORDER BY start_date DESC NULLS LAST
-                LIMIT 500
+                LIMIT 1000
                 """,
                 (since,),
             )
@@ -150,11 +150,37 @@ def run_cross_domain_synthesis(
         }
         for c in inserted
     ]
+
+    # v8: Processed documents that span domains (PDF sections in multiple domain_keys in window)
+    cross_domain_document_ids: List[int] = []
+    try:
+        conn2 = get_db_connection()
+        if conn2:
+            with conn2.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT (c.metadata->>'document_id')::int AS doc_id
+                    FROM intelligence.contexts c
+                    WHERE c.source_type = 'pdf_section'
+                      AND c.created_at::date >= %s
+                      AND c.metadata ? 'document_id'
+                    GROUP BY (c.metadata->>'document_id')::int
+                    HAVING COUNT(DISTINCT c.domain_key) >= 2
+                    LIMIT 50
+                    """,
+                    (since,),
+                )
+                cross_domain_document_ids = [r[0] for r in cur.fetchall() if r[0] is not None]
+            conn2.close()
+    except Exception as e:
+        logger.debug("run_cross_domain_synthesis cross_domain_documents: %s", e)
+
     return {
         "success": True,
         "correlation_id": str(inserted[0]["correlation_id"]) if inserted else None,
         "correlations": inserted,
         "meta_storylines": meta_storylines,
+        "cross_domain_document_ids": cross_domain_document_ids,
     }
 
 

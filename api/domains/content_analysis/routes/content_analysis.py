@@ -11,7 +11,12 @@ import logging
 
 from shared.services.llm_service import llm_service, TaskType
 from shared.database.connection import get_db_connection
-from shared.services.domain_aware_service import validate_domain
+from shared.services.domain_aware_service import (
+    validate_domain,
+    DOMAIN_DATA_SCHEMAS,
+    resolve_article_id_to_schema,
+    parse_optional_domain_to_schema,
+)
 from domains.content_analysis.services.topic_filter_rules import (
     filter_word_cloud_entries,
     filter_topic_list,
@@ -53,32 +58,67 @@ async def health_check():
         }
 
 @router.get("/articles")
-async def get_articles(limit: int = 20, offset: int = 0, status: Optional[str] = None):
-    """Get articles with optional filtering"""
+async def get_articles(
+    limit: int = 20,
+    offset: int = 0,
+    status: Optional[str] = None,
+    domain: Optional[str] = Query(
+        None,
+        description="Optional: politics, finance, or science-tech. Omit to aggregate all domains.",
+    ),
+):
+    """Get articles with optional filtering (domain-scoped or all domains)."""
     try:
+        try:
+            schema = parse_optional_domain_to_schema(domain)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
         conn = get_db_connection()
         if not conn:
             raise HTTPException(status_code=500, detail="Database connection failed")
         
         try:
             with conn.cursor() as cur:
-                # Build query with optional status filter
-                query = """
-                    SELECT id, title, content, url, source_domain, published_at,
-                           summary, quality_score, sentiment_score, sentiment_label,
-                           processing_status, created_at
-                    FROM articles 
-                """
-                params = []
-                
-                if status:
-                    query += " WHERE processing_status = %s"
-                    params.append(status)
-                
-                query += " ORDER BY created_at DESC LIMIT %s OFFSET %s"
-                params.extend([limit, offset])
-                
-                cur.execute(query, params)
+                if schema:
+                    wh = " WHERE processing_status = %s" if status else ""
+                    q = f"""
+                        SELECT id, title, content, url, source_domain, published_at,
+                               summary, quality_score, sentiment_score, sentiment_label,
+                               processing_status, created_at
+                        FROM {schema}.articles
+                        {wh}
+                        ORDER BY created_at DESC NULLS LAST
+                        LIMIT %s OFFSET %s
+                    """
+                    params = []
+                    if status:
+                        params.append(status)
+                    params.extend([limit, offset])
+                    cur.execute(q, params)
+                else:
+                    branches = []
+                    params = []
+                    for sch in DOMAIN_DATA_SCHEMAS:
+                        wh = " WHERE processing_status = %s" if status else ""
+                        branches.append(f"""
+                            SELECT id, title, content, url, source_domain, published_at,
+                                   summary, quality_score, sentiment_score, sentiment_label,
+                                   processing_status, created_at
+                            FROM {sch}.articles
+                            {wh}
+                        """)
+                        if status:
+                            params.append(status)
+                    union = " UNION ALL ".join(branches)
+                    params.extend([limit, offset])
+                    cur.execute(f"""
+                        SELECT * FROM (
+                            {union}
+                        ) all_articles
+                        ORDER BY created_at DESC NULLS LAST
+                        LIMIT %s OFFSET %s
+                    """, params)
                 
                 articles = []
                 for row in cur.fetchall():
@@ -101,15 +141,24 @@ async def get_articles(limit: int = 20, offset: int = 0, status: Optional[str] =
                         "created_at": row[11].isoformat() if row[11] else None
                     })
                 
-                # Get total count
-                count_query = "SELECT COUNT(*) FROM articles"
-                count_params = []
-                if status:
-                    count_query += " WHERE processing_status = %s"
-                    count_params.append(status)
-                
-                cur.execute(count_query, count_params)
-                total_count = cur.fetchone()[0]
+                if schema:
+                    count_query = f"SELECT COUNT(*) FROM {schema}.articles"
+                    count_params = []
+                    if status:
+                        count_query += " WHERE processing_status = %s"
+                        count_params.append(status)
+                    cur.execute(count_query, count_params)
+                    total_count = cur.fetchone()[0]
+                else:
+                    total_count = 0
+                    for sch in DOMAIN_DATA_SCHEMAS:
+                        cq = f"SELECT COUNT(*) FROM {sch}.articles"
+                        cp = []
+                        if status:
+                            cq += " WHERE processing_status = %s"
+                            cp.append(status)
+                        cur.execute(cq, cp)
+                        total_count += cur.fetchone()[0] or 0
                 
                 return {
                     "success": True,
@@ -134,15 +183,19 @@ async def get_articles(limit: int = 20, offset: int = 0, status: Optional[str] =
 async def analyze_article(article_id: int, background_tasks: BackgroundTasks):
     """Comprehensive article analysis using LLM"""
     try:
+        schema = resolve_article_id_to_schema(article_id)
+        if not schema:
+            raise HTTPException(status_code=404, detail="Article not found")
+
         conn = get_db_connection()
         if not conn:
             raise HTTPException(status_code=500, detail="Database connection failed")
         
         try:
             with conn.cursor() as cur:
-                cur.execute("""
+                cur.execute(f"""
                     SELECT id, title, content, url, source_domain
-                    FROM articles 
+                    FROM {schema}.articles 
                     WHERE id = %s
                 """, (article_id,))
                 
@@ -151,7 +204,7 @@ async def analyze_article(article_id: int, background_tasks: BackgroundTasks):
                     raise HTTPException(status_code=404, detail="Article not found")
                 
                 # Start comprehensive analysis
-                background_tasks.add_task(process_comprehensive_analysis, article)
+                background_tasks.add_task(process_comprehensive_analysis, article + (schema,))
                 
                 return {
                     "success": True,
@@ -249,15 +302,18 @@ async def get_article_analysis(article_id: int):
             raise HTTPException(status_code=500, detail="Database connection failed")
         
         try:
+            sch = resolve_article_id_to_schema(article_id)
+            if not sch:
+                raise HTTPException(status_code=404, detail="Article not found")
             with conn.cursor() as cur:
-                cur.execute("""
+                cur.execute(f"""
                     SELECT id, title, summary, sentiment_score, sentiment_label,
                            entities, bias_score, bias_indicators, quality_score,
                            analysis_updated_at
-                    FROM articles 
+                    FROM {sch}.articles
                     WHERE id = %s
                 """, (article_id,))
-                
+
                 article = cur.fetchone()
                 if not article:
                     raise HTTPException(status_code=404, detail="Article not found")
@@ -319,22 +375,22 @@ async def get_batch_processing_status():
         
         try:
             with conn.cursor() as cur:
-                # Count articles pending analysis
-                cur.execute("""
-                    SELECT COUNT(*) FROM articles 
-                    WHERE analysis_updated_at IS NULL 
-                    OR analysis_updated_at < created_at
-                """)
-                pending_count = cur.fetchone()[0]
-                
-                # Count articles analyzed in last hour
+                pending_count = 0
+                recent_count = 0
                 from datetime import timedelta
                 last_hour = datetime.now() - timedelta(hours=1)
-                cur.execute("""
-                    SELECT COUNT(*) FROM articles 
-                    WHERE analysis_updated_at >= %s
-                """, (last_hour,))
-                recent_count = cur.fetchone()[0]
+                for sch in DOMAIN_DATA_SCHEMAS:
+                    cur.execute(f"""
+                        SELECT COUNT(*) FROM {sch}.articles 
+                        WHERE analysis_updated_at IS NULL 
+                           OR analysis_updated_at < created_at
+                    """)
+                    pending_count += cur.fetchone()[0] or 0
+                    cur.execute(f"""
+                        SELECT COUNT(*) FROM {sch}.articles 
+                        WHERE analysis_updated_at >= %s
+                    """, (last_hour,))
+                    recent_count += cur.fetchone()[0] or 0
                 
                 return {
                     "success": True,
@@ -363,13 +419,24 @@ async def start_batch_processing(background_tasks: BackgroundTasks):
         
         try:
             with conn.cursor() as cur:
-                cur.execute("""
-                    SELECT id, title, content FROM articles 
-                    WHERE analysis_updated_at IS NULL 
-                    OR analysis_updated_at < created_at
-                    ORDER BY created_at ASC
+                branches = []
+                params = []
+                for sch in DOMAIN_DATA_SCHEMAS:
+                    branches.append(f"""
+                        SELECT id, title, content, %s::text AS _schema, created_at
+                        FROM {sch}.articles 
+                        WHERE analysis_updated_at IS NULL 
+                           OR analysis_updated_at < created_at
+                    """)
+                    params.append(sch)
+                union_sql = " UNION ALL ".join(branches)
+                cur.execute(f"""
+                    SELECT id, title, content, _schema FROM (
+                        {union_sql}
+                    ) pending
+                    ORDER BY created_at ASC NULLS LAST
                     LIMIT 10
-                """)
+                """, params)
                 
                 articles = cur.fetchall()
                 
@@ -401,7 +468,14 @@ async def start_batch_processing(background_tasks: BackgroundTasks):
 async def process_comprehensive_analysis(article: tuple):
     """Background task for comprehensive article analysis"""
     try:
-        article_id, title, content, url, source = article
+        if len(article) >= 6:
+            article_id, title, content, url, source, schema = article[:6]
+        else:
+            article_id, title, content, url, source = article[:5]
+            schema = resolve_article_id_to_schema(article_id)
+        if not schema:
+            logger.error("process_comprehensive_analysis: no schema for article %s", article_id)
+            return
         
         # Run all analysis types in parallel
         sentiment_task = llm_service.analyze_sentiment(content)
@@ -422,8 +496,8 @@ async def process_comprehensive_analysis(article: tuple):
                     import json
                     entities_json = json.dumps(entities_result.get("entities", {}))
                     
-                    cur.execute("""
-                        UPDATE articles 
+                    cur.execute(f"""
+                        UPDATE {schema}.articles 
                         SET summary = %s,
                             sentiment_score = %s,
                             sentiment_label = %s,
@@ -452,11 +526,17 @@ async def process_batch_analysis(articles: List[tuple]):
     
     for article in articles:
         try:
-            await process_comprehensive_analysis(article)
+            # (id, title, content, _schema) from batch query
+            if len(article) >= 4:
+                aid, title, content, schema = article[0], article[1], article[2], article[3]
+                row = (aid, title, content, None, None, schema)
+            else:
+                row = article
+            await process_comprehensive_analysis(row)
             # Small delay to prevent overwhelming the LLM service
             await asyncio.sleep(1)
         except Exception as e:
-            logger.error(f"Error processing article {article[0]}: {e}")
+            logger.error(f"Error processing article {article[0] if article else '?'}: {e}")
     
     logger.info("Batch analysis completed")
 
@@ -545,6 +625,7 @@ async def get_topics(
                 # Apply date/country filter rules and banned topics - exclude from display
                 banned = _get_banned_topics(cur, schema)
                 topics = filter_topic_list(topics, name_key="name", banned_topics=banned)
+                topics = _attach_topic_trend_signals(cur, schema, topics)
                 
                 # Get total count
                 count_query = f"""
@@ -1429,6 +1510,9 @@ async def get_word_cloud_data(
                 # Exclude dates, days, months, country identifiers, and banned topics from topic cloud
                 banned = _get_banned_topics(cur, schema)
                 word_cloud_data = filter_word_cloud_entries(word_cloud_data, text_key='text', banned_topics=banned)
+                word_cloud_data = _augment_word_cloud_with_entity_signals(
+                    cur, schema, word_cloud_data, time_period_hours, limit
+                )
                 # Rebuild category stats after filtering
                 categories = {}
                 for word in word_cloud_data:
@@ -1444,7 +1528,7 @@ async def get_word_cloud_data(
                         'word_cloud': word_cloud_data,
                         'total_keywords': len(word_cloud_data),
                         'categories': categories,
-                        'source': 'topic_keywords' if has_topic_keywords else 'topic_clusters',
+                        'source': 'hybrid_entity_context_topic',
                         'incremental': has_topic_keywords  # Only incremental if using topic_keywords
                     },
                     'timestamp': datetime.now().isoformat()
@@ -1467,6 +1551,167 @@ def _get_banned_topics(cur, schema: str) -> set:
         except Exception:
             pass
         return set()
+
+
+def _attach_topic_trend_signals(cur, schema: str, topics: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Enrich topics with context/entity-backed trend signals so topics represent
+    bigger-picture themes across multiple participants and perspectives.
+    """
+    if not topics:
+        return topics
+    topic_ids = [t.get("id") for t in topics if t.get("id") is not None]
+    if not topic_ids:
+        return topics
+
+    domain_key = schema  # intelligence domain_key uses science_tech format
+    counts_by_topic: Dict[int, Dict[str, int]] = {}
+    top_entities_by_topic: Dict[int, List[str]] = {}
+
+    try:
+        cur.execute(f"""
+            SELECT
+                atc.topic_cluster_id,
+                COUNT(DISTINCT atc.article_id) AS article_count,
+                COUNT(DISTINCT a2c.context_id) AS context_count,
+                COUNT(DISTINCT cem.entity_profile_id) AS entity_count
+            FROM {schema}.article_topic_clusters atc
+            LEFT JOIN intelligence.article_to_context a2c
+              ON a2c.article_id = atc.article_id
+             AND a2c.domain_key = %s
+            LEFT JOIN intelligence.context_entity_mentions cem
+              ON cem.context_id = a2c.context_id
+            WHERE atc.topic_cluster_id = ANY(%s)
+            GROUP BY atc.topic_cluster_id
+        """, (domain_key, topic_ids))
+        for row in cur.fetchall():
+            counts_by_topic[row[0]] = {
+                "articles": row[1] or 0,
+                "contexts": row[2] or 0,
+                "entities": row[3] or 0,
+            }
+    except Exception:
+        try:
+            cur.connection.rollback()
+        except Exception:
+            pass
+
+    try:
+        cur.execute(f"""
+            SELECT topic_cluster_id, entity_name, mentions
+            FROM (
+                SELECT
+                    atc.topic_cluster_id,
+                    COALESCE(
+                        ep.metadata->>'canonical_name',
+                        ep.metadata->>'name'
+                    ) AS entity_name,
+                    COUNT(*) AS mentions,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY atc.topic_cluster_id
+                        ORDER BY COUNT(*) DESC
+                    ) AS rn
+                FROM {schema}.article_topic_clusters atc
+                JOIN intelligence.article_to_context a2c
+                  ON a2c.article_id = atc.article_id
+                 AND a2c.domain_key = %s
+                JOIN intelligence.context_entity_mentions cem
+                  ON cem.context_id = a2c.context_id
+                JOIN intelligence.entity_profiles ep
+                  ON ep.id = cem.entity_profile_id
+                WHERE atc.topic_cluster_id = ANY(%s)
+                GROUP BY atc.topic_cluster_id, entity_name
+            ) ranked
+            WHERE rn <= 4
+              AND entity_name IS NOT NULL
+              AND BTRIM(entity_name) <> ''
+            ORDER BY topic_cluster_id, mentions DESC
+        """, (domain_key, topic_ids))
+        for topic_id, entity_name, _mentions in cur.fetchall():
+            top_entities_by_topic.setdefault(topic_id, []).append(entity_name)
+    except Exception:
+        try:
+            cur.connection.rollback()
+        except Exception:
+            pass
+
+    for topic in topics:
+        topic_id = topic.get("id")
+        counts = counts_by_topic.get(topic_id, {"articles": 0, "contexts": 0, "entities": 0})
+        top_entities = top_entities_by_topic.get(topic_id, [])
+        topic["trend_signals"] = {
+            "backed_by": "entity_context",
+            "articles": counts["articles"],
+            "contexts": counts["contexts"],
+            "entities": counts["entities"],
+            "top_entities": top_entities,
+        }
+        topic["theme_strength"] = (
+            counts["articles"] * 1.0
+            + counts["contexts"] * 1.25
+            + counts["entities"] * 1.5
+        )
+    return topics
+
+
+def _augment_word_cloud_with_entity_signals(
+    cur,
+    schema: str,
+    word_cloud_data: List[Dict[str, Any]],
+    time_period_hours: int,
+    limit: int,
+) -> List[Dict[str, Any]]:
+    """Add entity-backed trend items from contexts to the topic word cloud."""
+    if limit <= 0:
+        return word_cloud_data
+
+    domain_key = schema
+    existing = {str(w.get("text", "")).strip().lower() for w in word_cloud_data if w.get("text")}
+    room = max(0, min(20, limit) - min(len(word_cloud_data), min(20, limit)))
+    if room <= 0:
+        room = 8
+
+    try:
+        cur.execute("""
+            SELECT
+                COALESCE(ep.metadata->>'canonical_name', ep.metadata->>'name') AS entity_name,
+                COUNT(*) AS mentions
+            FROM intelligence.contexts c
+            JOIN intelligence.context_entity_mentions cem
+              ON cem.context_id = c.id
+            JOIN intelligence.entity_profiles ep
+              ON ep.id = cem.entity_profile_id
+            WHERE c.domain_key = %s
+              AND c.created_at >= NOW() - (%s * INTERVAL '1 hour')
+            GROUP BY entity_name
+            HAVING COALESCE(ep.metadata->>'canonical_name', ep.metadata->>'name') IS NOT NULL
+            ORDER BY mentions DESC
+            LIMIT %s
+        """, (domain_key, max(1, time_period_hours), room))
+        for entity_name, mentions in cur.fetchall():
+            if not entity_name:
+                continue
+            key = entity_name.strip().lower()
+            if not key or key in existing:
+                continue
+            freq = int(mentions or 0)
+            word_cloud_data.append({
+                "text": entity_name,
+                "size": min(100, max(18, int(freq * 3))),
+                "frequency": freq,
+                "relevance": min(1.0, 0.35 + (freq / 30.0)),
+                "articles": 0,
+                "quality_score": min(1.0, 0.35 + (freq / 30.0)),
+                "category": "entity_signal",
+                "topic": "entity_context_trends",
+            })
+            existing.add(key)
+    except Exception:
+        try:
+            cur.connection.rollback()
+        except Exception:
+            pass
+    return word_cloud_data
 
 
 @router.get("/{domain}/content_analysis/topics/banned")
@@ -1916,17 +2161,21 @@ async def process_article_clustering(limit: int, domain: str = "politics", time_
 async def get_individual_article(article_id: int):
     """Get a specific article by ID"""
     try:
+        schema = resolve_article_id_to_schema(article_id)
+        if not schema:
+            raise HTTPException(status_code=404, detail="Article not found")
+
         conn = get_db_connection()
         if not conn:
             raise HTTPException(status_code=500, detail="Database connection failed")
         
         try:
             with conn.cursor() as cur:
-                cur.execute("""
+                cur.execute(f"""
                     SELECT id, title, url, content, summary, source_domain,
                            published_at, word_count, processing_status,
                            created_at, updated_at
-                    FROM articles 
+                    FROM {schema}.articles 
                     WHERE id = %s
                 """, (article_id,))
                 

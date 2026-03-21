@@ -20,6 +20,7 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from shared.database.connection import get_db_connection
+from shared.services.domain_aware_service import DOMAIN_DATA_SCHEMAS
 
 # Configure logging
 logging.basicConfig(
@@ -56,118 +57,131 @@ class RSSDuplicateDetector:
             return False
     
     def detect_exact_duplicates(self) -> List[Dict[str, Any]]:
-        """Detect feeds with identical URLs"""
+        """Detect feeds with identical URLs (per domain schema)."""
         logger.info("🔍 Detecting exact URL duplicates...")
         
+        duplicates: List[Dict[str, Any]] = []
         with self.conn.cursor() as cur:
-            cur.execute("""
-                SELECT feed_url, COUNT(*) as count, 
-                       STRING_AGG(feed_name, ' | ') as names,
-                       STRING_AGG(id::text, ', ') as ids,
-                       STRING_AGG(is_active::text, ', ') as active_status
-                FROM rss_feeds 
-                GROUP BY feed_url 
-                HAVING COUNT(*) > 1
-                ORDER BY count DESC
-            """)
-            
-            duplicates = []
-            for row in cur.fetchall():
-                url, count, names, ids, active_status = row
-                duplicate_info = {
-                    'url': url,
-                    'count': count,
-                    'names': names.split(' | '),
-                    'ids': [int(id) for id in ids.split(', ')],
-                    'active_status': [status == 'True' for status in active_status.split(', ')],
-                    'type': 'exact_url'
-                }
-                duplicates.append(duplicate_info)
-                
-            logger.info(f"📊 Found {len(duplicates)} exact URL duplicates")
-            return duplicates
+            for sch in DOMAIN_DATA_SCHEMAS:
+                cur.execute(f"""
+                    SELECT feed_url, COUNT(*) as count,
+                           STRING_AGG(feed_name, ' | ') as names,
+                           STRING_AGG(id::text, ', ') as ids,
+                           STRING_AGG(is_active::text, ', ') as active_status
+                    FROM {sch}.rss_feeds
+                    GROUP BY feed_url
+                    HAVING COUNT(*) > 1
+                    ORDER BY count DESC
+                """)
+                for row in cur.fetchall():
+                    url, count, names, ids, active_status = row
+                    duplicate_info = {
+                        'url': url,
+                        'count': count,
+                        'names': names.split(' | '),
+                        'ids': [int(x) for x in ids.split(', ')],
+                        'active_status': [
+                            status == 'True'
+                            for status in active_status.split(', ')
+                        ],
+                        'type': 'exact_url',
+                        'domain_schema': sch,
+                    }
+                    duplicates.append(duplicate_info)
+
+        logger.info(f"📊 Found {len(duplicates)} exact URL duplicate groups")
+        return duplicates
     
     def detect_similar_feeds(self) -> List[Dict[str, Any]]:
-        """Detect feeds with similar URLs (same domain, different paths)"""
+        """Detect feeds with similar URLs (same host, different paths), per schema."""
         logger.info("🔍 Detecting similar feeds...")
-        
+
+        similar_groups: List[Dict[str, Any]] = []
         with self.conn.cursor() as cur:
-            cur.execute("""
-                SELECT id, feed_name, feed_url, is_active
-                FROM rss_feeds 
-                ORDER BY feed_url
-            """)
-            
-            feeds = cur.fetchall()
-            domain_groups = defaultdict(list)
-            
-            # Group feeds by domain
-            for feed_id, name, url, is_active in feeds:
-                try:
-                    parsed = urlparse(url)
-                    domain = parsed.netloc.lower()
-                    domain_groups[domain].append({
+            for sch in DOMAIN_DATA_SCHEMAS:
+                cur.execute(f"""
+                    SELECT id, feed_name, feed_url, is_active
+                    FROM {sch}.rss_feeds
+                    ORDER BY feed_url
+                """)
+                feeds = cur.fetchall()
+                domain_groups = defaultdict(list)
+
+                for feed_id, name, url, is_active in feeds:
+                    try:
+                        parsed = urlparse(url or "")
+                        domain = parsed.netloc.lower()
+                        domain_groups[domain].append({
+                            'id': feed_id,
+                            'name': name,
+                            'url': url,
+                            'is_active': is_active,
+                            'path': parsed.path,
+                            'domain_schema': sch,
+                        })
+                    except Exception as e:
+                        logger.warning(
+                            f"⚠️ Could not parse URL {url!r} in {sch}: {e}"
+                        )
+
+                for domain, feed_list in domain_groups.items():
+                    if len(feed_list) > 1:
+                        similar_groups.append({
+                            'domain': domain,
+                            'feeds': feed_list,
+                            'count': len(feed_list),
+                            'type': 'similar_domain',
+                            'domain_schema': sch,
+                        })
+
+        logger.info(
+            f"📊 Found {len(similar_groups)} domain groups with multiple feeds"
+        )
+        return similar_groups
+    
+    def detect_name_similarities(self) -> List[Dict[str, Any]]:
+        """Detect feeds with similar names but different URLs (per schema)."""
+        logger.info("🔍 Detecting name similarities...")
+
+        name_duplicates: List[Dict[str, Any]] = []
+        with self.conn.cursor() as cur:
+            for sch in DOMAIN_DATA_SCHEMAS:
+                cur.execute(f"""
+                    SELECT id, feed_name, feed_url, is_active
+                    FROM {sch}.rss_feeds
+                    ORDER BY feed_name
+                """)
+                feeds = cur.fetchall()
+                name_groups = defaultdict(list)
+
+                for feed_id, name, url, is_active in feeds:
+                    normalized = (
+                        (name or "")
+                        .lower()
+                        .replace(" ", "")
+                        .replace("-", "")
+                        .replace("_", "")
+                    )
+                    name_groups[normalized].append({
                         'id': feed_id,
                         'name': name,
                         'url': url,
                         'is_active': is_active,
-                        'path': parsed.path
+                        'domain_schema': sch,
                     })
-                except Exception as e:
-                    logger.warning(f"⚠️ Could not parse URL {url}: {e}")
-            
-            # Find domains with multiple feeds
-            similar_groups = []
-            for domain, feed_list in domain_groups.items():
-                if len(feed_list) > 1:
-                    similar_groups.append({
-                        'domain': domain,
-                        'feeds': feed_list,
-                        'count': len(feed_list),
-                        'type': 'similar_domain'
-                    })
-            
-            logger.info(f"📊 Found {len(similar_groups)} domains with multiple feeds")
-            return similar_groups
-    
-    def detect_name_similarities(self) -> List[Dict[str, Any]]:
-        """Detect feeds with similar names but different URLs"""
-        logger.info("🔍 Detecting name similarities...")
-        
-        with self.conn.cursor() as cur:
-            cur.execute("""
-                SELECT id, feed_name, feed_url, is_active
-                FROM rss_feeds 
-                ORDER BY feed_name
-            """)
-            
-            feeds = cur.fetchall()
-            name_groups = defaultdict(list)
-            
-            # Group feeds by normalized name
-            for feed_id, name, url, is_active in feeds:
-                # Normalize name for comparison
-                normalized = name.lower().replace(' ', '').replace('-', '').replace('_', '')
-                name_groups[normalized].append({
-                    'id': feed_id,
-                    'name': name,
-                    'url': url,
-                    'is_active': is_active
-                })
-            
-            # Find names with multiple feeds
-            name_duplicates = []
-            for normalized_name, feed_list in name_groups.items():
-                if len(feed_list) > 1:
-                    name_duplicates.append({
-                        'normalized_name': normalized_name,
-                        'feeds': feed_list,
-                        'count': len(feed_list),
-                        'type': 'similar_name'
-                    })
-            
-            logger.info(f"📊 Found {len(name_duplicates)} name similarities")
-            return name_duplicates
+
+                for normalized_name, feed_list in name_groups.items():
+                    if len(feed_list) > 1:
+                        name_duplicates.append({
+                            'normalized_name': normalized_name,
+                            'feeds': feed_list,
+                            'count': len(feed_list),
+                            'type': 'similar_name',
+                            'domain_schema': sch,
+                        })
+
+        logger.info(f"📊 Found {len(name_duplicates)} name similarity groups")
+        return name_duplicates
     
     def analyze_feed_content(self, url: str) -> Dict[str, Any]:
         """Analyze RSS feed content to detect duplicates"""
@@ -271,62 +285,71 @@ class RSSDuplicateDetector:
         for duplicate in duplicates:
             if duplicate['type'] != 'exact_url':
                 continue
-                
+
             try:
-                # Keep the feed with articles, or the oldest if tied
+                sch = duplicate.get('domain_schema')
+                if not sch or sch not in DOMAIN_DATA_SCHEMAS:
+                    merge_results['errors'].append(
+                        f"Missing or invalid domain_schema for {duplicate.get('url')!r}"
+                    )
+                    continue
+
                 feed_ids = duplicate['ids']
-                active_status = duplicate['active_status']
-                
-                # Get article counts for each feed
+
                 with self.conn.cursor() as cur:
-                    cur.execute("""
-                        SELECT feed_id, COUNT(*) as article_count
-                        FROM articles 
-                        WHERE feed_id = ANY(%s)
-                        GROUP BY feed_id
+                    cur.execute(f"""
+                        SELECT rss_feed_id, COUNT(*) AS article_count
+                        FROM {sch}.articles
+                        WHERE rss_feed_id = ANY(%s)
+                        GROUP BY rss_feed_id
                     """, (feed_ids,))
-                    
+
                     article_counts = {row[0]: row[1] for row in cur.fetchall()}
-                
-                # Determine which feed to keep
+
                 keep_feed_id = None
                 max_articles = -1
-                
+
                 for feed_id in feed_ids:
                     article_count = article_counts.get(feed_id, 0)
                     if article_count > max_articles:
                         max_articles = article_count
                         keep_feed_id = feed_id
-                
-                # If tied, keep the oldest
+
                 if max_articles == 0:
                     with self.conn.cursor() as cur:
-                        cur.execute("""
-                            SELECT id FROM rss_feeds 
-                            WHERE id = ANY(%s) 
-                            ORDER BY created_at ASC 
+                        cur.execute(f"""
+                            SELECT id FROM {sch}.rss_feeds
+                            WHERE id = ANY(%s)
+                            ORDER BY created_at ASC
                             LIMIT 1
                         """, (feed_ids,))
-                        keep_feed_id = cur.fetchone()[0]
-                
-                # Remove other feeds
+                        row = cur.fetchone()
+                        if row:
+                            keep_feed_id = row[0]
+
+                if keep_feed_id is None:
+                    merge_results['errors'].append(
+                        f"Could not pick feed to keep for {duplicate.get('url')!r} in {sch}"
+                    )
+                    continue
+
                 remove_feed_ids = [fid for fid in feed_ids if fid != keep_feed_id]
-                
+
                 if not dry_run:
                     with self.conn.cursor() as cur:
-                        # Delete duplicate feeds
-                        cur.execute("""
-                            DELETE FROM rss_feeds 
+                        cur.execute(f"""
+                            DELETE FROM {sch}.rss_feeds
                             WHERE id = ANY(%s)
                         """, (remove_feed_ids,))
-                        
+
                         self.conn.commit()
-                
+
                 merge_results['merged'].append({
                     'kept_feed_id': keep_feed_id,
                     'removed_feed_ids': remove_feed_ids,
                     'url': duplicate['url'],
-                    'names': duplicate['names']
+                    'names': duplicate['names'],
+                    'domain_schema': sch,
                 })
                 
                 merge_results['total_processed'] += len(remove_feed_ids)
@@ -341,34 +364,30 @@ class RSSDuplicateDetector:
         return merge_results
     
     def add_duplicate_prevention_constraints(self) -> bool:
-        """Add database constraints to prevent future duplicates"""
-        logger.info("🔒 Adding duplicate prevention constraints...")
-        
+        """Add unique index on feed_url per domain schema (idempotent)."""
+        logger.info("🔒 Adding duplicate prevention indexes per schema...")
+
+        all_ok = True
+        with self.conn.cursor() as cur:
+            for sch in DOMAIN_DATA_SCHEMAS:
+                idx_name = f"idx_rss_feeds_feed_url_unique_{sch}"
+                try:
+                    cur.execute(f"""
+                        CREATE UNIQUE INDEX IF NOT EXISTS {idx_name}
+                        ON {sch}.rss_feeds (feed_url)
+                    """)
+                except Exception as e:
+                    logger.error(f"❌ Error adding index on {sch}.rss_feeds: {e}")
+                    all_ok = False
         try:
-            with self.conn.cursor() as cur:
-                # Add unique constraint on feed_url
-                cur.execute("""
-                    ALTER TABLE rss_feeds 
-                    ADD CONSTRAINT unique_feed_url UNIQUE (feed_url)
-                """)
-                
-                # Add index for faster duplicate detection
-                cur.execute("""
-                    CREATE INDEX IF NOT EXISTS idx_rss_feeds_url 
-                    ON rss_feeds (feed_url)
-                """)
-                
-                self.conn.commit()
-                logger.info("✅ Duplicate prevention constraints added successfully")
-                return True
-                
+            self.conn.commit()
         except Exception as e:
-            if "already exists" in str(e):
-                logger.info("ℹ️ Unique constraint already exists")
-                return True
-            else:
-                logger.error(f"❌ Error adding constraints: {e}")
-                return False
+            logger.error(f"❌ Commit failed: {e}")
+            return False
+
+        if all_ok:
+            logger.info("✅ Per-schema duplicate prevention indexes ensured")
+        return all_ok
     
     def close_connection(self):
         """Close database connection"""

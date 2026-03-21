@@ -7,11 +7,13 @@ Excludes sports, entertainment, and pop culture content.
 
 import os
 import sys
+import json
 import logging
 import threading
 import hashlib
 import feedparser
 import psycopg2
+import psycopg2.errors
 import re
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
@@ -42,6 +44,23 @@ except ImportError:
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+def _apply_rss_source_credibility(
+    feed_url: str, feed_name: str, quality_score: float
+) -> tuple[float, Optional[dict]]:
+    """
+    Scale quality_score per orchestrator_governance source_credibility tiers.
+    Returns (adjusted_quality, metadata.source_credibility dict or None).
+    """
+    try:
+        from shared.services.source_credibility_service import apply_credibility_to_quality_score
+
+        q, result = apply_credibility_to_quality_score(quality_score, feed_url, feed_name)
+        return q, result.to_metadata_dict(feed_url)
+    except Exception as e:
+        logger.debug("source_credibility: %s", e)
+        return max(0.0, min(1.0, float(quality_score))), None
 
 # Use shared pool (run with api as cwd or PYTHONPATH=api)
 from shared.database.connection import get_db_connection as _get_conn
@@ -388,21 +407,35 @@ def is_advertisement(title: str, content: str, url: str = "") -> bool:
     return False
 
 
-def is_excluded_content(title: str, content: str, feed_name: str = "", feed_url: str = "") -> bool:
+def is_excluded_content(title: str, content: str, feed_name: str = "", feed_url: str = "", domain: str = "") -> bool:
     """
-    Check if article should be excluded (sports, entertainment, pop culture)
+    Check if article should be excluded (sports, entertainment, pop culture).
+    When domain is provided, also applies domain-specific exclusion keywords
+    from domain_synthesis_config (e.g. science-tech excludes consumer electronics).
     
     Args:
         title: Article title
         content: Article content/summary
         feed_name: Name of the RSS feed
         feed_url: URL of the RSS feed
+        domain: Domain key for domain-specific filtering
         
     Returns:
         True if article should be excluded, False otherwise
     """
     # Combine all text for checking
     text_to_check = f"{title} {content} {feed_name}".lower()
+
+    # Domain-specific exclusions from synthesis config
+    if domain:
+        try:
+            from services.domain_synthesis_config import get_domain_synthesis_config
+            cfg = get_domain_synthesis_config(domain)
+            if cfg.is_excluded_topic(text_to_check):
+                logger.debug(f"Article excluded (domain '{domain}' topic filter): {title[:60]}...")
+                return True
+        except ImportError:
+            pass
     
     # Sports keywords — only unambiguous sports terms (no common English words)
     sports_keywords = [
@@ -643,8 +676,8 @@ def collect_rss_feeds() -> int:
                             if not content:
                                 content = entry.get('summary', '') or entry.get('description', '')
                             
-                            # Filter excluded content (sports/entertainment/pop culture)
-                            if is_excluded_content(title, content, feed_name, feed_url):
+                            # Filter excluded content (sports/entertainment/pop culture + domain-specific)
+                            if is_excluded_content(title, content, feed_name, feed_url, domain=domain_key):
                                 excluded_count += 1
                                 continue
                             
@@ -665,6 +698,9 @@ def collect_rss_feeds() -> int:
                             # Calculate scores BEFORE filtering (need scores for threshold check)
                             impact_score = calculate_article_impact_score(title, content)
                             quality_score = calculate_article_quality_score(title, content, feed_name)
+                            quality_score, cred_meta = _apply_rss_source_credibility(
+                                feed_url, feed_name, quality_score
+                            )
                             
                             # Filter by minimum quality score
                             if quality_score < 0.3:
@@ -711,12 +747,67 @@ def collect_rss_feeds() -> int:
                                     bias_score = (raw_bias + 1) / 2 if raw_bias is not None else 0.5
                                     bias_score = max(0.0, min(1.0, bias_score))
                                     quality_score = max(0.0, min(1.0, quality_score))
-                                    feed_cur.execute(f"""
-                                        UPDATE {schema_name}.articles SET
-                                        title = %s, content = %s, summary = %s, published_at = %s,
-                                        source_domain = %s, quality_score = %s, bias_score = %s, updated_at = NOW()
-                                        WHERE id = %s
-                                    """, (title, content, None, published_date, feed_name, quality_score, bias_score, existing_id))
+                                    if cred_meta:
+                                        try:
+                                            feed_cur.execute(
+                                                f"""
+                                                UPDATE {schema_name}.articles SET
+                                                title = %s, content = %s, summary = %s, published_at = %s,
+                                                source_domain = %s, quality_score = %s, bias_score = %s,
+                                                metadata = COALESCE(metadata, '{{}}'::jsonb) || %s::jsonb,
+                                                updated_at = NOW()
+                                                WHERE id = %s
+                                                """,
+                                                (
+                                                    title,
+                                                    content,
+                                                    None,
+                                                    published_date,
+                                                    feed_name,
+                                                    quality_score,
+                                                    bias_score,
+                                                    json.dumps({"source_credibility": cred_meta}),
+                                                    existing_id,
+                                                ),
+                                            )
+                                        except psycopg2.errors.UndefinedColumn:
+                                            feed_cur.execute(
+                                                f"""
+                                                UPDATE {schema_name}.articles SET
+                                                title = %s, content = %s, summary = %s, published_at = %s,
+                                                source_domain = %s, quality_score = %s, bias_score = %s, updated_at = NOW()
+                                                WHERE id = %s
+                                                """,
+                                                (
+                                                    title,
+                                                    content,
+                                                    None,
+                                                    published_date,
+                                                    feed_name,
+                                                    quality_score,
+                                                    bias_score,
+                                                    existing_id,
+                                                ),
+                                            )
+                                    else:
+                                        feed_cur.execute(
+                                            f"""
+                                            UPDATE {schema_name}.articles SET
+                                            title = %s, content = %s, summary = %s, published_at = %s,
+                                            source_domain = %s, quality_score = %s, bias_score = %s, updated_at = NOW()
+                                            WHERE id = %s
+                                            """,
+                                            (
+                                                title,
+                                                content,
+                                                None,
+                                                published_date,
+                                                feed_name,
+                                                quality_score,
+                                                bias_score,
+                                                existing_id,
+                                            ),
+                                        )
                                     articles_updated += 1
                                     try:
                                         feed_cur.execute(f"""
@@ -768,14 +859,55 @@ def collect_rss_feeds() -> int:
                                     enrichment_status = "failed"
                                     enrichment_attempts = 1
 
-                            # Insert article (scores already calculated above)
+                            # Insert article (scores already calculated above); optional metadata for source_credibility
                             feed_cur.execute("SAVEPOINT sp_article")
-                            feed_cur.execute(f"""
-                                INSERT INTO {schema_name}.articles
-                                (title, url, content, summary, published_at, created_at, source_domain, quality_score, bias_score, enrichment_status, enrichment_attempts)
-                                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                                RETURNING id
-                            """, (title, url, insert_content, None, published_date, datetime.now(timezone.utc), feed_name, quality_score, bias_score, enrichment_status, enrichment_attempts))
+                            insert_vals = (
+                                title,
+                                url,
+                                insert_content,
+                                None,
+                                published_date,
+                                datetime.now(timezone.utc),
+                                feed_name,
+                                quality_score,
+                                bias_score,
+                                enrichment_status,
+                                enrichment_attempts,
+                            )
+                            if cred_meta:
+                                try:
+                                    feed_cur.execute(
+                                        f"""
+                                        INSERT INTO {schema_name}.articles
+                                        (title, url, content, summary, published_at, created_at, source_domain,
+                                         quality_score, bias_score, enrichment_status, enrichment_attempts, metadata)
+                                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+                                        RETURNING id
+                                        """,
+                                        (*insert_vals, json.dumps({"source_credibility": cred_meta})),
+                                    )
+                                except psycopg2.errors.UndefinedColumn:
+                                    feed_cur.execute(
+                                        f"""
+                                        INSERT INTO {schema_name}.articles
+                                        (title, url, content, summary, published_at, created_at, source_domain,
+                                         quality_score, bias_score, enrichment_status, enrichment_attempts)
+                                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                        RETURNING id
+                                        """,
+                                        insert_vals,
+                                    )
+                            else:
+                                feed_cur.execute(
+                                    f"""
+                                    INSERT INTO {schema_name}.articles
+                                    (title, url, content, summary, published_at, created_at, source_domain,
+                                     quality_score, bias_score, enrichment_status, enrichment_attempts)
+                                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                    RETURNING id
+                                    """,
+                                    insert_vals,
+                                )
                             
                             result = feed_cur.fetchone()
                             if result and feed_cur.rowcount > 0:
@@ -958,6 +1090,22 @@ def collect_rss_feed(feed_url: str, feed_name: str = "Unknown") -> int:
                 raise TimeoutError("RSS parsing timeout")
         
         articles_added = 0
+
+        # Determine domain/schema for this feed so domain-specific exclusion and INSERT target are correct
+        schema_name = "politics"
+        domain_key_single = ""
+        cur.execute("""
+            SELECT 'politics' as schema FROM politics.rss_feeds WHERE feed_url = %s
+            UNION ALL
+            SELECT 'finance' FROM finance.rss_feeds WHERE feed_url = %s
+            UNION ALL
+            SELECT 'science_tech' FROM science_tech.rss_feeds WHERE feed_url = %s
+            LIMIT 1
+        """, (feed_url, feed_url, feed_url))
+        r = cur.fetchone()
+        if r:
+            schema_name = r[0]
+            domain_key_single = "politics" if schema_name == "politics" else "finance" if schema_name == "finance" else "science-tech"
         
         for entry in feed.entries:
             try:
@@ -966,8 +1114,8 @@ def collect_rss_feed(feed_url: str, feed_name: str = "Unknown") -> int:
                 url = entry.get('link', '')[:500]
                 content = entry.get('summary', '') or entry.get('description', '')
                 
-                # Filter out sports, entertainment, and pop culture content
-                if is_excluded_content(title, content, feed_name, feed_url):
+                # Filter out sports, entertainment, and pop culture content (domain-specific for science-tech)
+                if is_excluded_content(title, content, feed_name, feed_url, domain=domain_key_single):
                     logger.debug(f"Skipping excluded article: {title[:60]}...")
                     continue
                 
@@ -983,6 +1131,9 @@ def collect_rss_feed(feed_url: str, feed_name: str = "Unknown") -> int:
                 
                 impact_score = calculate_article_impact_score(title, content)
                 quality_score = calculate_article_quality_score(title, content, feed_name)
+                quality_score, cred_meta = _apply_rss_source_credibility(
+                    feed_url, feed_name, quality_score
+                )
                 
                 if quality_score < 0.3:
                     logger.debug(f"Skipping article (quality score {quality_score:.2f} < 0.3): {title[:60]}...")
@@ -1000,25 +1151,7 @@ def collect_rss_feed(feed_url: str, feed_name: str = "Unknown") -> int:
                 else:
                     published_date = datetime.now(timezone.utc)
                 
-                # Determine domain for single feed collection (default to politics)
-                # Note: For single feed, we need to determine domain from feed_name or query all schemas
-                # For now, default to politics schema
-                schema_name = 'politics'
-                
-                # Try to find feed in any domain schema to determine correct schema
-                cur.execute("""
-                    SELECT 'politics' as schema FROM politics.rss_feeds WHERE feed_url = %s
-                    UNION ALL
-                    SELECT 'finance' as schema FROM finance.rss_feeds WHERE feed_url = %s
-                    UNION ALL
-                    SELECT 'science_tech' as schema FROM science_tech.rss_feeds WHERE feed_url = %s
-                    LIMIT 1
-                """, (feed_url, feed_url, feed_url))
-                result = cur.fetchone()
-                if result:
-                    schema_name = result[0]
-                
-                # Check for duplicates before inserting (in domain schema)
+                # Check for duplicates before inserting (in domain schema; schema_name set before loop)
                 cur.execute(f"""
                     SELECT id FROM {schema_name}.articles 
                     WHERE url = %s OR (title = %s AND source_domain = %s)
@@ -1057,14 +1190,53 @@ def collect_rss_feed(feed_url: str, feed_name: str = "Unknown") -> int:
                         enrichment_attempts = 1
 
                 # Insert article into domain schema (v5.0) with quality score and bias score
-                cur.execute(f"""
-                    INSERT INTO {schema_name}.articles
-                    (title, url, content, summary, published_at, created_at, source_domain, quality_score, bias_score, enrichment_status, enrichment_attempts)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    RETURNING id
-                """, (
-                    title, url, insert_content, None, published_date, datetime.now(timezone.utc), feed_name, quality_score, bias_score, enrichment_status, enrichment_attempts
-                ))
+                insert_vals = (
+                    title,
+                    url,
+                    insert_content,
+                    None,
+                    published_date,
+                    datetime.now(timezone.utc),
+                    feed_name,
+                    quality_score,
+                    bias_score,
+                    enrichment_status,
+                    enrichment_attempts,
+                )
+                if cred_meta:
+                    try:
+                        cur.execute(
+                            f"""
+                            INSERT INTO {schema_name}.articles
+                            (title, url, content, summary, published_at, created_at, source_domain,
+                             quality_score, bias_score, enrichment_status, enrichment_attempts, metadata)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+                            RETURNING id
+                            """,
+                            (*insert_vals, json.dumps({"source_credibility": cred_meta})),
+                        )
+                    except psycopg2.errors.UndefinedColumn:
+                        cur.execute(
+                            f"""
+                            INSERT INTO {schema_name}.articles
+                            (title, url, content, summary, published_at, created_at, source_domain,
+                             quality_score, bias_score, enrichment_status, enrichment_attempts)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            RETURNING id
+                            """,
+                            insert_vals,
+                        )
+                else:
+                    cur.execute(
+                        f"""
+                        INSERT INTO {schema_name}.articles
+                        (title, url, content, summary, published_at, created_at, source_domain,
+                         quality_score, bias_score, enrichment_status, enrichment_attempts)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        RETURNING id
+                        """,
+                        insert_vals,
+                    )
                 
                 result = cur.fetchone()
                 if result and cur.rowcount > 0:

@@ -129,6 +129,109 @@ export const intelligenceApi = {
     }
   },
 
+  async getEventStorylineClaimConsistency(
+    params: { limit_events?: number; min_claim_confidence?: number } = {},
+    domain?: string,
+  ) {
+    try {
+      const domainKey = domain || getCurrentDomain();
+      const response = await getApi().get(
+        `/api/${domainKey}/intelligence/consistency`,
+        { params },
+      );
+      return response.data;
+    } catch (error) {
+      Logger.apiError('Failed to get consistency assembly', error as Error);
+      return { success: false, error: (error as any).message };
+    }
+  },
+
+  async getParticipantPositionDeltas(
+    params: { days?: number } = {},
+    domain?: string,
+  ) {
+    try {
+      const domainKey = domain || getCurrentDomain();
+      const response = await getApi().get(
+        `/api/${domainKey}/intelligence/participant_deltas`,
+        { params },
+      );
+      return response.data;
+    } catch (error) {
+      Logger.apiError('Failed to get participant deltas', error as Error);
+      return { success: false, error: (error as any).message };
+    }
+  },
+
+  async getCausalChains(
+    params: { days?: number; min_strength?: number; limit?: number } = {},
+  ) {
+    try {
+      const response = await getApi().get(
+        '/api/intelligence/causal_chains',
+        { params },
+      );
+      return response.data;
+    } catch (error) {
+      Logger.apiError('Failed to get causal chains', error as Error);
+      return { success: false, error: (error as any).message };
+    }
+  },
+
+  async getNarrativeDivergenceMap(
+    eventId: number,
+    params: { min_contexts_per_cluster?: number } = {},
+    domain?: string,
+  ) {
+    try {
+      const domainKey = domain || getCurrentDomain();
+      const response = await getApi().get(
+        `/api/${domainKey}/intelligence/narrative_divergence/${eventId}`,
+        { params },
+      );
+      return response.data;
+    } catch (error) {
+      Logger.apiError('Failed to get narrative divergence map', error as Error);
+      return { success: false, error: (error as any).message };
+    }
+  },
+
+  async runWatchlistThemeBridge(
+    params: { create_alerts?: boolean; max_items?: number } = {},
+    domain?: string,
+  ) {
+    try {
+      const domainKey = domain || getCurrentDomain();
+      const response = await getApi().post(
+        `/api/${domainKey}/intelligence/watchlist_theme_bridge`,
+        null,
+        { params },
+      );
+      return response.data;
+    } catch (error) {
+      Logger.apiError('Failed to run watchlist-theme bridge', error as Error);
+      return { success: false, error: (error as any).message };
+    }
+  },
+
+  async runDocumentIntelligenceIntegration(
+    params: { days?: number; persist_links?: boolean; limit?: number } = {},
+    domain?: string,
+  ) {
+    try {
+      const domainKey = domain || getCurrentDomain();
+      const response = await getApi().post(
+        `/api/${domainKey}/intelligence/document_integration`,
+        null,
+        { params },
+      );
+      return response.data;
+    } catch (error) {
+      Logger.apiError('Failed to run document intelligence integration', error as Error);
+      return { success: false, error: (error as any).message };
+    }
+  },
+
   async getDomainEvents(
     params: { limit?: number; offset?: number; event_type?: string; ongoing_only?: boolean } = {},
     domain?: string,
@@ -287,6 +390,24 @@ export const intelligenceApi = {
     } catch (error) {
       Logger.apiError('Failed to get story dossier', error as Error);
       return { success: false, error: (error as any).message };
+    }
+  },
+
+  /** Report assembly: lead storylines (5W1H + key_actors), investigations, recent events, daily brief. */
+  async getReport(domain?: string, leadLimit: number = 10) {
+    try {
+      const domainKey = domain || getCurrentDomain();
+      const response = await getApi().get<{ success: boolean; data: import('../../types').ReportPayload | null; message: string | null }>(
+        `/api/${domainKey}/report`,
+        { params: { lead_limit: leadLimit } },
+      );
+      if (response.data.success && response.data.data) {
+        return { success: true as const, data: response.data.data };
+      }
+      return { success: false as const, data: null, message: response.data.message || 'No data' };
+    } catch (error) {
+      Logger.apiError('Failed to get report', error as Error);
+      return { success: false as const, data: null, message: (error as Error).message };
     }
   },
 

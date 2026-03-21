@@ -11,7 +11,11 @@ import time
 
 from shared.services.llm_service import llm_service, TaskType
 from shared.database.connection import get_db_connection
-from shared.services.domain_aware_service import validate_domain
+from shared.services.domain_aware_service import (
+    validate_domain,
+    DOMAIN_DATA_SCHEMAS,
+    resolve_article_id_to_schema,
+)
 from domains.news_aggregation.services.article_service import ArticleService
 
 logger = logging.getLogger(__name__)
@@ -357,38 +361,21 @@ async def collect_rss_feeds_now(
 
 @router.post("/fetch_articles")
 async def fetch_articles_from_feeds(background_tasks: BackgroundTasks):
-    """Fetch articles from all active RSS feeds"""
-    try:
-        conn = get_db_connection()
-        if not conn:
-            raise HTTPException(status_code=500, detail="Database connection failed")
-        
+    """Trigger RSS collection for all domains (uses collect_rss_feeds; domain-scoped feeds)."""
+    def _run_collect():
         try:
-            with conn.cursor() as cur:
-                cur.execute("""
-                    SELECT id, feed_name, feed_url, fetch_interval_seconds, last_fetched_at
-                    FROM rss_feeds 
-                    WHERE is_active = true
-                """)
-                
-                feeds = cur.fetchall()
-                
-                # Start background task for fetching
-                background_tasks.add_task(process_rss_feeds, feeds)
-                
-                return {
-                    "success": True,
-                    "message": f"Started fetching from {len(feeds)} RSS feeds",
-                    "feeds_count": len(feeds),
-                    "timestamp": datetime.now().isoformat()
-                }
-                
-        finally:
-            conn.close()
-            
-    except Exception as e:
-        logger.error(f"Error starting RSS fetch: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+            from collectors.rss_collector import collect_rss_feeds
+            return collect_rss_feeds()
+        except Exception as e:
+            logger.error("collect_rss_feeds failed: %s", e)
+            return None
+
+    background_tasks.add_task(_run_collect)
+    return {
+        "success": True,
+        "message": "RSS collection started for all domains (collect_rss_feeds)",
+        "timestamp": datetime.now().isoformat(),
+    }
 
 @router.get("/{domain}/articles")
 async def get_domain_articles(
@@ -606,15 +593,19 @@ async def get_recent_articles_legacy(
 async def analyze_article_quality(article_id: int, background_tasks: BackgroundTasks):
     """Analyze article quality using LLM"""
     try:
+        schema = resolve_article_id_to_schema(article_id)
+        if not schema:
+            raise HTTPException(status_code=404, detail="Article not found")
+
         conn = get_db_connection()
         if not conn:
             raise HTTPException(status_code=500, detail="Database connection failed")
         
         try:
             with conn.cursor() as cur:
-                cur.execute("""
+                cur.execute(f"""
                     SELECT id, title, content, url, source_domain
-                    FROM articles 
+                    FROM {schema}.articles 
                     WHERE id = %s
                 """, (article_id,))
                 
@@ -623,7 +614,7 @@ async def analyze_article_quality(article_id: int, background_tasks: BackgroundT
                     raise HTTPException(status_code=404, detail="Article not found")
                 
                 # Start background quality analysis
-                background_tasks.add_task(process_article_quality, article)
+                background_tasks.add_task(process_article_quality, article + (schema,))
                 
                 return {
                     "success": True,
@@ -649,22 +640,35 @@ async def get_aggregation_statistics():
         
         try:
             with conn.cursor() as cur:
-                # Total articles
-                cur.execute("SELECT COUNT(*) FROM articles")
-                total_articles = cur.fetchone()[0]
-                
-                # Articles last 24 hours
+                total_articles = 0
                 yesterday = datetime.now() - timedelta(days=1)
-                cur.execute("SELECT COUNT(*) FROM articles WHERE created_at >= %s", (yesterday,))
-                recent_articles = cur.fetchone()[0]
-                
-                # Active RSS feeds
-                cur.execute("SELECT COUNT(*) FROM rss_feeds WHERE is_active = true")
-                active_feeds = cur.fetchone()[0]
-                
-                # Average quality score
-                cur.execute("SELECT AVG(LENGTH(content)) FROM articles WHERE quality_score IS NOT NULL")
-                avg_quality = cur.fetchone()[0] or 0
+                recent_articles = 0
+                active_feeds = 0
+                weighted_q = 0.0
+                q_rows = 0
+                for sch in DOMAIN_DATA_SCHEMAS:
+                    cur.execute(f"SELECT COUNT(*) FROM {sch}.articles")
+                    total_articles += cur.fetchone()[0] or 0
+                    cur.execute(
+                        f"SELECT COUNT(*) FROM {sch}.articles WHERE created_at >= %s",
+                        (yesterday,),
+                    )
+                    recent_articles += cur.fetchone()[0] or 0
+                    cur.execute(
+                        f"SELECT COUNT(*) FROM {sch}.rss_feeds WHERE is_active = true"
+                    )
+                    active_feeds += cur.fetchone()[0] or 0
+                    cur.execute(f"""
+                        SELECT COUNT(*), COALESCE(AVG(quality_score), 0)
+                        FROM {sch}.articles
+                        WHERE quality_score IS NOT NULL
+                    """)
+                    cnt, av = cur.fetchone()
+                    cnt = cnt or 0
+                    if cnt:
+                        weighted_q += float(av or 0) * cnt
+                        q_rows += cnt
+                avg_quality = (weighted_q / q_rows) if q_rows else 0.0
                 
                 return {
                     "success": True,
@@ -704,150 +708,28 @@ def _log_rss_pull(feed_id, feed_name, status, fetched, saved, start_time, error=
 
 # Background task functions
 async def process_rss_feeds(feeds: List[tuple]):
-    """Background task to process RSS feeds"""
-    logger.info(f"Processing {len(feeds)} RSS feeds")
-    
+    """Deprecated legacy helper. Domain-scoped ingestion uses collectors.rss_collector.collect_rss_feeds."""
+    logger.warning(
+        "process_rss_feeds(feeds=) is deprecated (%s feeds ignored); use collect_rss_feeds()",
+        len(feeds) if feeds else 0,
+    )
     try:
-        import feedparser
-        import requests
-        from urllib.parse import urlparse
-        
-        processed_count = 0
-        error_count = 0
-        
-        for feed_data in feeds:
-            feed_id, feed_name, feed_url, fetch_interval, last_fetched_at = feed_data
-            feed_start = time.time()
-            
-            # Get a fresh database connection for each feed
-            conn = get_db_connection()
-            if not conn:
-                logger.error(f"Database connection failed for feed: {feed_name}")
-                _log_rss_pull(feed_id, feed_name, "error", 0, 0, feed_start, error="No DB connection")
-                error_count += 1
-                continue
-                
-            try:
-                logger.info(f"Processing feed: {feed_name} ({feed_url})")
-                articles_saved_this_feed = 0
-                entries_count = 0
-                
-                # Fetch RSS feed with better error handling
-                try:
-                    response = requests.get(feed_url, timeout=30, headers={
-                        'User-Agent': 'Mozilla/5.0 (compatible; News Intelligence Bot/1.0)'
-                    })
-                    response.raise_for_status()
-                except Exception as e:
-                    logger.error(f"Error fetching feed {feed_name}: {e}")
-                    _log_rss_pull(feed_id, feed_name, "error", 0, 0, feed_start, error=str(e))
-                    error_count += 1
-                    continue
-                
-                # Parse RSS feed
-                feed = feedparser.parse(response.content)
-                entries_count = len(feed.entries) if feed.entries else 0
-                
-                if not feed.entries:
-                    logger.warning(f"No entries found in feed: {feed_name}")
-                    _log_rss_pull(feed_id, feed_name, "no_entries", 0, 0, feed_start)
-                    continue
-                
-                # Process each entry
-                for entry in feed.entries[:10]:  # Limit to 10 most recent articles
-                    try:
-                        # Extract article data
-                        title = entry.get('title', 'No Title')
-                        link = entry.get('link', '')
-                        description = entry.get('description', '')
-                        published = entry.get('published_parsed')
-                        
-                        # Convert published date
-                        published_at = None
-                        if published:
-                            from datetime import datetime
-                            published_at = datetime(*published[:6])
-                        
-                        # Extract domain from URL
-                        domain = urlparse(link).netloc if link else 'unknown'
-                        
-                        # Check if article already exists and insert new article
-                        with conn.cursor() as cur:
-                            # Check for duplicates
-                            cur.execute("""
-                                SELECT id FROM articles 
-                                WHERE url = %s OR (title = %s AND source_domain = %s)
-                            """, (link, title, domain))
-                            
-                            if cur.fetchone():
-                                continue  # Skip duplicate
-                            
-                            # Insert new article with proper error handling
-                            try:
-                                cur.execute("""
-                                    INSERT INTO articles (
-                                        title, url, content, content, source_domain,
-                                        published_at,  processing_status,
-                                        created_at, updated_at
-                                    ) VALUES (
-                                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
-                                    )
-                                """, (
-                                    title,
-                                    link,
-                                    description,
-                                    description[:500] + "..." if len(description) > 500 else description,
-                                    domain,
-                                    published_at,
-                                    len(description.split()) if description else 0,
-                                    'pending',
-                                    datetime.now(),
-                                    datetime.now()
-                                ))
-                                
-                                processed_count += 1
-                                articles_saved_this_feed += 1
-                                logger.info(f"Added article: {title[:50]}...")
-                                
-                            except Exception as db_error:
-                                logger.error(f"Database error inserting article '{title[:30]}...': {db_error}")
-                                conn.rollback()  # Rollback the transaction
-                                error_count += 1
-                                continue
-                    
-                    except Exception as e:
-                        logger.error(f"Error processing article from {feed_name}: {e}")
-                        error_count += 1
-                
-                # Update feed timestamp
-                try:
-                    with conn.cursor() as cur:
-                        cur.execute("""
-                            UPDATE rss_feeds 
-                            SET last_fetched_at = %s 
-                            WHERE id = %s
-                        """, (datetime.now(), feed_id))
-                    conn.commit()
-                except Exception as e:
-                    logger.error(f"Error updating feed timestamp for {feed_name}: {e}")
-                    conn.rollback()
-                _log_rss_pull(feed_id, feed_name, "success", entries_count, articles_saved_this_feed, feed_start)
-            except Exception as e:
-                logger.error(f"Error processing feed {feed_name}: {e}")
-                _log_rss_pull(feed_id, feed_name, "error", entries_count, articles_saved_this_feed, feed_start, error=str(e))
-                error_count += 1
-            finally:
-                conn.close()
-        
-        logger.info(f"RSS processing completed: {processed_count} articles processed, {error_count} errors")
-        
+        from collectors.rss_collector import collect_rss_feeds
+        collect_rss_feeds()
     except Exception as e:
-        logger.error(f"RSS processing failed: {e}")
+        logger.error("collect_rss_feeds: %s", e)
 
 async def process_article_quality(article: tuple):
     """Background task to analyze article quality using LLM"""
     try:
-        article_id, title, content, url, source_domain = article
+        if len(article) >= 6:
+            article_id, title, content, url, source_domain, schema = article[:6]
+        else:
+            article_id, title, content, url, source_domain = article[:5]
+            schema = resolve_article_id_to_schema(article_id)
+        if not schema:
+            logger.error("process_article_quality: no schema for article %s", article_id)
+            return
         
         # Use LLM to analyze quality
         quality_analysis = await llm_service.generate_summary(
@@ -861,8 +743,8 @@ async def process_article_quality(article: tuple):
             if conn:
                 try:
                     with conn.cursor() as cur:
-                        cur.execute("""
-                            UPDATE articles 
+                        cur.execute(f"""
+                            UPDATE {schema}.articles 
                             SET quality_score = %s, 
                                 summary = %s,
                                 updated_at = %s

@@ -17,6 +17,10 @@ from .summarization_service import MLSummarizationService
 
 logger = logging.getLogger(__name__)
 
+# Domain-scoped article tables (not public.articles).
+_DOMAIN_ARTICLE_SCHEMAS = ("politics", "finance", "science_tech")
+
+
 class BackgroundMLProcessor:
     """
     Background processor for ML operations with timing tracking
@@ -47,6 +51,30 @@ class BackgroundMLProcessor:
             'failed': 0,
             'avg_processing_time': 0.0
         }
+
+    @staticmethod
+    def _resolve_article_schema(article_id: int) -> Optional[str]:
+        """Return which domain schema owns this article id, or None."""
+        conn = None
+        try:
+            conn = get_db_connection()
+            if not conn:
+                return None
+            with conn.cursor() as cursor:
+                for schema in _DOMAIN_ARTICLE_SCHEMAS:
+                    cursor.execute(
+                        f"SELECT 1 FROM {schema}.articles WHERE id = %s LIMIT 1",
+                        (article_id,),
+                    )
+                    if cursor.fetchone():
+                        return schema
+        except Exception as e:
+            logger.error("Error resolving schema for article %s: %s", article_id, e)
+            return None
+        finally:
+            if conn is not None:
+                conn.close()
+        return None
     
     def start_workers(self):
         """Start background worker threads"""
@@ -133,17 +161,25 @@ class BackgroundMLProcessor:
         article_id = task['article_id']
         operation_type = task['operation_type']
         model_name = task['model_name']
-        
+        schema: Optional[str] = None
+
         logger.info(f"Processing ML task {queue_id}: {operation_type} for article {article_id}")
         
         try:
+            schema = self._resolve_article_schema(article_id)
+            if not schema:
+                raise Exception(
+                    f"Article {article_id} not found in domain schemas "
+                    f"{_DOMAIN_ARTICLE_SCHEMAS}"
+                )
+
             # Get article data
-            article_data = self._get_article_data(article_id)
+            article_data = self._get_article_data(article_id, schema)
             if not article_data:
                 raise Exception(f"Article {article_id} not found")
             
             # Update article processing status
-            self._update_article_processing_status(article_id, 'processing')
+            self._update_article_processing_status(article_id, 'processing', schema=schema)
             
             # Start timing
             start_time = time.time()
@@ -166,7 +202,8 @@ class BackgroundMLProcessor:
                 operation_type, 
                 result, 
                 duration, 
-                model_name
+                model_name,
+                schema=schema,
             )
             
             # Log processing completion
@@ -192,7 +229,9 @@ class BackgroundMLProcessor:
             logger.error(f"Error processing ML task {queue_id}: {e}")
             
             # Update article processing status
-            self._update_article_processing_status(article_id, 'failed', str(e))
+            self._update_article_processing_status(
+                article_id, "failed", str(e), schema=schema
+            )
             
             # Update queue status
             self._update_queue_status(queue_id, 'failed', error=str(e))
@@ -278,32 +317,21 @@ class BackgroundMLProcessor:
             conn = get_db_connection()
             with conn.cursor() as cursor:
                     if article_id:
-                        cursor.execute("""
+                        sch = self._resolve_article_schema(article_id)
+                        if not sch:
+                            return {"error": "Article not found in domain schemas"}
+                        cursor.execute(f"""
                             SELECT 
                                 a.id, a.title, a.ml_processing_status,
                                 a.ml_processing_started_at, a.ml_processing_completed_at,
                                 a.ml_processing_duration_seconds, a.ml_processing_error,
                                 a.ml_model_used
-                            FROM articles a
+                            FROM {sch}.articles a
                             WHERE a.id = %s
                         """, (article_id,))
-                    else:
-                        cursor.execute("""
-                            SELECT 
-                                a.id, a.title, a.ml_processing_status,
-                                a.ml_processing_started_at, a.ml_processing_completed_at,
-                                a.ml_processing_duration_seconds, a.ml_processing_error,
-                                a.ml_model_used,
-                                COUNT(*) OVER() as total_count
-                            FROM articles a
-                            WHERE a.ml_processing_status IS NOT NULL
-                            ORDER BY a.ml_processing_started_at DESC
-                            LIMIT 100
-                        """)
-                    
-                    results = cursor.fetchall()
-                    
-                    if article_id and results:
+                        results = cursor.fetchall()
+                        if not results:
+                            return {"error": "Article not found"}
                         row = results[0]
                         return {
                             'article_id': row[0],
@@ -315,25 +343,45 @@ class BackgroundMLProcessor:
                             'error': row[6],
                             'model_used': row[7]
                         }
-                    else:
-                        articles = []
-                        for row in results:
-                            articles.append({
-                                'article_id': row[0],
-                                'title': row[1],
-                                'status': row[2],
-                                'started_at': row[3].isoformat() if row[3] else None,
-                                'completed_at': row[4].isoformat() if row[4] else None,
-                                'duration_seconds': float(row[5]) if row[5] else None,
-                                'error': row[6],
-                                'model_used': row[7]
-                            })
-                        
-                        return {
-                            'articles': articles,
-                            'total_count': results[0][8] if results and len(results[0]) > 8 else len(articles)
-                        }
-                        
+
+                    subqueries = []
+                    for sch in _DOMAIN_ARTICLE_SCHEMAS:
+                        subqueries.append(f"""
+                            SELECT 
+                                a.id, a.title, a.ml_processing_status,
+                                a.ml_processing_started_at, a.ml_processing_completed_at,
+                                a.ml_processing_duration_seconds, a.ml_processing_error,
+                                a.ml_model_used
+                            FROM {sch}.articles a
+                            WHERE a.ml_processing_status IS NOT NULL
+                        """)
+                    union_sql = " UNION ALL ".join(subqueries)
+                    cursor.execute(f"""
+                        SELECT * FROM (
+                            {union_sql}
+                        ) u
+                        ORDER BY ml_processing_started_at DESC NULLS LAST
+                        LIMIT 100
+                    """)
+                    results = cursor.fetchall()
+                    articles = []
+                    for row in results:
+                        articles.append({
+                            'article_id': row[0],
+                            'title': row[1],
+                            'status': row[2],
+                            'started_at': row[3].isoformat() if row[3] else None,
+                            'completed_at': row[4].isoformat() if row[4] else None,
+                            'duration_seconds': float(row[5]) if row[5] else None,
+                            'error': row[6],
+                            'model_used': row[7]
+                        })
+
+                    return {
+                        'articles': articles,
+                        'total_count': len(articles),
+                    }
+
         except Exception as e:
             logger.error(f"Error getting processing status: {e}")
             return {'error': str(e)}
@@ -426,15 +474,16 @@ class BackgroundMLProcessor:
         # This is a simplified check - in production, you'd want a more robust solution
         return False
     
-    def _get_article_data(self, article_id: int) -> Optional[Dict]:
+    def _get_article_data(self, article_id: int, schema: str) -> Optional[Dict]:
         """Get article data from database"""
         conn = None
         try:
             conn = get_db_connection()
             with conn.cursor() as cursor:
-                    cursor.execute("""
-                        SELECT id, title, content, url, source
-                        FROM articles 
+                    cursor.execute(f"""
+                        SELECT id, title, content, url,
+                               COALESCE(source, source_domain) AS src
+                        FROM {schema}.articles 
                         WHERE id = %s
                     """, (article_id,))
                     
@@ -456,21 +505,34 @@ class BackgroundMLProcessor:
             if conn is not None:
                 conn.close()
     
-    def _update_article_processing_status(self, article_id: int, status: str, error: str = None):
+    def _update_article_processing_status(
+        self,
+        article_id: int,
+        status: str,
+        error: str = None,
+        schema: Optional[str] = None,
+    ):
         """Update article processing status"""
         conn = None
+        sch = schema or self._resolve_article_schema(article_id)
+        if not sch:
+            logger.warning(
+                "Skip ml_processing_status update: no schema for article %s",
+                article_id,
+            )
+            return
         try:
             conn = get_db_connection()
             with conn.cursor() as cursor:
                     if status == 'processing':
-                        cursor.execute("""
-                            UPDATE articles 
+                        cursor.execute(f"""
+                            UPDATE {sch}.articles 
                             SET ml_processing_status = %s, ml_processing_started_at = %s
                             WHERE id = %s
                         """, (status, datetime.now(), article_id))
                     elif status in ['completed', 'failed']:
-                        cursor.execute("""
-                            UPDATE articles 
+                        cursor.execute(f"""
+                            UPDATE {sch}.articles 
                             SET ml_processing_status = %s, ml_processing_completed_at = %s,
                                 ml_processing_error = %s
                             WHERE id = %s
@@ -484,16 +546,30 @@ class BackgroundMLProcessor:
             if conn is not None:
                 conn.close()
     
-    def _update_article_with_results(self, article_id: int, operation_type: str, 
-                                   result: Dict, duration: float, model_name: str):
+    def _update_article_with_results(
+        self,
+        article_id: int,
+        operation_type: str,
+        result: Dict,
+        duration: float,
+        model_name: str,
+        schema: Optional[str] = None,
+    ):
         """Update article with ML processing results"""
         conn = None
+        sch = schema or self._resolve_article_schema(article_id)
+        if not sch:
+            logger.warning(
+                "Skip ML result write: no schema for article %s",
+                article_id,
+            )
+            return
         try:
             conn = get_db_connection()
             with conn.cursor() as cursor:
                     # Update basic processing info
-                    cursor.execute("""
-                        UPDATE articles 
+                    cursor.execute(f"""
+                        UPDATE {sch}.articles 
                         SET ml_processing_status = 'completed',
                             ml_processing_completed_at = %s,
                             ml_processing_duration_seconds = %s,
@@ -503,15 +579,15 @@ class BackgroundMLProcessor:
                     
                     # Update content based on operation type
                     if operation_type == 'summarization' and result.get('summary'):
-                        cursor.execute("""
-                            UPDATE articles 
+                        cursor.execute(f"""
+                            UPDATE {sch}.articles 
                             SET summary = %s
                             WHERE id = %s
                         """, (result['summary'], article_id))
                     
                     # Store ML data in JSONB field
-                    cursor.execute("""
-                        UPDATE articles 
+                    cursor.execute(f"""
+                        UPDATE {sch}.articles 
                         SET ml_processing_metadata = %s
                         WHERE id = %s
                     """, (json.dumps(result), article_id))

@@ -24,9 +24,20 @@ export const HeroStatusBar: React.FC = () => {
     let cancelled = false;
     const fetchAll = async () => {
       try {
+        const orchPromise = (async () => {
+          try {
+            const fn = apiService.getOrchestratorDashboard;
+            if (typeof fn !== 'function') return null;
+            const d = await fn.call(apiService, { decision_log_limit: 1 });
+            return d?.status ?? null;
+          } catch {
+            return null;
+          }
+        })();
+
         const [h, o, c] = await Promise.all([
           apiService.getHealth().catch(() => null),
-          apiService.getOrchestratorDashboard?.({ decision_log_limit: 1 }).then((d: any) => d?.status).catch(() => null),
+          orchPromise,
           contextCentricApi.getStatus().catch(() => null),
         ]);
         if (cancelled) return;

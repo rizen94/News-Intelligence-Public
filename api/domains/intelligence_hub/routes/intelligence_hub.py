@@ -10,6 +10,7 @@ import logging
 
 from shared.services.llm_service import llm_service, TaskType
 from shared.database.connection import get_db_connection
+from shared.services.domain_aware_service import DOMAIN_DATA_SCHEMAS
 
 logger = logging.getLogger(__name__)
 
@@ -121,14 +122,26 @@ async def generate_intelligence_insights(background_tasks: BackgroundTasks):
         
         try:
             with conn.cursor() as cur:
-                # Get recent articles for analysis
-                cur.execute("""
-                    SELECT id, title, content, source, published_at, summary
-                    FROM articles 
-                    WHERE created_at >= %s
-                    ORDER BY created_at DESC
+                since = datetime.now() - timedelta(days=7)
+                branches = []
+                params = []
+                for sch in DOMAIN_DATA_SCHEMAS:
+                    branches.append(f"""
+                        SELECT id, title, content,
+                               COALESCE(source, source_domain) AS source,
+                               published_at, summary, created_at
+                        FROM {sch}.articles 
+                        WHERE created_at >= %s
+                    """)
+                    params.append(since)
+                union_sql = " UNION ALL ".join(branches)
+                cur.execute(f"""
+                    SELECT id, title, content, source, published_at, summary FROM (
+                        {union_sql}
+                    ) u
+                    ORDER BY created_at DESC NULLS LAST
                     LIMIT 50
-                """, (datetime.now() - timedelta(days=7),))
+                """, params)
                 
                 recent_articles = cur.fetchall()
                 
@@ -234,14 +247,26 @@ async def predict_trends(request: Dict[str, Any], background_tasks: BackgroundTa
         
         try:
             with conn.cursor() as cur:
-                # Get relevant articles for trend analysis
-                cur.execute("""
-                    SELECT id, title, content, source, published_at, summary
-                    FROM articles 
-                    WHERE created_at >= %s
-                    ORDER BY created_at DESC
+                since = datetime.now() - timedelta(days=30)
+                branches = []
+                params = []
+                for sch in DOMAIN_DATA_SCHEMAS:
+                    branches.append(f"""
+                        SELECT id, title, content,
+                               COALESCE(source, source_domain) AS source,
+                               published_at, summary, created_at
+                        FROM {sch}.articles 
+                        WHERE created_at >= %s
+                    """)
+                    params.append(since)
+                union_sql = " UNION ALL ".join(branches)
+                cur.execute(f"""
+                    SELECT id, title, content, source, published_at, summary FROM (
+                        {union_sql}
+                    ) u
+                    ORDER BY created_at DESC NULLS LAST
                     LIMIT 100
-                """, (datetime.now() - timedelta(days=30),))
+                """, params)
                 
                 articles = cur.fetchall()
                 
@@ -283,21 +308,44 @@ async def get_analytics_summary():
             with conn.cursor() as cur:
                 # Get various analytics metrics
                 analytics = {}
+                week_ago = datetime.now() - timedelta(days=7)
                 
-                # Article analytics
-                cur.execute("SELECT COUNT(*) FROM articles")
-                analytics["total_articles"] = cur.fetchone()[0]
-                
-                cur.execute("SELECT COUNT(*) FROM articles WHERE created_at >= %s", 
-                           (datetime.now() - timedelta(days=7),))
-                analytics["articles_last_week"] = cur.fetchone()[0]
-                
-                # Storyline analytics
-                cur.execute("SELECT COUNT(*) FROM storylines")
-                analytics["total_storylines"] = cur.fetchone()[0]
-                
-                cur.execute("SELECT COUNT(*) FROM storyline_articles")
-                analytics["total_storyline_articles"] = cur.fetchone()[0]
+                analytics["total_articles"] = 0
+                analytics["articles_last_week"] = 0
+                analytics["total_storylines"] = 0
+                analytics["total_storyline_articles"] = 0
+                weighted_aq = 0.0
+                aq_n = 0
+                weighted_sq = 0.0
+                sq_n = 0
+                for sch in DOMAIN_DATA_SCHEMAS:
+                    cur.execute(f"SELECT COUNT(*) FROM {sch}.articles")
+                    analytics["total_articles"] += cur.fetchone()[0] or 0
+                    cur.execute(
+                        f"SELECT COUNT(*) FROM {sch}.articles WHERE created_at >= %s",
+                        (week_ago,),
+                    )
+                    analytics["articles_last_week"] += cur.fetchone()[0] or 0
+                    cur.execute(f"SELECT COUNT(*) FROM {sch}.storylines")
+                    analytics["total_storylines"] += cur.fetchone()[0] or 0
+                    cur.execute(f"SELECT COUNT(*) FROM {sch}.storyline_articles")
+                    analytics["total_storyline_articles"] += cur.fetchone()[0] or 0
+                    cur.execute(f"""
+                        SELECT COUNT(*), COALESCE(AVG(quality_score), 0)
+                        FROM {sch}.articles WHERE quality_score IS NOT NULL
+                    """)
+                    c, av = cur.fetchone()
+                    if c:
+                        weighted_aq += float(av or 0) * c
+                        aq_n += c
+                    cur.execute(f"""
+                        SELECT COUNT(*), COALESCE(AVG(quality_score), 0)
+                        FROM {sch}.storylines WHERE quality_score IS NOT NULL
+                    """)
+                    c2, av2 = cur.fetchone()
+                    if c2:
+                        weighted_sq += float(av2 or 0) * c2
+                        sq_n += c2
                 
                 # Intelligence analytics
                 cur.execute("SELECT COUNT(*) FROM intelligence_insights WHERE is_active = true")
@@ -306,12 +354,13 @@ async def get_analytics_summary():
                 cur.execute("SELECT COUNT(*) FROM trend_predictions WHERE is_active = true")
                 analytics["active_predictions"] = cur.fetchone()[0]
                 
-                # Quality metrics
-                cur.execute("SELECT AVG(quality_score) FROM articles WHERE quality_score IS NOT NULL")
-                analytics["avg_article_quality"] = round(cur.fetchone()[0] or 0, 2)
-                
-                cur.execute("SELECT AVG(quality_score) FROM storylines WHERE quality_score IS NOT NULL")
-                analytics["avg_storyline_quality"] = round(cur.fetchone()[0] or 0, 2)
+                # Quality metrics (weighted across domains)
+                analytics["avg_article_quality"] = round(
+                    (weighted_aq / aq_n) if aq_n else 0, 2
+                )
+                analytics["avg_storyline_quality"] = round(
+                    (weighted_sq / sq_n) if sq_n else 0, 2
+                )
                 
                 return {
                     "success": True,
@@ -453,29 +502,39 @@ async def get_topic_clusters(
                 else:
                     time_filter = datetime.now() - timedelta(days=7)
                 
-                # Get topic clusters with recent activity
-                cur.execute("""
-                    SELECT tc.id, tc.cluster_name, tc.cluster_description, tc.cluster_type,
-                           tc.created_at, tc.updated_at, tc.metadata,
-                           COUNT(atc.article_id) as total_articles,
-                           COUNT(CASE WHEN a.created_at >= %s THEN atc.article_id END) as recent_articles,
-                           AVG(atc.relevance_score) as avg_relevance,
-                           MAX(a.published_at) as latest_article_date
-                    FROM topic_clusters tc
-                    LEFT JOIN article_topics atc ON tc.id = atc.topic_id
-                    LEFT JOIN articles a ON atc.article_id = a.id
-                    WHERE tc.is_active = true
-                    GROUP BY tc.id, tc.cluster_name, tc.cluster_description, tc.cluster_type,
-                             tc.created_at, tc.updated_at, tc.metadata
-                    HAVING COUNT(atc.article_id) >= %s
-                    ORDER BY recent_articles DESC, total_articles DESC
-                    LIMIT %s
-                """, (time_filter, min_articles, limit))
+                # Per-domain topic clusters (matches {domain}.topic_clusters + article_topic_clusters)
+                candidates = []
+                for sch in DOMAIN_DATA_SCHEMAS:
+                    try:
+                        cur.execute(f"""
+                            SELECT tc.id, tc.cluster_name,
+                                   NULL::text AS cluster_description, NULL::text AS cluster_type,
+                                   tc.created_at, tc.updated_at, NULL::jsonb AS metadata,
+                                   COUNT(atc.article_id) AS total_articles,
+                                   COUNT(CASE WHEN a.created_at >= %s THEN atc.article_id END) AS recent_articles,
+                                   AVG(atc.relevance_score) AS avg_relevance,
+                                   MAX(a.published_at) AS latest_article_date
+                            FROM {sch}.topic_clusters tc
+                            LEFT JOIN {sch}.article_topic_clusters atc ON tc.id = atc.topic_cluster_id
+                            LEFT JOIN {sch}.articles a ON atc.article_id = a.id
+                            GROUP BY tc.id, tc.cluster_name, tc.created_at, tc.updated_at
+                            HAVING COUNT(atc.article_id) >= %s
+                        """, (time_filter, min_articles))
+                        for row in cur.fetchall():
+                            candidates.append((sch, row))
+                    except Exception as sch_err:
+                        logger.debug("intelligence topic_clusters %s: %s", sch, sch_err)
+
+                candidates.sort(
+                    key=lambda x: ((x[1][8] or 0), (x[1][7] or 0)),
+                    reverse=True,
+                )
                 
                 clusters = []
-                for row in cur.fetchall():
+                for sch, row in candidates[:limit]:
                     clusters.append({
                         "id": row[0],
+                        "domain_schema": sch,
                         "name": row[1],
                         "description": row[2],
                         "type": row[3],
@@ -530,34 +589,45 @@ async def get_trending_topics(
                 else:
                     time_filter = datetime.now() - timedelta(hours=24)
                 
-                # Get trending topics based on recent article activity
-                cur.execute("""
-                    SELECT tc.cluster_name, tc.cluster_description, tc.cluster_type,
-                           COUNT(atc.article_id) as recent_articles,
-                           AVG(atc.relevance_score) as avg_relevance,
-                           AVG(a.sentiment_score) as avg_sentiment,
-                           MAX(a.published_at) as latest_article_date
-                    FROM topic_clusters tc
-                    JOIN article_topics atc ON tc.id = atc.topic_id
-                    JOIN articles a ON atc.article_id = a.id
-                    WHERE tc.is_active = true
-                    AND a.created_at >= %s
-                    GROUP BY tc.id, tc.cluster_name, tc.cluster_description, tc.cluster_type
-                    ORDER BY recent_articles DESC, avg_relevance DESC
-                    LIMIT %s
-                """, (time_filter, limit))
+                candidates = []
+                for sch in DOMAIN_DATA_SCHEMAS:
+                    try:
+                        cur.execute(f"""
+                            SELECT tc.cluster_name,
+                                   NULL::text AS cluster_description,
+                                   NULL::text AS cluster_type,
+                                   COUNT(atc.article_id) AS recent_articles,
+                                   AVG(atc.relevance_score) AS avg_relevance,
+                                   AVG(a.sentiment_score) AS avg_sentiment,
+                                   MAX(a.published_at) AS latest_article_date
+                            FROM {sch}.topic_clusters tc
+                            JOIN {sch}.article_topic_clusters atc ON tc.id = atc.topic_cluster_id
+                            JOIN {sch}.articles a ON atc.article_id = a.id
+                            WHERE a.created_at >= %s
+                            GROUP BY tc.id, tc.cluster_name
+                        """, (time_filter,))
+                        for row in cur.fetchall():
+                            candidates.append((sch, row))
+                    except Exception as sch_err:
+                        logger.debug("intelligence trending_topics %s: %s", sch, sch_err)
+
+                candidates.sort(
+                    key=lambda x: ((x[1][3] or 0), (float(x[1][4]) if x[1][4] else 0.0)),
+                    reverse=True,
+                )
                 
                 trending_topics = []
-                for row in cur.fetchall():
+                for sch, row in candidates[:limit]:
                     trending_topics.append({
                         "name": row[0],
+                        "domain_schema": sch,
                         "description": row[1],
                         "type": row[2],
                         "recent_articles": row[3],
                         "avg_relevance": float(row[4]) if row[4] else 0.0,
                         "avg_sentiment": float(row[5]) if row[5] else 0.0,
                         "latest_article_date": row[6].isoformat() if row[6] else None,
-                        "trend_score": row[3] * (float(row[4]) if row[4] else 0.0)  # Simple trend calculation
+                        "trend_score": (row[3] or 0) * (float(row[4]) if row[4] else 0.0),
                     })
                 
                 return {

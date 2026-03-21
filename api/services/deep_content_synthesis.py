@@ -30,6 +30,7 @@ from services.domain_knowledge_service import (
     DomainContext,
     DomainEntity,
 )
+from services.domain_synthesis_config import get_domain_synthesis_config
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +42,7 @@ EMBEDDING_MODEL = os.getenv('EMBEDDING_MODEL', 'nomic-embed-text')
 # Synthesis parameters
 MAX_ARTICLE_LENGTH = 100000  # Max characters per article (100KB)
 MIN_CONTENT_LENGTH = 100   # Minimum content length to process
-MAX_SYNTHESIS_ARTICLES = 50  # Maximum articles to synthesize
+MAX_SYNTHESIS_ARTICLES = 80  # v8: higher cap
 LLM_TIMEOUT = 180  # Longer timeout for detailed generation
 
 
@@ -350,6 +351,8 @@ Focus on the most important and newsworthy facts. Extract 5-15 key facts."""
     ) -> SynthesizedArticle:
         """
         Create comprehensive synthesized content for a storyline.
+        Pulls full intelligence context (entities, claims, events, positions)
+        from content_synthesis_service when available.
         """
         schema = domain.replace('-', '_')
         
@@ -362,12 +365,23 @@ Focus on the most important and newsworthy facts. Extract 5-15 key facts."""
         if not articles:
             raise ValueError(f"No articles found for storyline {storyline_id}")
         
+        # Gather full intelligence context for richer synthesis
+        intel_ctx = None
+        try:
+            from services.content_synthesis_service import synthesize_storyline_context
+            ctx = synthesize_storyline_context(domain, storyline_id)
+            if ctx.get("success"):
+                intel_ctx = ctx
+        except Exception as e:
+            logger.debug("Could not load intelligence context for storyline %s: %s", storyline_id, e)
+        
         synthesized = self._synthesize_from_articles(
             domain=domain,
             topic=storyline.get('title', 'Unknown Topic'),
             articles=articles,
             depth=depth,
-            existing_description=storyline.get('description', '')
+            existing_description=storyline.get('description', ''),
+            intelligence_context=intel_ctx,
         )
         
         # Save synthesized content to database
@@ -492,7 +506,7 @@ Focus on the most important and newsworthy facts. Extract 5-15 key facts."""
         self,
         domain: str,
         topic_name: str,
-        hours: int = 168,
+        hours: int = 720,  # v8: 30 days
         depth: str = "comprehensive"
     ) -> SynthesizedArticle:
         """
@@ -516,7 +530,7 @@ Focus on the most important and newsworthy facts. Extract 5-15 key facts."""
     def synthesize_breaking_news(
         self,
         domain: str,
-        hours: int = 24,
+        hours: int = 72,  # v8
         min_articles: int = 3
     ) -> List[SynthesizedArticle]:
         """
@@ -548,12 +562,18 @@ Focus on the most important and newsworthy facts. Extract 5-15 key facts."""
         topic: str,
         articles: List[Dict],
         depth: str = "comprehensive",
-        existing_description: str = ""
+        existing_description: str = "",
+        intelligence_context: Optional[Dict[str, Any]] = None,
     ) -> SynthesizedArticle:
         """
         Core synthesis logic - creates Wikipedia-style article from multiple sources.
+
+        When intelligence_context is provided (from content_synthesis_service),
+        claims, entity positions, dossier summaries, and chronological events
+        are injected into the section generation prompts for richer output.
         """
         start_time = datetime.now()
+        domain_cfg = get_domain_synthesis_config(domain)
         
         # Limit articles
         articles = articles[:MAX_SYNTHESIS_ARTICLES]
@@ -594,10 +614,39 @@ Focus on the most important and newsworthy facts. Extract 5-15 key facts."""
             if explanation:
                 key_terms_explained[term] = explanation
         
-        # Step 4: Build timeline
+        # Step 4: Build timeline (include chronological events from intelligence)
         timeline = self._build_timeline(all_facts)
+        if intelligence_context:
+            for ce in intelligence_context.get("chronological_events", []):
+                timeline.append({
+                    "date": ce.get("event_date", ""),
+                    "event": ce.get("title", ""),
+                    "detail": ce.get("description", ""),
+                    "source": "event_extraction",
+                })
         
         # Step 5: Generate structured content
+        intelligence_supplement = ""
+        if intelligence_context:
+            parts = []
+            if domain_cfg.llm_context:
+                parts.append(f"Domain guidance: {domain_cfg.llm_context}")
+            claims = intelligence_context.get("claims", [])
+            if claims:
+                claim_lines = [f"- {c['subject']} {c['predicate']} {c['object']}" for c in claims[:8]]
+                parts.append("Key claims:\n" + "\n".join(claim_lines))
+            positions = intelligence_context.get("entity_positions", [])
+            if positions:
+                pos_lines = [f"- {p['entity_name']} on {p['topic']}: {p['position']}" for p in positions[:6]]
+                parts.append("Entity positions:\n" + "\n".join(pos_lines))
+            dossiers = intelligence_context.get("entity_dossiers", [])
+            if dossiers:
+                for d in dossiers[:3]:
+                    chronicle = d.get("chronicle_data", [])
+                    if chronicle and isinstance(chronicle, list):
+                        snippet = str(chronicle[0])[:200] if chronicle else ""
+                        parts.append(f"Dossier excerpt: {snippet}")
+            intelligence_supplement = "\n\n".join(parts)
         sections = self._generate_sections(
             topic=topic,
             facts=all_facts,
@@ -605,7 +654,7 @@ Focus on the most important and newsworthy facts. Extract 5-15 key facts."""
             key_terms=key_terms_explained,
             timeline=timeline,
             depth=depth,
-            existing_description=existing_description
+            existing_description=existing_description + ("\n\n" + intelligence_supplement if intelligence_supplement else ""),
         )
         
         # Step 6: Generate lead paragraph (summary)

@@ -1,5 +1,10 @@
 # Why "Events" Can Be 0 and How to Populate Them
 
+> **Different from “Extracted Events” on the domain `/events` page**  
+> That page lists **`public.chronological_events`** (LLM + `event_extraction` automation).  
+> This doc is about **`intelligence.tracked_events`** (investigation / dashboard).  
+> See [EXTRACTED_EVENTS_AND_ENTITY_PIPELINE.md](./EXTRACTED_EVENTS_AND_ENTITY_PIPELINE.md) and run `scripts/poll_extracted_events_and_pipeline.py` to audit chronological events.
+
 The status bar shows **Contexts**, **Entities**, and **Events**:
 
 - **Contexts** — Rows in `intelligence.contexts` (created from articles by the context processor). Your 18,662 means the pipeline is running.

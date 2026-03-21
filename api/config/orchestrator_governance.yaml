@@ -32,6 +32,73 @@ quality_thresholds:
   min_quality_score: 0.5
   min_importance_for_processing: 0.3
 
+# Source credibility tiers — wired by shared.services.source_credibility_service
+# Consumers: RSS collector (quality_score scaling + articles.metadata.source_credibility),
+# context processor (copies into intelligence.contexts.metadata when present).
+# Match order: tier_order; first host_suffixes / host_contains / name_keywords hit wins.
+# If none match, default_tier is used (should have no patterns, only multiplier/label).
+source_credibility:
+  enabled: true
+  apply_to_quality_score: true
+  disabled_multiplier: 1.0
+  default_tier: tier_3
+  tier_order:
+    - tier_1
+    - tier_2
+    - tier_3
+  tiers:
+    tier_1:
+      label: "Government / primary official / major wires"
+      multiplier: 1.0
+      requires_corroboration: false
+      host_suffixes:
+        - ".gov"
+        - ".mil"
+        - ".edu"
+      host_contains:
+        - "sec.gov"
+        - "nih.gov"
+        - "census.gov"
+        - "bls.gov"
+        - "europa.eu"
+        - "who.int"
+        - "fda.gov"
+        - "treasury.gov"
+        - "justice.gov"
+        - "congress.gov"
+        - "gpo.gov"
+        - "stlouisfed.org"
+        - "pubmed"
+        - "arxiv.org"
+      name_keywords:
+        - "reuters"
+        - "associated press"
+        - "ap news"
+    tier_2:
+      label: "Established media and institutions"
+      multiplier: 0.88
+      requires_corroboration: false
+      host_contains:
+        - "bbc."
+        - "nytimes.com"
+        - "wsj.com"
+        - "ft.com"
+        - "economist.com"
+        - "bloomberg"
+        - "npr.org"
+        - "pbs.org"
+        - "propublica.org"
+        - "brookings.edu"
+        - "csis.org"
+        - "chathamhouse.org"
+    tier_3:
+      label: "Long tail / default RSS"
+      multiplier: 0.72
+      requires_corroboration: false
+      host_suffixes: []
+      host_contains: []
+      name_keywords: []
+
 # Phase 3 T3.1: document acquisition — sources and types for pipeline
 # v7: automated_sources list enables document_collection phase (CRS, GAO, CBO, arXiv)
 document_sources:
@@ -53,7 +120,10 @@ document_sources:
   ingest_urls: []
 
 collection:
-  min_fetch_interval_seconds: 300
+  # RSS rarely has meaningful new items every few minutes.
+  # Increase the baseline polling interval; adaptive backoff (empty/adds=0) will
+  # further slow down when dedup rejects the majority of items.
+  min_fetch_interval_seconds: 1800
   max_fetch_interval_seconds: 7200
   empty_fetch_penalty: 2.0
   breaking_news_threshold: 0.8
@@ -109,6 +179,9 @@ processing:
     storyline_automation:
       interval_seconds: 300
       scope: storyline
+    storyline_enrichment:
+      interval_seconds: 43200  # 12h full-history enrichment
+      scope: null
     story_continuation:
       interval_seconds: 600
       scope: storyline
@@ -130,3 +203,18 @@ resources:
   daily_llm_tokens: 100000
   max_api_calls_per_hour: 1000
   storage_warning_threshold: 0.8
+
+# v8: collect-then-analyze pipeline (optional; automation_manager defaults used if absent)
+# Env override: COLLECTION_CYCLE_INTERVAL_SECONDS
+analysis_pipeline:
+  step_budgets_seconds: [1800, 1200, 1200, null]  # Foundation, Extraction, Intelligence, Output (null = no limit)
+  max_requeue_per_window: 3
+
+# Workload-driven scheduling: automation_manager checks every process every tick; run order and eligibility
+# are determined by current workload (backlog/pending), not fixed intervals. Collection is throttled when
+# downstream backlog is high so collection → processing → synthesis completes before more RSS. See
+# automation_manager.py USE_WORKLOAD_DRIVEN_ORDER, WORKLOAD_MIN_COOLDOWN, COLLECTION_THROTTLE_PENDING_THRESHOLD.
+workload_driven_scheduling: true
+
+collection_cycle:
+  interval_seconds: 7200  # 2 hours (used when idle; when work exists, cooldown applies)

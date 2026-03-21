@@ -1,0 +1,283 @@
+# Domain-specific synthesis configuration
+# Loaded by api/services/domain_synthesis_config.py
+# Each domain defines what matters for synthesis: event priorities, entity weights,
+# editorial sections, topic filters, and LLM prompt context.
+
+defaults:
+  max_articles_per_synthesis: 50
+  max_entities_per_synthesis: 30
+  min_article_confidence: 0.3
+  clustering_similarity_threshold: 0.65
+
+domains:
+  politics:
+    focus_areas:
+      - campaigns and elections
+      - regimes and leadership changes
+      - candidate profiles and political careers
+      - wars, terrorism, and armed conflict
+      - protests and civil unrest
+      - assassinations and political violence
+      - policy changes and legislative battles
+      - grassroots movements and social change
+      - diplomatic relations and treaties
+      - investigations and political scandals
+
+    event_type_priorities:
+      - election
+      - legislation
+      - policy_change
+      - policy_decision
+      - military_action
+      - conflict
+      - protest
+      - assassination
+      - death
+      - investigation
+      - diplomatic
+      - agreement
+      - appointment
+      - resignation
+      - arrest
+      - court_ruling
+      - public_statement
+
+    entity_type_weights:
+      person: 1.0       # politicians, leaders, candidates
+      organization: 0.9  # parties, agencies, movements
+      location: 0.7      # countries, regions, contested territories
+
+    storyline_patterns:
+      - campaign arcs (candidacy announcement through election outcome)
+      - policy battles (proposal through vote and implementation)
+      - international conflicts (escalation, diplomacy, resolution)
+      - investigations and legal proceedings
+      - social movements (emergence, growth, policy response)
+
+    editorial_sections:
+      - Key Actors
+      - Political Context
+      - Policy Implications
+      - Timeline of Events
+      - Reactions and Positions
+      - International Response
+
+    topic_filter:
+      exclude_keywords:
+        - super bowl
+        - world series
+        - nba finals
+        - nfl draft
+        - grammy
+        - oscar
+        - emmy
+        - red carpet
+        - celebrity gossip
+        - box office
+        - sports betting
+        - fantasy football
+        - injury report
+        - starting lineup
+        - power rankings
+      exclude_categories:
+        - entertainment
+        - sports
+        - celebrity
+
+    llm_context: >
+      You are analyzing political news. Focus on actors and their positions,
+      policy implications, power dynamics, and historical political context.
+      Prioritize elections, legislation, conflicts, protests, and leadership
+      changes. Identify who benefits, who opposes, and what precedents exist.
+
+  finance:
+    focus_areas:
+      - commodities and price movements driven by events
+      - supply chains and disruptions
+      - international commerce and trade flows
+      - tariffs, taxes, and trade policy
+      - resource demand changes (oil, rare minerals, metals)
+      - central bank policy and interest rates
+      - corporate earnings and market shifts
+      - sanctions and economic warfare
+      - currency movements and forex
+      - IPOs, mergers, and acquisitions
+
+    event_type_priorities:
+      - market_shift
+      - regulatory
+      - economic_event
+      - policy_decision
+      - trade_policy
+      - tariff_change
+      - sanctions
+      - supply_disruption
+      - earnings
+      - commodity_price
+      - legislation
+      - agreement
+      - report_release
+      - public_statement
+      - appointment
+
+    entity_type_weights:
+      organization: 1.0  # companies, exchanges, central banks
+      commodity: 0.95    # gold, oil, rare minerals
+      person: 0.7        # CEOs, regulators, finance ministers
+      location: 0.6      # trade route countries, economic zones
+
+    storyline_patterns:
+      - price movements driven by geopolitical events
+      - supply chain disruptions and recovery
+      - trade wars (tariff escalation, retaliation, negotiation)
+      - regulatory shifts and market response
+      - resource demand cycles (seasonal, technological, geopolitical)
+      - corporate strategy arcs (M&A, restructuring, market entry)
+
+    editorial_sections:
+      - Market Impact
+      - Price Analysis
+      - Supply Chain Context
+      - Regulatory Landscape
+      - Key Metrics
+      - International Commerce
+
+    topic_filter:
+      exclude_keywords:
+        - personal finance tips
+        - best credit card
+        - savings account
+        - mortgage rates for homebuyers
+        - celebrity net worth
+        - box office revenue
+        - entertainment business
+      exclude_categories:
+        - personal_finance
+        - entertainment_business
+
+    llm_context: >
+      You are analyzing financial and economic news. Focus on price impact,
+      market dynamics, supply chain effects, and trade flows. Quantify changes
+      where possible. Identify causal chains between events and market movements.
+      Prioritize commodities, tariffs, sanctions, central bank actions, and
+      resource demand shifts. Track how geopolitical events shape prices.
+
+  science-tech:
+    focus_areas:
+      - how a breakthrough or tool changes what is possible in adjacent fields
+      - evidence strength (preprint vs peer-reviewed vs deployed product)
+      - limits and failure modes of a technology (what it cannot do)
+      - cross-field influence (e.g. compute, data, regulation, ethics)
+      - parallel research tracks and competing approaches
+      - clinical and regulatory pipelines when relevant
+      - aerospace, energy transition, materials, and biotech convergence
+      - AI systems as tools for science (not hype about general intelligence)
+      - genomics, DNA sequencing, and therapeutic modalities
+      - quantum and novel computing when tied to real benchmarks
+
+    # Big-picture axes for topic clustering and storyline linking (influence graph, not politics-style events)
+    macro_subject_axes:
+      - artificial_intelligence_and_ml
+      - medicine_and_therapeutics
+      - genomics_dna_and_proteomics
+      - neuroscience_and_brain_interfaces
+      - climate_energy_and_storage
+      - aerospace_and_space
+      - materials_and_nanotechnology
+      - robotics_and_automation
+      - cybersecurity_and_digital_infrastructure
+      - semiconductors_and_hardware
+
+    event_type_priorities:
+      - research_publication
+      - scientific_discovery
+      - clinical_trial
+      - regulatory_approval
+      - patent_filing
+      - product_launch
+      - industry_partnership
+      - report_release
+      - agreement
+      - public_statement
+      - appointment
+      - meeting
+
+    entity_type_weights:
+      organization: 1.0  # labs, companies, agencies, consortia
+      person: 0.75       # principal investigators, founders — avoid over-weighting single quotes
+      technology: 1.0    # models, assays, platforms, spacecraft — central to linking
+      location: 0.35     # geography matters for policy and trials, less than politics
+
+    storyline_patterns:
+      - capability arc (what was demonstrated, under what conditions, vs marketing claims)
+      - cross-field influence (upstream method enables downstream application)
+      - replication and dispute (conflicting studies, retractions, consensus shifts)
+      - maturation pipeline (lab → trial → approval → scale; or prototype → product)
+      - enabling stack (data, compute, instruments, benchmarks moving together)
+      - regulatory and safety framing (biosafety, AI evaluation, export controls)
+      - convergence (AI + wet lab, space + materials, energy + grid)
+
+    editorial_sections:
+      - What Was Actually Shown
+      - Limits and Caveats
+      - Related Methods and Competing Approaches
+      - Cross-Domain Connections
+      - Regulatory or Safety Context
+      - What to Watch Next
+
+    topic_filter:
+      exclude_keywords:
+        - tv prices
+        - television deals
+        - gaming console
+        - nintendo switch
+        - playstation
+        - xbox
+        - streaming service
+        - netflix
+        - disney plus
+        - spotify
+        - smart tv
+        - soundbar
+        - headphone review
+        - phone case
+        - screen protector
+        - best laptop deals
+        - black friday tech
+        - cyber monday
+        - unboxing
+        - tech reviewer
+      exclude_categories:
+        - consumer_electronics
+        - gaming
+        - streaming
+        - entertainment_tech
+      include_categories:
+        - medicine
+        - artificial_intelligence
+        - aerospace
+        - materials_science
+        - energy
+        - biotechnology
+        - quantum_computing
+        - robotics
+        - climate_science
+        - genomics
+        - neuroscience
+
+    # Slightly tighter clustering so storylines favour substantive technical similarity
+    clustering_similarity_threshold: 0.68
+
+    llm_context: >
+      You are analyzing science and technology news for a domain that cares about
+      cross-field progress and realistic capabilities. Prefer linking articles when
+      they share mechanisms, datasets, hardware dependencies, regulatory pathways,
+      or methodological lineage—not superficial keyword overlap. Treat press releases
+      and vendor claims skeptically: distinguish demonstrated results (benchmarks,
+      trials, deployments) from roadmap language. State what a technology or study
+      does NOT establish when the text is vague. Avoid political-style “scandal” or
+      “who won” framing unless the article is explicitly about policy or competition.
+      Highlight how breakthroughs in one area (e.g. cheaper sequencing, better
+      models, new materials) enable or constrain others. When inferring connections
+      across fields, only do so when the article or well-known public facts support
+      them; otherwise say unknown or not stated.

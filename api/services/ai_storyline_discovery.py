@@ -37,6 +37,8 @@ import re
 import math
 from collections import Counter
 
+from services.domain_synthesis_config import get_domain_synthesis_config
+
 logger = logging.getLogger(__name__)
 
 # Configuration
@@ -367,7 +369,7 @@ class AIStorylineDiscovery:
             return 0.0
         return float(dot_product / (norm_a * norm_b))
     
-    def fetch_recent_articles(self, domain: str, hours: int = 24, limit: int = 500) -> List[ArticleEmbedding]:
+    def fetch_recent_articles(self, domain: str, hours: int = 168, limit: int = 1500) -> List[ArticleEmbedding]:
         """Fetch recent articles with cached embeddings"""
         schema = domain.replace('-', '_')
         self._ensure_embedding_column(schema)
@@ -415,6 +417,44 @@ class AIStorylineDiscovery:
                 return articles
         finally:
             conn.close()
+
+    def fetch_pdf_contexts_for_domain(
+        self, domain: str, hours: int = 168, limit: int = 200
+    ) -> List[ArticleEmbedding]:
+        """v8: Fetch PDF section contexts (intelligence.contexts) for this domain for use as similarity signals in clustering. Uses article_id = -context_id so they participate in clustering but are skipped when writing storyline_articles."""
+        conn = self.get_db_connection()
+        out: List[ArticleEmbedding] = []
+        try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    SELECT id, title, COALESCE(content, '') AS content, created_at
+                    FROM intelligence.contexts
+                    WHERE source_type = 'pdf_section' AND domain_key = %s
+                      AND created_at > NOW() - (%s || ' hours')::interval
+                    ORDER BY created_at DESC
+                    LIMIT %s
+                    """,
+                    (domain, hours, limit),
+                )
+                for row in cur.fetchall():
+                    out.append(
+                        ArticleEmbedding(
+                            article_id=-int(row["id"]),  # negative = context, not article
+                            title=(row["title"] or "PDF section")[:500],
+                            content=(row["content"] or "")[:2000],
+                            domain=domain,
+                            created_at=row["created_at"],
+                            embedding=None,
+                            entities=set(),
+                            cached=False,
+                        )
+                    )
+        except Exception as e:
+            logger.debug("fetch_pdf_contexts_for_domain: %s", e)
+        finally:
+            conn.close()
+        return out
     
     def _generate_single_embedding(self, article: ArticleEmbedding) -> ArticleEmbedding:
         """Generate embedding for a single article (for parallel processing)"""
@@ -825,22 +865,34 @@ class AIStorylineDiscovery:
         
         return ". ".join(parts) + "."
     
-    def generate_storyline_metadata(self, cluster: StorylineCluster) -> Dict[str, str]:
+    def generate_storyline_metadata(self, cluster: StorylineCluster, domain: str = "") -> Dict[str, str]:
         """
         Use LLM to generate title and description for a storyline cluster.
         Optimized with:
         - Shorter prompts for faster generation
         - Lower timeout for quick fallback
         - Entity-based context for better titles
+        - Domain-specific synthesis guidance
         """
         # Use only top 5 article titles for faster processing
         article_texts = "\n".join([f"- {a.title}" for a in cluster.articles[:5]])
         entities = ", ".join(cluster.common_entities[:3]) if cluster.common_entities else ""
         
-        # Shorter, more focused prompt
+        domain_hint = ""
+        if domain:
+            cfg = get_domain_synthesis_config(domain)
+            if cfg.llm_context:
+                domain_hint = f"\nDomain context: {cfg.llm_context}\n"
+            if cfg.macro_subject_axes:
+                domain_hint += (
+                    "\nCross-cutting science/technology axes (use only if the cluster clearly fits; "
+                    "do not invent connections): "
+                    f"{', '.join(cfg.macro_subject_axes[:10])}.\n"
+                )
+
         prompt = f"""Generate a news headline for these related articles{f' about {entities}' if entities else ''}:
 {article_texts}
-
+{domain_hint}
 Reply with ONLY a JSON object:
 {{"title": "headline", "description": "one sentence summary"}}"""
 
@@ -885,7 +937,134 @@ Reply with ONLY a JSON object:
             "title": fallback_title,
             "description": f"Cluster of {len(cluster.articles)} related articles with {cluster.avg_similarity:.0%} similarity. Key topics: {', '.join(cluster.common_entities[:3]) if cluster.common_entities else 'various'}"
         }
-    
+
+    DEDUP_SIMILARITY_THRESHOLD = 0.65
+
+    def _get_existing_storylines_for_dedup(self, domain: str) -> List[Dict[str, Any]]:
+        """Fetch existing storylines (id, title, description, entity_names, topic_ids) for dedup against new clusters. v8: topic overlap as signal."""
+        conn = self.get_db_connection()
+        out = []
+        try:
+            schema = domain.replace("-", "_")
+            with conn.cursor() as cur:
+                cur.execute(f"""
+                    SELECT s.id, s.title, s.description,
+                           COALESCE(array_agg(DISTINCT ec.canonical_name) FILTER (WHERE ec.canonical_name IS NOT NULL), ARRAY[]::text[]) AS entity_names,
+                           COALESCE(array_agg(DISTINCT ata.topic_id) FILTER (WHERE ata.topic_id IS NOT NULL), ARRAY[]::int[]) AS topic_ids
+                    FROM {schema}.storylines s
+                    LEFT JOIN {schema}.storyline_articles sa ON sa.storyline_id = s.id
+                    LEFT JOIN {schema}.article_entities ae ON ae.article_id = sa.article_id
+                    LEFT JOIN {schema}.entity_canonical ec ON ec.id = ae.canonical_entity_id
+                    LEFT JOIN {schema}.article_topic_assignments ata ON ata.article_id = sa.article_id
+                    GROUP BY s.id, s.title, s.description
+                """)
+                for row in cur.fetchall():
+                    out.append({
+                        "id": row[0],
+                        "title": (row[1] or "")[:500],
+                        "description": (row[2] or "")[:1000],
+                        "entity_names": list(row[3]) if row[3] else [],
+                        "topic_ids": list(row[4]) if row[4] else [],
+                    })
+        except Exception as e:
+            logger.debug("_get_existing_storylines_for_dedup: %s", e)
+        finally:
+            conn.close()
+        return out
+
+    def _get_topic_ids_for_article_ids(self, domain: str, article_ids: List[int]) -> Set[int]:
+        """v8: Topic–storyline bridge. Return set of topic_ids assigned to these articles."""
+        if not article_ids:
+            return set()
+        conn = self.get_db_connection()
+        try:
+            schema = domain.replace("-", "_")
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    SELECT DISTINCT topic_id FROM {schema}.article_topic_assignments
+                    WHERE article_id = ANY(%s) AND topic_id IS NOT NULL
+                    """,
+                    (article_ids,),
+                )
+                return set(row[0] for row in cur.fetchall())
+        except Exception as e:
+            logger.debug("_get_topic_ids_for_article_ids: %s", e)
+            return set()
+        finally:
+            conn.close()
+
+    def _cluster_similarity_to_existing(
+        self,
+        cluster: StorylineCluster,
+        existing: Dict[str, Any],
+        cluster_topic_ids: Optional[Set[int]] = None,
+    ) -> float:
+        """Entity overlap + title word overlap + topic overlap (v8); returns 0..1."""
+        entity_overlap = 0.0
+        if cluster.common_entities and existing.get("entity_names"):
+            a = set(e.lower() for e in cluster.common_entities)
+            b = set(e.lower() for e in existing["entity_names"])
+            if a or b:
+                entity_overlap = len(a & b) / len(a | b)
+        title_a = set(re.findall(r"\w+", (cluster.suggested_title or "").lower()))
+        title_b = set(re.findall(r"\w+", (existing.get("title") or "").lower()))
+        title_overlap = len(title_a & title_b) / len(title_a | title_b) if (title_a or title_b) else 0.0
+        # v8: topic overlap as similarity signal (dedup checks topic overlap)
+        topic_overlap = 0.0
+        if cluster_topic_ids is not None and existing.get("topic_ids"):
+            existing_topics = set(existing["topic_ids"])
+            if cluster_topic_ids or existing_topics:
+                topic_overlap = len(cluster_topic_ids & existing_topics) / len(cluster_topic_ids | existing_topics)
+        if cluster_topic_ids is not None and existing.get("topic_ids"):
+            return 0.35 * entity_overlap + 0.35 * title_overlap + 0.30 * topic_overlap
+        return 0.5 * entity_overlap + 0.5 * title_overlap
+
+    def _cluster_matches_existing(
+        self,
+        cluster: StorylineCluster,
+        existing_list: List[Dict[str, Any]],
+        threshold: float = None,
+        cluster_topic_ids: Optional[Set[int]] = None,
+    ) -> Optional[int]:
+        """If cluster matches an existing storyline above threshold, return that storyline id else None. v8: uses topic overlap when cluster_topic_ids provided."""
+        threshold = threshold or self.DEDUP_SIMILARITY_THRESHOLD
+        best_id = None
+        best_sim = 0.0
+        for ex in existing_list:
+            sim = self._cluster_similarity_to_existing(cluster, ex, cluster_topic_ids=cluster_topic_ids)
+            if sim >= threshold and sim > best_sim:
+                best_sim = sim
+                best_id = ex["id"]
+        return best_id
+
+    def _add_cluster_articles_to_storyline(
+        self, cluster: StorylineCluster, storyline_id: int, domain: str
+    ) -> int:
+        """Append cluster articles to an existing storyline; returns count added."""
+        conn = self.get_db_connection()
+        added = 0
+        try:
+            schema = domain.replace("-", "_")
+            with conn.cursor() as cur:
+                for article in cluster.articles:
+                    if article.article_id <= 0:
+                        continue  # v8: PDF context (negative id), not in storyline_articles
+                    cur.execute(f"""
+                        INSERT INTO {schema}.storyline_articles
+                        (storyline_id, article_id, relevance_score, created_at)
+                        VALUES (%s, %s, %s, NOW())
+                        ON CONFLICT DO NOTHING
+                    """, (storyline_id, article.article_id, cluster.avg_similarity))
+                    added += 1 if cur.rowcount else 0
+            conn.commit()
+        except Exception as e:
+            logger.debug("_add_cluster_articles_to_storyline: %s", e)
+            conn.rollback()
+        finally:
+            conn.close()
+        return added
+
     def save_storyline_suggestion(self, cluster: StorylineCluster, domain: str) -> Optional[int]:
         """Save a storyline suggestion to the database"""
         conn = self.get_db_connection()
@@ -896,7 +1075,7 @@ Reply with ONLY a JSON object:
                     INSERT INTO {schema}.storylines 
                     (storyline_uuid, title, description, status, processing_status,
                      article_count, total_articles, priority, importance_score,
-                     created_at, updated_at)
+                     automation_enabled, created_at, updated_at)
                     VALUES (
                         gen_random_uuid()::text, %s, %s, 
                         CASE WHEN %s THEN 'active' ELSE 'suggested' END,
@@ -904,6 +1083,7 @@ Reply with ONLY a JSON object:
                         %s, %s, 
                         CASE WHEN %s THEN 1 ELSE 2 END,
                         %s,
+                        true,
                         NOW(), NOW()
                     )
                     ON CONFLICT DO NOTHING
@@ -923,6 +1103,8 @@ Reply with ONLY a JSON object:
                     storyline_id = result[0]
                     
                     for article in cluster.articles:
+                        if article.article_id <= 0:
+                            continue  # v8: PDF context, not in storyline_articles
                         cur.execute(f"""
                             INSERT INTO {schema}.storyline_articles 
                             (storyline_id, article_id, relevance_score, created_at)
@@ -1297,7 +1479,7 @@ Reply with ONLY a JSON object:
         
         return "; ".join(reasons) if reasons else "general similarity"
     
-    def discover_storylines(self, domain: str, hours: int = 24, 
+    def discover_storylines(self, domain: str, hours: int = 168,
                             save_to_db: bool = True,
                             progress_callback=None) -> Dict[str, Any]:
         """
@@ -1329,10 +1511,14 @@ Reply with ONLY a JSON object:
             }
         }
         
-        # Phase 1: Fetch articles (with cached embeddings)
+        # Phase 1: Fetch articles (with cached embeddings) and v8 PDF section contexts as similarity signals
         phase_start = datetime.now()
         logger.info(f"[{domain}] Phase 1: Fetching articles with cache...")
         articles = self.fetch_recent_articles(domain, hours)
+        pdf_contexts = self.fetch_pdf_contexts_for_domain(domain, hours=hours, limit=200)
+        if pdf_contexts:
+            articles = articles + pdf_contexts
+            logger.info(f"[{domain}] Phase 1: Added {len(pdf_contexts)} PDF section contexts for clustering")
         fetched_count = len(articles)
         
         # Phase 1b: Deduplicate by title (fast pre-filter)
@@ -1410,7 +1596,7 @@ Reply with ONLY a JSON object:
         if llm_clusters:
             with ThreadPoolExecutor(max_workers=min(3, len(llm_clusters))) as executor:
                 future_to_cluster = {
-                    executor.submit(self.generate_storyline_metadata, cluster): cluster
+                    executor.submit(self.generate_storyline_metadata, cluster, domain): cluster
                     for cluster in llm_clusters
                 }
                 
@@ -1436,13 +1622,28 @@ Reply with ONLY a JSON object:
             "parallel_workers": min(3, len(llm_clusters)) if llm_clusters else 0
         }
         
-        # Phase 6: Save to database
+        # Phase 6: Save to database (with dedup against existing storylines)
         saved_storylines = []
         if save_to_db:
             phase_start = datetime.now()
             logger.info(f"[{domain}] Phase 6: Saving storylines...")
-            
+            existing_storylines = self._get_existing_storylines_for_dedup(domain)
+
             for cluster in clusters[:10]:
+                # v8: skip clusters with only PDF contexts (no real articles to link)
+                if not any(a.article_id > 0 for a in cluster.articles):
+                    continue
+                # Only articles have topic assignments; skip PDF context ids (negative)
+                cluster_article_ids = [a.article_id for a in cluster.articles if a.article_id > 0]
+                cluster_topic_ids = self._get_topic_ids_for_article_ids(domain, cluster_article_ids)
+                existing_id = self._cluster_matches_existing(
+                    cluster, existing_storylines, cluster_topic_ids=cluster_topic_ids
+                )
+                if existing_id is not None:
+                    added = self._add_cluster_articles_to_storyline(cluster, existing_id, domain)
+                    if added:
+                        logger.debug("[%s] Dedup: merged cluster into existing storyline %s (%s articles)", domain, existing_id, added)
+                    continue
                 storyline_id = self.save_storyline_suggestion(cluster, domain)
                 if storyline_id:
                     saved_storylines.append({
@@ -1450,7 +1651,7 @@ Reply with ONLY a JSON object:
                         "title": cluster.suggested_title,
                         "is_breaking_news": cluster.is_breaking_news
                     })
-            
+
             stats["phases"]["save_to_db"] = {
                 "duration_ms": (datetime.now() - phase_start).total_seconds() * 1000,
                 "storylines_saved": len(saved_storylines)

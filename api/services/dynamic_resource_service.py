@@ -46,7 +46,7 @@ class DynamicResourceService:
     def __init__(self, db_config: Dict[str, str]):
         self.db_config = db_config
         self.current_allocation = ResourceAllocation(
-            max_parallel_tasks=5,
+            max_parallel_tasks=12,
             max_memory_usage_gb=8.0,
             cpu_threshold=80.0,
             memory_threshold=85.0,
@@ -61,10 +61,10 @@ class DynamicResourceService:
         
         # Load patterns for prediction
         self.load_patterns = {
-            'low': {'cpu': 0.3, 'memory': 0.4, 'parallel_tasks': 8},
-            'medium': {'cpu': 0.6, 'memory': 0.6, 'parallel_tasks': 5},
-            'high': {'cpu': 0.8, 'memory': 0.8, 'parallel_tasks': 3},
-            'critical': {'cpu': 0.9, 'memory': 0.9, 'parallel_tasks': 1}
+            'low': {'cpu': 0.3, 'memory': 0.4, 'parallel_tasks': 12},
+            'medium': {'cpu': 0.6, 'memory': 0.6, 'parallel_tasks': 8},
+            'high': {'cpu': 0.8, 'memory': 0.8, 'parallel_tasks': 4},
+            'critical': {'cpu': 0.9, 'memory': 0.9, 'parallel_tasks': 2}
         }
         
     async def get_current_resource_metrics(self) -> ResourceMetrics:
@@ -468,7 +468,7 @@ class DynamicResourceService:
                     adaptive_scaling=True
                 ),
                 'balanced': ResourceAllocation(
-                    max_parallel_tasks=5,
+                    max_parallel_tasks=8,
                     max_memory_usage_gb=8.0,
                     cpu_threshold=80.0,
                     memory_threshold=85.0,

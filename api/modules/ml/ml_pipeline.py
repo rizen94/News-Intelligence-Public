@@ -287,12 +287,25 @@ class MLPipeline:
             conn = get_db_connection()
             cursor = conn.cursor()
             
-            # Prepare ML data for storage
-            ml_data = {
+            # Store ML output in articles.metadata (this replaces the legacy articles.ml_data column)
+            summary_obj = ml_results.get("summary") if isinstance(ml_results, dict) else None
+            key_points_obj = ml_results.get("key_points") if isinstance(ml_results, dict) else None
+            sentiment_obj = ml_results.get("sentiment") if isinstance(ml_results, dict) else None
+            argument_obj = ml_results.get("argument_analysis") if isinstance(ml_results, dict) else None
+
+            metadata_payload = {
+                # Flatten the most commonly-consumed fields at the metadata root
+                "summary": (summary_obj or {}).get("summary", "") if isinstance(summary_obj, dict) else "",
+                "key_points": (key_points_obj or {}).get("key_points", []) if isinstance(key_points_obj, dict) else [],
+                "sentiment_label": (sentiment_obj or {}).get("sentiment", "") if isinstance(sentiment_obj, dict) else "",
+                "sentiment_analysis": (sentiment_obj or {}).get("sentiment_analysis", "") if isinstance(sentiment_obj, dict) else "",
+                "argument_analysis": (argument_obj or {}).get("argument_analysis", "") if isinstance(argument_obj, dict) else "",
+
+                # Keep full payload for debugging/traceability
                 "content_analysis": content_analysis,
                 "quality_score": quality_score,
                 "ml_processing": ml_results,
-                "processed_at": datetime.now().isoformat()
+                "processed_at": datetime.now().isoformat(),
             }
             
             # Update article with ML results
@@ -309,9 +322,9 @@ class MLPipeline:
                 update_fields.append("quality_score = %s")
                 update_values.append(quality_score["overall_score"])
             
-            # Update ML data
-            update_fields.append("ml_data = %s")
-            update_values.append(json.dumps(ml_data))
+            # Update ML data -> articles.metadata (JSONB merge)
+            update_fields.append("metadata = COALESCE(metadata, '{}'::jsonb) || %s::jsonb")
+            update_values.append(json.dumps(metadata_payload))
             
             # Update processing status
             update_fields.append("processing_status = %s")
@@ -365,7 +378,7 @@ class MLPipeline:
                     COUNT(*) as total_articles,
                     COUNT(CASE WHEN processing_status = 'ml_processed' THEN 1 END) as ml_processed,
                     COUNT(CASE WHEN summary IS NOT NULL THEN 1 END) as with_summaries,
-                    COUNT(CASE WHEN ml_data IS NOT NULL THEN 1 END) as with_ml_data
+                    COUNT(CASE WHEN metadata->>'summary' IS NOT NULL AND metadata->>'summary' <> '' THEN 1 END) as with_ml_data
                 FROM articles
             """)
             

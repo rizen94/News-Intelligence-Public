@@ -1,12 +1,10 @@
 """
 Backlog metrics — pending work counts per automation phase for orchestrator priority.
 Used by the automation manager to: skip empty cycles, run backlog mode (shorter interval),
-and queue tasks by amount of work (most first).
-
-Backlog semantics: a task has a "backlog" only when the pending work exceeds what a
-single batch can handle.  One or two items waiting is normal operation, not a backlog.
-BATCH_SIZE_PER_TASK defines the batch size per task; the raw count is reduced by this
-amount so that values <= 0 mean "no backlog" and values > 0 mean "real backlog."
+and queue tasks by amount of work (most first). When workload-driven scheduling is on,
+phases listed here are eligible every tick (subject to cooldown) when they have work;
+phases not listed still use interval-based scheduling. Adding more phases to
+_get_raw_pending_counts and BATCH_SIZE_PER_TASK makes more of the pipeline workload-driven.
 """
 
 import logging
@@ -44,6 +42,12 @@ def _get_raw_pending_counts() -> Dict[str, int]:
         raw["entity_profile_build"] = _count_entity_profile_build_backlog()
         raw["investigation_report_refresh"] = _count_investigation_report_backlog()
         raw["document_processing"] = _count_document_processing_backlog()
+        try:
+            from shared.database.pending_db_writes import pending_line_count
+
+            raw["pending_db_flush"] = pending_line_count()
+        except Exception:
+            raw["pending_db_flush"] = 0
     except Exception as e:
         logger.warning("backlog_metrics _get_raw_pending_counts: %s", e)
     return raw
@@ -312,6 +316,7 @@ SKIP_WHEN_EMPTY = frozenset({
     "claim_extraction",
     "entity_profile_build",
     "investigation_report_refresh",
+    "pending_db_flush",
 })
 
 # When backlog exceeds this, use backlog-mode interval so we run more often

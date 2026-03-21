@@ -108,6 +108,54 @@ interface Stats {
   highPriority: number;
 }
 
+function DiscoverStorylinesButton({
+  domain,
+  onDone,
+}: {
+  domain: string;
+  onDone: () => void;
+}) {
+  const [discovering, setDiscovering] = useState(false);
+  const { showSuccess, showError, showInfo } = useNotification();
+
+  const handleDiscover = async () => {
+    setDiscovering(true);
+    try {
+      const result = await apiService.discoverStorylines(
+        { hours: 48, save: true },
+        domain,
+      );
+      if (result?.success && (result?.saved_storylines?.length || result?.summary?.storylines_saved)) {
+        const count = result?.saved_storylines?.length ?? result?.summary?.storylines_saved ?? 0;
+        showSuccess(`Discovery complete: ${count} new storyline(s) created.`);
+        onDone();
+      } else if (result?.success && result?.summary?.clusters_found === 0) {
+        showInfo('No article clusters found. Add more articles or try again later.');
+      } else if (result?.error) {
+        showError(result.error);
+      } else {
+        showSuccess('Discovery finished. Refreshing list.');
+        onDone();
+      }
+    } catch (e) {
+      showError(getUserFriendlyError(e as Error));
+    } finally {
+      setDiscovering(false);
+    }
+  };
+
+  return (
+    <Button
+      variant='contained'
+      startIcon={discovering ? <CircularProgress size={18} /> : <AutoAwesomeIcon />}
+      onClick={handleDiscover}
+      disabled={discovering}
+    >
+      {discovering ? 'Discovering… (2–5 min)' : 'Discover storylines now'}
+    </Button>
+  );
+}
+
 const Storylines: React.FC = () => {
   const navigate = useNavigate();
   const { navigateToDomain } = useDomainNavigation();
@@ -647,9 +695,17 @@ const Storylines: React.FC = () => {
         alignItems='center'
         mb={3}
       >
-        <Typography variant='h4' component='h1' sx={{ fontWeight: 'bold' }}>
-          Storylines
-        </Typography>
+        <Box display='flex' alignItems='center' gap={2}>
+          <Typography variant='h4' component='h1' sx={{ fontWeight: 'bold' }}>
+            Storylines
+          </Typography>
+          <Chip
+            label={domain === 'science-tech' ? 'Science & Tech' : domain?.charAt(0).toUpperCase() + domain?.slice(1) || 'Domain'}
+            size='small'
+            variant='outlined'
+            color='primary'
+          />
+        </Box>
         <Box display='flex' gap={2} alignItems='center'>
           <Button
             variant='contained'
@@ -886,12 +942,23 @@ const Storylines: React.FC = () => {
           <TimelineIcon sx={{ fontSize: 64, color: 'text.secondary', mb: 2 }} />
           <Typography variant='h6' color='text.secondary' gutterBottom>
             No storylines found
+            {domain ? ` for ${domain === 'science-tech' ? 'Science & Tech' : domain.charAt(0).toUpperCase() + domain.slice(1)}` : ''}
           </Typography>
-          <Typography variant='body2' color='text.secondary'>
+          <Typography variant='body2' color='text.secondary' sx={{ mb: 2 }}>
             {searchQuery || filterStatus || filterCategory || filterPriority
               ? 'Try adjusting your search criteria or filters'
-              : 'Storylines will appear here once the system starts analyzing articles'}
+              : 'Storylines are per domain. Get storylines in three ways:'}
           </Typography>
+          {!searchQuery && !filterStatus && !filterCategory && !filterPriority && (
+            <>
+              <Box component='ul' sx={{ textAlign: 'left', maxWidth: 480, mx: 'auto', mb: 2, pl: 2.5 }}>
+                <li><strong>Discover now</strong> — AI clusters recent articles in this domain into storylines (button below). Takes 2–5 minutes. Requires enough recent articles.</li>
+                <li><strong>Create one</strong> — Go to <strong>Story Management</strong> and add a storyline, then add articles or enable automation.</li>
+                <li><strong>Auto-discovery</strong> — The system runs discovery per domain on a schedule; storylines will appear after the next run for this domain.</li>
+              </Box>
+              <DiscoverStorylinesButton domain={domain} onDone={loadStorylines} />
+            </>
+          )}
         </Paper>
       ) : (
         <>

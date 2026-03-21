@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# News Intelligence System v5.0 - Restart Script
+# News Intelligence System v8.0 - Restart Script
 # Stops API and Frontend, then starts them again (same as stop + start).
 # Use this after changing .env (e.g. NEWS_API_KEY) so the API picks up new variables.
 

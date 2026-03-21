@@ -306,6 +306,33 @@ CREATE TABLE articles (
 );
 ```
 
+### **Connection Pool Architecture**
+
+The system uses three independent connection pools hitting the same PostgreSQL instance.
+All pool sizes are configurable via environment variables.
+
+| Pool | Library | Env Vars | Defaults | Purpose |
+|------|---------|----------|----------|---------|
+| **Worker** | psycopg2 `ThreadedConnectionPool` | `DB_POOL_WORKER_MIN/MAX` | 4 / 48 | Background processing (automation, enrichment, collection) |
+| **UI** | psycopg2 `ThreadedConnectionPool` | `DB_POOL_UI_MIN/MAX` | 2 / 16 | Page loads, monitoring endpoints |
+| **SQLAlchemy** | SQLAlchemy `QueuePool` | `DB_POOL_SA_SIZE/OVERFLOW` | 4 / 12 | ORM-based services (storylines, RSS, timelines) |
+
+**Maximum total connections:** Worker + UI + SA = up to **76** by default.
+Ensure PostgreSQL `max_connections` (default 100) can accommodate all three pools
+plus any direct script connections.
+
+**Checkout timeouts** (how long to wait for a free connection before raising):
+- Worker pool: 30 s (env `DB_WORKER_GETCONN_TIMEOUT_SECONDS`)
+- UI pool: 3 s (env `DB_UI_GETCONN_TIMEOUT_SECONDS`)
+- SQLAlchemy pool: 30 s (built-in `pool_timeout`)
+
+**When to use which pool:**
+- `get_db_connection()` / `get_db_connection_context()` → Worker pool (default for all services)
+- `get_ui_db_connection()` / `get_ui_db_connection_context()` → UI pool (monitoring and page-load routes only)
+- `get_db()` / `next(get_db())` → SQLAlchemy pool (ORM-based services only)
+- Never mix: don't use SQLAlchemy sessions for heavy background batch work unless
+  `DB_POOL_SA_SIZE` is sized for it.
+
 ### **Index Naming Convention**
 ```sql
 -- ✅ CORRECT - Use idx_{table}_{column} pattern
@@ -492,7 +519,62 @@ async def lifespan(app):
 
 **Fix:** remove redundant inner imports; use the module-level import.
 
-### **Rule 4: Guard DB queries with statement timeouts**
+### **Rule 4: Database connection lifecycle (CRITICAL — prevents pool exhaustion)**
+
+Every `get_db_connection()` call **must** be paired with a guaranteed `conn.close()`.
+Failure to close leaks a connection from the pool; once all slots are exhausted the
+process deadlocks.
+
+```python
+# ✅ BEST — context manager (zero risk of leak)
+from shared.database.connection import get_db_connection_context
+
+with get_db_connection_context() as conn:
+    with conn.cursor() as cur:
+        cur.execute("SELECT ...")
+
+# ✅ ACCEPTABLE — manual try/finally (conn = None before try)
+conn = None
+try:
+    conn = get_db_connection()
+    with conn.cursor() as cur:
+        cur.execute("SELECT ...")
+    conn.commit()
+finally:
+    if conn:
+        conn.close()
+
+# ❌ WRONG — conn.close() only in try (exception skips it)
+try:
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT ...")
+    conn.close()           # skipped if cur.execute raises!
+except Exception:
+    pass
+
+# ❌ WRONG — conn.close() after try/except (exception in except skips it)
+try:
+    conn = get_db_connection()
+    ...
+except Exception:
+    ...
+conn.close()               # NameError if get_db_connection raised
+```
+
+**Additional rules:**
+- Never hold a connection across an LLM call, HTTP request, `time.sleep()`, or any
+  I/O that might take seconds. Fetch data, close the connection, do slow work, then
+  reopen if you need to write back.
+- SQLAlchemy sessions (`get_db()` / `next(get_db())`) follow the same rule:
+  always `db.close()` in a `finally` block, and initialise `db = None` before the
+  `try` so the `finally` guard never hits a `NameError`.
+- For UI/monitoring endpoints, use `get_ui_db_connection()` (or `get_ui_db_connection_context()`)
+  which draws from a dedicated pool with a 3-second checkout timeout.
+- Direct `psycopg2.connect()` calls are **forbidden** in services; use
+  `get_db_connect_kwargs()` only in one-off scripts that genuinely cannot use the pool.
+
+### **Rule 5: Guard DB queries with statement timeouts**
 
 Any DB query callable from an API endpoint (directly or transitively) must have a
 local statement timeout so a slow query cannot block the thread indefinitely:
@@ -502,7 +584,7 @@ cur.execute("SET LOCAL statement_timeout = '3s'")
 cur.execute("SELECT ...")
 ```
 
-### **Rule 5: Limit background thread pools**
+### **Rule 6: Limit background thread pools**
 
 Keep `ThreadPoolExecutor(max_workers=...)` small (2–4) in background services.
 Each worker thread competes for the GIL; too many workers starve the main thread.

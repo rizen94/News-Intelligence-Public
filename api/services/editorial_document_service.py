@@ -14,11 +14,18 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 from shared.database.connection import get_db_connection
+from services.domain_synthesis_config import get_domain_synthesis_config
 
 logger = logging.getLogger(__name__)
 
 EDITORIAL_DOC_TEMPLATE = {
     "lede": "",
+    "who": [],
+    "what": [],
+    "when": [],
+    "where": [],
+    "why": "",
+    "how": "",
     "developments": [],
     "analysis": "",
     "outlook": "",
@@ -109,30 +116,57 @@ async def generate_storyline_editorial(domain: str, limit: int = 10) -> Dict[str
                 context_text = render_synthesis_for_llm(synthesis, max_chars=3500)
 
                 is_new = not existing_doc or existing_doc == {}
+                domain_cfg = get_domain_synthesis_config(domain)
+                domain_instruction = domain_cfg.llm_context
+                sections_hint = ", ".join(domain_cfg.editorial_sections) if domain_cfg.editorial_sections else ""
 
                 if is_new:
                     prompt = (
                         f"You are writing an editorial document for a news storyline titled \"{title}\".\n"
+                        f"Domain: {domain}\n"
+                    )
+                    if domain_instruction:
+                        prompt += f"Editorial lens: {domain_instruction}\n"
+                    if sections_hint:
+                        prompt += f"Emphasise these analytical sections: {sections_hint}\n"
+                    prompt += (
                         f"Description: {description or 'N/A'}\n\n"
                         f"Intelligence gathered:\n{context_text}\n\n"
-                        "Write a JSON object with these fields:\n"
+                        "Write a JSON object with these fields (5W1H + lede/outlook):\n"
                         '- "lede": one-sentence summary of the most important development\n'
-                        '- "developments": array of 2-4 short bullet points on what happened\n'
-                        '- "analysis": 1-2 sentences on why this matters (reference entity stances or document findings if relevant)\n'
+                        '- "who": array of key actors; each item: {"name": "...", "role": "...", "background": "...", "involvement": "..."}\n'
+                        '- "what": array of 2-4 developments or events that occurred\n'
+                        '- "when": array of key dates/times in chronological order (e.g. "2026-03-15: ...")\n'
+                        '- "where": array of geographic or location context (e.g. "Washington D.C. — ...")\n'
+                        '- "why": 1-2 sentences on causes, motivations, or significance\n'
+                        '- "how": 1 sentence on the mechanism or process\n'
                         '- "outlook": 1 sentence on what to watch next\n'
+                        '- "developments": array of 2-4 short bullet points (same as what, if you prefer)\n'
+                        '- "analysis": 1-2 sentences on why this matters\n'
                         "Respond with ONLY the JSON object, no markdown."
                     )
                 else:
                     existing_lede = existing_doc.get("lede", "") if isinstance(existing_doc, dict) else ""
                     prompt = (
                         f"You are refining an editorial document for the storyline \"{title}\".\n"
+                        f"Domain: {domain}\n"
+                    )
+                    if domain_instruction:
+                        prompt += f"Editorial lens: {domain_instruction}\n"
+                    prompt += (
                         f"Current lede: {existing_lede}\n\n"
                         f"Updated intelligence:\n{context_text}\n\n"
                         "Update the editorial document. Write a JSON object with:\n"
                         '- "lede": updated one-sentence summary\n'
-                        '- "developments": array of 2-4 updated bullet points\n'
-                        '- "analysis": 1-2 sentences on current significance (incorporate entity positions, document findings, and cross-domain connections if present)\n'
+                        '- "who": array of key actors (name, role, background, involvement)\n'
+                        '- "what": array of 2-4 developments\n'
+                        '- "when": array of key dates/times\n'
+                        '- "where": array of geographic context\n'
+                        '- "why": 1-2 sentences on causes/significance\n'
+                        '- "how": 1 sentence on mechanism\n'
                         '- "outlook": 1 sentence on what to watch\n'
+                        '- "developments": array of 2-4 bullet points\n'
+                        '- "analysis": 1-2 sentences on significance\n'
                         "Respond with ONLY the JSON object, no markdown."
                     )
 
@@ -289,7 +323,7 @@ async def generate_event_editorial(limit: int = 10) -> Dict[str, Any]:
 
 
 def _parse_editorial_json(llm_text: str, title: str, article_ids: List[int], sources: List[str]) -> dict:
-    """Try to parse LLM output as editorial JSON; fall back to template with raw text."""
+    """Try to parse LLM output as editorial JSON (5W1H or legacy); fall back to template with raw text."""
     try:
         cleaned = llm_text.strip()
         if cleaned.startswith("```"):
@@ -299,6 +333,12 @@ def _parse_editorial_json(llm_text: str, title: str, article_ids: List[int], sou
             result = {**EDITORIAL_DOC_TEMPLATE}
             result.update({
                 "lede": parsed.get("lede", ""),
+                "who": parsed.get("who", []),
+                "what": parsed.get("what", []),
+                "when": parsed.get("when", []),
+                "where": parsed.get("where", []),
+                "why": parsed.get("why", ""),
+                "how": parsed.get("how", ""),
                 "developments": parsed.get("developments", []),
                 "analysis": parsed.get("analysis", ""),
                 "outlook": parsed.get("outlook", ""),
@@ -316,6 +356,7 @@ def _parse_editorial_json(llm_text: str, title: str, article_ids: List[int], sou
         "lede": llm_text[:300],
         "sources": sources,
         "generated_at": datetime.now().isoformat(),
+        "based_on_articles": article_ids,
         "based_on_articles": article_ids,
     }
 

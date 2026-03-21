@@ -1,136 +1,142 @@
 # News Intelligence System
 
-**Status**: Active development | **Version**: 7.0 | **Last Updated**: March 2026
-
-## Overview
-
-News Intelligence is an AI-powered news aggregation and analysis platform. It collects RSS feeds, extracts entities and claims, resolves entities across domains, tracks storylines and events over time, verifies facts against multiple sources, and delivers editorial intelligence. All LLM processing runs locally via Ollama.
-
-**Architecture:** Primary (API, ML, frontend) + Widow (PostgreSQL, RSS) + NAS (storage). See [docs/ARCHITECTURE_AND_OPERATIONS.md](docs/ARCHITECTURE_AND_OPERATIONS.md).
-
-**Project map:** API `api/main_v4.py` · Frontend `web/src/App.tsx` · Domains: politics, finance, science-tech · Routes: `api/domains/*/routes/` · Intelligence: `api/services/` · Full index: [docs/DOCS_INDEX.md](docs/DOCS_INDEX.md) · Standards: [AGENTS.md](AGENTS.md).
-
-### Quick Access
-- **Web Interface**: http://localhost:3000
-- **API Documentation**: http://localhost:8000/docs
-- **System Health**: http://localhost:8000/api/system_monitoring/health
+**Status:** Active | **Version:** 8.0.0 **(stable)** | **Last updated:** March 2026
 
 ---
 
-## Quick Start
+## What It Is
+
+News Intelligence is an **AI-powered news aggregation and analysis platform** that turns many sources into one coherent intelligence view. It:
+
+- **Collects** news from RSS feeds (and optional PDF/document sources).
+- **Processes** content with local AI (summaries, entities, topics, sentiment, quality).
+- **Builds intelligence** over time: storylines, entity profiles, tracked events, claims, and cross-domain patterns.
+- **Delivers** editorial-style output: daily briefings, storyline narratives, entity dossiers, and fact-checked insights.
+
+All AI runs **locally via Ollama** — no cloud LLM required. The system is designed for a small footprint: Primary (API + frontend + ML), Widow (PostgreSQL + RSS), and optional NAS for storage.
+
+---
+
+## Features
+
+### For readers and analysts
+
+- **Domain dashboards** — Politics, Finance, Science & Technology with articles, storylines, and topics.
+- **Storylines** — Evolving clusters of coverage with editorial narratives, timelines, and automation.
+- **Entity dossiers** — One place per person or organization: who they are, positions, and related claims.
+- **Tracked events** — Time-bounded happenings with chronicles and editorial briefings.
+- **Daily and weekly briefings** — Editorial-first summaries and digests.
+- **Finance** — Market data, commodity views, analysis tasks with evidence provenance, and research topics.
+
+### For operators
+
+- **RSS management** — Add, edit, and trigger collection per domain.
+- **Pipeline and health** — Monitor system health, pipeline status, orchestrator, and alerts.
+- **Entity resolution** — Canonical entities, aliases, merge/split, cross-domain linking.
+- **Processed documents** — Ingest and process PDFs (e.g. CRS, GAO, arXiv) into the intelligence layer.
+
+### Technical highlights
+
+- **v8 collect-then-analyze** — Collection runs on an interval; between cycles an ordered analysis pipeline runs (context sync → extraction → intelligence → synthesis → editorial) with time budgets.
+- **Full-history awareness** — Storyline discovery and synthesis use 7–30 day windows and combine articles, PDFs, topics, claims, and dossiers with source diversity.
+- **Entity resolution** — Disambiguation, alias population, auto-merge, role-word decouple, cross-domain linking.
+- **Fact verification** — Multi-source corroboration, contradiction detection, scheduled verification.
+- **Data cleanliness** — Routine intelligence cleanup and entity decouple as part of the pipeline.
+
+---
+
+## How to Use
+
+### Quick start
 
 ```bash
-./start_system.sh        # Start all services
-./status_system.sh       # Check system status
-open http://localhost:3000
+./start_system.sh        # Start API, frontend, Redis
+./status_system.sh       # Check all services
+# Open http://localhost:3000
 ```
 
-See [Setup and Deployment Guide](./docs/SETUP_AND_DEPLOYMENT.md) for detailed instructions.
+- **Web UI:** http://localhost:3000  
+- **API docs:** http://localhost:8000/docs  
+- **Health:** http://localhost:8000/api/system_monitoring/health  
 
----
+See [Setup and Deployment](docs/SETUP_AND_DEPLOYMENT.md) for full installation and environment setup.
 
-## What's Built (v7)
+### Using the web interface
 
-### Intelligence Pipeline
-- **RSS collection** with full content capture; **v7: full-text enrichment** (trafilatura) for articles with short excerpts
-- **v7: Document collection** — government (CRS, GAO, CBO) and academic (arXiv) PDF discovery; **document processing** (pdfplumber) → contexts
-- **v7: Auto synthesis** — storyline synthesis and daily briefing synthesis run on schedule
-- **v7: Storyline discovery** — AI clusters recent articles and auto-creates storylines (every 4 h)
-- **v7: Entity dossiers** — biographic view per entity (narrative, positions, articles, relationships); Top Entities tab by mention count
-- ML enrichment (summarization, key points, sentiment, entities); **v7: higher content limits** for entity/topic extraction
-- **v7: Backlog logic** — true backlog = work exceeding one batch; interval shortening only when backlog > 0
-- **Entity resolution:** disambiguation, alias management, cross-domain linking, auto-merge
-- **Context-centric processing:** contexts, claims extraction, pattern discovery, entity profiles/dossiers
-- **Event tracking:** tracked events with chronicle builder and editorial briefings
-- **Storyline management:** CRUD, RAG discovery, editorial documents, timeline with narrative
-- **Fact verification:** multi-source corroboration, contradiction detection, source reliability scoring
-- **PDF document processing:** download, parse (pdfplumber), section/entity/findings extraction
-- **Content synthesis:** domain/storyline/event/entity scoped intelligence aggregation
-- **Briefings:** editorial-first daily/weekly briefings with LLM lead generation
+1. **Choose a domain** — Politics, Finance, or Science & Technology from the top navigation.
+2. **Dashboard** — Overview of recent activity, storylines, and top entities for that domain.
+3. **Articles** — Browse and search articles; view analysis and entities.
+4. **Storylines** — Open a storyline for timeline, narrative, and editorial document.
+5. **Investigate** — Entity dossiers (by name or ID), tracked events, processed documents, narrative threads.
+6. **Monitor** — System health, pipeline status, phase timeline (including claims_to_facts), domain synthesis & enrichment card, orchestrator dashboard, realtime activity.
+7. **Briefings** — Daily and weekly briefings and feedback.
 
-### Finance Domain
-- **Analysis orchestrator:** Gold/FRED/EDGAR refresh, LLM analysis with evidence provenance
-- **Market data:** Commodity dashboard, market patterns, corporate announcements
-- **Evidence collection:** RSS-derived news context integrated into analysis prompts
+### Using the API
 
-### Frontend
-- **Domain routing:** `/:domain/dashboard`, articles, storylines, topics, RSS feeds
-- **Investigate:** Entity profiles, canonical entity management, event detail, processed documents, narrative threads
-- **Monitor:** System health, pipeline status, orchestrator dashboard, realtime activity
-- **Briefings:** Editorial-first sections with intelligence narrative
-- **Finance:** Analysis submission/results, evidence explorer, commodity dashboard
+All endpoints use the `/api` prefix (no version in path). Domain-scoped routes use `{domain}` = `politics`, `finance`, or `science-tech`.
+
+Examples:
+
+- `GET /api/{domain}/articles` — List articles.
+- `GET /api/{domain}/storylines` — List storylines.
+- `GET /api/entity_profiles` — List entity profiles.
+- `GET /api/tracked_events` — List tracked events.
+- `GET /api/system_monitoring/health` — System health.
+
+Full reference: [API Reference](docs/API_REFERENCE.md). Interactive docs: http://localhost:8000/docs .
 
 ---
 
 ## Architecture
 
-| Layer | Technology | Location |
-|-------|------------|----------|
-| Frontend | React 18, TypeScript, Vite, MUI v5 | `web/` (port 3000) |
-| Backend | Python 3, FastAPI, uvicorn | `api/` (port 8000) |
-| Database | PostgreSQL (per-domain + intelligence schemas) | Widow (port 5432) |
-| Finance DB | SQLite (market, evidence, state) + ChromaDB | `data/finance/` |
-| Cache | Redis | Docker (port 6379) |
-| LLM | Ollama (Llama 3.1 8B, Mistral 7B) | Local (port 11434) |
+| Layer     | Technology                    | Location / port  |
+|----------|-------------------------------|------------------|
+| Frontend | React 18, TypeScript, Vite, MUI v5 | `web/` (3000)    |
+| Backend  | Python 3, FastAPI, uvicorn    | `api/` (8000)    |
+| Database | PostgreSQL (domain + intelligence schemas) | Widow (5432)  |
+| Finance  | SQLite + ChromaDB            | `data/finance/`  |
+| Cache    | Redis                        | Docker (6379)    |
+| LLM      | Ollama (Llama 3.1 8B, Mistral 7B) | Local (11434) |
 
-### API Structure
-
-Routes use flat `/api` prefix (no version in path):
-
-| Area | Pattern | Examples |
-|------|---------|----------|
-| Domain content | `/api/{domain}/...` | articles, feeds, storylines, topics |
-| Intelligence | `/api/entities/...`, `/api/tracked_events/...` | resolve, canonical, positions |
-| Synthesis | `/api/synthesis/...` | domain, storyline, event, entity |
-| Verification | `/api/verification/...` | corroborate, contradictions, batch |
-| Finance | `/api/{domain}/finance/...` | analyze, tasks, evidence, gold |
-| Monitoring | `/api/system_monitoring/...` | health, pipeline, metrics |
-| Orchestrator | `/api/orchestrator/...` | status, dashboard, decision_log |
+**Three-machine layout (typical):** Primary (API, frontend, Ollama, Redis) · Widow (PostgreSQL, RSS worker, backups) · NAS (optional storage).
 
 ---
 
-## Core System Invariants
+## Project documentation
 
-These invariants define what the system guarantees. If any invariant is violated, the system is broken regardless of whether it appears to "work."
+**Start here**
 
-1. **If an article has been processed, its key facts are extractable.** The `ml_data` field contains summary, key points, sentiment, and argument analysis derived from the article's actual content.
+- **[Documentation index](docs/DOCS_INDEX.md)** — Full list of docs.
+- **[Project overview](docs/PROJECT_OVERVIEW.md)** — What the system is and how it works (high level).
+- **[Architecture and operations](docs/ARCHITECTURE_AND_OPERATIONS.md)** — Deployment, DB, Widow, troubleshooting.
 
-2. **If a storyline exists, it has (or will have) an editorial narrative.** The `editorial_document` JSONB field is the primary output — a structured narrative with lede, developments, analysis, and outlook.
+**Reference**
 
-3. **If an event is tracked, it has a chronological briefing.** The `editorial_briefing` and `event_chronicles` fields tell the story of the event over time.
+- **[Database](docs/DATABASE.md)** — Schema and data I/O.
+- **[API reference](docs/API_REFERENCE.md)** — Endpoints and integrations.
+- **[Setup and deployment](docs/SETUP_AND_DEPLOYMENT.md)** — Installation and configuration.
+- **[Troubleshooting](docs/TROUBLESHOOTING.md)** — Common issues and fixes.
 
-4. **User-facing APIs return stories, not statistics.** Briefings lead with "what happened" (headlines, storylines, narrative), not "how many articles were processed."
+**Standards and design**
 
-See `docs/CORE_ARCHITECTURE_PRINCIPLES.md` for the full principles and `docs/IMPLEMENTATION_CONSTRAINTS.md` for code-level rules.
+- **[Coding style](docs/CODING_STYLE_GUIDE.md)** — Code conventions.
+- **[Core architecture principles](docs/CORE_ARCHITECTURE_PRINCIPLES.md)** — Design invariants.
+- **[AGENTS.md](AGENTS.md)** — Terminology and entry points for AI assistants.
 
----
-
-## Documentation
-
-- **[Documentation index](./docs/DOCS_INDEX.md)** — Start here for all docs
-- **[Project scope & status](./docs/PROJECT_SCOPE_AND_DEVELOPMENT_STATUS.md)** — Full scope view with v7 status
-- **[Capabilities brief](./docs/PROJECT_CAPABILITIES_BRIEF.md)** — Quick technical orientation
-- **[Setup and Deployment](./docs/SETUP_AND_DEPLOYMENT.md)** — Installation and deployment
-- **[Coding standards](./docs/CODING_STYLE_GUIDE.md)** — Code style and conventions
-- **[Architecture principles](./docs/CORE_ARCHITECTURE_PRINCIPLES.md)** — Intelligence-first design
-- **[Troubleshooting](./docs/TROUBLESHOOTING.md)** — Common issues and solutions
+**Planning and development history** are in [docs/archive/planning/](docs/archive/planning/) for historic reference.
 
 ---
 
-## System Requirements
-- Docker and Docker Compose
-- 8GB RAM minimum (16GB recommended for LLM)
-- 20GB disk space
-- Internet connection for RSS feeds
-- Ollama with Llama 3.1 8B model
+## System requirements
 
-## Ports
-- Frontend: 3000
-- API: 8000
-- PostgreSQL: 5432 (Widow) or 5433 (NAS tunnel)
-- Redis: 6379
-- Ollama: 11434
+- Docker and Docker Compose  
+- 8 GB RAM minimum (16 GB recommended for LLM)  
+- 20 GB disk space  
+- Internet for RSS feeds  
+- Ollama with Llama 3.1 8B (or configured model)  
 
 ---
 
-**Version**: 7.0.0 — v7 complete (full-text enrichment, document pipeline, auto synthesis, storyline discovery, entity dossiers, batch-size-aware backlog)
+## Version
+
+8.0 — Collect-then-analyze pipeline, full-history awareness, entity resolution and decouple, data-cleanliness integration, shareholder-ready documentation.

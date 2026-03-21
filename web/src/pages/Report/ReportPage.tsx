@@ -1,8 +1,9 @@
 /**
- * Today's Report — Editorial view using docs/EDITORIAL_DISPLAY_STRATEGY.md as single source of truth.
- * Hierarchy: dominant lead → 2 secondary → digest. Time-based layout (morning/midday/evening/weekend).
- * Trust signals: freshness, source count, optional "Why this is the lead". Progressive disclosure: glance → scan → read → dive.
+ * Today's Report — Single report API, 5W1H editorial + key_actors, progressive disclosure.
+ * See docs/EDITORIAL_DISPLAY_STRATEGY.md. Fallback to title/description when editorial_document is null.
  */
+import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Box,
   Typography,
@@ -19,47 +20,15 @@ import {
   Collapse,
   Paper,
   Divider,
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogActions,
-  Select,
-  MenuItem,
-  FormControl,
-  InputLabel,
-  TextField,
 } from '@mui/material';
 import Refresh from '@mui/icons-material/Refresh';
 import ExpandMore from '@mui/icons-material/ExpandMore';
 import ExpandLess from '@mui/icons-material/ExpandLess';
 import OpenInNew from '@mui/icons-material/OpenInNew';
-import InfoOutlined from '@mui/icons-material/InfoOutlined';
-import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
 import apiService from '../../services/apiService';
-import { contextCentricApi, type TrackedEvent } from '../../services/api/contextCentric';
 import { useDomain } from '../../contexts/DomainContext';
-
-interface ArticleItem {
-  id?: number;
-  title?: string;
-  source?: string;
-  source_domain?: string;
-  published_date?: string;
-  published_at?: string;
-  category?: string;
-}
-
-interface StorylineItem {
-  id?: number;
-  title?: string;
-  description?: string;
-  article_count?: number;
-  status?: string;
-  updated_at?: string;
-}
-
-type PhaseLabel = 'Breaking' | 'Developing' | 'Analysis';
+import EntityCard from '../../components/EntityCard/EntityCard';
+import type { ReportPayload, EditorialDocument, ReportStoryline } from '../../types';
 
 function timeAgo(date: Date): string {
   const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
@@ -72,18 +41,7 @@ function timeAgo(date: Date): string {
   return `${days}d ago`;
 }
 
-function getTimeOfDay(): 'morning' | 'midday' | 'evening' | 'weekend' {
-  const d = new Date();
-  const h = d.getHours();
-  const day = d.getDay();
-  if (day === 0 || day === 6) return 'weekend';
-  if (h >= 5 && h < 11) return 'morning';
-  if (h >= 11 && h < 17) return 'midday';
-  return 'evening';
-}
-
-function getTimeOfDayLabel(): string {
-  const slot = getTimeOfDay();
+function getTimeOfDayLabel(slot: ReportPayload['time_of_day']): string {
   switch (slot) {
     case 'morning':
       return 'While you were sleeping · Day ahead';
@@ -94,49 +52,159 @@ function getTimeOfDayLabel(): string {
     case 'weekend':
       return 'Week in review · Deeper reads';
     default:
-      return 'Today\'s report';
+      return "Today's report";
   }
 }
 
-function formatDate(dateString?: string): string {
-  if (!dateString) return '';
-  try {
-    return new Date(dateString).toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-  } catch {
-    return '';
-  }
+function is5W1H(ed: EditorialDocument | null | undefined): boolean {
+  return Boolean(ed && (ed.who != null || ed.what != null || ed.when != null || ed.where != null));
 }
 
-function phaseFromItem(status?: string, updated?: string): PhaseLabel {
-  if (status?.toLowerCase().includes('break')) return 'Breaking';
-  if (updated) {
-    const mins = Math.floor((Date.now() - new Date(updated).getTime()) / 60000);
-    if (mins < 120) return 'Developing';
-  }
-  return 'Analysis';
+interface LeadCardProps {
+  item: ReportStoryline;
+  domain: string;
+  isLead: boolean;
+  onNavigate: (id: number) => void;
+}
+
+function LeadStorylineCard({ item, domain, isLead, onNavigate }: LeadCardProps) {
+  const [whyHowOpen, setWhyHowOpen] = useState(false);
+  const ed = item.editorial_document;
+  const has5W1H = is5W1H(ed ?? undefined);
+
+  const lede = (ed?.lede ?? '').trim() || item.title;
+  const support = !has5W1H && item.title ? item.title !== lede ? item.title : '' : '';
+
+  return (
+    <Paper
+      elevation={0}
+      sx={{
+        borderLeft: '4px solid',
+        borderColor: item.phase === 'Breaking' ? 'error.main' : 'primary.main',
+        p: 2.5,
+        bgcolor: item.phase === 'Breaking' ? 'error.50' : 'grey.50',
+      }}
+    >
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap', mb: 1 }}>
+        <Chip
+          label={item.phase}
+          size="small"
+          color={item.phase === 'Breaking' ? 'error' : 'default'}
+          variant={item.phase === 'Breaking' ? 'filled' : 'outlined'}
+        />
+        <Typography variant="caption" color="text.secondary">
+          {timeAgo(new Date(item.updated_at))}
+        </Typography>
+        {item.source_count > 0 && (
+          <Typography variant="caption" color="text.secondary">
+            · {item.source_count} source{item.source_count !== 1 ? 's' : ''}
+          </Typography>
+        )}
+      </Box>
+      <CardActionArea onClick={() => onNavigate(item.id)} sx={{ alignItems: 'flex-start', py: 0.5 }}>
+        <Typography variant={isLead ? 'h4' : 'h6'} component="h2" sx={{ fontWeight: 700, lineHeight: 1.25, mb: 1 }}>
+          {lede}
+        </Typography>
+        {support && (
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+            {support.slice(0, 220)}
+            {support.length > 220 ? '…' : ''}
+          </Typography>
+        )}
+        {has5W1H && ed && (
+          <Box sx={{ mt: 1.5, textAlign: 'left' }}>
+            {ed.who && ed.who.length > 0 && (
+              <Box sx={{ mb: 1 }}>
+                <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, display: 'block', mb: 0.5 }}>
+                  Who
+                </Typography>
+                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75 }}>
+                  {item.key_actors?.slice(0, isLead ? 10 : 2).map((actor, i) => (
+                    <EntityCard
+                      key={actor.canonical_entity_id ?? i}
+                      entity={{
+                        canonical_entity_id: actor.canonical_entity_id,
+                        name: actor.name,
+                        type: actor.type,
+                        description: actor.description,
+                        profile_id: actor.profile_id ?? null,
+                        has_dossier: false,
+                        role_in_story: actor.role_in_story,
+                      }}
+                      mode="compact"
+                      domain={domain}
+                    />
+                  ))}
+                </Box>
+              </Box>
+            )}
+            {ed.what && ed.what.length > 0 && (
+              <Box sx={{ mb: 1, pl: 2 }} component="ul">
+                <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, display: 'block', mb: 0.5 }}>
+                  What
+                </Typography>
+                {ed.what.slice(0, 4).map((w, i) => (
+                  <Typography key={i} variant="body2" component="li" sx={{ mb: 0.25 }}>{w}</Typography>
+                ))}
+              </Box>
+            )}
+            {ed.when && ed.when.length > 0 && (
+              <Box sx={{ mb: 1, display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+                <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, width: '100%' }}>
+                  When
+                </Typography>
+                {ed.when.slice(0, 5).map((t, i) => (
+                  <Chip key={i} size="small" label={t} variant="outlined" />
+                ))}
+              </Box>
+            )}
+            {ed.where && ed.where.length > 0 && (
+              <Box sx={{ mb: 1, display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+                <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, width: '100%' }}>
+                  Where
+                </Typography>
+                {ed.where.slice(0, 4).map((w, i) => (
+                  <Chip key={i} size="small" label={w} variant="outlined" />
+                ))}
+              </Box>
+            )}
+            {(ed.why || ed.how) && (
+              <Box sx={{ mt: 1 }}>
+                <ListItemButton dense onClick={() => setWhyHowOpen(!whyHowOpen)} sx={{ px: 0 }}>
+                  <ListItemText primary="Why / How" secondary="Analysis" />
+                  {whyHowOpen ? <ExpandLess /> : <ExpandMore />}
+                </ListItemButton>
+                <Collapse in={whyHowOpen}>
+                  <Typography variant="body2" color="text.secondary" sx={{ pl: 0, pr: 2, pb: 1 }}>
+                    {[ed.why, ed.how].filter(Boolean).join(' ')}
+                  </Typography>
+                </Collapse>
+              </Box>
+            )}
+            {ed.outlook && (
+              <Paper variant="outlined" sx={{ p: 1, mt: 1, bgcolor: 'action.hover' }}>
+                <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>
+                  What to watch
+                </Typography>
+                <Typography variant="body2">{ed.outlook}</Typography>
+              </Paper>
+            )}
+          </Box>
+        )}
+        <Typography variant="caption" color="primary" sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 1 }}>
+          Read storyline <OpenInNew fontSize="small" />
+        </Typography>
+      </CardActionArea>
+    </Paper>
+  );
 }
 
 export default function ReportPage() {
   const { domain } = useDomain();
   const navigate = useNavigate();
-
-  const [articles, setArticles] = useState<ArticleItem[]>([]);
-  const [storylines, setStorylines] = useState<StorylineItem[]>([]);
-  const [events, setEvents] = useState<TrackedEvent[]>([]);
+  const [payload, setPayload] = useState<ReportPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [whyLeadExpanded, setWhyLeadExpanded] = useState(false);
-  const [storylineDialogOpen, setStorylineDialogOpen] = useState(false);
-  const [storylineDialogArticle, setStorylineDialogArticle] = useState<ArticleItem | null>(null);
-  const [storylineDialogStorylineId, setStorylineDialogStorylineId] = useState<number | ''>('');
-  const [storylineDialogNewTitle, setStorylineDialogNewTitle] = useState('');
-  const [storylineDialogLoading, setStorylineDialogLoading] = useState(false);
-  const [storylineDialogError, setStorylineDialogError] = useState<string | null>(null);
 
   useEffect(() => {
     load();
@@ -145,105 +213,17 @@ export default function ReportPage() {
   const load = async () => {
     setLoading(true);
     setError(null);
-    try {
-      const [articlesRes, storylinesRes, eventsRes] = await Promise.all([
-        apiService.getArticles({ limit: 12, quality_first: true, max_quality_tier: 2 }).catch(() => ({ data: { articles: [] } })),
-        apiService.getStorylines().catch(() => ({ data: { storylines: [] } })),
-        contextCentricApi.getTrackedEvents({ domain_key: domain, limit: 8 }).catch(() => ({ items: [] as TrackedEvent[] })),
-      ]);
-      const rawArticles = (articlesRes as { data?: { articles?: ArticleItem[] } })?.data?.articles ?? (articlesRes as { articles?: ArticleItem[] })?.articles ?? [];
-      const rawStorylines = (storylinesRes as { data?: { storylines?: StorylineItem[] } })?.data?.storylines ?? (storylinesRes as { storylines?: StorylineItem[] })?.storylines ?? [];
-      setArticles(Array.isArray(rawArticles) ? rawArticles : []);
-      setStorylines(Array.isArray(rawStorylines) ? rawStorylines : []);
-      setEvents(eventsRes?.items ?? []);
-    } catch {
-      setError('Failed to load report data');
-    } finally {
-      setLoading(false);
+    const res = await apiService.getReport(domain);
+    if (res.success && res.data) {
+      setPayload(res.data);
+    } else {
+      setError(res.message ?? 'Failed to load report');
+      setPayload(null);
     }
+    setLoading(false);
   };
 
-  // Lead: prefer first event (investigation/tracking), then first storyline, then first article
-  const leadEvent = events[0];
-  const leadStoryline = storylines[0];
-  const leadArticle = articles[0];
-  const leadPhase: PhaseLabel = leadEvent
-    ? phaseFromItem(leadEvent.status, leadEvent.updated_at ?? leadEvent.created_at)
-    : leadStoryline
-      ? phaseFromItem(leadStoryline.status, leadStoryline.updated_at)
-      : leadArticle?.published_at
-        ? (Date.now() - new Date(leadArticle.published_at).getTime() < 2 * 60 * 60 * 1000 ? 'Breaking' : 'Developing')
-        : 'Analysis';
-
-  const secondaryEvents = events.slice(1, 2);
-  const secondaryStorylines = storylines.slice(leadEvent ? 0 : 1, leadEvent ? 1 : 3);
-  const secondaryArticles = articles.slice(leadEvent || leadStoryline ? 0 : 1, 3);
-  const digestStorylines = storylines.slice(leadEvent ? 0 : 3, 6);
-  const digestArticles = articles.slice(3, 10);
-  const digestEvents = events.slice(2, 6);
-  const e0 = secondaryEvents[0];
-
-  const openAddToStoryline = (article: ArticleItem) => {
-    setStorylineDialogArticle(article);
-    setStorylineDialogStorylineId('');
-    setStorylineDialogNewTitle('');
-    setStorylineDialogError(null);
-    setStorylineDialogOpen(true);
-  };
-
-  const closeAddToStoryline = () => {
-    setStorylineDialogOpen(false);
-    setStorylineDialogArticle(null);
-    setStorylineDialogStorylineId('');
-    setStorylineDialogNewTitle('');
-    setStorylineDialogError(null);
-  };
-
-  const confirmAddToStoryline = async () => {
-    const article = storylineDialogArticle;
-    if (!article?.id) return;
-    setStorylineDialogLoading(true);
-    setStorylineDialogError(null);
-    try {
-      const domainKey = domain === 'science-tech' ? 'science_tech' : domain;
-      if (storylineDialogStorylineId) {
-        const res = await apiService.addArticleToStoryline(
-          storylineDialogStorylineId,
-          article.id,
-          domainKey,
-        );
-        if (res?.success === false) throw new Error((res as { error?: string }).error || 'Failed to add');
-      } else if (storylineDialogNewTitle.trim()) {
-        const createRes = await apiService.createStoryline(
-          {
-            title: storylineDialogNewTitle.trim(),
-            description: `From report: ${article.title?.slice(0, 100) ?? ''}`,
-            article_ids: [article.id],
-          },
-          domainKey,
-        );
-        if ((createRes as { success?: boolean }).success === false) throw new Error((createRes as { error?: string }).error || 'Failed to create');
-        // Backend create_storyline_from_articles already adds article_ids; no need to add again
-      } else return;
-      closeAddToStoryline();
-      load();
-    } catch (e: unknown) {
-      setStorylineDialogError(e instanceof Error ? e.message : 'Failed to add to storyline');
-    } finally {
-      setStorylineDialogLoading(false);
-    }
-  };
-
-  const leadTitle =
-    leadEvent?.event_name ?? leadStoryline?.title ?? leadArticle?.title ?? 'No lead';
-  const leadSupport =
-    leadStoryline?.description?.slice(0, 200) ?? (leadArticle ? `${leadArticle.source ?? ''} · ${formatDate(leadArticle.published_at ?? leadArticle.published_date)}` : leadEvent ? 'Tracked event' : '');
-  const leadUpdated =
-    leadEvent?.updated_at ?? leadEvent?.created_at ?? leadStoryline?.updated_at ?? leadArticle?.published_at ?? leadArticle?.published_date;
-  const leadSourceCount =
-    leadStoryline?.article_count ?? (leadEvent ? 1 : 0) ?? (leadArticle ? 1 : 0);
-
-  const isBreaking = leadPhase === 'Breaking';
+  const timeOfDay = payload?.time_of_day ?? 'morning';
 
   return (
     <Box>
@@ -253,7 +233,7 @@ export default function ReportPage() {
             Today&apos;s Report
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            {getTimeOfDayLabel()}
+            {getTimeOfDayLabel(timeOfDay)}
           </Typography>
         </Box>
         <Button variant="outlined" size="small" startIcon={<Refresh />} onClick={load} disabled={loading}>
@@ -267,159 +247,41 @@ export default function ReportPage() {
         </Box>
       ) : error ? (
         <Alert severity="error">{error}</Alert>
-      ) : (
+      ) : !payload ? null : (
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-          {/* Dominant lead — massive weight, visual grammar by phase */}
-          {(leadEvent || leadStoryline || leadArticle) && (
-            <Paper
-              elevation={0}
-              sx={{
-                borderLeft: '4px solid',
-                borderColor: isBreaking ? 'error.main' : 'primary.main',
-                p: 2.5,
-                bgcolor: isBreaking ? 'error.50' : 'grey.50',
-              }}
-            >
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap', mb: 1 }}>
-                <Chip
-                  label={leadPhase}
-                  size="small"
-                  color={isBreaking ? 'error' : 'default'}
-                  variant={isBreaking ? 'filled' : 'outlined'}
-                />
-                {leadUpdated && (
-                  <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 500 }}>
-                    {timeAgo(new Date(leadUpdated))}
-                  </Typography>
-                )}
-                {leadSourceCount > 0 && (
-                  <Typography variant="caption" color="text.secondary">
-                    · {leadSourceCount} source{leadSourceCount !== 1 ? 's' : ''}
-                  </Typography>
-                )}
-              </Box>
-              <CardActionArea
-                onClick={() => {
-                  if (leadEvent?.id) navigate(`/${domain}/investigate/events/${leadEvent.id}`);
-                  else if (leadStoryline?.id) navigate(`/${domain}/storylines/${leadStoryline.id}`);
-                }}
-                sx={{ alignItems: 'flex-start', py: 0.5 }}
-              >
-                <Typography variant="h4" component="h2" sx={{ fontWeight: 700, lineHeight: 1.25, mb: 1 }}>
-                  {leadTitle}
-                </Typography>
-                {leadSupport && (
-                  <Typography variant="body1" color="text.secondary" sx={{ mb: 1 }}>
-                    {typeof leadSupport === 'string' ? leadSupport.slice(0, 220) : ''}
-                    {(typeof leadSupport === 'string' && leadSupport.length > 220) ? '…' : ''}
-                  </Typography>
-                )}
-                <Typography variant="caption" color="primary" sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                  {leadEvent ? 'View event' : 'Read storyline'} <OpenInNew fontSize="small" />
-                </Typography>
-              </CardActionArea>
-              {/* Trust: optional "Why this is the lead" */}
-              <Box sx={{ mt: 2 }}>
-                <ListItemButton
-                  dense
-                  onClick={() => setWhyLeadExpanded(!whyLeadExpanded)}
-                  sx={{ px: 0 }}
-                >
-                  <InfoOutlined fontSize="small" sx={{ mr: 1, color: 'text.secondary' }} />
-                  <ListItemText primary="Why this is the lead" secondary="Methodology" />
-                  {whyLeadExpanded ? <ExpandLess /> : <ExpandMore />}
-                </ListItemButton>
-                <Collapse in={whyLeadExpanded}>
-                  <Typography variant="body2" color="text.secondary" sx={{ pl: 4, pr: 2, pb: 1 }}>
-                    Lead is chosen by recency and phase: we prefer tracked events, then active storylines, then latest articles. Breaking items get top placement; freshness and source count are shown for transparency.
-                  </Typography>
-                </Collapse>
-              </Box>
+          {payload.lead_storylines.length > 0 ? (
+            <LeadStorylineCard
+              item={payload.lead_storylines[0]}
+              domain={payload.domain}
+              isLead
+              onNavigate={(id) => navigate(`/${payload.domain}/storylines/${id}`)}
+            />
+          ) : (
+            <Paper variant="outlined" sx={{ p: 3, textAlign: 'center' }}>
+              <Typography color="text.secondary">No lead storylines for this domain yet.</Typography>
             </Paper>
           )}
 
-          {/* Secondary leads — exactly 2, medium weight */}
-          <Typography variant="overline" color="text.secondary" sx={{ fontWeight: 600 }}>
-            Also leading
-          </Typography>
-          <Grid container spacing={2}>
-            {(secondaryStorylines[0] || secondaryArticles[0] || secondaryEvents[0]) && (
-              <Grid item xs={12} md={6}>
-                <Card variant="outlined" sx={{ height: '100%' }}>
-                  <CardActionArea
-                    onClick={() => {
-                      const e = secondaryEvents[0];
-                      const s = secondaryStorylines[0];
-                      if (e?.id) navigate(`/${domain}/investigate/events/${e.id}`);
-                      else if (s?.id) navigate(`/${domain}/storylines/${s.id}`);
-                      else if (secondaryArticles[0]?.id) navigate(`/${domain}/articles`);
-                    }}
-                    sx={{ p: 2, display: 'block', textAlign: 'left' }}
-                  >
-                    <Chip
-                      label={e0 ? phaseFromItem(undefined, e0.updated_at ?? e0.created_at) : phaseFromItem(secondaryStorylines[0]?.status, secondaryStorylines[0]?.updated_at)}
-                      size="small"
-                      sx={{ mb: 1 }}
+          {payload.lead_storylines.length > 1 && (
+            <>
+              <Typography variant="overline" color="text.secondary" sx={{ fontWeight: 600 }}>
+                Also leading
+              </Typography>
+              <Grid container spacing={2}>
+                {payload.lead_storylines.slice(1, 3).map((item) => (
+                  <Grid item xs={12} md={6} key={item.id}>
+                    <LeadStorylineCard
+                      item={item}
+                      domain={payload.domain}
+                      isLead={false}
+                      onNavigate={(id) => navigate(`/${payload.domain}/storylines/${id}`)}
                     />
-                    <Typography variant="h6" sx={{ fontWeight: 600 }}>
-                      {e0?.event_name ?? secondaryStorylines[0]?.title ?? secondaryArticles[0]?.title}
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary">
-                      {secondaryStorylines[0]?.description?.slice(0, 80) ?? secondaryArticles[0]?.source ?? (e0 ? 'Tracked event' : '')}
-                      {(secondaryStorylines[0]?.article_count ?? 0) > 0 && ` · ${secondaryStorylines[0]?.article_count} articles`}
-                    </Typography>
-                    {!e0 && !secondaryStorylines[0] && secondaryArticles[0]?.id && (
-                      <Button
-                        size="small"
-                        sx={{ mt: 1 }}
-                        onClick={(ev) => { ev.stopPropagation(); openAddToStoryline(secondaryArticles[0]); }}
-                      >
-                        → Storyline
-                      </Button>
-                    )}
-                  </CardActionArea>
-                </Card>
+                  </Grid>
+                ))}
               </Grid>
-            )}
-            {(secondaryStorylines[1] || secondaryArticles[1]) && (
-              <Grid item xs={12} md={6}>
-                <Card variant="outlined" sx={{ height: '100%' }}>
-                  <CardActionArea
-                    onClick={() => {
-                      const s = secondaryStorylines[1];
-                      if (s?.id) navigate(`/${domain}/storylines/${s.id}`);
-                      else if (secondaryArticles[1]?.id) navigate(`/${domain}/articles`);
-                    }}
-                    sx={{ p: 2, display: 'block', textAlign: 'left' }}
-                  >
-                    <Chip
-                      label={phaseFromItem(secondaryStorylines[1]?.status, secondaryStorylines[1]?.updated_at)}
-                      size="small"
-                      sx={{ mb: 1 }}
-                    />
-                    <Typography variant="h6" sx={{ fontWeight: 600 }}>
-                      {secondaryStorylines[1]?.title ?? secondaryArticles[1]?.title}
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary">
-                      {secondaryStorylines[1]?.description?.slice(0, 80) ?? secondaryArticles[1]?.source ?? ''}
-                      {(secondaryStorylines[1]?.article_count ?? 0) > 0 && ` · ${secondaryStorylines[1]?.article_count} articles`}
-                    </Typography>
-                    {!secondaryStorylines[1] && secondaryArticles[1]?.id && (
-                      <Button
-                        size="small"
-                        sx={{ mt: 1 }}
-                        onClick={(ev) => { ev.stopPropagation(); openAddToStoryline(secondaryArticles[1]); }}
-                      >
-                        → Storyline
-                      </Button>
-                    )}
-                  </CardActionArea>
-                </Card>
-              </Grid>
-            )}
-          </Grid>
+            </>
+          )}
 
-          {/* Digest — supporting stories, lightweight scannable */}
           <Typography variant="overline" color="text.secondary" sx={{ fontWeight: 600 }}>
             Digest
           </Typography>
@@ -427,79 +289,73 @@ export default function ReportPage() {
             <Grid item xs={12} md={4}>
               <Paper variant="outlined" sx={{ p: 2 }}>
                 <Typography variant="subtitle2" color="text.secondary" gutterBottom>
-                  Top stories
+                  Investigations
                 </Typography>
                 <List dense disablePadding>
-                  {digestArticles.slice(0, 4).map((a, i) => (
+                  {(payload.investigations ?? []).slice(0, 5).map((inv) => (
                     <ListItemButton
-                      key={a.id ?? i}
+                      key={inv.id}
                       dense
-                      onClick={() => a.id && navigate(`/${domain}/articles`)}
+                      onClick={() => navigate(`/${payload.domain}/investigate/events/${inv.id}`)}
                     >
                       <ListItemText
-                        primary={a.title?.slice(0, 60)}
-                        secondary={a.source ? `${a.source} · ${timeAgo(new Date(a.published_at ?? a.published_date ?? 0))}` : undefined}
+                        primary={inv.name?.slice(0, 50) || `#${inv.id}`}
+                        secondary={inv.briefing?.slice(0, 60)}
                         primaryTypographyProps={{ variant: 'body2' }}
                       />
-                      {a.id && (
-                        <Button size="small" onClick={(ev) => { ev.stopPropagation(); openAddToStoryline(a); }}>
-                          → Storyline
-                        </Button>
-                      )}
                     </ListItemButton>
                   ))}
+                  {(!payload.investigations || payload.investigations.length === 0) && (
+                    <ListItemText primary="None" primaryTypographyProps={{ variant: 'body2', color: 'text.secondary' }} />
+                  )}
                 </List>
               </Paper>
             </Grid>
             <Grid item xs={12} md={4}>
               <Paper variant="outlined" sx={{ p: 2 }}>
                 <Typography variant="subtitle2" color="text.secondary" gutterBottom>
-                  Active storylines
+                  Recent events
                 </Typography>
                 <List dense disablePadding>
-                  {digestStorylines.slice(0, 4).map((s, i) => (
+                  {(payload.recent_events ?? []).slice(0, 5).map((ev) => (
                     <ListItemButton
-                      key={s.id ?? i}
+                      key={ev.id}
                       dense
-                      onClick={() => s.id && navigate(`/${domain}/storylines/${s.id}`)}
+                      onClick={() => navigate(`/${payload.domain}/investigate/events/${ev.id}`)}
                     >
                       <ListItemText
-                        primary={s.title?.slice(0, 60)}
-                        secondary={s.article_count ? `${s.article_count} articles` : undefined}
+                        primary={ev.title?.slice(0, 50) || `#${ev.id}`}
+                        secondary={ev.date ? timeAgo(new Date(ev.date)) : ev.type}
                         primaryTypographyProps={{ variant: 'body2' }}
                       />
                     </ListItemButton>
                   ))}
+                  {(!payload.recent_events || payload.recent_events.length === 0) && (
+                    <ListItemText primary="None" primaryTypographyProps={{ variant: 'body2', color: 'text.secondary' }} />
+                  )}
                 </List>
               </Paper>
             </Grid>
             <Grid item xs={12} md={4}>
               <Paper variant="outlined" sx={{ p: 2 }}>
                 <Typography variant="subtitle2" color="text.secondary" gutterBottom>
-                  Tracked events
+                  Daily brief
                 </Typography>
-                <List dense disablePadding>
-                  {digestEvents.slice(0, 4).map((e) => (
-                    <ListItemButton
-                      key={e.id}
-                      dense
-                      onClick={() => navigate(`/${domain}/investigate/events/${e.id}`)}
-                    >
-                      <ListItemText
-                        primary={(e.event_name ?? 'Event').slice(0, 60)}
-                        secondary={e.updated_at ? timeAgo(new Date(e.updated_at)) : undefined}
-                        primaryTypographyProps={{ variant: 'body2' }}
-                      />
-                    </ListItemButton>
-                  ))}
-                </List>
+                {payload.daily_brief ? (
+                  <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
+                    {payload.daily_brief.slice(0, 400)}
+                    {payload.daily_brief.length > 400 ? '…' : ''}
+                  </Typography>
+                ) : (
+                  <Typography variant="body2" color="text.secondary">
+                    No brief generated yet.
+                  </Typography>
+                )}
               </Paper>
             </Grid>
           </Grid>
 
           <Divider sx={{ my: 1 }} />
-
-          {/* Dive */}
           <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
             <Button size="small" variant="outlined" onClick={() => navigate(`/${domain}/storylines`)}>
               All storylines
@@ -513,66 +369,6 @@ export default function ReportPage() {
           </Box>
         </Box>
       )}
-
-      <Dialog open={storylineDialogOpen} onClose={closeAddToStoryline} maxWidth="sm" fullWidth>
-        <DialogTitle>Add to Storyline</DialogTitle>
-        <DialogContent>
-          {storylineDialogArticle && (
-            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-              Article: {storylineDialogArticle.title?.slice(0, 80)}
-            </Typography>
-          )}
-          <FormControl fullWidth sx={{ mb: 2 }}>
-            <InputLabel>Existing storyline</InputLabel>
-            <Select
-              value={storylineDialogStorylineId}
-              label="Existing storyline"
-              onChange={(e) => {
-                setStorylineDialogStorylineId(e.target.value as number | '');
-                setStorylineDialogNewTitle('');
-              }}
-            >
-              <MenuItem value="">—</MenuItem>
-              {storylines.map((s) => (
-                <MenuItem key={s.id} value={s.id ?? ''}>
-                  {s.title}
-                </MenuItem>
-              ))}
-            </Select>
-          </FormControl>
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-            Or create new:
-          </Typography>
-          <TextField
-            fullWidth
-            label="New storyline title"
-            value={storylineDialogNewTitle}
-            onChange={(e) => {
-              setStorylineDialogNewTitle(e.target.value);
-              setStorylineDialogStorylineId('');
-            }}
-            placeholder="Enter title..."
-          />
-          {storylineDialogError && (
-            <Alert severity="error" sx={{ mt: 2 }} onClose={() => setStorylineDialogError(null)}>
-              {storylineDialogError}
-            </Alert>
-          )}
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={closeAddToStoryline}>Cancel</Button>
-          <Button
-            variant="contained"
-            onClick={confirmAddToStoryline}
-            disabled={
-              storylineDialogLoading ||
-              (!storylineDialogStorylineId && !storylineDialogNewTitle.trim())
-            }
-          >
-            {storylineDialogLoading ? 'Adding...' : 'Add to Storyline'}
-          </Button>
-        </DialogActions>
-      </Dialog>
     </Box>
   );
 }

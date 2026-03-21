@@ -42,7 +42,7 @@ Respond with ONLY a JSON array, no other text."""
 def extract_positions_for_entity(
     domain_key: str,
     entity_id: int,
-    max_articles: int = 20,
+    max_articles: int = 50,  # v8: 50 per entity for extract path; batch uses 25
     skip_existing: bool = True,
 ) -> Dict[str, Any]:
     """
@@ -76,7 +76,7 @@ def extract_positions_for_entity(
             # Get articles mentioning this entity (with content)
             cur.execute(
                 f"""
-                SELECT DISTINCT a.id, a.title, LEFT(a.content, 2000), a.ml_data, a.published_at
+                SELECT DISTINCT a.id, a.title, LEFT(a.content, 2000), COALESCE(a.metadata, '{{}}'::jsonb), a.published_at
                 FROM {schema}.article_entities ae
                 JOIN {schema}.articles a ON a.id = ae.article_id
                 WHERE ae.canonical_entity_id = %s
@@ -326,7 +326,7 @@ def run_position_tracker_batch(
     domain_key: Optional[str] = None,
     min_mentions: int = 5,
     max_entities: int = 10,
-    max_articles_per_entity: int = 10,
+    max_articles_per_entity: int = 25,  # v8
 ) -> Dict[str, Any]:
     """
     Batch position extraction: find top entities by mention count, extract positions for each.

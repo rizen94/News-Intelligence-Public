@@ -31,13 +31,25 @@ import NarrativeThreadsPage from './pages/Investigate/NarrativeThreadsPage';
 import EntityDossierPage from './pages/Investigate/EntityDossierPage';
 import MonitorPage from './pages/Monitor/MonitorPage';
 import AnalyzePage from './pages/Analyze/AnalyzePage';
+import AuditChecklistPage from './pages/Audit/AuditChecklistPage';
 import CommodityDashboard from './pages/Finance/CommodityDashboard';
 import FinancialAnalysis from './pages/Finance/FinancialAnalysis';
 import FinancialAnalysisResult from './pages/Finance/FinancialAnalysisResult';
+import TaskTraceViewer from './pages/Finance/TaskTraceViewer';
 import Storylines from './pages/Storylines/Storylines';
 import StorylineDetail from './pages/Storylines/StorylineDetail';
+import StorylineDiscovery from './pages/Storylines/StorylineDiscovery';
+import SynthesizedView from './pages/Storylines/SynthesizedView';
+import StoryTimeline from './pages/StoryTimeline/StoryTimeline';
+import Articles from './pages/Articles/Articles';
+import ArticleDetail from './pages/Articles/ArticleDetail';
+import ArticleDeduplicationManager from './pages/Articles/ArticleDeduplicationManager';
 import Briefings from './pages/Briefings/Briefings';
 import ReportPage from './pages/Report/ReportPage';
+import RSSFeeds from './pages/RSSFeeds/RSSFeeds';
+import Topics from './pages/Topics/Topics';
+import Watchlist from './pages/Watchlist/Watchlist';
+import Events from './pages/Events/Events';
 
 const theme = createTheme({
   palette: {
@@ -55,7 +67,7 @@ function App() {
   useEffect(() => {
     errorHandler.initialize();
     loggingService.info('News Intelligence (Dashboard) initialized', {
-      version: '7.0',
+      version: '8.0',
       environment: import.meta.env.MODE || 'development',
     });
     const connectionManager = getAPIConnectionManager();
@@ -81,9 +93,20 @@ function App() {
                   <Route path="discover" element={<DiscoverPage />} />
                   <Route path="discover/contexts/:id" element={<ContextDetailPage />} />
                   <Route path="storylines" element={<Storylines />} />
+                  {/* Static segments before :id — otherwise "discovery" / "synthesized" match as storyline ids */}
+                  <Route path="storylines/discovery" element={<StorylineDiscovery />} />
+                  <Route path="storylines/synthesized" element={<SynthesizedView />} />
+                  <Route path="storylines/:id/timeline" element={<StoryTimeline />} />
                   <Route path="storylines/:id" element={<StorylineDetail />} />
+                  <Route path="articles" element={<Articles />} />
+                  <Route path="articles/deduplication" element={<ArticleDeduplicationManager />} />
+                  <Route path="articles/:id" element={<ArticleDetail />} />
                   <Route path="briefings" element={<Briefings />} />
                   <Route path="report" element={<ReportPage />} />
+                  <Route path="rss_feeds" element={<RSSFeeds />} />
+                  <Route path="topics" element={<Topics />} />
+                  <Route path="watchlist" element={<Watchlist />} />
+                  <Route path="events" element={<Events />} />
                   <Route path="investigate" element={<InvestigatePage />} />
                   <Route path="investigate/events/:id" element={<EventDetailPage />} />
                   <Route path="investigate/entities" element={<EntitiesListPage />} />
@@ -94,9 +117,11 @@ function App() {
                   <Route path="investigate/documents/:documentId" element={<ProcessedDocumentDetailPage />} />
                   <Route path="investigate/narrative-threads" element={<NarrativeThreadsPage />} />
                   <Route path="monitor" element={<MonitorPage />} />
+                  <Route path="audit-checklist" element={<AuditChecklistPage />} />
                   <Route path="analyze" element={<AnalyzePage />} />
                   <Route path="analysis" element={<FinancialAnalysis />} />
                   <Route path="analysis/:taskId" element={<FinancialAnalysisResult />} />
+                  <Route path="trace/:taskId" element={<TaskTraceViewer />} />
                   <Route path="commodity" element={<Navigate to="commodity/gold" replace />} />
                   <Route path="commodity/:commodity" element={<CommodityDashboard />} />
                 </Route>

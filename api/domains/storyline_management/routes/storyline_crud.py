@@ -20,6 +20,7 @@ from ..schemas.storyline_schemas import (
     StorylineDetailResponse,
     StorylineListResponse,
     StorylineListItem,
+    StorylineEntitySummary,
     PaginationInfo,
     ArticleSummary
 )
@@ -92,9 +93,40 @@ async def get_domain_storylines(
                     LIMIT %s OFFSET %s
                 """
                 cur.execute(query, params + [page_size, offset])
+                list_rows = cur.fetchall()
+                storyline_ids = [r[0] for r in list_rows]
+                
+                # Top 3 entities per storyline (by mention count) for list view
+                top_entities_by_storyline = {sid: [] for sid in storyline_ids}
+                if storyline_ids:
+                    cur.execute(f"""
+                        WITH article_entities_agg AS (
+                            SELECT sa.storyline_id, ae.canonical_entity_id, COUNT(*) AS cnt
+                            FROM {schema}.storyline_articles sa
+                            JOIN {schema}.article_entities ae ON ae.article_id = sa.article_id
+                            WHERE sa.storyline_id = ANY(%s)
+                            GROUP BY sa.storyline_id, ae.canonical_entity_id
+                        ),
+                        ranked AS (
+                            SELECT storyline_id, canonical_entity_id,
+                                   ROW_NUMBER() OVER (PARTITION BY storyline_id ORDER BY cnt DESC) AS rn
+                            FROM article_entities_agg
+                        )
+                        SELECT r.storyline_id, ec.canonical_name, ec.entity_type, ec.description
+                        FROM ranked r
+                        JOIN {schema}.entity_canonical ec ON ec.id = r.canonical_entity_id
+                        WHERE r.rn <= 3
+                    """, (storyline_ids,))
+                    for r in cur.fetchall():
+                        desc = r[3]
+                        top_entities_by_storyline.setdefault(r[0], []).append({
+                            "name": r[1] or "",
+                            "type": r[2] or "subject",
+                            "description_short": (desc[:100] + "…") if desc and len(desc) > 100 else (desc or ""),
+                        })
                 
                 storylines = []
-                for row in cur.fetchall():
+                for row in list_rows:
                     storylines.append(StorylineListItem(
                         id=row[0],
                         title=row[1],
@@ -103,7 +135,8 @@ async def get_domain_storylines(
                         quality_score=row[7],
                         status=row[5],
                         created_at=row[3],
-                        updated_at=row[4]
+                        updated_at=row[4],
+                        top_entities=top_entities_by_storyline.get(row[0], []),
                     ))
                 
                 pagination = PaginationInfo(
@@ -212,14 +245,15 @@ async def get_domain_storyline(
         
         try:
             with conn.cursor() as cur:
-                # Get storyline details (include ml_processing_status for frontend processing state)
+                # Get storyline details (include key_entities, ml_processing_status)
                 cur.execute(f"""
                     SELECT id, title, description, created_at, updated_at,
                            status, analysis_summary, quality_score, article_count,
                            last_evolution_at, evolution_count, background_information,
                            context_last_updated,
                            COALESCE(ml_processing_status, 'completed') as ml_processing_status,
-                           editorial_document, document_version, document_status, last_refinement
+                           editorial_document, document_version, document_status, last_refinement,
+                           key_entities
                     FROM {schema}.storylines 
                     WHERE id = %s
                 """, (storyline_id,))
@@ -238,8 +272,11 @@ async def get_domain_storyline(
                     ORDER BY a.published_at DESC
                 """, (storyline_id,))
                 
+                article_rows = cur.fetchall()
                 articles = []
-                for row in cur.fetchall():
+                article_ids = []
+                for row in article_rows:
+                    article_ids.append(row[0])
                     articles.append(ArticleSummary(
                         id=row[0],
                         title=row[1],
@@ -249,16 +286,64 @@ async def get_domain_storyline(
                         summary=row[5]
                     ))
                 
-                # Parse background_information if present
+                # Entities: article_entities + entity_canonical for this storyline's articles
+                entity_list = []
+                if article_ids:
+                    domain_key = domain  # politics | finance | science-tech
+                    cur.execute(f"""
+                        SELECT ec.id, ec.canonical_name, ec.entity_type, ec.description,
+                               COUNT(ae.article_id) AS mention_count
+                        FROM {schema}.article_entities ae
+                        JOIN {schema}.entity_canonical ec ON ec.id = ae.canonical_entity_id
+                        WHERE ae.article_id = ANY(%s)
+                        GROUP BY ec.id, ec.canonical_name, ec.entity_type, ec.description
+                        ORDER BY mention_count DESC
+                    """, (article_ids,))
+                    entity_rows = cur.fetchall()
+                    canonical_ids = [r[0] for r in entity_rows]
+                    profile_map = {}
+                    dossier_set = set()
+                    if canonical_ids:
+                        cur.execute("""
+                            SELECT canonical_entity_id, id FROM intelligence.entity_profiles
+                            WHERE domain_key = %s AND canonical_entity_id = ANY(%s)
+                        """, (domain_key, canonical_ids))
+                        for r in cur.fetchall():
+                            profile_map[r[0]] = r[1]
+                        cur.execute("""
+                            SELECT entity_id FROM intelligence.entity_dossiers
+                            WHERE domain_key = %s AND entity_id = ANY(%s)
+                        """, (domain_key, canonical_ids))
+                        dossier_set = {r[0] for r in cur.fetchall()}
+                    for r in entity_rows:
+                        entity_list.append(StorylineEntitySummary(
+                            canonical_entity_id=r[0],
+                            name=r[1] or "",
+                            type=r[2] or "subject",
+                            description=r[3],
+                            mention_count=r[4] or 0,
+                            has_profile=(r[0] in profile_map),
+                            has_dossier=(r[0] in dossier_set),
+                            profile_id=profile_map.get(r[0]),
+                        ))
+                
+                # Parse background_information and key_entities if present
+                import json
                 background_info = None
                 if storyline[11]:
-                    import json
                     try:
                         background_info = json.loads(storyline[11]) if isinstance(storyline[11], str) else storyline[11]
-                    except:
+                    except Exception:
+                        pass
+                key_entities_raw = storyline[18] if len(storyline) > 18 else None
+                key_entities = None
+                if key_entities_raw is not None:
+                    try:
+                        key_entities = key_entities_raw if isinstance(key_entities_raw, (dict, list)) else json.loads(key_entities_raw)
+                    except Exception:
                         pass
                 
-                # storyline row: [0]id [1]title [2]description [3]created_at [4]updated_at [5]status [6]analysis_summary [7]quality_score [8]article_count [9]last_evolution_at [10]evolution_count [11]background_information [12]context_last_updated [13]ml_processing_status [14]editorial_document [15]document_version [16]document_status [17]last_refinement
+                # storyline row: [0]id ... [17]last_refinement [18]key_entities
                 return StorylineDetailResponse(
                     id=storyline[0],
                     title=storyline[1],
@@ -279,6 +364,8 @@ async def get_domain_storyline(
                     document_version=storyline[15] if len(storyline) > 15 else None,
                     document_status=storyline[16] if len(storyline) > 16 else None,
                     last_refinement=storyline[17] if len(storyline) > 17 else None,
+                    key_entities=key_entities,
+                    entities=entity_list,
                 )
                 
         finally:

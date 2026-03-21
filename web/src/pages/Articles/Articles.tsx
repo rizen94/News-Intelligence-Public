@@ -178,12 +178,12 @@ const Articles: React.FC = () => {
   const loadStorylines = useCallback(async() => {
     try {
       const response = await apiService.getStorylines({}, domain);
-      if (response.success) {
-        const storylinesList = Array.isArray(response.data)
-          ? response.data
-          : response.data?.storylines || [];
-        setStorylines(storylinesList);
-      }
+      // Backend returns { data: StorylineListItem[], pagination, domain } (no .success); or { success: false, error }
+      if ('error' in response && response.error) return;
+      const storylinesList = Array.isArray(response.data)
+        ? response.data
+        : (response as { data?: { storylines?: unknown[] } }).data?.storylines || [];
+      setStorylines(storylinesList);
     } catch (error) {
       console.error('Failed to load storylines:', error);
     }

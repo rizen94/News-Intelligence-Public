@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link as RouterLink } from 'react-router-dom';
 import {
   Box,
   Typography,
@@ -20,6 +20,7 @@ import {
   Switch,
   FormControlLabel,
   TablePagination,
+  Link,
 } from '@mui/material';
 import { useDomain } from '../../contexts/DomainContext';
 import apiService from '../../services/apiService';
@@ -130,6 +131,9 @@ const Events: React.FC = () => {
                 <TableCell>Title</TableCell>
                 <TableCell>Type</TableCell>
                 <TableCell>Location</TableCell>
+                <TableCell>Extraction</TableCell>
+                <TableCell>Dedup</TableCell>
+                <TableCell>Source article</TableCell>
                 <TableCell align="center">Sources</TableCell>
                 <TableCell align="center">Ongoing</TableCell>
                 <TableCell>Storyline</TableCell>
@@ -164,6 +168,39 @@ const Events: React.FC = () => {
                     />
                   </TableCell>
                   <TableCell>{evt.location !== 'unknown' ? evt.location : '—'}</TableCell>
+                  <TableCell sx={{ maxWidth: 140 }}>
+                    {evt.extraction_method ? (
+                      <Chip size="small" variant="outlined" label={String(evt.extraction_method)} />
+                    ) : (
+                      '—'
+                    )}
+                  </TableCell>
+                  <TableCell sx={{ maxWidth: 160 }}>
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                      {evt.dedup_role && (
+                        <Chip size="small" label={String(evt.dedup_role)} variant="outlined" />
+                      )}
+                      {evt.canonical_event_id != null && (
+                        <Typography variant="caption" color="text.secondary">
+                          canonical #{evt.canonical_event_id}
+                        </Typography>
+                      )}
+                      {!evt.dedup_role && evt.canonical_event_id == null && '—'}
+                    </Box>
+                  </TableCell>
+                  <TableCell onClick={(e) => e.stopPropagation()}>
+                    {evt.source_article_id ? (
+                      <Link
+                        component={RouterLink}
+                        to={`/${domain}/articles/${evt.source_article_id}`}
+                        underline="hover"
+                      >
+                        #{evt.source_article_id}
+                      </Link>
+                    ) : (
+                      '—'
+                    )}
+                  </TableCell>
                   <TableCell align="center">{evt.source_count}</TableCell>
                   <TableCell align="center">{evt.is_ongoing ? '✓' : ''}</TableCell>
                   <TableCell>
@@ -177,7 +214,7 @@ const Events: React.FC = () => {
               ))}
               {events.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={7} align="center" sx={{ py: 4 }}>
+                  <TableCell colSpan={10} align="center" sx={{ py: 4 }}>
                     <Typography color="text.secondary">No events found</Typography>
                   </TableCell>
                 </TableRow>

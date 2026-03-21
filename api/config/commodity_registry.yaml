@@ -1,0 +1,141 @@
+# Commodity registry — single source of truth for finance commodity tracking.
+# Used by news_orchestrator (relevance), finance routes (validation), FRED/price, and dashboard.
+# FRED: set fred_series_id here or via env FRED_{COMMODITY_ID}_SERIES_ID (e.g. FRED_OIL_SERIES_ID).
+
+# Shared financial context signals (market/trading/regulatory). Content matching these is boosted.
+financial_signals_default:
+  - price
+  - trading
+  - market
+  - ETF
+  - reserve
+  - reserves
+  - mining
+  - tariff
+  - supply
+  - demand
+  - central bank
+  - ounce
+  - refinery
+  - LBMA
+  - spot
+  - futures
+  - import
+  - export
+  - holdings
+
+commodities:
+  - id: gold
+    label: Gold
+    unit: USD/oz
+    metals_dev: true
+    fred_series_id: "IQ12260"
+    topic_keywords:
+      - gold
+      - bullion
+      - precious metal
+      - yellow metal
+      - ounce
+      - oz
+    word_boundary_terms:
+      - gold
+    non_financial_exclude:
+      - jewelry
+      - fashion
+      - wedding band
+      - celebrity
+      - buy now
+      - style guide
+      - gift guide
+      - gold medal
+      - gold color
+
+  - id: silver
+    label: Silver
+    unit: USD/oz
+    metals_dev: true
+    fred_series_id: ""
+    topic_keywords:
+      - silver
+      - precious metal
+      - industrial metal
+      - ounce
+      - oz
+    word_boundary_terms:
+      - silver
+    non_financial_exclude:
+      - jewelry
+      - silverware
+      - fashion
+      - wedding
+      - celebrity
+      - gift guide
+      - silver medal
+      - silver screen
+
+  - id: platinum
+    label: Platinum
+    unit: USD/oz
+    metals_dev: true
+    fred_series_id: ""
+    topic_keywords:
+      - platinum
+      - pgm
+      - palladium
+      - precious metal
+      - catalyst
+      - automotive
+    word_boundary_terms:
+      - platinum
+    non_financial_exclude:
+      - jewelry
+      - wedding band
+      - fashion
+      - celebrity
+      - platinum album
+      - gift guide
+
+  - id: oil
+    label: Oil
+    unit: USD/bbl
+    metals_dev: false
+    fred_series_id: ""
+    topic_keywords:
+      - crude oil
+      - oil price
+      - oil market
+      - brent
+      - wti
+      - barrel
+      - bbl
+      - opec
+      - oil production
+      - oil demand
+    word_boundary_terms: []
+    non_financial_exclude:
+      - cooking oil
+      - olive oil
+      - oil painting
+      - oil change
+      - essential oil
+      - motor oil
+
+  - id: gas
+    label: Natural gas
+    unit: USD/mmbtu
+    metals_dev: false
+    fred_series_id: ""
+    topic_keywords:
+      - natural gas
+      - gas price
+      - gas market
+      - henry hub
+      - lng
+      - gas demand
+      - gas production
+    word_boundary_terms: []
+    non_financial_exclude:
+      - gas station
+      - fuel pump
+      - gas grill
+      - cooking gas

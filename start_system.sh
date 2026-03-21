@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# News Intelligence System v6.0 - Comprehensive Startup Script
+# News Intelligence System v8.0 - Comprehensive Startup Script
 # Starts: SSH Tunnel, API Server, Frontend, and all background services (Redis removed)
 
 set -e
@@ -451,7 +451,7 @@ verify_services() {
 # Main execution
 main() {
     log "=========================================="
-    log "News Intelligence System v6.0 - Startup"
+    log "News Intelligence System v8.0 - Startup"
     log "=========================================="
     log "Started at: $(date)"
     echo ""

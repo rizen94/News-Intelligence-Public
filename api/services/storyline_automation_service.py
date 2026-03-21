@@ -6,7 +6,7 @@ Provides RAG-enhanced article discovery with configurable automation controls
 
 import logging
 import psycopg2
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Any, Optional, Tuple
 import json
 import asyncio
@@ -17,6 +17,19 @@ from shared.services.domain_aware_service import DomainAwareService
 from services.domain_synthesis_config import get_domain_synthesis_config
 
 logger = logging.getLogger(__name__)
+
+
+def _hours_since_db_timestamp(last_run: datetime) -> float:
+    """
+    Hours since a DB timestamp (e.g. last_automation_run). PostgreSQL may return
+    offset-aware UTC while datetime.now() is naive — normalize so subtraction is safe.
+    """
+    now = datetime.now(timezone.utc)
+    if last_run.tzinfo is None:
+        lr = last_run.replace(tzinfo=timezone.utc)
+    else:
+        lr = last_run.astimezone(timezone.utc)
+    return (now - lr).total_seconds() / 3600.0
 
 
 class StorylineAutomationService(DomainAwareService):
@@ -125,6 +138,9 @@ class StorylineAutomationService(DomainAwareService):
             conn = get_db_connection()
             if not conn:
                 raise Exception("Database connection failed")
+            # This coroutine performs awaited network/LLM work between DB calls;
+            # autocommit prevents long-lived "idle in transaction" sessions.
+            conn.autocommit = True
             
             try:
                 with conn.cursor() as cur:
@@ -186,7 +202,7 @@ class StorylineAutomationService(DomainAwareService):
                     
                     # Check if we should run (frequency check; skip for enrichment_mode so we can run both flows)
                     if not force_refresh and not enrichment_mode and last_automation_run:
-                        hours_since_run = (datetime.now() - last_automation_run).total_seconds() / 3600
+                        hours_since_run = _hours_since_db_timestamp(last_automation_run)
                         if hours_since_run < (automation_frequency_hours or 24):
                             return {
                                 "success": True,
@@ -537,7 +553,15 @@ class StorylineAutomationService(DomainAwareService):
                         ORDER BY a.published_at DESC, a.quality_score DESC
                         LIMIT %s
                     """, params_with_exclude + [max_results])
-                except Exception:
+                except Exception as inner_exc:
+                    logger.debug(
+                        "Entity-based primary query failed, retrying without quality columns: %s",
+                        inner_exc,
+                    )
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        pass
                     cur.execute(f"""
                         SELECT a.id, a.title, a.summary, a.content, a.url, a.source_domain, a.published_at, a.quality_score
                         FROM {self.schema}.articles a

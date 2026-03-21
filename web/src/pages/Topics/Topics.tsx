@@ -867,9 +867,10 @@ const Topics: React.FC = () => {
       </Typography>
 
       <Typography variant='body1' color='text.secondary' sx={{ mb: 3 }}>
-        Discover and explore topics automatically extracted from news articles
-        using AI-powered clustering. See the big picture with word clouds,
-        trending topics, and comprehensive analysis.
+        Discover and explore trend themes backed by entities and contexts.
+        Themes group related participants, developments, and events into a
+        bigger-picture view. Convert interesting themes into storylines for
+        deeper RAG-enhanced analysis.
       </Typography>
 
       {/* Controls */}
@@ -1006,8 +1007,8 @@ const Topics: React.FC = () => {
               Word Cloud - What's Happening
             </Typography>
             <Typography variant='body2' color='text.secondary' sx={{ mb: 2 }}>
-              Visual representation of topics based on article frequency. Larger
-              words indicate more coverage.
+              Hybrid trend map across topic clusters plus entity/context signals.
+              Larger words indicate stronger multi-source coverage.
             </Typography>
             <WordCloudVisualization
               words={wordCloudData?.word_cloud || wordCloudData?.words || []}

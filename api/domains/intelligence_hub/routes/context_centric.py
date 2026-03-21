@@ -508,6 +508,14 @@ def list_entity_profiles(
         raise HTTPException(status_code=503, detail="Database unavailable")
     try:
         with conn.cursor() as cur:
+            if domain_key:
+                cur.execute(
+                    "SELECT COUNT(*) FROM intelligence.entity_profiles WHERE domain_key = %s",
+                    (domain_key,),
+                )
+            else:
+                cur.execute("SELECT COUNT(*) FROM intelligence.entity_profiles")
+            total = int(cur.fetchone()[0])
             if brief:
                 # Do not SELECT sections/relationships_summary — avoids huge transfer and timeout
                 if domain_key:
@@ -560,7 +568,7 @@ def list_entity_profiles(
             rows = cur.fetchall()
         conn.close()
         to_item = _row_to_profile_brief if brief else _row_to_profile
-        return {"items": [to_item(r) for r in rows], "limit": limit, "offset": offset}
+        return {"items": [to_item(r) for r in rows], "limit": limit, "offset": offset, "total": total}
     except Exception as e:
         logger.warning("list_entity_profiles: %s", e, exc_info=True)
         try:
@@ -761,6 +769,20 @@ def _row_to_context(row: tuple, max_content_len: int = 2000) -> dict:
     }
 
 
+def _contexts_list_where_params(
+    domain_key: Optional[str],
+    source_type: Optional[str],
+) -> tuple:
+    """Returns (WHERE fragment without WHERE keyword, tuple of bind params)."""
+    if domain_key and source_type:
+        return "domain_key = %s AND source_type = %s", (domain_key, source_type)
+    if domain_key:
+        return "domain_key = %s", (domain_key,)
+    if source_type:
+        return "source_type = %s", (source_type,)
+    return "TRUE", tuple()
+
+
 @router.get("/contexts", response_model=dict)
 def list_contexts(
     domain_key: Optional[str] = Query(None),
@@ -774,54 +796,32 @@ def list_contexts(
     if not conn:
         raise HTTPException(status_code=503, detail="Database unavailable")
     try:
+        where_frag, base_params = _contexts_list_where_params(domain_key, source_type)
         with conn.cursor() as cur:
-            if domain_key and source_type:
-                cur.execute(
-                    """
-                    SELECT id, source_type, domain_key, title, content, metadata, created_at, updated_at
-                    FROM intelligence.contexts
-                    WHERE domain_key = %s AND source_type = %s
-                    ORDER BY created_at DESC
-                    LIMIT %s OFFSET %s
-                    """,
-                    (domain_key, source_type, limit, offset),
-                )
-            elif domain_key:
-                cur.execute(
-                    """
-                    SELECT id, source_type, domain_key, title, content, metadata, created_at, updated_at
-                    FROM intelligence.contexts
-                    WHERE domain_key = %s
-                    ORDER BY created_at DESC
-                    LIMIT %s OFFSET %s
-                    """,
-                    (domain_key, limit, offset),
-                )
-            elif source_type:
-                cur.execute(
-                    """
-                    SELECT id, source_type, domain_key, title, content, metadata, created_at, updated_at
-                    FROM intelligence.contexts
-                    WHERE source_type = %s
-                    ORDER BY created_at DESC
-                    LIMIT %s OFFSET %s
-                    """,
-                    (source_type, limit, offset),
-                )
-            else:
-                cur.execute(
-                    """
-                    SELECT id, source_type, domain_key, title, content, metadata, created_at, updated_at
-                    FROM intelligence.contexts
-                    ORDER BY created_at DESC
-                    LIMIT %s OFFSET %s
-                    """,
-                    (limit, offset),
-                )
+            cur.execute(
+                f"SELECT COUNT(*) FROM intelligence.contexts WHERE {where_frag}",
+                base_params,
+            )
+            total = int(cur.fetchone()[0])
+            cur.execute(
+                f"""
+                SELECT id, source_type, domain_key, title, content, metadata, created_at, updated_at
+                FROM intelligence.contexts
+                WHERE {where_frag}
+                ORDER BY created_at DESC
+                LIMIT %s OFFSET %s
+                """,
+                (*base_params, limit, offset),
+            )
             rows = cur.fetchall()
         conn.close()
         content_len = 400 if brief else 2000
-        return {"items": [_row_to_context(r, content_len) for r in rows], "limit": limit, "offset": offset}
+        return {
+            "items": [_row_to_context(r, content_len) for r in rows],
+            "limit": limit,
+            "offset": offset,
+            "total": total,
+        }
     except Exception as e:
         logger.warning(f"list_contexts: {e}")
         try:
@@ -868,6 +868,7 @@ def get_context(context_id: int) -> dict:
             ctx = _row_to_context_full(row)
 
             article = None
+            related: dict = {"topics": [], "storylines": []}
             try:
                 cur.execute(
                     "SELECT article_id FROM intelligence.article_to_context WHERE context_id = %s LIMIT 1",
@@ -897,10 +898,39 @@ def get_context(context_id: int) -> dict:
                             "published_date": art_row[5].isoformat() if art_row[5] else None,
                             "content": art_row[6][:5000] if art_row[6] else None,
                         }
+                    try:
+                        cur.execute(
+                            f"""
+                            SELECT t.id, t.name FROM {schema}.article_topic_assignments ata
+                            JOIN {schema}.topics t ON t.id = ata.topic_id
+                            WHERE ata.article_id = %s
+                            ORDER BY t.name
+                            LIMIT 50
+                            """,
+                            (article_id,),
+                        )
+                        related["topics"] = [{"id": r[0], "name": r[1]} for r in cur.fetchall()]
+                    except Exception as te:
+                        logger.debug("get_context topics: %s", te)
+                    try:
+                        cur.execute(
+                            f"""
+                            SELECT DISTINCT s.id, s.title FROM {schema}.storyline_articles sa
+                            JOIN {schema}.storylines s ON s.id = sa.storyline_id
+                            WHERE sa.article_id = %s
+                            ORDER BY s.title NULLS LAST
+                            LIMIT 50
+                            """,
+                            (article_id,),
+                        )
+                        related["storylines"] = [{"id": r[0], "title": r[1]} for r in cur.fetchall()]
+                    except Exception as se:
+                        logger.debug("get_context storylines: %s", se)
             except Exception as e:
                 logger.debug(f"get_context article lookup: {e}")
 
             ctx["article"] = article
+            ctx["related"] = related
         conn.close()
         return ctx
     except HTTPException:
@@ -970,6 +1000,53 @@ def update_context(
         except Exception:
             pass
         raise HTTPException(status_code=500, detail="Failed to update context")
+
+
+@router.post("/contexts/{context_id}/grouping_feedback", response_model=dict)
+def post_context_grouping_feedback(
+    context_id: int,
+    body: dict = Body(..., description="grouping_type, judgment; optional grouping_id, grouping_label, notes, judged_by"),
+) -> dict:
+    """Record whether this context belongs with a topic/storyline/pattern (human audit / training signal)."""
+    from services.context_grouping_feedback_service import submit_context_grouping_feedback
+
+    grouping_type = (body.get("grouping_type") or "").strip()
+    judgment = (body.get("judgment") or "").strip()
+    grouping_id = body.get("grouping_id")
+    if grouping_id is not None:
+        try:
+            grouping_id = int(grouping_id)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="grouping_id must be an integer")
+    result = submit_context_grouping_feedback(
+        context_id=context_id,
+        grouping_type=grouping_type,
+        judgment=judgment,
+        grouping_id=grouping_id,
+        grouping_label=body.get("grouping_label"),
+        notes=body.get("notes"),
+        judged_by=body.get("judged_by"),
+    )
+    if not result.get("success"):
+        msg = result.get("error", "Unknown error")
+        if "not found" in msg.lower():
+            raise HTTPException(status_code=404, detail=msg)
+        raise HTTPException(status_code=400, detail=msg)
+    return {"success": True, "data": {"id": result.get("id"), "judged_at": result.get("judged_at")}, "message": None}
+
+
+@router.get("/contexts/{context_id}/grouping_feedback", response_model=dict)
+def get_context_grouping_feedback(
+    context_id: int,
+    limit: int = Query(50, ge=1, le=200),
+) -> dict:
+    """List grouping judgments for a context (newest first)."""
+    from services.context_grouping_feedback_service import list_context_grouping_feedback
+
+    result = list_context_grouping_feedback(context_id, limit=limit)
+    if not result.get("success"):
+        raise HTTPException(status_code=500, detail=result.get("error", "Failed to list feedback"))
+    return {"success": True, "data": {"items": result.get("items", [])}, "message": None}
 
 
 _EVENT_COLS = """id, event_type, event_name, start_date, end_date, geographic_scope,
@@ -2052,11 +2129,12 @@ def merge_entities(
 @router.post("/entities/auto_merge", response_model=dict)
 def auto_merge_entities(
     domain_key: Optional[str] = Query(None, description="Domain to auto-merge; omit for all"),
-    min_confidence: float = Query(0.9, description="Only merge above this confidence"),
+    min_confidence: float = Query(0.9, description="Only merge above this confidence (use 0.6 for Trump/Donald Trump–style consolidation)"),
 ) -> dict:
     """
     Automatically merge canonical entities with confidence >= threshold.
-    High confidence (>= 0.9) means title-stripped or shared alias matches.
+    Keeps the primary (full) name and merges variants into it (variants become aliases).
+    Use min_confidence=0.6 to consolidate last-name and variant matches (e.g. Trump, Donald J Trump, King Trump).
     """
     from services.entity_resolution_service import auto_merge_high_confidence, ALL_DOMAINS
 

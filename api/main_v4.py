@@ -449,6 +449,11 @@ async def lifespan(app: FastAPI):
     # Stop automation manager
     try:
         if hasattr(app.state, 'automation') and app.state.automation:
+            # v8: Persist pending collection queue before stop
+            try:
+                app.state.automation.persist_pending_collection_queue()
+            except Exception as e:
+                logger.debug("Persist pending collection queue on shutdown: %s", e)
             # Signal automation to stop
             app.state.automation.is_running = False
             logger.info("Automation manager stop signal sent")

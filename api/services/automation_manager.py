@@ -1,6 +1,19 @@
 """
 News Intelligence System v8.0 - Enterprise Automation Manager
 Collect-then-analyze pipeline: collection_cycle, pipeline-ordered analysis (Foundation → Extraction → Intelligence → Output).
+
+Workload-driven scheduling (USE_WORKLOAD_DRIVEN_ORDER=True): the scheduler checks every process every tick.
+Order and run eligibility are determined by current workload, not fixed intervals. When a phase has pending
+work it is eligible every WORKLOAD_MIN_COOLDOWN seconds; when idle, intervals apply. Collection is throttled
+when downstream backlog (enrichment + context_sync + document_processing) exceeds
+COLLECTION_THROTTLE_PENDING_THRESHOLD so the sequence collection → processing → synthesis completes before
+adding more RSS. No process is left behind because of fast RSS; phases with no work are skipped or deprioritized.
+
+When AUTOMATION_QUEUE_SOFT_CAP > 0 and combined queue depth (task_queue + requested queue) reaches the cap,
+new scheduled enqueues, continuous batch re-queues, and dependency-chain request_phase calls are skipped
+except phases in AUTOMATION_QUEUE_PAUSE_ALLOW (default: collection_cycle, health_check) so the backlog can drain.
+Dependency settle time after a phase completes is capped by AUTOMATION_DEPENDENCY_SETTLE_CAP_SEC (default 180s)
+so long estimated_duration values (e.g. collection_cycle) do not block dependents such as storyline_discovery.
 """
 
 import asyncio
@@ -18,6 +31,7 @@ from dataclasses import dataclass
 from enum import Enum
 import threading
 import queue
+from collections import defaultdict, deque, Counter
 from concurrent.futures import ThreadPoolExecutor
 import traceback
 
@@ -63,7 +77,20 @@ def _persist_automation_run(phase_name: str, started_at: datetime, finished_at: 
         finally:
             conn.close()
     except Exception as e:
-        logger.debug("persist automation_run_history: %s", e)
+        # Must be visible: silent failure makes automation look healthy when history is not persisted
+        logger.warning("persist automation_run_history failed (runs not recorded): %s", e)
+        try:
+            from shared.database.pending_db_writes import enqueue_automation_run_history
+
+            enqueue_automation_run_history(
+                phase_name,
+                started_at.isoformat() if started_at else "",
+                finished_at.isoformat() if finished_at else "",
+                success,
+                error_message,
+            )
+        except Exception as qe:
+            logger.warning("pending_db_writes enqueue also failed: %s", qe)
 
 
 # Legacy enrichment-backlog-first flag — removed in v8.1.
@@ -87,6 +114,34 @@ BATCH_PHASES_CONTINUOUS = {
 }
 MAX_REQUEUE_PER_WINDOW = 3  # v8: cap re-enqueues per analysis window so one task cannot monopolize
 _SCHEMAS = ("politics", "finance", "science_tech")
+
+# Workload-driven scheduling: order and run decisions by current work, not fixed intervals.
+# When a phase has pending work, it is eligible every tick (subject to cooldown); intervals apply only when idle.
+WORKLOAD_MIN_COOLDOWN = 10  # seconds between enqueueing the same phase when it has work (avoid flood)
+# Don't run collection_cycle when downstream (enrichment + context_sync + document_processing) pending exceeds this.
+# Ensures collection → processing → synthesis sequence completes before adding more RSS.
+COLLECTION_THROTTLE_PENDING_THRESHOLD = 500
+# When True, scheduler ignores analysis-window step lock; workload + pipeline order determine what runs.
+USE_WORKLOAD_DRIVEN_ORDER = True
+
+# When combined queue depth (main + requested) >= this, stop enqueueing scheduled work except allowlist
+# so the backlog can drain. 0 = disabled. Tuned for ~12–16 workers × ~12 tasks ahead each.
+AUTOMATION_QUEUE_SOFT_CAP = int(os.environ.get("AUTOMATION_QUEUE_SOFT_CAP", "200"))
+QUEUE_PAUSE_ALLOW_SCHEDULED = frozenset(
+    x.strip()
+    for x in os.environ.get(
+        "AUTOMATION_QUEUE_PAUSE_ALLOW",
+        "collection_cycle,health_check,pending_db_flush",
+    ).split(",")
+    if x.strip()
+)
+
+# Cap how long we wait after a dependency completes before a dependent may run. Without this,
+# collection_cycle's large estimated_duration (~1800s) kept dependents (e.g. storyline_discovery)
+# permanently ineligible while collection runs often.
+AUTOMATION_DEPENDENCY_SETTLE_CAP_SEC = int(
+    os.environ.get("AUTOMATION_DEPENDENCY_SETTLE_CAP_SEC", "180")
+)
 
 # Phases that constitute "data load"; when none have run recently, downtime loop runs entity organizer
 DATA_LOAD_PHASES = ("collection_cycle", "entity_extraction")  # v8: collection_cycle is the data load
@@ -120,6 +175,9 @@ STEP_TIME_BUDGETS: Tuple[Optional[int], ...] = (1800, 1200, 1200, None)  # secon
 
 # Cap concurrent Ollama/GPU tasks. Scale up when you have GPU/CPU headroom (e.g. 12).
 MAX_CONCURRENT_OLLAMA_TASKS = 12
+
+# Collection-cycle watchdog: 60 min after cycle starts, check if any phase should be added to the queue.
+WATCHDOG_SECONDS = int(os.environ.get("COLLECTION_PHASE_WATCHDOG_SECONDS", "3600"))
 
 class TaskStatus(Enum):
     """Task execution status"""
@@ -155,8 +213,8 @@ class Task:
 PHASE_ESTIMATED_DURATION_SECONDS = {
     "rss_processing": 120,
     "ml_processing": 240,
-    "topic_clustering": 180,
-    "entity_extraction": 120,
+    "topic_clustering": 400,  # observed ~396s avg when backlog; was 180
+    "entity_extraction": 260,  # observed ~257s avg; was 120
     "quality_scoring": 90,
     "sentiment_analysis": 120,
     "storyline_processing": 300,
@@ -170,11 +228,12 @@ PHASE_ESTIMATED_DURATION_SECONDS = {
     "watchlist_alerts": 60,
     "data_cleanup": 300,
     "health_check": 10,
+    "pending_db_flush": 30,
     "context_sync": 60,   # ~5-10s per 100 contexts (production batch)
-    "entity_profile_sync": 120,
+    "entity_profile_sync": 225,  # observed ~223s avg; was 120
     "claim_extraction": 60,   # 50 contexts @ 2-5s each, parallel 5 → ~20-50s
     "claims_to_facts": 30,    # promote high-confidence claims to versioned_facts (DB only)
-    "event_tracking": 120,  # 300 contexts/run × 3 domains + chronicle updates, ~1-2 min
+    "event_tracking": 200,  # observed ~196s avg; was 120
     "event_coherence_review": 180,
     "investigation_report_refresh": 300,
     "entity_profile_build": 600,
@@ -185,7 +244,7 @@ PHASE_ESTIMATED_DURATION_SECONDS = {
     "entity_enrichment": 180,
     "pattern_matching": 90,
     "cross_domain_synthesis": 120,
-    "entity_organizer": 180,  # cleanup + relationship extraction
+    "entity_organizer": 600,  # observed can be 5–90 min under load; was 180
     "entity_dossier_compile": 90,  # compile entity dossiers (no LLM), ~2-5s per dossier
     "entity_position_tracker": 300,  # LLM position extraction per entity, ~30-60s per entity
     "metadata_enrichment": 90,  # language/categories/sentiment/quality per domain batch
@@ -195,7 +254,7 @@ PHASE_ESTIMATED_DURATION_SECONDS = {
     # v7: full-text enrichment, document pipeline, auto synthesis
     "content_enrichment": 120,   # trafilatura fetch per article, rate-limited
     "document_collection": 300,   # government + academic PDF discovery
-    "document_processing": 600,   # pdfplumber + LLM per document
+    "document_processing": 180,   # observed ~152s when small batch; was 600
     "storyline_synthesis": 600,   # deep content synthesis per storyline
     "daily_briefing_synthesis": 300,  # breaking news synthesis per domain
     "storyline_discovery": 600,  # AI clustering + LLM title generation per domain
@@ -213,6 +272,7 @@ class AutomationManager:
         self.is_running = False
         self.tasks: Dict[str, Task] = {}
         self.executor = ThreadPoolExecutor(max_workers=6)
+        self._executor = self.executor  # alias used by entity_dossier_compile, entity_position_tracker, fact_verification
         self.task_queue = asyncio.Queue()
         # User/governor-requested tasks run before scheduled tasks so "Request phase" is not starved
         self._requested_task_queue: asyncio.Queue = asyncio.Queue()
@@ -238,6 +298,17 @@ class AutomationManager:
         self._step_started_at: Optional[datetime] = None
         # v8: Re-enqueue count per task in current analysis window (reset when window starts)
         self._requeue_counts: Dict[str, int] = {}
+
+        # Monitor metrics for phase timeline:
+        # - queued_tasks_by_phase: computed from in-memory asyncio queues
+        # - running_tasks_by_phase: tracked while tasks are executing
+        # - runs_last_60m_by_phase: recorded from completion timestamps
+        self._running_tasks_by_phase: Dict[str, int] = defaultdict(int)
+        self._phase_run_times_last_60m: Dict[str, deque[datetime]] = defaultdict(deque)
+
+        # Collection-cycle watchdog: when current cycle started; per-phase last completion (for "has it run since start?")
+        self._collection_cycle_started_at: Optional[datetime] = None
+        self._last_completed_at_by_phase: Dict[str, datetime] = {}
 
         # v8: Optional config from orchestrator_governance.yaml (analysis_pipeline, collection_cycle)
         try:
@@ -745,7 +816,17 @@ class AutomationManager:
                 'phase': 0,
                 'depends_on': [],
                 'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['health_check'],
-            }
+            },
+            # OUTAGE: Replay local spill file (automation_run_history) when DB was down
+            'pending_db_flush': {
+                'interval': 45,
+                'last_run': None,
+                'enabled': True,
+                'priority': TaskPriority.CRITICAL,
+                'phase': 0,
+                'depends_on': [],
+                'estimated_duration': PHASE_ESTIMATED_DURATION_SECONDS['pending_db_flush'],
+            },
         }
         
         # Performance metrics
@@ -759,7 +840,20 @@ class AutomationManager:
             'load_factor': 1.0,  # Multiplier for intervals based on load
             'processing_history': {}  # Track actual vs estimated durations
         }
-        
+
+    def _automation_queue_depth(self) -> int:
+        """Approximate pending tasks in worker queues (scheduled + governor-requested)."""
+        try:
+            return int(self.task_queue.qsize()) + int(self._requested_task_queue.qsize())
+        except Exception:
+            return 0
+
+    def _scheduled_enqueue_paused(self) -> bool:
+        """When True, skip adding new scheduled / chained / continuous tasks (allowlist still runs)."""
+        if AUTOMATION_QUEUE_SOFT_CAP <= 0:
+            return False
+        return self._automation_queue_depth() >= AUTOMATION_QUEUE_SOFT_CAP
+
     def queue_collection_request(self, request_type: str = "url", url: str = "", source: str = "") -> None:
         """v8: Queue a URL or feed for the next collection cycle (e.g. from RAG/synthesis). Thread-safe append."""
         self._pending_collection_queue.append({
@@ -1158,20 +1252,47 @@ class AutomationManager:
         # v8: Pipeline-agnostic tasks always use normal logic (e.g. document_processing drains PDF backlog)
         if task_name in ("collection_cycle", "health_check", "document_processing"):
             pass
-        elif self._analysis_window_start is not None:
-            # Advance step if current step's time budget exceeded
+        elif not USE_WORKLOAD_DRIVEN_ORDER and self._analysis_window_start is not None:
+            # Legacy: only run tasks in current pipeline step when step budget is enforced
             if self._active_step < len(self._step_time_budgets) and self._step_started_at is not None:
                 budget = self._step_time_budgets[self._active_step]
                 if budget is not None and (current_time - self._step_started_at).total_seconds() >= budget:
                     self._active_step = min(self._active_step + 1, len(ANALYSIS_PIPELINE_STEPS) - 1)
                     self._step_started_at = current_time
-            # Allow only tasks in current pipeline step
             if self._active_step < len(ANALYSIS_PIPELINE_STEPS):
                 if task_name not in ANALYSIS_PIPELINE_STEPS[self._active_step]:
                     return False
+        elif USE_WORKLOAD_DRIVEN_ORDER and self._analysis_window_start is not None:
+            # Advance step for reporting only; do not gate tasks — workload order decides
+            if self._active_step < len(self._step_time_budgets) and self._step_started_at is not None:
+                budget = self._step_time_budgets[self._active_step]
+                if budget is not None and (current_time - self._step_started_at).total_seconds() >= budget:
+                    self._active_step = min(self._active_step + 1, len(ANALYSIS_PIPELINE_STEPS) - 1)
+                    self._step_started_at = current_time
 
         if not self._check_dependencies(task_name, schedule):
             return False
+
+        # When PostgreSQL is down, do not schedule new phases (avoids LLM/CPU waste). Flush runs when DB is back.
+        try:
+            if os.getenv("AUTOMATION_PAUSE_WHEN_DB_DOWN", "true").lower() in ("1", "true", "yes"):
+                from shared.database.db_availability import is_automation_db_ready
+
+                if not is_automation_db_ready():
+                    return False
+        except Exception:
+            pass
+
+        # Workload-driven: don't run collection_cycle when downstream backlog is high — complete
+        # collection → processing → synthesis sequence before adding more RSS.
+        if USE_WORKLOAD_DRIVEN_ORDER and task_name == "collection_cycle":
+            downstream = (
+                (self._pending_counts.get("content_enrichment", 0) if hasattr(self, "_pending_counts") else 0)
+                + (self._pending_counts.get("context_sync", 0) if hasattr(self, "_pending_counts") else 0)
+                + (self._pending_counts.get("document_processing", 0) if hasattr(self, "_pending_counts") else 0)
+            )
+            if downstream > COLLECTION_THROTTLE_PENDING_THRESHOLD:
+                return False
 
         if schedule.get("idle_only") and not self._is_system_idle():
             return False
@@ -1182,17 +1303,25 @@ class AutomationManager:
 
         backlog = backlog_counts.get(task_name, 0)
 
-        # SKIP_WHEN_EMPTY uses raw pending counts (any work at all).
-        # get_all_pending_counts provides raw counts; backlog_counts already has
-        # batch-adjusted values.  To decide "any work?", check if backlog > 0 OR
-        # the raw pending count is > 0 (pending_counts retrieved once per tick).
+        # SKIP_WHEN_EMPTY: skip when no work (so we don't run empty cycles).
         pending = self._pending_counts.get(task_name, 0) if hasattr(self, '_pending_counts') else backlog
         if task_name in SKIP_WHEN_EMPTY and pending == 0:
             return False
 
+        has_work = pending > 0 or backlog > 0
+
+        # Workload-driven: when there is work, eligibility is based on cooldown + deps only (no interval).
+        # Each tick we check every process; if it has work and deps are satisfied, we add it to the candidate
+        # list; sort order (priority, -backlog, phase) then decides what gets queued first.
+        if USE_WORKLOAD_DRIVEN_ORDER and has_work:
+            time_since = (current_time - schedule['last_run']).total_seconds() if schedule.get('last_run') else 9999
+            if time_since >= WORKLOAD_MIN_COOLDOWN and self._are_dependencies_satisfied(task_name, schedule, current_time):
+                return True
+            return False
+
+        # No work (or legacy mode): use interval so we don't run e.g. collection_cycle every tick when idle.
         base_interval = schedule['interval']
         adaptive_interval = self._calculate_adaptive_interval(task_name, base_interval)
-        # True backlog (more work than one batch) triggers shorter intervals
         if backlog > BACKLOG_HIGH_THRESHOLD:
             effective_interval = min(adaptive_interval, BACKLOG_MODE_INTERVAL)
         elif backlog > 0:
@@ -1210,6 +1339,14 @@ class AutomationManager:
     
     async def _create_and_queue_task(self, task_name: str, schedule: Dict[str, Any], current_time: datetime):
         """Create and queue a task"""
+        if self._scheduled_enqueue_paused() and task_name not in QUEUE_PAUSE_ALLOW_SCHEDULED:
+            logger.info(
+                "Queue soft cap: skipping scheduled enqueue for %s (depth=%s cap=%s)",
+                task_name,
+                self._automation_queue_depth(),
+                AUTOMATION_QUEUE_SOFT_CAP,
+            )
+            return
         # Create task
         task = Task(
             id=f"{task_name}_{int(current_time.timestamp())}",
@@ -1261,11 +1398,14 @@ class AutomationManager:
             if dep_never_run:
                 return False
 
-            # Check if dependency completed within reasonable time
+            # Require a short settle window after dependency completed (DB / pipeline visibility).
+            # Cap by AUTOMATION_DEPENDENCY_SETTLE_CAP_SEC so long phases (e.g. collection_cycle ~30m
+            # estimated) do not block dependents indefinitely while collection runs often.
             time_since_dep = (current_time - dep_schedule['last_run']).total_seconds()
             dep_duration = dep_schedule.get('estimated_duration', 60)
             adjusted_duration = dep_duration * self.metrics['load_factor']
-            if time_since_dep < adjusted_duration:
+            settle = min(max(adjusted_duration, 15.0), float(AUTOMATION_DEPENDENCY_SETTLE_CAP_SEC))
+            if time_since_dep < settle:
                 return False
 
         return True
@@ -1427,18 +1567,20 @@ class AutomationManager:
     def _get_input_volume_factor(self) -> float:
         """Calculate input volume factor based on recent article counts"""
         try:
-            conn = self._get_db_connection()
-            cursor = conn.cursor()
-            
-            # Get article count from last hour
-            cursor.execute("""
-                SELECT COUNT(*) FROM articles 
-                WHERE created_at > NOW() - INTERVAL '1 hour'
-            """)
-            
-            recent_count = cursor.fetchone()[0]
-            cursor.close()
-            conn.close()
+            conn = self._get_db_connection_sync()
+            if not conn:
+                return 1.0
+            try:
+                with conn.cursor() as cursor:
+                    recent_count = 0
+                    for schema in _SCHEMAS:
+                        cursor.execute(f"""
+                            SELECT COUNT(*) FROM {schema}.articles
+                            WHERE created_at > NOW() - INTERVAL '1 hour'
+                        """)
+                        recent_count += int(cursor.fetchone()[0] or 0)
+            finally:
+                conn.close()
             
             # Normalize to expected volume (100 articles per hour)
             expected_volume = 100
@@ -1497,7 +1639,7 @@ class AutomationManager:
             await self.ollama_semaphore.acquire()
 
         logger.info(f"Worker {worker_id} executing task: {task.name}")
-        task.started_at = datetime.now(timezone.utc)
+        self._running_tasks_by_phase[task.name] += 1
         try:
             from services.activity_feed_service import get_activity_feed
             feed = get_activity_feed()
@@ -1518,6 +1660,8 @@ class AutomationManager:
         try:
             # Execute task based on type
             if task.name == 'collection_cycle':
+                self._collection_cycle_started_at = task.started_at
+                asyncio.create_task(self._run_collection_watchdog(task.started_at))
                 await self._execute_collection_cycle(task)
             elif task.name == 'document_processing':
                 await self._execute_document_processing(task)
@@ -1559,6 +1703,8 @@ class AutomationManager:
                 await self._execute_data_cleanup(task)
             elif task.name == 'health_check':
                 await self._execute_health_check(task)
+            elif task.name == 'pending_db_flush':
+                await self._execute_pending_db_flush(task)
             elif task.name == 'rag_enhancement':
                 await self._execute_rag_enhancement(task)
             elif task.name == 'cache_cleanup':
@@ -1618,7 +1764,17 @@ class AutomationManager:
             self.metrics['tasks_completed'] += 1
             if task.name in self.schedules:
                 self.schedules[task.name]['last_run'] = task.completed_at
+            self._last_completed_at_by_phase[task.name] = task.completed_at
             _persist_automation_run(task.name, task.started_at, task.completed_at, True, None)
+            # Record completion for last-60m run counts (used by monitoring timeline).
+            try:
+                cutoff = datetime.now(timezone.utc) - timedelta(minutes=60)
+                dq = self._phase_run_times_last_60m[task.name]
+                dq.append(task.completed_at)
+                while dq and dq[0] < cutoff:
+                    dq.popleft()
+            except Exception:
+                pass
 
             # v8: When collection_cycle completes, enter analysis pipeline (step 0) and reset re-enqueue counts
             if task.name == "collection_cycle":
@@ -1643,22 +1799,34 @@ class AutomationManager:
                     if current >= self._max_requeue_per_window:
                         logger.debug("Re-enqueue cap reached for %s (%s)", task.name, self._max_requeue_per_window)
                     elif await self._has_pending_work(task.name):
-                        next_task = Task(
-                            id=f"{task.name}_{int(task.completed_at.timestamp())}_next",
-                            name=task.name,
-                            priority=self.schedules[task.name].get("priority", TaskPriority.NORMAL),
-                            status=TaskStatus.PENDING,
-                            created_at=task.completed_at,
-                            metadata={
-                                "scheduled": True,
-                                "phase": self.schedules[task.name].get("phase", 0),
-                                "estimated_duration": self.schedules[task.name].get("estimated_duration", 60),
-                                "continuous": True,
-                            },
-                        )
-                        await self.task_queue.put(next_task)
-                        self._requeue_counts[task.name] = current + 1
-                        logger.debug("Queued next %s immediately (pending work remains, requeue %s/%s)", task.name, current + 1, self._max_requeue_per_window)
+                        if self._scheduled_enqueue_paused() and task.name not in QUEUE_PAUSE_ALLOW_SCHEDULED:
+                            logger.debug(
+                                "Queue soft cap: skip continuous re-queue for %s (depth=%s)",
+                                task.name,
+                                self._automation_queue_depth(),
+                            )
+                        else:
+                            next_task = Task(
+                                id=f"{task.name}_{int(task.completed_at.timestamp())}_next",
+                                name=task.name,
+                                priority=self.schedules[task.name].get("priority", TaskPriority.NORMAL),
+                                status=TaskStatus.PENDING,
+                                created_at=task.completed_at,
+                                metadata={
+                                    "scheduled": True,
+                                    "phase": self.schedules[task.name].get("phase", 0),
+                                    "estimated_duration": self.schedules[task.name].get("estimated_duration", 60),
+                                    "continuous": True,
+                                },
+                            )
+                            await self.task_queue.put(next_task)
+                            self._requeue_counts[task.name] = current + 1
+                            logger.debug(
+                                "Queued next %s immediately (pending work remains, requeue %s/%s)",
+                                task.name,
+                                current + 1,
+                                self._max_requeue_per_window,
+                            )
                 except Exception as e:
                     logger.debug("Re-enqueue check for %s: %s", task.name, e)
 
@@ -1679,6 +1847,13 @@ class AutomationManager:
                     if enrichment_backlog > 0 and other_name not in ENRICHMENT_BACKLOG_FIRST_WHITELIST:
                         logger.info("Chained: skipping %s (enrichment backlog first, %s articles pending)", other_name, enrichment_backlog)
                         continue
+                    if self._scheduled_enqueue_paused() and other_name not in QUEUE_PAUSE_ALLOW_SCHEDULED:
+                        logger.debug(
+                            "Queue soft cap: skip chained request for %s (depth=%s)",
+                            other_name,
+                            self._automation_queue_depth(),
+                        )
+                        continue
                     try:
                         self.request_phase(other_name)
                         logger.info("Chained: requested %s (depends on %s)", other_name, task.name)
@@ -1695,6 +1870,15 @@ class AutomationManager:
             if task.name in self.schedules:
                 self.schedules[task.name]['last_run'] = finished_at
             _persist_automation_run(task.name, task.started_at, finished_at, False, str(e))
+            # Record failure for last-60m run counts (used by monitoring timeline).
+            try:
+                cutoff = datetime.now(timezone.utc) - timedelta(minutes=60)
+                dq = self._phase_run_times_last_60m[task.name]
+                dq.append(finished_at)
+                while dq and dq[0] < cutoff:
+                    dq.popleft()
+            except Exception:
+                pass
 
             logger.error(f"Task {task.name} failed: {e}")
             
@@ -1706,6 +1890,12 @@ class AutomationManager:
                 logger.info(f"Retrying task {task.name} (attempt {task.retry_count + 1})")
         
         finally:
+            # Keep per-phase worker counts in sync even when task fails.
+            try:
+                if self._running_tasks_by_phase.get(task.name, 0) > 0:
+                    self._running_tasks_by_phase[task.name] -= 1
+            except Exception:
+                pass
             if task.name in _OLLAMA_TASKS:
                 self.ollama_semaphore.release()
             try:
@@ -1738,6 +1928,8 @@ class AutomationManager:
             return "Discovering new storylines from article clusters"
         if name == "proactive_detection":
             return "Proactive detection (emerging storylines)"
+        if name == "pending_db_flush":
+            return "Flushing pending DB writes (local spill file → automation_run_history)"
         if name == "fact_verification":
             return "Fact verification (recent claims)"
         if name == "storyline_automation":
@@ -2506,16 +2698,19 @@ class AutomationManager:
         cutoff_date = datetime.now(timezone.utc) - timedelta(days=30)
 
         try:
+            deleted_count = 0
             conn = await self._get_db_connection()
-            cursor = conn.cursor()
-            cursor.execute("""
-                DELETE FROM articles
-                WHERE published_at < %s AND created_at < %s
-            """, (cutoff_date, cutoff_date))
-            deleted_count = cursor.rowcount
-            conn.commit()
-            cursor.close()
-            conn.close()
+            try:
+                with conn.cursor() as cursor:
+                    for schema in _SCHEMAS:
+                        cursor.execute(f"""
+                            DELETE FROM {schema}.articles
+                            WHERE published_at < %s AND created_at < %s
+                        """, (cutoff_date, cutoff_date))
+                        deleted_count += max(0, cursor.rowcount or 0)
+                    conn.commit()
+            finally:
+                conn.close()
             logger.info(f"Data cleanup: deleted {deleted_count} old articles")
         except Exception as e:
             logger.warning(f"Data cleanup (articles): {e}")
@@ -2527,6 +2722,16 @@ class AutomationManager:
         except Exception as e:
             logger.warning(f"Data cleanup (intelligence): {e}")
         
+    async def _execute_pending_db_flush(self, task: Task):
+        """Replay automation_run_history rows queued while DB was unreachable."""
+        try:
+            from shared.database.pending_db_writes import flush_pending_writes
+
+            stats = flush_pending_writes()
+            logger.info("pending_db_flush: %s", stats)
+        except Exception as e:
+            logger.warning("pending_db_flush failed: %s", e)
+
     async def _execute_health_check(self, task: Task):
         """Execute health check task"""
         # Check database connectivity
@@ -2680,29 +2885,29 @@ class AutomationManager:
 
             ml_processor = BackgroundMLProcessor(self.db_config)
 
-            conn = await self._get_db_connection()
-            cursor = conn.cursor()
-            try:
-                cursor.execute("""
-                    SELECT id FROM articles
-                    WHERE ml_processed = FALSE
-                    AND content IS NOT NULL
-                    AND LENGTH(content) > 100
-                    ORDER BY created_at DESC
-                    LIMIT 50
-                """)
-                articles = cursor.fetchall()
-            finally:
-                cursor.close()
-                conn.close()
-
             processed_count = 0
-            for article_id, in articles:
+            for schema in _SCHEMAS:
+                conn = await self._get_db_connection()
                 try:
-                    ml_processor.queue_article_for_processing(article_id, 'full_analysis')
-                    processed_count += 1
-                except Exception as e:
-                    logger.error(f"Error processing article {article_id}: {e}")
+                    with conn.cursor() as cursor:
+                        cursor.execute(f"""
+                            SELECT id FROM {schema}.articles
+                            WHERE ml_processed = FALSE
+                              AND content IS NOT NULL
+                              AND LENGTH(content) > 100
+                            ORDER BY created_at DESC
+                            LIMIT 50
+                        """)
+                        articles = cursor.fetchall()
+                finally:
+                    conn.close()
+
+                for article_id, in articles:
+                    try:
+                        ml_processor.queue_article_for_processing(article_id, 'full_analysis')
+                        processed_count += 1
+                    except Exception as e:
+                        logger.error("Error processing article %s (%s): %s", article_id, schema, e)
 
             logger.info(f"ML processing completed: {processed_count} articles queued")
         except Exception as e:
@@ -2716,45 +2921,48 @@ class AutomationManager:
         from services.ai_processing_service import get_ai_service
         
         ai_service = get_ai_service()
-        
-        # Analyze sentiment for recent articles
-        conn = await self._get_db_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute("""
-            SELECT id, content FROM articles 
-            WHERE sentiment_score IS NULL 
-            AND content IS NOT NULL 
-            AND LENGTH(content) > 50
-            ORDER BY created_at DESC 
-            LIMIT 100
-        """)
-        
-        articles = cursor.fetchall()
         analyzed_count = 0
-        
-        for article_id, content in articles:
+
+        for schema in _SCHEMAS:
+            # Fetch candidates quickly, then close transaction before awaited LLM work.
+            conn = await self._get_db_connection()
             try:
-                sentiment = await ai_service.analyze_sentiment(content)
-                
-                score = sentiment.get('score', 0)
-                label = sentiment.get('label', '')
-                # Store both score and label (preserving the qualitative assessment)
-                cursor.execute("""
-                    UPDATE articles 
-                    SET sentiment_score = %s,
-                        sentiment_label = COALESCE(%s, sentiment_label),
-                        updated_at = CURRENT_TIMESTAMP
-                    WHERE id = %s
-                """, (score, label or None, article_id))
-                
-                analyzed_count += 1
-            except Exception as e:
-                logger.error(f"Error analyzing sentiment for article {article_id}: {e}")
-        
-        conn.commit()
-        cursor.close()
-        conn.close()
+                with conn.cursor() as cursor:
+                    cursor.execute(f"""
+                        SELECT id, content FROM {schema}.articles
+                        WHERE sentiment_score IS NULL
+                          AND content IS NOT NULL
+                          AND LENGTH(content) > 50
+                        ORDER BY created_at DESC
+                        LIMIT 100
+                    """)
+                    articles = cursor.fetchall()
+            finally:
+                conn.close()
+
+            for article_id, content in articles:
+                try:
+                    sentiment = await ai_service.analyze_sentiment(content)
+                    score = sentiment.get('score', 0)
+                    label = sentiment.get('label', '')
+
+                    # Persist each result in a short-lived transaction.
+                    write_conn = await self._get_db_connection()
+                    try:
+                        with write_conn.cursor() as write_cur:
+                            write_cur.execute(f"""
+                                UPDATE {schema}.articles
+                                SET sentiment_score = %s,
+                                    sentiment_label = COALESCE(%s, sentiment_label),
+                                    updated_at = CURRENT_TIMESTAMP
+                                WHERE id = %s
+                            """, (score, label or None, article_id))
+                            write_conn.commit()
+                        analyzed_count += 1
+                    finally:
+                        write_conn.close()
+                except Exception as e:
+                    logger.error("Error analyzing sentiment for article %s (%s): %s", article_id, schema, e)
         
         logger.info(f"Sentiment analysis completed: {analyzed_count} articles analyzed")
         
@@ -2852,18 +3060,20 @@ class AutomationManager:
                 try:
                     svc = StorylineAutomationService(domain=d)
                     conn = await self._get_db_connection()
-                    cur = conn.cursor()
                     schema = d.replace("-", "_")
-                    cur.execute(f"""
-                        SELECT id FROM {schema}.storylines
-                        WHERE automation_enabled = true
-                        ORDER BY last_automation_run ASC NULLS FIRST
-                        LIMIT 5
-                    """)
-                    for row in cur.fetchall():
+                    try:
+                        with conn.cursor() as cur:
+                            cur.execute(f"""
+                                SELECT id FROM {schema}.storylines
+                                WHERE automation_enabled = true
+                                ORDER BY last_automation_run ASC NULLS FIRST
+                                LIMIT 5
+                            """)
+                            storyline_rows = cur.fetchall()
+                    finally:
+                        conn.close()
+                    for row in storyline_rows:
                         await svc.discover_articles_for_storyline(row[0], force_refresh=False)
-                    cur.close()
-                    conn.close()
                 except Exception as e:
                     logger.debug("Storyline automation batch %s: %s", d, e)
             logger.info("Storyline automation: batch run across domains completed")
@@ -2892,21 +3102,23 @@ class AutomationManager:
                 try:
                     svc = StorylineAutomationService(domain=d)
                     conn = await self._get_db_connection()
-                    cur = conn.cursor()
                     schema = d.replace("-", "_")
-                    cur.execute(f"""
-                        SELECT s.id FROM {schema}.storylines s
-                        WHERE s.automation_enabled = true
-                        AND EXISTS (SELECT 1 FROM {schema}.storyline_articles sa WHERE sa.storyline_id = s.id)
-                        ORDER BY s.last_automation_run ASC NULLS FIRST
-                        LIMIT 3
-                    """)
-                    for row in cur.fetchall():
+                    try:
+                        with conn.cursor() as cur:
+                            cur.execute(f"""
+                                SELECT s.id FROM {schema}.storylines s
+                                WHERE s.automation_enabled = true
+                                AND EXISTS (SELECT 1 FROM {schema}.storyline_articles sa WHERE sa.storyline_id = s.id)
+                                ORDER BY s.last_automation_run ASC NULLS FIRST
+                                LIMIT 3
+                            """)
+                            storyline_rows = cur.fetchall()
+                    finally:
+                        conn.close()
+                    for row in storyline_rows:
                         await svc.discover_articles_for_storyline(
                             row[0], force_refresh=True, enrichment_mode=True
                         )
-                    cur.close()
-                    conn.close()
                 except Exception as e:
                     logger.debug("Storyline enrichment batch %s: %s", d, e)
             logger.info("Storyline enrichment: full-history batch run across domains completed")
@@ -2951,8 +3163,15 @@ class AutomationManager:
                 try:
                     svc = ProactiveDetectionService(domain=domain)
                     result = await svc.detect_emerging_storylines(hours=72, min_articles=3)
-                    if result.get("success") and result.get("data", {}).get("stored_count", 0) > 0:
-                        logger.info("Proactive detection [%s]: stored %s emerging storylines", domain, result["data"]["stored_count"])
+                    if result.get("success"):
+                        d = result.get("data") or {}
+                        if d.get("stored_count", 0) > 0 or d.get("promoted_to_domain_storylines", 0) > 0:
+                            logger.info(
+                                "Proactive detection [%s]: emerging_stored=%s promoted_to_domain_storylines=%s",
+                                domain,
+                                d.get("stored_count", 0),
+                                d.get("promoted_to_domain_storylines", 0),
+                            )
                 except Exception as e:
                     logger.debug("Proactive detection failed for %s: %s", domain, e)
         except Exception as e:
@@ -2995,6 +3214,7 @@ class AutomationManager:
         conn = await self._get_db_connection()
         try:
             cursor = conn.cursor()
+            domain_articles = {}
             for domain_key, schema_name in domains:
                 try:
                     cursor.execute(f"""
@@ -3008,31 +3228,32 @@ class AutomationManager:
                         ORDER BY a.created_at DESC
                         LIMIT 20
                     """)
-                    articles = cursor.fetchall()
+                    domain_articles[schema_name] = cursor.fetchall()
                 except Exception as e:
                     logger.warning("Entity extraction query for %s: %s", schema_name, e)
-                    continue
-
-                for article_id, title, content in articles:
-                    try:
-                        result = await extractor.extract_and_store(
-                            article_id=article_id,
-                            title=title or "",
-                            content=content,
-                            schema=schema_name,
-                        )
-                        if result.get("success"):
-                            extracted_count += 1
-                    except Exception as e:
-                        logger.error("Entity extraction for article %s (%s): %s", article_id, domain_key, e)
+                    domain_articles[schema_name] = []
         finally:
             cursor.close()
             conn.close()
 
+        for domain_key, schema_name in domains:
+            for article_id, title, content in domain_articles.get(schema_name, []):
+                try:
+                    result = await extractor.extract_and_store(
+                        article_id=article_id,
+                        title=title or "",
+                        content=content,
+                        schema=schema_name,
+                    )
+                    if result.get("success"):
+                        extracted_count += 1
+                except Exception as e:
+                    logger.error("Entity extraction for article %s (%s): %s", article_id, domain_key, e)
+
         logger.info(f"Entity extraction completed: {extracted_count} articles processed across domains")
 
     async def _execute_event_extraction_v5(self, task: Task):
-        """v5.0 -- Extract structured events with temporal grounding from articles. Skips if timeline_processed missing."""
+        """v5.0 -- Extract structured events with temporal grounding from domain articles."""
         try:
             from services.event_extraction_service import EventExtractionService
 
@@ -3041,44 +3262,65 @@ class AutomationManager:
             cursor = conn.cursor()
 
             try:
-                cursor.execute("""
-                    SELECT id, content, published_at
-                    FROM articles
-                    WHERE processing_status = 'completed'
-                      AND timeline_processed = false
-                      AND content IS NOT NULL
-                      AND LENGTH(content) > 100
-                    ORDER BY published_at DESC
-                    LIMIT 30
-                """)
-                articles = cursor.fetchall()
-
                 total_events = 0
-                for article_id, content, pub_date in articles:
-                    try:
-                        if pub_date is None:
-                            pub_date = datetime.now(timezone.utc)
-                        events = await svc.extract_events_from_article(
-                            article_id=article_id,
-                            content=content,
-                            pub_date=pub_date,
-                        )
-                        saved = await svc.save_events(events, conn)
-                        total_events += saved
+                total_articles = 0
 
-                        cursor.execute("""
-                            UPDATE articles
-                            SET timeline_processed = true,
-                                timeline_events_generated = %s,
-                                updated_at = CURRENT_TIMESTAMP
-                            WHERE id = %s
-                        """, (len(events), article_id))
-                        conn.commit()
-                    except Exception as e:
-                        logger.error(f"Event extraction failed for article {article_id}: {e}")
-                        conn.rollback()
+                for schema in _SCHEMAS:
+                    cursor.execute(f"""
+                        SELECT a.id, a.content, a.published_at,
+                               (
+                                   SELECT sa.storyline_id::text
+                                   FROM {schema}.storyline_articles sa
+                                   WHERE sa.article_id = a.id
+                                   ORDER BY sa.added_at DESC NULLS LAST
+                                   LIMIT 1
+                               ) AS storyline_id
+                        FROM {schema}.articles a
+                        WHERE a.timeline_processed = false
+                          AND a.content IS NOT NULL
+                          AND LENGTH(a.content) > 100
+                          AND (
+                              a.processing_status = 'completed'
+                              OR a.enrichment_status IN ('completed', 'enriched')
+                          )
+                        ORDER BY a.published_at DESC NULLS LAST
+                        LIMIT 30
+                    """)
+                    articles = cursor.fetchall()
+                    total_articles += len(articles)
 
-                logger.info(f"v5 event extraction completed: {total_events} events from {len(articles)} articles")
+                    for article_id, content, pub_date, storyline_id in articles:
+                        try:
+                            if pub_date is None:
+                                pub_date = datetime.now(timezone.utc)
+                            events = await svc.extract_events_from_article(
+                                article_id=article_id,
+                                content=content,
+                                pub_date=pub_date,
+                                storyline_id=storyline_id,
+                                domain=schema.replace("_", "-"),
+                            )
+                            saved = await svc.save_events(events, conn)
+                            total_events += saved
+
+                            cursor.execute(f"""
+                                UPDATE {schema}.articles
+                                SET timeline_processed = true,
+                                    timeline_events_generated = %s,
+                                    updated_at = CURRENT_TIMESTAMP
+                                WHERE id = %s
+                            """, (len(events), article_id))
+                            conn.commit()
+                        except Exception as e:
+                            logger.error("Event extraction failed for %s article %s: %s", schema, article_id, e)
+                            conn.rollback()
+
+                logger.info(
+                    "v5 event extraction completed: %s events from %s articles across %s schemas",
+                    total_events,
+                    total_articles,
+                    len(_SCHEMAS),
+                )
             finally:
                 cursor.close()
                 conn.close()
@@ -3167,66 +3409,117 @@ class AutomationManager:
         from services.ai_processing_service import get_ai_service
         
         ai_service = get_ai_service()
-        
-        # Score quality for recent articles
-        conn = await self._get_db_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute("""
-            SELECT id, content, title FROM articles 
-            WHERE quality_score IS NULL
-            AND content IS NOT NULL 
-            AND LENGTH(content) > 100
-            ORDER BY created_at DESC 
-            LIMIT 50
-        """)
-        
-        articles = cursor.fetchall()
         scored_count = 0
-        
-        for article_id, content, title in articles:
+
+        for schema in _SCHEMAS:
+            # Fetch candidates quickly, then close transaction before awaited LLM work.
+            conn = await self._get_db_connection()
             try:
-                # Score quality
-                quality = await ai_service.score_article_quality(content, title)
-                
-                # Update article with quality score
-                cursor.execute("""
-                    UPDATE articles 
-                    SET quality_score = %s, updated_at = CURRENT_TIMESTAMP
-                    WHERE id = %s
-                """, (quality.get('score', 0), article_id))
-                
-                scored_count += 1
-            except Exception as e:
-                logger.error(f"Error scoring quality for article {article_id}: {e}")
-        
-        conn.commit()
-        cursor.close()
-        conn.close()
+                with conn.cursor() as cursor:
+                    cursor.execute(f"""
+                        SELECT id, content, title FROM {schema}.articles
+                        WHERE quality_score IS NULL
+                          AND content IS NOT NULL
+                          AND LENGTH(content) > 100
+                        ORDER BY created_at DESC
+                        LIMIT 50
+                    """)
+                    articles = cursor.fetchall()
+            finally:
+                conn.close()
+
+            for article_id, content, title in articles:
+                try:
+                    quality = await ai_service.score_article_quality(content, title)
+                    write_conn = await self._get_db_connection()
+                    try:
+                        with write_conn.cursor() as write_cur:
+                            write_cur.execute(f"""
+                                UPDATE {schema}.articles
+                                SET quality_score = %s, updated_at = CURRENT_TIMESTAMP
+                                WHERE id = %s
+                            """, (quality.get('score', 0), article_id))
+                            write_conn.commit()
+                        scored_count += 1
+                    finally:
+                        write_conn.close()
+                except Exception as e:
+                    logger.error("Error scoring quality for article %s (%s): %s", article_id, schema, e)
         
         logger.info(f"Quality scoring completed: {scored_count} articles scored")
         
     async def _execute_timeline_generation(self, task: Task):
-        """Execute timeline generation task"""
-        from services.storyline_service import get_storyline_service
-        
-        storyline_service = get_storyline_service()
-        
-        # Generate timelines for storylines
-        storylines = await storyline_service.get_all_storylines()
+        """Execute timeline generation per domain using public chronological_events + domain storylines."""
+        from services.timeline_builder_service import TimelineBuilderService
+
         generated_count = 0
-        
-        for storyline in storylines:
+
+        for schema in _SCHEMAS:
+            conn_sel = await self._get_db_connection()
+            storyline_ids: List[int] = []
             try:
-                # Generate timeline if needed
-                if not storyline.get('timeline_summary') or len(storyline.get('timeline_summary', '')) < 100:
-                    timeline = await storyline_service.generate_storyline_timeline(storyline['id'])
+                with conn_sel.cursor() as cur:
+                    cur.execute(f"""
+                        SELECT s.id FROM {schema}.storylines s
+                        WHERE s.status = 'active'
+                          AND EXISTS (
+                              SELECT 1 FROM {schema}.storyline_articles sa
+                              WHERE sa.storyline_id = s.id
+                          )
+                          AND (
+                              s.timeline_summary IS NULL
+                              OR LENGTH(COALESCE(s.timeline_summary, '')) < 100
+                          )
+                        ORDER BY s.updated_at DESC NULLS LAST
+                        LIMIT 12
+                    """)
+                    storyline_ids = [row[0] for row in cur.fetchall() if row and row[0] is not None]
+            finally:
+                conn_sel.close()
+
+            for sid in storyline_ids:
+                conn = await self._get_db_connection()
+                try:
+                    tb = TimelineBuilderService(conn, schema_name=schema)
+                    timeline = tb.build_timeline(sid)
+                    events = timeline.get("events") or []
+                    if not events:
+                        continue
+                    parts = []
+                    for e in events[:25]:
+                        title = (e.get("title") or "").strip()
+                        d = e.get("event_date")
+                        ds = d.isoformat() if hasattr(d, "isoformat") else (str(d) if d else "")
+                        if title:
+                            parts.append(f"{ds}: {title}" if ds else title)
+                    summary = (
+                        f"Timeline ({len(events)} events): "
+                        + " | ".join(parts[:12])
+                    )
+                    if len(summary) > 12000:
+                        summary = summary[:11997] + "..."
+                    with conn.cursor() as cur:
+                        cur.execute(f"""
+                            UPDATE {schema}.storylines
+                            SET timeline_summary = %s, updated_at = NOW()
+                            WHERE id = %s
+                        """, (summary, sid))
+                        conn.commit()
                     generated_count += 1
-                    
-            except Exception as e:
-                logger.error(f"Error generating timeline for storyline {storyline['id']}: {e}")
-        
-        logger.info(f"Timeline generation completed: {generated_count} timelines generated")
+                except Exception as e:
+                    logger.error(
+                        "Timeline generation failed for storyline %s (%s): %s",
+                        sid,
+                        schema,
+                        e,
+                    )
+                finally:
+                    conn.close()
+
+        logger.info(
+            "Timeline generation completed: %s timeline summaries updated (all domains)",
+            generated_count,
+        )
 
     async def _execute_cache_cleanup(self, task: Task):
         """Execute cache cleanup task"""
@@ -3282,57 +3575,57 @@ class AutomationManager:
                 
                 # Process articles incrementally with balanced prioritization
                 conn = await self._get_db_connection()
-                cursor = conn.cursor()
-                
-                # Get articles with their average confidence scores from domain schema
-                # This query categorizes articles into priority groups
-                cursor.execute(f"""
-                    WITH article_confidence AS (
-                        SELECT 
-                            a.id,
-                            a.title,
-                            a.created_at,
-                            COUNT(ata.id) as assignment_count,
-                            COALESCE(AVG(ata.confidence_score), 0.0) as avg_confidence,
-                            COALESCE(MIN(ata.confidence_score), 0.0) as min_confidence,
-                            COALESCE(MAX(ata.confidence_score), 0.0) as max_confidence,
-                            CASE 
-                                WHEN COUNT(ata.id) = 0 THEN 'new'
-                                WHEN COALESCE(AVG(ata.confidence_score), 0.0) < %s THEN 'low_confidence'
-                                WHEN COALESCE(AVG(ata.confidence_score), 0.0) < %s THEN 'medium_confidence'
-                                ELSE 'high_confidence'
-                            END as priority_group
-                        FROM {schema_name}.articles a
-                        LEFT JOIN {schema_name}.article_topic_assignments ata ON a.id = ata.article_id
-                        WHERE a.content IS NOT NULL 
-                        AND LENGTH(a.content) > 100
-                        GROUP BY a.id, a.title, a.created_at
-                    )
-                    SELECT 
-                        id,
-                        title,
-                        assignment_count,
-                        avg_confidence,
-                        min_confidence,
-                        max_confidence,
-                        priority_group,
-                        created_at
-                    FROM article_confidence
-                    WHERE priority_group != 'high_confidence'  -- Exclude articles above threshold
-                    ORDER BY 
-                        CASE priority_group
-                            WHEN 'new' THEN 1
-                            WHEN 'low_confidence' THEN 2
-                            WHEN 'medium_confidence' THEN 3
-                        END,
-                        avg_confidence ASC,  -- Lower confidence first within each group
-                        created_at DESC
-                """, (LOW_CONFIDENCE_THRESHOLD, CONFIDENCE_THRESHOLD))
-                
-                all_articles = cursor.fetchall()
-                cursor.close()
-                conn.close()
-                
+                try:
+                    cursor = conn.cursor()
+                    try:
+                        cursor.execute(f"""
+                            WITH article_confidence AS (
+                                SELECT 
+                                    a.id,
+                                    a.title,
+                                    a.created_at,
+                                    COUNT(ata.id) as assignment_count,
+                                    COALESCE(AVG(ata.confidence_score), 0.0) as avg_confidence,
+                                    COALESCE(MIN(ata.confidence_score), 0.0) as min_confidence,
+                                    COALESCE(MAX(ata.confidence_score), 0.0) as max_confidence,
+                                    CASE 
+                                        WHEN COUNT(ata.id) = 0 THEN 'new'
+                                        WHEN COALESCE(AVG(ata.confidence_score), 0.0) < %s THEN 'low_confidence'
+                                        WHEN COALESCE(AVG(ata.confidence_score), 0.0) < %s THEN 'medium_confidence'
+                                        ELSE 'high_confidence'
+                                    END as priority_group
+                                FROM {schema_name}.articles a
+                                LEFT JOIN {schema_name}.article_topic_assignments ata ON a.id = ata.article_id
+                                WHERE a.content IS NOT NULL 
+                                AND LENGTH(a.content) > 100
+                                GROUP BY a.id, a.title, a.created_at
+                            )
+                            SELECT 
+                                id,
+                                title,
+                                assignment_count,
+                                avg_confidence,
+                                min_confidence,
+                                max_confidence,
+                                priority_group,
+                                created_at
+                            FROM article_confidence
+                            WHERE priority_group != 'high_confidence'  -- Exclude articles above threshold
+                            ORDER BY 
+                                CASE priority_group
+                                    WHEN 'new' THEN 1
+                                    WHEN 'low_confidence' THEN 2
+                                    WHEN 'medium_confidence' THEN 3
+                                END,
+                                avg_confidence ASC,  -- Lower confidence first within each group
+                                created_at DESC
+                        """, (LOW_CONFIDENCE_THRESHOLD, CONFIDENCE_THRESHOLD))
+                        all_articles = cursor.fetchall()
+                    finally:
+                        cursor.close()
+                finally:
+                    conn.close()
+
                 if not all_articles:
                     logger.info(f"  ✅ No articles need topic clustering in {domain_key} (all above confidence threshold)")
                     continue
@@ -3470,9 +3763,66 @@ class AutomationManager:
             logger.error(f"❌ Error during topic clustering: {e}", exc_info=True)
         
     async def _get_db_connection(self):
-        """Get database connection from shared pool."""
+        """Get database connection from shared pool. Runs in executor to avoid blocking the event loop."""
         from shared.database.connection import get_db_connection
-        return get_db_connection()
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, get_db_connection)
+
+    def _watchdog_required_phases(self) -> List[str]:
+        """Flatten analysis pipeline steps and add document_processing for the 60-minute watchdog."""
+        phases: List[str] = []
+        for step in ANALYSIS_PIPELINE_STEPS:
+            phases.extend(step)
+        if "document_processing" not in phases:
+            phases.append("document_processing")
+        return phases
+
+    async def _run_collection_watchdog(self, collection_started_at: datetime) -> None:
+        """
+        Run once 60 minutes after collection_cycle started. Check each required phase: if it has not
+        run since collection started and (has pending work or we can't tell), request_phase so it
+        gets added to the queue. No gating of the next collection_cycle.
+        """
+        try:
+            await asyncio.sleep(WATCHDOG_SECONDS)
+        except asyncio.CancelledError:
+            return
+        if not self.is_running:
+            return
+        required = self._watchdog_required_phases()
+        pending_counts: Dict[str, int] = {}
+        if get_all_pending_counts:
+            try:
+                pending_counts = get_all_pending_counts()
+            except Exception as e:
+                logger.debug("Watchdog get_all_pending_counts: %s", e)
+        requested: List[str] = []
+        for phase_name in required:
+            schedule = self.schedules.get(phase_name)
+            if not schedule or not schedule.get("enabled", True):
+                continue
+            try:
+                from config.context_centric_config import is_context_centric_task_enabled
+                if not is_context_centric_task_enabled(phase_name):
+                    continue
+            except Exception:
+                pass
+            last_run = schedule.get("last_run") or self._last_completed_at_by_phase.get(phase_name)
+            if last_run and collection_started_at and last_run >= collection_started_at:
+                continue
+            has_work = (pending_counts.get(phase_name) or 0) > 0
+            if not has_work and phase_name in BATCH_PHASES_CONTINUOUS:
+                has_work = await self._has_pending_work(phase_name)
+            if not has_work and phase_name not in pending_counts and phase_name not in BATCH_PHASES_CONTINUOUS:
+                has_work = True
+            if has_work:
+                try:
+                    self.request_phase(phase_name)
+                    requested.append(phase_name)
+                except Exception as e:
+                    logger.debug("Watchdog request_phase %s: %s", phase_name, e)
+        if requested:
+            logger.info("Collection watchdog: requested phases (add to queue) %s", requested)
 
     async def _has_pending_work(self, phase_name: str) -> bool:
         """Quick check: is there still work for this phase in any domain? Used to re-enqueue for continuous run."""
@@ -3619,10 +3969,38 @@ class AutomationManager:
             'active_workers': len([w for w in self.workers if not w.done()]),
             'queue_size': self.task_queue.qsize(),
             'requested_queue_size': self._requested_task_queue.qsize(),
+            'combined_queue_depth': self._automation_queue_depth(),
+            'queue_soft_cap': AUTOMATION_QUEUE_SOFT_CAP,
+            'scheduled_enqueue_paused': self._scheduled_enqueue_paused(),
             'metrics': self.metrics,
             'schedules': self.schedules,
             'recent_tasks': list(self.tasks.values())[-10:]  # Last 10 tasks
         }
+        # Per-phase queue/run metrics for monitoring timeline:
+        # - queued_tasks_by_phase: tasks currently enqueued (not yet executing)
+        # - active_tasks_by_phase: tasks currently executing (workers)
+        # - runs_last_60m_by_phase: how many phase runs completed in the last 60 minutes
+        try:
+            from collections import Counter
+            queued_counter = Counter()
+            for q in (self.task_queue, self._requested_task_queue):
+                try:
+                    internal = getattr(q, "_queue", None)
+                    if internal is not None:
+                        queued_counter.update([t.name for t in list(internal) if hasattr(t, "name")])
+                except Exception:
+                    pass
+            out["queued_tasks_by_phase"] = dict(queued_counter)
+        except Exception:
+            out["queued_tasks_by_phase"] = {}
+        try:
+            out["active_tasks_by_phase"] = {k: v for k, v in self._running_tasks_by_phase.items() if v > 0}
+        except Exception:
+            out["active_tasks_by_phase"] = {}
+        try:
+            out["runs_last_60m_by_phase"] = {k: len(dq) for k, dq in self._phase_run_times_last_60m.items()}
+        except Exception:
+            out["runs_last_60m_by_phase"] = {}
         if get_all_backlog_counts:
             try:
                 out['backlog_counts'] = get_all_backlog_counts()

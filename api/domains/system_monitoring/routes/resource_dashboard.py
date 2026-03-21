@@ -18,10 +18,19 @@ import requests
 import yaml
 from fastapi import APIRouter, HTTPException
 
-from shared.database.connection import get_db_connection
+from shared.database.connection import get_ui_db_connection as get_db_connection
 from shared.services.response_cache import cached_response
 
 logger = logging.getLogger(__name__)
+
+
+def _rollback_db_connection(conn) -> None:
+    """Clear aborted transaction so the next query on this connection can run (psycopg2)."""
+    try:
+        conn.rollback()
+    except Exception:
+        pass
+
 
 # Default SSH user for remote monitoring (env MONITORING_SSH_USER or per-device ssh_user in config)
 DEFAULT_SSH_TIMEOUT_SECONDS = 12
@@ -164,17 +173,26 @@ async def get_database_stats():
 # ---------------------------------------------------------------------------
 
 @router.get("/backlog_status")
+@cached_response(ttl=15)
 def get_backlog_status() -> Dict[str, Any]:
     """
     Backlog progression: articles to enrich, documents to process, storylines to synthesize,
     with estimated throughput and catch-up ETA. Used by the Monitor page.
     """
-    conn = get_db_connection()
-    if not conn:
-        return {"success": False, "error": "Database connection failed", "data": None}
+    # get_db_connection() raises ConnectionError when UI pool is exhausted or DB is down (no longer returns None).
+    try:
+        conn = get_db_connection()
+    except Exception as e:
+        logger.warning("backlog_status: database unavailable: %s", e)
+        return {"success": False, "error": str(e)[:200], "data": None}
 
     try:
         cur = conn.cursor()
+        try:
+            # Keep monitor responsive under DB load: each statement fails fast.
+            cur.execute("SET LOCAL statement_timeout = '3s'")
+        except Exception:
+            _rollback_db_connection(conn)
         article_backlog = 0
         articles_created_24h = 0
         articles_short_created_24h = 0
@@ -218,19 +236,20 @@ def get_backlog_status() -> Dict[str, Any]:
                     enriched_last_1h += (r[0] or 0)
                     enriched_last_24h += (r[1] or 0)
             except Exception:
-                pass
+                _rollback_db_connection(conn)
 
         doc_backlog = 0
         try:
             cur.execute(
                 """
                 SELECT COUNT(*) FROM intelligence.processed_documents
-                WHERE extracted_sections IS NULL OR extracted_sections = '[]'
+                WHERE (extracted_sections IS NULL OR extracted_sections = '[]')
+                  AND (metadata IS NULL OR (metadata->'processing'->>'permanent_failure') IS DISTINCT FROM 'true')
                 """
             )
             doc_backlog = cur.fetchone()[0] or 0
         except Exception:
-            pass
+            _rollback_db_connection(conn)
 
         storyline_backlog = 0
         for schema in ("politics", "finance", "science_tech"):
@@ -251,11 +270,192 @@ def get_backlog_status() -> Dict[str, Any]:
                 )
                 storyline_backlog += cur.fetchone()[0] or 0
             except Exception:
-                pass
+                _rollback_db_connection(conn)
+
+        # Contexts: total, backlog (no claims yet), and throughput (contexts that got claims in last 1h/24h)
+        context_total = 0
+        context_backlog = 0
+        contexts_claim_extracted_last_1h = 0
+        contexts_claim_extracted_last_24h = 0
+        contexts_created_last_1h = 0
+        contexts_created_last_24h = 0
+        try:
+            cur.execute("SET LOCAL statement_timeout = '5s'")
+            cur.execute("SELECT COUNT(*) FROM intelligence.contexts")
+            context_total = cur.fetchone()[0] or 0
+            cur.execute(
+                """
+                SELECT COUNT(*) FROM intelligence.contexts c
+                LEFT JOIN intelligence.extracted_claims ec ON ec.context_id = c.id
+                WHERE ec.id IS NULL
+                """
+            )
+            context_backlog = cur.fetchone()[0] or 0
+            cur.execute(
+                """
+                SELECT
+                    COUNT(DISTINCT context_id) FILTER (WHERE ec.created_at >= NOW() - INTERVAL '1 hour'),
+                    COUNT(DISTINCT context_id) FILTER (WHERE ec.created_at >= NOW() - INTERVAL '24 hours')
+                FROM intelligence.extracted_claims ec
+                """
+            )
+            r = cur.fetchone()
+            if r:
+                contexts_claim_extracted_last_1h = r[0] or 0
+                contexts_claim_extracted_last_24h = r[1] or 0
+            cur.execute(
+                """
+                SELECT
+                    COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '1 hour'),
+                    COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '24 hours')
+                FROM intelligence.contexts
+                """
+            )
+            r = cur.fetchone()
+            if r:
+                contexts_created_last_1h = r[0] or 0
+                contexts_created_last_24h = r[1] or 0
+        except Exception:
+            _rollback_db_connection(conn)
+
+        # Entity profiles: total, backlog (empty sections or stale), throughput (updated with sections in last 1h/24h)
+        entity_profile_total = 0
+        entity_profile_backlog = 0
+        entity_profiles_updated_last_1h = 0
+        entity_profiles_updated_last_24h = 0
+        try:
+            cur.execute("SELECT COUNT(*) FROM intelligence.entity_profiles")
+            entity_profile_total = cur.fetchone()[0] or 0
+            cur.execute(
+                """
+                SELECT COUNT(*) FROM intelligence.entity_profiles ep
+                WHERE ep.sections = '[]'::jsonb OR ep.sections IS NULL
+                   OR ep.updated_at < NOW() - INTERVAL '7 days'
+                """
+            )
+            entity_profile_backlog = cur.fetchone()[0] or 0
+            cur.execute(
+                """
+                SELECT
+                    COUNT(*) FILTER (WHERE updated_at >= NOW() - INTERVAL '1 hour' AND sections IS NOT NULL AND sections != '[]'::jsonb),
+                    COUNT(*) FILTER (WHERE updated_at >= NOW() - INTERVAL '24 hours' AND sections IS NOT NULL AND sections != '[]'::jsonb)
+                FROM intelligence.entity_profiles
+                """
+            )
+            r = cur.fetchone()
+            if r:
+                entity_profiles_updated_last_1h = r[0] or 0
+                entity_profiles_updated_last_24h = r[1] or 0
+        except Exception:
+            _rollback_db_connection(conn)
+
+        # Documents processed in last 1h/24h (for measured throughput)
+        docs_processed_last_1h = 0
+        docs_processed_last_24h = 0
+        docs_attempted_last_1h = 0
+        docs_attempted_last_24h = 0
+        docs_failed_last_1h = 0
+        docs_failed_last_24h = 0
+        docs_permanent_failed_total = 0
+        docs_top_failure_reasons: List[Dict[str, Any]] = []
+        try:
+            cur.execute(
+                """
+                SELECT
+                    COUNT(*) FILTER (WHERE updated_at >= NOW() - INTERVAL '1 hour'),
+                    COUNT(*) FILTER (WHERE updated_at >= NOW() - INTERVAL '24 hours')
+                FROM intelligence.processed_documents
+                WHERE extracted_sections IS NOT NULL AND extracted_sections != '[]'::jsonb
+                """
+            )
+            r = cur.fetchone()
+            if r:
+                docs_processed_last_1h = r[0] or 0
+                docs_processed_last_24h = r[1] or 0
+            cur.execute(
+                """
+                SELECT
+                    COUNT(*) FILTER (
+                        WHERE updated_at >= NOW() - INTERVAL '1 hour'
+                          AND COALESCE(metadata->'processing'->>'method', '') IN ('pdf_auto', 'pdf_failed')
+                    ),
+                    COUNT(*) FILTER (
+                        WHERE updated_at >= NOW() - INTERVAL '24 hours'
+                          AND COALESCE(metadata->'processing'->>'method', '') IN ('pdf_auto', 'pdf_failed')
+                    ),
+                    COUNT(*) FILTER (
+                        WHERE updated_at >= NOW() - INTERVAL '1 hour'
+                          AND COALESCE(metadata->'processing'->>'method', '') = 'pdf_failed'
+                    ),
+                    COUNT(*) FILTER (
+                        WHERE updated_at >= NOW() - INTERVAL '24 hours'
+                          AND COALESCE(metadata->'processing'->>'method', '') = 'pdf_failed'
+                    ),
+                    COUNT(*) FILTER (
+                        WHERE (metadata->'processing'->>'permanent_failure') = 'true'
+                    )
+                FROM intelligence.processed_documents
+                """
+            )
+            r = cur.fetchone()
+            if r:
+                docs_attempted_last_1h = r[0] or 0
+                docs_attempted_last_24h = r[1] or 0
+                docs_failed_last_1h = r[2] or 0
+                docs_failed_last_24h = r[3] or 0
+                docs_permanent_failed_total = r[4] or 0
+            cur.execute(
+                """
+                SELECT COALESCE(NULLIF(metadata->'processing'->>'error', ''), 'unknown') AS reason, COUNT(*) AS c
+                FROM intelligence.processed_documents
+                WHERE COALESCE(metadata->'processing'->>'method', '') = 'pdf_failed'
+                  AND updated_at >= NOW() - INTERVAL '24 hours'
+                GROUP BY 1
+                ORDER BY c DESC
+                LIMIT 5
+                """
+            )
+            docs_top_failure_reasons = [
+                {"reason": row[0], "count": row[1] or 0}
+                for row in (cur.fetchall() or [])
+            ]
+        except Exception:
+            pass
+
+        # Synthesis results per domain (storylines synthesized in last 1h and 2h)
+        synthesis_last_1h: Dict[str, int] = {}
+        synthesis_last_2h: Dict[str, int] = {}
+        for schema, domain_key in [("politics", "politics"), ("finance", "finance"), ("science_tech", "science_tech")]:
+            try:
+                cur.execute(
+                    f"""
+                    SELECT
+                        COUNT(*) FILTER (WHERE synthesized_at >= NOW() - INTERVAL '1 hour'),
+                        COUNT(*) FILTER (WHERE synthesized_at >= NOW() - INTERVAL '2 hours')
+                    FROM {schema}.storylines
+                    WHERE synthesized_at IS NOT NULL
+                    """
+                )
+                r = cur.fetchone()
+                if r:
+                    synthesis_last_1h[domain_key] = r[0] or 0
+                    synthesis_last_2h[domain_key] = r[1] or 0
+                else:
+                    synthesis_last_1h[domain_key] = 0
+                    synthesis_last_2h[domain_key] = 0
+            except Exception:
+                _rollback_db_connection(conn)
+                synthesis_last_1h[domain_key] = 0
+                synthesis_last_2h[domain_key] = 0
+
         cur.close()
         conn.close()
     except Exception as e:
-        conn.close()
+        logger.warning("backlog_status: query failed: %s", e)
+        try:
+            conn.close()
+        except Exception:
+            pass
         return {"success": False, "error": str(e)[:200], "data": None}
 
     # Throughput: use measured enrichment when available (articles updated to full content in last 1h/24h)
@@ -269,9 +469,53 @@ def get_backlog_status() -> Dict[str, Any]:
     else:
         articles_per_hour = 300
         per_hour_source = "estimated"
-    docs_per_hour = 20
-    storylines_per_hour = 12
     articles_per_day = articles_per_hour * 24
+
+    # Documents: measured from last 1h/24h when available
+    if docs_processed_last_1h > 0:
+        docs_per_hour = min(docs_processed_last_1h, 100)
+        docs_per_hour_source = "measured_1h"
+    elif docs_processed_last_24h > 0:
+        docs_per_hour = min(round(docs_processed_last_24h / 24.0), 100)
+        docs_per_hour_source = "measured_24h"
+    else:
+        docs_per_hour = 20
+        docs_per_hour_source = "estimated"
+
+    # Context claim-extraction throughput (contexts that got claims in last 1h/24h)
+    if contexts_claim_extracted_last_1h >= 5:
+        context_claims_per_hour = min(contexts_claim_extracted_last_1h, 200)
+        context_claims_per_hour_source = "measured_1h"
+    elif contexts_claim_extracted_last_24h > 0:
+        context_claims_per_hour = min(round(contexts_claim_extracted_last_24h / 24.0), 200)
+        context_claims_per_hour_source = "measured_24h"
+    else:
+        context_claims_per_hour = 100  # ~50/run every 30 min
+        context_claims_per_hour_source = "estimated"
+
+    # Entity profile build throughput
+    if entity_profiles_updated_last_1h >= 1:
+        entity_per_hour = min(entity_profiles_updated_last_1h, 50)
+        entity_per_hour_source = "measured_1h"
+    elif entity_profiles_updated_last_24h > 0:
+        entity_per_hour = min(round(entity_profiles_updated_last_24h / 24.0), 50)
+        entity_per_hour_source = "measured_24h"
+    else:
+        entity_per_hour = 15  # ~25/run every 30 min, conservative
+        entity_per_hour_source = "estimated"
+
+    # Storyline synthesis: use sum of last 1h per domain when available
+    storylines_synthesized_last_1h = sum(synthesis_last_1h.values())
+    storylines_synthesized_last_2h = sum(synthesis_last_2h.values())
+    if storylines_synthesized_last_1h >= 1:
+        storylines_per_hour = min(storylines_synthesized_last_1h, 50)
+        storylines_per_hour_source = "measured_1h"
+    elif storylines_synthesized_last_2h > 0:
+        storylines_per_hour = min(round(storylines_synthesized_last_2h / 2.0), 50)
+        storylines_per_hour_source = "measured_2h"
+    else:
+        storylines_per_hour = 12
+        storylines_per_hour_source = "estimated"
 
     def eta_hours(backlog: int, per_hour: float) -> float:
         if per_hour <= 0:
@@ -282,12 +526,20 @@ def get_backlog_status() -> Dict[str, Any]:
     h_articles = eta_hours(article_backlog, articles_per_hour)
     h_docs = eta_hours(doc_backlog, docs_per_hour)
     h_storylines = eta_hours(storyline_backlog, storylines_per_hour)
+    h_contexts = eta_hours(context_backlog, context_claims_per_hour)
+    h_entities = eta_hours(entity_profile_backlog, entity_per_hour)
 
     eta_articles = (now + timedelta(hours=h_articles)).isoformat() if article_backlog else None
     eta_docs = (now + timedelta(hours=h_docs)).isoformat() if doc_backlog else None
     eta_storylines = (now + timedelta(hours=h_storylines)).isoformat() if storyline_backlog else None
-    overall_h = max(h_articles, h_docs, h_storylines)
-    eta_overall = (now + timedelta(hours=overall_h)).isoformat() if (article_backlog or doc_backlog or storyline_backlog) else None
+    overall_h = max(h_articles, h_docs, h_storylines, h_contexts, h_entities)
+    eta_overall = (now + timedelta(hours=overall_h)).isoformat() if (article_backlog or doc_backlog or storyline_backlog or context_backlog or entity_profile_backlog) else None
+
+    # Iterations to baseline: one "iteration" = one 2h collection/analysis cycle
+    def iterations_2h(hours: float) -> int:
+        if hours <= 0:
+            return 0
+        return max(1, int((hours + 1.99) // 2))
 
     # Net rate: inflow (short created 24h) minus outflow (enriched per day); positive = backlog growing
     net_articles_per_day = articles_short_created_24h - articles_per_day
@@ -300,11 +552,14 @@ def get_backlog_status() -> Dict[str, Any]:
                 "backlog": article_backlog,
                 "per_hour": articles_per_hour,
                 "per_hour_source": per_hour_source,
+                "processed_last_1h": enriched_last_1h,
+                "processed_last_24h": enriched_last_24h,
                 "enriched_last_1h": enriched_last_1h,
                 "enriched_last_24h": enriched_last_24h,
                 "per_day": articles_per_day,
                 "eta_hours": round(h_articles, 1),
                 "eta_utc": eta_articles,
+                "iterations_to_baseline": iterations_2h(h_articles),
                 "created_last_24h": articles_created_24h,
                 "short_created_last_24h": articles_short_created_24h,
                 "net_per_day": net_articles_per_day,
@@ -313,19 +568,77 @@ def get_backlog_status() -> Dict[str, Any]:
             "documents": {
                 "backlog": doc_backlog,
                 "per_hour": docs_per_hour,
+                "per_hour_source": docs_per_hour_source,
+                "processed_last_1h": docs_processed_last_1h,
+                "processed_last_24h": docs_processed_last_24h,
+                "attempted_last_1h": docs_attempted_last_1h,
+                "attempted_last_24h": docs_attempted_last_24h,
+                "failed_last_1h": docs_failed_last_1h,
+                "failed_last_24h": docs_failed_last_24h,
+                "permanent_failed_total": docs_permanent_failed_total,
+                "top_failure_reasons_24h": docs_top_failure_reasons,
                 "eta_hours": round(h_docs, 1),
                 "eta_utc": eta_docs,
+                "iterations_to_baseline": iterations_2h(h_docs),
+            },
+            "contexts": {
+                "total": context_total,
+                "backlog": context_backlog,
+                "per_hour": context_claims_per_hour,
+                "per_hour_source": context_claims_per_hour_source,
+                "processed_last_1h": contexts_claim_extracted_last_1h,
+                "processed_last_24h": contexts_claim_extracted_last_24h,
+                "created_last_1h": contexts_created_last_1h,
+                "created_last_24h": contexts_created_last_24h,
+                "eta_hours": round(h_contexts, 1),
+                "iterations_to_baseline": iterations_2h(h_contexts),
+            },
+            "entity_profiles": {
+                "total": entity_profile_total,
+                "backlog": entity_profile_backlog,
+                "per_hour": entity_per_hour,
+                "per_hour_source": entity_per_hour_source,
+                "processed_last_1h": entity_profiles_updated_last_1h,
+                "processed_last_24h": entity_profiles_updated_last_24h,
+                "eta_hours": round(h_entities, 1),
+                "iterations_to_baseline": iterations_2h(h_entities),
             },
             "storylines": {
                 "backlog": storyline_backlog,
                 "per_hour": storylines_per_hour,
+                "per_hour_source": storylines_per_hour_source,
+                "processed_last_1h": storylines_synthesized_last_1h,
+                "processed_last_2h": storylines_synthesized_last_2h,
+                "synthesis_per_domain_last_1h": synthesis_last_1h,
+                "synthesis_per_domain_last_2h": synthesis_last_2h,
                 "eta_hours": round(h_storylines, 1),
                 "eta_utc": eta_storylines,
+                "iterations_to_baseline": iterations_2h(h_storylines),
             },
             "overall_eta_hours": round(overall_h, 1),
             "overall_eta_utc": eta_overall,
+            "overall_iterations_to_baseline": iterations_2h(overall_h),
+            "cycle_hours": 2,
         },
     }
+
+
+# ---------------------------------------------------------------------------
+# Context-entity coverage diagnostic (Phase 3B)
+# ---------------------------------------------------------------------------
+
+@router.get("/context_entity_coverage")
+def get_context_entity_coverage() -> Dict[str, Any]:
+    """
+    Diagnostic: contexts with vs without context_entity_mentions.
+    Run entity_profile_sync + backfill to improve coverage.
+    """
+    try:
+        from services.context_processor_service import get_context_entity_mentions_coverage
+        data = get_context_entity_mentions_coverage()
+        return {"success": "error" not in data, "data": data}
+    except Exception as e:
+        return {"success": False, "error": str(e)[:200], "data": None}
 
 
 # ---------------------------------------------------------------------------

@@ -7,6 +7,8 @@ Run from project root: .venv/bin/python api/scripts/diagnose_db_legacy_data.py
 
 import os
 import sys
+import re
+from pathlib import Path
 
 try:
     from dotenv import load_dotenv
@@ -43,6 +45,51 @@ def run_one(conn, sql, params=None):
 def set_search_path(conn, path):
     with conn.cursor() as cur:
         cur.execute(f"SET search_path TO {path}")
+
+
+def scan_runtime_sql_alignment():
+    """
+    Static SQL alignment scan for runtime code.
+    Flags unqualified table references likely to hit public schema by accident.
+    """
+    api_root = Path(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    runtime_roots = (
+        api_root / "services",
+        api_root / "domains",
+        api_root / "shared",
+        api_root / "modules",
+    )
+    excluded_markers = ("/tests/", "/scripts/", "/archive/", "/compatibility/")
+    sql_pattern = re.compile(
+        r"\b(FROM|JOIN|UPDATE|INTO|DELETE\s+FROM)\s+([a-zA-Z_][a-zA-Z0-9_]*)\b",
+        re.IGNORECASE,
+    )
+    risky_tables = {"articles", "storylines", "rss_feeds", "storyline_articles"}
+    findings = []
+
+    for root in runtime_roots:
+        if not root.exists():
+            continue
+        for py_file in root.rglob("*.py"):
+            path_str = str(py_file).replace("\\", "/")
+            if any(marker in path_str for marker in excluded_markers):
+                continue
+            try:
+                text = py_file.read_text(encoding="utf-8", errors="ignore")
+            except Exception:
+                continue
+
+            for idx, line in enumerate(text.splitlines(), start=1):
+                if "." in line:
+                    # Skip obviously schema-qualified lines (e.g. politics.articles).
+                    continue
+                for match in sql_pattern.finditer(line):
+                    table = match.group(2).lower()
+                    if table in risky_tables:
+                        rel = str(py_file.relative_to(api_root))
+                        findings.append((rel, idx, table, line.strip()))
+
+    return findings
 
 
 def main():
@@ -153,6 +200,31 @@ def main():
                     print(f"  public.{tbl}: table not present")
         except Exception as e:
             print(f"  public check: {e}")
+
+        # --- 6. Runtime SQL static alignment scan ---
+        print("\n--- 6. Runtime SQL alignment scan (static code check) ---")
+        findings = scan_runtime_sql_alignment()
+        if not findings:
+            print("  No risky unqualified runtime SQL table references found.")
+        else:
+            table_counts = {}
+            file_counts = {}
+            for rel, _, table, _ in findings:
+                table_counts[table] = table_counts.get(table, 0) + 1
+                file_counts[rel] = file_counts.get(rel, 0) + 1
+
+            print(f"  Findings: {len(findings)} potential unqualified table references")
+            print("  By table:")
+            for table, count in sorted(table_counts.items(), key=lambda x: (-x[1], x[0])):
+                print(f"    - {table}: {count}")
+
+            print("  Top files:")
+            for rel, count in sorted(file_counts.items(), key=lambda x: (-x[1], x[0]))[:15]:
+                print(f"    - {rel}: {count}")
+
+            print("  Sample findings:")
+            for rel, line_no, table, line in findings[:20]:
+                print(f"    - {rel}:{line_no} [{table}] {line}")
 
         print("\n" + "=" * 60)
         print("Done. No data was modified. See docs/DATA_CLEANUP_AND_COMPATIBILITY.md for cleanup options.")

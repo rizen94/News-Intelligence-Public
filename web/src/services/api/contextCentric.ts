@@ -41,6 +41,25 @@ export interface Context {
   updated_at: string | null;
 }
 
+/** Topics and storylines that share the context's linked article (cross-entity audit). */
+export interface ContextRelated {
+  topics: { id: number; name: string | null }[];
+  storylines: { id: number; title: string | null }[];
+}
+
+export type ContextDetailResponse = Context & {
+  article?: {
+    id: number;
+    title: string;
+    url: string | null;
+    source: string | null;
+    summary: string | null;
+    published_date: string | null;
+    content: string | null;
+  } | null;
+  related?: ContextRelated;
+};
+
 export interface TrackedEvent {
   id: number;
   event_type: string | null;
@@ -88,6 +107,18 @@ export interface PatternDiscovery {
   confidence: number | null;
   data: unknown;
   created_at: string | null;
+}
+
+export interface ContextGroupingFeedbackItem {
+  id: number;
+  context_id: number;
+  grouping_type: string;
+  grouping_id: number | null;
+  grouping_label: string | null;
+  judgment: string;
+  notes: string | null;
+  judged_by: string | null;
+  judged_at: string | null;
 }
 
 export interface ContextCentricStatus {
@@ -267,10 +298,12 @@ export const contextCentricApi = {
 
   async getEntityProfiles(params?: { domain_key?: string; limit?: number; offset?: number; brief?: boolean }) {
     try {
-      const response = await getApi().get<{ items: EntityProfile[]; limit: number; offset: number }>(
-        apiPath('/api/entity_profiles'),
-        { ...contextCentricConfig(), params: params ?? {} },
-      );
+      const response = await getApi().get<{
+        items: EntityProfile[];
+        limit: number;
+        offset: number;
+        total?: number;
+      }>(apiPath('/api/entity_profiles'), { ...contextCentricConfig(), params: params ?? {} });
       return response.data;
     } catch (error) {
       return handleError('Failed to fetch entity profiles', error);
@@ -286,9 +319,9 @@ export const contextCentricApi = {
     }
   },
 
-  async getContext(contextId: number): Promise<Context & { article?: { id: number; title: string; url: string | null; source: string | null; summary: string | null; published_date: string | null; content: string | null } | null }> {
+  async getContext(contextId: number): Promise<ContextDetailResponse> {
     try {
-      const response = await getApi().get<Context & { article?: { id: number; title: string; url: string | null; source: string | null; summary: string | null; published_date: string | null; content: string | null } | null }>(
+      const response = await getApi().get<ContextDetailResponse>(
         apiPath(`/api/contexts/${contextId}`),
         contextCentricConfig(),
       );
@@ -323,13 +356,59 @@ export const contextCentricApi = {
     brief?: boolean;
   }) {
     try {
-      const response = await getApi().get<{ items: Context[]; limit: number; offset: number }>(
-        apiPath('/api/contexts'),
-        { ...contextCentricConfig(), params: params ?? {} },
-      );
+      const response = await getApi().get<{
+        items: Context[];
+        limit: number;
+        offset: number;
+        total?: number;
+      }>(apiPath('/api/contexts'), { ...contextCentricConfig(), params: params ?? {} });
       return response.data;
     } catch (error) {
       return handleError('Failed to fetch contexts', error);
+    }
+  },
+
+  async postContextGroupingFeedback(
+    contextId: number,
+    body: {
+      grouping_type: 'topic' | 'storyline' | 'pattern' | 'other';
+      judgment: 'belongs' | 'does_not_belong' | 'unsure';
+      grouping_id?: number | null;
+      grouping_label?: string | null;
+      notes?: string | null;
+      judged_by?: string | null;
+    },
+  ): Promise<{ success: boolean; data?: { id: number; judged_at: string }; message?: string | null }> {
+    try {
+      const response = await getApi().post<{
+        success: boolean;
+        data?: { id: number; judged_at: string };
+        message?: string | null;
+      }>(apiPath(`/api/contexts/${contextId}/grouping_feedback`), body, contextCentricConfig());
+      return response.data;
+    } catch (error) {
+      Logger.apiError('Failed to submit context grouping feedback', error as Error);
+      throw error;
+    }
+  },
+
+  async getContextGroupingFeedback(
+    contextId: number,
+    limit = 50,
+  ): Promise<{ success: boolean; data?: { items: ContextGroupingFeedbackItem[] }; message?: string | null }> {
+    try {
+      const response = await getApi().get<{
+        success: boolean;
+        data?: { items: ContextGroupingFeedbackItem[] };
+        message?: string | null;
+      }>(apiPath(`/api/contexts/${contextId}/grouping_feedback`), {
+        ...contextCentricConfig(),
+        params: { limit },
+      });
+      return response.data;
+    } catch (error) {
+      Logger.apiError('Failed to fetch context grouping feedback', error as Error);
+      throw error;
     }
   },
 

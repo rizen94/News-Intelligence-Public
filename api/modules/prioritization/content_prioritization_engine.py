@@ -39,6 +39,7 @@ class ContentPrioritizationEngine:
     
     def _load_priority_levels(self):
         """Load priority levels from database"""
+        conn = None
         try:
             conn = get_db_connection()
             cursor = conn.cursor()
@@ -60,14 +61,17 @@ class ContentPrioritizationEngine:
                     'is_active': row[5]
                 }
             
-            conn.close()
             self.logger.info(f"Loaded {len(self.priority_levels)} priority levels")
             
         except Exception as e:
             self.logger.error(f"Error loading priority levels: {e}")
+        finally:
+            if conn:
+                conn.close()
     
     def _load_user_rules(self):
         """Load user interest rules from database"""
+        conn = None
         try:
             conn = get_db_connection()
             cursor = conn.cursor()
@@ -97,14 +101,17 @@ class ContentPrioritizationEngine:
                 
                 self.user_rules[rule['profile_name']].append(rule)
             
-            conn.close()
             self.logger.info(f"Loaded user rules for {len(self.user_rules)} profiles")
             
         except Exception as e:
             self.logger.error(f"Error loading user rules: {e}")
+        finally:
+            if conn:
+                conn.close()
     
     def _load_collection_rules(self):
         """Load content collection rules from database"""
+        conn = None
         try:
             conn = get_db_connection()
             cursor = conn.cursor()
@@ -129,13 +136,14 @@ class ContentPrioritizationEngine:
                 
                 self.collection_rules.append(rule)
             
-            conn.close()
             self.logger.info(f"Loaded {len(self.collection_rules)} collection rules")
             
         except Exception as e:
             self.logger.error(f"Error loading collection rules: {e}")
-            # Initialize as empty list if there's an error
             self.collection_rules = []
+        finally:
+            if conn:
+                conn.close()
     
     def calculate_article_priority(self, article_data: Dict[str, Any], 
                                  profile_name: str = 'default') -> Dict[str, Any]:
@@ -284,6 +292,7 @@ class ContentPrioritizationEngine:
     
     def _find_story_thread_matches(self, title: str, content: str, category: str) -> List[Dict[str, Any]]:
         """Find matching story threads for an article"""
+        conn = None
         try:
             conn = get_db_connection()
             cursor = conn.cursor()
@@ -315,12 +324,14 @@ class ContentPrioritizationEngine:
                         'priority_level_id': priority_id
                     })
             
-            conn.close()
             return matches
             
         except Exception as e:
             self.logger.error(f"Error finding story thread matches: {e}")
             return []
+        finally:
+            if conn:
+                conn.close()
     
     def create_story_thread(self, title: str, description: str, category: str,
                            priority_level_name: str = 'medium', 
@@ -340,11 +351,11 @@ class ContentPrioritizationEngine:
         Returns:
             Dictionary with thread information
         """
+        conn = None
         try:
             conn = get_db_connection()
             cursor = conn.cursor()
             
-            # Find priority level
             priority_level_id = None
             for level_id, level_data in self.priority_levels.items():
                 if level_data['name'] == priority_level_name:
@@ -352,9 +363,8 @@ class ContentPrioritizationEngine:
                     break
             
             if not priority_level_id:
-                priority_level_id = 2  # Default to medium
+                priority_level_id = 2
             
-            # Create story thread
             cursor.execute("""
                 INSERT INTO story_threads (title, description, category, priority_level_id, user_created)
                 VALUES (%s, %s, %s, %s, %s)
@@ -363,7 +373,6 @@ class ContentPrioritizationEngine:
             
             thread_id = cursor.fetchone()[0]
             
-            # Add keywords if provided
             if keywords:
                 for keyword in keywords:
                     cursor.execute("""
@@ -372,7 +381,6 @@ class ContentPrioritizationEngine:
                     """, (thread_id, keyword, 1.0))
             
             conn.commit()
-            conn.close()
             
             self.logger.info(f"Created story thread: {title} (ID: {thread_id})")
             
@@ -389,6 +397,9 @@ class ContentPrioritizationEngine:
         except Exception as e:
             self.logger.error(f"Error creating story thread: {e}")
             return {'error': str(e)}
+        finally:
+            if conn:
+                conn.close()
     
     def add_user_interest_rule(self, profile_name: str, rule_type: str, rule_value: str,
                                priority_level_name: str, action: str = 'track',
@@ -407,11 +418,11 @@ class ContentPrioritizationEngine:
         Returns:
             Dictionary with rule information
         """
+        conn = None
         try:
             conn = get_db_connection()
             cursor = conn.cursor()
             
-            # Get or create profile
             cursor.execute("""
                 SELECT id FROM user_interest_profiles 
                 WHERE profile_name = %s AND is_active = TRUE
@@ -428,7 +439,6 @@ class ContentPrioritizationEngine:
                 """, ('default', profile_name))
                 profile_id = cursor.fetchone()[0]
             
-            # Find priority level
             priority_level_id = None
             for level_id, level_data in self.priority_levels.items():
                 if level_data['name'] == priority_level_name:
@@ -436,9 +446,8 @@ class ContentPrioritizationEngine:
                     break
             
             if not priority_level_id:
-                priority_level_id = 2  # Default to medium
+                priority_level_id = 2
             
-            # Create rule
             cursor.execute("""
                 INSERT INTO user_interest_rules 
                 (profile_id, rule_type, rule_value, priority_level_id, action, weight)
@@ -449,9 +458,7 @@ class ContentPrioritizationEngine:
             rule_id = cursor.fetchone()[0]
             
             conn.commit()
-            conn.close()
             
-            # Reload user rules
             self._load_user_rules()
             
             self.logger.info(f"Added user interest rule: {rule_type}={rule_value} -> {action}")
@@ -469,6 +476,9 @@ class ContentPrioritizationEngine:
         except Exception as e:
             self.logger.error(f"Error adding user interest rule: {e}")
             return {'error': str(e)}
+        finally:
+            if conn:
+                conn.close()
     
     def get_story_threads(self, status: str = 'active', 
                           priority_level_name: str = None) -> List[Dict[str, Any]]:
@@ -482,6 +492,7 @@ class ContentPrioritizationEngine:
         Returns:
             List of story threads
         """
+        conn = None
         try:
             conn = get_db_connection()
             cursor = conn.cursor()
@@ -524,15 +535,18 @@ class ContentPrioritizationEngine:
                     'keyword_count': row[11]
                 })
             
-            conn.close()
             return threads
             
         except Exception as e:
             self.logger.error(f"Error getting story threads: {e}")
             return []
+        finally:
+            if conn:
+                conn.close()
     
     def get_priority_statistics(self) -> Dict[str, Any]:
         """Get statistics about content priority distribution"""
+        conn = None
         try:
             conn = get_db_connection()
             cursor = conn.cursor()
@@ -573,8 +587,6 @@ class ContentPrioritizationEngine:
             
             recent_articles = cursor.fetchone()[0]
             
-            conn.close()
-            
             return {
                 'priority_levels': priority_stats,
                 'story_threads': thread_stats,
@@ -586,3 +598,6 @@ class ContentPrioritizationEngine:
         except Exception as e:
             self.logger.error(f"Error getting priority statistics: {e}")
             return {'error': str(e)}
+        finally:
+            if conn:
+                conn.close()

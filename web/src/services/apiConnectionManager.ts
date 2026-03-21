@@ -37,6 +37,7 @@ class APIConnectionManager {
           const globalRoutes = [
             'politics', 'finance', 'science-tech', 'system_monitoring', 'route_supervisor', 'watchlist', 'monitoring',
             'orchestrator', 'context_centric', 'entity_profiles', 'contexts', 'tracked_events', 'claims', 'pattern_discoveries',
+            'processed_documents', 'entity_dossiers', 'entity_positions', 'narrative_threads', 'synthesis', 'entities',
           ];
           const isGlobalRoute = globalRoutes.includes(firstSegment);
           // Global routes (context_centric, entity_profiles, etc.) use origin-only base so path stays /api/...

@@ -139,12 +139,34 @@ export default function GoldChoropleth({
     draw();
   }, [draw]);
 
+  const countByCountry = buildCountByCountry(byRegion);
+  const maxCount = Math.max(0, ...Object.values(countByCountry));
+  const hasData = maxCount > 0;
+
   return (
     <Box sx={{ width: '100%', overflow: 'hidden' }}>
       <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
         Event density by region (click to filter)
       </Typography>
       <svg ref={svgRef} width={width} height={height} style={{ maxWidth: '100%', height: 'auto' }} />
+      {hasData && (
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 1 }}>
+          <Typography variant="caption" color="text.secondary">
+            Event count:
+          </Typography>
+          <Box
+            sx={{
+              width: 80,
+              height: 8,
+              borderRadius: 1,
+              background: 'linear-gradient(to right, #deebf7 0%, #3182bd 100%)',
+            }}
+          />
+          <Typography variant="caption" color="text.secondary">
+            0 — {maxCount}
+          </Typography>
+        </Box>
+      )}
     </Box>
   );
 }

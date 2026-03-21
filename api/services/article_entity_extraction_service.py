@@ -14,7 +14,9 @@ from typing import Dict, List, Any, Optional, Union
 
 from shared.database.connection import get_db_connection
 from shared.services.llm_service import LLMService, ModelType
-from services.entity_resolution_service import resolve_to_canonical
+from services.entity_resolution_service import resolve_to_canonical, _add_alias
+from services.wikipedia_knowledge_service import lookup_entity
+from services.entity_relational_expansion_service import expand_relational_entity_async
 
 logger = logging.getLogger(__name__)
 
@@ -163,6 +165,7 @@ Rules:
                 return bool(isinstance(item, dict) and item.get("in_headline", False))
 
             # 1. article_entities (people, orgs, subjects, recurring_events) with canonical resolution
+            canonical_ids_used = set()
             for entity_type, key in [
                 ("person", "people"),
                 ("organization", "organizations"),
@@ -173,9 +176,24 @@ Rules:
                     name = _item_name(item)
                     if not name or len(name) < 2:
                         continue
+                    # Resolve relational phrases (e.g. "Zohran Mamdani's wife") to real name via LLM
+                    name_to_use = name
+                    original_phrase = None
+                    if entity_type == "person":
+                        try:
+                            llm_call = lambda p: self.llm._call_ollama(ModelType.LLAMA_8B, p)
+                            name_to_use, original_phrase = await expand_relational_entity_async(
+                                name, entity_type, llm_call, timeout_seconds=8.0
+                            )
+                        except Exception as e:
+                            logger.debug("Relational expansion skip for %s: %s", name, e)
                     mention = "headline" if _item_in_headline(item) else "body"
                     conf = _item_conf(item)
-                    canonical_id = resolve_to_canonical(schema, name, entity_type, create_if_missing=True)
+                    canonical_id = resolve_to_canonical(schema, name_to_use, entity_type, create_if_missing=True)
+                    if canonical_id:
+                        canonical_ids_used.add(canonical_id)
+                        if original_phrase and original_phrase != name_to_use:
+                            _add_alias(cur, schema, canonical_id, original_phrase)
                     try:
                         cur.execute(f"""
                             INSERT INTO {schema}.article_entities
@@ -189,6 +207,34 @@ Rules:
                         counts["entities"] += 1
                     except Exception as e:
                         logger.debug(f"article_entities insert skip: {e}")
+
+            # 1b. Auto-populate entity_canonical.description from local Wikipedia if missing
+            if canonical_ids_used:
+                cur.execute(
+                    f"""
+                    SELECT id, canonical_name FROM {schema}.entity_canonical
+                    WHERE id = ANY(%s) AND (description IS NULL OR description = '')
+                    """,
+                    (list(canonical_ids_used),),
+                )
+                for (eid, canonical_name) in cur.fetchall():
+                    if not canonical_name or len(canonical_name) < 2:
+                        continue
+                    try:
+                        wiki = lookup_entity(canonical_name)
+                        if wiki and wiki.get("extract"):
+                            extract = (wiki.get("extract") or "")[:500]
+                            page_id = wiki.get("page_id")
+                            cur.execute(
+                                f"""
+                                UPDATE {schema}.entity_canonical
+                                SET description = %s, wikipedia_page_id = %s, updated_at = NOW()
+                                WHERE id = %s
+                                """,
+                                (extract, page_id, eid),
+                            )
+                    except Exception as e:
+                        logger.debug("Wikipedia description backfill for entity %s: %s", eid, e)
 
             def _dict_val(item: Any, key: str, default: str = "") -> Optional[str]:
                 if isinstance(item, dict):

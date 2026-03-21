@@ -55,11 +55,11 @@ def _weekly_digest_exists(week_start: date) -> bool:
 
 
 def _run_weekly_briefing_sync(week_start: date) -> Optional[Dict[str, Any]]:
-    """Generate weekly briefing for the given week (sync). Returns weekly_briefing dict or None."""
+    """Generate weekly briefing for the given week (sync), aggregating from all domains. Returns weekly_briefing dict or None."""
     try:
         svc = _get_daily_briefing_service()
         week_start_dt = datetime.combine(week_start, datetime.min.time())
-        return svc.generate_weekly_briefing(week_start_dt)
+        return svc.generate_weekly_briefing_aggregate(week_start_dt)
     except Exception as e:
         logger.warning("Weekly briefing generation failed: %s", e)
         return None

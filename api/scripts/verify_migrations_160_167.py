@@ -1,8 +1,24 @@
 #!/usr/bin/env python3
-"""Verify migrations 160–167 are fully applied (tables/columns exist). Run after migration 167 completes.
+"""Verify critical DB migrations are applied (133, 160–172, 176 ledger, 177–179 domain event pipeline columns).
 
-From project root:
-  PYTHONPATH=api .venv/bin/python3 api/scripts/verify_migrations_160_167.py
+Run from project root (requires DB_PASSWORD and network to DB):
+
+  PYTHONPATH=api uv run python api/scripts/verify_migrations_160_167.py
+
+Checks:
+  133  public.chronological_events (is_ongoing, date_precision)
+  160  intelligence.processed_documents
+  161  public.automation_run_history
+  164–167 domain articles/storylines quality & enrichment (as before)
+  168  public.automation_state
+  169  intelligence.storyline_rag_context
+  170  intelligence.wikipedia_knowledge + politics.entity_canonical.description
+  171  intelligence.tracked_events.storyline_id
+  172  public.automation_run_history_daily, public.log_archive_daily_rollup
+  176  public.applied_migrations (operational ledger)
+  177  politics.articles.timeline_processed + politics.article_entities (domain event/entity pipeline)
+  178  politics.articles.timeline_events_generated (event_extraction article UPDATE)
+  179  politics (sample) story_entity_index for story_continuation matching
 """
 
 import os
@@ -10,6 +26,7 @@ import sys
 
 try:
     from dotenv import load_dotenv
+
     api_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     load_dotenv(os.path.join(api_dir, ".env"), override=False)
     load_dotenv(os.path.join(api_dir, "..", ".env"), override=False)
@@ -72,37 +89,42 @@ def main():
     missing = []
     try:
         cur = conn.cursor()
-        # 160: intelligence.processed_documents
+
+        # --- 133: event extraction v5 columns ---
+        for col in ("is_ongoing", "date_precision", "source_count"):
+            if check_column(cur, "public", "chronological_events", col):
+                ok.append(f"133: public.chronological_events.{col}")
+            else:
+                missing.append(f"133: public.chronological_events.{col}")
+
+        # --- 160 ---
         if check_table(cur, "intelligence", "processed_documents"):
             ok.append("160: intelligence.processed_documents")
         else:
             missing.append("160: intelligence.processed_documents")
 
-        # 161: automation_run_history (public)
+        # --- 161 ---
         if check_table(cur, "public", "automation_run_history"):
             ok.append("161: public.automation_run_history")
         else:
             missing.append("161: public.automation_run_history")
 
-        # 164: articles.quality_tier
+        # --- 164–167 (domain samples) ---
         if check_column(cur, "politics", "articles", "quality_tier"):
             ok.append("164: politics.articles.quality_tier")
         else:
             missing.append("164: politics.articles.quality_tier")
 
-        # 165: storylines.min_quality_tier
         if check_column(cur, "politics", "storylines", "min_quality_tier"):
             ok.append("165: politics.storylines.min_quality_tier")
         else:
             missing.append("165: politics.storylines.min_quality_tier")
 
-        # 166: article_topic_assignments.assignment_context
         if check_column(cur, "politics", "article_topic_assignments", "assignment_context"):
             ok.append("166: politics.article_topic_assignments.assignment_context")
         else:
             missing.append("166: politics.article_topic_assignments.assignment_context")
 
-        # 167: enrichment_attempts, enrichment_status, partial index (all 3 domains)
         for schema in ("politics", "finance", "science_tech"):
             if check_column(cur, schema, "articles", "enrichment_attempts") and check_column(
                 cur, schema, "articles", "enrichment_status"
@@ -115,12 +137,78 @@ def main():
         else:
             missing.append("167: idx_politics_articles_enrichment_backlog")
 
+        # --- 168 ---
+        if check_table(cur, "public", "automation_state"):
+            ok.append("168: public.automation_state")
+        else:
+            missing.append("168: public.automation_state")
+
+        # --- 169 ---
+        if check_table(cur, "intelligence", "storyline_rag_context"):
+            ok.append("169: intelligence.storyline_rag_context")
+        else:
+            missing.append("169: intelligence.storyline_rag_context")
+
+        # --- 170 ---
+        if check_table(cur, "intelligence", "wikipedia_knowledge"):
+            ok.append("170: intelligence.wikipedia_knowledge")
+        else:
+            missing.append("170: intelligence.wikipedia_knowledge")
+        if check_column(cur, "politics", "entity_canonical", "description"):
+            ok.append("170: politics.entity_canonical.description")
+        else:
+            missing.append("170: politics.entity_canonical.description")
+
+        # --- 171 ---
+        if check_column(cur, "intelligence", "tracked_events", "storyline_id"):
+            ok.append("171: intelligence.tracked_events.storyline_id")
+        else:
+            missing.append("171: intelligence.tracked_events.storyline_id")
+
+        # --- 172 ---
+        if check_table(cur, "public", "automation_run_history_daily"):
+            ok.append("172: public.automation_run_history_daily")
+        else:
+            missing.append("172: public.automation_run_history_daily")
+        if check_table(cur, "public", "log_archive_daily_rollup"):
+            ok.append("172: public.log_archive_daily_rollup")
+        else:
+            missing.append("172: public.log_archive_daily_rollup")
+
+        # --- 176 ---
+        if check_table(cur, "public", "applied_migrations"):
+            ok.append("176: public.applied_migrations")
+        else:
+            missing.append("176: public.applied_migrations")
+
+        # --- 177 (domain timeline + article_entities; sample politics) ---
+        if check_column(cur, "politics", "articles", "timeline_processed"):
+            ok.append("177: politics.articles.timeline_processed")
+        else:
+            missing.append("177: politics.articles.timeline_processed")
+        if check_table(cur, "politics", "article_entities"):
+            ok.append("177: politics.article_entities")
+        else:
+            missing.append("177: politics.article_entities")
+
+        # --- 178 ---
+        if check_column(cur, "politics", "articles", "timeline_events_generated"):
+            ok.append("178: politics.articles.timeline_events_generated")
+        else:
+            missing.append("178: politics.articles.timeline_events_generated")
+
+        # --- 179 (story_entity_index per domain; sample politics) ---
+        if check_table(cur, "politics", "story_entity_index"):
+            ok.append("179: politics.story_entity_index")
+        else:
+            missing.append("179: politics.story_entity_index")
+
         cur.close()
     finally:
         conn.close()
 
     print("=" * 60)
-    print("Migration verification (160–167)")
+    print("Migration verification (133, 160–172, 176, 177, 178, 179)")
     print("=" * 60)
     for s in ok:
         print(f"  OK   {s}")
@@ -128,9 +216,9 @@ def main():
         print(f"  MISS {s}")
     print("=" * 60)
     if missing:
-        print("Apply missing migrations, then run this script again.")
+        print("Apply missing migrations under api/database/migrations/, then run this script again.")
         sys.exit(1)
-    print("All checked migrations are present. Database consistent.")
+    print("All checked migrations are present.")
     return 0
 
 

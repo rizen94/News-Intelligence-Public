@@ -6,6 +6,7 @@ Uses in-memory cache with TTL (Time To Live)
 import time
 import hashlib
 import json
+import inspect
 from typing import Any, Optional, Callable
 from functools import wraps
 import logging
@@ -49,9 +50,14 @@ def cached_response(ttl: int = 60, max_size: int = 1000):
     def decorator(func: Callable):
         @wraps(func)
         async def wrapper(*args, **kwargs):
+            async def _call_underlying():
+                if inspect.iscoroutinefunction(func):
+                    return await func(*args, **kwargs)
+                return func(*args, **kwargs)
+
             # Skip caching if lock not available
             if _cache_lock is None:
-                return await func(*args, **kwargs)
+                return await _call_underlying()
             
             # Generate cache key
             cache_key = f"{func.__name__}:{_get_cache_key(*args, **kwargs)}"
@@ -69,8 +75,8 @@ def cached_response(ttl: int = 60, max_size: int = 1000):
                         del _cache[cache_key]
                         logger.debug(f"Cache EXPIRED: {func.__name__}")
             
-            # Cache miss - call function
-            result = await func(*args, **kwargs)
+            # Cache miss - call function (sync or async)
+            result = await _call_underlying()
             
             # Store in cache
             with _cache_lock:

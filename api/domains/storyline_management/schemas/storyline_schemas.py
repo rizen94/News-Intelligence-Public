@@ -101,8 +101,20 @@ class StorylineResponse(BaseModel):
         from_attributes = True
 
 
+class StorylineEntitySummary(BaseModel):
+    """Entity attached to a storyline (from article_entities + entity_canonical)"""
+    canonical_entity_id: int
+    name: str
+    type: str
+    description: Optional[str] = None
+    mention_count: int = 0
+    has_profile: bool = False
+    has_dossier: bool = False
+    profile_id: Optional[int] = None
+
+
 class StorylineDetailResponse(StorylineResponse):
-    """Detailed storyline response with articles"""
+    """Detailed storyline response with articles and entities"""
     articles: List[ArticleSummary] = Field(default_factory=list)
     background_information: Optional[Dict[str, Any]] = None
     context_last_updated: Optional[datetime] = None
@@ -111,6 +123,8 @@ class StorylineDetailResponse(StorylineResponse):
     document_version: Optional[int] = None
     document_status: Optional[str] = None
     last_refinement: Optional[datetime] = None
+    key_entities: Optional[Dict[str, Any]] = None  # legacy column from storylines.key_entities
+    entities: List[StorylineEntitySummary] = Field(default_factory=list)
 
 
 class StorylineListItem(BaseModel):
@@ -123,6 +137,7 @@ class StorylineListItem(BaseModel):
     status: str
     created_at: datetime
     updated_at: datetime
+    top_entities: List[Dict[str, Any]] = Field(default_factory=list)  # [{name, type, description_short}]
 
 
 class PaginationInfo(BaseModel):

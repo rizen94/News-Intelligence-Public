@@ -5,7 +5,8 @@ Detects emerging storylines and predicts story developments
 """
 
 import logging
-from typing import List, Dict, Any, Optional
+import os
+from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime, timedelta, timezone
 from collections import Counter, defaultdict
 import json
@@ -31,10 +32,13 @@ class ProactiveDetectionService(DomainAwareService):
         super().__init__(domain)
         self.min_article_count = 3  # Minimum articles to consider emerging
         self.min_confidence = 0.6   # Minimum confidence to report
-    
+        # Promote to domain storylines when cluster is strong enough (balances domains vs test-only storylines)
+        self.promote_min_articles = int(os.getenv("PROACTIVE_PROMOTE_MIN_ARTICLES", "4"))
+        self.promote_min_confidence = float(os.getenv("PROACTIVE_PROMOTE_MIN_CONFIDENCE", "0.55"))
+
     async def detect_emerging_storylines(
         self,
-        hours: int = 24,
+        hours: int = 72,
         min_articles: int = 3
     ) -> Dict[str, Any]:
         """
@@ -51,12 +55,9 @@ class ProactiveDetectionService(DomainAwareService):
             conn = self.get_db_connection()
             try:
                 with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                    # Get recent articles not in any storyline
-                    # Ensure timezone-aware datetime for comparison
-                    from datetime import timezone
                     cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
-                    
-                    cur.execute(f"""
+                    cur.execute(
+                        f"""
                         SELECT a.id, a.title, a.content, a.summary, a.published_at,
                                a.source_domain, a.quality_score
                         FROM {self.schema}.articles a
@@ -64,51 +65,46 @@ class ProactiveDetectionService(DomainAwareService):
                         WHERE a.published_at >= %s
                           AND sa.article_id IS NULL
                         ORDER BY a.published_at DESC
-                        LIMIT 500
-                    """, (cutoff_time,))
-                    
+                        LIMIT 1000
+                        """,
+                        (cutoff_time,),
+                    )
                     articles = cur.fetchall()
-                    
-                    if len(articles) < min_articles:
-                        return {
-                            "success": True,
-                            "data": {
-                                "emerging_storylines": [],
-                                "articles_analyzed": len(articles),
-                                "message": f"Not enough articles (need {min_articles}, found {len(articles)})"
-                            }
-                        }
-                    
-                    # Cluster articles by similarity
-                    clusters = await self._cluster_articles_by_similarity(articles)
-                    
-                    # Filter clusters by minimum size
-                    valid_clusters = [
-                        cluster for cluster in clusters 
-                        if len(cluster['articles']) >= min_articles
-                    ]
-                    
-                    # Create emerging storyline records
-                    emerging_storylines = []
-                    for cluster in valid_clusters:
-                        emerging = await self._create_emerging_storyline(cluster)
-                        if emerging and emerging['confidence_score'] >= self.min_confidence:
-                            emerging_storylines.append(emerging)
-                    
-                    # Store emerging storylines
-                    stored_count = await self._store_emerging_storylines(conn, emerging_storylines)
-                    
+
+                if len(articles) < min_articles:
                     return {
                         "success": True,
                         "data": {
-                            "emerging_storylines": emerging_storylines,
+                            "emerging_storylines": [],
                             "articles_analyzed": len(articles),
-                            "clusters_found": len(clusters),
-                            "valid_clusters": len(valid_clusters),
-                            "stored_count": stored_count
-                        }
+                            "message": f"Not enough articles (need {min_articles}, found {len(articles)})",
+                        },
                     }
-                    
+
+                clusters = await self._cluster_articles_by_similarity(articles)
+                valid_clusters = [
+                    cluster for cluster in clusters if len(cluster["articles"]) >= min_articles
+                ]
+                emerging_storylines: List[Dict[str, Any]] = []
+                for cluster in valid_clusters:
+                    emerging = await self._create_emerging_storyline(cluster)
+                    if emerging and emerging["confidence_score"] >= self.min_confidence:
+                        emerging_storylines.append(emerging)
+
+                stored_count, promoted_count = await self._store_emerging_storylines(conn, emerging_storylines)
+
+                return {
+                    "success": True,
+                    "data": {
+                        "emerging_storylines": emerging_storylines,
+                        "articles_analyzed": len(articles),
+                        "clusters_found": len(clusters),
+                        "valid_clusters": len(valid_clusters),
+                        "stored_count": stored_count,
+                        "promoted_to_domain_storylines": promoted_count,
+                    },
+                }
+
             finally:
                 conn.close()
                 
@@ -234,6 +230,7 @@ class ProactiveDetectionService(DomainAwareService):
             hours_ago = 0
         trend_score = max(0.0, 100.0 - (hours_ago * 2))  # Decay over time
         
+        article_ids = [int(a["id"]) for a in articles if a.get("id") is not None]
         return {
             "title": title,
             "description": f"Emerging storyline detected from {article_count} articles",
@@ -243,55 +240,226 @@ class ProactiveDetectionService(DomainAwareService):
             "key_entities": list(keyword_counts.keys())[:10],
             "key_keywords": top_keywords,
             "source_diversity": source_diversity,
-            "first_detected_at": datetime.now(timezone.utc).isoformat()
+            "first_detected_at": datetime.now(timezone.utc).isoformat(),
+            "article_ids": article_ids,
         }
-    
+
+    def _should_promote_to_storyline(self, emerging: Dict[str, Any]) -> bool:
+        """Larger / higher-confidence clusters become domain storylines (narrative shell for other pipelines)."""
+        n = len(emerging.get("article_ids") or [])
+        conf = float(emerging.get("confidence_score") or 0)
+        if n >= max(self.promote_min_articles, 5):
+            return True
+        if n >= self.promote_min_articles and conf >= self.promote_min_confidence:
+            return True
+        return False
+
+    async def _promote_to_domain_storyline(
+        self,
+        cur,
+        emerging: Dict[str, Any],
+        emerging_row_id: int,
+    ) -> bool:
+        """
+        Insert domain storyline + storyline_articles; enable automation; seed story_entity_index from article_entities.
+        """
+        if not self._should_promote_to_storyline(emerging):
+            return False
+
+        article_ids = [int(x) for x in (emerging.get("article_ids") or [])]
+        if len(article_ids) < self.min_article_count:
+            return False
+
+        # Re-check unlinked (avoid duplicate storylines if another process linked articles)
+        cur.execute(
+            f"""
+            SELECT a.id FROM {self.schema}.articles a
+            WHERE a.id = ANY(%s)
+              AND NOT EXISTS (
+                  SELECT 1 FROM {self.schema}.storyline_articles sa WHERE sa.article_id = a.id
+              )
+            """,
+            (article_ids,),
+        )
+        unlinked = [r[0] for r in cur.fetchall()]
+        if len(unlinked) < self.promote_min_articles:
+            return False
+
+        title = (emerging.get("title") or "Emerging story")[:300]
+        cur.execute(
+            f"""
+            SELECT 1 FROM {self.schema}.storylines
+            WHERE lower(trim(title)) = lower(trim(%s))
+              AND created_at > NOW() - INTERVAL '14 days'
+            LIMIT 1
+            """,
+            (title,),
+        )
+        if cur.fetchone():
+            logger.debug("Proactive promote skipped (recent storyline with same title): %s", title)
+            return False
+
+        desc = emerging.get("description") or ""
+        key_kw = emerging.get("key_keywords") or []
+        key_ent = emerging.get("key_entities") or []
+        settings_json = json.dumps({"min_quality_tier": 2, "source": "proactive_detection_promote"})
+
+        try:
+            cur.execute(
+                f"""
+                INSERT INTO {self.schema}.storylines (
+                    title, description, status, processing_status,
+                    total_articles, article_count,
+                    automation_enabled, automation_mode, automation_frequency_hours,
+                    automation_settings, search_keywords, search_entities,
+                    key_entities, created_at, updated_at
+                )
+                VALUES (
+                    %s, %s, 'active', 'pending',
+                    %s, %s,
+                    TRUE, 'suggest_only', 6,
+                    %s::jsonb, %s, %s,
+                    %s::jsonb, NOW(), NOW()
+                )
+                RETURNING id
+                """,
+                (
+                    title,
+                    desc[:5000] if desc else None,
+                    len(unlinked),
+                    len(unlinked),
+                    settings_json,
+                    key_kw[:40] if key_kw else [],
+                    key_ent[:40] if key_ent else [],
+                    json.dumps({"keywords": key_kw[:20], "entities": key_ent[:20]}),
+                ),
+            )
+        except Exception as e:
+            logger.warning("Proactive promote: rich storylines INSERT failed (%s), trying minimal", e)
+            cur.execute(
+                f"""
+                INSERT INTO {self.schema}.storylines (title, description, status, created_at, updated_at)
+                VALUES (%s, %s, 'active', NOW(), NOW())
+                RETURNING id
+                """,
+                (title, desc[:5000] if desc else None),
+            )
+
+        row = cur.fetchone()
+        if not row:
+            return False
+        storyline_id = int(row[0])
+
+        rel = min(0.95, 0.55 + 0.05 * len(unlinked))
+        for aid in unlinked:
+            try:
+                cur.execute(
+                    f"""
+                    INSERT INTO {self.schema}.storyline_articles (storyline_id, article_id, relevance_score)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT DO NOTHING
+                    """,
+                    (storyline_id, aid, rel),
+                )
+            except Exception as sa_err:
+                logger.debug("storyline_articles insert %s/%s: %s", storyline_id, aid, sa_err)
+
+        # Seed story_entity_index for story_continuation / automation (best-effort)
+        try:
+            from services.storyline_automation_service import StorylineAutomationService
+
+            svc = StorylineAutomationService(domain=self.domain)
+            for aid in unlinked:
+                try:
+                    svc._merge_article_entities_to_storyline(cur, storyline_id, aid)
+                except Exception as merge_err:
+                    logger.debug("merge_article_entities storyline %s article %s: %s", storyline_id, aid, merge_err)
+        except Exception as imp_err:
+            logger.debug("StorylineAutomationService unavailable for entity merge: %s", imp_err)
+
+        try:
+            cur.execute(
+                """
+                UPDATE public.emerging_storylines
+                SET status = 'confirmed',
+                    merged_into_storyline_id = %s,
+                    last_updated_at = NOW(),
+                    metadata = COALESCE(metadata, '{}'::jsonb) || %s::jsonb
+                WHERE id = %s
+                """,
+                (
+                    storyline_id,
+                    json.dumps({"domain_schema": self.schema, "storyline_id": storyline_id}),
+                    emerging_row_id,
+                ),
+            )
+        except Exception as up_err:
+            logger.warning("Could not update emerging_storylines row %s: %s", emerging_row_id, up_err)
+
+        logger.info(
+            "Proactive detection promoted emerging id=%s → %s.storylines id=%s (%s articles)",
+            emerging_row_id,
+            self.schema,
+            storyline_id,
+            len(unlinked),
+        )
+        return True
+
     async def _store_emerging_storylines(
         self,
         conn,
         emerging_storylines: List[Dict]
-    ) -> int:
-        """Store emerging storylines in database"""
+    ) -> Tuple[int, int]:
+        """Store emerging rows; promote strong clusters to domain storylines."""
         stored_count = 0
-        
+        promoted_count = 0
+
         try:
             with conn.cursor() as cur:
                 for emerging in emerging_storylines:
                     try:
-                        cur.execute("""
+                        cur.execute(
+                            """
                             INSERT INTO public.emerging_storylines (
                                 domain_schema, title, description, confidence_score,
                                 article_count, trend_score, key_entities, key_keywords,
                                 source_diversity, first_detected_at, last_updated_at, status
                             ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                            ON CONFLICT DO NOTHING
-                        """, (
-                            self.schema,
-                            emerging['title'],
-                            emerging['description'],
-                            emerging['confidence_score'],
-                            emerging['article_count'],
-                            emerging['trend_score'],
-                            emerging['key_entities'],
-                            emerging['key_keywords'],
-                            emerging['source_diversity'],
-                            datetime.now(timezone.utc),
-                            datetime.now(timezone.utc),
-                            'emerging'
-                        ))
-                        
-                        if cur.rowcount > 0:
-                            stored_count += 1
+                            RETURNING id
+                            """,
+                            (
+                                self.schema,
+                                emerging["title"],
+                                emerging["description"],
+                                emerging["confidence_score"],
+                                emerging["article_count"],
+                                emerging["trend_score"],
+                                emerging["key_entities"],
+                                emerging["key_keywords"],
+                                emerging["source_diversity"],
+                                datetime.now(timezone.utc),
+                                datetime.now(timezone.utc),
+                                "emerging",
+                            ),
+                        )
+                        rid = cur.fetchone()
+                        if not rid:
+                            continue
+                        emerging_id = int(rid[0])
+                        stored_count += 1
+
+                        if await self._promote_to_domain_storyline(cur, emerging, emerging_id):
+                            promoted_count += 1
                     except Exception as e:
-                        logger.warning(f"Error storing emerging storyline: {e}")
+                        logger.warning("Error storing emerging storyline: %s", e)
                         continue
-                
+
                 conn.commit()
         except Exception as e:
-            logger.error(f"Error storing emerging storylines: {e}")
+            logger.error("Error storing emerging storylines: %s", e)
             conn.rollback()
-        
-        return stored_count
+
+        return stored_count, promoted_count
     
     async def identify_story_correlations(
         self,

@@ -10,6 +10,20 @@ import logging
 from pydantic import BaseModel
 
 from shared.database.connection import get_db_connection
+from shared.services.domain_aware_service import DOMAIN_DATA_SCHEMAS
+
+
+def _find_rss_feed_schema(conn, feed_id: int) -> Optional[str]:
+    """Return domain schema name containing this rss_feeds.id, or None."""
+    with conn.cursor() as cur:
+        for sch in DOMAIN_DATA_SCHEMAS:
+            cur.execute(
+                f"SELECT 1 FROM {sch}.rss_feeds WHERE id = %s LIMIT 1",
+                (feed_id,),
+            )
+            if cur.fetchone():
+                return sch
+    return None
 from scripts.rss_duplicate_detector import RSSDuplicateDetector
 
 logger = logging.getLogger(__name__)
@@ -121,24 +135,43 @@ async def merge_duplicates(request: DuplicateMergeRequest):
             raise HTTPException(status_code=500, detail="Database connection failed")
         
         try:
-            # Create a duplicate structure for the merge function
+            conn = detector.conn
+            sch = _find_rss_feed_schema(conn, request.keep_feed_id)
+            if not sch:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"RSS feed id {request.keep_feed_id} not found in any domain schema",
+                )
+            for rid in request.remove_feed_ids:
+                rs = _find_rss_feed_schema(conn, rid)
+                if rs != sch:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            f"remove_feed_ids must belong to the same schema as keep_feed_id "
+                            f"({sch}); feed {rid} is in {rs!r}"
+                        ),
+                    )
+
             duplicate_info = {
                 'ids': [request.keep_feed_id] + request.remove_feed_ids,
                 'type': 'exact_url',
-                'url': '',  # Will be filled from database
-                'names': [],  # Will be filled from database
-                'active_status': []  # Will be filled from database
+                'url': '',
+                'names': [],
+                'active_status': [],
+                'domain_schema': sch,
             }
-            
-            # Get feed details
-            conn = detector.conn
+
             with conn.cursor() as cur:
-                cur.execute("""
+                cur.execute(
+                    f"""
                     SELECT feed_url, feed_name, is_active
-                    FROM rss_feeds 
+                    FROM {sch}.rss_feeds
                     WHERE id = %s
-                """, (request.keep_feed_id,))
-                
+                    """,
+                    (request.keep_feed_id,),
+                )
+
                 result = cur.fetchone()
                 if result:
                     duplicate_info['url'] = result[0]
@@ -236,32 +269,32 @@ async def get_duplicate_stats():
         
         try:
             with conn.cursor() as cur:
-                # Get total feeds
-                cur.execute("SELECT COUNT(*) FROM rss_feeds")
-                total_feeds = cur.fetchone()[0]
-                
-                # Get active feeds
-                cur.execute("SELECT COUNT(*) FROM rss_feeds WHERE is_active = true")
-                active_feeds = cur.fetchone()[0]
-                
-                # Get feeds with articles
-                cur.execute("""
-                    SELECT COUNT(DISTINCT feed_id) 
-                    FROM articles 
-                    WHERE feed_id IS NOT NULL
-                """)
-                feeds_with_articles = cur.fetchone()[0]
-                
-                # Get duplicate count
-                cur.execute("""
-                    SELECT COUNT(*) FROM (
-                        SELECT feed_url, COUNT(*) as count
-                        FROM rss_feeds 
-                        GROUP BY feed_url 
-                        HAVING COUNT(*) > 1
-                    ) duplicates
-                """)
-                duplicate_count = cur.fetchone()[0]
+                total_feeds = 0
+                active_feeds = 0
+                feeds_with_articles = 0
+                duplicate_count = 0
+                for sch in DOMAIN_DATA_SCHEMAS:
+                    cur.execute(f"SELECT COUNT(*) FROM {sch}.rss_feeds")
+                    total_feeds += cur.fetchone()[0] or 0
+                    cur.execute(
+                        f"SELECT COUNT(*) FROM {sch}.rss_feeds WHERE is_active = true"
+                    )
+                    active_feeds += cur.fetchone()[0] or 0
+                    cur.execute(f"""
+                        SELECT COUNT(DISTINCT rss_feed_id)
+                        FROM {sch}.articles
+                        WHERE rss_feed_id IS NOT NULL
+                    """)
+                    feeds_with_articles += cur.fetchone()[0] or 0
+                    cur.execute(f"""
+                        SELECT COUNT(*) FROM (
+                            SELECT feed_url, COUNT(*) AS count
+                            FROM {sch}.rss_feeds
+                            GROUP BY feed_url
+                            HAVING COUNT(*) > 1
+                        ) duplicates
+                    """)
+                    duplicate_count += cur.fetchone()[0] or 0
                 
                 return {
                     "success": True,

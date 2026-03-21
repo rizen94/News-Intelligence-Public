@@ -10,9 +10,6 @@ from .storyline_tracker import StorylineTracker
 # Use: from modules.deduplication.advanced_deduplication_service import AdvancedDeduplicationService
 from .daily_briefing_service import DailyBriefingService
 from .background_processor import BackgroundMLProcessor
-from .ml_rag_service import MLRAGService
-# Backward compatibility alias
-from .ml_rag_service import MLRAGService as RAGEnhancedService
 
 __all__ = [
     'MLSummarizationService',
@@ -21,6 +18,4 @@ __all__ = [
     'StorylineTracker',
     'DailyBriefingService',
     'BackgroundMLProcessor',
-    'MLRAGService',
-    'RAGEnhancedService'  # Backward compatibility alias
 ]

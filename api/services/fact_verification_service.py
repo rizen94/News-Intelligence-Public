@@ -481,7 +481,7 @@ def assess_completeness(
                 cur.execute(
                     f"""
                     SELECT a.id, a.title, a.source_domain, a.published_at,
-                           a.sentiment_score, a.ml_data,
+                           a.sentiment_score, COALESCE(a.metadata, '{{}}'::jsonb),
                            LEFT(a.content, 500)
                     FROM {schema}.storyline_articles sa
                     JOIN {schema}.articles a ON a.id = sa.article_id
@@ -494,7 +494,7 @@ def assess_completeness(
                 cur.execute(
                     f"""
                     SELECT a.id, a.title, a.source_domain, a.published_at,
-                           a.sentiment_score, a.ml_data,
+                           a.sentiment_score, COALESCE(a.metadata, '{{}}'::jsonb),
                            LEFT(a.content, 500)
                     FROM {schema}.articles a
                     WHERE a.published_at >= %s

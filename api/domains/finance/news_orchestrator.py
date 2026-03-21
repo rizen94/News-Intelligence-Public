@@ -15,11 +15,9 @@ try:
 except Exception:
     logger = logging.getLogger(__name__)
 
-# Terms that must match as whole words to avoid false positives (e.g. "gold" vs "Goldman Sachs")
-WORD_BOUNDARY_TERMS: frozenset[str] = frozenset({"gold"})
-
-# Topic -> search terms (for scoring relevance)
-TOPIC_KEYWORDS: dict[str, list[str]] = {
+# Fallback when topic is not in commodity registry (edgar, fred, all)
+WORD_BOUNDARY_TERMS_FALLBACK: frozenset[str] = frozenset({"gold"})
+TOPIC_KEYWORDS_FALLBACK: dict[str, list[str]] = {
     "gold": ["gold", "bullion", "precious metal", "yellow metal", "ounce", "oz"],
     "silver": ["silver", "precious metal", "industrial metal", "ounce", "oz"],
     "platinum": ["platinum", "pgm", "palladium", "precious metal", "catalyst", "automotive"],
@@ -29,11 +27,41 @@ TOPIC_KEYWORDS: dict[str, list[str]] = {
 }
 
 
+def _get_topic_keywords(topic: str) -> list[str]:
+    """Topic keywords from registry if commodity, else fallback dict."""
+    cid = (topic or "").lower()
+    try:
+        from domains.finance.commodity_registry import get_topic_keywords as reg_keywords
+        from domains.finance.commodity_registry import get_commodity_ids
+        if cid in [x.lower() for x in get_commodity_ids()]:
+            kw = reg_keywords(cid)
+            if kw:
+                return kw
+    except Exception:
+        pass
+    return TOPIC_KEYWORDS_FALLBACK.get(cid, []) if cid else []
+
+
+def _get_word_boundary_terms(topic: str) -> frozenset[str]:
+    """Word-boundary terms from registry if commodity, else fallback."""
+    try:
+        from domains.finance.commodity_registry import get_word_boundary_terms as reg_boundary
+        from domains.finance.commodity_registry import get_commodity_ids
+        cid = (topic or "").lower()
+        if cid in [x.lower() for x in get_commodity_ids()]:
+            terms = reg_boundary(cid)
+            if terms:
+                return frozenset(terms)
+    except Exception:
+        pass
+    return WORD_BOUNDARY_TERMS_FALLBACK
+
+
 def _terms_for_topic_and_query(topic: str, query: str | None) -> set[str]:
     """Build set of lowercase terms for scoring: topic keywords + words from query."""
     terms = set()
     topic_lower = (topic or "").lower()
-    for t in TOPIC_KEYWORDS.get(topic_lower, []):
+    for t in _get_topic_keywords(topic_lower):
         terms.add(t)
     if topic_lower and topic_lower not in terms:
         terms.add(topic_lower)
@@ -45,11 +73,12 @@ def _terms_for_topic_and_query(topic: str, query: str | None) -> set[str]:
 
 
 def _term_matches(text: str, term: str, topic: str | None = None) -> bool:
-    """True if term appears in text. Terms in WORD_BOUNDARY_TERMS match as whole word only (e.g. gold vs Goldman Sachs)."""
+    """True if term appears in text. Terms in word_boundary set match as whole word only (e.g. gold vs Goldman Sachs)."""
     if not text or not term:
         return False
     lower = text.lower()
-    if topic and term in WORD_BOUNDARY_TERMS:
+    boundary = _get_word_boundary_terms(topic or "")
+    if topic and term in boundary:
         return bool(re.search(r"\b" + re.escape(term) + r"\b", lower))
     if " " in term:
         return term in lower
@@ -63,18 +92,57 @@ def _score_text(text: str, terms: set[str], topic: str | None = None) -> float:
     return sum(1 for t in terms if _term_matches(text, t, topic))
 
 
+def _matches_non_financial_exclude(text: str | None, commodity: str) -> bool:
+    """True if text matches any non_financial_exclude phrase/keyword for this commodity (registry only)."""
+    if not text or not commodity:
+        return False
+    try:
+        from domains.finance.commodity_registry import get_non_financial_exclude, get_commodity_ids
+        cid = (commodity or "").lower()
+        if cid not in [x.lower() for x in get_commodity_ids()]:
+            return False
+        exclude_list = get_non_financial_exclude(cid)
+        if not exclude_list:
+            return False
+        lower = text.lower()
+        for phrase in exclude_list:
+            if phrase and phrase.lower() in lower:
+                return True
+    except Exception:
+        pass
+    return False
+
+
+def _financial_score(text: str | None, commodity: str) -> float:
+    """Count of financial_signals present in text (registry commodities only)."""
+    if not text or not commodity:
+        return 0.0
+    try:
+        from domains.finance.commodity_registry import get_financial_signals, get_commodity_ids
+        cid = (commodity or "").lower()
+        if cid not in [x.lower() for x in get_commodity_ids()]:
+            return 0.0
+        signals = get_financial_signals(cid)
+        if not signals:
+            return 0.0
+        lower = text.lower()
+        return sum(1 for s in signals if s and s.lower() in lower)
+    except Exception:
+        return 0.0
+
+
 def is_relevant_to_commodity(text: str | None, commodity: str) -> bool:
     """
     Return True if text (e.g. event_name) is relevant to the given commodity.
-    Uses TOPIC_KEYWORDS for gold/silver/platinum; "gold" matches as whole word only
-    so "Goldman Sachs" is not treated as gold-the-metal.
+    Uses registry topic_keywords and word_boundary when commodity is in registry;
+    otherwise fallback dict. "gold" matches as whole word so "Goldman Sachs" is not gold-the-metal.
     """
     if not text or not commodity:
         return False
-    topic_lower = commodity.lower()
-    if topic_lower not in TOPIC_KEYWORDS:
+    topic_lower = (commodity or "").lower()
+    terms = set(_get_topic_keywords(topic_lower))
+    if not terms:
         return True
-    terms = set(TOPIC_KEYWORDS[topic_lower])
     return _score_text(text, terms, topic=topic_lower) >= 1
 
 
@@ -93,6 +161,12 @@ def get_shortlist(
     """
     terms = _terms_for_topic_and_query(topic, query)
     shortlist: list[tuple[float, dict[str, Any]]] = []
+    topic_lower = (topic or "").lower()
+    try:
+        from domains.finance.commodity_registry import get_commodity_ids
+        is_registry_commodity = topic_lower in [x.lower() for x in get_commodity_ids()]
+    except Exception:
+        is_registry_commodity = False
 
     # 1) Finance-domain articles (RSS-derived)
     try:
@@ -110,9 +184,16 @@ def get_shortlist(
             title = (a.get("title") or "")[:500]
             content = a.get("content") or a.get("summary") or ""
             snippet = (content or title)[:400]
+            combined = f"{title} {snippet}"
+            if is_registry_commodity and _matches_non_financial_exclude(combined, topic_lower):
+                continue
+            topic_score = _score_text(title, terms, topic=topic) * 2.0 + _score_text(snippet, terms, topic=topic)
+            financial = _financial_score(combined, topic_lower)
+            if is_registry_commodity and topic_score >= 1 and financial < 1:
+                continue
+            score = topic_score * 2.0 + financial
             pub = a.get("published_at") or a.get("published_date")
             published_at = pub.isoformat() if hasattr(pub, "isoformat") else str(pub) if pub else ""
-            score = _score_text(title, terms, topic=topic) * 2.0 + _score_text(snippet, terms, topic=topic)
             shortlist.append((score, {
                 "id": a.get("id"),
                 "title": title,
@@ -148,7 +229,14 @@ def get_shortlist(
                     ctx_id, title, content, created_at = row
                     title = (title or "")[:500]
                     snippet = (content or "")[:400]
-                    score = _score_text(title, terms, topic=topic) * 2.0 + _score_text(snippet, terms, topic=topic)
+                    combined = f"{title} {snippet}"
+                    if is_registry_commodity and _matches_non_financial_exclude(combined, topic_lower):
+                        continue
+                    topic_score = _score_text(title, terms, topic=topic) * 2.0 + _score_text(snippet, terms, topic=topic)
+                    financial = _financial_score(combined, topic_lower)
+                    if is_registry_commodity and topic_score >= 1 and financial < 1:
+                        continue
+                    score = topic_score * 2.0 + financial
                     shortlist.append((score, {
                         "id": f"ctx-{ctx_id}",
                         "title": title,
@@ -167,6 +255,71 @@ def get_shortlist(
         logger.info("News orchestrator shortlist: topic=%s terms=%d items=%d top_score=%.0f",
                     topic, len(terms), len(out), shortlist[0][0] if shortlist else 0)
     return out
+
+
+def get_supply_chain_items(
+    commodity: str,
+    *,
+    hours: int = 168,
+    max_items: int = 15,
+) -> list[dict[str, Any]]:
+    """
+    Fetch finance-domain contexts (EDGAR, mining, supply-chain) relevant to the commodity.
+    Same relevance rules as get_shortlist: topic + financial signals, exclude non-financial.
+    Returns list of { id, title, snippet, url, source, published_at }.
+    """
+    topic_lower = (commodity or "").lower()
+    terms = _terms_for_topic_and_query(topic_lower, None)
+    try:
+        from domains.finance.commodity_registry import get_commodity_ids
+        is_registry_commodity = topic_lower in [x.lower() for x in get_commodity_ids()]
+    except Exception:
+        is_registry_commodity = False
+    shortlist: list[tuple[float, dict[str, Any]]] = []
+    try:
+        from shared.database.connection import get_db_connection
+        conn = get_db_connection()
+        if not conn:
+            return []
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, title, content, created_at
+                FROM intelligence.contexts
+                WHERE domain_key = 'finance'
+                  AND created_at >= NOW() - make_interval(hours => %s)
+                ORDER BY created_at DESC
+                LIMIT 100
+                """,
+                (max(hours, 24),),
+            )
+            rows = cur.fetchall()
+        conn.close()
+        for row in rows:
+            ctx_id, title, content, created_at = row
+            title = (title or "")[:500]
+            snippet = (content or "")[:400]
+            combined = f"{title} {snippet}"
+            if is_registry_commodity and _matches_non_financial_exclude(combined, topic_lower):
+                continue
+            topic_score = _score_text(title, terms, topic=topic_lower) * 2.0 + _score_text(snippet, terms, topic=topic_lower)
+            financial = _financial_score(combined, topic_lower)
+            if is_registry_commodity and topic_score >= 1 and financial < 1:
+                continue
+            score = topic_score * 2.0 + financial
+            shortlist.append((score, {
+                "id": f"ctx-{ctx_id}",
+                "title": title,
+                "snippet": snippet,
+                "url": "",
+                "source": "context",
+                "published_at": created_at.isoformat() if hasattr(created_at, "isoformat") else str(created_at) if created_at else "",
+            }))
+    except Exception as e:
+        logger.debug("Supply chain contexts fetch failed: %s", e)
+        return []
+    shortlist.sort(key=lambda x: -x[0])
+    return [item for _, item in shortlist[:max_items]]
 
 
 def shortlist_to_rss_snippets(shortlist: list[dict[str, Any]]) -> list[dict[str, Any]]:

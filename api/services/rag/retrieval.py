@@ -20,6 +20,21 @@ from .base import BaseRAGService
 logger = logging.getLogger(__name__)
 
 
+def _parse_json_column(val: Any, expected_type: type) -> Any:
+    """Parse a DB column that may be already dict/list (JSONB) or a JSON string. Avoids json.loads on non-str."""
+    if val is None:
+        return {} if expected_type is dict else []
+    if isinstance(val, expected_type):
+        return val
+    if isinstance(val, (str, bytes)):
+        try:
+            out = json.loads(val)
+            return out if isinstance(out, expected_type) else ({} if expected_type is dict else [])
+        except (json.JSONDecodeError, TypeError):
+            return {} if expected_type is dict else []
+    return {} if expected_type is dict else []
+
+
 class RAGRetrievalModule:
     """
     RAG Retrieval Module - Advanced retrieval techniques
@@ -74,10 +89,13 @@ class RAGRetrievalModule:
         use_hybrid: bool = True,
         expand_query: bool = True,
         rerank: bool = True,
-        filters: Dict[str, Any] = None
+        filters: Dict[str, Any] = None,
+        domain: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """
-        Retrieve relevant articles using enhanced RAG techniques
+        Retrieve relevant articles using enhanced RAG techniques.
+        v8: When domain is set, queries that domain's schema. When filters.full_history is True
+        (or date_from/date_to omitted), searches entire history (no time bound).
         
         Args:
             query: Search query
@@ -86,7 +104,8 @@ class RAGRetrievalModule:
             use_hybrid: Use hybrid search (keyword + semantic)
             expand_query: Expand query with related terms
             rerank: Re-rank results using multiple signals
-            filters: Additional filters (date range, quality, etc.)
+            filters: Additional filters (date_from, date_to, min_quality, exclude_article_ids, full_history)
+            domain: Domain key (politics, finance, science-tech) to search that schema; None = public
         
         Returns:
             List of relevant articles with relevance scores
@@ -94,8 +113,11 @@ class RAGRetrievalModule:
         try:
             if max_results is None:
                 max_results = self.config['max_results_final']
+            filters = filters or {}
+            if domain:
+                filters = {**filters, "domain": domain}
             
-            logger.info(f"Enhanced RAG retrieval for query: {query}")
+            logger.info(f"Enhanced RAG retrieval for query: {query} (domain={domain})")
             
             # Step 1: Query expansion
             if expand_query:
@@ -222,22 +244,35 @@ class RAGRetrievalModule:
                     conditions.append("quality_score >= %s")
                     params.append(filters['min_quality'])
                 
-                if filters.get('date_from'):
-                    conditions.append("published_at >= %s")
-                    params.append(filters['date_from'])
-                
-                if filters.get('date_to'):
-                    conditions.append("published_at <= %s")
-                    params.append(filters['date_to'])
+                # v8: full_history = search entire DB; otherwise apply date range when given
+                if not filters.get('full_history'):
+                    if filters.get('date_from'):
+                        conditions.append("published_at >= %s")
+                        params.append(filters['date_from'])
+                    if filters.get('date_to'):
+                        conditions.append("published_at <= %s")
+                        params.append(filters['date_to'])
                 
                 if filters.get('min_word_count'):
                     conditions.append("word_count >= %s")
                     params.append(filters['min_word_count'])
+                
+                if filters.get('exclude_article_ids'):
+                    excl = filters['exclude_article_ids']
+                    if excl:
+                        placeholders = ",".join(["%s"] * len(excl))
+                        conditions.append(f"id NOT IN ({placeholders})")
+                        params.extend(excl[:500])  # cap to avoid huge IN list
             
             # Quality threshold
             conditions.append("quality_score >= 0.3")
             
             where_clause = " AND ".join(conditions)
+            # v8: domain-aware table (schema.articles)
+            schema = None
+            if filters.get("domain"):
+                schema = str(filters["domain"]).replace("-", "_")
+            table = f"{schema}.articles" if schema else "articles"
             
             query_sql = f"""
                 SELECT 
@@ -247,7 +282,7 @@ class RAGRetrievalModule:
                     sentiment_label, sentiment_score,
                     entities, topics, keywords,
                     processing_status, created_at
-                FROM articles
+                FROM {table}
                 WHERE {where_clause}
                 ORDER BY 
                     quality_score DESC,
@@ -279,9 +314,9 @@ class RAGRetrievalModule:
                         'label': row['sentiment_label'],
                         'score': float(row['sentiment_score']) if row['sentiment_score'] else 0.0
                     },
-                    'entities': row['entities'] if isinstance(row['entities'], dict) else json.loads(row['entities']) if row['entities'] else {},
-                    'topics': row['topics'] if isinstance(row['topics'], list) else json.loads(row['topics']) if row['topics'] else [],
-                    'keywords': row['keywords'] if isinstance(row['keywords'], list) else json.loads(row['keywords']) if row['keywords'] else [],
+                    'entities': _parse_json_column(row['entities'], dict),
+                    'topics': _parse_json_column(row['topics'], list),
+                    'keywords': _parse_json_column(row['keywords'], list),
                     'relevance_score': 0.5,  # Default keyword match score
                     'retrieval_method': 'keyword'
                 })

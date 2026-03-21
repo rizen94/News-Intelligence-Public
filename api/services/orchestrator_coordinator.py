@@ -128,7 +128,9 @@ class OrchestratorCoordinator:
                                 self._executor,
                                 self._collect_rss_feeds_fn,
                             )
-                            success = True
+                            # Only treat RSS as "successful" if it actually adds new articles.
+                            # If dedup rejects everything (adds=0), we want adaptive backoff.
+                            success = (observations_count or 0) > 0
                             outcome = f"rss_collected_{observations_count}"
                         else:
                             # Finance (gold, silver, platinum) or other handlers from config

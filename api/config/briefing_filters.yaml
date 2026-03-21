@@ -30,7 +30,46 @@ low_priority_keywords:
   - "starting lineup"
   - "power rankings"
 
-# Optional: per-domain overrides (if you want finance to allow "box office" but politics to demote it).
-# domains:
-#   politics: { low_priority_keywords: [ ... ] }
-#   finance: { low_priority_keywords: [ ... ] }
+# Per-domain overrides: merge with the global lists above.
+# Each domain can add extra low_priority_keywords and exclude_keywords.
+# exclude_keywords cause content to be DROPPED (not just demoted) for that domain.
+domains:
+  politics:
+    low_priority_keywords:
+      - "entertainment"
+      - "movie review"
+      - "album release"
+    exclude_keywords: []
+
+  finance:
+    low_priority_keywords:
+      - "personal finance tips"
+      - "best credit card"
+      - "savings account"
+      - "mortgage rates for homebuyers"
+      - "celebrity net worth"
+    exclude_keywords: []
+
+  science-tech:
+    low_priority_keywords:
+      - "unboxing"
+      - "tech reviewer"
+      - "best laptop deals"
+    exclude_keywords:
+      - "tv prices"
+      - "television deals"
+      - "gaming console"
+      - "nintendo switch"
+      - "playstation"
+      - "xbox"
+      - "streaming service"
+      - "netflix"
+      - "disney plus"
+      - "spotify"
+      - "smart tv"
+      - "soundbar"
+      - "headphone review"
+      - "phone case"
+      - "screen protector"
+      - "black friday tech"
+      - "cyber monday"

@@ -154,6 +154,7 @@ class RAGContextBuilder:
     
     def _get_thread_info(self, thread_id: int) -> Optional[Dict[str, Any]]:
         """Get story thread information"""
+        conn = None
         try:
             conn = get_db_connection()
             cursor = conn.cursor()
@@ -167,7 +168,6 @@ class RAGContextBuilder:
             """, (thread_id,))
             
             row = cursor.fetchone()
-            conn.close()
             
             if row:
                 return {
@@ -186,6 +186,9 @@ class RAGContextBuilder:
         except Exception as e:
             self.logger.error(f"Error getting thread info: {e}")
             return None
+        finally:
+            if conn:
+                conn.close()
     
     def _build_historical_context(self, thread_info: Dict[str, Any], 
                                  max_articles: int) -> Dict[str, Any]:
@@ -345,6 +348,7 @@ class RAGContextBuilder:
     
     def _get_thread_keywords(self, thread_id: int) -> List[str]:
         """Get keywords for a story thread"""
+        conn = None
         try:
             conn = get_db_connection()
             cursor = conn.cursor()
@@ -357,17 +361,20 @@ class RAGContextBuilder:
             """, (thread_id,))
             
             keywords = [row[0] for row in cursor.fetchall()]
-            conn.close()
             
             return keywords
             
         except Exception as e:
             self.logger.error(f"Error getting thread keywords: {e}")
             return []
+        finally:
+            if conn:
+                conn.close()
     
     def _search_historical_articles(self, keywords: List[str], category: str,
                                    max_articles: int, before_date: datetime) -> List[Dict[str, Any]]:
         """Search for historical articles before a specific date"""
+        conn = None
         try:
             conn = get_db_connection()
             cursor = conn.cursor()
@@ -411,16 +418,19 @@ class RAGContextBuilder:
                     self.logger.warning(f"Error processing article row: {e}")
                     continue
             
-            conn.close()
             return articles
             
         except Exception as e:
             self.logger.error(f"Error searching historical articles: {e}")
             return []
+        finally:
+            if conn:
+                conn.close()
     
     def _search_related_articles(self, keywords: List[str], category: str,
                                 max_articles: int, exclude_thread_id: int) -> List[Dict[str, Any]]:
         """Search for related articles"""
+        conn = None
         try:
             conn = get_db_connection()
             cursor = conn.cursor()
@@ -461,16 +471,19 @@ class RAGContextBuilder:
                     'url': row[6]
                 })
             
-            conn.close()
             return articles
             
         except Exception as e:
             self.logger.error(f"Error searching related articles: {e}")
             return []
+        finally:
+            if conn:
+                conn.close()
     
     def _search_background_articles(self, keywords: List[str], category: str,
                                    max_articles: int) -> List[Dict[str, Any]]:
         """Search for background/educational articles"""
+        conn = None
         try:
             conn = get_db_connection()
             cursor = conn.cursor()
@@ -513,15 +526,18 @@ class RAGContextBuilder:
                     'url': row[6]
                 })
             
-            conn.close()
             return articles
             
         except Exception as e:
             self.logger.error(f"Error searching background articles: {e}")
             return []
+        finally:
+            if conn:
+                conn.close()
     
     def _search_relevant_articles(self, keywords: List[str], max_articles: int) -> List[Dict[str, Any]]:
         """Search for relevant articles based on keywords"""
+        conn = None
         try:
             conn = get_db_connection()
             cursor = conn.cursor()
@@ -556,15 +572,18 @@ class RAGContextBuilder:
                     'url': row[6]
                 })
             
-            conn.close()
             return articles
             
         except Exception as e:
             self.logger.error(f"Error searching relevant articles: {e}")
             return []
+        finally:
+            if conn:
+                conn.close()
     
     def _get_thread_articles(self, thread_id: int, max_articles: int) -> List[Dict[str, Any]]:
         """Get articles assigned to a specific thread"""
+        conn = None
         try:
             conn = get_db_connection()
             cursor = conn.cursor()
@@ -593,12 +612,14 @@ class RAGContextBuilder:
                     'url': row[6]
                 })
             
-            conn.close()
             return articles
             
         except Exception as e:
             self.logger.error(f"Error getting thread articles: {e}")
             return []
+        finally:
+            if conn:
+                conn.close()
     
     def _generate_context_summary(self, articles: List[Dict[str, Any]]) -> str:
         """Generate a summary of the context articles"""
@@ -945,31 +966,33 @@ class RAGContextBuilder:
     def _log_context_request(self, thread_id: int, context_type: str, 
                             context: Dict[str, Any]) -> None:
         """Log a RAG context request"""
+        conn = None
         try:
             conn = get_db_connection()
             cursor = conn.cursor()
             
-            # Use the existing table structure
             cursor.execute("""
                 INSERT INTO rag_context_requests 
                 (article_id, context_type, context_description, priority, status, context_data, sources_used, confidence_score)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             """, (
-                None,  # article_id - not applicable for thread-based context
+                None,
                 context_type,
                 f"Context request for thread {thread_id}: {context.get('context_summary', 'Context generated')}",
-                1,  # priority
+                1,
                 'completed',
-                json.dumps(context),  # context_data as JSON
-                [],  # sources_used
-                0.95  # confidence_score
+                json.dumps(context),
+                [],
+                0.95
             ))
             
             conn.commit()
-            conn.close()
             
         except Exception as e:
             self.logger.error(f"Error logging context request: {e}")
+        finally:
+            if conn:
+                conn.close()
     
     def _calculate_historical_period(self, created_date: datetime) -> str:
         """Calculate the historical period for context"""

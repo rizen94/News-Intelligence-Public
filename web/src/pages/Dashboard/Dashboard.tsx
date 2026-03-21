@@ -21,7 +21,7 @@ import {
 } from '@mui/material';
 import { contextCentricApi, type Context, type TrackedEvent, type ContextCentricStatus } from '../../services/api/contextCentric';
 import apiService from '../../services/apiService';
-import { useDomain } from '../../contexts/DomainContext';
+import { useDomainRoute } from '../../hooks/useDomainRoute';
 
 function timeAgo(date: Date): string {
   const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
@@ -45,7 +45,8 @@ function cleanSnippet(raw: string, maxLen: number): string {
 }
 
 export default function Dashboard() {
-  const { domain } = useDomain();
+  // URL is source of truth so What's New matches the domain in the address bar (not stale context).
+  const { domain } = useDomainRoute();
   const navigate = useNavigate();
   const [contexts, setContexts] = useState<Context[]>([]);
   const [events, setEvents] = useState<TrackedEvent[]>([]);
@@ -66,9 +67,16 @@ export default function Dashboard() {
 
       // Wave 1: light endpoints so "System Intelligence" appears quickly
       const stRes = contextCentricApi.getStatus().catch(() => null);
-      const oRes = apiService.getOrchestratorDashboard?.({ decision_log_limit: 1 })
-        .then((d: unknown) => (d as { status?: Record<string, unknown> })?.status ?? null)
-        .catch(() => null);
+      const oRes = (async () => {
+        try {
+          const fn = apiService.getOrchestratorDashboard;
+          if (typeof fn !== 'function') return null;
+          const d = await fn.call(apiService, { decision_log_limit: 1 });
+          return (d as { status?: Record<string, unknown> } | null)?.status ?? null;
+        } catch {
+          return null;
+        }
+      })();
       const [statusData, orchData] = await Promise.all([stRes, oRes]);
       if (cancelled) return;
       setStatus(statusData ?? null);
@@ -80,8 +88,15 @@ export default function Dashboard() {
       const evRes = contextCentricApi.getTrackedEvents({ domain_key: domain, limit: 8 }).catch(() => ({ items: [] as TrackedEvent[] }));
       const [ctxData, evData] = await Promise.all([ctxRes, evRes]);
       if (cancelled) return;
-      setContexts(ctxData?.items ?? []);
-      setEvents(evData?.items ?? []);
+      const rawCtx = ctxData?.items ?? [];
+      const rawEv = evData?.items ?? [];
+      // Safety net if API omits domain_key filter or returns mixed rows
+      setContexts(rawCtx.filter((c) => !c.domain_key || c.domain_key === domain));
+      setEvents(
+        rawEv.filter(
+          (e) => !e.domain_keys?.length || e.domain_keys.includes(domain),
+        ),
+      );
       setContextsLoading(false);
       setEventsLoading(false);
     };

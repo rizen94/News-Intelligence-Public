@@ -8,7 +8,7 @@ Multiple handlers per event type are supported (each receives envelope, orchestr
 from typing import Any
 
 from orchestration.events.types import EventType
-from orchestration.roles import archivist, chief_editor, editor, journalist
+from orchestration.roles import archivist, chief_editor, cross_domain, editor, journalist
 
 
 def register_default_handlers(orchestrator: Any) -> None:
@@ -16,6 +16,7 @@ def register_default_handlers(orchestrator: Any) -> None:
     orchestrator.register_handler(EventType.ARTICLE_INGESTED, editor.handle_article_ingested)
     orchestrator.register_handler(EventType.ARTICLE_INGESTED, journalist.handle_article_ingested)
     orchestrator.register_handler(EventType.ARTICLE_INGESTED, archivist.handle_article_ingested)
+    orchestrator.register_handler(EventType.ARTICLE_INGESTED, cross_domain.handle_article_ingested)
     orchestrator.register_handler(EventType.BREAKING_NEWS, editor.handle_breaking_news)
     orchestrator.register_handler(EventType.BREAKING_NEWS, chief_editor.handle_breaking_news)
     orchestrator.register_handler(EventType.PATTERN_DETECTED, journalist.handle_pattern_detected)

@@ -69,40 +69,52 @@ class BaseRAGService:
         return self.cache_service
     
     async def enhance_storyline_context(
-        self, 
-        storyline_id: str, 
-        storyline_title: str, 
-        articles: List[Dict[str, Any]]
+        self,
+        storyline_id: str,
+        storyline_title: str,
+        articles: List[Dict[str, Any]],
+        domain: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Enhance storyline with RAG context from Wikipedia and GDELT"""
+        """Enhance storyline with RAG context from Wikipedia and GDELT. v8: domain keys storage (domain_key, storyline_id). Uses DB entities when domain and article ids available."""
         try:
-            logger.info(f"Enhancing storyline context for: {storyline_title}")
-            
-            # Extract key entities and topics from articles
-            entities = self._extract_entities_from_articles(articles)
+            logger.info(f"Enhancing storyline context for: {storyline_title} (domain={domain})")
+            entity_names: List[str] = []
+            entity_backgrounds: List[Dict[str, Any]] = []
+            if domain and articles:
+                article_ids = [a.get("id") for a in articles if a.get("id") is not None]
+                if article_ids:
+                    enriched = self._get_entities_from_db(article_ids, domain)
+                    entity_names = [e["name"] for e in enriched]
+                    entity_backgrounds = [
+                        {"name": e["name"], "type": e.get("type", ""), "description": e.get("description", ""), "wikipedia_url": e.get("wikipedia_url")}
+                        for e in enriched
+                    ]
+            if not entity_names:
+                entity_names = self._extract_entities_from_articles(articles)
             topics = self._extract_topics_from_articles(articles)
-            
-            # Get Wikipedia context
-            wikipedia_context = await self._get_wikipedia_context(topics, entities)
-            
-            # Get GDELT context
-            gdelt_context = await self._get_gdelt_context(topics, entities)
-            
-            # Combine all context
+            wikipedia_context = await self._get_wikipedia_context(topics, entity_names)
+            gdelt_context = await self._get_gdelt_context(topics, entity_names)
             rag_context = {
                 "wikipedia": wikipedia_context,
                 "gdelt": gdelt_context,
-                "extracted_entities": entities,
+                "extracted_entities": entity_names,
                 "extracted_topics": topics,
+                "entity_backgrounds": entity_backgrounds,
                 "enhanced_at": datetime.now(timezone.utc).isoformat(),
-                "storyline_id": storyline_id
+                "storyline_id": storyline_id,
+                "domain_key": domain,
             }
-            
-            # Save RAG context to database
-            await self._save_rag_context(storyline_id, rag_context)
-            
+            await self._save_rag_context(storyline_id, rag_context, domain=domain)
+            # Phase 4A: persist GDELT events to chronological_events for timeline/dedup pipeline
+            gdelt_events = (rag_context.get("gdelt") or {}).get("events") or []
+            if gdelt_events and domain and articles:
+                self._store_gdelt_events_to_chronological(
+                    storyline_id=str(storyline_id),
+                    domain=domain,
+                    articles=articles,
+                    gdelt_events=gdelt_events,
+                )
             return rag_context
-            
         except Exception as e:
             logger.error(f"Error enhancing storyline context: {e}")
             return {
@@ -111,10 +123,57 @@ class BaseRAGService:
                 "gdelt": {},
                 "extracted_entities": [],
                 "extracted_topics": [],
+                "entity_backgrounds": [],
                 "enhanced_at": datetime.now(timezone.utc).isoformat(),
-                "storyline_id": storyline_id
+                "storyline_id": storyline_id,
             }
-    
+
+    def _get_entities_from_db(self, article_ids: List[int], domain: str) -> List[Dict[str, Any]]:
+        """Load entities from article_entities + entity_canonical for given article ids. Returns list of dicts with canonical_entity_id, name, type, description, aliases, wikipedia_url so context enrichment and entity viewer can use the main entity and all aliases."""
+        schema = domain.replace("-", "_") if domain else "politics"
+        conn = get_db_connection()
+        if not conn:
+            return []
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    SELECT ec.id, ec.canonical_name, ec.entity_type, ec.description, ec.aliases, ec.wikipedia_page_id
+                    FROM {schema}.article_entities ae
+                    JOIN {schema}.entity_canonical ec ON ec.id = ae.canonical_entity_id
+                    WHERE ae.article_id = ANY(%s) AND ec.canonical_name IS NOT NULL
+                    GROUP BY ec.id, ec.canonical_name, ec.entity_type, ec.description, ec.aliases, ec.wikipedia_page_id
+                    ORDER BY COUNT(ae.id) DESC
+                    LIMIT 20
+                    """,
+                    (article_ids,),
+                )
+                seen = set()
+                out = []
+                for row in cur.fetchall():
+                    name = (row[1] or "").strip()
+                    if not name or name in seen:
+                        continue
+                    seen.add(name)
+                    wiki_url = ""
+                    if row[5]:
+                        wiki_url = f"https://en.wikipedia.org/wiki/?curid={row[5]}"
+                    out.append({
+                        "canonical_entity_id": row[0],
+                        "name": name,
+                        "type": row[2] or "other",
+                        "description": (row[3] or "").strip() or None,
+                        "aliases": list(row[4] or []),
+                        "wikipedia_page_id": row[5],
+                        "wikipedia_url": wiki_url or None,
+                    })
+                return out
+        except Exception as e:
+            logger.debug("_get_entities_from_db: %s", e)
+            return []
+        finally:
+            conn.close()
+
     def _extract_entities_from_articles(self, articles: List[Dict[str, Any]]) -> List[str]:
         """Extract key entities from articles"""
         entities = set()
@@ -359,61 +418,152 @@ class BaseRAGService:
             gdelt_context["error"] = str(e)
         
         return gdelt_context
-    
-    async def _save_rag_context(self, storyline_id: str, rag_context: Dict[str, Any]):
-        """Save RAG context to database"""
+
+    def _store_gdelt_events_to_chronological(
+        self,
+        storyline_id: str,
+        domain: str,
+        articles: List[Dict[str, Any]],
+        gdelt_events: List[Dict[str, Any]],
+    ) -> None:
+        """
+        Store GDELT events as chronological_events (extraction_method='gdelt') so they
+        enter the timeline and dedup pipeline. Uses first article id as source_article_id
+        for FK; may no-op if table/schema does not allow it.
+        """
+        if not gdelt_events or not articles:
+            return
+        first_article_id = None
+        for a in articles:
+            aid = a.get("id") if isinstance(a, dict) else None
+            if aid is not None:
+                first_article_id = int(aid)
+                break
+        if first_article_id is None:
+            return
+        schema = (domain or "politics").replace("-", "_")
+        conn = get_db_connection()
+        if not conn:
+            return
+        try:
+            with conn.cursor() as cur:
+                cur.execute(f"SET search_path TO {schema}, public")
+                for i, ev in enumerate(gdelt_events[:20]):
+                    if not isinstance(ev, dict):
+                        continue
+                    title = (ev.get("title") or ev.get("event", "") or "GDELT event")[:500]
+                    date_str = ev.get("date") or ev.get("event_date", "")
+                    try:
+                        actual_date = datetime.strptime(date_str[:10], "%Y-%m-%d").date() if date_str and len(date_str) >= 10 else None
+                    except Exception:
+                        actual_date = None
+                    event_id = f"gdelt_{storyline_id}_{i}_{hash(title + str(actual_date)) % 10**8}"
+                    try:
+                        cur.execute(
+                            """
+                            INSERT INTO chronological_events (
+                                event_id, storyline_id, title, description, event_type,
+                                actual_event_date, source_article_id, extraction_method,
+                                extraction_confidence, importance_score
+                            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            ON CONFLICT (event_id) DO NOTHING
+                            """,
+                            (
+                                event_id,
+                                str(storyline_id),
+                                title[:300],
+                                (ev.get("summary") or ev.get("url") or "")[:2000],
+                                ev.get("event_type", "other"),
+                                actual_date,
+                                first_article_id,
+                                "gdelt",
+                                0.6,
+                                0.5,
+                            ),
+                        )
+                    except Exception as ins_err:
+                        if "does not exist" in str(ins_err).lower() or "foreign key" in str(ins_err).lower():
+                            logger.debug("GDELT store chronological_events skip: %s", ins_err)
+                            break
+                        logger.debug("GDELT event insert skip: %s", ins_err)
+            conn.commit()
+        except Exception as e:
+            logger.debug("_store_gdelt_events_to_chronological: %s", e)
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    async def _save_rag_context(
+        self,
+        storyline_id: str,
+        rag_context: Dict[str, Any],
+        domain: Optional[str] = None,
+    ):
+        """Save RAG context. v8: when domain is set, use intelligence.storyline_rag_context (domain_key, storyline_id)."""
         try:
             conn = get_db_connection()
             cursor = conn.cursor()
-            
-            # Insert or update RAG context
-            cursor.execute("""
-                INSERT INTO storyline_rag_context (
-                    storyline_id, rag_data, created_at, updated_at
-                ) VALUES (
-                    %s, %s, %s, %s
-                ) ON CONFLICT (storyline_id) 
-                DO UPDATE SET 
-                    rag_data = EXCLUDED.rag_data,
-                    updated_at = EXCLUDED.updated_at
-            """, (
-                storyline_id,
-                json.dumps(rag_context),
-                datetime.now(timezone.utc),
-                datetime.now(timezone.utc)
-            ))
+            now = datetime.now(timezone.utc)
+            data = json.dumps(rag_context)
+
+            if domain:
+                domain_key = domain.replace("-", "_") if domain else "politics"
+                cursor.execute("""
+                    INSERT INTO intelligence.storyline_rag_context (
+                        domain_key, storyline_id, rag_data, created_at, updated_at
+                    ) VALUES (%s, %s, %s, %s, %s)
+                    ON CONFLICT (domain_key, storyline_id)
+                    DO UPDATE SET rag_data = EXCLUDED.rag_data, updated_at = EXCLUDED.updated_at
+                """, (domain_key, int(storyline_id), data, now, now))
+            else:
+                cursor.execute("""
+                    INSERT INTO storyline_rag_context (
+                        storyline_id, rag_data, created_at, updated_at
+                    ) VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (storyline_id)
+                    DO UPDATE SET rag_data = EXCLUDED.rag_data, updated_at = EXCLUDED.updated_at
+                """, (storyline_id, data, now, now))
             
             conn.commit()
             cursor.close()
             conn.close()
-            
-            logger.info(f"Saved RAG context for storyline {storyline_id}")
-            
+            logger.info(f"Saved RAG context for storyline {storyline_id} (domain={domain})")
         except Exception as e:
             logger.error(f"Error saving RAG context: {e}")
     
-    async def get_rag_context(self, storyline_id: str) -> Optional[Dict[str, Any]]:
-        """Get RAG context for a storyline"""
+    async def get_rag_context(
+        self,
+        storyline_id: str,
+        domain: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Get RAG context for a storyline. v8: when domain is set, read from intelligence.storyline_rag_context."""
         try:
             conn = get_db_connection()
             cursor = conn.cursor(cursor_factory=RealDictCursor)
-            
-            cursor.execute("""
-                SELECT rag_data FROM storyline_rag_context 
-                WHERE storyline_id = %s
-            """, (storyline_id,))
-            
+            if domain:
+                cursor.execute("""
+                    SELECT rag_data FROM intelligence.storyline_rag_context
+                    WHERE domain_key = %s AND storyline_id = %s
+                """, (domain.replace("-", "_"), int(storyline_id)))
+            else:
+                cursor.execute("""
+                    SELECT rag_data FROM storyline_rag_context WHERE storyline_id = %s
+                """, (storyline_id,))
             result = cursor.fetchone()
             cursor.close()
             conn.close()
-            
-            if result and result['rag_data']:
-                # Handle both string and dict cases
-                if isinstance(result['rag_data'], str):
-                    return json.loads(result['rag_data'])
-                elif isinstance(result['rag_data'], dict):
-                    return result['rag_data']
-            
+            if result and result.get('rag_data'):
+                r = result['rag_data']
+                if isinstance(r, str):
+                    return json.loads(r)
+                if isinstance(r, dict):
+                    return r
             return None
             
         except Exception as e:

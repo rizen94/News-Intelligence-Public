@@ -14,7 +14,7 @@ from shared.services.llm_service import LLMService, ModelType
 logger = logging.getLogger(__name__)
 
 
-def get_contexts_for_entity_profile(entity_profile_id: int, limit: int = 50) -> List[tuple]:
+def get_contexts_for_entity_profile(entity_profile_id: int, limit: int = 75) -> List[tuple]:  # v8
     """Return (context_id, title, content) for contexts that mention this entity (via context_entity_mentions)."""
     conn = get_db_connection()
     if not conn:
@@ -82,17 +82,43 @@ async def build_profile_sections(entity_profile_id: int) -> bool:
         name = canonical_name or f"Entity {entity_profile_id}"
         etype = entity_type or "entity"
 
-        contexts = get_contexts_for_entity_profile(entity_profile_id, limit=30)
+        contexts = get_contexts_for_entity_profile(entity_profile_id, limit=75)
         if not contexts:
             logger.debug(f"Entity profile {entity_profile_id}: no contexts to build from")
             return False
 
-        # Build combined text (titles + snippet of content) for LLM
-        parts = []
-        for ctx_id, title, content in contexts[:20]:
-            content_preview = (content or "")[:1200].replace("\n", " ")
-            parts.append(f"[Source {ctx_id}] {title or 'Untitled'}\n{content_preview}")
-        combined = "\n\n".join(parts)[:10000]
+        llm = LLMService()
+        # v8: Iterative summarization for large sets — summarize in chunks then synthesize
+        ITERATIVE_THRESHOLD = 30
+        CHUNK_SIZE = 15
+        combined: str
+        if len(contexts) > ITERATIVE_THRESHOLD:
+            chunk_summaries: List[str] = []
+            for i in range(0, min(len(contexts), 60), CHUNK_SIZE):
+                chunk = contexts[i : i + CHUNK_SIZE]
+                parts_chunk = []
+                for ctx_id, title, content in chunk:
+                    content_preview = (content or "")[:800].replace("\n", " ")
+                    parts_chunk.append(f"[{title or 'Untitled'}] {content_preview}")
+                chunk_text = "\n".join(parts_chunk)[:6000]
+                chunk_prompt = f"""Summarize in 2-4 sentences what the following excerpts say about "{name}" (entity type: {etype}). Focus on role, positions, and recent relevance. Be concise.\n\nExcerpts:\n{chunk_text}"""
+                raw_chunk = await llm._call_ollama(ModelType.LLAMA_8B, chunk_prompt) if chunk_text else ""
+                if raw_chunk and len(raw_chunk.strip()) > 20:
+                    chunk_summaries.append(raw_chunk.strip()[:800])
+            combined = "\n\n".join(chunk_summaries)[:5000] if chunk_summaries else ""
+            if not combined:
+                # Fallback: use first 25 contexts as single block
+                parts = []
+                for ctx_id, title, content in contexts[:25]:
+                    content_preview = (content or "")[:800].replace("\n", " ")
+                    parts.append(f"[Source {ctx_id}] {title or 'Untitled'}\n{content_preview}")
+                combined = "\n\n".join(parts)[:8000]
+        else:
+            parts = []
+            for ctx_id, title, content in contexts[:40]:
+                content_preview = (content or "")[:1200].replace("\n", " ")
+                parts.append(f"[Source {ctx_id}] {title or 'Untitled'}\n{content_preview}")
+            combined = "\n\n".join(parts)[:10000]
 
         prompt = f"""Given the following entity and excerpts from news contexts where they are mentioned, produce a short profile.
 
@@ -115,7 +141,6 @@ Return ONLY a JSON object (no markdown):
 }}
 Keep each section content concise. If relationships are not clear, return empty array for "relationships"."""
 
-        llm = LLMService()
         raw = await llm._call_ollama(ModelType.LLAMA_8B, prompt)
         sections, relationships = _parse_sections_response(raw)
         if not sections and not relationships:

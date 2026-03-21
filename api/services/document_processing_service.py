@@ -19,6 +19,7 @@ import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import urljoin
 
 from shared.database.connection import get_db_connection
 
@@ -29,12 +30,14 @@ MAX_PAGES = 200
 DOWNLOAD_TIMEOUT = 45
 DOWNLOAD_RETRIES = 2
 RETRY_BACKOFF_SEC = 5
-# Don't retry these; mark document as permanently failed so we stop re-queuing
-PERMANENT_HTTP_CODES = (404, 403, 410)
+# Don't retry these; mark document as permanently failed so we stop re-queuing.
+# 403 is intentionally excluded: many sources return temporary bot/WAF blocks.
+PERMANENT_HTTP_CODES = (404, 410)
 # After this many failed attempts (any error), mark as permanent to avoid infinite retry
 MAX_PROCESSING_ATTEMPTS = 5
 # Process this many documents in parallel per batch (throughput vs LLM/DB load)
 BATCH_PARALLEL_WORKERS = 3
+ENABLE_BROWSER_PDF_FALLBACK = os.getenv("ENABLE_BROWSER_PDF_FALLBACK", "1").strip().lower() not in {"0", "false", "no"}
 
 # Section heading heuristics: lines that are short, often bold/large, start sections
 HEADING_PATTERN = re.compile(
@@ -74,14 +77,14 @@ Text:
 # ---------------------------------------------------------------------------
 
 def _is_permanent_failure(error_message: str) -> bool:
-    """True if we should stop retrying this URL (404, 403, 410, or explicit 'permanent')."""
+    """True if we should stop retrying this URL (404/410 or explicit 'permanent')."""
     if not error_message:
         return False
     msg = error_message.lower()
     if "permanent" in msg:
         return True
-    for code in (404, 403, 410):
-        if str(code) in msg or ("not found" in msg and code == 404) or ("forbidden" in msg and code == 403):
+    for code in (404, 410):
+        if str(code) in msg or ("not found" in msg and code == 404):
             return True
     return False
 
@@ -152,6 +155,86 @@ def _download_pdf(url: str, max_mb: int = MAX_PDF_SIZE_MB, head_first: bool = Tr
             time.sleep(RETRY_BACKOFF_SEC)
 
     return None, last_error or "Download failed"
+
+
+def _resolve_pdf_url_from_landing_page(url: str, timeout: int = 20) -> Optional[str]:
+    """Try to resolve a direct PDF URL from an HTML landing page."""
+    import requests
+    try:
+        resp = requests.get(
+            url,
+            timeout=timeout,
+            allow_redirects=True,
+            headers={
+                "User-Agent": "Mozilla/5.0 (compatible; NewsIntelligence/1.0; +https://news-intel/document-bot)",
+                "Accept": "text/html,application/xhtml+xml,*/*",
+            },
+        )
+        if resp.status_code >= 400:
+            return None
+        html = resp.text or ""
+        # First: explicit .pdf links
+        for m in re.finditer(r'href=["\']([^"\']+\.pdf[^"\']*)["\']', html, re.I):
+            return urljoin(resp.url or url, m.group(1))
+        # Second: common download endpoints that imply file payload
+        for m in re.finditer(r'href=["\']([^"\']*(?:download|attachment|file)[^"\']*)["\']', html, re.I):
+            candidate = urljoin(resp.url or url, m.group(1))
+            if "pdf" in candidate.lower():
+                return candidate
+    except Exception as e:
+        logger.debug("Landing-page PDF resolve failed for %s: %s", url, e)
+    return None
+
+
+def _resolve_pdf_url_via_browser(url: str, timeout_ms: int = 20000) -> Optional[str]:
+    """Browser-based fallback: render page and discover PDF links/network responses."""
+    if not ENABLE_BROWSER_PDF_FALLBACK:
+        return None
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        logger.debug("playwright not installed; skip browser PDF fallback")
+        return None
+
+    found: List[str] = []
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            try:
+                page = browser.new_page()
+
+                def _on_response(resp):
+                    try:
+                        ct = (resp.headers.get("content-type") or "").lower()
+                    except Exception:
+                        ct = ""
+                    rurl = resp.url or ""
+                    if "pdf" in ct or ".pdf" in rurl.lower():
+                        found.append(rurl)
+
+                page.on("response", _on_response)
+                page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+                page.wait_for_timeout(2500)
+
+                if found:
+                    return found[0]
+
+                links = page.eval_on_selector_all(
+                    "a[href]",
+                    "els => els.map(e => e.href).filter(Boolean)",
+                ) or []
+                for href in links:
+                    if ".pdf" in str(href).lower():
+                        return str(href)
+
+                html = page.content() or ""
+                for m in re.finditer(r'href=["\']([^"\']+\.pdf[^"\']*)["\']', html, re.I):
+                    return urljoin(page.url or url, m.group(1))
+            finally:
+                browser.close()
+    except Exception as e:
+        logger.debug("Browser PDF resolve failed for %s: %s", url, e)
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -510,6 +593,10 @@ def process_document(
                     "table_count": pdf_result.get("table_count", 0),
                     "text_length": pdf_result.get("text_length", 0),
                 }
+                if pdf_result.get("resolved_url"):
+                    processing_metadata["resolved_url"] = pdf_result.get("resolved_url")
+                if pdf_result.get("resolved_via"):
+                    processing_metadata["resolved_via"] = pdf_result.get("resolved_via")
             else:
                 error_msg = pdf_result.get("error", "unknown")
                 attempts = prev_attempts + 1
@@ -661,7 +748,26 @@ def process_document(
 
 def _process_from_url(url: str, title: str) -> Dict[str, Any]:
     """Download PDF from URL and extract text, sections, entities, findings."""
-    pdf_bytes, download_error = _download_pdf(url)
+    pdf_url = url
+    resolved_via: Optional[str] = None
+    pdf_bytes, download_error = _download_pdf(pdf_url)
+    # If source URL is likely a landing page or is blocked, try to resolve a direct PDF URL.
+    should_try_resolution = bool(download_error) and any(
+        marker in download_error.lower()
+        for marker in ("not a pdf", "http 4", "timeout", "download failed")
+    )
+    if should_try_resolution:
+        resolved = _resolve_pdf_url_from_landing_page(url)
+        if resolved and resolved != url:
+            pdf_url = resolved
+            resolved_via = "html"
+            pdf_bytes, download_error = _download_pdf(pdf_url, head_first=False)
+    if should_try_resolution and download_error:
+        resolved_browser = _resolve_pdf_url_via_browser(url)
+        if resolved_browser and resolved_browser != url:
+            pdf_url = resolved_browser
+            resolved_via = "browser"
+            pdf_bytes, download_error = _download_pdf(pdf_url, head_first=False)
     if download_error:
         return {"success": False, "error": download_error}
 
@@ -679,6 +785,8 @@ def _process_from_url(url: str, title: str) -> Dict[str, Any]:
 
     return {
         "success": True,
+        "resolved_url": pdf_url if pdf_url != url else None,
+        "resolved_via": resolved_via,
         "sections": sections,
         "entities": entities,
         "key_findings": key_findings,

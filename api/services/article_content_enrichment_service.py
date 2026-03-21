@@ -1,5 +1,5 @@
 """
-Article content enrichment service (v7).
+Article content enrichment service (v8).
 Fetches full article text via trafilatura for articles with short or missing content.
 After enrichment, triggers re-extraction (entities, topics, context update).
 Supports inline enrichment at RSS ingestion and batch backlog drain with attempt tracking.
@@ -318,7 +318,7 @@ def enrich_articles_batch(batch_size: int = 20) -> int:
             conn.commit()
 
         if enriched > 0:
-            logger.info("Content enrichment (v7): %s articles enriched", enriched)
+            logger.info("Content enrichment (v8): %s articles enriched", enriched)
         return enriched
     except Exception as e:
         logger.warning("Content enrichment failed: %s", e)

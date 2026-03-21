@@ -10,7 +10,11 @@ import logging
 from datetime import datetime
 
 from shared.database.connection import get_db_connection
-from shared.services.domain_aware_service import validate_domain
+from shared.services.domain_aware_service import (
+    validate_domain,
+    DOMAIN_DATA_SCHEMAS,
+    parse_optional_domain_to_schema,
+)
 from domains.content_analysis.services.topic_clustering_service import TopicClusteringService
 
 logger = logging.getLogger(__name__)
@@ -32,6 +36,23 @@ DB_CONFIG = {
 
 # Note: TopicClusteringService is now domain-aware and should be initialized per-domain
 # For routes, we'll create service instances as needed
+
+
+def _resolve_topic_row_schema(
+    conn, topic_id: int, domain: Optional[str]
+) -> Optional[str]:
+    """Schema containing topics.id = topic_id; if domain set, only that schema."""
+    if domain is not None and str(domain).strip():
+        schemas = [parse_optional_domain_to_schema(domain)]
+    else:
+        schemas = list(DOMAIN_DATA_SCHEMAS)
+    with conn.cursor() as cur:
+        for sch in schemas:
+            cur.execute(f"SELECT 1 FROM {sch}.topics WHERE id = %s", (topic_id,))
+            if cur.fetchone():
+                return sch
+    return None
+
 
 # ============================================================================
 # Pydantic Models
@@ -61,6 +82,7 @@ class TopicMerge(BaseModel):
     """Model for merging topics"""
     topic_ids: List[int]
     keep_primary: bool = True  # If True, keep first topic; if False, create new merged topic
+    domain: str = "politics"
 
 # ============================================================================
 # Health Check
@@ -231,7 +253,13 @@ async def get_domain_topics(
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/topics/{topic_id}")
-async def get_topic(topic_id: int):
+async def get_topic(
+    topic_id: int,
+    domain: Optional[str] = Query(
+        None,
+        description="politics, finance, or science-tech; omit to search all domain schemas",
+    ),
+):
     """Get a single topic by ID"""
     try:
         conn = get_db_connection()
@@ -239,21 +267,28 @@ async def get_topic(topic_id: int):
             raise HTTPException(status_code=500, detail="Database connection failed")
         
         try:
+            try:
+                sch = _resolve_topic_row_schema(conn, topic_id, domain)
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e))
+            if not sch:
+                raise HTTPException(status_code=404, detail="Topic not found")
+
             with conn.cursor() as cur:
-                cur.execute("""
-                    SELECT 
+                cur.execute(f"""
+                    SELECT
                         t.id, t.topic_uuid, t.name, t.description, t.category,
                         t.keywords, t.confidence_score, t.accuracy_score,
                         t.review_count, t.correct_assignments, t.incorrect_assignments,
                         t.status, t.is_auto_generated, t.created_at, t.updated_at,
                         t.learning_data, t.last_improved_at,
                         COUNT(DISTINCT ata.article_id) as article_count
-                    FROM topics t
-                    LEFT JOIN article_topic_assignments ata ON t.id = ata.topic_id
+                    FROM {sch}.topics t
+                    LEFT JOIN {sch}.article_topic_assignments ata ON t.id = ata.topic_id
                     WHERE t.id = %s
                     GROUP BY t.id
                 """, (topic_id,))
-                
+
                 row = cur.fetchone()
                 if not row:
                     raise HTTPException(status_code=404, detail="Topic not found")
@@ -279,7 +314,7 @@ async def get_topic(topic_id: int):
                         "last_improved_at": row[16].isoformat() if row[16] else None,
                         "created_at": row[13].isoformat() if row[13] else None,
                         "updated_at": row[14].isoformat() if row[14] else None,
-                        "domain": domain
+                        "domain_schema": sch,
                     }
                 }
                 
@@ -296,14 +331,19 @@ async def get_topic(topic_id: int):
 async def create_topic(topic: TopicCreate):
     """Create a new topic manually"""
     try:
+        try:
+            sch = parse_optional_domain_to_schema(topic.domain or "politics")
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
         conn = get_db_connection()
         if not conn:
             raise HTTPException(status_code=500, detail="Database connection failed")
         
         try:
             with conn.cursor() as cur:
-                cur.execute("""
-                    INSERT INTO topics (
+                cur.execute(f"""
+                    INSERT INTO {sch}.topics (
                         name, description, category, keywords,
                         is_auto_generated, status, confidence_score, accuracy_score
                     )
@@ -329,7 +369,8 @@ async def create_topic(topic: TopicCreate):
                         "id": result[0],
                         "topic_uuid": str(result[1]),
                         "name": topic.name,
-                        "created_at": result[2].isoformat()
+                        "created_at": result[2].isoformat(),
+                        "domain_schema": sch,
                     }
                 }
                 
@@ -343,9 +384,21 @@ async def create_topic(topic: TopicCreate):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.put("/topics/{topic_id}")
-async def update_topic(topic_id: int, topic_update: TopicUpdate):
+async def update_topic(
+    topic_id: int,
+    topic_update: TopicUpdate,
+    domain: str = Query(
+        "politics",
+        description="Domain schema for this topic: politics, finance, or science-tech",
+    ),
+):
     """Update a topic"""
     try:
+        try:
+            sch = parse_optional_domain_to_schema(domain)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
         conn = get_db_connection()
         if not conn:
             raise HTTPException(status_code=500, detail="Database connection failed")
@@ -378,7 +431,7 @@ async def update_topic(topic_id: int, topic_update: TopicUpdate):
                 updates.append("updated_at = CURRENT_TIMESTAMP")
                 params.append(topic_id)
                 
-                query = f"UPDATE topics SET {', '.join(updates)} WHERE id = %s RETURNING id"
+                query = f"UPDATE {sch}.topics SET {', '.join(updates)} WHERE id = %s RETURNING id"
                 cur.execute(query, params)
                 
                 if not cur.fetchone():
@@ -501,7 +554,11 @@ async def process_article_topics(article_id: int, background_tasks: BackgroundTa
 async def get_topic_articles(
     topic_id: int,
     limit: int = Query(20, ge=1, le=100),
-    offset: int = Query(0, ge=0)
+    offset: int = Query(0, ge=0),
+    domain: Optional[str] = Query(
+        None,
+        description="politics, finance, or science-tech; omit to search all schemas",
+    ),
 ):
     """Get all articles assigned to a topic"""
     try:
@@ -510,16 +567,23 @@ async def get_topic_articles(
             raise HTTPException(status_code=500, detail="Database connection failed")
         
         try:
+            try:
+                sch = _resolve_topic_row_schema(conn, topic_id, domain)
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e))
+            if not sch:
+                raise HTTPException(status_code=404, detail="Topic not found")
+
             with conn.cursor() as cur:
-                cur.execute("""
-                    SELECT 
+                cur.execute(f"""
+                    SELECT
                         ata.id as assignment_id,
                         a.id, a.title, a.url, a.source_domain,
                         a.published_at, a.summary,
                         ata.confidence_score, ata.relevance_score,
                         ata.is_validated, ata.is_correct, ata.feedback_notes
-                    FROM article_topic_assignments ata
-                    JOIN articles a ON ata.article_id = a.id
+                    FROM {sch}.article_topic_assignments ata
+                    JOIN {sch}.articles a ON ata.article_id = a.id
                     WHERE ata.topic_id = %s
                     ORDER BY ata.confidence_score DESC, a.published_at DESC
                     LIMIT %s OFFSET %s
@@ -542,9 +606,8 @@ async def get_topic_articles(
                         "feedback_notes": row[11]
                     })
                 
-                # Get total count
-                cur.execute("""
-                    SELECT COUNT(*) FROM article_topic_assignments
+                cur.execute(f"""
+                    SELECT COUNT(*) FROM {sch}.article_topic_assignments
                     WHERE topic_id = %s
                 """, (topic_id,))
                 total = cur.fetchone()[0]
@@ -556,7 +619,8 @@ async def get_topic_articles(
                         "articles": articles,
                         "total": total,
                         "limit": limit,
-                        "offset": offset
+                        "offset": offset,
+                        "domain_schema": sch,
                     }
                 }
                 
@@ -708,11 +772,18 @@ async def merge_topics(merge_request: TopicMerge):
             raise HTTPException(status_code=500, detail="Database connection failed")
         
         try:
+            try:
+                sch = parse_optional_domain_to_schema(
+                    merge_request.domain or "politics"
+                )
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e))
+
             with conn.cursor() as cur:
                 # Validate all topics exist
                 placeholders = ','.join(['%s'] * len(merge_request.topic_ids))
                 cur.execute(f"""
-                    SELECT id, name, status FROM topics
+                    SELECT id, name, status FROM {sch}.topics
                     WHERE id IN ({placeholders})
                 """, merge_request.topic_ids)
                 
@@ -735,13 +806,13 @@ async def merge_topics(merge_request: TopicMerge):
                 topics_to_merge = merge_request.topic_ids[1:]
                 
                 # Get primary topic details
-                cur.execute("""
+                cur.execute(f"""
                     SELECT name, description, category, keywords, confidence_score, accuracy_score,
                            review_count, correct_assignments, incorrect_assignments, article_count
-                    FROM topics t
+                    FROM {sch}.topics t
                     LEFT JOIN (
                         SELECT topic_id, COUNT(*) as article_count
-                        FROM article_topic_assignments
+                        FROM {sch}.article_topic_assignments
                         GROUP BY topic_id
                     ) ata ON t.id = ata.topic_id
                     WHERE t.id = %s
@@ -799,11 +870,11 @@ async def merge_topics(merge_request: TopicMerge):
                 
                 # Calculate weighted averages for scores
                 # Get all assignments to calculate proper averages
-                cur.execute("""
-                    SELECT 
+                cur.execute(f"""
+                    SELECT
                         AVG(confidence_score) as avg_confidence,
                         AVG(relevance_score) as avg_relevance
-                    FROM article_topic_assignments
+                    FROM {sch}.article_topic_assignments
                     WHERE topic_id = ANY(%s)
                 """, (merge_request.topic_ids,))
                 
@@ -812,9 +883,9 @@ async def merge_topics(merge_request: TopicMerge):
                 new_accuracy = primary_accuracy  # Keep primary accuracy, or could recalculate
                 
                 # Update primary topic
-                cur.execute("""
-                    UPDATE topics
-                    SET 
+                cur.execute(f"""
+                    UPDATE {sch}.topics
+                    SET
                         description = %s,
                         keywords = %s,
                         confidence_score = %s,
@@ -841,8 +912,8 @@ async def merge_topics(merge_request: TopicMerge):
                 # Transfer article assignments from merged topics to primary
                 # Handle duplicates by keeping the one with highest confidence
                 # First, get all assignments from topics to merge
-                cur.execute("""
-                    SELECT 
+                cur.execute(f"""
+                    SELECT
                         article_id,
                         confidence_score,
                         relevance_score,
@@ -850,7 +921,7 @@ async def merge_topics(merge_request: TopicMerge):
                         is_correct,
                         feedback_notes,
                         assignment_method
-                    FROM article_topic_assignments
+                    FROM {sch}.article_topic_assignments
                     WHERE topic_id = ANY(%s)
                     ORDER BY article_id, confidence_score DESC, relevance_score DESC
                 """, (topics_to_merge,))
@@ -886,19 +957,19 @@ async def merge_topics(merge_request: TopicMerge):
                 
                 # Insert or update assignments
                 for assignment in assignments_by_article.values():
-                    cur.execute("""
-                        INSERT INTO article_topic_assignments (
+                    cur.execute(f"""
+                        INSERT INTO {sch}.article_topic_assignments AS ata (
                             article_id, topic_id, confidence_score, relevance_score,
                             is_validated, is_correct, feedback_notes, assignment_method
                         )
                         VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                         ON CONFLICT (article_id, topic_id) DO UPDATE SET
                             confidence_score = GREATEST(
-                                article_topic_assignments.confidence_score,
+                                ata.confidence_score,
                                 EXCLUDED.confidence_score
                             ),
                             relevance_score = GREATEST(
-                                article_topic_assignments.relevance_score,
+                                ata.relevance_score,
                                 EXCLUDED.relevance_score
                             ),
                             updated_at = CURRENT_TIMESTAMP
@@ -915,14 +986,14 @@ async def merge_topics(merge_request: TopicMerge):
                 
                 # Delete assignments from merged topics (now that they're transferred)
                 cur.execute(f"""
-                    DELETE FROM article_topic_assignments
+                    DELETE FROM {sch}.article_topic_assignments
                     WHERE topic_id IN ({placeholders})
                 """, topics_to_merge)
                 
                 # Mark merged topics as 'merged' status
                 cur.execute(f"""
-                    UPDATE topics
-                    SET 
+                    UPDATE {sch}.topics
+                    SET
                         status = 'merged',
                         updated_at = CURRENT_TIMESTAMP
                     WHERE id IN ({placeholders})
@@ -930,7 +1001,7 @@ async def merge_topics(merge_request: TopicMerge):
                 
                 # Get names of merged topics for response
                 cur.execute(f"""
-                    SELECT name FROM topics
+                    SELECT name FROM {sch}.topics
                     WHERE id IN ({placeholders})
                 """, topics_to_merge)
                 merged_names = [row[0] for row in cur.fetchall()]

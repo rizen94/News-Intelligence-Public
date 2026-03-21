@@ -1,6 +1,6 @@
 /**
- * Commodity Intelligence — one dashboard for gold, silver, platinum.
- * Data switches by selected commodity (URL param :commodity). Same view, different data.
+ * Commodity Intelligence — dashboard for registry commodities (gold, silver, platinum, oil, gas).
+ * Commodity list from API; data switches by selected commodity (URL param :commodity).
  */
 import React, { useEffect, useState, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
@@ -33,18 +33,19 @@ import { useDomain } from '@/contexts/DomainContext';
 import { monitoringApi } from '@/services/api/monitoring';
 import GoldChoropleth, { type GeoEvent } from '@/components/charts/GoldChoropleth';
 
-export type CommoditySlug = 'gold' | 'silver' | 'platinum';
-
-const COMMODITIES: { id: CommoditySlug; label: string }[] = [
+/** Fallback when API fails */
+const COMMODITIES_FALLBACK: { id: string; label: string }[] = [
   { id: 'gold', label: 'Gold' },
   { id: 'silver', label: 'Silver' },
   { id: 'platinum', label: 'Platinum' },
 ];
 
-const COMMODITY_COLORS: Record<CommoditySlug, string> = {
+const COMMODITY_COLORS: Record<string, string> = {
   gold: '#b8860b',
   silver: '#c0c0c0',
   platinum: '#e5e4e2',
+  oil: '#2c3e50',
+  gas: '#3498db',
 };
 
 const EVENT_TYPE_COLORS: Record<string, 'error' | 'warning' | 'info' | 'success' | 'default'> = {
@@ -62,16 +63,12 @@ const EVENT_TYPE_COLORS: Record<string, 'error' | 'warning' | 'info' | 'success'
 type TimeRange = '30d' | '90d' | '1y' | '5y';
 const DAYS_MAP: Record<TimeRange, number> = { '30d': 30, '90d': 90, '1y': 365, '5y': 365 * 5 };
 
-function isValidCommodity(s: string): s is CommoditySlug {
-  return s === 'gold' || s === 'silver' || s === 'platinum';
-}
-
 export default function CommodityDashboard() {
   const { domain } = useDomain();
   const navigate = useNavigate();
   const { commodity: commodityParam } = useParams<{ commodity: string }>();
-  const commodity: CommoditySlug = isValidCommodity(commodityParam ?? '') ? commodityParam! : 'gold';
 
+  const [commoditiesList, setCommoditiesList] = useState<{ id: string; label: string }[]>(COMMODITIES_FALLBACK);
   const [timeRange, setTimeRange] = useState<TimeRange>('90d');
   const [history, setHistory] = useState<{ date: string; value: number }[]>([]);
   const [spot, setSpot] = useState<{
@@ -92,19 +89,43 @@ export default function CommodityDashboard() {
   >([]);
   const [selectedCountry, setSelectedCountry] = useState<string | null>(null);
   const [selectedEventIds, setSelectedEventIds] = useState<number[]>([]);
+  const [newsItems, setNewsItems] = useState<{ id: unknown; title: string; snippet: string; url: string; source: string; published_at: string }[]>([]);
+  const [supplyChainItems, setSupplyChainItems] = useState<{ id: unknown; title: string; snippet: string; url: string; source: string; published_at: string }[]>([]);
   const [loading, setLoading] = useState(true);
+
+  const commodity = (() => {
+    const id = (commodityParam ?? '').toLowerCase();
+    const valid = commoditiesList.some((c) => c.id.toLowerCase() === id);
+    return valid ? id : (commoditiesList[0]?.id ?? 'gold');
+  })();
+
+  useEffect(() => {
+    if (domain !== 'finance') return;
+    monitoringApi.getCommodities(domain).then((res) => {
+      const list = (res?.data ?? []) as { id: string; label: string }[];
+      if (Array.isArray(list) && list.length > 0) setCommoditiesList(list);
+    });
+  }, [domain]);
+
+  useEffect(() => {
+    if (domain === 'finance' && commodityParam && commodity !== (commodityParam ?? '').toLowerCase()) {
+      navigate(`/${domain}/commodity/${commodity}`, { replace: true });
+    }
+  }, [domain, commodity, commodityParam, navigate]);
 
   const loadData = useCallback(async () => {
     if (domain !== 'finance') return;
     setLoading(true);
     const days = DAYS_MAP[timeRange];
     try {
-      const [histRes, spotRes, authRes, geoRes, regRes] = await Promise.all([
+      const [histRes, spotRes, authRes, geoRes, regRes, newsRes, supplyRes] = await Promise.all([
         monitoringApi.getCommodityHistory(commodity, { days, fetch_if_empty: true }, domain),
         monitoringApi.getCommoditySpot(commodity, domain),
         monitoringApi.getCommodityAuthority(commodity, {}, domain),
         monitoringApi.getCommodityGeoEvents({ limit: 50, commodity }, domain),
         monitoringApi.getCommodityRegulatoryEvents({ limit: 15, commodity }, domain),
+        monitoringApi.getCommodityNews(commodity, { hours: 168, max_items: 20 }, domain),
+        monitoringApi.getCommoditySupplyChain(commodity, { hours: 168, max_items: 15 }, domain),
       ]);
       const obs = (histRes?.data?.observations ?? []) as { date: string; value: number }[];
       setHistory(obs);
@@ -117,6 +138,8 @@ export default function CommodityDashboard() {
       setRegulatoryEvents(
         (regRes?.data?.events ?? []) as { id: number; event_type: string; event_name: string; start_date: string | null; geographic_scope: string | null }[],
       );
+      setNewsItems((newsRes?.data?.items ?? []) as { id: unknown; title: string; snippet: string; url: string; source: string; published_at: string }[]);
+      setSupplyChainItems((supplyRes?.data?.items ?? []) as { id: unknown; title: string; snippet: string; url: string; source: string; published_at: string }[]);
     } finally {
       setLoading(false);
     }
@@ -126,7 +149,7 @@ export default function CommodityDashboard() {
     loadData();
   }, [loadData]);
 
-  const handleCommodityChange = (_: React.MouseEvent<HTMLElement>, value: CommoditySlug | null) => {
+  const handleCommodityChange = (_: React.MouseEvent<HTMLElement>, value: string | null) => {
     if (value) navigate(`/${domain}/commodity/${value}`);
   };
 
@@ -137,8 +160,8 @@ export default function CommodityDashboard() {
 
   const filteredEvents =
     selectedEventIds.length ? geoEvents.events.filter((e) => selectedEventIds.includes(e.id)) : geoEvents.events;
-  const chartColor = COMMODITY_COLORS[commodity];
-  const commodityLabel = COMMODITIES.find((c) => c.id === commodity)?.label ?? commodity;
+  const chartColor = COMMODITY_COLORS[commodity] ?? '#666';
+  const commodityLabel = commoditiesList.find((c) => c.id.toLowerCase() === commodity)?.label ?? commodity;
 
   if (domain !== 'finance') {
     return (
@@ -161,7 +184,7 @@ export default function CommodityDashboard() {
           size="small"
           aria-label="Select commodity"
         >
-          {COMMODITIES.map((c) => (
+          {commoditiesList.map((c) => (
             <ToggleButton key={c.id} value={c.id} aria-label={c.label}>
               {c.label}
             </ToggleButton>
@@ -268,6 +291,12 @@ export default function CommodityDashboard() {
       <Card variant="outlined" sx={{ mb: 3 }}>
         <CardHeader title="Geographic intelligence" subheader="Event density by region" />
         <CardContent>
+          {!loading && geoEvents.events.length === 0 && (
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              No geographic data for this commodity yet. Event discovery runs on finance contexts; events with a
+              geographic scope will appear here.
+            </Typography>
+          )}
           {selectedCountry && (
             <Chip
               label={`Filter: ${selectedCountry}`}
@@ -351,6 +380,64 @@ export default function CommodityDashboard() {
         </CardContent>
       </Card>
 
+      {/* Section C2: Commodity news (financial relevance filter applied) */}
+      <Card variant="outlined" sx={{ mb: 3 }}>
+        <CardHeader title="News" subheader={`Financial news for ${commodityLabel} (market, trading, regulatory)`} />
+        <CardContent>
+          {loading ? (
+            <Skeleton variant="rectangular" height={120} />
+          ) : newsItems.length === 0 ? (
+            <Typography color="text.secondary">
+              No financial news for {commodityLabel} in the selected period.
+            </Typography>
+          ) : (
+            <List dense>
+              {newsItems.slice(0, 15).map((item, i) => (
+                <React.Fragment key={item.id ?? i}>
+                  <ListItemButton
+                    component="a"
+                    href={item.url || '#'}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    disableRipple={!item.url}
+                  >
+                    <ListItemText
+                      primary={item.title || 'Untitled'}
+                      secondary={
+                        <Box sx={{ mt: 0.5 }}>
+                          {item.snippet && (
+                            <Typography variant="body2" color="text.secondary" sx={{ display: 'block' }}>
+                              {item.snippet.slice(0, 200)}
+                              {item.snippet.length > 200 ? '…' : ''}
+                            </Typography>
+                          )}
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap', mt: 0.5 }}>
+                            {item.source && (
+                              <Chip size="small" label={item.source} variant="outlined" />
+                            )}
+                            {item.published_at && (
+                              <Typography variant="caption" color="text.disabled">
+                                {new Date(item.published_at).toLocaleDateString(undefined, {
+                                  month: 'short',
+                                  day: 'numeric',
+                                  year: 'numeric',
+                                })}
+                              </Typography>
+                            )}
+                          </Box>
+                        </Box>
+                      }
+                      primaryTypographyProps={{ fontWeight: 600 }}
+                    />
+                  </ListItemButton>
+                  {i < newsItems.length - 1 && <Divider component="li" />}
+                </React.Fragment>
+              ))}
+            </List>
+          )}
+        </CardContent>
+      </Card>
+
       {/* Section D: Intel panels */}
       <Grid container spacing={2}>
         <Grid item xs={12} md={4}>
@@ -414,10 +501,31 @@ export default function CommodityDashboard() {
           <Card variant="outlined">
             <CardHeader title="Industrial & supply chain" subheader="EDGAR, mining, logistics" />
             <CardContent>
-              <Typography variant="body2" color="text.secondary">
-                Mining company filings and supply-chain contexts will appear here as the pipeline ingests EDGAR and
-                commodity-related articles.
-              </Typography>
+              {loading ? (
+                <Skeleton variant="text" width="90%" height={24} sx={{ mb: 0.5 }} />
+              ) : supplyChainItems.length > 0 ? (
+                <List dense disablePadding>
+                  {supplyChainItems.slice(0, 8).map((item, i) => (
+                    <ListItemButton key={item.id ?? i} disablePadding sx={{ py: 0.25, px: 0 }} disableRipple>
+                      <ListItemText
+                        primary={item.title || 'Untitled'}
+                        secondary={
+                          item.published_at
+                            ? new Date(item.published_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+                            : null
+                        }
+                        primaryTypographyProps={{ variant: 'body2', noWrap: true, title: item.title }}
+                        secondaryTypographyProps={{ variant: 'caption' }}
+                      />
+                    </ListItemButton>
+                  ))}
+                </List>
+              ) : (
+                <Typography variant="body2" color="text.secondary">
+                  Mining company filings and supply-chain contexts will appear here as the pipeline ingests EDGAR and
+                  commodity-related articles.
+                </Typography>
+              )}
             </CardContent>
           </Card>
         </Grid>

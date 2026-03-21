@@ -16,22 +16,30 @@ from typing import Any, Dict, List, Optional
 
 from services.temporal_parser import extract_temporal_expressions, resolve_date
 from shared.services.llm_service import LLMService, ModelType
+from services.domain_synthesis_config import get_domain_synthesis_config
 
 logger = logging.getLogger(__name__)
 
 VALID_EVENT_TYPES = {
+    # Core (all domains)
     'legal_action', 'policy_decision', 'election', 'conflict',
     'economic_event', 'scientific_discovery', 'natural_disaster',
     'public_statement', 'investigation', 'legislation', 'court_ruling',
     'arrest', 'protest', 'agreement', 'appointment', 'resignation',
     'death', 'meeting', 'report_release', 'other',
+    # Finance
+    'market_shift', 'trade_policy', 'supply_disruption',
+    'commodity_price', 'tariff_change', 'sanctions',
+    # Science-tech
+    'clinical_trial', 'patent_filing', 'product_launch',
+    'research_publication', 'regulatory_approval', 'industry_partnership',
 }
 
 EVENT_EXTRACTION_PROMPT = """You are an expert news analyst. Given the following news article, extract ALL discrete real-world events described.
 
 For EACH event, return a JSON object with these fields:
 - event_title: A concise title (max 15 words)
-- event_type: one of [legal_action, policy_decision, election, conflict, economic_event, scientific_discovery, natural_disaster, public_statement, investigation, legislation, court_ruling, arrest, protest, agreement, appointment, resignation, death, meeting, report_release, other]
+- event_type: one of [legal_action, policy_decision, election, conflict, economic_event, scientific_discovery, natural_disaster, public_statement, investigation, legislation, court_ruling, arrest, protest, agreement, appointment, resignation, death, meeting, report_release, market_shift, trade_policy, supply_disruption, commodity_price, tariff_change, sanctions, clinical_trial, patent_filing, product_launch, research_publication, regulatory_approval, industry_partnership, other]
 - event_date: The actual date this event occurred (NOT the publication date). Use ISO format YYYY-MM-DD if exact. For relative dates like "yesterday" or "last Tuesday", write the relative phrase as-is.
 - date_precision: one of [exact, week, month, quarter, year, unknown]
 - location: Where it happened (city, state, country). Use "unknown" if not stated.
@@ -47,6 +55,24 @@ Article text:
 
 Respond with ONLY a JSON array of event objects. If no discrete events are found, return an empty array [].
 Do NOT include any text outside the JSON array."""
+
+# Science-tech: fewer “political” discrete beats; stress evidence and avoid invented links.
+SCIENCE_TECH_EVENT_ADDENDUM = """
+Science & technology domain addendum:
+- Prefer event types: research_publication, scientific_discovery, clinical_trial, regulatory_approval,
+  patent_filing, product_launch, industry_partnership, report_release, meeting, public_statement.
+- Do NOT invent causal links or “breakthrough” narratives unless the article states them clearly.
+- For continuation_signals, only use phrases explicitly tying this work to prior studies, trials,
+  or product generations described in the text (not generic “could revolutionize” language).
+- If the article only describes potential future applications, treat as ongoing research with cautious outcome wording.
+"""
+
+
+def _is_science_tech_domain(domain: Optional[str]) -> bool:
+    if not domain:
+        return False
+    k = domain.lower().strip().replace("_", "-")
+    return k in ("science-tech", "sciencetech", "science tech")
 
 
 def compute_event_fingerprint(
@@ -85,6 +111,7 @@ class EventExtractionService:
         content: str,
         pub_date: datetime,
         storyline_id: Optional[str] = None,
+        domain: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """
         Send article text through the event-extraction prompt, parse the
@@ -99,6 +126,14 @@ class EventExtractionService:
             pub_date=pub_date.strftime('%Y-%m-%d'),
             content=content[:4000],
         )
+        if domain:
+            cfg = get_domain_synthesis_config(domain)
+            if cfg.llm_context:
+                prompt = f"Domain: {domain}\n{cfg.llm_context}\n\n{prompt}"
+            if cfg.event_type_priorities:
+                prompt += f"\n\nPrioritise these event types for this domain: {', '.join(cfg.event_type_priorities[:10])}"
+            if _is_science_tech_domain(domain):
+                prompt += SCIENCE_TECH_EVENT_ADDENDUM
 
         try:
             raw_response = await self.llm._call_ollama(ModelType.LLAMA_8B, prompt)
@@ -230,7 +265,7 @@ class EventExtractionService:
         for evt in events:
             try:
                 cursor.execute("""
-                    INSERT INTO chronological_events (
+                    INSERT INTO public.chronological_events (
                         event_id, storyline_id, title, description, event_type,
                         actual_event_date, relative_temporal_expression,
                         temporal_confidence, source_article_id, extraction_method,
@@ -254,8 +289,8 @@ class EventExtractionService:
                 """, evt)
                 saved += 1
             except Exception as e:
+                # Do not rollback the whole batch — other events in this article can still persist
                 logger.error(f"Failed to save event '{evt.get('title')}': {e}")
-                conn.rollback()
 
         conn.commit()
         cursor.close()

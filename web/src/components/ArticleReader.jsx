@@ -77,29 +77,54 @@ const ArticleReader = ({ article, open, onClose, onAddToStoryline }) => {
     setError(null);
 
     try {
-      // Try to get full content from the article
-      if (article.content && article.content.length > 200) {
-        setFullContent(article.content);
-      } else {
-        // If content is just a summary, try to fetch full content
+      const localFallback =
+        article.content ||
+        article.summary ||
+        article.excerpt ||
+        '';
+
+      // Prefer locally available text; avoid unnecessary hard-fail fetches.
+      if (localFallback && localFallback.length >= 80) {
+        setFullContent(localFallback);
+        return;
+      }
+
+      // Only attempt full-content fetch when we have a valid article id.
+      if (article.id) {
         const response = await api.post(
           `/article-processing/fetch-full-content/${article.id}`,
         );
         if (response.data?.success && response.data.data?.content) {
           setFullContent(response.data.data.content);
-        } else if (response.data?.content) {
-          setFullContent(response.data.content);
-        } else {
-          setFullContent(
-            article.content ||
-              'Full content not available. Click "Read Original" to view the complete article.',
-          );
+          return;
         }
+        if (response.data?.content) {
+          setFullContent(response.data.content);
+          return;
+        }
+      }
+
+      // No fetch result; still show what we have without treating as hard error.
+      if (localFallback) {
+        setFullContent(localFallback);
+      } else {
+        setError('Full content is not available for this article yet.');
+        setFullContent('Content not available');
       }
     } catch (err) {
       Logger.error('Error loading full content:', err);
-      setError('Failed to load full article content');
-      setFullContent(article.content || 'Content not available');
+      const fallback =
+        article.content ||
+        article.summary ||
+        article.excerpt ||
+        '';
+      if (fallback) {
+        setFullContent(fallback);
+        setError(null);
+      } else {
+        setError('Failed to load full article content');
+        setFullContent('Content not available');
+      }
     } finally {
       setLoading(false);
     }

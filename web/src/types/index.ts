@@ -5,6 +5,8 @@
 
 import React from 'react';
 
+export type { EditorialDocument, StorylineEntity, ReportStoryline, ReportPayload, ReportInvestigation, ReportRecentEvent } from './editorial';
+
 // ============================================================================
 // API Response Types
 // ============================================================================
@@ -142,28 +144,68 @@ export interface RSSStats {
 }
 
 // ============================================================================
-// Storyline Types
+// Storyline Types (aligned with backend: storyline_crud, list/detail responses)
 // ============================================================================
 
 export interface Storyline {
-  id: string;
+  id: number;
   title: string;
-  description: string;
-  summary?: string;
-  status: 'active' | 'inactive' | 'archived';
-  priority: 'low' | 'medium' | 'high' | 'critical';
+  description: string | null;
+  status: string;
+  article_count: number;
+  quality_score: number | null;
+  analysis_summary: string | null;
   created_at: string;
   updated_at: string;
-  last_activity?: string;
-  article_count: number;
-  tags: string[];
-  category?: string;
-  sentiment_score?: number;
-  impact_score?: number;
-  is_trending: boolean;
-  is_featured: boolean;
-  related_storylines?: string[];
-  timeline_events?: TimelineEvent[];
+  last_evolution_at?: string | null;
+  evolution_count?: number | null;
+  editorial_document?: Record<string, unknown> | null;
+  document_version?: number | null;
+  document_status?: string | null;
+  ml_processing_status?: string;
+  top_entities?: Array<{ name: string; type: string; description_short?: string }>;
+}
+
+export interface StorylineDetail extends Storyline {
+  articles: Array<{
+    id: number;
+    title: string;
+    url?: string | null;
+    source_domain?: string | null;
+    published_at?: string | null;
+    summary?: string | null;
+  }>;
+  background_information?: Record<string, unknown> | null;
+  context_last_updated?: string | null;
+  last_refinement?: string | null;
+  key_entities?: unknown;
+  entities: Array<{
+    canonical_entity_id: number;
+    name: string;
+    type: string;
+    description: string | null;
+    mention_count: number;
+    has_profile: boolean;
+    has_dossier: boolean;
+    profile_id: number | null;
+  }>;
+}
+
+export interface StorylineListItem extends Storyline {
+  top_entities?: Array<{ name: string; type: string; description_short?: string }>;
+}
+
+export interface StorylineListResponse {
+  data: StorylineListItem[];
+  pagination: {
+    page: number;
+    page_size: number;
+    total: number;
+    pages: number;
+    has_next: boolean;
+    has_prev: boolean;
+  };
+  domain: string;
 }
 
 export interface TimelineEvent {

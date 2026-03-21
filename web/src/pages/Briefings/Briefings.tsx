@@ -34,6 +34,7 @@ import { useNavigate } from 'react-router-dom';
 import apiService from '../../services/apiService';
 import { contextCentricApi, type TrackedEvent } from '../../services/api/contextCentric';
 import { useDomain } from '../../contexts/DomainContext';
+import EntityCard from '../../components/EntityCard/EntityCard';
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -58,6 +59,8 @@ interface StorylineItem {
   article_count?: number;
   status?: string;
   updated_at?: string;
+  editorial_document?: { lede?: string; [key: string]: unknown } | null;
+  top_entities?: Array<{ name: string; type: string; description_short?: string }>;
 }
 
 interface GeneratedBriefing {
@@ -157,7 +160,10 @@ export default function Briefings() {
           apiService.getStorylines().catch(() => ({ data: { storylines: [] } })),
         ]);
         const rawArticles = (articlesRes as { data?: { articles?: ArticleItem[] } })?.data?.articles ?? (articlesRes as { articles?: ArticleItem[] })?.articles ?? [];
-        const rawStorylines = (storylinesRes as { data?: { storylines?: StorylineItem[] } })?.data?.storylines ?? (storylinesRes as { storylines?: StorylineItem[] })?.storylines ?? [];
+        // getStorylines returns { data: StorylineListItem[], pagination, domain } (data is the array)
+        const rawStorylines = Array.isArray((storylinesRes as { data?: unknown })?.data)
+          ? (storylinesRes as { data: StorylineItem[] }).data
+          : (storylinesRes as { data?: { storylines?: StorylineItem[] } })?.data?.storylines ?? (storylinesRes as { storylines?: StorylineItem[] })?.storylines ?? [];
         setArticles(Array.isArray(rawArticles) ? rawArticles.slice(0, 8) : []);
         setStorylines(Array.isArray(rawStorylines) ? rawStorylines.slice(0, 6) : []);
       }
@@ -281,13 +287,27 @@ export default function Briefings() {
                     )}
                   </Box>
                   <Typography variant="h4" component="h2" sx={{ fontWeight: 700, lineHeight: 1.25, mb: 1 }}>
-                    {leadStoryline?.title || leadArticle?.title || 'No lead'}
+                    {(leadStoryline?.editorial_document?.lede ?? leadStoryline?.title) || leadArticle?.title || 'No lead'}
                   </Typography>
-                  {(leadStoryline?.description || leadArticle?.source) && (
+                  {(leadStoryline?.description || leadStoryline?.editorial_document?.lede || leadArticle?.source) && (
                     <Typography variant="body1" color="text.secondary">
-                      {leadStoryline?.description?.slice(0, 160) || `${leadArticle?.source ?? ''} · ${formatDate(leadArticle?.published_at ?? leadArticle?.published_date) || ''}`}
-                      {(leadStoryline?.description?.length ?? 0) > 160 ? '…' : ''}
+                      {leadStoryline?.editorial_document?.lede
+                        ? (leadStoryline.editorial_document.lede.slice(0, 160) + (leadStoryline.editorial_document.lede.length > 160 ? '…' : ''))
+                        : leadStoryline?.description?.slice(0, 160) || `${leadArticle?.source ?? ''} · ${formatDate(leadArticle?.published_at ?? leadArticle?.published_date) || ''}`}
+                      {(leadStoryline?.description?.length ?? leadStoryline?.editorial_document?.lede?.length ?? 0) > 160 ? '…' : ''}
                     </Typography>
+                  )}
+                  {leadStoryline?.top_entities && leadStoryline.top_entities.length > 0 && (
+                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75, mt: 1 }}>
+                      {leadStoryline.top_entities.slice(0, 4).map((e, i) => (
+                        <EntityCard
+                          key={i}
+                          entity={{ canonical_entity_id: i, name: e.name, type: e.type, description: e.description_short ?? null }}
+                          mode="compact"
+                          domain={domain}
+                        />
+                      ))}
+                    </Box>
                   )}
                   {leadStoryline?.id && (
                     <Typography variant="caption" color="primary" sx={{ mt: 1, display: 'flex', alignItems: 'center', gap: 0.5 }}>
@@ -322,11 +342,18 @@ export default function Briefings() {
                     >
                       <Chip label={phaseChip(secondaryStorylines[0]?.status, secondaryStorylines[0]?.updated_at)} size="small" sx={{ mb: 1 }} />
                       <Typography variant="h6" sx={{ fontWeight: 600 }}>
-                        {secondaryStorylines[0]?.title || secondaryArticles[0]?.title}
+                        {(secondaryStorylines[0]?.editorial_document?.lede ?? secondaryStorylines[0]?.title) || secondaryArticles[0]?.title}
                       </Typography>
                       <Typography variant="body2" color="text.secondary">
                         {secondaryStorylines[0]?.description?.slice(0, 100) || secondaryArticles[0]?.source || ''} · {secondaryStorylines[0]?.article_count ?? 0} articles
                       </Typography>
+                      {secondaryStorylines[0]?.top_entities && secondaryStorylines[0].top_entities.length > 0 && (
+                        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mt: 0.5 }}>
+                          {secondaryStorylines[0].top_entities.slice(0, 2).map((e, i) => (
+                            <EntityCard key={i} entity={{ canonical_entity_id: i, name: e.name, type: e.type, description: e.description_short ?? null }} mode="compact" domain={domain} />
+                          ))}
+                        </Box>
+                      )}
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 1 }}>
                         <IconButton size="small" title="Not interested" onClick={(e) => { e.stopPropagation(); handleFeedback(secondaryStorylines[0] ? 'storyline' : 'article', (secondaryStorylines[0]?.id ?? secondaryArticles[0]?.id) as number, { not_interested: true }); }}><ThumbDownOffAlt fontSize="small" /></IconButton>
                         {[1, 2, 3, 4, 5].map((n) => <Button key={n} size="small" sx={{ minWidth: 24, p: 0.25 }} onClick={(e) => { e.stopPropagation(); handleFeedback(secondaryStorylines[0] ? 'storyline' : 'article', (secondaryStorylines[0]?.id ?? secondaryArticles[0]?.id) as number, { rating: n }); }}>{n}</Button>)}
@@ -347,11 +374,18 @@ export default function Briefings() {
                     >
                       <Chip label={phaseChip(secondaryStorylines[1]?.status, secondaryStorylines[1]?.updated_at)} size="small" sx={{ mb: 1 }} />
                       <Typography variant="h6" sx={{ fontWeight: 600 }}>
-                        {secondaryStorylines[1]?.title || secondaryArticles[1]?.title}
+                        {(secondaryStorylines[1]?.editorial_document?.lede ?? secondaryStorylines[1]?.title) || secondaryArticles[1]?.title}
                       </Typography>
                       <Typography variant="body2" color="text.secondary">
                         {secondaryStorylines[1]?.description?.slice(0, 100) || secondaryArticles[1]?.source || ''} · {secondaryStorylines[1]?.article_count ?? 0} articles
                       </Typography>
+                      {secondaryStorylines[1]?.top_entities && secondaryStorylines[1].top_entities.length > 0 && (
+                        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mt: 0.5 }}>
+                          {secondaryStorylines[1].top_entities.slice(0, 2).map((e, i) => (
+                            <EntityCard key={i} entity={{ canonical_entity_id: i, name: e.name, type: e.type, description: e.description_short ?? null }} mode="compact" domain={domain} />
+                          ))}
+                        </Box>
+                      )}
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 1 }}>
                         <IconButton size="small" title="Not interested" onClick={(e) => { e.stopPropagation(); handleFeedback(secondaryStorylines[1] ? 'storyline' : 'article', (secondaryStorylines[1]?.id ?? secondaryArticles[1]?.id) as number, { not_interested: true }); }}><ThumbDownOffAlt fontSize="small" /></IconButton>
                         {[1, 2, 3, 4, 5].map((n) => <Button key={n} size="small" sx={{ minWidth: 24, p: 0.25 }} onClick={(e) => { e.stopPropagation(); handleFeedback(secondaryStorylines[1] ? 'storyline' : 'article', (secondaryStorylines[1]?.id ?? secondaryArticles[1]?.id) as number, { rating: n }); }}>{n}</Button>)}
@@ -395,9 +429,14 @@ export default function Briefings() {
                   {digestStorylines.map((s, i) => (
                     <ListItemButton key={s.id ?? i} dense onClick={() => s.id && navigate(`/${domain}/storylines/${s.id}`)}>
                       <ListItemText
-                        primary={s.title || 'Untitled'}
+                        primary={(s.editorial_document?.lede ?? s.title) || 'Untitled'}
+                        secondary={[
+                          `${s.article_count ?? 0} articles`,
+                          s.top_entities?.length
+                            ? `Key: ${s.top_entities.slice(0, 3).map((e) => e.name).join(', ')}`
+                            : null,
+                        ].filter(Boolean).join(' · ')}
                         primaryTypographyProps={{ variant: 'body2' }}
-                        secondary={`${s.article_count ?? 0} articles`}
                         secondaryTypographyProps={{ variant: 'caption' }}
                       />
                       <ListItemSecondaryAction>

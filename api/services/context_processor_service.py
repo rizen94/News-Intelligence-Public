@@ -6,7 +6,7 @@ See docs/CONTEXT_CENTRIC_UPGRADE_PLAN.md.
 
 import json
 import logging
-from typing import Optional
+from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +70,26 @@ def ensure_context_for_article(domain_key: str, article_id: int) -> Optional[int
             content = (content or "")[:500000]
             raw_content = content
 
+            ctx_metadata: Dict[str, Any] = {
+                "url": url,
+                "published_at": str(published_at) if published_at else None,
+            }
+            # Copy RSS source_credibility from articles.metadata (orchestrator_governance tiers)
+            try:
+                cur.execute(
+                    f"SELECT metadata FROM {schema_name}.articles WHERE id = %s",
+                    (article_id,),
+                )
+                mrow = cur.fetchone()
+                if mrow and mrow[0]:
+                    am = mrow[0]
+                    if isinstance(am, str):
+                        am = json.loads(am)
+                    if isinstance(am, dict) and am.get("source_credibility"):
+                        ctx_metadata["source_credibility"] = am["source_credibility"]
+            except Exception as meta_err:
+                logger.debug("Context processor: article metadata not read (%s)", meta_err)
+
             # Insert context
             cur.execute(
                 """
@@ -83,7 +103,7 @@ def ensure_context_for_article(domain_key: str, article_id: int) -> Optional[int
                     title,
                     content,
                     raw_content,
-                    json.dumps({"url": url, "published_at": str(published_at) if published_at else None}),
+                    json.dumps(ctx_metadata),
                     created_at,
                 ),
             )
@@ -350,6 +370,43 @@ def sync_domain_articles_to_contexts(domain_key: str, limit: int = 100) -> int:
         except Exception:
             pass
         return 0
+
+
+def get_context_entity_mentions_coverage() -> Dict[str, Any]:
+    """
+    Diagnostic: count contexts with vs without context_entity_mentions.
+    Use to verify coverage after entity_profile_sync + backfill_context_entity_mentions.
+    Returns dict with total_contexts, contexts_with_mentions, contexts_without_mentions, coverage_pct.
+    """
+    from shared.database.connection import get_db_connection
+
+    conn = get_db_connection()
+    if not conn:
+        return {"error": "no_connection", "total_contexts": 0, "contexts_with_mentions": 0, "contexts_without_mentions": 0, "coverage_pct": 0.0}
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SET LOCAL statement_timeout = '5s'")
+            cur.execute("SELECT COUNT(*) FROM intelligence.contexts")
+            total = cur.fetchone()[0] or 0
+            cur.execute("""
+                SELECT COUNT(DISTINCT context_id) FROM intelligence.context_entity_mentions
+            """)
+            with_mentions = cur.fetchone()[0] or 0
+        conn.close()
+        without = max(0, total - with_mentions)
+        pct = round(100.0 * with_mentions / total, 1) if total else 0.0
+        return {
+            "total_contexts": total,
+            "contexts_with_mentions": with_mentions,
+            "contexts_without_mentions": without,
+            "coverage_pct": pct,
+        }
+    except Exception as e:
+        try:
+            conn.close()
+        except Exception:
+            pass
+        return {"error": str(e)[:200], "total_contexts": 0, "contexts_with_mentions": 0, "contexts_without_mentions": 0, "coverage_pct": 0.0}
 
 
 def backfill_context_entity_mentions_for_domain(domain_key: str, limit: int = 500) -> int:

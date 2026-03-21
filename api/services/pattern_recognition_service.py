@@ -77,7 +77,7 @@ def _discover_temporal_patterns(conn, domain_key: Optional[str], limit: int) -> 
                 """
                 SELECT DATE(c.created_at) AS d, array_agg(c.id ORDER BY c.id) AS ctx_ids, COUNT(*) AS cnt
                 FROM intelligence.contexts c
-                WHERE c.domain_key = %s AND c.created_at >= NOW() - INTERVAL '30 days'
+                WHERE c.domain_key = %s AND c.created_at >= NOW() - INTERVAL '90 days'
                 GROUP BY DATE(c.created_at)
                 HAVING COUNT(*) >= 2
                 ORDER BY d DESC
@@ -90,7 +90,7 @@ def _discover_temporal_patterns(conn, domain_key: Optional[str], limit: int) -> 
                 """
                 SELECT DATE(c.created_at) AS d, array_agg(c.id ORDER BY c.id) AS ctx_ids, COUNT(*) AS cnt
                 FROM intelligence.contexts c
-                WHERE c.created_at >= NOW() - INTERVAL '30 days'
+                WHERE c.created_at >= NOW() - INTERVAL '90 days'
                 GROUP BY DATE(c.created_at)
                 HAVING COUNT(*) >= 2
                 ORDER BY d DESC

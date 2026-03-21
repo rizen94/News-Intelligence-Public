@@ -298,6 +298,7 @@ class TopicClusteringService:
     
     async def save_topics_to_database(self, topics_data: Dict[str, Any], articles: List[Dict[str, Any]]) -> bool:
         """Save topic clustering results to database"""
+        db = None
         try:
             db = next(get_db())
             
@@ -343,10 +344,12 @@ class TopicClusteringService:
             
         except Exception as e:
             logger.error(f"Error saving topics to database: {e}")
-            db.rollback()
+            if db:
+                db.rollback()
             return False
         finally:
-            db.close()
+            if db:
+                db.close()
 
 # Global instance
 topic_clustering_service = TopicClusteringService()

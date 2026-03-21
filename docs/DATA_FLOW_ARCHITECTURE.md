@@ -101,7 +101,8 @@ RSS Sources / External APIs
                         ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │  STAGE 6: STORYLINE MANAGEMENT                                  │
-│  storyline_service.py, storyline_automation_service.py          │
+│  domains/storyline_management/services/storyline_service.py,      │
+│  storyline_automation_service.py                                 │
 │    → {domain}.storylines (grouping of related articles)        │
 │    → {domain}.storyline_articles (article-storyline links)     │
 │                                                                 │

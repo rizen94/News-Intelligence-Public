@@ -127,11 +127,22 @@ export const monitoringApi = {
   /** Backlog progression: articles/documents/storylines remaining and catch-up ETA. */
   async getBacklogStatus() {
     try {
-      const response = await getApi().get('/api/system_monitoring/backlog_status');
+      const response = await getApi().get('/api/system_monitoring/backlog_status', { timeout: 12000 });
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to fetch backlog status', error as Error);
       return { success: false, data: null, error: (error as any).message };
+    }
+  },
+
+  /** Live DB sessions (pg_stat_activity) for monitoring long-held connections. */
+  async getDatabaseConnections(params?: { limit?: number; long_running_seconds?: number }) {
+    try {
+      const response = await getApi().get('/api/system_monitoring/database/connections', { params, timeout: 20000 });
+      return response.data;
+    } catch (error) {
+      Logger.apiError('Failed to fetch database connections', error as Error);
+      return { success: false, data: { sessions: [] }, error: (error as any).message };
     }
   },
 
@@ -558,9 +569,59 @@ export const monitoringApi = {
     }
   },
 
-  /** Commodity-agnostic: pass gold | silver | platinum. Same dashboard, data for selected metal. */
+  /** List of commodities from registry (id, label) for dashboard/nav. */
+  async getCommodities(domain?: string) {
+    try {
+      const domainKey = domain || getCurrentDomain();
+      const response = await getApi().get(`/api/${domainKey}/finance/commodities`);
+      return response.data;
+    } catch (error) {
+      Logger.apiError('Failed to fetch commodities list', error as Error);
+      return { success: false, data: [], error: (error as Error).message };
+    }
+  },
+
+  /** Commodity-relevant news (financial relevance filter applied). */
+  async getCommodityNews(
+    commodity: string,
+    params: { hours?: number; max_items?: number } = {},
+    domain?: string
+  ) {
+    try {
+      const domainKey = domain || getCurrentDomain();
+      const response = await getApi().get(
+        `/api/${domainKey}/finance/commodity/${commodity}/news`,
+        { params }
+      );
+      return response.data;
+    } catch (error) {
+      Logger.apiError(`Failed to fetch ${commodity} news`, error as Error);
+      return { success: false, data: { items: [] }, error: (error as Error).message };
+    }
+  },
+
+  /** Commodity-relevant supply-chain contexts (mining, EDGAR). */
+  async getCommoditySupplyChain(
+    commodity: string,
+    params: { hours?: number; max_items?: number } = {},
+    domain?: string
+  ) {
+    try {
+      const domainKey = domain || getCurrentDomain();
+      const response = await getApi().get(
+        `/api/${domainKey}/finance/commodity/${commodity}/supply-chain`,
+        { params }
+      );
+      return response.data;
+    } catch (error) {
+      Logger.apiError(`Failed to fetch ${commodity} supply-chain`, error as Error);
+      return { success: false, data: { items: [] }, error: (error as Error).message };
+    }
+  },
+
+  /** Commodity id from registry (e.g. gold, silver, platinum, oil, gas). */
   async getCommodityHistory(
-    commodity: 'gold' | 'silver' | 'platinum',
+    commodity: string,
     params: { days?: number; fetch_if_empty?: boolean } = {},
     domain?: string
   ) {
@@ -577,7 +638,7 @@ export const monitoringApi = {
     }
   },
 
-  async getCommoditySpot(commodity: 'gold' | 'silver' | 'platinum', domain?: string) {
+  async getCommoditySpot(commodity: string, domain?: string) {
     try {
       const domainKey = domain || getCurrentDomain();
       const response = await getApi().get(`/api/${domainKey}/finance/commodity/${commodity}/spot`);
@@ -589,7 +650,7 @@ export const monitoringApi = {
   },
 
   async getCommodityAuthority(
-    commodity: 'gold' | 'silver' | 'platinum',
+    commodity: string,
     params: { authorities?: string } = {},
     domain?: string
   ) {
@@ -607,7 +668,7 @@ export const monitoringApi = {
   },
 
   async getCommodityGeoEvents(
-    params: { limit?: number; commodity?: 'gold' | 'silver' | 'platinum' } = {},
+    params: { limit?: number; commodity?: string } = {},
     domain?: string,
   ) {
     try {
@@ -621,7 +682,7 @@ export const monitoringApi = {
   },
 
   async getCommodityRegulatoryEvents(
-    params: { limit?: number; commodity?: 'gold' | 'silver' | 'platinum' } = {},
+    params: { limit?: number; commodity?: string } = {},
     domain?: string,
   ) {
     try {

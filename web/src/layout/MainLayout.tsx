@@ -3,7 +3,7 @@
  * Replaces the old Header + Navigation + DomainLayout.
  */
 import React, { useEffect } from 'react';
-import { Outlet, useParams, useNavigate, Navigate } from 'react-router-dom';
+import { Outlet, useParams, useNavigate, useLocation, Navigate } from 'react-router-dom';
 import { Box, Select, MenuItem, FormControl, InputLabel } from '@mui/material';
 import { HeroStatusBar } from './HeroStatusBar';
 import { AppNav, APP_NAV_WIDTH } from './AppNav';
@@ -14,6 +14,7 @@ const MainLayout: React.FC = () => {
   const { domain: urlDomain } = useParams<{ domain: string }>();
   const { domain: contextDomain, setDomain, availableDomains } = useDomain();
   const navigate = useNavigate();
+  const location = useLocation();
 
   useEffect(() => {
     if (urlDomain && isValidDomain(urlDomain) && urlDomain !== contextDomain) {
@@ -26,10 +27,12 @@ const MainLayout: React.FC = () => {
   }
 
   const handleDomainChange = (newDomain: string) => {
-    if (isValidDomain(newDomain)) {
-      setDomain(newDomain as 'politics' | 'finance' | 'science-tech');
-      navigate(`/${newDomain}/dashboard`, { replace: true });
-    }
+    if (!isValidDomain(newDomain) || newDomain === contextDomain) return;
+    setDomain(newDomain as 'politics' | 'finance' | 'science-tech');
+    // Stay on the same page: preserve path after domain (e.g. /politics/storylines/123 → /finance/storylines/123)
+    const pathMatch = location.pathname.match(/^\/(?:politics|finance|science-tech)(\/.*)?$/);
+    const pathWithoutDomain = pathMatch?.[1] || '/dashboard';
+    navigate(`/${newDomain}${pathWithoutDomain}`, { replace: true });
   };
 
   return (

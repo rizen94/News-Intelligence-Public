@@ -15,12 +15,24 @@ logger = logging.getLogger(__name__)
 ACTIVE_GAP_DAYS = 7
 SLOW_GAP_DAYS = 30
 
+# Per-domain storylines/articles live in these schemas (not public).
+_DOMAIN_SCHEMAS = ("politics", "finance", "science_tech")
+# Extracted timeline rows live in public (migrations 060, 133).
+_CHRONO_EVENTS = "public.chronological_events"
+
 
 class TimelineBuilderService:
     """Constructs structured timelines from storyline events."""
 
-    def __init__(self, conn):
+    def __init__(self, conn, schema_name: Optional[str] = None):
+        """
+        Args:
+            conn: Open DB connection (psycopg2).
+            schema_name: Domain schema for storylines/articles lookups (e.g. politics, science_tech).
+                chronological_events is read from public.chronological_events; articles are domain-scoped.
+        """
         self.conn = conn
+        self.schema_name = schema_name.replace("-", "_") if schema_name else None
 
     def build_timeline(self, storyline_id: int) -> Dict[str, Any]:
         """
@@ -29,8 +41,15 @@ class TimelineBuilderService:
         Returns a dict with ordered events, gaps, milestones, and metadata.
         """
         events = self._load_events(storyline_id)
+        merged_duplicate_events_count = self._count_merged_duplicate_events(storyline_id)
         if not events:
-            return {"storyline_id": storyline_id, "events": [], "gaps": [], "milestones": []}
+            return {
+                "storyline_id": storyline_id,
+                "events": [],
+                "gaps": [],
+                "milestones": [],
+                "merged_duplicate_events_count": merged_duplicate_events_count,
+            }
 
         events = self._order_events(events)
         gaps = self._detect_gaps(events, storyline_id)
@@ -46,22 +65,43 @@ class TimelineBuilderService:
             "time_span": self._compute_span(events),
             "source_count": self._count_distinct_sources(events),
             "built_at": datetime.now(timezone.utc).isoformat(),
+            "merged_duplicate_events_count": merged_duplicate_events_count,
         }
 
     # ------------------------------------------------------------------
     # Event loading and ordering
     # ------------------------------------------------------------------
 
+    def _count_merged_duplicate_events(self, storyline_id: int) -> int:
+        """Rows merged into a canonical event (hidden from primary timeline)."""
+        cursor = self.conn.cursor()
+        try:
+            cursor.execute(
+                f"""
+                SELECT COUNT(*) FROM {_CHRONO_EVENTS}
+                WHERE storyline_id = %s::text AND canonical_event_id IS NOT NULL
+                """,
+                (storyline_id,),
+            )
+            row = cursor.fetchone()
+            return int(row[0]) if row and row[0] is not None else 0
+        except Exception:
+            logger.debug("TimelineBuilderService: merged duplicate count failed", exc_info=True)
+            return 0
+        finally:
+            cursor.close()
+
     def _load_events(self, storyline_id: int) -> List[Dict]:
         cursor = self.conn.cursor()
-        cursor.execute("""
+        cursor.execute(f"""
             SELECT ce.id, ce.title, ce.description, ce.event_type,
                    ce.actual_event_date, ce.date_precision,
                    ce.location, ce.key_actors, ce.entities,
                    ce.importance_score, ce.source_article_id,
                    ce.source_count, ce.is_ongoing, ce.outcome,
-                   ce.canonical_event_id
-            FROM chronological_events ce
+                   ce.canonical_event_id, ce.extraction_method,
+                   ce.extraction_confidence
+            FROM {_CHRONO_EVENTS} ce
             WHERE ce.storyline_id = %s::text
               AND ce.canonical_event_id IS NULL
             ORDER BY ce.actual_event_date ASC NULLS LAST
@@ -78,6 +118,11 @@ class TimelineBuilderService:
                 "importance": float(r[9] or 0),
                 "source_article_id": r[10], "source_count": r[11] or 1,
                 "is_ongoing": r[12], "outcome": r[13],
+                # r[14] canonical_event_id — NULL for rows shown on timeline (primary row for a dedup cluster)
+                "canonical_event_id": r[14] if len(r) > 14 else None,
+                "extraction_method": r[15] if len(r) > 15 else None,
+                "extraction_confidence": float(r[16]) if len(r) > 16 and r[16] is not None else None,
+                "timeline_row_role": "primary",
             }
             for r in rows
         ]
@@ -120,13 +165,23 @@ class TimelineBuilderService:
 
     def _gap_threshold(self, storyline_id: int) -> int:
         """Use a shorter threshold for active stories, longer for slow-moving ones."""
+        schemas = [self.schema_name] if self.schema_name else list(_DOMAIN_SCHEMAS)
         cursor = self.conn.cursor()
-        cursor.execute(
-            "SELECT status FROM storylines WHERE id = %s", (storyline_id,)
-        )
-        row = cursor.fetchone()
-        cursor.close()
-        status = row[0] if row else 'active'
+        try:
+            status = "active"
+            for sch in schemas:
+                if not sch:
+                    continue
+                cursor.execute(
+                    f"SELECT status FROM {sch}.storylines WHERE id = %s",
+                    (storyline_id,),
+                )
+                row = cursor.fetchone()
+                if row:
+                    status = row[0] or "active"
+                    break
+        finally:
+            cursor.close()
         if status in ('dormant', 'watching'):
             return SLOW_GAP_DAYS
         return ACTIVE_GAP_DAYS
@@ -174,13 +229,19 @@ class TimelineBuilderService:
     # ------------------------------------------------------------------
 
     def _attach_sources(self, events: List[Dict]) -> List[Dict]:
+        if not self.schema_name:
+            logger.debug("TimelineBuilderService: no schema_name; skipping article source enrichment")
+            return events
+        sch = self.schema_name
         cursor = self.conn.cursor()
-        for evt in events:
-            aid = evt.get('source_article_id')
-            if aid:
-                cursor.execute("""
+        try:
+            for evt in events:
+                aid = evt.get('source_article_id')
+                if not aid:
+                    continue
+                cursor.execute(f"""
                     SELECT title, source_domain, published_at
-                    FROM articles WHERE id = %s
+                    FROM {sch}.articles WHERE id = %s
                 """, (aid,))
                 row = cursor.fetchone()
                 if row:
@@ -189,7 +250,8 @@ class TimelineBuilderService:
                         'domain': row[1],
                         'published_at': row[2].isoformat() if row[2] else None,
                     }
-        cursor.close()
+        finally:
+            cursor.close()
         return events
 
     # ------------------------------------------------------------------

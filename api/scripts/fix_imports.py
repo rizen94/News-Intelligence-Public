@@ -84,25 +84,10 @@ def fix_specific_imports():
             'new': 'from services.deduplication_integration_service import DeduplicationIntegrationService'
         },
         {
-            'file': 'api/services/storyline_service.py',
-            'old': 'from .rss_service import RSSService',
-            'new': 'from services.rss_service import RSSService'
-        },
-        {
-            'file': 'api/services/enhanced_storyline_service.py',
-            'old': 'from .storyline_service import StorylineService',
-            'new': 'from services.storyline_service import StorylineService'
-        },
-        {
             'file': 'api/services/rss_fetcher_service.py',
             'old': 'from .rss_service import RSSService',
             'new': 'from services.rss_service import RSSService'
         },
-        {
-            'file': 'api/services/progressive_enhancement_service.py',
-            'old': 'from .storyline_service import StorylineService',
-            'new': 'from services.storyline_service import StorylineService'
-        }
     ]
     
     for fix in fixes:

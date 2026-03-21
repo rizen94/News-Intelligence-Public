@@ -5,6 +5,11 @@ Designed to be called by the automation_manager (data_cleanup phase) or the
 newsroom orchestrator. Keeps entity profiles, tracked events, and contexts
 lean by removing noise, merging duplicates, and pruning stale data.
 
+Routine data cleanliness includes entity bad-merge decouple: splitting
+canonicals that were incorrectly merged (e.g. role-word last name like
+"X executives" + "Y executives"). Controlled by policy entity_bad_merge_decouple;
+runs once per data_cleanup cycle.
+
 Configurable retention policies control what gets cleaned and when.
 """
 
@@ -33,6 +38,9 @@ DEFAULT_POLICY = {
     "stale_event_archive_days": 30,
     "orphan_profile_cleanup": True,
     "max_entity_profiles_per_domain": 10000,
+    # Bad-merge decouple: split canonicals that were incorrectly merged (e.g. role-word last name).
+    "entity_bad_merge_decouple": True,
+    "entity_decouple_max_splits_per_domain": 0,  # 0 = no cap
     # Retention for unbounded intelligence tables (keep under ~1 TB). Set to 0 to disable.
     "retention_fact_log_days": 7,
     "retention_queue_days": 7,
@@ -76,6 +84,9 @@ class IntelligenceCleanupController:
 
                 if self.policy["orphan_profile_cleanup"]:
                     domain_result["orphan_profiles_removed"] = self._cleanup_orphan_profiles(d)
+
+                if self.policy.get("entity_bad_merge_decouple"):
+                    domain_result["entity_decouple_splits"] = self._run_entity_decouple(d)
 
                 cap = self.policy["max_entity_profiles_per_domain"]
                 if cap:
@@ -312,6 +323,33 @@ class IntelligenceCleanupController:
             logger.warning(f"cap entities {domain_key}: {e}")
             _safe_rollback_close(conn)
         return removed
+
+    # -- Entity bad-merge decouple (routine data cleanliness) ------------------
+
+    def _run_entity_decouple(self, domain_key: str) -> int:
+        """
+        Run entity decouple pipeline for this domain: split canonicals that were
+        incorrectly merged (e.g. role-word last name). Part of routine data cleanup.
+        """
+        try:
+            from services.entity_resolution_service import run_entity_decouple_pipeline
+            max_splits = self.policy.get("entity_decouple_max_splits_per_domain") or None
+            if max_splits == 0:
+                max_splits = None
+            result = run_entity_decouple_pipeline(
+                domain_keys=[domain_key],
+                dry_run=False,
+                max_splits_per_domain=max_splits,
+            )
+            by_domain = result.get("by_domain") or {}
+            domain_result = by_domain.get(domain_key) or {}
+            count = domain_result.get("split_count", 0)
+            if count:
+                logger.info("Entity decouple %s: %s splits (canonicals_processed=%s)", domain_key, count, domain_result.get("canonicals_processed", 0))
+            return count
+        except Exception as e:
+            logger.warning("Entity decouple %s: %s", domain_key, e)
+            return 0
 
     # -- Stale event archival --------------------------------------------------
 

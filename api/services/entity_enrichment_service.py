@@ -7,6 +7,7 @@ See docs/RAG_ENHANCEMENT_ROADMAP.md.
 
 import json
 import logging
+import os
 from typing import Any, Dict, List, Optional
 
 from shared.database.connection import get_db_connection
@@ -42,20 +43,24 @@ def _get_canonical_name_for_profile(entity_profile_id: int) -> Optional[tuple]:
 
 
 def _fetch_wikipedia_summary(canonical_name: str) -> Optional[Dict[str, Any]]:
-    """Fetch Wikipedia summary for an entity name. Returns summary dict or None."""
+    """Fetch entity knowledge via high-level connector (Wikipedia first, optional KG fallback)."""
     try:
-        wiki = _get_wikipedia_service()
-        summary = wiki.get_article_summary(canonical_name)
-        if summary and summary.get("extract"):
-            return summary
-        # Try search then first result
-        results = wiki.search_articles(canonical_name, limit=1)
-        if results:
-            summary = wiki.get_article_summary(results[0]["title"])
-            if summary and summary.get("extract"):
-                return summary
+        from services.entity_knowledge_connector import resolve_entity_knowledge
+        result = resolve_entity_knowledge(
+            canonical_name,
+            sources=("wikipedia", "knowledge_graph"),
+        )
+        if not result:
+            return None
+        # Map connector shape to legacy summary shape for _merge_wikipedia_section and _facts_*
+        return {
+            "title": result.get("title", ""),
+            "extract": result.get("description", ""),
+            "url": result.get("url", ""),
+            "page_id": result.get("wikipedia_page_id"),
+        }
     except Exception as e:
-        logger.debug("Wikipedia fetch for %s: %s", canonical_name, e)
+        logger.debug("Entity knowledge fetch for %s: %s", canonical_name, e)
     return None
 
 
@@ -205,14 +210,19 @@ def get_entity_profile_ids_to_enrich(limit: int = 20) -> List[int]:
         conn.close()
 
 
-# Production: max 20 entities per minute (LLM limits); skip run if queue > 1000 (backpressure)
-ENTITY_ENRICHMENT_QUEUE_LIMIT = 1000
+# Log-only threshold: large backlog used to skip all work and block enrichment forever (v8 fix).
+ENTITY_ENRICHMENT_QUEUE_WARN_THRESHOLD = int(
+    os.environ.get("ENTITY_ENRICHMENT_QUEUE_WARN_THRESHOLD", "5000")
+)
 
 
 def run_enrichment_batch(limit: int = 20) -> int:
     """
     Enrich up to `limit` entity profiles. Returns number updated.
-    Production: max 20/run, ~10s timeout per entity; if queue depth > 1000 we skip (system overloaded).
+    Production: max 20/run, ~10s timeout per entity.
+
+    Previously: queue depth > 1000 skipped the entire run, which stalled enrichment whenever
+    a large backlog existed (no profiles ever got ``updated_at`` / sections writes).
     """
     ids = get_entity_profile_ids_to_enrich(limit=limit)
     if not ids:
@@ -229,12 +239,13 @@ def run_enrichment_batch(limit: int = 20) -> int:
                     """
                 )
                 (queue_depth,) = cur.fetchone()
-                if queue_depth > ENTITY_ENRICHMENT_QUEUE_LIMIT:
+                if queue_depth > ENTITY_ENRICHMENT_QUEUE_WARN_THRESHOLD:
                     logger.warning(
-                        "Entity enrichment queue depth %s > %s (backpressure): skipping this run",
-                        queue_depth, ENTITY_ENRICHMENT_QUEUE_LIMIT,
+                        "Entity enrichment backlog %s profiles (threshold %s); still processing batch of %s",
+                        queue_depth,
+                        ENTITY_ENRICHMENT_QUEUE_WARN_THRESHOLD,
+                        limit,
                     )
-                    return 0
         finally:
             conn.close()
     updated = 0

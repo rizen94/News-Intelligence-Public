@@ -113,13 +113,41 @@ class TopicClusteringService:
             
             # Limit content length for LLM
             content_preview = content[:5000] if len(content) > 5000 else content  # v7: full-text
-            
+
+            # Domain-specific context so the LLM knows what matters for this domain
+            domain_hint = ""
+            category_choices = (
+                "politics, business, technology, health, environment, international, sports, entertainment, other"
+            )
+            try:
+                from services.domain_synthesis_config import get_domain_synthesis_config
+                cfg = get_domain_synthesis_config(self.domain)
+                if cfg.focus_areas:
+                    domain_hint = f" For this domain, prioritise topics related to: {', '.join(cfg.focus_areas[:8])}."
+                if cfg.macro_subject_axes:
+                    domain_hint += (
+                        " When relevant, tie themes to these cross-field axes (keywords only; do not force): "
+                        f"{', '.join(cfg.macro_subject_axes[:10])}."
+                    )
+                if cfg.llm_context:
+                    domain_hint += f" {cfg.llm_context[:500]}"
+                dk = (self.domain or "").lower().replace("_", "-")
+                if dk in ("science-tech", "sciencetech"):
+                    category_choices = (
+                        "technology, health, medicine, artificial_intelligence, biotechnology, genomics, "
+                        "aerospace, energy, materials_science, quantum_computing, robotics, climate_science, "
+                        "neuroscience, cybersecurity, environment, business, other"
+                    )
+            except Exception:
+                pass
+
             system_prompt = """You are an expert news analyst specializing in topic extraction and categorization.
 Your task is to identify the main topics and themes in news articles.
 Return your response as a JSON array of topics, each with: name, confidence (0-1), keywords (array), and category.
-CRITICAL: Only extract topics that are EXPLICITLY discussed in this specific article. Do not include topics from other news. Each topic must be clearly mentioned in the article text. Never infer or hallucinate topics."""
-            
-            prompt = f"""Analyze the following news article and extract the main topics.
+CRITICAL: Only extract topics that are EXPLICITLY discussed in this specific article. Do not include topics from other news. Each topic must be clearly mentioned in the article text. Never infer or hallucinate topics.""" + domain_hint
+
+            prompt = (
+                f"""Analyze the following news article and extract the main topics.
 
 Article Title: {title}
 
@@ -135,7 +163,9 @@ Instructions:
    - name: A clear, concise topic name (2-4 words)
    - confidence: Your confidence in this topic (0.0 to 1.0)
    - keywords: 3-5 related keywords
-   - category: One of: politics, business, technology, health, environment, international, sports, entertainment, other
+   - category: One of: """
+                + category_choices
+                + """
 
 4. Focus on specific, meaningful topics (not generic terms like "news" or "article")
 5. Consider the article's main subject, key entities, and themes
@@ -143,15 +173,16 @@ Instructions:
 
 Return ONLY a JSON array in this exact format:
 [
-  {{
+  {
     "name": "Topic Name",
     "confidence": 0.85,
     "keywords": ["keyword1", "keyword2", "keyword3"],
     "category": "politics"
-  }}
+  }
 ]
 
 JSON Response:"""
+            )
             
             response = await self._call_ollama(prompt, system_prompt)
             
@@ -336,11 +367,11 @@ JSON Response:"""
             conn = self._get_db_connection()
             cur = conn.cursor(cursor_factory=RealDictCursor)
             
-            # Get article
-            cur.execute("""
-                SELECT id, title, content, excerpt, topics, 
+            # Get article from this service's domain schema
+            cur.execute(f"""
+                SELECT id, title, content, excerpt, topics,
                        published_at, source_domain
-                FROM articles
+                FROM {self.schema}.articles
                 WHERE id = %s
             """, (article_id,))
             

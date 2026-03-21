@@ -3,7 +3,7 @@ Centralized content synthesis service — aggregates all intelligence phases int
 unified context for editorial generation and briefing construction.
 
 The intelligence cascade produces enrichments at every stage:
-  article → ml_data → entities → contexts → claims → events → storylines
+  article → metadata (analysis_results) → entities → contexts → claims → events → storylines
 
 This service is the single point that gathers all those enrichments for a given
 scope (domain, storyline, event, or entity) and produces a synthesis-ready
@@ -20,6 +20,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from shared.database.connection import get_db_connection
+from services.domain_synthesis_config import get_domain_synthesis_config
 
 logger = logging.getLogger(__name__)
 
@@ -40,12 +41,13 @@ def _schema(domain_key: str) -> str:
 
 def synthesize_domain_context(
     domain_key: str,
-    hours: int = 24,
-    max_articles: int = 30,
-    max_storylines: int = 10,
-    max_events: int = 10,
-    max_entities: int = 20,
+    hours: int = 168,  # v8: 7-day default
+    max_articles: int = 100,
+    max_storylines: int = 25,
+    max_events: int = 25,
+    max_entities: int = 50,
     max_quality_tier: Optional[int] = None,
+    max_articles_per_source: Optional[int] = 5,  # v8: source diversity
 ) -> Dict[str, Any]:
     """
     Gather all intelligence for a domain within the last `hours` window.
@@ -62,6 +64,7 @@ def synthesize_domain_context(
     }
     """
     schema = _schema(domain_key)
+    domain_config = get_domain_synthesis_config(domain_key)
     conn = get_db_connection()
     if not conn:
         return {"success": False, "error": "Database connection failed"}
@@ -79,6 +82,13 @@ def synthesize_domain_context(
         "claims": [],
         "patterns": [],
         "statistics": {},
+        "domain_synthesis_config": {
+            "llm_context": domain_config.llm_context,
+            "editorial_sections": domain_config.editorial_sections,
+            "event_type_priorities": domain_config.event_type_priorities,
+            "entity_type_weights": domain_config.entity_type_weights,
+            "focus_areas": domain_config.focus_areas,
+        },
     }
 
     try:
@@ -90,12 +100,13 @@ def synthesize_domain_context(
             if max_quality_tier is not None:
                 quality_clause = " AND COALESCE(a.quality_tier, 4) <= %s"
                 order_clause = "ORDER BY COALESCE(a.quality_tier, 4) ASC, COALESCE(a.quality_score, 0) DESC, a.published_at DESC NULLS LAST"
-            article_params: tuple = (cutoff, cutoff, max_quality_tier, max_articles) if max_quality_tier is not None else (cutoff, cutoff, max_articles)
+            fetch_limit = max_articles * 20 if max_articles_per_source else max_articles
+            article_params: tuple = (cutoff, cutoff, max_quality_tier, fetch_limit) if max_quality_tier is not None else (cutoff, cutoff, fetch_limit)
             cur.execute(
                 f"""
                 SELECT a.id, a.title, a.source_domain, a.published_at,
                        LEFT(a.content, 800) AS content_excerpt,
-                       a.ml_data, a.entities, a.sentiment_score
+                       COALESCE(a.metadata, '{{}}'::jsonb), a.entities, a.sentiment_score
                 FROM {schema}.articles a
                 WHERE (a.published_at >= %s OR a.created_at >= %s){quality_clause}
                 {order_clause}
@@ -106,22 +117,66 @@ def synthesize_domain_context(
             articles = []
             article_ids = []
             for row in cur.fetchall():
-                aid, title, source, pub_at, content_excerpt, ml_data, entities_json, sentiment = row
+                aid, title, source, pub_at, content_excerpt, meta, entities_json, sentiment = row
                 article_ids.append(aid)
-                ml = ml_data if isinstance(ml_data, dict) else {}
+                meta = meta if isinstance(meta, dict) else {}
                 articles.append({
                     "id": aid,
                     "title": title or "",
                     "source": source or "",
                     "published_at": pub_at.isoformat() if pub_at else None,
                     "content_excerpt": content_excerpt or "",
-                    "summary": ml.get("summary", ""),
-                    "key_points": ml.get("key_points", []),
+                    "summary": meta.get("summary", ""),
+                    "key_points": meta.get("key_points", []),
                     "entities_extracted": entities_json if isinstance(entities_json, dict) else {},
                     "sentiment_score": float(sentiment) if sentiment is not None else None,
-                    "sentiment_label": ml.get("sentiment_label", ""),
+                    "sentiment_label": meta.get("sentiment_label", ""),
                 })
+            # v8: source diversity — cap articles per source then trim to max_articles
+            if max_articles_per_source and max_articles_per_source > 0:
+                source_count: Dict[str, int] = {}
+                capped: List[Dict[str, Any]] = []
+                for a in articles:
+                    src = a.get("source") or ""
+                    if source_count.get(src, 0) < max_articles_per_source:
+                        source_count[src] = source_count.get(src, 0) + 1
+                        capped.append(a)
+                        if len(capped) >= max_articles:
+                            break
+                articles = capped
+                article_ids = [a["id"] for a in articles]
             result["articles"] = articles
+
+            # --- v8: Historical summary tier (older articles, 7–30 days) ---
+            cutoff_hist_end = datetime.now(timezone.utc) - timedelta(hours=168)
+            cutoff_hist_start = datetime.now(timezone.utc) - timedelta(hours=720)
+            try:
+                cur.execute(
+                    f"""
+                    SELECT a.id, a.title, a.source_domain, a.published_at,
+                           LEFT(a.content, 500) AS content_excerpt, COALESCE(a.metadata, '{{}}'::jsonb)
+                    FROM {schema}.articles a
+                    WHERE (a.published_at >= %s AND a.published_at < %s) OR (a.created_at >= %s AND a.created_at < %s)
+                    ORDER BY a.published_at DESC NULLS LAST
+                    LIMIT 25
+                    """,
+                    (cutoff_hist_start, cutoff_hist_end, cutoff_hist_start, cutoff_hist_end),
+                )
+                articles_historical = []
+                for row in cur.fetchall():
+                    ml = row[5] if isinstance(row[5], dict) else {}
+                    articles_historical.append({
+                        "id": row[0],
+                        "title": row[1] or "",
+                        "source": row[2] or "",
+                        "published_at": row[3].isoformat() if row[3] else None,
+                        "content_excerpt": (row[4] or "")[:500],
+                        "summary": ml.get("summary", "")[:200],
+                    })
+                result["articles_historical"] = articles_historical
+            except Exception as hist_err:
+                logger.debug("synthesize_domain_context articles_historical: %s", hist_err)
+                result["articles_historical"] = []
 
             # --- Entity mentions aggregated ---
             if article_ids:
@@ -240,20 +295,26 @@ def synthesize_domain_context(
                 })
             result["patterns"] = patterns
 
-            # --- Processed documents (PDFs: CRS, GAO, CBO, arXiv) ---
+            # --- Processed documents (PDFs); v8: filter by domain_key from metadata when set ---
             try:
                 cur.execute(
                     """
                     SELECT pd.id, pd.title, pd.source_name, pd.source_url, pd.document_type,
-                           pd.publication_date, pd.key_findings, pd.extracted_sections
+                           pd.publication_date, pd.key_findings, pd.extracted_sections,
+                           COALESCE(pd.metadata->'processing'->>'domain_key', pd.metadata->>'domain_key') AS doc_domain
                     FROM intelligence.processed_documents pd
                     WHERE pd.extracted_sections IS NOT NULL
                       AND pd.extracted_sections != '[]'
                       AND (pd.created_at >= %s OR pd.publication_date >= %s)
+                      AND (
+                        COALESCE(pd.metadata->'processing'->>'domain_key', pd.metadata->>'domain_key') IS NULL
+                        OR COALESCE(pd.metadata->'processing'->>'domain_key', pd.metadata->>'domain_key') = %s
+                        OR COALESCE(pd.metadata->'processing'->>'domain_key', pd.metadata->>'domain_key') = 'documents'
+                      )
                     ORDER BY pd.publication_date DESC NULLS LAST
                     LIMIT 10
                     """,
-                    (cutoff, cutoff.date()),
+                    (cutoff, cutoff.date(), domain_key),
                 )
                 documents = []
                 for drow in cur.fetchall():
@@ -301,7 +362,7 @@ def synthesize_domain_context(
                 logger.debug("synthesize_domain_context entity_positions: %s", pos_err)
                 result["entity_positions"] = []
 
-            # --- Cross-domain correlations ---
+            # --- Cross-domain correlations (v8: limit 20) ---
             try:
                 cur.execute(
                     """
@@ -309,7 +370,7 @@ def synthesize_domain_context(
                     FROM intelligence.cross_domain_correlations
                     WHERE domain_1 = %s OR domain_2 = %s
                     ORDER BY discovered_at DESC
-                    LIMIT 10
+                    LIMIT 20
                     """,
                     (domain_key, domain_key),
                 )
@@ -327,6 +388,37 @@ def synthesize_domain_context(
             except Exception as cd_err:
                 logger.debug("synthesize_domain_context cross_domain: %s", cd_err)
                 result["cross_domain"] = []
+
+            # --- v8: Top entity dossier summaries (Key actor profiles for LLM) ---
+            try:
+                cur.execute(
+                    """
+                    SELECT ec.canonical_name, ed.chronicle_data, ed.metadata, ed.relationships
+                    FROM intelligence.entity_dossiers ed
+                    JOIN """ + schema + """.entity_canonical ec ON ec.id = ed.entity_id
+                    WHERE ed.domain_key = %s
+                    ORDER BY ed.compilation_date DESC NULLS LAST
+                    LIMIT 20
+                    """,
+                    (domain_key,),
+                )
+                key_actor_profiles = []
+                for row in cur.fetchall():
+                    name = (row[0] or "Unknown")[:200]
+                    chronicle = row[1] or []
+                    meta = row[2] if isinstance(row[2], dict) else {}
+                    rels = row[3] or []
+                    summary = meta.get("summary") or ""
+                    if not summary and chronicle:
+                        first = chronicle[0] if isinstance(chronicle[0], dict) else {}
+                        summary = (first.get("summary") or first.get("text") or str(first))[:300]
+                    if not summary and rels:
+                        summary = f"Key relationships: {len(rels)}"
+                    key_actor_profiles.append({"entity_name": name, "summary": (summary or "—")[:250]})
+                result["key_actor_profiles"] = key_actor_profiles
+            except Exception as d_err:
+                logger.debug("synthesize_domain_context key_actor_profiles: %s", d_err)
+                result["key_actor_profiles"] = []
 
         conn.close()
 
@@ -362,10 +454,11 @@ def synthesize_storyline_context(
 ) -> Dict[str, Any]:
     """
     Gather all intelligence related to a specific storyline:
-    articles with full ml_data, entities, claims from those article contexts,
+    articles with full metadata/analysis, entities, claims from those article contexts,
     and the storyline's editorial document.
     """
     schema = _schema(domain_key)
+    domain_config = get_domain_synthesis_config(domain_key)
     conn = get_db_connection()
     if not conn:
         return {"success": False, "error": "Database connection failed"}
@@ -400,7 +493,7 @@ def synthesize_storyline_context(
             cur.execute(
                 f"""
                 SELECT a.id, a.title, a.source_domain, a.published_at,
-                       LEFT(a.content, 1200), a.ml_data, a.entities,
+                       LEFT(a.content, 1200), COALESCE(a.metadata, '{{}}'::jsonb), a.entities,
                        a.sentiment_score
                 FROM {schema}.storyline_articles sa
                 JOIN {schema}.articles a ON a.id = sa.article_id
@@ -414,42 +507,94 @@ def synthesize_storyline_context(
             for row in cur.fetchall():
                 aid = row[0]
                 article_ids.append(aid)
-                ml = row[5] if isinstance(row[5], dict) else {}
+                meta = row[5] if isinstance(row[5], dict) else {}
                 articles.append({
                     "id": aid,
                     "title": row[1] or "",
                     "source": row[2] or "",
                     "published_at": row[3].isoformat() if row[3] else None,
                     "content_excerpt": row[4] or "",
-                    "summary": ml.get("summary", ""),
-                    "key_points": ml.get("key_points", []),
+                    "summary": meta.get("summary", ""),
+                    "key_points": meta.get("key_points", []),
                     "entities_extracted": row[6] if isinstance(row[6], dict) else {},
                     "sentiment_score": float(row[7]) if row[7] is not None else None,
                 })
 
-            # Entities across these articles
+            # Entities across these articles (include description from entity_canonical when present)
             entities = []
+            entity_canonical_ids = []
+            entity_profiles = []
+            entity_dossiers = []
             if article_ids:
                 cur.execute(
                     f"""
-                    SELECT ec.canonical_name, ec.entity_type, COUNT(ae.id),
-                           ec.aliases
+                    SELECT ec.id, ec.canonical_name, ec.entity_type, COUNT(ae.id),
+                           ec.aliases, ec.description
                     FROM {schema}.article_entities ae
                     JOIN {schema}.entity_canonical ec ON ec.id = ae.canonical_entity_id
                     WHERE ae.article_id = ANY(%s)
-                    GROUP BY ec.id, ec.canonical_name, ec.entity_type, ec.aliases
+                    GROUP BY ec.id, ec.canonical_name, ec.entity_type, ec.aliases, ec.description
                     ORDER BY COUNT(ae.id) DESC
                     LIMIT 30
                     """,
                     (article_ids,),
                 )
                 for erow in cur.fetchall():
+                    canonical_id = erow[0]
+                    entity_canonical_ids.append(canonical_id)
                     entities.append({
-                        "name": erow[0],
-                        "type": erow[1],
-                        "mention_count": erow[2],
-                        "aliases": erow[3] or [],
+                        "canonical_entity_id": canonical_id,
+                        "name": erow[1],
+                        "type": erow[2],
+                        "mention_count": erow[3],
+                        "aliases": erow[4] or [],
+                        "description": (erow[5] or "").strip() or None,
                     })
+            # Entity profiles (Wikipedia sections, relationships) for top entities
+            entity_profiles = []
+            if entity_canonical_ids:
+                try:
+                    top_canonical_ids = entity_canonical_ids[:10]
+                    cur.execute(
+                        """
+                        SELECT ep.canonical_entity_id, ep.sections, ep.relationships_summary, ep.metadata
+                        FROM intelligence.entity_profiles ep
+                        WHERE ep.domain_key = %s AND ep.canonical_entity_id = ANY(%s)
+                        """,
+                        (domain_key, top_canonical_ids),
+                    )
+                    for prow in cur.fetchall():
+                        entity_profiles.append({
+                            "canonical_entity_id": prow[0],
+                            "sections": prow[1] or [],
+                            "relationships_summary": prow[2] or [],
+                            "metadata": prow[3] or {},
+                        })
+                except Exception as ep_err:
+                    logger.debug("synthesize_storyline_context entity_profiles: %s", ep_err)
+            # Entity dossiers (chronicle, positions, patterns) for top 5
+            entity_dossiers = []
+            if entity_canonical_ids:
+                try:
+                    top5_ids = entity_canonical_ids[:5]
+                    cur.execute(
+                        """
+                        SELECT ed.entity_id, ed.chronicle_data, ed.relationships, ed.positions, ed.metadata
+                        FROM intelligence.entity_dossiers ed
+                        WHERE ed.domain_key = %s AND ed.entity_id = ANY(%s)
+                        """,
+                        (domain_key, top5_ids),
+                    )
+                    for drow in cur.fetchall():
+                        entity_dossiers.append({
+                            "canonical_entity_id": drow[0],
+                            "chronicle_data": drow[1] or [],
+                            "relationships": drow[2] or [],
+                            "positions": drow[3] or [],
+                            "metadata": drow[4] or {},
+                        })
+                except Exception as ed_err:
+                    logger.debug("synthesize_storyline_context entity_dossiers: %s", ed_err)
 
             # Claims from contexts linked to these articles
             claims = []
@@ -531,24 +676,87 @@ def synthesize_storyline_context(
             except Exception as doc_err:
                 logger.debug("synthesize_storyline_context documents: %s", doc_err)
 
+            # Chronological events linked to this storyline
+            chronological_events = []
+            try:
+                cur.execute(
+                    """
+                    SELECT ce.id, ce.title, ce.description, ce.event_type,
+                           ce.actual_event_date, ce.location, ce.key_actors,
+                           ce.outcome, ce.is_ongoing, ce.importance_score,
+                           ce.date_precision, ce.extraction_confidence
+                    FROM chronological_events ce
+                    WHERE ce.storyline_id = %s
+                    ORDER BY ce.actual_event_date ASC NULLS LAST, ce.created_at ASC
+                    LIMIT 50
+                    """,
+                    (str(storyline_id),),
+                )
+                for cerow in cur.fetchall():
+                    actors = cerow[6]
+                    if isinstance(actors, str):
+                        try:
+                            actors = json.loads(actors)
+                        except (json.JSONDecodeError, TypeError):
+                            actors = []
+                    chronological_events.append({
+                        "id": cerow[0],
+                        "title": cerow[1] or "",
+                        "description": cerow[2] or "",
+                        "event_type": cerow[3] or "other",
+                        "event_date": cerow[4].isoformat() if cerow[4] else None,
+                        "location": cerow[5] or "",
+                        "key_actors": actors or [],
+                        "outcome": cerow[7] or "",
+                        "is_ongoing": bool(cerow[8]),
+                        "importance_score": float(cerow[9]) if cerow[9] is not None else 0.0,
+                        "date_precision": cerow[10] or "unknown",
+                        "extraction_confidence": float(cerow[11]) if cerow[11] is not None else 0.0,
+                    })
+            except Exception as ce_err:
+                logger.debug("synthesize_storyline_context chronological_events: %s", ce_err)
+
+            # Optional: structured timeline (gaps, milestones) for synthesis
+            timeline = None
+            if chronological_events:
+                try:
+                    from services.timeline_builder_service import TimelineBuilderService
+                    tbs = TimelineBuilderService(conn, schema_name=schema)
+                    timeline = tbs.build_timeline(storyline_id)
+                except Exception as tl_err:
+                    logger.debug("synthesize_storyline_context timeline_builder: %s", tl_err)
+
         conn.close()
-        return {
+        result = {
             "success": True,
             "domain_key": domain_key,
             "storyline": storyline,
             "articles": articles,
             "entities": entities,
+            "entity_profiles": entity_profiles,
+            "entity_dossiers": entity_dossiers,
             "claims": claims,
             "entity_positions": entity_positions,
             "documents": documents,
+            "chronological_events": chronological_events,
+            "timeline": timeline,
+            "domain_synthesis_config": {
+                "llm_context": domain_config.llm_context,
+                "editorial_sections": domain_config.editorial_sections,
+                "event_type_priorities": domain_config.event_type_priorities,
+                "entity_type_weights": domain_config.entity_type_weights,
+                "focus_areas": domain_config.focus_areas,
+            },
             "statistics": {
                 "article_count": len(articles),
                 "entity_count": len(entities),
                 "claim_count": len(claims),
                 "entity_position_count": len(entity_positions),
                 "document_count": len(documents),
+                "chronological_event_count": len(chronological_events),
             },
         }
+        return result
     except Exception as e:
         logger.warning("synthesize_storyline_context: %s", e)
         try:
@@ -684,10 +892,11 @@ def synthesize_entity_context(
                 "aliases": erow[3] or [],
             }
 
-            # Recent articles
+            # Recent articles (metadata = ML/analysis JSONB; summary may be in a.summary or metadata)
             cur.execute(
                 f"""
-                SELECT a.id, a.title, LEFT(a.content, 500), a.published_at, a.ml_data
+                SELECT a.id, a.title, LEFT(a.content, 500), a.published_at,
+                       COALESCE(a.metadata, '{{}}'::jsonb), a.summary
                 FROM {schema}.article_entities ae
                 JOIN {schema}.articles a ON a.id = ae.article_id
                 WHERE ae.canonical_entity_id = %s
@@ -698,13 +907,15 @@ def synthesize_entity_context(
             )
             articles = []
             for arow in cur.fetchall():
-                ml = arow[4] if isinstance(arow[4], dict) else {}
+                meta = arow[4] if isinstance(arow[4], dict) else {}
+                direct_summary = arow[5] if len(arow) > 5 else None
+                summary = (direct_summary or "") or meta.get("summary", "")
                 articles.append({
                     "id": arow[0],
                     "title": arow[1] or "",
                     "content_excerpt": arow[2] or "",
                     "published_at": arow[3].isoformat() if arow[3] else None,
-                    "summary": ml.get("summary", ""),
+                    "summary": summary or "",
                 })
 
             # Dossier
@@ -820,6 +1031,16 @@ def render_synthesis_for_llm(synthesis: Dict[str, Any], max_chars: int = 8000) -
                 line += " | Key: " + "; ".join(a["key_points"][:3])
             parts.append(line)
 
+    # v8: Historical summary tier (older coverage 7–30 days)
+    articles_historical = synthesis.get("articles_historical", [])
+    if articles_historical:
+        parts.append("\n## Older coverage (7–30 days)")
+        for a in articles_historical[:15]:
+            line = f"- {a.get('title', 'Untitled')}"
+            if a.get("summary"):
+                line += f": {a['summary'][:150]}"
+            parts.append(line)
+
     # Storylines
     storylines = synthesis.get("storylines", [])
     if storylines:
@@ -842,12 +1063,43 @@ def render_synthesis_for_llm(synthesis: Dict[str, Any], max_chars: int = 8000) -
                 line += f": {e['editorial_briefing'][:200]}"
             parts.append(line)
 
-    # Entities
+    # Entities (with background when available)
     entities = synthesis.get("entities", [])
     if entities:
         parts.append("\n## Key Entities")
         for ent in entities[:10]:
-            parts.append(f"- {ent.get('name', '')} ({ent.get('type', '')}) — {ent.get('mention_count', 0)} mentions")
+            desc = ent.get("description") or ""
+            if desc:
+                line = f"- **{ent.get('name', '')}** ({ent.get('type', '')}): {desc[:200]}"
+                if len(desc) > 200:
+                    line += "..."
+            else:
+                line = f"- {ent.get('name', '')} ({ent.get('type', '')})"
+            line += f" [{ent.get('mention_count', 0)} mentions]"
+            parts.append(line)
+
+    # Entity profiles (Wikipedia / background sections)
+    entity_profiles = synthesis.get("entity_profiles", [])
+    if entity_profiles:
+        parts.append("\n## Entity Backgrounds (Wikipedia / profile)")
+        for ep in entity_profiles[:10]:
+            sections = ep.get("sections") or []
+            for sec in sections:
+                if isinstance(sec, dict) and sec.get("content"):
+                    title = sec.get("title", "Background")
+                    content = (sec.get("content") or "")[:400]
+                    if content:
+                        parts.append(f"- {title}: {content}")
+
+    # Entity dossier summaries (narrative, positions)
+    entity_dossiers = synthesis.get("entity_dossiers", [])
+    if entity_dossiers:
+        parts.append("\n## Entity Dossier Summaries")
+        for ed in entity_dossiers[:5]:
+            meta = ed.get("metadata") or {}
+            summary = meta.get("narrative_summary") or ""
+            if summary:
+                parts.append(f"- {summary[:300]}")
 
     # Claims
     claims = synthesis.get("claims", [])
@@ -875,11 +1127,18 @@ def render_synthesis_for_llm(synthesis: Dict[str, Any], max_chars: int = 8000) -
                 line += " — Findings: " + "; ".join(str(f) for f in findings[:3])
             parts.append(line)
 
-    # Cross-domain connections
+    # v8: Key actor profiles (top entity dossier summaries)
+    key_actor_profiles = synthesis.get("key_actor_profiles", [])
+    if key_actor_profiles:
+        parts.append("\n## Key Actor Profiles")
+        for p in key_actor_profiles[:20]:
+            parts.append(f"- {p.get('entity_name', '')}: {p.get('summary', '')}")
+
+    # Cross-domain connections (v8: limit 20)
     cross_domain = synthesis.get("cross_domain", [])
     if cross_domain:
         parts.append("\n## Cross-Domain Connections")
-        for cd in cross_domain[:5]:
+        for cd in cross_domain[:20]:
             parts.append(f"- {cd.get('domain_1', '')} ↔ {cd.get('domain_2', '')}: {cd.get('correlation_type', '')} (strength: {cd.get('strength', '?')})")
 
     # Patterns

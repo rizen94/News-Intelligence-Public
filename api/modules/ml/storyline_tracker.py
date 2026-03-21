@@ -53,10 +53,10 @@ class StorylineTracker:
             cutoff_date = datetime.now() - timedelta(days=days)
             cursor.execute(f"""
                 SELECT id, title, content, summary, category, source, published_at, 
-                       ml_data, quality_score, created_at
+                       metadata AS ml_data, quality_score, created_at
                 FROM {articles_from}
                 WHERE created_at >= %s 
-                AND ml_data IS NOT NULL 
+                AND metadata->>'summary' IS NOT NULL AND metadata->>'summary' <> ''
                 AND quality_score >= 0.3
                 ORDER BY published_at DESC, quality_score DESC
             """, (cutoff_date,))
@@ -109,7 +109,7 @@ class StorylineTracker:
             # Get all articles related to this story
             cursor.execute("""
                 SELECT id, title, content, summary, category, source, published_at, 
-                       ml_data, quality_score, created_at
+                       metadata AS ml_data, quality_score, created_at
                 FROM articles 
                 WHERE (
                     LOWER(title) LIKE LOWER(%s) OR 
@@ -117,7 +117,7 @@ class StorylineTracker:
                     LOWER(summary) LIKE LOWER(%s) OR
                     category = %s
                 )
-                AND ml_data IS NOT NULL 
+                AND metadata->>'summary' IS NOT NULL AND metadata->>'summary' <> ''
                 AND quality_score >= 0.4
                 ORDER BY published_at DESC, quality_score DESC
             """, (f"%{story_id}%", f"%{story_id}%", f"%{story_id}%", story_id))
@@ -167,7 +167,7 @@ class StorylineTracker:
             cutoff_date = datetime.now() - timedelta(days=days)
             cursor.execute("""
                 SELECT id, title, content, summary, source, published_at, 
-                       ml_data, quality_score
+                       metadata AS ml_data, quality_score
                 FROM articles 
                 WHERE (
                     LOWER(title) LIKE LOWER(%s) OR 
@@ -175,7 +175,7 @@ class StorylineTracker:
                     LOWER(summary) LIKE LOWER(%s)
                 )
                 AND published_at >= %s
-                AND ml_data IS NOT NULL 
+                AND metadata->>'summary' IS NOT NULL AND metadata->>'summary' <> ''
                 ORDER BY published_at ASC
             """, (f"%{story_id}%", f"%{story_id}%", f"%{story_id}%", cutoff_date))
             
