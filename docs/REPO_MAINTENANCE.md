@@ -8,7 +8,7 @@ Keep the repo and Cursor context manageable so Git and the AI use resources resp
 
 ## What’s ignored (and why)
 
-- **`.gitignore`** — Git does not track: venvs (`.venv/`, `.venv.backup/`), `node_modules/`, logs, `data/`, `archive/`, `.env`, `.db_password_widow`, `api/config/.secrets`, backups, `scripts/pi_reports/`, and the usual Python/IDE/OS cruft. See project root `.gitignore` for the full list. Periodically run `git grep -iE 'password|api_key|secret' -- ':!docs/_archive' ':!archive'` to spot accidental literals (triage; many hits will be docs or env var *names*).
+- **`.gitignore`** — Git does not track: venvs (`.venv/`, `.venv.backup/`), `node_modules/`, logs, `data/`, **`/archive/`** (repo-root external archive only — **not** `api/database/migrations/archive/`), `.env`, `.db_password_widow`, `api/config/.secrets`, backups, `scripts/pi_reports/`, and the usual Python/IDE/OS cruft. See project root `.gitignore` for the full list. Periodically run `git grep -iE 'password|api_key|secret' -- ':!docs/_archive' ':!archive'` to spot accidental literals (triage; many hits will be docs or env var *names*).
 - **`.cursorignore`** — Cursor skips the same heavy/generated dirs when building context, plus `docs/_archive/`, `uv.lock`, and a few very large single files (`tests/unit/test_finance_market_data_store.py`, `web/DEVELOPMENT_SETUP.md`, `api/_archived/`) to avoid overloading indexing. That keeps the context window focused and can reduce crashes.
 
 ## Commit in smaller, logical chunks
