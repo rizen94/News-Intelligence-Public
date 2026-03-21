@@ -5,6 +5,7 @@ AI-powered endpoints for discovering storylines from article similarity
 
 import logging
 from datetime import datetime
+from typing import Annotated
 
 import numpy as np
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Path, Query
@@ -23,27 +24,30 @@ router = APIRouter(tags=["Storyline Discovery"])
 @router.post("/{domain}/storylines/discover")
 async def discover_storylines(
     domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
-    hours: int = Query(24, ge=1, le=168, description="Hours of articles to analyze"),
+    hours: Annotated[
+        int | None,
+        Query(
+            description=(
+                "If set, only articles with created_at in the last N hours. "
+                "Omit for full historical backlog (newest first, capped by "
+                "STORYLINE_DISCOVERY_ARTICLE_LIMIT, default 10000)."
+            ),
+        ),
+    ] = None,
     save: bool = Query(True, description="Save discovered storylines to database"),
     min_similarity: float = Query(
         0.75, ge=0.5, le=0.99, description="Minimum similarity threshold"
     ),
 ):
     """
-    Discover potential storylines from recent articles using AI similarity analysis
+    Discover potential storylines from article similarity (default: full backlog, capped).
 
-    This endpoint:
-    1. Fetches recent articles from the specified domain
-    2. Generates embeddings using Ollama
-    3. Calculates pairwise similarity
-    4. Clusters similar articles into potential storylines
-    5. Uses LLM to generate titles and descriptions
-    6. Identifies breaking news based on similarity + volume
-
-    Returns suggested storylines ranked by importance.
+    Reporting surfaces (e.g. breaking news) can stay on short windows; this pipeline
+    is intended to use historic context so storylines can span months or years.
     """
     try:
-        logger.info(f"Starting storyline discovery for {domain} (last {hours} hours)")
+        win = f"last {hours}h" if hours and hours > 0 else "full backlog (capped)"
+        logger.info("Starting storyline discovery for %s (%s)", domain, win)
 
         service = get_discovery_service()
         result = service.discover_storylines(domain=domain, hours=hours, save_to_db=save)
@@ -59,7 +63,12 @@ async def discover_storylines(
 async def discover_storylines_async(
     background_tasks: BackgroundTasks,
     domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
-    hours: int = Query(24, ge=1, le=168),
+    hours: Annotated[
+        int | None,
+        Query(
+            description="Omit for full backlog (capped); or set lookback hours.",
+        ),
+    ] = None,
 ):
     """
     Start storyline discovery in the background
@@ -81,7 +90,7 @@ async def discover_storylines_async(
         "success": True,
         "task_id": task_id,
         "message": f"Storyline discovery started for {domain}",
-        "estimated_duration_minutes": 2,
+        "estimated_duration_minutes": 45,
     }
 
 
@@ -299,11 +308,16 @@ JSON:"""
 @router.get("/{domain}/storylines/compare")
 async def compare_storylines_endpoint(
     domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
-    hours: int = Query(48, description="Hours of storylines to analyze"),
+    hours: Annotated[
+        int | None,
+        Query(
+            description="Article lookback for clustering; omit for full backlog cap.",
+        ),
+    ] = None,
     min_similarity: float = Query(0.3, description="Minimum similarity threshold"),
 ):
     """
-    Compare all recent storylines and find related ones.
+    Compare storylines derived from article clusters and find related ones.
 
     Returns a similarity matrix and groups of related storylines.
     """
