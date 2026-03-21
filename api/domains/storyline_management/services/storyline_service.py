@@ -131,6 +131,22 @@ class StorylineService(DomainAwareService):
 
                     conn.commit()
 
+                    if article_ids:
+                        try:
+                            from services.content_refinement_queue_service import (
+                                enqueue_initial_narrative_finisher,
+                            )
+
+                            enqueue_initial_narrative_finisher(
+                                self.domain,
+                                storyline_id,
+                                source="create_storyline_from_articles",
+                            )
+                        except Exception as enq_e:
+                            logger.warning(
+                                "enqueue initial narrative finisher on create: %s", enq_e
+                            )
+
                     return {
                         "success": True,
                         "data": {

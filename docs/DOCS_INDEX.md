@@ -126,6 +126,7 @@ Superseded full copies of the old setup/Ollama/GPU pages: [_archive/consolidated
 | Doc | Purpose |
 |-----|---------|
 | [REPO_MAINTENANCE.md](REPO_MAINTENANCE.md) | Git and Cursor — what's ignored, commit practice |
+| [GITIGNORE.md](GITIGNORE.md) | **`.gitignore` reference** — tables for root + `web/` patterns and rationale (source of truth: root `.gitignore`) |
 | [OBFUSCATION.md](OBFUSCATION.md) | **Public-repo hygiene** — LAN IP / path placeholders, `doc_obfuscation.local.yaml` (gitignored), expand/scrub script |
 
 ---

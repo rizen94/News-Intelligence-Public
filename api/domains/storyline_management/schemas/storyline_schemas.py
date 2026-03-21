@@ -167,7 +167,11 @@ class StorylineRefinementEnqueueRequest(BaseModel):
         ...,
         description="comprehensive_rag | narrative_finisher | headline_refiner | timeline_narrative_chronological | timeline_narrative_briefing",
     )
-    priority: str = Field("medium", pattern="^(high|medium|low)$")
+    priority: str = Field(
+        "medium",
+        pattern="^(high|medium|low)$",
+        description="narrative_finisher is upgraded to high when canonical_narrative is still empty unless set to low",
+    )
 
 
 class StorylineListItem(BaseModel):

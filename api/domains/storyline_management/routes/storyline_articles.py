@@ -6,6 +6,7 @@ Managing articles within storylines (add, remove, list available)
 
 import logging
 import math
+import os
 from datetime import datetime
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Path, Query
@@ -95,6 +96,34 @@ async def add_article_to_domain_storyline(
                 )
 
                 conn.commit()
+
+                if os.getenv("STORYLINE_ENQUEUE_FINISHER_ON_NEW_ARTICLE", "1") == "1":
+                    try:
+                        from services.content_refinement_queue_service import (
+                            JOB_NARRATIVE_FINISHER,
+                            enqueue_content_refinement,
+                            enqueue_initial_narrative_finisher,
+                            storyline_needs_initial_master_narrative,
+                        )
+
+                        if storyline_needs_initial_master_narrative(domain, storyline_id):
+                            enqueue_initial_narrative_finisher(
+                                domain, storyline_id, source="add_article"
+                            )
+                        else:
+                            enqueue_content_refinement(
+                                domain,
+                                storyline_id,
+                                JOB_NARRATIVE_FINISHER,
+                                priority="medium",
+                                metadata={
+                                    "finisher_pass": "refresh",
+                                    "source": "add_article",
+                                    "article_id": article_id,
+                                },
+                            )
+                    except Exception as enq_e:
+                        logger.debug("finisher enqueue on add_article: %s", enq_e)
 
                 # Trigger intelligent storyline evolution in background
                 if background_tasks:

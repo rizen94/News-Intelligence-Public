@@ -29,6 +29,8 @@ BATCH_SIZE_PER_TASK: Dict[str, int] = {
     "investigation_report_refresh": 8,
     "document_processing": 10,
     "content_refinement_queue": 4,
+    # Unified nightly phase: enrichment + context_sync + refinement queue
+    "nightly_enrichment_context": 0,
 }
 
 
@@ -50,6 +52,11 @@ def _get_raw_pending_counts() -> Dict[str, int]:
         except Exception:
             raw["pending_db_flush"] = 0
         raw["content_refinement_queue"] = _count_content_refinement_queue_pending()
+        raw["nightly_enrichment_context"] = (
+            int(raw.get("content_enrichment", 0) or 0)
+            + int(raw.get("context_sync", 0) or 0)
+            + int(raw.get("content_refinement_queue", 0) or 0)
+        )
     except Exception as e:
         logger.warning("backlog_metrics _get_raw_pending_counts: %s", e)
     return raw
@@ -58,6 +65,12 @@ def _get_raw_pending_counts() -> Dict[str, int]:
 # Two cached dicts: raw pending (for SKIP_WHEN_EMPTY) and true backlog (for priority/interval)
 _pending_cache: Dict[str, int] = {}
 _pending_cache_time: float = 0
+
+
+def invalidate_backlog_metrics_cache() -> None:
+    """Force the next get_all_pending_counts / get_all_backlog_counts to re-query the DB."""
+    global _backlog_cache_time
+    _backlog_cache_time = 0.0
 
 
 def _refresh_cache() -> None:
@@ -345,6 +358,7 @@ SKIP_WHEN_EMPTY = frozenset({
     "entity_profile_build",
     "investigation_report_refresh",
     "pending_db_flush",
+    "nightly_enrichment_context",
 })
 
 # When backlog exceeds this, use backlog-mode interval so we run more often

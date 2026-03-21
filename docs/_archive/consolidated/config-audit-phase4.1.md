@@ -1,3 +1,7 @@
+**Status:** Superseded — historical **2025-02-21** migration-prep snapshot. Current architecture: [ARCHITECTURE_AND_OPERATIONS.md](../../ARCHITECTURE_AND_OPERATIONS.md), [DATABASE.md](../../DATABASE.md).
+
+---
+
 # Phase 4.1 Config Audit — Migration Prep
 
 **Date:** 2025-02-21  

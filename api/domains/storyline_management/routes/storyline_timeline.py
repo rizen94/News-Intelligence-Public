@@ -295,8 +295,10 @@ async def enqueue_storyline_refinement_job(
 ):
     """Queue a refinement job (processed by automation `content_refinement_queue` phase)."""
     from services.content_refinement_queue_service import (
+        JOB_NARRATIVE_FINISHER,
         VALID_JOB_TYPES,
         enqueue_content_refinement,
+        storyline_needs_initial_master_narrative,
     )
 
     if body.job_type not in VALID_JOB_TYPES:
@@ -320,11 +322,16 @@ async def enqueue_storyline_refinement_job(
     finally:
         conn.close()
 
+    prio = body.priority
+    if body.job_type == JOB_NARRATIVE_FINISHER and prio != "low":
+        if storyline_needs_initial_master_narrative(domain, storyline_id):
+            prio = "high"
+
     result = enqueue_content_refinement(
         domain,
         storyline_id,
         body.job_type,
-        priority=body.priority,
+        priority=prio,
     )
     if not result.get("success"):
         raise HTTPException(status_code=500, detail=result.get("error", "enqueue failed"))

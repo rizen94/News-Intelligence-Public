@@ -113,7 +113,7 @@ QUEUE_PAUSE_ALLOW_SCHEDULED = frozenset(
     x.strip()
     for x in os.environ.get(
         "AUTOMATION_QUEUE_PAUSE_ALLOW",
-        "collection_cycle,health_check,pending_db_flush,content_refinement_queue",
+        "collection_cycle,health_check,pending_db_flush,content_refinement_queue,nightly_enrichment_context",
     ).split(",")
     if x.strip()
 )
@@ -138,6 +138,7 @@ DOWNTIME_POLL_SLEEP = 30  # Seconds to sleep when data load is active (before re
 ANALYSIS_PIPELINE_STEPS: tuple[tuple[str, ...], ...] = (
     # Step 0: Foundation
     (
+        "nightly_enrichment_context",
         "context_sync",
         "entity_profile_sync",
         "ml_processing",
@@ -290,12 +291,13 @@ PHASE_ESTIMATED_DURATION_SECONDS = {
     "document_processing": 180,  # observed ~152s when small batch; was 600
     "storyline_synthesis": 600,  # deep content synthesis per storyline
     "daily_briefing_synthesis": 300,  # breaking news synthesis per domain
-    "storyline_discovery": 600,  # AI clustering + LLM title generation per domain
+    "storyline_discovery": 3600,  # Full-backlog discovery (capped) + embeddings + LLM per domain
     # v8: collect-then-analyze — single master task runs RSS + enrichment + docs
     "collection_cycle": 1800,  # 30 min; RSS + drain enrichment + doc collection + drain doc processing + pending queue
     "proactive_detection": 300,  # v8: emerging storylines per domain
     "fact_verification": 120,  # v8: verify_recent_claims per domain
     "content_refinement_queue": 420,  # storyline RAG / timeline narrative / ~70B finisher (queued user jobs)
+    "nightly_enrichment_context": 7200,  # 02:00–05:00 local unified pipeline; exits when all idle
 }
 
 
@@ -384,6 +386,18 @@ class AutomationManager:
                 "phase": 0,
                 "depends_on": [],
                 "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["collection_cycle"],
+            },
+            # 02:00–05:00 local (NIGHTLY_PIPELINE_*): enrichment → context_sync → ~70B; GPU when ingest idle
+            "nightly_enrichment_context": {
+                "interval": 60,
+                "last_run": None,
+                "enabled": True,
+                "priority": TaskPriority.HIGH,
+                "phase": 0,
+                "depends_on": [],
+                "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS[
+                    "nightly_enrichment_context"
+                ],
             },
             # PDF document processing (also runs inside collection_cycle); standalone so backlog drains between cycles
             "document_processing": {
@@ -1440,6 +1454,21 @@ class AutomationManager:
         if schedule.get("idle_only") and not self._is_system_idle():
             return False
 
+        # Nightly unified pipeline [NIGHTLY_PIPELINE_START, END): nightly_enrichment_context owns
+        # enrichment, context_sync, and refinement queue; exits when all idle.
+        try:
+            from services.nightly_ingest_window_service import in_nightly_pipeline_window_est
+
+            _nightly_pipe = in_nightly_pipeline_window_est()
+        except Exception:
+            _nightly_pipe = False
+        if task_name == "context_sync" and _nightly_pipe:
+            return False
+        if task_name == "content_refinement_queue" and _nightly_pipe:
+            return False
+        if task_name == "nightly_enrichment_context" and not _nightly_pipe:
+            return False
+
         backlog_counts = backlog_counts or {}
         if (
             ENRICHMENT_BACKLOG_FIRST_ENABLED
@@ -1758,6 +1787,26 @@ class AutomationManager:
         task.status = TaskStatus.RUNNING
         task.started_at = datetime.now(timezone.utc)
 
+        try:
+            from services.nightly_ingest_window_service import (
+                in_nightly_enrichment_context_window_est,
+                nightly_ingest_exclusive_automation_enabled,
+                task_allowed_during_nightly_ingest_exclusive,
+            )
+
+            if (
+                nightly_ingest_exclusive_automation_enabled()
+                and in_nightly_enrichment_context_window_est()
+                and not task_allowed_during_nightly_ingest_exclusive(task.name)
+            ):
+                logger.debug("Nightly ingest exclusive window — deferring %s", task.name)
+                task.status = TaskStatus.PENDING
+                await self.task_queue.put(task)
+                await asyncio.sleep(3)
+                return
+        except Exception as e:
+            logger.debug("Nightly ingest exclusive gate: %s", e)
+
         # Priority hierarchy: yield to web page loads — skip Ollama tasks when API is active
         _OLLAMA_TASKS = {
             "topic_clustering",
@@ -1780,10 +1829,10 @@ class AutomationManager:
             "editorial_briefing_generation",
             "story_enhancement",
             "content_refinement_queue",
+            "nightly_enrichment_context",
             "storyline_synthesis",
             "daily_briefing_synthesis",
             "document_processing",  # v7
-            "content_refinement_queue",
         }
         if task.name in _OLLAMA_TASKS:
             try:
@@ -1824,6 +1873,35 @@ class AutomationManager:
                         return
             except ImportError:
                 pass
+            try:
+                from services.content_refinement_queue_service import (
+                    in_nightly_gpu_refinement_window_est,
+                    nightly_gpu_refinement_exclusive_gpu_enabled,
+                )
+
+                if (
+                    nightly_gpu_refinement_exclusive_gpu_enabled()
+                    and in_nightly_gpu_refinement_window_est()
+                ):
+                    _nightly_ollama_allow = frozenset(
+                        x.strip()
+                        for x in os.environ.get(
+                            "NIGHTLY_GPU_REFINEMENT_OLLAMA_ALLOW",
+                            "nightly_enrichment_context",
+                        ).split(",")
+                        if x.strip()
+                    )
+                    if task.name not in _nightly_ollama_allow:
+                        logger.debug(
+                            "Nightly GPU exclusive window — deferring Ollama task %s",
+                            task.name,
+                        )
+                        task.status = TaskStatus.PENDING
+                        await self.task_queue.put(task)
+                        await asyncio.sleep(5)
+                        return
+            except Exception as e:
+                logger.debug("Nightly GPU exclusive Ollama gate: %s", e)
             await self.ollama_semaphore.acquire()
 
         logger.info(f"Worker {worker_id} executing task: {task.name}")
@@ -1858,6 +1936,8 @@ class AutomationManager:
                 await self._execute_storyline_synthesis(task)
             elif task.name == "daily_briefing_synthesis":
                 await self._execute_daily_briefing_synthesis(task)
+            elif task.name == "nightly_enrichment_context":
+                await self._execute_nightly_enrichment_context(task)
             elif task.name == "context_sync":
                 await self._execute_context_sync(task)
             elif task.name == "entity_profile_sync":
@@ -2201,6 +2281,8 @@ class AutomationManager:
             return "Data cleanup"
         if name == "health_check":
             return "Health check"
+        if name == "nightly_enrichment_context":
+            return "Nightly pipeline (enrichment → context sync → ~70B summaries)"
         if name == "cache_cleanup":
             return "Cache cleanup"
         if name == "digest_generation":
@@ -2227,6 +2309,17 @@ class AutomationManager:
     async def _execute_content_enrichment(self, task: Task):
         """v7: Fetch full article text with trafilatura for articles with short content."""
         import asyncio
+
+        try:
+            from services.nightly_ingest_window_service import in_nightly_pipeline_window_est
+
+            if in_nightly_pipeline_window_est():
+                logger.debug(
+                    "Content enrichment: nightly pipeline window — handled by nightly_enrichment_context"
+                )
+                return
+        except Exception:
+            pass
 
         from services.article_content_enrichment_service import enrich_articles_batch
 
@@ -2302,22 +2395,30 @@ class AutomationManager:
                 await self._execute_rss_processing(dummy)
             except Exception as e:
                 logger.warning(f"Collection cycle RSS step failed: {e}")
-        # 2. Content enrichment — loop until drained or cap
-        max_enrich_iters = 30
-        for _ in range(max_enrich_iters):
-            if not get_all_pending_counts:
-                break
-            try:
-                counts = get_all_pending_counts()
-                if (counts.get("content_enrichment") or 0) == 0:
+        # 2. Content enrichment — loop until drained or cap (nightly pipeline window: nightly_enrichment_context owns this)
+        skip_enrich_nightly = False
+        try:
+            from services.nightly_ingest_window_service import in_nightly_pipeline_window_est
+
+            skip_enrich_nightly = in_nightly_pipeline_window_est()
+        except Exception:
+            pass
+        if not skip_enrich_nightly:
+            max_enrich_iters = 30
+            for _ in range(max_enrich_iters):
+                if not get_all_pending_counts:
                     break
-            except Exception:
-                break
-            try:
-                await self._execute_content_enrichment(dummy)
-            except Exception as e:
-                logger.warning(f"Collection cycle enrichment step failed: {e}")
-                break
+                try:
+                    counts = get_all_pending_counts()
+                    if (counts.get("content_enrichment") or 0) == 0:
+                        break
+                except Exception:
+                    break
+                try:
+                    await self._execute_content_enrichment(dummy)
+                except Exception as e:
+                    logger.warning(f"Collection cycle enrichment step failed: {e}")
+                    break
         # 3. Document collection
         try:
             await self._execute_document_collection(dummy)
@@ -2464,6 +2565,16 @@ class AutomationManager:
 
     async def _execute_context_sync(self, task: Task):
         """Backfill: sync domain articles to intelligence.contexts (Phase 1.2 context-centric)."""
+        try:
+            from services.nightly_ingest_window_service import in_nightly_pipeline_window_est
+
+            if in_nightly_pipeline_window_est():
+                logger.debug(
+                    "Context sync: nightly pipeline window — handled by nightly_enrichment_context"
+                )
+                return
+        except Exception:
+            pass
         try:
             from config.context_centric_config import is_context_centric_task_enabled
 
@@ -2740,7 +2851,16 @@ class AutomationManager:
 
     async def _execute_content_refinement_queue(self, task: Task):
         """Drain intelligence.content_refinement_queue (storyline RAG, timeline narratives, ~70B finisher)."""
-        from services.content_refinement_queue_service import process_content_refinement_queue_batch
+        from services.content_refinement_queue_service import (
+            in_nightly_gpu_refinement_window_est,
+            process_content_refinement_queue_batch,
+        )
+
+        if in_nightly_gpu_refinement_window_est():
+            logger.debug(
+                "Content refinement queue: nightly pipeline active — handled by nightly_enrichment_context"
+            )
+            return
 
         try:
             stats = await process_content_refinement_queue_batch()
@@ -2753,6 +2873,47 @@ class AutomationManager:
                 )
         except Exception as e:
             logger.warning("Content refinement queue failed: %s", e)
+
+    async def _execute_nightly_enrichment_context(self, task: Task):
+        """Nightly pipeline window: enrichment → context_sync → ~70B queue; exits when all idle."""
+        from services.nightly_ingest_window_service import (
+            in_nightly_pipeline_window_est,
+            run_nightly_unified_pipeline_drain,
+        )
+
+        if not in_nightly_pipeline_window_est():
+            return
+
+        try:
+            stats = await run_nightly_unified_pipeline_drain()
+            if (
+                stats.get("enrichment_articles", 0)
+                or stats.get("contexts_created", 0)
+                or stats.get("gpu_processed", 0)
+                or stats.get("gpu_failed", 0)
+            ):
+                logger.info(
+                    "Nightly pipeline: cycles=%s enrich_batches=%s articles=%s sync_rounds=%s contexts=%s "
+                    "gpu_batches=%s gpu_processed=%s gpu_failed=%s stopped=%s gpu_stopped=%s",
+                    stats.get("outer_cycles"),
+                    stats.get("enrichment_batches"),
+                    stats.get("enrichment_articles"),
+                    stats.get("context_sync_rounds"),
+                    stats.get("contexts_created"),
+                    stats.get("gpu_batches"),
+                    stats.get("gpu_processed"),
+                    stats.get("gpu_failed"),
+                    stats.get("stopped_reason"),
+                    stats.get("gpu_stopped_reason"),
+                )
+            elif stats.get("outer_cycles", 0):
+                logger.debug(
+                    "Nightly pipeline: cycles=%s stopped=%s",
+                    stats.get("outer_cycles"),
+                    stats.get("stopped_reason"),
+                )
+        except Exception as e:
+            logger.warning("Nightly unified pipeline failed: %s", e)
 
     async def _execute_entity_enrichment(self, task: Task):
         """Phase 3 RAG: Run entity enrichment batch (Wikipedia -> entity_profiles + versioned_facts)."""
@@ -3511,8 +3672,8 @@ class AutomationManager:
 
     async def _execute_storyline_discovery(self, task: Task):
         """Auto-discover storylines from recent article clusters using AI similarity.
-        Runs AIStorylineDiscovery.discover_storylines() for each domain, creating new
-        storylines from high-similarity article clusters that aren't already tracked."""
+        Runs AIStorylineDiscovery.discover_storylines() for each domain (full backlog,
+        newest-first cap), creating new storylines from high-similarity clusters."""
         import asyncio
 
         try:
@@ -3526,7 +3687,7 @@ class AutomationManager:
                     result = await loop.run_in_executor(
                         None,
                         lambda d=domain: service.discover_storylines(
-                            domain=d, hours=168, save_to_db=True
+                            domain=d, hours=None, save_to_db=True
                         ),
                     )
                     saved = len(result.get("saved_storylines", []))
@@ -4411,6 +4572,10 @@ class AutomationManager:
                         if cur.fetchone():
                             return True
                 elif phase_name == "content_refinement_queue":
+                    from services.nightly_ingest_window_service import in_nightly_pipeline_window_est
+
+                    if in_nightly_pipeline_window_est():
+                        return False
                     cur.execute(
                         """
                         SELECT 1 FROM intelligence.content_refinement_queue

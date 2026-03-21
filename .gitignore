@@ -1,4 +1,4 @@
-# News Intelligence System v2.0.0 - Git Ignore File
+# News Intelligence — Git ignore (see docs/GITIGNORE.md for rationale tables)
 
 # Database files and data directories
 db_data/

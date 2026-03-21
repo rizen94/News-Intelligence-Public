@@ -53,7 +53,9 @@ const StorylineDiscovery: React.FC = () => {
   const [breakingNews, setBreakingNews] = useState<DiscoveryStoryline[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
-  const [hours, setHours] = useState<number>(48);
+  /** When true, omit `hours` so the API uses full backlog (server-capped). */
+  const [useFullBacklog, setUseFullBacklog] = useState(true);
+  const [hours, setHours] = useState<number>(168);
   const [minClusterSize, setMinClusterSize] = useState<number>(3);
   const [similarityThreshold, setSimilarityThreshold] = useState<number>(0.6);
   const [autoSave, setAutoSave] = useState(false);
@@ -83,18 +85,21 @@ const StorylineDiscovery: React.FC = () => {
       setError(null);
       setSuccess(null);
       const response = await apiService.discoverStorylines({
-        hours,
+        ...(useFullBacklog ? {} : { hours }),
         minArticles: minClusterSize,
         minSimilarity: similarityThreshold,
         save: autoSave,
       });
       if (response?.success) {
-        setDiscoveredStorylines(response.storylines || []);
+        const suggested =
+          response.suggested_storylines || response.storylines || [];
+        setDiscoveredStorylines(suggested);
+        const sum = response.summary || {};
         setSuccess(
           `Discovered ${
-            response.clusters_found || 0
+            sum.clusters_found ?? response.clusters_found ?? 0
           } potential storylines from ${
-            response.articles_analyzed || 0
+            sum.articles_analyzed ?? response.articles_analyzed ?? 0
           } articles`
         );
         if (autoSave) fetchBreakingNews();
@@ -217,14 +222,29 @@ const StorylineDiscovery: React.FC = () => {
                 Discovery Settings
               </Typography>
               <Box sx={{ mb: 3 }}>
-                <Typography gutterBottom>Time Window: {hours} hours</Typography>
-                <Slider
-                  value={hours}
-                  onChange={(_, v) => setHours(v as number)}
-                  min={12}
-                  max={168}
-                  step={12}
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={useFullBacklog}
+                      onChange={e => setUseFullBacklog(e.target.checked)}
+                    />
+                  }
+                  label='Full historical backlog (server cap; default)'
                 />
+                {!useFullBacklog && (
+                  <>
+                    <Typography gutterBottom sx={{ mt: 1 }}>
+                      Time window: {hours} hours (created_at)
+                    </Typography>
+                    <Slider
+                      value={hours}
+                      onChange={(_, v) => setHours(v as number)}
+                      min={12}
+                      max={720}
+                      step={12}
+                    />
+                  </>
+                )}
               </Box>
               <Box sx={{ mb: 3 }}>
                 <Typography gutterBottom>

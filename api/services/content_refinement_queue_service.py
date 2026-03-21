@@ -8,14 +8,21 @@ Job types:
   - timeline_narrative_chronological | timeline_narrative_briefing: 8B narrative from timeline, stored on storylines
 
 Processed by automation task `content_refinement_queue` (see automation_manager).
+
+Nightly pipeline (America/New_York by default): automation phase `nightly_enrichment_context` runs
+02:00–05:00 (`NIGHTLY_PIPELINE_*`), draining enrichment, then context_sync, then this queue with
+higher per-batch caps. GPU refinement starts as soon as enrichment and context_sync are idle (no
+wait for 03:00). When all three are idle, the phase exits and normal automation resumes.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
 from datetime import datetime, timezone
+from collections.abc import Callable
 from typing import Any
 
 from shared.database.connection import get_db_connection
@@ -44,6 +51,57 @@ VALID_JOB_TYPES = frozenset(
 _HEAVY_70B_JOB_TYPES = frozenset({JOB_NARRATIVE_FINISHER, JOB_HEADLINE_REFINER})
 _MAX_FINISHER_PER_CYCLE = int(os.environ.get("CONTENT_REFINEMENT_MAX_FINISHER_JOBS_PER_CYCLE", "1"))
 _MAX_JOBS_PER_CYCLE = int(os.environ.get("CONTENT_REFINEMENT_MAX_JOBS_PER_CYCLE", "4"))
+# Claim enough pending rows to sort by "initial master narrative" vs refresh before applying caps
+_CLAIM_BATCH = int(os.environ.get("CONTENT_REFINEMENT_CLAIM_BATCH", "32"))
+
+# Nightly window (local TZ): higher throughput for ~70B finisher catch-up
+_NIGHTLY_MAX_FINISHER = int(
+    os.environ.get(
+        "CONTENT_REFINEMENT_NIGHTLY_MAX_FINISHER_JOBS_PER_CYCLE",
+        str(max(_MAX_FINISHER_PER_CYCLE, 2)),
+    )
+)
+_NIGHTLY_MAX_JOBS = int(
+    os.environ.get(
+        "CONTENT_REFINEMENT_NIGHTLY_MAX_JOBS_PER_CYCLE",
+        str(max(_MAX_JOBS_PER_CYCLE, 6)),
+    )
+)
+_NIGHTLY_CLAIM_BATCH = int(
+    os.environ.get(
+        "CONTENT_REFINEMENT_NIGHTLY_CLAIM_BATCH",
+        str(max(_CLAIM_BATCH, 48)),
+    )
+)
+_NIGHTLY_MAX_BATCH_LOOPS = int(os.environ.get("NIGHTLY_GPU_REFINEMENT_MAX_BATCH_LOOPS", "500"))
+
+_nightly_drain_lock = asyncio.Lock()
+
+
+def in_nightly_gpu_refinement_window_est() -> bool:
+    """
+    True during the unified nightly pipeline window (default 02:00–05:00 local).
+    Kept for backward compatibility; delegates to nightly_ingest_window_service.in_nightly_pipeline_window_est.
+    """
+    try:
+        from services.nightly_ingest_window_service import in_nightly_pipeline_window_est
+
+        return in_nightly_pipeline_window_est()
+    except Exception:
+        return False
+
+
+def _default_nightly_pipeline_window_active() -> bool:
+    return in_nightly_gpu_refinement_window_est()
+
+
+def nightly_gpu_refinement_exclusive_gpu_enabled() -> bool:
+    """When True, automation defers other Ollama phases during the nightly refinement window."""
+    return os.environ.get("NIGHTLY_GPU_REFINEMENT_EXCLUSIVE_GPU", "0").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
 
 
 def enqueue_content_refinement(
@@ -137,6 +195,108 @@ def list_pending_job_types(domain_key: str, storyline_id: int) -> list[str]:
         conn.close()
 
 
+def storyline_needs_initial_master_narrative(domain_key: str, storyline_id: int) -> bool:
+    """True if ~70B canonical narrative has never been stored (first finisher pass)."""
+    if domain_key not in ALLOWED_DOMAIN_KEYS:
+        return True
+    schema = domain_key.replace("-", "_")
+    conn = get_db_connection()
+    if not conn:
+        return True
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT (canonical_narrative IS NULL OR btrim(canonical_narrative) = '')
+                FROM {schema}.storylines
+                WHERE id = %s
+                """,
+                (storyline_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                return True
+            return bool(row[0])
+    except Exception as e:
+        logger.warning("storyline_needs_initial_master_narrative: %s", e)
+        return True
+    finally:
+        conn.close()
+
+
+def enqueue_initial_narrative_finisher(
+    domain_key: str, storyline_id: int, *, source: str
+) -> dict[str, Any]:
+    """Queue ~70B master narrative at high priority (deduped per storyline/job_type)."""
+    if os.getenv("STORYLINE_AUTO_ENQUEUE_NARRATIVE_FINISHER", "1") == "0":
+        return {"success": True, "skipped": True, "reason": "disabled_by_env"}
+    return enqueue_content_refinement(
+        domain_key,
+        storyline_id,
+        JOB_NARRATIVE_FINISHER,
+        priority="high",
+        metadata={"finisher_pass": "initial", "source": source},
+    )
+
+
+def _need_initial_narrative_map_for_batch(
+    conn, rows: list[tuple[Any, ...]]
+) -> dict[tuple[str, int], bool]:
+    """Map (domain_key, storyline_id) -> empty canonical narrative, for narrative_finisher rows only."""
+    from collections import defaultdict
+
+    by_dkey: dict[str, list[int]] = defaultdict(list)
+    for row in rows:
+        if len(row) < 4:
+            continue
+        dkey, sid, jtype = row[1], int(row[2]), row[3]
+        if jtype != JOB_NARRATIVE_FINISHER or dkey not in ALLOWED_DOMAIN_KEYS:
+            continue
+        by_dkey[str(dkey)].append(sid)
+
+    out: dict[tuple[str, int], bool] = {}
+    for dkey, ids in by_dkey.items():
+        uniq = list(dict.fromkeys(ids))
+        schema = dkey.replace("-", "_")
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    SELECT id,
+                      (canonical_narrative IS NULL OR btrim(canonical_narrative) = '')
+                    FROM {schema}.storylines
+                    WHERE id = ANY(%s::int[])
+                    """,
+                    (uniq,),
+                )
+                for rid, empty in cur.fetchall() or []:
+                    out[(dkey, int(rid))] = bool(empty)
+        except Exception as e:
+            logger.warning("need_initial_narrative_map %s: %s", schema, e)
+        for sid in uniq:
+            if (dkey, sid) not in out:
+                out[(dkey, sid)] = True
+    return out
+
+
+def _refinement_queue_sort_key(
+    row: tuple[Any, ...], initial_nf: dict[tuple[str, int], bool]
+) -> tuple[Any, ...]:
+    """Order: priority high→low; then initial narrative_finisher; then refresh finisher; headline; other."""
+    if len(row) < 7:
+        return (9, 9, "", row[0])
+    job_id, dkey, sid, jtype, prio, _meta, created_at = row[0], row[1], int(row[2]), row[3], row[4], row[5], row[6]
+    pr = 0 if prio == "high" else 1 if prio == "medium" else 2
+    if jtype == JOB_NARRATIVE_FINISHER:
+        tier = 0 if initial_nf.get((str(dkey), sid), True) else 1
+    elif jtype == JOB_HEADLINE_REFINER:
+        tier = 2
+    else:
+        tier = 3
+    ts = created_at.isoformat() if hasattr(created_at, "isoformat") else str(created_at)
+    return (pr, tier, ts, job_id)
+
+
 def _claim_pending_batch(conn, limit: int) -> list[tuple[Any, ...]]:
     with conn.cursor() as cur:
         cur.execute(
@@ -156,7 +316,7 @@ def _claim_pending_batch(conn, limit: int) -> list[tuple[Any, ...]]:
                 started_at = NOW()
             FROM cte
             WHERE q.id = cte.id
-            RETURNING q.id, q.domain_key, q.storyline_id, q.job_type, q.priority, q.metadata
+            RETURNING q.id, q.domain_key, q.storyline_id, q.job_type, q.priority, q.metadata, q.created_at
             """,
             (limit,),
         )
@@ -349,11 +509,26 @@ async def _run_timeline_narrative(domain_key: str, storyline_id: int, mode: str)
         conn.close()
 
 
-async def process_content_refinement_queue_batch() -> dict[str, Any]:
+async def process_content_refinement_queue_batch(
+    *,
+    max_finisher_per_cycle: int | None = None,
+    max_jobs_per_cycle: int | None = None,
+    claim_batch: int | None = None,
+) -> dict[str, Any]:
     """
     Claim and run up to CONTENT_REFINEMENT_MAX_JOBS_PER_CYCLE jobs.
     Caps ~70B jobs (narrative_finisher + headline_refiner) per cycle for GPU friendliness.
+    Prefers: high priority, then first-time ~70B master narrative (empty canonical_narrative),
+    then refresh finisher, headline refiner, then other job types.
     """
+    cap_fin = (
+        max_finisher_per_cycle
+        if max_finisher_per_cycle is not None
+        else _MAX_FINISHER_PER_CYCLE
+    )
+    cap_jobs = max_jobs_per_cycle if max_jobs_per_cycle is not None else _MAX_JOBS_PER_CYCLE
+    cap_claim = claim_batch if claim_batch is not None else _CLAIM_BATCH
+
     conn = get_db_connection()
     if not conn:
         return {"processed": 0, "error": "no_db_connection"}
@@ -363,21 +538,34 @@ async def process_content_refinement_queue_batch() -> dict[str, Any]:
     to_process: list[tuple[Any, ...]] = []
 
     try:
-        rows = _claim_pending_batch(conn, _MAX_JOBS_PER_CYCLE * 2)
+        rows = _claim_pending_batch(conn, max(cap_claim, cap_jobs * 2))
         if not rows:
             conn.commit()
             return stats
 
-        # Re-order: defer extra finisher jobs beyond cap (put back to pending)
+        initial_nf = _need_initial_narrative_map_for_batch(conn, rows)
+        rows_sorted = sorted(rows, key=lambda r: _refinement_queue_sort_key(r, initial_nf))
+
         to_process = []
         deferred_ids: list[int] = []
-        for row in rows:
-            _id, dkey, sid, jtype, _prio, _meta = row
+        for row in rows_sorted:
+            _id, dkey, sid, jtype, _prio, _meta, _ca = (
+                row[0],
+                row[1],
+                row[2],
+                row[3],
+                row[4],
+                row[5],
+                row[6] if len(row) > 6 else None,
+            )
             if jtype in _HEAVY_70B_JOB_TYPES:
-                if finisher_run >= _MAX_FINISHER_PER_CYCLE:
+                if finisher_run >= cap_fin:
                     deferred_ids.append(_id)
                     continue
                 finisher_run += 1
+            if len(to_process) >= cap_jobs:
+                deferred_ids.append(_id)
+                continue
             to_process.append(row)
 
         if deferred_ids:
@@ -403,8 +591,8 @@ async def process_content_refinement_queue_batch() -> dict[str, Any]:
         except Exception:
             pass
 
-    for row in to_process[:_MAX_JOBS_PER_CYCLE]:
-        job_id, domain_key, storyline_id, job_type, _priority, _metadata = row
+    for row in to_process:
+        job_id, domain_key, storyline_id, job_type, _priority, _metadata = row[:6]
         try:
             if job_type == JOB_COMPREHENSIVE_RAG:
                 await _run_comprehensive_rag(domain_key, storyline_id)
@@ -428,3 +616,78 @@ async def process_content_refinement_queue_batch() -> dict[str, Any]:
             stats["failed"] += 1
 
     return stats
+
+
+async def _nightly_gpu_refinement_drain_inner(
+    window_active: Callable[[], bool],
+) -> dict[str, Any]:
+    aggregate: dict[str, Any] = {
+        "batches": 0,
+        "processed": 0,
+        "failed": 0,
+        "by_type": {},
+        "stopped_reason": None,
+    }
+    while aggregate["batches"] < _NIGHTLY_MAX_BATCH_LOOPS:
+        if not window_active():
+            aggregate["stopped_reason"] = "window_ended"
+            break
+
+        batch = await process_content_refinement_queue_batch(
+            max_finisher_per_cycle=_NIGHTLY_MAX_FINISHER,
+            max_jobs_per_cycle=_NIGHTLY_MAX_JOBS,
+            claim_batch=_NIGHTLY_CLAIM_BATCH,
+        )
+        aggregate["batches"] += 1
+        aggregate["processed"] += int(batch.get("processed") or 0)
+        aggregate["failed"] += int(batch.get("failed") or 0)
+        for k, v in (batch.get("by_type") or {}).items():
+            aggregate["by_type"][k] = aggregate["by_type"].get(k, 0) + int(v)
+
+        if batch.get("error"):
+            aggregate["error"] = batch["error"]
+            aggregate["stopped_reason"] = "batch_error"
+            break
+        if int(batch.get("processed") or 0) == 0 and int(batch.get("failed") or 0) == 0:
+            aggregate["stopped_reason"] = "queue_idle"
+            break
+
+    if aggregate["batches"] >= _NIGHTLY_MAX_BATCH_LOOPS and aggregate.get("stopped_reason") is None:
+        aggregate["stopped_reason"] = "max_loops"
+
+    return aggregate
+
+
+async def process_nightly_gpu_refinement_drain(
+    *,
+    window_active: Callable[[], bool] | None = None,
+    use_drain_lock: bool = True,
+) -> dict[str, Any]:
+    """
+    Nightly caps refinement batches until idle, window ends, or max loops.
+    use_drain_lock=False when nightly unified pipeline already holds _nightly_ingest_lock.
+    """
+    win = window_active or _default_nightly_pipeline_window_active
+    aggregate: dict[str, Any] = {
+        "batches": 0,
+        "processed": 0,
+        "failed": 0,
+        "by_type": {},
+        "stopped_reason": None,
+    }
+    if not win():
+        aggregate["stopped_reason"] = "outside_window"
+        return aggregate
+
+    if use_drain_lock:
+        async with _nightly_drain_lock:
+            if not win():
+                aggregate["stopped_reason"] = "outside_window_after_lock"
+                return aggregate
+            inner = await _nightly_gpu_refinement_drain_inner(win)
+            aggregate.update(inner)
+    else:
+        inner = await _nightly_gpu_refinement_drain_inner(win)
+        aggregate.update(inner)
+
+    return aggregate

@@ -121,10 +121,7 @@ function DiscoverStorylinesButton({
   const handleDiscover = async () => {
     setDiscovering(true);
     try {
-      const result = await apiService.discoverStorylines(
-        { hours: 48, save: true },
-        domain
-      );
+      const result = await apiService.discoverStorylines({ save: true }, domain);
       if (
         result?.success &&
         (result?.saved_storylines?.length || result?.summary?.storylines_saved)
@@ -161,7 +158,9 @@ function DiscoverStorylinesButton({
       onClick={handleDiscover}
       disabled={discovering}
     >
-      {discovering ? 'Discovering… (2–5 min)' : 'Discover storylines now'}
+      {discovering
+        ? 'Discovering… (full backlog, may take a while)'
+        : 'Discover storylines now'}
     </Button>
   );
 }
@@ -1037,9 +1036,9 @@ const Storylines: React.FC = () => {
                   }}
                 >
                   <li>
-                    <strong>Discover now</strong> — AI clusters recent articles
-                    in this domain into storylines (button below). Takes 2–5
-                    minutes. Requires enough recent articles.
+                    <strong>Discover now</strong> — AI clusters articles from the
+                    full backlog (newest-first, capped) into storylines. Can take
+                    much longer than a quick weekly scan; Ollama must stay up.
                   </li>
                   <li>
                     <strong>Create one</strong> — Go to{' '}
@@ -1047,9 +1046,8 @@ const Storylines: React.FC = () => {
                     add articles or enable automation.
                   </li>
                   <li>
-                    <strong>Auto-discovery</strong> — The system runs discovery
-                    per domain on a schedule; storylines will appear after the
-                    next run for this domain.
+                    <strong>Auto-discovery</strong> — Scheduled job uses the same
+                    full-backlog window per domain (not a 7-day slice).
                   </li>
                 </Box>
                 <DiscoverStorylinesButton

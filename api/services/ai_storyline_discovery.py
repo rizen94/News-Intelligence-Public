@@ -65,6 +65,10 @@ SAME_WEEK_HOURS = 168  # Within 7 days = same week
 # Parallel processing
 MAX_EMBEDDING_WORKERS = 8  # Concurrent embedding requests
 
+# Articles loaded per discovery run (newest first). O(n²) similarity — increase only with RAM headroom.
+STORYLINE_DISCOVERY_ARTICLE_LIMIT = int(os.getenv("STORYLINE_DISCOVERY_ARTICLE_LIMIT", "10000"))
+STORYLINE_DISCOVERY_PDF_CONTEXT_LIMIT = int(os.getenv("STORYLINE_DISCOVERY_PDF_CONTEXT_LIMIT", "500"))
+
 
 @dataclass
 class ArticleEmbedding:
@@ -403,26 +407,44 @@ class AIStorylineDiscovery:
         return float(dot_product / (norm_a * norm_b))
 
     def fetch_recent_articles(
-        self, domain: str, hours: int = 168, limit: int = 1500
+        self, domain: str, hours: int | None = None, limit: int | None = None
     ) -> list[ArticleEmbedding]:
-        """Fetch recent articles with cached embeddings"""
+        """Fetch articles with cached embeddings, newest first.
+
+        If ``hours`` is None or <= 0, use the full backlog subject to ``limit``.
+        If ``hours`` is set, only rows with ``created_at`` within the last N hours.
+        """
         schema = domain.replace("-", "_")
         self._ensure_embedding_column(schema)
+        if limit is None:
+            limit = STORYLINE_DISCOVERY_ARTICLE_LIMIT
 
         conn = self.get_db_connection()
         try:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                cur.execute(
-                    f"""
-                    SELECT id, title, COALESCE(content, '') as content, created_at,
-                           embedding_vector, embedding_model, extracted_entities
-                    FROM {schema}.articles
-                    WHERE created_at > NOW() - INTERVAL '%s hours'
-                    ORDER BY created_at DESC
-                    LIMIT %s
-                """,
-                    (hours, limit),
-                )
+                if hours is not None and hours > 0:
+                    cur.execute(
+                        f"""
+                        SELECT id, title, COALESCE(content, '') as content, created_at,
+                               embedding_vector, embedding_model, extracted_entities
+                        FROM {schema}.articles
+                        WHERE created_at > NOW() - (%s * INTERVAL '1 hour')
+                        ORDER BY created_at DESC
+                        LIMIT %s
+                        """,
+                        (hours, limit),
+                    )
+                else:
+                    cur.execute(
+                        f"""
+                        SELECT id, title, COALESCE(content, '') as content, created_at,
+                               embedding_vector, embedding_model, extracted_entities
+                        FROM {schema}.articles
+                        ORDER BY created_at DESC
+                        LIMIT %s
+                        """,
+                        (limit,),
+                    )
 
                 articles = []
                 for row in cur.fetchall():
@@ -461,24 +483,38 @@ class AIStorylineDiscovery:
             conn.close()
 
     def fetch_pdf_contexts_for_domain(
-        self, domain: str, hours: int = 168, limit: int = 200
+        self, domain: str, hours: int | None = None, limit: int | None = None
     ) -> list[ArticleEmbedding]:
         """v8: Fetch PDF section contexts (intelligence.contexts) for this domain for use as similarity signals in clustering. Uses article_id = -context_id so they participate in clustering but are skipped when writing storyline_articles."""
+        if limit is None:
+            limit = STORYLINE_DISCOVERY_PDF_CONTEXT_LIMIT
         conn = self.get_db_connection()
         out: list[ArticleEmbedding] = []
         try:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                cur.execute(
-                    """
-                    SELECT id, title, COALESCE(content, '') AS content, created_at
-                    FROM intelligence.contexts
-                    WHERE source_type = 'pdf_section' AND domain_key = %s
-                      AND created_at > NOW() - (%s || ' hours')::interval
-                    ORDER BY created_at DESC
-                    LIMIT %s
-                    """,
-                    (domain, hours, limit),
-                )
+                if hours is not None and hours > 0:
+                    cur.execute(
+                        """
+                        SELECT id, title, COALESCE(content, '') AS content, created_at
+                        FROM intelligence.contexts
+                        WHERE source_type = 'pdf_section' AND domain_key = %s
+                          AND created_at > NOW() - (%s * INTERVAL '1 hour')
+                        ORDER BY created_at DESC
+                        LIMIT %s
+                        """,
+                        (domain, hours, limit),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        SELECT id, title, COALESCE(content, '') AS content, created_at
+                        FROM intelligence.contexts
+                        WHERE source_type = 'pdf_section' AND domain_key = %s
+                        ORDER BY created_at DESC
+                        LIMIT %s
+                        """,
+                        (domain, limit),
+                    )
                 for row in cur.fetchall():
                     out.append(
                         ArticleEmbedding(
@@ -1301,6 +1337,16 @@ Reply with ONLY a JSON object:
                         )
 
                     conn.commit()
+                    try:
+                        from services.content_refinement_queue_service import (
+                            enqueue_initial_narrative_finisher,
+                        )
+
+                        enqueue_initial_narrative_finisher(
+                            domain, storyline_id, source="discovery_save_storyline_suggestion"
+                        )
+                    except Exception as enq_e:
+                        logger.warning("enqueue initial narrative finisher (discovery): %s", enq_e)
                     return storyline_id
 
             conn.commit()
@@ -1698,16 +1744,25 @@ Reply with ONLY a JSON object:
         return "; ".join(reasons) if reasons else "general similarity"
 
     def discover_storylines(
-        self, domain: str, hours: int = 168, save_to_db: bool = True, progress_callback=None
+        self,
+        domain: str,
+        hours: int | None = None,
+        save_to_db: bool = True,
+        progress_callback=None,
     ) -> dict[str, Any]:
         """
-        Main pipeline: Discover storylines from recent articles
-        Enhanced with parallel processing and hybrid similarity
+        Main pipeline: Discover storylines from articles (default: full backlog, capped).
+
+        ``hours`` if set (>0) restricts to articles with ``created_at`` in the last N hours.
+        Omit or pass None/0 for all-time (subject to ``STORYLINE_DISCOVERY_ARTICLE_LIMIT``).
         """
         start_time = datetime.now()
         stats = {
             "domain": domain,
-            "hours_analyzed": hours,
+            "hours_analyzed": hours if hours and hours > 0 else None,
+            "time_window": (
+                f"last_{hours}_hours" if hours and hours > 0 else "all_time_capped"
+            ),
             "started_at": start_time.isoformat(),
             "phases": {},
             "enhancements": {
@@ -1731,9 +1786,12 @@ Reply with ONLY a JSON object:
 
         # Phase 1: Fetch articles (with cached embeddings) and v8 PDF section contexts as similarity signals
         phase_start = datetime.now()
-        logger.info(f"[{domain}] Phase 1: Fetching articles with cache...")
+        logger.info(
+            f"[{domain}] Phase 1: Fetching articles with cache "
+            f"({'all-time capped' if not hours or hours <= 0 else f'last {hours}h'})..."
+        )
         articles = self.fetch_recent_articles(domain, hours)
-        pdf_contexts = self.fetch_pdf_contexts_for_domain(domain, hours=hours, limit=200)
+        pdf_contexts = self.fetch_pdf_contexts_for_domain(domain, hours=hours)
         if pdf_contexts:
             articles = articles + pdf_contexts
             logger.info(
@@ -1752,6 +1810,7 @@ Reply with ONLY a JSON object:
             "duplicates_removed": dedup_count,
             "article_count": len(articles),
             "cached_embeddings": cached_count,
+            "article_limit_cap": STORYLINE_DISCOVERY_ARTICLE_LIMIT,
         }
 
         if len(articles) < MIN_CLUSTER_SIZE:
@@ -1906,6 +1965,9 @@ Reply with ONLY a JSON object:
                 "duration_seconds": round(total_duration, 2),
                 "cached_embeddings_used": cached_count,
                 "parallel_speedup": f"{MAX_EMBEDDING_WORKERS}x",
+                "time_window": stats["time_window"],
+                "hours_analyzed": stats["hours_analyzed"],
+                "article_limit_cap": STORYLINE_DISCOVERY_ARTICLE_LIMIT,
             },
             "breaking_news": [c.to_dict() for c in breaking_news],
             "suggested_storylines": [c.to_dict() for c in clusters[:10]],
