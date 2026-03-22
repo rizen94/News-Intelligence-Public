@@ -165,6 +165,23 @@ export const monitoringApi = {
     }
   },
 
+  /** PDF document collectors: success vs HTTP 403/404 / parser failures by source (last N days). */
+  async getDocumentSourcesHealth(windowDays: number = 30) {
+    try {
+      const response = await getApi().get(
+        '/api/system_monitoring/document_sources/health',
+        { params: { window_days: windowDays }, timeout: 15000 }
+      );
+      return response.data;
+    } catch (error) {
+      Logger.apiError(
+        'Failed to fetch document sources health',
+        error as Error
+      );
+      return { success: false, data: null, error: (error as any).message };
+    }
+  },
+
   /** Live DB sessions (pg_stat_activity) for monitoring long-held connections. */
   async getDatabaseConnections(params?: {
     limit?: number;
@@ -189,7 +206,12 @@ export const monitoringApi = {
   /** Request that a phase run now (e.g. rss_processing, digest_generation). */
   async triggerPhase(
     phase: string,
-    options?: { domain?: string; storyline_id?: number }
+    options?: {
+      domain?: string;
+      storyline_id?: number;
+      /** Only for phase nightly_enrichment_context: run unified drain outside 02:00–05:00 local */
+      force_nightly_unified_pipeline?: boolean;
+    }
   ) {
     try {
       const response = await getApi().post(
@@ -875,6 +897,33 @@ export const monitoringApi = {
     }
   },
 
+  /** Persist a window of prices (FRED / amalgamator / metals fallback). Use for oil/gas backfill or after config changes. */
+  async triggerCommodityPriceFetch(
+    commodity: string,
+    params: { days?: number } = {},
+    domain?: string
+  ) {
+    try {
+      const domainKey = domain || getCurrentDomain();
+      const response = await getApi().post(
+        `/api/${domainKey}/finance/commodity/${commodity}/fetch`,
+        null,
+        { params: { days: params.days ?? 365 } }
+      );
+      return response.data;
+    } catch (error) {
+      Logger.apiError(
+        `Failed to trigger ${commodity} price fetch`,
+        error as Error
+      );
+      return {
+        success: false,
+        data: {},
+        error: (error as Error).message,
+      };
+    }
+  },
+
   async getCommoditySpot(commodity: string, domain?: string) {
     try {
       const domainKey = domain || getCurrentDomain();
@@ -907,7 +956,13 @@ export const monitoringApi = {
   },
 
   async getCommodityGeoEvents(
-    params: { limit?: number; commodity?: string } = {},
+    params: {
+      limit?: number;
+      commodity?: string;
+      include_cross_domain?: boolean;
+      include_map_overlays?: boolean;
+      include_supply_chain_geo?: boolean;
+    } = {},
     domain?: string
   ) {
     try {
@@ -922,6 +977,28 @@ export const monitoringApi = {
       return {
         success: false,
         data: { events: [], by_region: {} },
+        error: (error as Error).message,
+      };
+    }
+  },
+
+  async getCommodityContextLens(
+    commodity: string,
+    params: { limit?: number } = {},
+    domain?: string
+  ) {
+    try {
+      const domainKey = domain || getCurrentDomain();
+      const response = await getApi().get(
+        `/api/${domainKey}/finance/commodity/${commodity}/context-lens`,
+        { params }
+      );
+      return response.data;
+    } catch (error) {
+      Logger.apiError('Failed to fetch commodity context lens', error as Error);
+      return {
+        success: false,
+        data: { lens_text: '', cited_event_ids: [] },
         error: (error as Error).message,
       };
     }

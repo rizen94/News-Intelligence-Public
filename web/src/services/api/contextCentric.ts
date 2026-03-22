@@ -132,8 +132,37 @@ export interface ContextCentricStatus {
   tracked_events: number;
   /** Same scope as Extracted Events page — chronological_events per domain articles. */
   extracted_events?: number;
+  /** Full row count in public.chronological_events (always global in API). */
+  chronological_events_total?: number;
+  /** chronological_events_total + tracked_events (always global in API). */
+  events_stored_total?: number;
   event_chronicles: number;
   pattern_discoveries: number;
+}
+
+/**
+ * Legacy: `extracted_events ?? tracked_events` is wrong when extracted is 0 (?? keeps 0).
+ * Prefer {@link heroBarEventsStoredCount} for the hero bar.
+ */
+export function contextCentricEventsDisplayCount(
+  s: Pick<ContextCentricStatus, 'extracted_events' | 'tracked_events'>
+): number {
+  const ex = s.extracted_events ?? 0;
+  const tr = s.tracked_events ?? 0;
+  return ex > 0 ? ex : tr;
+}
+
+/** Hero / dashboard: full-database event rows (chrono + tracked), with fallbacks for older APIs. */
+export function heroBarEventsStoredCount(s: ContextCentricStatus): number {
+  if (typeof s.events_stored_total === 'number' && Number.isFinite(s.events_stored_total)) {
+    return s.events_stored_total;
+  }
+  const ce = Number(s.chronological_events_total ?? 0);
+  const tr = Number(s.tracked_events ?? 0);
+  if (ce > 0 || tr > 0) {
+    return ce + tr;
+  }
+  return contextCentricEventsDisplayCount(s);
 }
 
 export interface ContextCentricQualityDomain {
@@ -439,6 +468,21 @@ export const contextCentricApi = {
       return response.data;
     } catch (error) {
       return handleError('Failed to fetch tracked event', error);
+    }
+  },
+
+  async getTrackedEventLinkedEvents(
+    eventId: number,
+    limit = 12,
+  ): Promise<{ items: TrackedEvent[]; limit: number }> {
+    try {
+      const response = await getApi().get<{ items: TrackedEvent[]; limit: number }>(
+        apiPath(`/api/tracked_events/${eventId}/linked_events`),
+        { ...contextCentricConfig(), params: { limit } },
+      );
+      return response.data;
+    } catch (error) {
+      return handleError('Failed to fetch linked tracked events', error);
     }
   },
 

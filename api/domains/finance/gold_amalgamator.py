@@ -25,6 +25,10 @@ from shared.data_result import DataResult
 from domains.finance.data.evidence_ledger import record as ledger_record
 from domains.finance.data.market_data_store import get_series, upsert_observations
 from domains.finance.gold_sources import fred_gold, freegoldapi
+from domains.finance.history_staleness import (
+    bounded_refresh_start_end,
+    observations_stale,
+)
 
 
 def _metals_dev_fetch(start: str | None = None, end: str | None = None) -> DataResult[list[dict]]:
@@ -204,6 +208,10 @@ def get_unified(
 
     if not result and fetch_if_empty:
         fetch_all(start=start, end=end, store=True)
+        return get_unified(prefer_unit=prefer_unit, start=start, end=end, fetch_if_empty=False)
+    if result and fetch_if_empty and start and end and observations_stale(result):
+        rs, re = bounded_refresh_start_end(start, end)
+        fetch_all(start=rs, end=re, store=True)
         return get_unified(prefer_unit=prefer_unit, start=start, end=end, fetch_if_empty=False)
     return result
 

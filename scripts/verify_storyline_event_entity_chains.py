@@ -5,7 +5,7 @@ chains are populated (story_entity_index, storyline_articles ↔ article_entitie
 
 Read-only. From repo root:
   PYTHONPATH=api uv run python scripts/verify_storyline_event_entity_chains.py
-  PYTHONPATH=api uv run python scripts/verify_storyline_event_entity_chains.py --write-report docs/STORYLINE_EVENT_ENTITY_CHAINS_REPORT.md
+  PYTHONPATH=api uv run python scripts/verify_storyline_event_entity_chains.py --write-report docs/generated/STORYLINE_EVENT_ENTITY_CHAINS_REPORT.md
 
 Pipeline context (v5/v8):
 - **New storylines**: AI clustering (`storyline_discovery`), `storyline_automation` (match articles
@@ -97,7 +97,7 @@ def main() -> int:
     p.add_argument(
         "--write-report",
         metavar="PATH",
-        help="Write markdown report under docs/ (e.g. docs/STORYLINE_EVENT_ENTITY_CHAINS_REPORT.md)",
+        help="Write markdown report (e.g. docs/generated/STORYLINE_EVENT_ENTITY_CHAINS_REPORT.md)",
     )
     args = p.parse_args()
 

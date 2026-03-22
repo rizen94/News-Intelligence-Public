@@ -55,7 +55,14 @@ Bullet points of established facts supported by the evidence.
 ## What's Uncertain
 Open questions, conflicting reports, or gaps in the evidence.
 
+{CROSS_DOMAIN_BLOCK}
+
 Use a neutral, factual tone. Prefer short sentences. Do not invent facts beyond what the evidence suggests."""
+
+CROSS_DOMAIN_SECTION = """
+CROSS-DOMAIN LINKS (related tracked_events from correlation graph — use only as background; primary evidence is above):
+{cross_domain_block}
+"""
 
 
 def _strip_html(text: str, max_len: int = 2000) -> str:
@@ -185,6 +192,56 @@ def _build_chronicle_block(chronicles: list[dict], contexts: dict[int, dict]) ->
     return "\n\n".join(lines) if lines else "No chronicles."
 
 
+def _build_cross_domain_link_block(event_id: int) -> str:
+    """Summaries of other tracked_events that appear in cross_domain_correlations with this event."""
+    conn = get_db_connection()
+    if not conn:
+        return ""
+    lines: list[str] = []
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT domain_1, domain_2, correlation_type, correlation_strength, event_ids
+                FROM intelligence.cross_domain_correlations
+                WHERE %s = ANY(event_ids)
+                ORDER BY discovered_at DESC NULLS LAST
+                LIMIT 12
+                """,
+                (event_id,),
+            )
+            rows = cur.fetchall() or []
+        other_ids: set[int] = set()
+        for r in rows:
+            eids = list(r[4]) if r[4] else []
+            for eid in eids:
+                if isinstance(eid, int) and eid != event_id:
+                    other_ids.add(eid)
+        if not other_ids:
+            conn.close()
+            return ""
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, event_name, event_type, COALESCE(domain_keys, '{}') AS domain_keys
+                FROM intelligence.tracked_events
+                WHERE id = ANY(%s)
+                """,
+                (list(other_ids)[:15],),
+            )
+            for r in cur.fetchall() or []:
+                dks = ", ".join(list(r[3]) if r[3] else [])
+                lines.append(f"- Event #{r[0]} ({r[2]}): {r[1] or ''} [domains: {dks}]")
+        conn.close()
+    except Exception as e:
+        logger.debug("_build_cross_domain_link_block: %s", e)
+        try:
+            conn.close()
+        except Exception:
+            pass
+    return "\n".join(lines) if lines else ""
+
+
 def _build_context_block(contexts: dict[int, dict]) -> str:
     lines = []
     for cid, ctx in sorted(contexts.items(), key=lambda x: x[1].get("created_at") or ""):
@@ -220,6 +277,14 @@ async def generate_investigation_report(event_id: int) -> dict[str, Any]:
     def _escape_braces(s: str) -> str:
         return (s or "").replace("{", "{{").replace("}", "}}")
 
+    cross_raw = _build_cross_domain_link_block(event_id)
+    if cross_raw.strip():
+        cross_domain_block = CROSS_DOMAIN_SECTION.format(
+            cross_domain_block=_escape_braces(cross_raw)
+        )
+    else:
+        cross_domain_block = ""
+
     prompt = DOSSIER_PROMPT.format(
         event_name=_escape_braces(event_name),
         event_type=_escape_braces(event_type),
@@ -227,6 +292,7 @@ async def generate_investigation_report(event_id: int) -> dict[str, Any]:
         time_span=_escape_braces(time_span),
         chronicle_block=_escape_braces(chronicle_block),
         context_block=_escape_braces(context_block),
+        CROSS_DOMAIN_BLOCK=cross_domain_block,
     )
 
     try:

@@ -7,7 +7,7 @@
 
 ## 1. Overview
 
-- **Assessment & alignment:** See [DB_FULL_ASSESSMENT.md](DB_FULL_ASSESSMENT.md) (four-surface matrix, persistence gates, baselines), [DB_CLEANUP_BUNDLES.md](DB_CLEANUP_BUNDLES.md), and [DB_PRODUCTION_MAINTENANCE_RUNBOOK.md](DB_PRODUCTION_MAINTENANCE_RUNBOOK.md).
+- **Assessment & alignment (archived):** [_archive/retired_root_docs_2026_03/DB_FULL_ASSESSMENT.md](_archive/retired_root_docs_2026_03/DB_FULL_ASSESSMENT.md), [_archive/retired_root_docs_2026_03/DB_CLEANUP_BUNDLES.md](_archive/retired_root_docs_2026_03/DB_CLEANUP_BUNDLES.md). **Runbook (current):** [DB_PRODUCTION_MAINTENANCE_RUNBOOK.md](DB_PRODUCTION_MAINTENANCE_RUNBOOK.md).
 - **Primary database:** PostgreSQL (default: Widow at `<WIDOW_HOST_IP>:5432`, database `news_intel`, user `newsapp`).
 - **Domain silos:** Per-domain schemas `politics`, `finance`, `science_tech` hold articles, storylines, topics, RSS feeds, and entity tables.
 - **Shared intelligence:** Schema `intelligence` holds cross-domain entities, contexts, claims, events, dossiers, and related tables. Schema `orchestration` holds investigations and optional run history.
@@ -113,7 +113,7 @@ Cross-domain and context-centric data. Entity IDs in intelligence tables refer t
 | **evidence_ledger.db** | `data/finance/` | Evidence and provenance for analysis tasks. |
 | **ChromaDB** | `data/finance/chroma/` | Vector store for EDGAR/evidence search. |
 | **orchestrator_state.db** | `data/orchestrator_state.db` | OrchestratorCoordinator and governors state. |
-| **Redis** | Docker (port 6379) | Optional cache/sessions. |
+| **Redis** | Optional (local install) | Cache/sessions only if you enable it; not required for default v8 runs. |
 
 ---
 
@@ -129,4 +129,4 @@ Cross-domain and context-centric data. Entity IDs in intelligence tables refer t
 
 - [ARCHITECTURE_AND_OPERATIONS.md](ARCHITECTURE_AND_OPERATIONS.md) — DB host, Widow, rollback to NAS.
 - [DATABASE_CONNECTION_AUDIT.md](DATABASE_CONNECTION_AUDIT.md) — Connection consistency.
-- [PROJECT_OVERVIEW.md](PROJECT_OVERVIEW.md) — End-to-end flow.
+- [SYSTEM_OVERVIEW.md](SYSTEM_OVERVIEW.md) — System map; end-to-end narrative (archived): [_archive/retired_root_docs_2026_03/PROJECT_OVERVIEW.md](_archive/retired_root_docs_2026_03/PROJECT_OVERVIEW.md).

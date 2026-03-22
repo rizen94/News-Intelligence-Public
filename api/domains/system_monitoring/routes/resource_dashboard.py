@@ -22,6 +22,11 @@ from shared.services.response_cache import cached_response
 
 logger = logging.getLogger(__name__)
 
+# Minimum processed count in the last 4 days to prefer 4d average throughput over 1h/24h spikes.
+BACKLOG_AVG_4D_MIN_SAMPLES = 12
+BACKLOG_AVG_4D_MIN_DOCUMENTS = 8
+BACKLOG_WORKLOAD_WINDOW_DAYS = 4
+
 
 def _rollback_db_connection(conn) -> None:
     """Clear aborted transaction so the next query on this connection can run (psycopg2)."""
@@ -179,7 +184,10 @@ async def get_database_stats():
 def get_backlog_status() -> dict[str, Any]:
     """
     Backlog progression: articles to enrich, documents to process, storylines to synthesize,
-    with estimated throughput and catch-up ETA. Used by the Monitor page.
+    with throughput and catch-up ETA. Throughput prefers a rolling average over the last
+    four days when enough samples exist, then 1h/24h measurements, then static estimates.
+    Includes steady_state (automation backlog clear + pipeline queues clear + non-growing
+    article trend + overall iterations at baseline). Used by the Monitor page.
     """
     # get_db_connection() raises ConnectionError when UI pool is exhausted or DB is down (no longer returns None).
     try:
@@ -200,6 +208,7 @@ def get_backlog_status() -> dict[str, Any]:
         articles_short_created_24h = 0
         enriched_last_1h = 0
         enriched_last_24h = 0
+        enriched_last_4d = 0
         for schema in ("politics", "finance", "science_tech"):
             try:
                 cur.execute(
@@ -237,6 +246,15 @@ def get_backlog_status() -> dict[str, Any]:
                 if r:
                     enriched_last_1h += r[0] or 0
                     enriched_last_24h += r[1] or 0
+                cur.execute(
+                    f"""
+                    SELECT COUNT(*)
+                    FROM {schema}.articles
+                    WHERE enrichment_status = 'enriched' AND url IS NOT NULL AND url != ''
+                      AND updated_at >= NOW() - INTERVAL '{BACKLOG_WORKLOAD_WINDOW_DAYS} days'
+                    """
+                )
+                enriched_last_4d += cur.fetchone()[0] or 0
             except Exception:
                 _rollback_db_connection(conn)
 
@@ -279,6 +297,7 @@ def get_backlog_status() -> dict[str, Any]:
         context_backlog = 0
         contexts_claim_extracted_last_1h = 0
         contexts_claim_extracted_last_24h = 0
+        contexts_claim_extracted_last_4d = 0
         contexts_created_last_1h = 0
         contexts_created_last_24h = 0
         try:
@@ -306,6 +325,14 @@ def get_backlog_status() -> dict[str, Any]:
                 contexts_claim_extracted_last_1h = r[0] or 0
                 contexts_claim_extracted_last_24h = r[1] or 0
             cur.execute(
+                f"""
+                SELECT COUNT(DISTINCT context_id)
+                FROM intelligence.extracted_claims
+                WHERE created_at >= NOW() - INTERVAL '{BACKLOG_WORKLOAD_WINDOW_DAYS} days'
+                """
+            )
+            contexts_claim_extracted_last_4d = cur.fetchone()[0] or 0
+            cur.execute(
                 """
                 SELECT
                     COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '1 hour'),
@@ -325,6 +352,7 @@ def get_backlog_status() -> dict[str, Any]:
         entity_profile_backlog = 0
         entity_profiles_updated_last_1h = 0
         entity_profiles_updated_last_24h = 0
+        entity_profiles_updated_4d = 0
         try:
             cur.execute("SELECT COUNT(*) FROM intelligence.entity_profiles")
             entity_profile_total = cur.fetchone()[0] or 0
@@ -348,12 +376,22 @@ def get_backlog_status() -> dict[str, Any]:
             if r:
                 entity_profiles_updated_last_1h = r[0] or 0
                 entity_profiles_updated_last_24h = r[1] or 0
+            cur.execute(
+                f"""
+                SELECT COUNT(*)
+                FROM intelligence.entity_profiles
+                WHERE updated_at >= NOW() - INTERVAL '{BACKLOG_WORKLOAD_WINDOW_DAYS} days'
+                  AND sections IS NOT NULL AND sections != '[]'::jsonb
+                """
+            )
+            entity_profiles_updated_4d = cur.fetchone()[0] or 0
         except Exception:
             _rollback_db_connection(conn)
 
         # Documents processed in last 1h/24h (for measured throughput)
         docs_processed_last_1h = 0
         docs_processed_last_24h = 0
+        docs_processed_4d = 0
         docs_attempted_last_1h = 0
         docs_attempted_last_24h = 0
         docs_failed_last_1h = 0
@@ -374,6 +412,15 @@ def get_backlog_status() -> dict[str, Any]:
             if r:
                 docs_processed_last_1h = r[0] or 0
                 docs_processed_last_24h = r[1] or 0
+            cur.execute(
+                f"""
+                SELECT COUNT(*)
+                FROM intelligence.processed_documents
+                WHERE extracted_sections IS NOT NULL AND extracted_sections != '[]'::jsonb
+                  AND updated_at >= NOW() - INTERVAL '{BACKLOG_WORKLOAD_WINDOW_DAYS} days'
+                """
+            )
+            docs_processed_4d = cur.fetchone()[0] or 0
             cur.execute(
                 """
                 SELECT
@@ -423,9 +470,10 @@ def get_backlog_status() -> dict[str, Any]:
         except Exception:
             pass
 
-        # Synthesis results per domain (storylines synthesized in last 1h and 2h)
+        # Synthesis results per domain (storylines synthesized in last 1h, 2h, 4d)
         synthesis_last_1h: dict[str, int] = {}
         synthesis_last_2h: dict[str, int] = {}
+        synthesis_last_4d: dict[str, int] = {}
         for schema, domain_key in [
             ("politics", "politics"),
             ("finance", "finance"),
@@ -436,7 +484,8 @@ def get_backlog_status() -> dict[str, Any]:
                     f"""
                     SELECT
                         COUNT(*) FILTER (WHERE synthesized_at >= NOW() - INTERVAL '1 hour'),
-                        COUNT(*) FILTER (WHERE synthesized_at >= NOW() - INTERVAL '2 hours')
+                        COUNT(*) FILTER (WHERE synthesized_at >= NOW() - INTERVAL '2 hours'),
+                        COUNT(*) FILTER (WHERE synthesized_at >= NOW() - INTERVAL '{BACKLOG_WORKLOAD_WINDOW_DAYS} days')
                     FROM {schema}.storylines
                     WHERE synthesized_at IS NOT NULL
                     """
@@ -445,13 +494,16 @@ def get_backlog_status() -> dict[str, Any]:
                 if r:
                     synthesis_last_1h[domain_key] = r[0] or 0
                     synthesis_last_2h[domain_key] = r[1] or 0
+                    synthesis_last_4d[domain_key] = r[2] or 0
                 else:
                     synthesis_last_1h[domain_key] = 0
                     synthesis_last_2h[domain_key] = 0
+                    synthesis_last_4d[domain_key] = 0
             except Exception:
                 _rollback_db_connection(conn)
                 synthesis_last_1h[domain_key] = 0
                 synthesis_last_2h[domain_key] = 0
+                synthesis_last_4d[domain_key] = 0
 
         cur.close()
         conn.close()
@@ -463,9 +515,14 @@ def get_backlog_status() -> dict[str, Any]:
             pass
         return {"success": False, "error": str(e)[:200], "data": None}
 
-    # Throughput: use measured enrichment when available (articles updated to full content in last 1h/24h)
-    # so ETA and trend reflect reality. Fallback 300/hr when no recent data; cap at 700 (burst max).
-    if enriched_last_1h >= 10:
+    # Throughput: prefer rolling average over the last 4 days when enough samples exist,
+    # then 1h / 24h (or 2h for storylines), then static estimates. Caps match prior behaviour.
+    hours_4d = 24.0 * BACKLOG_WORKLOAD_WINDOW_DAYS
+
+    if enriched_last_4d >= BACKLOG_AVG_4D_MIN_SAMPLES:
+        articles_per_hour = min(enriched_last_4d / hours_4d, 700)
+        per_hour_source = "avg_4d"
+    elif enriched_last_1h >= 10:
         articles_per_hour = min(enriched_last_1h, 700)
         per_hour_source = "measured_1h"
     elif enriched_last_24h > 0:
@@ -476,8 +533,10 @@ def get_backlog_status() -> dict[str, Any]:
         per_hour_source = "estimated"
     articles_per_day = articles_per_hour * 24
 
-    # Documents: measured from last 1h/24h when available
-    if docs_processed_last_1h > 0:
+    if docs_processed_4d >= BACKLOG_AVG_4D_MIN_DOCUMENTS:
+        docs_per_hour = min(docs_processed_4d / hours_4d, 100)
+        docs_per_hour_source = "avg_4d"
+    elif docs_processed_last_1h > 0:
         docs_per_hour = min(docs_processed_last_1h, 100)
         docs_per_hour_source = "measured_1h"
     elif docs_processed_last_24h > 0:
@@ -487,32 +546,39 @@ def get_backlog_status() -> dict[str, Any]:
         docs_per_hour = 20
         docs_per_hour_source = "estimated"
 
-    # Context claim-extraction throughput (contexts that got claims in last 1h/24h)
-    if contexts_claim_extracted_last_1h >= 5:
+    if contexts_claim_extracted_last_4d >= BACKLOG_AVG_4D_MIN_SAMPLES:
+        context_claims_per_hour = min(contexts_claim_extracted_last_4d / hours_4d, 200)
+        context_claims_per_hour_source = "avg_4d"
+    elif contexts_claim_extracted_last_1h >= 5:
         context_claims_per_hour = min(contexts_claim_extracted_last_1h, 200)
         context_claims_per_hour_source = "measured_1h"
     elif contexts_claim_extracted_last_24h > 0:
         context_claims_per_hour = min(round(contexts_claim_extracted_last_24h / 24.0), 200)
         context_claims_per_hour_source = "measured_24h"
     else:
-        context_claims_per_hour = 100  # ~50/run every 30 min
+        context_claims_per_hour = 100
         context_claims_per_hour_source = "estimated"
 
-    # Entity profile build throughput
-    if entity_profiles_updated_last_1h >= 1:
+    if entity_profiles_updated_4d >= BACKLOG_AVG_4D_MIN_SAMPLES:
+        entity_per_hour = min(entity_profiles_updated_4d / hours_4d, 50)
+        entity_per_hour_source = "avg_4d"
+    elif entity_profiles_updated_last_1h >= 1:
         entity_per_hour = min(entity_profiles_updated_last_1h, 50)
         entity_per_hour_source = "measured_1h"
     elif entity_profiles_updated_last_24h > 0:
         entity_per_hour = min(round(entity_profiles_updated_last_24h / 24.0), 50)
         entity_per_hour_source = "measured_24h"
     else:
-        entity_per_hour = 15  # ~25/run every 30 min, conservative
+        entity_per_hour = 15
         entity_per_hour_source = "estimated"
 
-    # Storyline synthesis: use sum of last 1h per domain when available
     storylines_synthesized_last_1h = sum(synthesis_last_1h.values())
     storylines_synthesized_last_2h = sum(synthesis_last_2h.values())
-    if storylines_synthesized_last_1h >= 1:
+    storylines_synthesized_last_4d = sum(synthesis_last_4d.values())
+    if storylines_synthesized_last_4d >= BACKLOG_AVG_4D_MIN_SAMPLES:
+        storylines_per_hour = min(storylines_synthesized_last_4d / hours_4d, 50)
+        storylines_per_hour_source = "avg_4d"
+    elif storylines_synthesized_last_1h >= 1:
         storylines_per_hour = min(storylines_synthesized_last_1h, 50)
         storylines_per_hour_source = "measured_1h"
     elif storylines_synthesized_last_2h > 0:
@@ -566,15 +632,80 @@ def get_backlog_status() -> dict[str, Any]:
         else ("shrinking" if net_articles_per_day < 0 else "stable")
     )
 
+    overall_iterations = iterations_2h(overall_h)
+
+    automation_backlog_nonzero: list[str] = []
+    automation_backlog_clear = True
+    try:
+        from services.backlog_metrics import get_all_backlog_counts
+
+        _bc = get_all_backlog_counts()
+        for name, cnt in sorted(_bc.items()):
+            if int(cnt or 0) > 0:
+                automation_backlog_clear = False
+                automation_backlog_nonzero.append(f"{name}={cnt}")
+    except Exception as ex:
+        automation_backlog_clear = False
+        automation_backlog_nonzero.append(f"backlog_metrics_unavailable:{str(ex)[:120]}")
+
+    pipeline_queues_clear = (
+        article_backlog == 0
+        and doc_backlog == 0
+        and storyline_backlog == 0
+        and context_backlog == 0
+        and entity_profile_backlog == 0
+    )
+    articles_trend_ok = backlog_trend in ("stable", "shrinking")
+    overall_iterations_at_baseline = overall_iterations <= 1
+    steady_ok = (
+        automation_backlog_clear
+        and pipeline_queues_clear
+        and articles_trend_ok
+        and overall_iterations_at_baseline
+    )
+    steady_reasons: list[str] = []
+    if not automation_backlog_clear:
+        tail = automation_backlog_nonzero[:15]
+        more = len(automation_backlog_nonzero) - len(tail)
+        steady_reasons.append(
+            "Automation queues over one-batch depth: "
+            + ", ".join(tail)
+            + (f" …(+{more} more)" if more > 0 else "")
+        )
+    if not pipeline_queues_clear:
+        steady_reasons.append(
+            "Monitor SQL backlogs remain (articles, documents, contexts, entity profiles, or storylines)"
+        )
+    if not articles_trend_ok:
+        steady_reasons.append(
+            f"Article inflow vs throughput trend is “{backlog_trend}” (need stable or shrinking)"
+        )
+    if not overall_iterations_at_baseline:
+        steady_reasons.append(
+            f"Overall catch-up iterations ({overall_iterations}) exceeds baseline threshold (>1)"
+        )
+
     return {
         "success": True,
         "data": {
+            "workload_window_days": BACKLOG_WORKLOAD_WINDOW_DAYS,
+            "steady_state": {
+                "ok": steady_ok,
+                "checks": {
+                    "automation_backlog_clear": automation_backlog_clear,
+                    "pipeline_queues_clear": pipeline_queues_clear,
+                    "articles_trend_ok": articles_trend_ok,
+                    "overall_iterations_at_baseline": overall_iterations_at_baseline,
+                },
+                "reasons": steady_reasons,
+            },
             "articles": {
                 "backlog": article_backlog,
-                "per_hour": articles_per_hour,
+                "per_hour": round(articles_per_hour, 2),
                 "per_hour_source": per_hour_source,
                 "processed_last_1h": enriched_last_1h,
                 "processed_last_24h": enriched_last_24h,
+                "processed_last_4d": enriched_last_4d,
                 "enriched_last_1h": enriched_last_1h,
                 "enriched_last_24h": enriched_last_24h,
                 "per_day": articles_per_day,
@@ -588,10 +719,11 @@ def get_backlog_status() -> dict[str, Any]:
             },
             "documents": {
                 "backlog": doc_backlog,
-                "per_hour": docs_per_hour,
+                "per_hour": round(docs_per_hour, 2),
                 "per_hour_source": docs_per_hour_source,
                 "processed_last_1h": docs_processed_last_1h,
                 "processed_last_24h": docs_processed_last_24h,
+                "processed_last_4d": docs_processed_4d,
                 "attempted_last_1h": docs_attempted_last_1h,
                 "attempted_last_24h": docs_attempted_last_24h,
                 "failed_last_1h": docs_failed_last_1h,
@@ -605,10 +737,11 @@ def get_backlog_status() -> dict[str, Any]:
             "contexts": {
                 "total": context_total,
                 "backlog": context_backlog,
-                "per_hour": context_claims_per_hour,
+                "per_hour": round(context_claims_per_hour, 2),
                 "per_hour_source": context_claims_per_hour_source,
                 "processed_last_1h": contexts_claim_extracted_last_1h,
                 "processed_last_24h": contexts_claim_extracted_last_24h,
+                "processed_last_4d": contexts_claim_extracted_last_4d,
                 "created_last_1h": contexts_created_last_1h,
                 "created_last_24h": contexts_created_last_24h,
                 "eta_hours": round(h_contexts, 1),
@@ -617,29 +750,194 @@ def get_backlog_status() -> dict[str, Any]:
             "entity_profiles": {
                 "total": entity_profile_total,
                 "backlog": entity_profile_backlog,
-                "per_hour": entity_per_hour,
+                "per_hour": round(entity_per_hour, 2),
                 "per_hour_source": entity_per_hour_source,
                 "processed_last_1h": entity_profiles_updated_last_1h,
                 "processed_last_24h": entity_profiles_updated_last_24h,
+                "processed_last_4d": entity_profiles_updated_4d,
                 "eta_hours": round(h_entities, 1),
                 "iterations_to_baseline": iterations_2h(h_entities),
             },
             "storylines": {
                 "backlog": storyline_backlog,
-                "per_hour": storylines_per_hour,
+                "per_hour": round(storylines_per_hour, 2),
                 "per_hour_source": storylines_per_hour_source,
                 "processed_last_1h": storylines_synthesized_last_1h,
                 "processed_last_2h": storylines_synthesized_last_2h,
+                "processed_last_4d": storylines_synthesized_last_4d,
                 "synthesis_per_domain_last_1h": synthesis_last_1h,
                 "synthesis_per_domain_last_2h": synthesis_last_2h,
+                "synthesis_per_domain_last_4d": synthesis_last_4d,
                 "eta_hours": round(h_storylines, 1),
                 "eta_utc": eta_storylines,
                 "iterations_to_baseline": iterations_2h(h_storylines),
             },
             "overall_eta_hours": round(overall_h, 1),
             "overall_eta_utc": eta_overall,
-            "overall_iterations_to_baseline": iterations_2h(overall_h),
+            "overall_iterations_to_baseline": overall_iterations,
             "cycle_hours": 2,
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
+# Document sources: failure profile by collector (403/404 vs parser vs success)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/document_sources/health")
+@cached_response(ttl=60)
+def get_document_sources_health(window_days: int = 30) -> dict[str, Any]:
+    """
+    Aggregate intelligence.processed_documents by source_type/source_name for the
+    last *window_days* days. Use this to decide whether a collector (CRS, GAO,
+    CBO, arXiv, etc.) is worth keeping: persistent HTTP 403/404 means the source
+    is not providing fetchable PDFs to this environment, not that downstream
+    parsing is the bottleneck.
+    """
+    wd = max(1, min(int(window_days or 30), 365))
+    try:
+        conn = get_db_connection()
+    except Exception as e:
+        logger.warning("document_sources/health: database unavailable: %s", e)
+        return {"success": False, "error": str(e)[:200], "data": None}
+
+    automated: list[str] = []
+    try:
+        from config.orchestrator_governance import get_orchestrator_governance_config
+
+        cfg = get_orchestrator_governance_config() or {}
+        ds = cfg.get("document_sources") or {}
+        automated = list(ds.get("automated_sources") or [])
+    except Exception:
+        pass
+
+    try:
+        cur = conn.cursor()
+        try:
+            cur.execute("SET LOCAL statement_timeout = '8s'")
+        except Exception:
+            _rollback_db_connection(conn)
+
+        cur.execute(
+            f"""
+            SELECT
+                COALESCE(NULLIF(TRIM(source_type), ''), '(unknown)') AS st,
+                COALESCE(NULLIF(TRIM(source_name), ''), '(unknown)') AS sn,
+                COUNT(*)::bigint AS n_total,
+                COUNT(*) FILTER (
+                    WHERE extracted_sections IS NOT NULL
+                      AND extracted_sections::text NOT IN ('[]', 'null')
+                )::bigint AS n_success,
+                COUNT(*) FILTER (
+                    WHERE metadata->'processing'->>'method' = 'pdf_failed'
+                )::bigint AS n_pdf_failed,
+                COUNT(*) FILTER (
+                    WHERE COALESCE(metadata->'processing'->>'error', '')
+                      ILIKE '%%HTTP 403%%'
+                )::bigint AS n_http_403,
+                COUNT(*) FILTER (
+                    WHERE COALESCE(metadata->'processing'->>'error', '')
+                      ILIKE '%%HTTP 404%%'
+                )::bigint AS n_http_404,
+                COUNT(*) FILTER (
+                    WHERE COALESCE(metadata->'processing'->>'error', '')
+                      ILIKE '%%No PDF parser available%%'
+                )::bigint AS n_parser_missing,
+                COUNT(*) FILTER (
+                    WHERE (metadata->'processing'->>'permanent_failure') = 'true'
+                )::bigint AS n_permanent
+            FROM intelligence.processed_documents
+            WHERE created_at >= NOW() - INTERVAL '{wd} days'
+            GROUP BY 1, 2
+            ORDER BY n_pdf_failed DESC, n_http_403 + n_http_404 DESC, n_total DESC
+            """
+        )
+        rows = cur.fetchall() or []
+
+        cur.execute(
+            f"""
+            SELECT
+                COUNT(*) FILTER (
+                    WHERE COALESCE(metadata->'processing'->>'error', '')
+                      ILIKE '%%HTTP 403%%'
+                )::bigint,
+                COUNT(*) FILTER (
+                    WHERE COALESCE(metadata->'processing'->>'error', '')
+                      ILIKE '%%HTTP 404%%'
+                )::bigint,
+                COUNT(*)::bigint
+            FROM intelligence.processed_documents
+            WHERE created_at >= NOW() - INTERVAL '{wd} days'
+            """
+        )
+        tot_row = cur.fetchone() or (0, 0, 0)
+        cur.close()
+        conn.close()
+    except Exception as e:
+        logger.warning("document_sources/health: query failed: %s", e)
+        try:
+            conn.close()
+        except Exception:
+            pass
+        return {"success": False, "error": str(e)[:200], "data": None}
+
+    sources: list[dict[str, Any]] = []
+    for st, sn, n_total, n_success, n_pdf_failed, n403, n404, n_parser, n_perm in rows:
+        access_failures = int(n403 or 0) + int(n404 or 0)
+        review = False
+        if int(n_total or 0) > 0:
+            if int(n404 or 0) >= 3 or int(n403 or 0) >= 5:
+                review = True
+            elif int(n_pdf_failed or 0) >= 5 and access_failures >= int(n_pdf_failed or 0) // 2:
+                review = True
+        if int(n_total or 0) == 0:
+            health = "no_rows"
+        elif review:
+            health = "review_source_or_disable_collector"
+        else:
+            health = "ok"
+
+        sources.append(
+            {
+                "source_type": st,
+                "source_name": sn,
+                "documents_in_window": int(n_total or 0),
+                "success_processed_count": int(n_success or 0),
+                "pdf_failed_count": int(n_pdf_failed or 0),
+                "http_403_count": int(n403 or 0),
+                "http_404_count": int(n404 or 0),
+                "parser_missing_count": int(n_parser or 0),
+                "permanent_failure_count": int(n_perm or 0),
+                "health": health,
+            }
+        )
+
+    t403, t404, t_all = (int(tot_row[0] or 0), int(tot_row[1] or 0), int(tot_row[2] or 0))
+    rec_parts: list[str] = []
+    if t403 + t404 > 0:
+        rec_parts.append(
+            "High HTTP 403/404 counts usually mean the origin is blocking or the PDF URL is wrong; "
+            "remove or fix the corresponding key under document_sources.automated_sources in "
+            "api/config/orchestrator_governance.yaml (crs, gao, cbo, arxiv)."
+        )
+    if not rec_parts:
+        rec_parts.append(
+            "No major HTTP access-error signal in this window; failures may be parser, size, or one-off."
+        )
+
+    return {
+        "success": True,
+        "data": {
+            "window_days": wd,
+            "configured_automated_sources": automated,
+            "sources": sources,
+            "summary": {
+                "documents_in_window_total": t_all,
+                "http_403_total": t403,
+                "http_404_total": t404,
+                "recommendation": " ".join(rec_parts),
+            },
         },
     }
 

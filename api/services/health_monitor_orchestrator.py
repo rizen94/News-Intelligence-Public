@@ -79,19 +79,19 @@ def _create_health_alert(feed_name: str, message: str) -> None:
             now = datetime.utcnow()
             alert_data = json.dumps({"feed": feed_name})
             with conn.cursor() as cur:
+                # Align with system_alerts reads (category, message); many DBs lack alert_type/description.
                 cur.execute(
                     """
                     INSERT INTO system_alerts
-                    (alert_type, severity, title, description, alert_data, created_at, updated_at, is_active)
-                    VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s, true)
-                """,
+                    (category, severity, title, message, alert_data, created_at, is_active)
+                    VALUES (%s, %s, %s, %s, %s::jsonb, %s, true)
+                    """,
                     (
                         "health_check",
                         "high",
                         f"Health check failed: {feed_name}",
                         message,
                         alert_data,
-                        now,
                         now,
                     ),
                 )

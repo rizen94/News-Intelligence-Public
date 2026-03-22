@@ -20,7 +20,7 @@ When you have many changed files (e.g. 50+), Git and Cursor both do better if yo
 1. **Docs and repo hygiene** — `.gitignore`, `README.md`, `docs/REPO_MAINTENANCE.md`, `docs/DOCS_INDEX.md`, `QUICK_START.md`, any other `docs/*.md` only.
 2. **DB connection and scripts** — `api/shared/database/connection.py`, `api/config/database.py`, all `api/**` that use `get_db_connection`/pool, `start_system.sh`, `stop_system.sh`, `restart_system.sh`, `scripts/*.sh` (cron, report).
 3. **Migrations and new API** — `api/database/migrations/*.sql`, `api/scripts/run_migration_*.py`, new services/routes.
-4. **Frontend and config** — `web/src/**`, `configs/`, `pyproject.toml`, `docker-compose.yml`.
+4. **Frontend and config** — `web/src/**`, `configs/`, `pyproject.toml`. (Legacy Docker Compose files: `docs/archive/docker_stack/`.)
 
 Example split (generic):
 
@@ -43,9 +43,9 @@ Smaller commits mean smaller diffs, faster operations, and easier history.
 ## Testing before Phase 4 (context-centric)
 
 - **Smoke test (no DB):** From project root run  
-  `PYTHONPATH=api .venv/bin/python api/tests/test_context_centric_imports.py`  
-  Verifies context-centric services and API routes load.
-- **Full API tests (DB required):** `PYTHONPATH=api .venv/bin/python api/tests/test_api_routes.py` — needs PostgreSQL (e.g. Widow) and credentials.
+  `PYTHONPATH=api .venv/bin/python api/_archived/legacy_pytest_tree_2026_03/test_context_centric_imports.py`  
+  Verifies context-centric services and API routes load (archived tree; prefer adding checks under `tests/`).
+- **Legacy API route tests (DB required):** `api/_archived/legacy_pytest_tree_2026_03/test_api_routes.py` — needs PostgreSQL and credentials; not run in CI.
 - **Commit in chunks:** Use `bash scripts/commit_context_centric.sh` to commit context-centric and doc changes in logical order (migrations → services → config → API → test → docs → hygiene). Confirm each step at the prompt.
 
 ## Optional disk cleanup
@@ -60,6 +60,7 @@ Smaller commits mean smaller diffs, faster operations, and easier history.
 | **`archive/`** (repo root) | Planning packs, exports, non-markdown history, large attachments. Listed in [DOCS_INDEX.md](DOCS_INDEX.md) § Archived. Git may ignore per `.gitignore` — confirm before relying on Git history for these paths. |
 | **`docs/_archive/`** | Superseded **Markdown** guides, old release notes (`_archive/releases/`), consolidated copies of merged docs (`_archive/consolidated/`). Still versioned unless excluded. |
 | **`scripts/archive/`** | Retired **scripts** (one-off migrations, deprecated daemons). Do not delete without checking `SCRIPTS_INDEX.md`. |
+| **`docs/archive/`** (except `_archive/`) | **Cleanup buckets** — `planning_incubator/`, `docker_stack/`, `root_analysis_snapshots/`, etc. See [archive/CLEANUP_2026_03.md](archive/CLEANUP_2026_03.md). |
 | **`api/_archived/`**, **`web/_archived_duplicates/`** | Retired **code** only; follow “reuse before create” — restore from here before re-implementing. |
 | **`docs/generated/`** | Pointer [generated/README.md](generated/README.md) — documents script-emitted reports; reports may still live as `docs/*_REPORT.md` at repo root for tooling compatibility. |
 
@@ -68,7 +69,7 @@ When you **merge** two docs, move the superseded file under `docs/_archive/conso
 ## Documentation inventory (quick)
 
 - **Canonical index:** [DOCS_INDEX.md](DOCS_INDEX.md)
-- **Orientation:** [PROJECT_OVERVIEW.md](PROJECT_OVERVIEW.md) (includes capabilities + scope summaries; full matrices in `_archive/consolidated/`)
+- **Orientation:** [SYSTEM_OVERVIEW.md](SYSTEM_OVERVIEW.md); capabilities/scope-style narrative (archived): [_archive/retired_root_docs_2026_03/PROJECT_OVERVIEW.md](_archive/retired_root_docs_2026_03/PROJECT_OVERVIEW.md); older matrices in `_archive/consolidated/`
 - **Setup:** [SETUP_ENV_AND_RUNTIME.md](SETUP_ENV_AND_RUNTIME.md)
 - **Security:** [SECURITY_OPERATIONS.md](SECURITY_OPERATIONS.md)
 - **Generated reports:** [generated/README.md](generated/README.md)

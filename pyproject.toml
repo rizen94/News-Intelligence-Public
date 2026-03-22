@@ -30,8 +30,10 @@ dependencies = [
     "trafilatura>=1.6.0",
     "lxml>=4.9.0",
     "chardet>=5.0.0",
-    # PDF document processing
+    # PDF document processing (document_processing_service: pdfplumber → pymupdf → pdfminer)
     "pdfplumber>=0.11.0",
+    "pdfminer.six>=20221105",
+    "pymupdf>=1.23.0",
     # Scheduling & monitoring
     "schedule>=1.2.0",
     "psutil>=5.9.0",
@@ -51,7 +53,6 @@ dependencies = [
 
 [project.optional-dependencies]
 finance = ["chromadb", "sentence-transformers"]
-documents = ["pymupdf>=1.23.0"]  # optional: faster/robust PDF text fallback when pdfplumber fails
 dev = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.23.0",

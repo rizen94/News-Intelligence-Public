@@ -62,6 +62,40 @@ def fetch_commodity_history_from_fred(
     return DataResult.ok(out)
 
 
+def get_stored_fred_commodity_history(
+    commodity: str,
+    start: str,
+    end: str,
+) -> list[dict]:
+    """
+    Read previously persisted FRED observations from market_data_store (source=fred, symbol=series_id).
+    Used when live FRED is unavailable or returns empty but a prior fetch stored data.
+    """
+    series_id = get_fred_series_id(commodity)
+    if not series_id:
+        return []
+    try:
+        from domains.finance.data.market_data_store import get_series
+    except Exception:
+        return []
+    r = get_series("fred", series_id, start_date=start, end_date=end)
+    if not isinstance(r, DataResult) or not r.success or not r.data:
+        return []
+    unit = registry_get_unit((commodity or "").lower())
+    out: list[dict] = []
+    for row in r.data:
+        meta = row.get("metadata") or {}
+        out.append(
+            {
+                "date": row.get("date") or "",
+                "value": row.get("value"),
+                "unit": meta.get("unit") or unit,
+                "source_id": meta.get("source_id") or f"fred_{series_id}",
+            }
+        )
+    return out
+
+
 def fetch_commodity_spot_from_fred(commodity: str) -> DataResult[dict]:
     """
     Fetch latest observation from FRED as spot (last ~7 days, take most recent).

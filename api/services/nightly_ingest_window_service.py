@@ -85,11 +85,23 @@ def task_allowed_during_nightly_ingest_exclusive(task_name: str) -> bool:
     return task_name in _ingest_allowlist()
 
 
-async def run_nightly_unified_pipeline_drain() -> dict[str, Any]:
+async def run_nightly_unified_pipeline_drain(
+    *,
+    force_outside_window: bool = False,
+) -> dict[str, Any]:
     """
     Within in_nightly_pipeline_window_est: drain enrichment, then context_sync, then GPU refinement.
     Repeats the outer cycle if new work appears (e.g. RSS). Exits immediately when all three idle.
+
+    force_outside_window: set True when AutomationManager runs this phase from a manual Monitor
+    request outside local night hours — same drain logic, no clock gate.
     """
+
+    def window_active() -> bool:
+        if force_outside_window:
+            return True
+        return in_nightly_pipeline_window_est()
+
     stats: dict[str, Any] = {
         "enrichment_batches": 0,
         "enrichment_articles": 0,
@@ -102,8 +114,9 @@ async def run_nightly_unified_pipeline_drain() -> dict[str, Any]:
         "gpu_stopped_reason": None,
         "stopped_reason": None,
         "outer_cycles": 0,
+        "manual_force": bool(force_outside_window),
     }
-    if not in_nightly_pipeline_window_est():
+    if not window_active():
         stats["stopped_reason"] = "outside_pipeline_window"
         return stats
 
@@ -120,7 +133,7 @@ async def run_nightly_unified_pipeline_drain() -> dict[str, Any]:
     max_sync_loops = int(os.environ.get("NIGHTLY_CONTEXT_SYNC_MAX_LOOPS", "800"))
 
     async with _nightly_ingest_lock:
-        if not in_nightly_pipeline_window_est():
+        if not window_active():
             stats["stopped_reason"] = "outside_window_after_lock"
             return stats
 
@@ -131,7 +144,7 @@ async def run_nightly_unified_pipeline_drain() -> dict[str, Any]:
 
         loop = asyncio.get_event_loop()
 
-        while in_nightly_pipeline_window_est():
+        while window_active():
             invalidate_backlog_metrics_cache()
             try:
                 pending = get_all_pending_counts()
@@ -151,7 +164,7 @@ async def run_nightly_unified_pipeline_drain() -> dict[str, Any]:
 
             # --- Enrichment (must complete before sync / GPU in this cycle) ---
             enrich_i = 0
-            while enrich_i < max_enrich_loops and in_nightly_pipeline_window_est():
+            while enrich_i < max_enrich_loops and window_active():
                 invalidate_backlog_metrics_cache()
                 try:
                     pe = int(get_all_pending_counts().get("content_enrichment") or 0)
@@ -172,7 +185,7 @@ async def run_nightly_unified_pipeline_drain() -> dict[str, Any]:
 
             if context_sync_enabled:
                 sync_i = 0
-                while sync_i < max_sync_loops and in_nightly_pipeline_window_est():
+                while sync_i < max_sync_loops and window_active():
                     invalidate_backlog_metrics_cache()
                     try:
                         pc = int(get_all_pending_counts().get("context_sync") or 0)
@@ -183,7 +196,7 @@ async def run_nightly_unified_pipeline_drain() -> dict[str, Any]:
 
                     round_total = 0
                     for domain_key in ("politics", "finance", "science-tech"):
-                        if not in_nightly_pipeline_window_est():
+                        if not window_active():
                             break
                         lim = sync_limit
                         created = await loop.run_in_executor(
@@ -198,7 +211,7 @@ async def run_nightly_unified_pipeline_drain() -> dict[str, Any]:
                     if round_total == 0:
                         break
 
-            if not in_nightly_pipeline_window_est():
+            if not window_active():
                 stats["stopped_reason"] = "window_ended_before_gpu"
                 break
 
@@ -210,7 +223,7 @@ async def run_nightly_unified_pipeline_drain() -> dict[str, Any]:
 
             if pr > 0:
                 gpu_stats = await process_nightly_gpu_refinement_drain(
-                    window_active=in_nightly_pipeline_window_est,
+                    window_active=window_active,
                     use_drain_lock=False,
                 )
                 stats["gpu_batches"] += int(gpu_stats.get("batches") or 0)
@@ -221,7 +234,11 @@ async def run_nightly_unified_pipeline_drain() -> dict[str, Any]:
                     stats["gpu_by_type"][k] = stats["gpu_by_type"].get(k, 0) + int(v)
 
         if stats.get("stopped_reason") is None:
-            stats["stopped_reason"] = "window_ended"
+            stats["stopped_reason"] = (
+                "manual_force_window_loop_end"
+                if force_outside_window
+                else "window_ended"
+            )
 
     return stats
 

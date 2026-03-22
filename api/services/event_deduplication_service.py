@@ -47,6 +47,28 @@ class EventDeduplicationService:
 
     def __init__(self, conn):
         self.conn = conn
+        self._chronological_has_embedding: bool | None = None
+
+    def _chronological_events_has_embedding(self) -> bool:
+        if self._chronological_has_embedding is not None:
+            return self._chronological_has_embedding
+        cursor = self.conn.cursor()
+        try:
+            cursor.execute(
+                """
+                SELECT EXISTS (
+                    SELECT 1 FROM information_schema.columns c
+                    WHERE c.table_schema = 'public'
+                      AND c.table_name = 'chronological_events'
+                      AND c.column_name = 'embedding'
+                )
+                """
+            )
+            row = cursor.fetchone()
+            self._chronological_has_embedding = bool(row and row[0])
+        finally:
+            cursor.close()
+        return self._chronological_has_embedding
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -60,36 +82,65 @@ class EventDeduplicationService:
         Side-effects: updates canonical pointers, source counts, and merges
         metadata when a match is confirmed.
         """
+        has_emb = self._chronological_events_has_embedding()
         cursor = self.conn.cursor()
-        cursor.execute(
-            """
-            SELECT id, event_fingerprint, title, description, event_type,
-                   actual_event_date, date_precision, location, key_actors,
-                   entities, embedding, storyline_id
-            FROM chronological_events
-            WHERE id = %s
-        """,
-            (event_id,),
-        )
+        if has_emb:
+            cursor.execute(
+                """
+                SELECT id, event_fingerprint, title, description, event_type,
+                       actual_event_date, date_precision, location, key_actors,
+                       entities, embedding, storyline_id
+                FROM chronological_events
+                WHERE id = %s
+            """,
+                (event_id,),
+            )
+        else:
+            cursor.execute(
+                """
+                SELECT id, event_fingerprint, title, description, event_type,
+                       actual_event_date, date_precision, location, key_actors,
+                       entities, storyline_id
+                FROM chronological_events
+                WHERE id = %s
+            """,
+                (event_id,),
+            )
         row = cursor.fetchone()
         cursor.close()
         if not row:
             return None
 
-        (
-            eid,
-            fingerprint,
-            title,
-            desc,
-            etype,
-            edate,
-            precision,
-            loc,
-            actors_json,
-            entities_json,
-            embedding,
-            storyline_id,
-        ) = row
+        if has_emb:
+            (
+                eid,
+                fingerprint,
+                title,
+                desc,
+                etype,
+                edate,
+                precision,
+                loc,
+                actors_json,
+                entities_json,
+                embedding,
+                storyline_id,
+            ) = row
+        else:
+            (
+                eid,
+                fingerprint,
+                title,
+                desc,
+                etype,
+                edate,
+                precision,
+                loc,
+                actors_json,
+                entities_json,
+                storyline_id,
+            ) = row
+            embedding = None
 
         key_actors = self._parse_json(actors_json)
         entities = self._parse_json(entities_json)
@@ -101,18 +152,19 @@ class EventDeduplicationService:
             return canonical
 
         # --- Tier 2: semantic similarity (pgvector) ----------------------
-        if embedding is None:
-            embed_text = f"{title}. {desc or ''}"
-            vec = await _get_embedding(embed_text)
-            if vec:
-                self._store_embedding(eid, vec)
-                embedding = vec
+        if has_emb:
+            if embedding is None:
+                embed_text = f"{title}. {desc or ''}"
+                vec = await _get_embedding(embed_text)
+                if vec:
+                    self._store_embedding(eid, vec)
+                    embedding = vec
 
-        if embedding is not None:
-            canonical = self._match_by_embedding(eid, embedding)
-            if canonical:
-                await self._merge(eid, canonical)
-                return canonical
+            if embedding is not None:
+                canonical = self._match_by_embedding(eid, embedding)
+                if canonical:
+                    await self._merge(eid, canonical)
+                    return canonical
 
         # --- Tier 3: entity + temporal overlap ---------------------------
         actor_names = (

@@ -1055,7 +1055,7 @@ class AdvancedTopicExtractor:
             source_domain,
         ) in articles:
             # Use title and summary primarily (they contain the most relevant phrases)
-            # v7: full-text articles — use first 5000 chars for topic extraction
+            # Long-form articles — use first 5000 chars for topic extraction
             content_preview = (content or "")[:5000] if content else ""
             raw_text = f"{title} {summary or ''} {content_preview}"
 

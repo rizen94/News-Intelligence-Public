@@ -1,6 +1,6 @@
-# Documentation Index
+# Documentation index
 
-Use this index to find the right document. **Project-facing** docs (overview, database, API) are listed first; **planning and development history** are in a separate archive.
+Use this index for **current** documentation: architecture, how the API and database fit together, setup, security, and operations. **Proposals, plans, strategy docs, release-style summaries, and long-form feature write-ups** that used to sit beside these files are in [`_archive/retired_root_docs_2026_03/`](_archive/retired_root_docs_2026_03/README.md).
 
 ---
 
@@ -8,142 +8,105 @@ Use this index to find the right document. **Project-facing** docs (overview, da
 
 | Doc | Purpose |
 |-----|---------|
-| [CODEBASE_MAP.md](CODEBASE_MAP.md) | **Directory map** — API/web/scripts layout, high-interest files, reading order. |
-| [PIPELINE_AND_ORDER_OF_OPERATIONS.md](PIPELINE_AND_ORDER_OF_OPERATIONS.md) | **v8 automation** — collection cycle vs analysis phases; mermaid + pointers to `automation_manager.py`. |
-| [CODE_REVIEW_AND_RUN_CAVEATS.md](CODE_REVIEW_AND_RUN_CAVEATS.md) | **Run requirements** and **why casual local deploy is not recommended** (DB, Ollama, compose drift, lab defaults). |
+| [CODEBASE_MAP.md](CODEBASE_MAP.md) | Directory map — API / web / scripts layout and reading order. |
+| [PIPELINE_AND_ORDER_OF_OPERATIONS.md](PIPELINE_AND_ORDER_OF_OPERATIONS.md) | What runs when — automation phases; points to `automation_manager.py`. |
+| [CODE_REVIEW_AND_RUN_CAVEATS.md](CODE_REVIEW_AND_RUN_CAVEATS.md) | Run requirements and why casual local deploy is not recommended. |
 
 ---
 
-## Project documentation (what it is and how it works)
+## System and data flow
 
 | Doc | Purpose |
 |-----|---------|
-| [PROJECT_OVERVIEW.md](PROJECT_OVERVIEW.md) | **How the project works** — end-to-end flow, pipeline, concepts, **capabilities snapshot**, **scope/status** (replaces separate brief/scope docs) |
-| [DATABASE.md](DATABASE.md) | **Database reference (canonical)** — schema layout (domain + intelligence), data I/O, who writes/reads what. **Start here** for current schema. |
-| [DB_FULL_ASSESSMENT.md](DB_FULL_ASSESSMENT.md) | **Full DB assessment** — four-surface matrix, persistence gates, baseline snapshots, expert checklist |
-| [DB_CLEANUP_BUNDLES.md](DB_CLEANUP_BUNDLES.md) | **Cleanup bundles A/B/C** — non-destructive vs archive vs destructive (pre-delete checklist) |
-| [DB_PRODUCTION_MAINTENANCE_RUNBOOK.md](DB_PRODUCTION_MAINTENANCE_RUNBOOK.md) | **Prod/staging DB maintenance** — ordered steps, rollback, applied_migrations ledger |
-| [PIPELINE_DB_ALIGNMENT_REPORT.md](PIPELINE_DB_ALIGNMENT_REPORT.md) | **Generated** — refresh via `scripts/verify_pipeline_db_alignment.py --write-report …` (see [generated/README.md](generated/README.md)) |
-| [STORYLINE_EVENT_ENTITY_CHAINS.md](STORYLINE_EVENT_ENTITY_CHAINS.md) | **Storylines ↔ events ↔ entities** — how continuation matches events to storylines; report file is generated (see [generated/README.md](generated/README.md)) |
-| [INTELLIGENCE_PHASES_PRODUCTIVITY_REPORT.md](INTELLIGENCE_PHASES_PRODUCTIVITY_REPORT.md) | **Generated** — refresh via `scripts/verify_intelligence_phases_productivity.py` (see [generated/README.md](generated/README.md)) |
-| [CLAIMS_TO_FACTS_ENTITY_RESOLUTION.md](CLAIMS_TO_FACTS_ENTITY_RESOLUTION.md) | **Claims → facts** — how `promote_claims_to_versioned_facts` resolves subjects to `entity_profiles`; prior bug (`display_name` / bad join) and verification scripts |
-| [SOURCE_CREDIBILITY.md](SOURCE_CREDIBILITY.md) | **Source credibility tiers** — `orchestrator_governance.yaml` `source_credibility`; RSS quality scaling, `articles`/`contexts` metadata, claim confidence |
-| [NARRATIVE_BOOTSTRAP_AND_DB_OUTAGE.md](NARRATIVE_BOOTSTRAP_AND_DB_OUTAGE.md) | **Proactive cluster → domain storyline** promotion + **DB outage** pause + `pending_db_flush` / `.local/db_pending_writes` |
-| [API_REFERENCE.md](API_REFERENCE.md) | **API reference** — every endpoint area, method + path, integrations |
-| [ARCHITECTURE_AND_OPERATIONS.md](ARCHITECTURE_AND_OPERATIONS.md) | **Architecture and ops** — three-machine setup, DB config, Widow, scripts, pipeline and automations, troubleshooting |
-| [SECURITY_OPERATIONS.md](SECURITY_OPERATIONS.md) | **Security** — mixed LAN/internet exposure, env toggles, secrets, SSH, untrusted input (RSS/HTML/LLM) |
-| [DOMAIN_EXTENSION_TEMPLATE.md](DOMAIN_EXTENSION_TEMPLATE.md) | **Adding an optional domain** — onboarding YAML, registry, validation one-liner, links to `api/config/domains/README.md` and `provision_domain.py` |
-| [LEGAL_DOMAIN_DEPLOYMENT.md](LEGAL_DOMAIN_DEPLOYMENT.md) | **Legal domain (first expansion)** — provision/rollback, ledger, RSS seeds, synthesis config, UI cutover |
-| [STORYLINE_70B_NARRATIVE_FINISHER.md](STORYLINE_70B_NARRATIVE_FINISHER.md) | **~70B narrative finisher** — final editorial pass on storylines; consumes 8B/Mistral outputs; durable narrative + config (`NARRATIVE_FINISHER_MODEL`) |
+| [SYSTEM_OVERVIEW.md](SYSTEM_OVERVIEW.md) | System map — routes, UI, services, file layout. |
+| [ARCHITECTURE_AND_OPERATIONS.md](ARCHITECTURE_AND_OPERATIONS.md) | Hosts, DB, Widow, scripts, pipeline visibility. |
+| [DATA_FLOW_ARCHITECTURE.md](DATA_FLOW_ARCHITECTURE.md) | Intelligence cascade — ingestion through storylines and editorial. |
+| [DATABASE.md](DATABASE.md) | **Canonical DB reference** — schemas, who reads/writes what. |
+| [API_REFERENCE.md](API_REFERENCE.md) | **API reference** — endpoint areas and methods. |
 
 ---
 
-## Releases
+## API, web, and implementation rules
 
 | Doc | Purpose |
 |-----|---------|
-| [RELEASE_v8.0.md](RELEASE_v8.0.md) | **Current** — collect-then-analyze, full-history awareness, pipeline-ordered analysis |
-| [_archive/releases/](_archive/releases/) | Older release notes (v7, v5, dossier wire-in) — historic only |
+| [DOMAIN_EXTENSION_TEMPLATE.md](DOMAIN_EXTENSION_TEMPLATE.md) | Adding an optional domain — YAML, registry, validation (`api/config/domains/README.md`). |
+| [PDF_INGESTION_PIPELINE.md](PDF_INGESTION_PIPELINE.md) | PDF ingestion — collectors, download, extraction (see code: `document_download_service.py`). |
+| [WEB_API_CONNECTIONS.md](WEB_API_CONNECTIONS.md) | Web → API — base URL, proxy, checklist. |
+| [DATABASE_CONNECTION_AUDIT.md](DATABASE_CONNECTION_AUDIT.md) | DB connection single source of truth. |
+| [CODING_STYLE_GUIDE.md](CODING_STYLE_GUIDE.md) | Naming, patterns, project layout. |
+| [IMPLEMENTATION_CONSTRAINTS.md](IMPLEMENTATION_CONSTRAINTS.md) | Hard rules and verification checklists. |
+| [API_TESTING_GUIDE.md](API_TESTING_GUIDE.md) | API testing. |
+| [FRONTEND_DEBUGGING_GUIDE.md](FRONTEND_DEBUGGING_GUIDE.md) | Frontend debugging. |
 
 ---
 
-## Architecture and design
+## Setup, security, and deployment
 
 | Doc | Purpose |
 |-----|---------|
-| [SYSTEM_OVERVIEW.md](SYSTEM_OVERVIEW.md) | **System map** — API routes, web UI, data flow, key services, file layout |
-| [CORE_ARCHITECTURE_PRINCIPLES.md](CORE_ARCHITECTURE_PRINCIPLES.md) | **Four principles** — Content is King, Intelligence Accumulates, Narratives Over Metrics, Editorial Documents are Primary |
-| [DATA_FLOW_ARCHITECTURE.md](DATA_FLOW_ARCHITECTURE.md) | **Intelligence cascade** — ingestion → ML → entities → contexts → claims/events → storylines → editorial |
-| [IMPLEMENTATION_CONSTRAINTS.md](IMPLEMENTATION_CONSTRAINTS.md) | **Hard rules** — code patterns, verification checklists |
-| [API_DESIGN_PRINCIPLES.md](API_DESIGN_PRINCIPLES.md) | **API standards** — narrative-first endpoints, editorial fields |
-| [DATABASE_DESIGN_PHILOSOPHY.md](DATABASE_DESIGN_PHILOSOPHY.md) | **Schema philosophy** — editorial_document / editorial_briefing / sections JSONB |
-| [ORCHESTRATION_REQUIREMENTS.md](ORCHESTRATION_REQUIREMENTS.md) | **Pipeline requirements** — phase checks, health queries |
-| [STORY_ASSEMBLY_AND_DATA_QUALITY.md](STORY_ASSEMBLY_AND_DATA_QUALITY.md) | **Story assembly** — contexts/entities → Report, Briefing, synthesis; caps vs minimums |
-| [BRIEFING_STRATEGY_AND_PROCESSES.md](BRIEFING_STRATEGY_AND_PROCESSES.md) | **Briefing generation** — daily/weekly, editorial-first, LLM lead |
+| [SETUP_ENV_AND_RUNTIME.md](SETUP_ENV_AND_RUNTIME.md) | Install, `.env`, DB, migrations, Ollama, GPU. |
+| [SECURITY_OPERATIONS.md](SECURITY_OPERATIONS.md) | Exposure, secrets, SSH, untrusted input. |
+| [PUBLIC_DEPLOYMENT.md](PUBLIC_DEPLOYMENT.md) | Public HTTPS read-only demo (`NEWS_INTEL_DEMO_*`, etc.). |
+| [WIDOW_DB_ADJACENT_CRON.md](WIDOW_DB_ADJACENT_CRON.md) | Widow DB-adjacent cron (RSS, flush, sync). |
+| [WIDOW_PUBLIC_STACK.md](WIDOW_PUBLIC_STACK.md) | Widow public stack notes. |
+| [MONITORING_SSH_SETUP.md](MONITORING_SSH_SETUP.md) | SSH keys for monitoring hosts. |
+| [NAS_LEGACY_AND_STORAGE.md](NAS_LEGACY_AND_STORAGE.md) | NAS rollback and storage. |
+| [DYNAMIC_DNS_WIDOW.md](DYNAMIC_DNS_WIDOW.md) | DDNS on Widow. |
 
 ---
 
-## Reference
+## Database operations
 
 | Doc | Purpose |
 |-----|---------|
-| [CODING_STYLE_GUIDE.md](CODING_STYLE_GUIDE.md) | **Coding standards** — naming, patterns, project layout |
-| [DATABASE_SCHEMA_DOCUMENTATION.md](DATABASE_SCHEMA_DOCUMENTATION.md) | **Legacy snapshot** (v3-era naming and layout). **Do not update** for new work; use [DATABASE.md](DATABASE.md) as the single source of truth. |
-| [API_ALIGNMENT.md](API_ALIGNMENT.md) | API–frontend routes and article fields alignment |
-| [UI_PIPELINE_AUDIT_GUIDE.md](UI_PIPELINE_AUDIT_GUIDE.md) | **Audit UI** — pipeline layer checklist, storyline/timeline reliability, cross-entity checks, synthesis provenance |
-| [CONTENT_QUALITY_STANDARDS.md](CONTENT_QUALITY_STANDARDS.md) | **Content quality** — 4-tier quality, content_quality_service, briefing prioritization |
-| [BRIEFING_FILTERS_AND_FEEDBACK.md](BRIEFING_FILTERS_AND_FEEDBACK.md) | **Briefing filters and feedback** — not interested, usefulness, low-priority entities/keywords |
-| [AUTOMATION_AND_LAST_24H_ACTIVITY.md](AUTOMATION_AND_LAST_24H_ACTIVITY.md) | **What ran / what was collected** — last-24h report, automation sources |
-| [CONTENT_COLLECTION_AND_INSIGHT_EXPECTATIONS.md](CONTENT_COLLECTION_AND_INSIGHT_EXPECTATIONS.md) | **What to expect** — collection/processing cadence, backlogs |
-| [ARTICLE_ENTITY_SCHEMA_DESIGN.md](ARTICLE_ENTITY_SCHEMA_DESIGN.md) | Article entity and entity_canonical design |
-| [ENTITY_KNOWLEDGE_AND_SOURCES.md](ENTITY_KNOWLEDGE_AND_SOURCES.md) | **Entity–knowledge connector** — high-level resolution, when to add vector DB or other sources |
-| [DATA_SOURCES_AND_COLLECTION.md](DATA_SOURCES_AND_COLLECTION.md) | Data sources and collection |
-| [SOURCES_AND_EXPECTED_USAGE.md](SOURCES_AND_EXPECTED_USAGE.md) | **Master source list** — all sources and expected system usage (RSS, finance APIs, RAG, LLM, documents) |
-| [FREE_OPEN_DATA_SOURCES.md](FREE_OPEN_DATA_SOURCES.md) | **Curated free/open sources** — academic, macro, civic, environmental; candidate integrations |
-| [RSS_FEED_MANAGEMENT_SYSTEM.md](RSS_FEED_MANAGEMENT_SYSTEM.md) | RSS feed management |
-| [FINANCE_PIPELINE.md](FINANCE_PIPELINE.md) | Finance domain pipeline |
-| [FINANCE_REFERENCE_SOURCES.md](FINANCE_REFERENCE_SOURCES.md) | Finance reference sources |
-| [SCIENCE_TECH_DOMAIN_STRATEGY.md](SCIENCE_TECH_DOMAIN_STRATEGY.md) | **Science-tech domain** — RSS expansion, cross-field linking, capability-aware prompts |
-| [RAG_V8_AND_DISCOVERY.md](RAG_V8_AND_DISCOVERY.md) | RAG and discovery (v8) |
-| [VECTOR_DATABASE_SCHEMA.md](VECTOR_DATABASE_SCHEMA.md) | Vector schema (pgvector/ChromaDB) |
-| [CHRONOLOGICAL_TIMING.md](CHRONOLOGICAL_TIMING.md) | Chronological ordering, time-based queries, timezones |
-| [LOGGING_SYSTEM_SUMMARY.md](LOGGING_SYSTEM_SUMMARY.md) | Logging |
-| [STORAGE_ESTIMATES_AND_OPTIMIZATION.md](STORAGE_ESTIMATES_AND_OPTIMIZATION.md) | Storage planning and optimization |
+| [DB_PRODUCTION_MAINTENANCE_RUNBOOK.md](DB_PRODUCTION_MAINTENANCE_RUNBOOK.md) | Prod/staging maintenance, migrations ledger. |
+| Deep assessment & cleanup bundles | Archived: [_archive/retired_root_docs_2026_03/DB_FULL_ASSESSMENT.md](_archive/retired_root_docs_2026_03/DB_FULL_ASSESSMENT.md), [_archive/retired_root_docs_2026_03/DB_CLEANUP_BUNDLES.md](_archive/retired_root_docs_2026_03/DB_CLEANUP_BUNDLES.md) |
 
 ---
 
-## Setup and configuration
+## Troubleshooting and feature guides (current)
 
 | Doc | Purpose |
 |-----|---------|
-| [SETUP_ENV_AND_RUNTIME.md](SETUP_ENV_AND_RUNTIME.md) | **Setup and runtime** — install, `.env`, DB, migrations pointers, Ollama, GPU/throttle (canonical) |
-| [DATABASE_CONNECTION_AUDIT.md](DATABASE_CONNECTION_AUDIT.md) | **DB connection** — single source of truth, consistency |
-| [WEB_API_CONNECTIONS.md](WEB_API_CONNECTIONS.md) | **Web→API** — base URL, proxy, connection checklist |
-| [NAS_LEGACY_AND_STORAGE.md](NAS_LEGACY_AND_STORAGE.md) | NAS rollback and storage |
-| [MONITORING_SSH_SETUP.md](MONITORING_SSH_SETUP.md) | SSH keys for monitoring (Widow, NAS, Pi) |
-
-Superseded full copies of the old setup/Ollama/GPU pages: [_archive/consolidated/](_archive/consolidated/) (`SETUP_AND_DEPLOYMENT.md`, `VENV_AND_GPU_SETUP.md`, `OLLAMA_SETUP.md`, `GPU_AND_OLLAMA_MANAGEMENT.md`).
+| [TROUBLESHOOTING.md](TROUBLESHOOTING.md) | Common issues. |
+| [EVENTS_ZERO_AND_HOW_TO_POPULATE.md](EVENTS_ZERO_AND_HOW_TO_POPULATE.md) | `tracked_events` empty — how to populate. |
+| [MONITOR_BLOCKAGES_AND_GPU.md](MONITOR_BLOCKAGES_AND_GPU.md) | Monitor / GPU blockages. |
+| [STORYLINE_AUTOMATION_GUIDE.md](STORYLINE_AUTOMATION_GUIDE.md) | Storyline automation. |
 
 ---
 
-## Operations and troubleshooting
+## Generated reports (do not edit by hand)
 
-| Doc | Purpose |
-|-----|---------|
-| [TROUBLESHOOTING.md](TROUBLESHOOTING.md) | **Troubleshooting** — common issues and solutions |
-| [EVENTS_ZERO_AND_HOW_TO_POPULATE.md](EVENTS_ZERO_AND_HOW_TO_POPULATE.md) | Tracked events zero (`intelligence.tracked_events`) and how to populate |
-| [EXTRACTED_EVENTS_AND_ENTITY_PIPELINE.md](EXTRACTED_EVENTS_AND_ENTITY_PIPELINE.md) | **Extracted timeline events** (`chronological_events`), automation gates, entity vs event phases, DB poll script |
-| [MONITOR_BLOCKAGES_AND_GPU.md](MONITOR_BLOCKAGES_AND_GPU.md) | Monitor blockages and GPU |
-| [FRONTEND_DEBUGGING_GUIDE.md](FRONTEND_DEBUGGING_GUIDE.md) | Frontend debugging |
-| [LLM_ACTIVITY_MONITORING.md](LLM_ACTIVITY_MONITORING.md) | LLM activity monitoring |
-| [OFFICIAL_GOVERNMENT_FEEDS.md](OFFICIAL_GOVERNMENT_FEEDS.md) | Official government feeds |
-| [STORYLINE_AUTOMATION_GUIDE.md](STORYLINE_AUTOMATION_GUIDE.md) | Storyline automation |
+| Location | Purpose |
+|----------|---------|
+| [generated/README.md](generated/README.md) | How to regenerate pipeline alignment, storyline/event chains, intelligence-phase productivity reports. |
 
 ---
 
-## Repo and maintenance
+## Repo maintenance
 
 | Doc | Purpose |
 |-----|---------|
-| [REPO_MAINTENANCE.md](REPO_MAINTENANCE.md) | Git and Cursor — what's ignored, commit practice |
-| [GITIGNORE.md](GITIGNORE.md) | **`.gitignore` reference** — tables for root + `web/` patterns and rationale (source of truth: root `.gitignore`) |
-| [OBFUSCATION.md](OBFUSCATION.md) | **Public-repo hygiene** — LAN IP / path placeholders, `doc_obfuscation.local.yaml` (gitignored), expand/scrub script |
+| [REPO_MAINTENANCE.md](REPO_MAINTENANCE.md) | Git, Cursor, commit practice. |
+| [GITIGNORE.md](GITIGNORE.md) | `.gitignore` rationale. |
+| [OBFUSCATION.md](OBFUSCATION.md) | Public-repo placeholders and scrub tooling. |
+| [archive/CLEANUP_2026_03.md](archive/CLEANUP_2026_03.md) | Housekeeping log (trees moved to `docs/archive/`). |
 
 ---
 
 ## Archived documentation (policy)
 
-Use **one mental model** so “where is the old doc?” has a clear answer:
-
 | Location | Purpose |
 |----------|---------|
-| [_archive/](_archive/) | **Canonical archive** — git-tracked obsolete material: older release notes, deprecated guides, v4/v6 planning copies, consolidated legacy pages. **Prefer adding or moving obsolete docs here** when they are replaced by current project-facing docs. |
-| [archive/](archive/) | **Optional tree** (e.g. [archive/planning/](archive/planning/)) — local or historical planning markdowns that are **not** merged into `_archive/`. Same spirit: record-keeping, not the live API/DB contract. If you add new archival material, either put it under `_archive/` **or** under `archive/` consistently, and link it from the index if others should find it. |
+| [_archive/retired_root_docs_2026_03/](_archive/retired_root_docs_2026_03/README.md) | **Retired `docs/*.md` root files** — plans, summaries, strategy, long-form feature docs (March 2026). |
+| [_archive/](_archive/) | Older release notes, deprecated guides, v4/v6 copies, consolidated legacy pages. |
+| [archive/planning_incubator/](archive/planning_incubator/README.md) | Proposals not shipped. |
 
 ---
 
 ## Quick links
 
 - **Root README:** [../README.md](../README.md)
-- **AGENTS.md (terminology, entry points):** [../AGENTS.md](../AGENTS.md)
+- **AGENTS.md:** [../AGENTS.md](../AGENTS.md) (terminology, entry points)
 - **Quick start:** [../QUICK_START.md](../QUICK_START.md) (if present)

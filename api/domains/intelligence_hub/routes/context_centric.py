@@ -309,7 +309,8 @@ def context_centric_status(
     domain_key: Optional[str] = Query(
         None,
         description="When set (politics|finance|science-tech), contexts/entity_profiles/extracted_events "
-        "are scoped to this domain. Omit for aggregate totals (e.g. Monitor page).",
+        "are scoped to this domain. Omit for aggregate totals. "
+        "events_stored_total and chronological_events_total are always full-database counts.",
     ),
 ) -> dict:
     """Return counts for context-centric pipeline (Phase 3.2 quality validation)."""
@@ -361,6 +362,16 @@ def context_centric_status(
             extracted_events = _count_extracted_events_for_status(cur, domain_key)
             chronicles = _safe_count(cur, "SELECT COUNT(*) FROM intelligence.event_chronicles")
             pattern_discoveries = _safe_count(cur, "SELECT COUNT(*) FROM intelligence.pattern_discoveries")
+            # Full-table totals (always global — hero bar / dashboards; independent of domain_key filter)
+            chronological_events_total = _safe_count(
+                cur, "SELECT COUNT(*) FROM public.chronological_events"
+            )
+            try:
+                ce = int(chronological_events_total)
+                te = int(intel_tracked)
+            except (TypeError, ValueError):
+                ce, te = 0, 0
+            events_stored_total = ce + te
         conn.close()
         return {
             "domain_key": domain_key,
@@ -372,6 +383,8 @@ def context_centric_status(
             "extracted_claims": claims,
             "tracked_events": intel_tracked,
             "extracted_events": extracted_events,
+            "chronological_events_total": chronological_events_total,
+            "events_stored_total": events_stored_total,
             "event_chronicles": chronicles,
             "pattern_discoveries": pattern_discoveries,
         }
@@ -604,7 +617,12 @@ def _row_to_profile_brief(row: tuple) -> dict:
 @router.get("/entity_profiles", response_model=dict)
 def list_entity_profiles(
     domain_key: Optional[str] = Query(None, description="Filter by domain"),
-    limit: int = Query(50, ge=1, le=200),
+    limit: int = Query(
+        50,
+        ge=1,
+        le=50_000,
+        description="Page size; use offset for pagination. Large limits can be slow without brief=true.",
+    ),
     offset: int = Query(0, ge=0),
     brief: bool = Query(False, description="If true, omit sections/relationships for faster list load"),
 ) -> dict:
@@ -893,7 +911,12 @@ def _contexts_list_where_params(
 def list_contexts(
     domain_key: Optional[str] = Query(None),
     source_type: Optional[str] = Query(None, description="e.g. article"),
-    limit: int = Query(50, ge=1, le=200),
+    limit: int = Query(
+        50,
+        ge=1,
+        le=50_000,
+        description="Page size; use offset for pagination. Large limits can be slow without brief=true.",
+    ),
     offset: int = Query(0, ge=0),
     brief: bool = Query(False, description="If true, truncate content for faster list load"),
 ) -> dict:
@@ -1186,7 +1209,12 @@ def _row_to_event(row: tuple) -> dict:
 def list_tracked_events(
     event_type: Optional[str] = Query(None),
     domain_key: Optional[str] = Query(None, description="Filter: events that include this domain"),
-    limit: int = Query(50, ge=1, le=200),
+    limit: int = Query(
+        50,
+        ge=1,
+        le=50_000,
+        description="Page size; use offset for pagination.",
+    ),
     offset: int = Query(0, ge=0),
 ) -> dict:
     """List tracked events. Events can span multiple domains; domain_key filters to events that include that domain."""
@@ -1449,6 +1477,61 @@ def get_tracked_event(event_id: int) -> dict:
         raise HTTPException(status_code=500, detail="Failed to get tracked event")
 
 
+@router.get("/tracked_events/{event_id}/linked_events", response_model=dict)
+def get_tracked_event_linked_events(
+    event_id: int,
+    limit: int = Query(12, ge=1, le=30),
+) -> dict:
+    """Other tracked_events that appear in cross_domain_correlations with this event."""
+    conn = get_db_connection()
+    if not conn:
+        raise HTTPException(status_code=503, detail="Database unavailable")
+    items: list[dict] = []
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT correlation_type, correlation_strength, event_ids
+                FROM intelligence.cross_domain_correlations
+                WHERE %s = ANY(event_ids)
+                ORDER BY discovered_at DESC NULLS LAST
+                LIMIT 20
+                """,
+                (event_id,),
+            )
+            rows = cur.fetchall() or []
+        other: set[int] = set()
+        for r in rows:
+            for eid in list(r[2]) if r[2] else []:
+                if isinstance(eid, int) and eid != event_id:
+                    other.add(eid)
+        if not other:
+            conn.close()
+            return {"items": [], "limit": limit}
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT {_EVENT_COLS}
+                FROM intelligence.tracked_events
+                WHERE id = ANY(%s)
+                ORDER BY updated_at DESC NULLS LAST
+                LIMIT %s
+                """,
+                (list(other)[: limit * 2], limit),
+            )
+            for row in cur.fetchall() or []:
+                items.append(_row_to_event(row))
+        conn.close()
+    except Exception as e:
+        logger.warning("get_tracked_event_linked_events: %s", e)
+        try:
+            conn.close()
+        except Exception:
+            pass
+        raise HTTPException(status_code=500, detail="Failed to list linked events")
+    return {"items": items, "limit": limit}
+
+
 @router.post("/tracked_events/{event_id}/chronicles/update", response_model=dict)
 def update_tracked_event_chronicles(
     event_id: int,
@@ -1653,7 +1736,8 @@ def list_processed_documents(
             if source_type:
                 cur.execute(
                     """
-                    SELECT id, source_type, source_name, source_url, title, publication_date, document_type, created_at
+                    SELECT id, source_type, source_name, source_url, title, publication_date, document_type,
+                           file_hash, file_size_bytes, extraction_method, created_at
                     FROM intelligence.processed_documents
                     WHERE source_type = %s
                     ORDER BY created_at DESC
@@ -1664,7 +1748,8 @@ def list_processed_documents(
             else:
                 cur.execute(
                     """
-                    SELECT id, source_type, source_name, source_url, title, publication_date, document_type, created_at
+                    SELECT id, source_type, source_name, source_url, title, publication_date, document_type,
+                           file_hash, file_size_bytes, extraction_method, created_at
                     FROM intelligence.processed_documents
                     ORDER BY created_at DESC
                     LIMIT %s OFFSET %s
@@ -1683,7 +1768,10 @@ def list_processed_documents(
                 "title": r[4],
                 "publication_date": str(r[5]) if r[5] else None,
                 "document_type": r[6],
-                "created_at": r[7].isoformat() if r[7] else None,
+                "file_hash": r[7],
+                "file_size_bytes": r[8],
+                "extraction_method": r[9],
+                "created_at": r[10].isoformat() if r[10] else None,
             })
         return {"items": items, "limit": limit, "offset": offset}
     except Exception as e:
@@ -1706,7 +1794,8 @@ def get_processed_document(document_id: int) -> dict:
             cur.execute(
                 """
                 SELECT id, source_type, source_name, source_url, title, publication_date, authors, document_type,
-                       extracted_sections, key_findings, entities_mentioned, citations, metadata, created_at, updated_at
+                       extracted_sections, key_findings, entities_mentioned, citations, metadata,
+                       file_hash, file_size_bytes, extraction_method, created_at, updated_at
                 FROM intelligence.processed_documents
                 WHERE id = %s
                 """,
@@ -1730,8 +1819,11 @@ def get_processed_document(document_id: int) -> dict:
             "entities_mentioned": row[10],
             "citations": row[11],
             "metadata": _json_safe(row[12]) if row[12] else {},
-            "created_at": row[13].isoformat() if row[13] else None,
-            "updated_at": row[14].isoformat() if row[14] else None,
+            "file_hash": row[13],
+            "file_size_bytes": row[14],
+            "extraction_method": row[15],
+            "created_at": row[16].isoformat() if row[16] else None,
+            "updated_at": row[17].isoformat() if row[17] else None,
         }
     except HTTPException:
         raise

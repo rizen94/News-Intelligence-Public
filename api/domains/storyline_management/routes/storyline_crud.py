@@ -260,7 +260,7 @@ async def get_domain_storyline(
                 cur.execute(
                     f"""
                     SELECT id, title, description, created_at, updated_at,
-                           status, analysis_summary, quality_score, article_count,
+                           status, analysis_summary, master_summary, quality_score, article_count,
                            last_evolution_at, evolution_count, background_information,
                            context_last_updated,
                            COALESCE(ml_processing_status, 'completed') as ml_processing_status,
@@ -365,16 +365,16 @@ async def get_domain_storyline(
                 import json
 
                 background_info = None
-                if storyline[11]:
+                if storyline[12]:
                     try:
                         background_info = (
-                            json.loads(storyline[11])
-                            if isinstance(storyline[11], str)
-                            else storyline[11]
+                            json.loads(storyline[12])
+                            if isinstance(storyline[12], str)
+                            else storyline[12]
                         )
                     except Exception:
                         pass
-                key_entities_raw = storyline[18] if len(storyline) > 18 else None
+                key_entities_raw = storyline[19] if len(storyline) > 19 else None
                 key_entities = None
                 if key_entities_raw is not None:
                     try:
@@ -386,7 +386,7 @@ async def get_domain_storyline(
                     except Exception:
                         pass
 
-                nf_meta = storyline[22] if len(storyline) > 22 else None
+                nf_meta = storyline[23] if len(storyline) > 23 else None
                 if nf_meta is not None and isinstance(nf_meta, str):
                     try:
                         nf_meta = json.loads(nf_meta)
@@ -402,33 +402,34 @@ async def get_domain_storyline(
                     title=storyline[1],
                     description=storyline[2],
                     status=storyline[5],
-                    article_count=storyline[8] or 0,
-                    quality_score=storyline[7],
+                    article_count=storyline[9] or 0,
+                    quality_score=storyline[8],
                     analysis_summary=storyline[6],
+                    master_summary=storyline[7] if len(storyline) > 7 else None,
                     created_at=storyline[3],
                     updated_at=storyline[4],
-                    last_evolution_at=storyline[9],
-                    evolution_count=storyline[10],
+                    last_evolution_at=storyline[10],
+                    evolution_count=storyline[11],
                     articles=articles,
                     background_information=background_info,
-                    context_last_updated=storyline[12],
-                    ml_processing_status=storyline[13] if len(storyline) > 13 else "completed",
-                    editorial_document=storyline[14] if len(storyline) > 14 else None,
-                    document_version=storyline[15] if len(storyline) > 15 else None,
-                    document_status=storyline[16] if len(storyline) > 16 else None,
-                    last_refinement=storyline[17] if len(storyline) > 17 else None,
+                    context_last_updated=storyline[13],
+                    ml_processing_status=storyline[14] if len(storyline) > 14 else "completed",
+                    editorial_document=storyline[15] if len(storyline) > 15 else None,
+                    document_version=storyline[16] if len(storyline) > 16 else None,
+                    document_status=storyline[17] if len(storyline) > 17 else None,
+                    last_refinement=storyline[18] if len(storyline) > 18 else None,
                     key_entities=key_entities,
                     entities=entity_list,
-                    canonical_narrative=storyline[19] if len(storyline) > 19 else None,
-                    narrative_finisher_model=storyline[20] if len(storyline) > 20 else None,
-                    narrative_finisher_at=storyline[21] if len(storyline) > 21 else None,
+                    canonical_narrative=storyline[20] if len(storyline) > 20 else None,
+                    narrative_finisher_model=storyline[21] if len(storyline) > 21 else None,
+                    narrative_finisher_at=storyline[22] if len(storyline) > 22 else None,
                     narrative_finisher_meta=nf_meta if isinstance(nf_meta, dict) else None,
-                    timeline_narrative_chronological=storyline[23] if len(storyline) > 23 else None,
-                    timeline_narrative_briefing=storyline[24] if len(storyline) > 24 else None,
-                    timeline_narrative_chronological_at=storyline[25]
-                    if len(storyline) > 25
+                    timeline_narrative_chronological=storyline[24] if len(storyline) > 24 else None,
+                    timeline_narrative_briefing=storyline[25] if len(storyline) > 25 else None,
+                    timeline_narrative_chronological_at=storyline[26]
+                    if len(storyline) > 26
                     else None,
-                    timeline_narrative_briefing_at=storyline[26] if len(storyline) > 26 else None,
+                    timeline_narrative_briefing_at=storyline[27] if len(storyline) > 27 else None,
                     refinement_jobs_pending=refinement_pending,
                 )
 
@@ -536,6 +537,99 @@ async def update_domain_storyline(
     except Exception as e:
         logger.error(f"Error updating storyline: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# Cross-domain related storylines (shared entities)
+# ============================================================================
+
+
+def _entity_profile_domain_keys_for_path(path_domain: str) -> list[str]:
+    if path_domain == "science-tech":
+        return ["science-tech", "science_tech"]
+    return [path_domain]
+
+
+@router.get("/{domain}/storylines/{storyline_id}/related_cross_domain")
+async def get_storyline_related_cross_domain(
+    domain: str = Depends(validate_domain_dependency),
+    storyline_id: int = Path(..., description="Storyline ID", ge=1),
+    limit: int = Query(8, ge=1, le=20),
+):
+    """Storylines in other domains that share canonical entities with this storyline."""
+    schema = domain.replace("-", "_")
+    conn = get_db_connection()
+    if not conn:
+        raise HTTPException(status_code=500, detail="Database connection failed")
+    out: list[dict] = []
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT ae.canonical_entity_id
+                FROM {schema}.storyline_articles sa
+                JOIN {schema}.article_entities ae ON ae.article_id = sa.article_id
+                WHERE sa.storyline_id = %s
+                """,
+                (storyline_id,),
+            )
+            canon = list({int(r[0]) for r in cur.fetchall() if r and r[0] is not None})[:50]
+        if not canon:
+            conn.close()
+            return {"success": True, "data": {"storylines": []}, "message": None}
+
+        prof_domains = _entity_profile_domain_keys_for_path(domain)
+        for other_schema, origin in (
+            ("politics", "politics"),
+            ("finance", "finance"),
+            ("science_tech", "science-tech"),
+        ):
+            if other_schema == schema or len(out) >= limit:
+                continue
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        f"""
+                        SELECT DISTINCT s.id, s.title, s.updated_at
+                        FROM {other_schema}.storylines s
+                        JOIN {other_schema}.storyline_articles sa ON sa.storyline_id = s.id
+                        JOIN {other_schema}.article_entities ae ON ae.article_id = sa.article_id
+                        WHERE ae.canonical_entity_id = ANY(%s)
+                          AND s.id IS NOT NULL
+                          AND s.title IS NOT NULL AND TRIM(s.title) != ''
+                        ORDER BY s.updated_at DESC NULLS LAST
+                        LIMIT %s
+                        """,
+                        (canon, limit),
+                    )
+                    for r in cur.fetchall() or []:
+                        if len(out) >= limit:
+                            break
+                        out.append(
+                            {
+                                "id": r[0],
+                                "title": r[1] or "",
+                                "updated_at": r[2].isoformat()
+                                if hasattr(r[2], "isoformat")
+                                else str(r[2]),
+                                "origin_domain": origin,
+                                "link_reason": "shared_entity",
+                            }
+                        )
+            except Exception as e:
+                logger.debug("related_cross_domain %s: %s", other_schema, e)
+        conn.close()
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.warning("get_storyline_related_cross_domain: %s", e)
+        try:
+            conn.close()
+        except Exception:
+            pass
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+    return {"success": True, "data": {"storylines": out}, "message": None}
 
 
 # ============================================================================

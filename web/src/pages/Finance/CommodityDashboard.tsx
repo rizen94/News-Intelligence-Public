@@ -2,7 +2,7 @@
  * Commodity Intelligence — dashboard for registry commodities (gold, silver, platinum, oil, gas).
  * Commodity list from API; data switches by selected commodity (URL param :commodity).
  */
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   Box,
@@ -19,6 +19,9 @@ import {
   ListItemButton,
   ListItemText,
   Divider,
+  Button,
+  FormControlLabel,
+  Checkbox,
 } from '@mui/material';
 import {
   AreaChart,
@@ -31,8 +34,10 @@ import {
 } from 'recharts';
 import { useDomain } from '@/contexts/DomainContext';
 import { monitoringApi } from '@/services/api/monitoring';
+import Logger from '@/utils/logger';
 import GoldChoropleth, {
   type GeoEvent,
+  type MapOverlayFeatureCollection,
 } from '@/components/charts/GoldChoropleth';
 
 /** Fallback when API fails */
@@ -49,6 +54,16 @@ const COMMODITY_COLORS: Record<string, string> = {
   oil: '#2c3e50',
   gas: '#3498db',
 };
+
+/** Oil/gas use FRED only — not metals.dev */
+const ENERGY_COMMODITIES = new Set(['oil', 'gas']);
+
+function priceHistoryEmptyMessage(commodityId: string, label: string): string {
+  if (ENERGY_COMMODITIES.has(commodityId)) {
+    return `No price history from FRED for ${label}. Oil and gas use FRED only (not metals.dev). Set FRED_API_KEY. Defaults: WTI DCOILWTICO, Henry Hub DHHNGSP in commodity_registry.yaml — or set FRED_OIL_SERIES_ID / FRED_GAS_SERIES_ID.`;
+  }
+  return `No price history. Trigger a fetch or add METALS_DEV_API_KEY for ${label}.`;
+}
 
 const EVENT_TYPE_COLORS: Record<
   string,
@@ -81,7 +96,9 @@ export default function CommodityDashboard() {
   const [commoditiesList, setCommoditiesList] =
     useState<{ id: string; label: string }[]>(COMMODITIES_FALLBACK);
   const [timeRange, setTimeRange] = useState<TimeRange>('90d');
-  const [history, setHistory] = useState<{ date: string; value: number }[]>([]);
+  const [history, setHistory] = useState<
+    { date: string; value: number; unit?: string }[]
+  >([]);
   const [spot, setSpot] = useState<{
     price?: number;
     unit?: string;
@@ -100,6 +117,16 @@ export default function CommodityDashboard() {
     events: [],
     by_region: {},
   });
+  const [mapOverlays, setMapOverlays] = useState<MapOverlayFeatureCollection | null>(
+    null
+  );
+  const [includeCrossDomainGeo, setIncludeCrossDomainGeo] = useState(true);
+  const [includeMapOverlays, setIncludeMapOverlays] = useState(true);
+  const [includeSupplyChainGeo, setIncludeSupplyChainGeo] = useState(false);
+  const [contextLens, setContextLens] = useState<{
+    lens_text: string;
+    cited_event_ids: number[];
+  } | null>(null);
   const [regulatoryEvents, setRegulatoryEvents] = useState<
     {
       id: number;
@@ -132,6 +159,7 @@ export default function CommodityDashboard() {
     }[]
   >([]);
   const [loading, setLoading] = useState(true);
+  const [fetchPricesBusy, setFetchPricesBusy] = useState(false);
 
   const commodity = (() => {
     const id = (commodityParam ?? '').toLowerCase();
@@ -162,7 +190,7 @@ export default function CommodityDashboard() {
     setLoading(true);
     const days = DAYS_MAP[timeRange];
     try {
-      const [histRes, spotRes, authRes, geoRes, regRes, newsRes, supplyRes] =
+      const [histRes, spotRes, authRes, geoRes, regRes, newsRes, supplyRes, lensRes] =
         await Promise.all([
           monitoringApi.getCommodityHistory(
             commodity,
@@ -171,7 +199,16 @@ export default function CommodityDashboard() {
           ),
           monitoringApi.getCommoditySpot(commodity, domain),
           monitoringApi.getCommodityAuthority(commodity, {}, domain),
-          monitoringApi.getCommodityGeoEvents({ limit: 50, commodity }, domain),
+          monitoringApi.getCommodityGeoEvents(
+            {
+              limit: 50,
+              commodity,
+              include_cross_domain: includeCrossDomainGeo,
+              include_map_overlays: includeMapOverlays,
+              include_supply_chain_geo: includeSupplyChainGeo,
+            },
+            domain
+          ),
           monitoringApi.getCommodityRegulatoryEvents(
             { limit: 15, commodity },
             domain
@@ -186,10 +223,12 @@ export default function CommodityDashboard() {
             { hours: 168, max_items: 15 },
             domain
           ),
+          monitoringApi.getCommodityContextLens(commodity, { limit: 6 }, domain),
         ]);
       const obs = (histRes?.data?.observations ?? []) as {
         date: string;
         value: number;
+        unit?: string;
       }[];
       setHistory(obs);
       setSpot(spotRes?.data ?? null);
@@ -199,10 +238,32 @@ export default function CommodityDashboard() {
           { rates?: Record<string, number>; timestamp?: string }
         >) ?? {}
       );
+      const gdata = geoRes?.data as {
+        events?: GeoEvent[];
+        by_region?: Record<string, number[]>;
+        map_overlays?: MapOverlayFeatureCollection;
+      };
       setGeoEvents({
-        events: (geoRes?.data?.events ?? []) as GeoEvent[],
-        by_region: (geoRes?.data?.by_region ?? {}) as Record<string, number[]>,
+        events: (gdata?.events ?? []) as GeoEvent[],
+        by_region: (gdata?.by_region ?? {}) as Record<string, number[]>,
       });
+      setMapOverlays(
+        includeMapOverlays && gdata?.map_overlays?.features?.length
+          ? gdata.map_overlays
+          : null
+      );
+      const lensData = lensRes?.data as {
+        lens_text?: string;
+        cited_event_ids?: number[];
+      };
+      if (lensData?.lens_text) {
+        setContextLens({
+          lens_text: lensData.lens_text,
+          cited_event_ids: lensData.cited_event_ids ?? [],
+        });
+      } else {
+        setContextLens(null);
+      }
       setRegulatoryEvents(
         (regRes?.data?.events ?? []) as {
           id: number;
@@ -235,7 +296,14 @@ export default function CommodityDashboard() {
     } finally {
       setLoading(false);
     }
-  }, [domain, commodity, timeRange]);
+  }, [
+    domain,
+    commodity,
+    timeRange,
+    includeCrossDomainGeo,
+    includeMapOverlays,
+    includeSupplyChainGeo,
+  ]);
 
   useEffect(() => {
     loadData();
@@ -263,6 +331,14 @@ export default function CommodityDashboard() {
   const commodityLabel =
     commoditiesList.find(c => c.id.toLowerCase() === commodity)?.label ??
     commodity;
+
+  const chartPriceUnit = useMemo(() => {
+    const u = history.find(o => o.unit)?.unit ?? spot?.unit;
+    if (u) return u;
+    if (commodity === 'oil') return 'USD/bbl';
+    if (commodity === 'gas') return 'USD/mmbtu';
+    return 'USD/oz';
+  }, [history, spot, commodity]);
 
   if (domain !== 'finance') {
     return (
@@ -311,17 +387,56 @@ export default function CommodityDashboard() {
             <CardHeader
               title={`${commodityLabel} price history`}
               action={
-                <ToggleButtonGroup
-                  size='small'
-                  value={timeRange}
-                  exclusive
-                  onChange={(_, v) => v != null && setTimeRange(v)}
+                <Box
+                  sx={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 1,
+                    flexWrap: 'wrap',
+                    justifyContent: 'flex-end',
+                  }}
                 >
-                  <ToggleButton value='30d'>30d</ToggleButton>
-                  <ToggleButton value='90d'>90d</ToggleButton>
-                  <ToggleButton value='1y'>1y</ToggleButton>
-                  <ToggleButton value='5y'>5y</ToggleButton>
-                </ToggleButtonGroup>
+                  <Button
+                    size='small'
+                    variant='outlined'
+                    disabled={fetchPricesBusy || loading}
+                    onClick={async () => {
+                      setFetchPricesBusy(true);
+                      try {
+                        const res = await monitoringApi.triggerCommodityPriceFetch(
+                          commodity,
+                          { days: 365 },
+                          domain
+                        );
+                        if (!res?.success) {
+                          Logger.warn('Commodity price fetch failed', {
+                            error: res?.error ?? (res as { detail?: string })?.detail,
+                          });
+                        }
+                        await loadData();
+                      } finally {
+                        setFetchPricesBusy(false);
+                      }
+                    }}
+                  >
+                    {fetchPricesBusy
+                      ? 'Fetching…'
+                      : ENERGY_COMMODITIES.has(commodity)
+                      ? 'Fetch FRED prices'
+                      : 'Refresh price store'}
+                  </Button>
+                  <ToggleButtonGroup
+                    size='small'
+                    value={timeRange}
+                    exclusive
+                    onChange={(_, v) => v != null && setTimeRange(v)}
+                  >
+                    <ToggleButton value='30d'>30d</ToggleButton>
+                    <ToggleButton value='90d'>90d</ToggleButton>
+                    <ToggleButton value='1y'>1y</ToggleButton>
+                    <ToggleButton value='5y'>5y</ToggleButton>
+                  </ToggleButtonGroup>
+                </Box>
               }
             />
             <CardContent sx={{ pt: 0 }}>
@@ -333,8 +448,7 @@ export default function CommodityDashboard() {
                 />
               ) : history.length === 0 ? (
                 <Typography color='text.secondary'>
-                  No price history. Trigger a fetch or add METALS_DEV_API_KEY
-                  for {commodityLabel}.
+                  {priceHistoryEmptyMessage(commodity, commodityLabel)}
                 </Typography>
               ) : (
                 <ResponsiveContainer width='100%' height={280}>
@@ -367,7 +481,7 @@ export default function CommodityDashboard() {
                     <YAxis tick={{ fontSize: 11 }} domain={['auto', 'auto']} />
                     <Tooltip
                       formatter={(v: number) => [
-                        `${v?.toFixed(2)} USD/oz`,
+                        `${v?.toFixed(2)} ${chartPriceUnit}`,
                         'Price',
                       ]}
                     />
@@ -445,14 +559,64 @@ export default function CommodityDashboard() {
       {/* Section B: Choropleth */}
       <Card variant='outlined' sx={{ mb: 3 }}>
         <CardHeader
-          title='Geographic intelligence'
-          subheader='Event density by region'
+          title='Geographic & logistics context'
+          subheader={`Tracked events for ${commodityLabel} with mappable regions. Cross-domain rows are politics/science-tech items that match this commodity; map lines are reference routes only (not live vessels).`}
         />
         <CardContent>
+          <Box
+            sx={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              gap: 2,
+              mb: 2,
+              alignItems: 'center',
+            }}
+          >
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={includeCrossDomainGeo}
+                  onChange={(_, c) => setIncludeCrossDomainGeo(c)}
+                  size='small'
+                />
+              }
+              label='Cross-domain events'
+            />
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={includeMapOverlays}
+                  onChange={(_, c) => setIncludeMapOverlays(c)}
+                  size='small'
+                />
+              }
+              label='Reference routes / chokepoints'
+            />
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={includeSupplyChainGeo}
+                  onChange={(_, c) => setIncludeSupplyChainGeo(c)}
+                  size='small'
+                />
+              }
+              label='Supply-chain geo (broader match)'
+            />
+          </Box>
+          {contextLens?.lens_text && (
+            <Typography
+              variant='body2'
+              color='text.secondary'
+              sx={{ mb: 2, p: 1.5, bgcolor: 'action.hover', borderRadius: 1 }}
+            >
+              {contextLens.lens_text}
+            </Typography>
+          )}
           {!loading && geoEvents.events.length === 0 && (
             <Typography variant='body2' color='text.secondary' sx={{ mb: 2 }}>
-              No geographic data for this commodity yet. Event discovery runs on
-              finance contexts; events with a geographic scope will appear here.
+              No events passed the commodity filter with geographic scope in this
+              window. The pipeline adds regions when it can infer them from finance
+              contexts and tracked events.
             </Typography>
           )}
           {selectedCountry && (
@@ -470,6 +634,8 @@ export default function CommodityDashboard() {
             events={geoEvents.events}
             byRegion={geoEvents.by_region}
             onCountryClick={handleCountryClick}
+            mapOverlays={mapOverlays}
+            showOverlays={includeMapOverlays}
             width={Math.min(
               960,
               typeof window !== 'undefined' ? window.innerWidth - 48 : 960
@@ -499,7 +665,7 @@ export default function CommodityDashboard() {
       <Card variant='outlined' sx={{ mb: 3 }}>
         <CardHeader
           title='Event timeline'
-          subheader='Tracked events (finance)'
+          subheader='Finance-tagged and optional cross-domain rows for this commodity'
         />
         <CardContent>
           {loading ? (
@@ -535,6 +701,14 @@ export default function CommodityDashboard() {
                             }
                             variant='outlined'
                           />
+                          {e.display_source === 'cross_domain' && (
+                            <Chip
+                              label='Cross-domain'
+                              size='small'
+                              color='secondary'
+                              variant='filled'
+                            />
+                          )}
                           {e.geographic_scope && (
                             <Typography
                               variant='caption'

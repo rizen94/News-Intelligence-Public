@@ -59,6 +59,8 @@ interface TimelineEvent {
   outcome: string;
   extraction_method?: string | null;
   extraction_confidence?: number | null;
+  /** occurred | scheduled | unknown — vs source article published_at */
+  temporal_status?: string;
   source_article_id?: number | null;
   canonical_event_id?: number | null;
   timeline_row_role?: string;
@@ -410,6 +412,15 @@ const StoryTimeline: React.FC = () => {
                           ~{evt.date_precision}
                         </Typography>
                       )}
+                    {evt.temporal_status === 'scheduled' && (
+                      <Typography
+                        variant='caption'
+                        display='block'
+                        sx={{ mt: 0.5, color: 'warning.main', fontWeight: 600 }}
+                      >
+                        Scheduled (after article date)
+                      </Typography>
+                    )}
                   </TimelineOppositeContent>
 
                   <TimelineSeparator>

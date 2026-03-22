@@ -1,6 +1,6 @@
 # Pipeline and order of operations
 
-**Purpose:** Follow-along map of **what runs when** in the v8 **collect-then-analyze** design. For **data** semantics (what each stage means), read [DATA_FLOW_ARCHITECTURE.md](DATA_FLOW_ARCHITECTURE.md) and [PROJECT_OVERVIEW.md](PROJECT_OVERVIEW.md).
+**Purpose:** Follow-along map of **what runs when** in the v8 **collect-then-analyze** design. For **data** semantics (what each stage means), read [DATA_FLOW_ARCHITECTURE.md](DATA_FLOW_ARCHITECTURE.md) and [SYSTEM_OVERVIEW.md](SYSTEM_OVERVIEW.md); extended product narrative (archived): [_archive/retired_root_docs_2026_03/PROJECT_OVERVIEW.md](_archive/retired_root_docs_2026_03/PROJECT_OVERVIEW.md).
 
 **Source of truth in code:** [`api/services/automation_manager.py`](../api/services/automation_manager.py) — the `self.schedules` dict (task name → interval, `depends_on`, `phase`). Intervals and budgets are also influenced by `api/config/orchestrator_governance.yaml`.
 
@@ -58,6 +58,6 @@ Exact **intervals** and **dependencies** change over time — always confirm in 
 
 ## Related docs
 
-- [ORCHESTRATION_REQUIREMENTS.md](ORCHESTRATION_REQUIREMENTS.md) — coordinator / health expectations.
-- [AUTOMATION_AND_LAST_24H_ACTIVITY.md](AUTOMATION_AND_LAST_24H_ACTIVITY.md) — where “what ran” surfaces in the product.
-- [EXTRACTED_EVENTS_AND_ENTITY_PIPELINE.md](EXTRACTED_EVENTS_AND_ENTITY_PIPELINE.md) — gates for timeline/event extraction.
+- Coordinator / health expectations (archived): [_archive/retired_root_docs_2026_03/ORCHESTRATION_REQUIREMENTS.md](_archive/retired_root_docs_2026_03/ORCHESTRATION_REQUIREMENTS.md).
+- Last-24h operator narrative (archived): [_archive/retired_root_docs_2026_03/AUTOMATION_AND_LAST_24H_ACTIVITY.md](_archive/retired_root_docs_2026_03/AUTOMATION_AND_LAST_24H_ACTIVITY.md); scripts: `scripts/run_last_24h_report.sh`, `public.automation_run_history`.
+- Timeline/event extraction gates (archived): [_archive/retired_root_docs_2026_03/EXTRACTED_EVENTS_AND_ENTITY_PIPELINE.md](_archive/retired_root_docs_2026_03/EXTRACTED_EVENTS_AND_ENTITY_PIPELINE.md).

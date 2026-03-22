@@ -25,6 +25,8 @@ import {
   TableHead,
   TableRow,
   FormControl,
+  FormControlLabel,
+  Checkbox,
   InputLabel,
   Select,
   MenuItem,
@@ -86,6 +88,30 @@ type DbSession = {
   open_seconds?: number;
   long_running?: boolean;
 };
+
+type BacklogPerHourSource =
+  | 'avg_4d'
+  | 'measured_1h'
+  | 'measured_24h'
+  | 'measured_2h'
+  | 'estimated';
+
+function throughputSourceLabel(src?: BacklogPerHourSource): string {
+  switch (src) {
+    case 'avg_4d':
+      return '4-day workload avg';
+    case 'measured_1h':
+      return 'measured 1h';
+    case 'measured_24h':
+      return 'measured 24h';
+    case 'measured_2h':
+      return 'measured 2h';
+    case 'estimated':
+      return 'no recent data (estimate)';
+    default:
+      return '';
+  }
+}
 
 export default function MonitorPage() {
   const { domain: routeDomain } = useParams<{ domain: string }>();
@@ -171,10 +197,17 @@ export default function MonitorPage() {
   const [backlogStatus, setBacklogStatus] = useState<{
     success?: boolean;
     data?: {
+      workload_window_days?: number;
+      steady_state?: {
+        ok: boolean;
+        checks?: Record<string, boolean>;
+        reasons?: string[];
+      };
       articles?: {
         backlog: number;
         per_hour: number;
-        per_hour_source?: 'measured_1h' | 'measured_24h' | 'estimated';
+        per_hour_source?: BacklogPerHourSource;
+        processed_last_4d?: number;
         enriched_last_1h?: number;
         enriched_last_24h?: number;
         per_day?: number;
@@ -188,6 +221,8 @@ export default function MonitorPage() {
       documents?: {
         backlog: number;
         per_hour: number;
+        per_hour_source?: BacklogPerHourSource;
+        processed_last_4d?: number;
         eta_hours: number;
         eta_utc: string | null;
         processed_last_1h?: number;
@@ -199,14 +234,38 @@ export default function MonitorPage() {
         permanent_failed_total?: number;
         top_failure_reasons_24h?: Array<{ reason: string; count: number }>;
       };
+      contexts?: {
+        backlog: number;
+        per_hour?: number;
+        per_hour_source?: BacklogPerHourSource;
+        processed_last_4d?: number;
+        processed_last_1h?: number;
+        total?: number;
+        eta_hours?: number;
+        iterations_to_baseline?: number;
+      };
+      entity_profiles?: {
+        backlog: number;
+        per_hour?: number;
+        per_hour_source?: BacklogPerHourSource;
+        processed_last_4d?: number;
+        processed_last_1h?: number;
+        total?: number;
+        eta_hours?: number;
+        iterations_to_baseline?: number;
+      };
       storylines?: {
         backlog: number;
         per_hour: number;
+        per_hour_source?: BacklogPerHourSource;
+        processed_last_4d?: number;
         eta_hours: number;
         eta_utc: string | null;
+        synthesis_per_domain_last_4d?: Record<string, number>;
       };
       overall_eta_hours?: number;
       overall_eta_utc?: string | null;
+      overall_iterations_to_baseline?: number;
     };
     error?: string;
   } | null>(null);
@@ -224,6 +283,8 @@ export default function MonitorPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [triggerPhaseName, setTriggerPhaseName] = useState<string>('');
+  const [forceNightlyUnifiedPipeline, setForceNightlyUnifiedPipeline] =
+    useState(false);
   const [triggering, setTriggering] = useState(false);
   const [triggerResult, setTriggerResult] = useState<{
     success: boolean;
@@ -356,7 +417,12 @@ export default function MonitorPage() {
     setTriggering(true);
     setTriggerResult(null);
     try {
-      const result = (await apiService.triggerPhase(triggerPhaseName)) as {
+      const result = (await apiService.triggerPhase(triggerPhaseName, {
+        force_nightly_unified_pipeline:
+          triggerPhaseName === 'nightly_enrichment_context'
+            ? forceNightlyUnifiedPipeline
+            : undefined,
+      })) as {
         success?: boolean;
         message?: string;
         error?: string;
@@ -371,6 +437,7 @@ export default function MonitorPage() {
           warning: result?.warning as string | undefined,
         });
         setTriggerPhaseName('');
+        setForceNightlyUnifiedPipeline(false);
         loadOverview();
         // Refresh again so Current activity shows "Requested — queued" then "Running..." when the worker starts
         setTimeout(loadOverview, 2500);
@@ -944,13 +1011,67 @@ export default function MonitorPage() {
       </Card>
 
       {/* Backlog status progression */}
-      <Typography variant='subtitle1' sx={{ fontWeight: 600, mb: 1 }}>
+      <Typography variant='subtitle1' sx={{ fontWeight: 600, mb: 0.5 }}>
         Backlog status progression
+      </Typography>
+      <Typography variant='caption' color='text.secondary' display='block' sx={{ mb: 1 }}>
+        ETAs use a rolling average over the last{' '}
+        {backlogStatus?.data?.workload_window_days ?? 4} days when enough work
+        was completed in that window; otherwise recent 1h/24h measurements or a
+        conservative estimate. “Steady state” requires automation backlogs within
+        one batch each, empty monitor queues, non-growing article trend, and
+        catch-up iterations at baseline.
       </Typography>
       <Card variant='outlined' sx={{ mb: 3 }}>
         <CardContent sx={{ py: 1.5 }}>
           {backlogStatus?.success && backlogStatus.data ? (
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              {backlogStatus.data.steady_state && (
+                <Alert
+                  severity={
+                    backlogStatus.data.steady_state.ok ? 'success' : 'warning'
+                  }
+                  icon={
+                    backlogStatus.data.steady_state.ok ? (
+                      <CheckCircleOutlineIcon />
+                    ) : (
+                      <ErrorOutlineIcon />
+                    )
+                  }
+                >
+                  <Typography variant='subtitle2' fontWeight={600}>
+                    Steady state:{' '}
+                    {backlogStatus.data.steady_state.ok ? 'Yes' : 'Not yet'}
+                  </Typography>
+                  {backlogStatus.data.steady_state.ok ? (
+                    <Typography variant='body2' color='text.secondary'>
+                      Automation queues are within one batch depth, SQL monitor
+                      backlogs are clear, article inflow is not outpacing
+                      throughput, and overall catch-up is at baseline (≤1
+                      two-hour iteration).
+                    </Typography>
+                  ) : (
+                    <Typography variant='body2' color='text.secondary'>
+                      {(backlogStatus.data.steady_state.reasons ?? []).join(
+                        ' '
+                      ) || 'See backlog rows and automation status.'}
+                    </Typography>
+                  )}
+                  {backlogStatus.data.steady_state.checks &&
+                    !backlogStatus.data.steady_state.ok && (
+                      <Typography
+                        variant='caption'
+                        color='text.secondary'
+                        display='block'
+                        sx={{ mt: 0.5 }}
+                      >
+                        {Object.entries(backlogStatus.data.steady_state.checks)
+                          .map(([k, v]) => `${k}: ${v ? 'pass' : 'fail'}`)
+                          .join(' · ')}
+                      </Typography>
+                    )}
+                </Alert>
+              )}
               <Table size='small'>
                 <TableHead>
                   <TableRow>
@@ -977,12 +1098,26 @@ export default function MonitorPage() {
                           color='text.secondary'
                           sx={{ display: 'block' }}
                         >
-                          {backlogStatus.data.articles.per_hour_source ===
-                            'measured_1h' && '(measured 1h)'}
-                          {backlogStatus.data.articles.per_hour_source ===
-                            'measured_24h' && '(measured 24h)'}
-                          {backlogStatus.data.articles.per_hour_source ===
-                            'estimated' && '(no recent data)'}
+                          (
+                          {throughputSourceLabel(
+                            backlogStatus.data.articles.per_hour_source
+                          )}
+                          )
+                        </Typography>
+                      )}
+                      {(backlogStatus.data.articles?.processed_last_4d ?? 0) >
+                        0 && (
+                        <Typography
+                          component='span'
+                          variant='caption'
+                          color='text.secondary'
+                          sx={{ display: 'block' }}
+                        >
+                          {(
+                            backlogStatus.data.articles?.processed_last_4d ?? 0
+                          ).toLocaleString()}{' '}
+                          enriched in last{' '}
+                          {backlogStatus.data.workload_window_days ?? 4}d
                         </Typography>
                       )}
                     </TableCell>
@@ -1007,6 +1142,36 @@ export default function MonitorPage() {
                     </TableCell>
                     <TableCell align='right'>
                       ~{backlogStatus.data.documents?.per_hour ?? 0}/hr
+                      {backlogStatus.data.documents?.per_hour_source && (
+                        <Typography
+                          component='span'
+                          variant='caption'
+                          color='text.secondary'
+                          sx={{ display: 'block' }}
+                        >
+                          (
+                          {throughputSourceLabel(
+                            backlogStatus.data.documents.per_hour_source
+                          )}
+                          )
+                        </Typography>
+                      )}
+                      {(backlogStatus.data.documents?.processed_last_4d ?? 0) >
+                        0 && (
+                        <Typography
+                          component='span'
+                          variant='caption'
+                          color='text.secondary'
+                          sx={{ display: 'block' }}
+                        >
+                          {(
+                            backlogStatus.data.documents?.processed_last_4d ??
+                            0
+                          ).toLocaleString()}{' '}
+                          extracted in last{' '}
+                          {backlogStatus.data.workload_window_days ?? 4}d
+                        </Typography>
+                      )}
                       {(backlogStatus.data.documents?.processed_last_1h ?? 0) >=
                         0 && (
                         <Typography
@@ -1074,6 +1239,35 @@ export default function MonitorPage() {
                       </TableCell>
                       <TableCell align='right'>
                         ~{backlogStatus.data.contexts.per_hour ?? 0}/hr
+                        {backlogStatus.data.contexts.per_hour_source && (
+                          <Typography
+                            component='span'
+                            variant='caption'
+                            color='text.secondary'
+                            sx={{ display: 'block' }}
+                          >
+                            (
+                            {throughputSourceLabel(
+                              backlogStatus.data.contexts.per_hour_source
+                            )}
+                            )
+                          </Typography>
+                        )}
+                        {(backlogStatus.data.contexts.processed_last_4d ?? 0) >
+                          0 && (
+                          <Typography
+                            component='span'
+                            variant='caption'
+                            color='text.secondary'
+                            sx={{ display: 'block' }}
+                          >
+                            {(
+                              backlogStatus.data.contexts.processed_last_4d ?? 0
+                            ).toLocaleString()}{' '}
+                            contexts w/ claims in last{' '}
+                            {backlogStatus.data.workload_window_days ?? 4}d
+                          </Typography>
+                        )}
                         {(backlogStatus.data.contexts.processed_last_1h ?? 0) >
                           0 && (
                           <Typography
@@ -1114,6 +1308,37 @@ export default function MonitorPage() {
                       </TableCell>
                       <TableCell align='right'>
                         ~{backlogStatus.data.entity_profiles.per_hour ?? 0}/hr
+                        {backlogStatus.data.entity_profiles
+                          .per_hour_source && (
+                          <Typography
+                            component='span'
+                            variant='caption'
+                            color='text.secondary'
+                            sx={{ display: 'block' }}
+                          >
+                            (
+                            {throughputSourceLabel(
+                              backlogStatus.data.entity_profiles.per_hour_source
+                            )}
+                            )
+                          </Typography>
+                        )}
+                        {(backlogStatus.data.entity_profiles
+                          .processed_last_4d ?? 0) > 0 && (
+                          <Typography
+                            component='span'
+                            variant='caption'
+                            color='text.secondary'
+                            sx={{ display: 'block' }}
+                          >
+                            {(
+                              backlogStatus.data.entity_profiles
+                                .processed_last_4d ?? 0
+                            ).toLocaleString()}{' '}
+                            profiles w/ sections in last{' '}
+                            {backlogStatus.data.workload_window_days ?? 4}d
+                          </Typography>
+                        )}
                         {(backlogStatus.data.entity_profiles
                           .processed_last_1h ?? 0) > 0 && (
                           <Typography
@@ -1150,6 +1375,36 @@ export default function MonitorPage() {
                     </TableCell>
                     <TableCell align='right'>
                       ~{backlogStatus.data.storylines?.per_hour ?? 0}/hr
+                      {backlogStatus.data.storylines?.per_hour_source && (
+                        <Typography
+                          component='span'
+                          variant='caption'
+                          color='text.secondary'
+                          sx={{ display: 'block' }}
+                        >
+                          (
+                          {throughputSourceLabel(
+                            backlogStatus.data.storylines.per_hour_source
+                          )}
+                          )
+                        </Typography>
+                      )}
+                      {(backlogStatus.data.storylines?.processed_last_4d ?? 0) >
+                        0 && (
+                        <Typography
+                          component='span'
+                          variant='caption'
+                          color='text.secondary'
+                          sx={{ display: 'block' }}
+                        >
+                          {(
+                            backlogStatus.data.storylines?.processed_last_4d ??
+                            0
+                          ).toLocaleString()}{' '}
+                          synthesized in last{' '}
+                          {backlogStatus.data.workload_window_days ?? 4}d
+                        </Typography>
+                      )}
                     </TableCell>
                     <TableCell>
                       {(backlogStatus.data.storylines?.backlog ?? 0) > 0
@@ -1204,6 +1459,37 @@ export default function MonitorPage() {
                     .join(', ')}
                 </Typography>
               )}
+              {(
+                backlogStatus.data.storylines as {
+                  synthesis_per_domain_last_4d?: Record<string, number>;
+                }
+              )?.synthesis_per_domain_last_4d &&
+                Object.values(
+                  (
+                    backlogStatus.data.storylines as {
+                      synthesis_per_domain_last_4d: Record<string, number>;
+                    }
+                  ).synthesis_per_domain_last_4d
+                ).some(n => n > 0) && (
+                  <Typography
+                    variant='caption'
+                    color='text.secondary'
+                    display='block'
+                    sx={{ mt: 0.25 }}
+                  >
+                    Synthesis last {backlogStatus.data.workload_window_days ?? 4}
+                    d by domain:{' '}
+                    {Object.entries(
+                      (
+                        backlogStatus.data.storylines as {
+                          synthesis_per_domain_last_4d: Record<string, number>;
+                        }
+                      ).synthesis_per_domain_last_4d
+                    )
+                      .map(([d, n]) => `${d}: ${n}`)
+                      .join(', ')}
+                  </Typography>
+                )}
               {(backlogStatus.data.documents?.permanent_failed_total ?? 0) >
                 0 && (
                 <Typography
@@ -1272,7 +1558,8 @@ export default function MonitorPage() {
                 (backlogStatus.data.entity_profiles?.backlog ?? 0) ===
                 0 && (
                 <Typography variant='body2' color='success.main'>
-                  No backlog — all queues current.
+                  No monitor SQL backlog — all listed queues current. Use
+                  “Steady state” above for full pipeline + automation health.
                 </Typography>
               )}
               {backlogStatus.data.articles &&
@@ -1738,7 +2025,10 @@ export default function MonitorPage() {
                   <Select
                     value={triggerPhaseName}
                     label='Phase'
-                    onChange={e => setTriggerPhaseName(e.target.value)}
+                    onChange={e => {
+                      setTriggerPhaseName(e.target.value);
+                      setForceNightlyUnifiedPipeline(false);
+                    }}
                   >
                     <MenuItem value=''>Select…</MenuItem>
                     {(phases.length > 0
@@ -1759,6 +2049,7 @@ export default function MonitorPage() {
                           'editorial_briefing_generation',
                           'digest_generation',
                           'daily_briefing_synthesis',
+                          'nightly_enrichment_context',
                         ]
                     ).map(name => (
                       <MenuItem key={name} value={name}>
@@ -1776,6 +2067,20 @@ export default function MonitorPage() {
                 >
                   {triggering ? 'Requesting…' : 'Run now'}
                 </Button>
+                {triggerPhaseName === 'nightly_enrichment_context' && (
+                  <FormControlLabel
+                    control={
+                      <Checkbox
+                        size='small'
+                        checked={forceNightlyUnifiedPipeline}
+                        onChange={e =>
+                          setForceNightlyUnifiedPipeline(e.target.checked)
+                        }
+                      />
+                    }
+                    label='Outside night window (force unified drain)'
+                  />
+                )}
               </Box>
               {triggerResult && (
                 <Box sx={{ mt: 1.5 }}>

@@ -8,6 +8,11 @@ Job types:
   - timeline_narrative_chronological | timeline_narrative_briefing: 8B narrative from timeline, stored on storylines
 
 Processed by automation task `content_refinement_queue` (see automation_manager).
+Before each drain batch, automation calls `auto_enqueue_comprehensive_rag_for_automation()` so
+deep analysis (`comprehensive_rag`) is queued without using the UI (disable via
+`AUTO_ENQUEUE_COMPREHENSIVE_RAG=0`). The scheduler also calls
+`maybe_auto_enqueue_comprehensive_rag_from_scheduler()` every ~30s so the DB queue gains work even
+when the refinement phase is starved (`AUTO_ENQUEUE_RAG_SCHEDULER_SECONDS`).
 
 Nightly pipeline (America/New_York by default): automation phase `nightly_enrichment_context` runs
 02:00–05:00 (`NIGHTLY_PIPELINE_*`), draining enrichment, then context_sync, then this queue with
@@ -21,6 +26,7 @@ import asyncio
 import json
 import logging
 import os
+import time
 from datetime import datetime, timezone
 from collections.abc import Callable
 from typing import Any
@@ -28,6 +34,9 @@ from typing import Any
 from shared.database.connection import get_db_connection
 
 logger = logging.getLogger(__name__)
+
+# Throttle scheduler-driven enqueue so we fill the DB queue even if the refinement phase is starved.
+_last_scheduler_auto_enqueue_monotonic: float = 0.0
 
 ALLOWED_DOMAIN_KEYS = frozenset({"politics", "finance", "science-tech"})
 
@@ -237,6 +246,176 @@ def enqueue_initial_narrative_finisher(
         priority="high",
         metadata={"finisher_pass": "initial", "source": source},
     )
+
+
+def auto_enqueue_comprehensive_rag_for_automation() -> dict[str, Any]:
+    """
+    Enqueue comprehensive_rag (deep storyline analysis) for storylines that should not depend
+    on the UI "Queue deep analysis" button. Called by automation `content_refinement_queue` and
+    nightly GPU refinement drain.
+
+    Candidates:
+      - ml_processing_status in (pending, processing) — e.g. topic→storyline promotion
+      - Else if document_status is present: never rag_analyzed (NULL or other values)
+
+    Disabled with AUTO_ENQUEUE_COMPREHENSIVE_RAG=0. Per-domain scan cap:
+    AUTO_ENQUEUE_COMPREHENSIVE_RAG_PER_DOMAIN (default 8).
+    """
+    if os.getenv("AUTO_ENQUEUE_COMPREHENSIVE_RAG", "1").lower() not in (
+        "1",
+        "true",
+        "yes",
+    ):
+        return {"skipped": True, "reason": "disabled_by_env", "enqueued": 0, "already_queued": 0}
+
+    limit = max(1, int(os.environ.get("AUTO_ENQUEUE_COMPREHENSIVE_RAG_PER_DOMAIN", "8")))
+    stats: dict[str, Any] = {"enqueued": 0, "already_queued": 0, "errors": 0, "by_domain": {}}
+
+    for domain_key in sorted(ALLOWED_DOMAIN_KEYS):
+        schema = domain_key.replace("-", "_")
+        d_stats = {"enqueued": 0, "already_queued": 0}
+        conn = get_db_connection()
+        if not conn:
+            stats["errors"] += 1
+            continue
+        rows: list[tuple[int, str]] = []
+        try:
+            with conn.cursor() as cur:
+                try:
+                    cur.execute(
+                        f"""
+                        SELECT s.id,
+                          CASE
+                            WHEN s.ml_processing_status IN ('pending', 'processing')
+                            THEN 'high' ELSE 'medium'
+                          END AS prio
+                        FROM {schema}.storylines s
+                        WHERE s.status = 'active'
+                          AND EXISTS (
+                              SELECT 1 FROM {schema}.storyline_articles sa
+                              WHERE sa.storyline_id = s.id
+                          )
+                          AND NOT EXISTS (
+                              SELECT 1 FROM intelligence.content_refinement_queue q
+                              WHERE q.domain_key = %s
+                                AND q.storyline_id = s.id
+                                AND q.job_type = %s
+                                AND q.status IN ('pending', 'processing')
+                          )
+                          AND (
+                            s.ml_processing_status IN ('pending', 'processing')
+                            OR (
+                              s.document_status IS NULL
+                              OR s.document_status <> 'rag_analyzed'
+                            )
+                          )
+                        ORDER BY
+                          CASE
+                            WHEN s.ml_processing_status IN ('pending', 'processing') THEN 0
+                            ELSE 1
+                          END,
+                          s.updated_at DESC NULLS LAST
+                        LIMIT %s
+                        """,
+                        (domain_key, JOB_COMPREHENSIVE_RAG, limit),
+                    )
+                    rows = [(int(r[0]), str(r[1])) for r in cur.fetchall()]
+                except Exception as e:
+                    err = str(e).lower()
+                    if "document_status" not in err and "undefinedcolumn" not in err:
+                        raise
+                    cur.execute(
+                        f"""
+                        SELECT s.id, 'high'::text AS prio
+                        FROM {schema}.storylines s
+                        WHERE s.status = 'active'
+                          AND EXISTS (
+                              SELECT 1 FROM {schema}.storyline_articles sa
+                              WHERE sa.storyline_id = s.id
+                          )
+                          AND NOT EXISTS (
+                              SELECT 1 FROM intelligence.content_refinement_queue q
+                              WHERE q.domain_key = %s
+                                AND q.storyline_id = s.id
+                                AND q.job_type = %s
+                                AND q.status IN ('pending', 'processing')
+                          )
+                          AND s.ml_processing_status IN ('pending', 'processing')
+                        ORDER BY s.updated_at DESC NULLS LAST
+                        LIMIT %s
+                        """,
+                        (domain_key, JOB_COMPREHENSIVE_RAG, limit),
+                    )
+                    rows = [(int(r[0]), str(r[1])) for r in cur.fetchall()]
+        except Exception as e:
+            logger.warning("auto_enqueue_comprehensive_rag domain=%s: %s", domain_key, e)
+            stats["errors"] += 1
+        finally:
+            conn.close()
+
+        for sid, prio in rows:
+            res = enqueue_content_refinement(
+                domain_key,
+                sid,
+                JOB_COMPREHENSIVE_RAG,
+                priority=prio if prio in ("high", "medium", "low") else "medium",
+                metadata={"source": "automation_auto_enqueue"},
+            )
+            if not res.get("success"):
+                stats["errors"] += 1
+                continue
+            if res.get("already_queued"):
+                d_stats["already_queued"] += 1
+            else:
+                d_stats["enqueued"] += 1
+                stats["enqueued"] += 1
+
+        stats["already_queued"] += d_stats["already_queued"]
+        if d_stats["enqueued"] or d_stats["already_queued"]:
+            stats["by_domain"][domain_key] = d_stats
+
+    if stats["enqueued"] or stats.get("errors"):
+        logger.info(
+            "auto_enqueue comprehensive_rag: enqueued=%s already_queued=%s errors=%s by_domain=%s",
+            stats["enqueued"],
+            stats["already_queued"],
+            stats.get("errors", 0),
+            stats.get("by_domain", {}),
+        )
+    return stats
+
+
+def maybe_auto_enqueue_comprehensive_rag_from_scheduler() -> None:
+    """
+    Run auto_enqueue on an interval from AutomationManager._scheduler (not only when the
+    content_refinement_queue task runs). Otherwise pending=0 skips visible work and the phase
+    can starve behind higher-backlog tasks, so storylines never get comprehensive_rag rows.
+
+    Skipped during the unified nightly pipeline window (nightly_enrichment_context owns drain +
+    enqueue at drain start). Interval: AUTO_ENQUEUE_RAG_SCHEDULER_SECONDS (default 30).
+    """
+    global _last_scheduler_auto_enqueue_monotonic
+    if os.getenv("AUTO_ENQUEUE_COMPREHENSIVE_RAG", "1").lower() not in (
+        "1",
+        "true",
+        "yes",
+    ):
+        return
+    try:
+        from services.nightly_ingest_window_service import in_nightly_pipeline_window_est
+
+        if in_nightly_pipeline_window_est():
+            return
+    except Exception:
+        pass
+    interval = float(os.environ.get("AUTO_ENQUEUE_RAG_SCHEDULER_SECONDS", "30"))
+    if interval <= 0:
+        return
+    now = time.monotonic()
+    if now - _last_scheduler_auto_enqueue_monotonic < interval:
+        return
+    _last_scheduler_auto_enqueue_monotonic = now
+    auto_enqueue_comprehensive_rag_for_automation()
 
 
 def _need_initial_narrative_map_for_batch(
@@ -628,6 +807,7 @@ async def _nightly_gpu_refinement_drain_inner(
         "by_type": {},
         "stopped_reason": None,
     }
+    auto_enqueue_comprehensive_rag_for_automation()
     while aggregate["batches"] < _NIGHTLY_MAX_BATCH_LOOPS:
         if not window_active():
             aggregate["stopped_reason"] = "window_ended"

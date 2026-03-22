@@ -354,7 +354,7 @@ export default function ProcessedDocumentsPage() {
                 <strong>Automated collection</strong> — CRS, GAO, CBO, and arXiv
                 are collected every 6 hours; processing runs every 30 minutes.
                 If automation just started, wait for the next cycle or run{' '}
-                <code>scripts/check_v7_data_collection.py</code> to see counts.
+                <code>scripts/check_data_collection_health.py</code> to see counts.
               </li>
             </Box>
           </CardContent>

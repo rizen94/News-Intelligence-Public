@@ -55,6 +55,7 @@ export interface ReportInvestigation {
   type: string;
   status: string;
   briefing: string | null;
+  domain_keys?: string[];
 }
 
 export interface ReportRecentEvent {
@@ -62,12 +63,38 @@ export interface ReportRecentEvent {
   title: string;
   date: string;
   type: string;
+  domain_keys?: string[];
+}
+
+export interface ReportRelatedEvent {
+  id: number;
+  title: string;
+  date: string;
+  type: string;
+  origin_domain: string;
+  link_reason: string;
+  correlation_strength?: number | null;
+  suggested_domain?: string;
+}
+
+export interface ReportRelatedStoryline {
+  id: number;
+  title: string;
+  updated_at: string;
+  origin_domain: string;
+  link_reason: string;
+}
+
+export interface ReportRelatedCrossDomain {
+  events: ReportRelatedEvent[];
+  storylines: ReportRelatedStoryline[];
 }
 
 export interface ReportPayload {
   lead_storylines: ReportStoryline[];
   investigations: ReportInvestigation[];
   recent_events: ReportRecentEvent[];
+  related_cross_domain?: ReportRelatedCrossDomain;
   daily_brief: string | null;
   time_of_day: 'morning' | 'midday' | 'evening' | 'weekend';
   domain: string;

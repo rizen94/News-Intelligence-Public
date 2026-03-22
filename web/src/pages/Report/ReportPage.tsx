@@ -490,6 +490,91 @@ export default function ReportPage() {
             </Grid>
           </Grid>
 
+          {(payload.related_cross_domain?.events?.length ?? 0) > 0 ||
+          (payload.related_cross_domain?.storylines?.length ?? 0) > 0 ? (
+            <Paper variant='outlined' sx={{ p: 2, mb: 2, bgcolor: 'grey.50' }}>
+              <Typography
+                variant='overline'
+                color='text.secondary'
+                sx={{ fontWeight: 600, display: 'block', mb: 1 }}
+              >
+                Also relevant (other domains)
+              </Typography>
+              <Grid container spacing={2}>
+                <Grid item xs={12} md={6}>
+                  <Typography variant='caption' color='text.secondary'>
+                    Linked events
+                  </Typography>
+                  <List dense disablePadding>
+                    {(payload.related_cross_domain?.events ?? [])
+                      .slice(0, 6)
+                      .map(ev => (
+                        <ListItemButton
+                          key={ev.id}
+                          dense
+                          onClick={() =>
+                            navigate(
+                              `/${ev.suggested_domain ?? domain}/investigate/events/${ev.id}`
+                            )
+                          }
+                        >
+                          <ListItemText
+                            primary={ev.title?.slice(0, 56) || `#${ev.id}`}
+                            secondary={`${ev.origin_domain} · ${ev.link_reason}`}
+                            primaryTypographyProps={{ variant: 'body2' }}
+                          />
+                        </ListItemButton>
+                      ))}
+                    {(!payload.related_cross_domain?.events ||
+                      payload.related_cross_domain.events.length === 0) && (
+                      <ListItemText
+                        primary='None'
+                        primaryTypographyProps={{
+                          variant: 'body2',
+                          color: 'text.secondary',
+                        }}
+                      />
+                    )}
+                  </List>
+                </Grid>
+                <Grid item xs={12} md={6}>
+                  <Typography variant='caption' color='text.secondary'>
+                    Storylines (shared entities)
+                  </Typography>
+                  <List dense disablePadding>
+                    {(payload.related_cross_domain?.storylines ?? [])
+                      .slice(0, 6)
+                      .map(s => (
+                        <ListItemButton
+                          key={`${s.origin_domain}-${s.id}`}
+                          dense
+                          onClick={() =>
+                            navigate(`/${s.origin_domain}/storylines/${s.id}`)
+                          }
+                        >
+                          <ListItemText
+                            primary={s.title?.slice(0, 56) || `#${s.id}`}
+                            secondary={s.origin_domain}
+                            primaryTypographyProps={{ variant: 'body2' }}
+                          />
+                        </ListItemButton>
+                      ))}
+                    {(!payload.related_cross_domain?.storylines ||
+                      payload.related_cross_domain.storylines.length === 0) && (
+                      <ListItemText
+                        primary='None'
+                        primaryTypographyProps={{
+                          variant: 'body2',
+                          color: 'text.secondary',
+                        }}
+                      />
+                    )}
+                  </List>
+                </Grid>
+              </Grid>
+            </Paper>
+          ) : null}
+
           <Divider sx={{ my: 1 }} />
           <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
             <Button

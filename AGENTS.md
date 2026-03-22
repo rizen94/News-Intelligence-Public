@@ -66,11 +66,11 @@ Context for AI assistants. Use project terminology consistently.
 1. **Article:** RSS → processing → storyline linking → event extraction.
 2. **Storyline:** create → add articles → **queued refinement** (`intelligence.content_refinement_queue` + automation phase `content_refinement_queue`) for deep analysis, ~70B finisher, and timeline narratives — UI reads **stored** summaries/narratives; `POST /api/{domain}/storylines/{id}/refinement_jobs` enqueues work (migration `181_*.sql`).
 3. **Events (v5):** extract → deduplicate → story continuation → alerts.
-4. **Narrative bootstrap:** `proactive_detection` clusters unlinked articles → can promote to domain **`storylines`** + **`storyline_articles`** + **`story_entity_index`** (see `docs/NARRATIVE_BOOTSTRAP_AND_DB_OUTAGE.md`). DB down: **`AUTOMATION_PAUSE_WHEN_DB_DOWN`** pauses scheduling; failed **`automation_run_history`** writes spill to **`.local/db_pending_writes`** and **`pending_db_flush`** replays.
-5. **Ollama:** Model routing — `api/shared/services/ollama_model_caller.py` + `ollama_model_policy.py`; routine **`ollama pull`** — `api/scripts/refresh_ollama_models.py` (`docs/SETUP_ENV_AND_RUNTIME.md`). **Storyline finisher (~70B):** final narrative editor only — `InvocationKind.STORYLINE_NARRATIVE_FINISH` → `ModelType.LLAMA_70B` (`NARRATIVE_FINISHER_MODEL`); see `docs/STORYLINE_70B_NARRATIVE_FINISHER.md` and `api/services/storyline_narrative_finisher_service.py`.
+4. **Narrative bootstrap:** `proactive_detection` clusters unlinked articles → can promote to domain **`storylines`** + **`storyline_articles`** + **`story_entity_index`** (see `docs/_archive/retired_root_docs_2026_03/NARRATIVE_BOOTSTRAP_AND_DB_OUTAGE.md`). DB down: **`AUTOMATION_PAUSE_WHEN_DB_DOWN`** pauses scheduling; failed **`automation_run_history`** writes spill to **`.local/db_pending_writes`** and **`pending_db_flush`** replays.
+5. **Ollama:** Model routing — `api/shared/services/ollama_model_caller.py` + `ollama_model_policy.py`; routine **`ollama pull`** — `api/scripts/refresh_ollama_models.py` (`docs/SETUP_ENV_AND_RUNTIME.md`). **Storyline finisher (~70B):** final narrative editor only — `InvocationKind.STORYLINE_NARRATIVE_FINISH` → `ModelType.LLAMA_70B` (`NARRATIVE_FINISHER_MODEL`); see `docs/_archive/retired_root_docs_2026_03/STORYLINE_70B_NARRATIVE_FINISHER.md` and `api/services/storyline_narrative_finisher_service.py`.
 6. **Widow vs main GPU:** **AutomationManager** runs on the **main** API host only. **Widow** can run **RSS** (`newsplatform-secondary` or `run_widow_db_adjacent.py --rss`) and **DB-adjacent cron** (`context_sync`, `entity_profile_sync`, `pending_db_flush`) per `docs/WIDOW_DB_ADJACENT_CRON.md`; main `.env` uses **`AUTOMATION_SKIP_RSS_IN_COLLECTION_CYCLE`** and **`AUTOMATION_DISABLED_SCHEDULES`** to avoid duplicate work.
-7. **Claims → facts:** `promote_claims_to_versioned_facts` resolves claim subjects to **`intelligence.entity_profiles`** (context mentions, article entities, canonicals, metadata) before inserting **`intelligence.versioned_facts`**; see `docs/CLAIMS_TO_FACTS_ENTITY_RESOLUTION.md`.
-8. **Source credibility:** **`api/config/orchestrator_governance.yaml`** section **`source_credibility`** drives tier multipliers at RSS ingest (`quality_score` + **`articles.metadata`**), copied to **`intelligence.contexts.metadata`**, and scales stored claim confidence; see `docs/SOURCE_CREDIBILITY.md`.
+7. **Claims → facts:** `promote_claims_to_versioned_facts` resolves claim subjects to **`intelligence.entity_profiles`** (context mentions, article entities, canonicals, metadata) before inserting **`intelligence.versioned_facts`**; see `docs/_archive/retired_root_docs_2026_03/CLAIMS_TO_FACTS_ENTITY_RESOLUTION.md`.
+8. **Source credibility:** **`api/config/orchestrator_governance.yaml`** section **`source_credibility`** drives tier multipliers at RSS ingest (`quality_score` + **`articles.metadata`**), copied to **`intelligence.contexts.metadata`**, and scales stored claim confidence; see `docs/_archive/retired_root_docs_2026_03/SOURCE_CREDIBILITY.md`.
 
 ---
 
@@ -84,7 +84,7 @@ Context for AI assistants. Use project terminology consistently.
 
 - **Phase completions:** `public.automation_run_history` — inserts via `shared.services.automation_run_history_writer.persist_automation_run_history` (AutomationManager completions; optional **`POST /api/system_monitoring/cron_heartbeat`** with **`CRON_HEARTBEAT_KEY`** + **`X-Cron-Heartbeat-Key`** for cron markers such as `cron_rss`).
 - **Pipeline DB rows:** `pipeline_traces` / `pipeline_checkpoints` — `shared.services.pipeline_trace_writer.log_pipeline_trace` (Monitoring **Trigger pipeline**; OrchestratorCoordinator RSS uses stage **`orchestrator_rss_collection`**).
-- **Operator report:** `scripts/run_last_24h_report.sh` → `scripts/last_24h_activity_report.py`; narrative: **`docs/AUTOMATION_AND_LAST_24H_ACTIVITY.md`**.
+- **Operator report:** `scripts/run_last_24h_report.sh` → `scripts/last_24h_activity_report.py`; narrative (archived): **`docs/_archive/retired_root_docs_2026_03/AUTOMATION_AND_LAST_24H_ACTIVITY.md`**.
 
 ---
 
@@ -96,6 +96,12 @@ Context for AI assistants. Use project terminology consistently.
 | Services | `api/services/`, `api/domains/*/services/` |
 | Frontend pages | `web/src/pages/` |
 | API modules | `web/src/services/api/` (articles, watchlist, storylines, topics, rss, monitoring) |
+| Docker (archived, not default) | `docs/archive/docker_stack/` — Compose + Dockerfiles + legacy scripts only |
+| Planning proposals (not v8 spec) | `docs/archive/planning_incubator/` — PDF/UI/v6 write-ups tagged **TAG_INCORPORATE** |
+| Legacy pytest under `api/` | `api/_archived/legacy_pytest_tree_2026_03/` — CI uses repo-root `tests/` only |
+| Old React tree (not bundled) | `web/_archived_duplicates/_archived_interface/` |
+
+**Deployment:** Canonical path is **bare metal** (`start_system.sh`, Widow PostgreSQL, local `.venv`). Do not assume Docker for development or home ops.
 
 ---
 
@@ -133,7 +139,7 @@ Context for AI assistants. Use project terminology consistently.
 4. **Pool env vars** — `DB_POOL_WORKER_MIN/MAX`, `DB_POOL_UI_MIN/MAX`, `DB_POOL_SA_SIZE/OVERFLOW`. Total must stay under PostgreSQL `max_connections`.
 5. **Checkout timeouts** — Worker: 30 s, UI: 3 s. A timeout error means connections are leaking; find and fix the leak.
 6. See `docs/CODING_STYLE_GUIDE.md` § "Database connection lifecycle" and "Connection Pool Architecture" for full details and code examples.
-7. **Migration verification** — Active SQL lives in `api/database/migrations/`; pre-176 history is in `api/database/migrations/archive/historical/` (runners resolve both via `shared.migration_sql_paths`). After applies, run `PYTHONPATH=api uv run python api/scripts/verify_migrations_160_167.py` (checks **133**, **160–172**, **176** `applied_migrations`, **177–179** domain pipeline objects). Exit code **0** means all listed objects exist; **1** lists what to apply. Record **176+** applies with `api/scripts/register_applied_migration.py` and diff files vs ledger with `api/scripts/migration_ledger_report.py`. See `api/database/migrations/README.md`. Full assessment: `docs/DB_FULL_ASSESSMENT.md`. Manual event extraction: `scripts/run_event_pipeline_manual.py`.
+7. **Migration verification** — Active SQL lives in `api/database/migrations/`; pre-176 history is in `api/database/migrations/archive/historical/` (runners resolve both via `shared.migration_sql_paths`). After applies, run `PYTHONPATH=api uv run python api/scripts/verify_migrations_160_167.py` (checks **133**, **160–172**, **176** `applied_migrations`, **177–179** domain pipeline objects). Exit code **0** means all listed objects exist; **1** lists what to apply. Record **176+** applies with `api/scripts/register_applied_migration.py` and diff files vs ledger with `api/scripts/migration_ledger_report.py`. See `api/database/migrations/README.md`. Full assessment (archived): `docs/_archive/retired_root_docs_2026_03/DB_FULL_ASSESSMENT.md`. Manual event extraction: `scripts/run_event_pipeline_manual.py`.
 8. **Timeline generation** — The legacy ML queue module **`TimelineGenerator`** (`timeline_events` / unscoped `articles`) is **removed**. Use automation task **`timeline_generation`** (`TimelineBuilderService` + **`public.chronological_events`**) or **`GET /api/{domain}/storylines/{id}/timeline`**. `TaskType.TIMELINE_GENERATION` in the ML queue completes with **0 events** and a deprecation message.
 
 ---

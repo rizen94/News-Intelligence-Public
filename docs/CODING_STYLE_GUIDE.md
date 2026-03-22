@@ -641,7 +641,6 @@ News Intelligence/
 api/shared/database/connection.py  # get_db_config, get_db_connection (pool)
 api/config/database.py             # Re-exports shared (backward compat)
 api/config/paths.py                # Path management
-docker-compose.yml                 # Container orchestration
 
 # ❌ WRONG - Duplicate or legacy config
 api/config/robust_database.py
@@ -688,7 +687,7 @@ configs/.env
 
 ### **Keep docs in sync with code**
 When you make a **major change** (e.g. API path scheme, versioning, removal of a feature, or a new system boundary), **retroactively update all affected docs** so they stay accurate. Check at least:
-- [DOCS_INDEX.md](DOCS_INDEX.md), [PROJECT_OVERVIEW.md](PROJECT_OVERVIEW.md), current `RELEASE_v*.md` (older notes in `_archive/releases/`)
+- [DOCS_INDEX.md](DOCS_INDEX.md), [SYSTEM_OVERVIEW.md](SYSTEM_OVERVIEW.md), archived product narrative: [_archive/retired_root_docs_2026_03/PROJECT_OVERVIEW.md](_archive/retired_root_docs_2026_03/PROJECT_OVERVIEW.md); release notes in `_archive/releases/` and `_archive/retired_root_docs_2026_03/`
 - Architecture trio: [SYSTEM_OVERVIEW.md](SYSTEM_OVERVIEW.md), [ARCHITECTURE_AND_OPERATIONS.md](ARCHITECTURE_AND_OPERATIONS.md), [SECURITY_OPERATIONS.md](SECURITY_OPERATIONS.md) when exposure or ops change
 - API reference or route tables in any of the above
 
@@ -760,17 +759,8 @@ class DatabaseManager:
         pass
 ```
 
-### **Multiple Docker Compose Files**
-```bash
-# ❌ WRONG - Multiple compose files
-docker-compose.yml
-docker-compose.dev.yml
-docker-compose.prod.yml
-configs/docker-compose.backend.yml
-
-# ✅ CORRECT - Single compose file
-docker-compose.yml
-```
+### **Container sprawl (out of scope for default dev)**
+Bare-metal runs use `start_system.sh` and `.env` for Postgres (Widow/tunnel). Any Docker Compose material is **archived** under `docs/archive/docker_stack/` and is not part of the active programming path.
 
 ---
 
@@ -791,15 +781,6 @@ python3 api/scripts/validate_architecture.py
 
 # Test database connectivity
 python3 api/scripts/test_database_connection.py
-```
-
-### **Docker Validation**
-```bash
-# Validate Docker configuration
-docker-compose config
-
-# Check container naming
-docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}"
 ```
 
 ---
@@ -883,7 +864,6 @@ When you change the **API** (routes, path segments, response shape) or **core be
 
 ### **External References**
 - [PEP 8 - Python Style Guide](https://pep8.org/)
-- [Docker Compose Documentation](https://docs.docker.com/compose/)
 - [FastAPI Documentation](https://fastapi.tiangolo.com/)
 
 ---

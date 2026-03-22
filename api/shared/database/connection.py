@@ -1,5 +1,5 @@
 """
-Shared Database Connection Module for News Intelligence System v7
+Shared database connection module for the News Intelligence system
 With connection pooling for improved performance over SSH tunnel.
 Single source of truth for all DB connections (psycopg2 + SQLAlchemy).
 

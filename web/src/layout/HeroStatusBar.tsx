@@ -1,19 +1,18 @@
 /**
  * Hero status bar — system health, quick stats, last update.
- * Aligned with WEB_PRODUCT_DISPLAY_PLAN (Intelligence Dashboard).
+ * Product notes: docs/archive/planning_incubator/WEB_PRODUCT_DISPLAY_PLAN.md
  */
 import React, { useEffect, useState } from 'react';
-import { useLocation } from 'react-router-dom';
 import { Box, Typography, Chip } from '@mui/material';
-import { contextCentricApi, type ContextCentricStatus } from '../services/api/contextCentric';
+import {
+  contextCentricApi,
+  heroBarEventsStoredCount,
+  type ContextCentricStatus,
+} from '../services/api/contextCentric';
 import apiService from '../services/apiService';
-import { useDomain } from '../contexts/DomainContext';
 import APIConnectionStatus from '../components/APIConnectionStatus/APIConnectionStatus';
 
 export const HeroStatusBar: React.FC = () => {
-  const { domain } = useDomain();
-  const location = useLocation();
-  const statusScopeAllDomains = location.pathname.split('/').includes('monitor');
   const [health, setHealth] = useState<{ status?: string; services?: Record<string, string> } | null>(null);
   const [orchStatus, setOrchStatus] = useState<{
     running?: boolean;
@@ -41,9 +40,7 @@ export const HeroStatusBar: React.FC = () => {
         const [h, o, c] = await Promise.all([
           apiService.getHealth().catch(() => null),
           orchPromise,
-          contextCentricApi
-            .getStatus(statusScopeAllDomains ? null : domain)
-            .catch(() => null),
+          contextCentricApi.getStatus(null).catch(() => null),
         ]);
         if (cancelled) return;
         if (h && typeof h === 'object') setHealth(h);
@@ -60,7 +57,7 @@ export const HeroStatusBar: React.FC = () => {
       cancelled = true;
       clearInterval(t);
     };
-  }, [domain, statusScopeAllDomains]);
+  }, []);
 
   const systemHealthy = health?.status === 'healthy';
   const sourcesCount = orchStatus?.collection_sources?.length ?? 0;
@@ -110,7 +107,7 @@ export const HeroStatusBar: React.FC = () => {
             <Typography variant="body2" color="text.secondary">
               Events:{' '}
               <strong>
-                {(ctxStatus.extracted_events ?? ctxStatus.tracked_events).toLocaleString()}
+                {heroBarEventsStoredCount(ctxStatus).toLocaleString()}
               </strong>
             </Typography>
           </>

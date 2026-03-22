@@ -31,7 +31,7 @@ All AI runs **locally via Ollama** — no cloud LLM required. The system is desi
 
 **Architecture and data flow (read next):**
 
-- [docs/PROJECT_OVERVIEW.md](docs/PROJECT_OVERVIEW.md) — what the system does end-to-end.
+- [docs/SYSTEM_OVERVIEW.md](docs/SYSTEM_OVERVIEW.md) — what the system is and how pieces connect; extended narrative (archived): [docs/_archive/retired_root_docs_2026_03/PROJECT_OVERVIEW.md](docs/_archive/retired_root_docs_2026_03/PROJECT_OVERVIEW.md).
 - [docs/DATA_FLOW_ARCHITECTURE.md](docs/DATA_FLOW_ARCHITECTURE.md) — intelligence cascade (ingestion → editorial).
 - [docs/SYSTEM_OVERVIEW.md](docs/SYSTEM_OVERVIEW.md) — routes, UI map, services (long reference).
 
@@ -117,7 +117,7 @@ Full reference: [API Reference](docs/API_REFERENCE.md). Interactive docs: http:/
 | Backend  | Python 3, FastAPI, uvicorn    | `api/` (8000)    |
 | Database | PostgreSQL (domain + intelligence schemas) | Widow (5432)  |
 | Finance  | SQLite + ChromaDB            | `data/finance/`  |
-| Cache    | Redis                        | Docker (6379)    |
+| Cache    | Redis (optional)             | Local / systemd if enabled |
 | LLM      | Ollama (Llama 3.1 8B, Mistral 7B) | Local (11434) |
 
 **Three-machine layout (typical):** Primary (API, frontend, Ollama, Redis) · Widow (PostgreSQL, RSS worker, backups) · NAS (optional storage).
@@ -131,7 +131,7 @@ Full reference: [API Reference](docs/API_REFERENCE.md). Interactive docs: http:/
 **Start here**
 
 - **[Documentation index](docs/DOCS_INDEX.md)** — Full list of docs.
-- **[Project overview](docs/PROJECT_OVERVIEW.md)** — What the system is and how it works (high level).
+- **[System overview](docs/SYSTEM_OVERVIEW.md)** — What the system is and how it works (high level); archived deep narrative: [PROJECT_OVERVIEW (archive)](docs/_archive/retired_root_docs_2026_03/PROJECT_OVERVIEW.md).
 - **[Architecture and operations](docs/ARCHITECTURE_AND_OPERATIONS.md)** — Deployment, DB, Widow, troubleshooting.
 
 **Reference**
@@ -154,11 +154,15 @@ Full reference: [API Reference](docs/API_REFERENCE.md). Interactive docs: http:/
 
 ## System requirements
 
-- Docker and Docker Compose  
+- **PostgreSQL** reachable from the app (typically Widow; see [ARCHITECTURE_AND_OPERATIONS.md](docs/ARCHITECTURE_AND_OPERATIONS.md))  
+- **Python 3.10+** with `uv` (see [SETUP_ENV_AND_RUNTIME.md](docs/SETUP_ENV_AND_RUNTIME.md))  
+- **Node.js** for the Vite frontend  
 - 8 GB RAM minimum (16 GB recommended for LLM)  
 - 20 GB disk space  
 - Internet for RSS feeds  
 - Ollama with Llama 3.1 8B (or configured model)  
+
+Docker is **not** part of the default stack; an old Compose bundle lives under [`docs/archive/docker_stack/`](docs/archive/docker_stack/) for reference only.
 
 ---
 

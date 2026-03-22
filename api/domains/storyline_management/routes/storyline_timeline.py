@@ -25,6 +25,7 @@ _CHRONO_COL_DEFAULTS: dict[str, str] = {
     "extraction_confidence": "NULL",
     "canonical_event_id": "NULL",
     "source_article_id": "NULL",
+    "temporal_status": "'unknown'",
 }
 
 
@@ -61,6 +62,7 @@ def _chronological_events_select_sql(available: set[str]) -> str:
         "extraction_confidence",
         "canonical_event_id",
         "source_article_id",
+        "temporal_status",
     ]
     parts: list[str] = []
     for name in order:
@@ -420,6 +422,8 @@ async def list_domain_events(
         events = []
         for r in cursor.fetchall():
             canon = r[12]
+            source_article_id = r[13]
+            temporal_status = r[14] if len(r) > 14 else "unknown"
             events.append(
                 {
                     "id": r[0],
@@ -438,7 +442,8 @@ async def list_domain_events(
                     "dedup_role": "merged_into_other"
                     if canon is not None
                     else "primary_or_unmerged",
-                    "source_article_id": r[13],
+                    "source_article_id": source_article_id,
+                    "temporal_status": temporal_status,
                 }
             )
 

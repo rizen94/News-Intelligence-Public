@@ -2,45 +2,34 @@
 Document processing service — PDF parsing, text extraction, section identification,
 entity tagging, and key findings extraction.
 
-Downloads PDFs from source_url, extracts text via pdfplumber, identifies document
-sections (headings, paragraphs, tables), runs entity extraction and LLM-based
-key findings extraction, then stores everything in processed_documents and
-document_intelligence.
+HTTP download and landing-page PDF resolution live in document_download_service.
+This module extracts text via pdfplumber, identifies document sections (headings,
+paragraphs, tables), runs entity extraction and LLM-based key findings extraction,
+then stores everything in processed_documents and document_intelligence.
 
 T3.2 of V6_QUALITY_FIRST_TODO.md. See docs/V6_QUALITY_FIRST_UPGRADE_PLAN.md.
 """
 
+import hashlib
 import io
 import json
 import logging
-import os
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
-from urllib.parse import urljoin
 
 from shared.database.connection import get_db_connection
 
+from services.document_download_service import fetch_pdf_from_url
+
 logger = logging.getLogger(__name__)
 
-MAX_PDF_SIZE_MB = 50
 MAX_PAGES = 200
-DOWNLOAD_TIMEOUT = 45
-DOWNLOAD_RETRIES = 2
-RETRY_BACKOFF_SEC = 5
-# Don't retry these; mark document as permanently failed so we stop re-queuing.
-# 403 is intentionally excluded: many sources return temporary bot/WAF blocks.
-PERMANENT_HTTP_CODES = (404, 410)
 # After this many failed attempts (any error), mark as permanent to avoid infinite retry
 MAX_PROCESSING_ATTEMPTS = 5
 # Process this many documents in parallel per batch (throughput vs LLM/DB load)
 BATCH_PARALLEL_WORKERS = 3
-ENABLE_BROWSER_PDF_FALLBACK = os.getenv("ENABLE_BROWSER_PDF_FALLBACK", "1").strip().lower() not in {
-    "0",
-    "false",
-    "no",
-}
 
 # Section heading heuristics: lines that are short, often bold/large, start sections
 HEADING_PATTERN = re.compile(
@@ -76,7 +65,7 @@ Text:
 
 
 # ---------------------------------------------------------------------------
-# PDF download
+# Permanent-failure policy (download HTTP details live in document_download_service)
 # ---------------------------------------------------------------------------
 
 
@@ -91,162 +80,6 @@ def _is_permanent_failure(error_message: str) -> bool:
         if str(code) in msg or ("not found" in msg and code == 404):
             return True
     return False
-
-
-def _download_pdf(
-    url: str, max_mb: int = MAX_PDF_SIZE_MB, head_first: bool = True
-) -> tuple[bytes | None, str | None]:
-    """
-    Download PDF from URL. Returns (bytes, None) or (None, error).
-    - Optional HEAD request first to fail fast on 404/403/410.
-    - Retries with backoff for timeouts and 5xx (not for 4xx except where we retry).
-    """
-    import requests
-
-    headers = {
-        "User-Agent": "Mozilla/5.0 (compatible; NewsIntelligence/1.0; +https://news-intel/document-bot)",
-        "Accept": "application/pdf,*/*",
-    }
-
-    # Fail fast on permanent HTTP errors (saves bandwidth and time)
-    if head_first:
-        try:
-            head_resp = requests.head(
-                url,
-                timeout=10,
-                allow_redirects=True,
-                headers=headers,
-            )
-            if head_resp.status_code in PERMANENT_HTTP_CODES:
-                return None, f"HTTP {head_resp.status_code} (permanent)"
-            if head_resp.status_code >= 400 and head_resp.status_code < 500:
-                return None, f"HTTP {head_resp.status_code}"
-        except requests.exceptions.Timeout:
-            return None, "HEAD timeout"
-        except requests.exceptions.RequestException as e:
-            # HEAD can fail (e.g. 405 Method Not Allowed); proceed to GET
-            logger.debug("HEAD request failed, trying GET: %s", e)
-
-    # GET with retries for timeout and 5xx only
-    last_error: str | None = None
-    for attempt in range(DOWNLOAD_RETRIES + 1):
-        try:
-            resp = requests.get(url, timeout=DOWNLOAD_TIMEOUT, stream=True, headers=headers)
-            resp.raise_for_status()
-
-            content = resp.content
-            content_type = resp.headers.get("Content-Type", "")
-            if "pdf" not in content_type.lower() and not url.lower().endswith(".pdf"):
-                if len(content) >= 5 and content[:5] != b"%PDF-":
-                    return None, f"Not a PDF (Content-Type: {content_type})"
-
-            size = len(content)
-            if size > max_mb * 1024 * 1024:
-                return None, f"PDF too large: {size / 1024 / 1024:.1f} MB (max {max_mb} MB)"
-
-            return content, None
-        except requests.exceptions.HTTPError as e:
-            if e.response is not None and e.response.status_code in PERMANENT_HTTP_CODES:
-                return None, f"HTTP {e.response.status_code} (permanent)"
-            if e.response is not None and 400 <= e.response.status_code < 500:
-                return None, f"HTTP {e.response.status_code}"
-            # 5xx: retry
-            last_error = f"HTTP {e.response.status_code}" if e.response else str(e)
-        except requests.exceptions.Timeout:
-            last_error = f"Download timeout ({DOWNLOAD_TIMEOUT}s)"
-        except requests.exceptions.RequestException as e:
-            last_error = f"Download failed: {e}"
-
-        if attempt < DOWNLOAD_RETRIES:
-            time.sleep(RETRY_BACKOFF_SEC)
-
-    return None, last_error or "Download failed"
-
-
-def _resolve_pdf_url_from_landing_page(url: str, timeout: int = 20) -> str | None:
-    """Try to resolve a direct PDF URL from an HTML landing page."""
-    import requests
-
-    try:
-        resp = requests.get(
-            url,
-            timeout=timeout,
-            allow_redirects=True,
-            headers={
-                "User-Agent": "Mozilla/5.0 (compatible; NewsIntelligence/1.0; +https://news-intel/document-bot)",
-                "Accept": "text/html,application/xhtml+xml,*/*",
-            },
-        )
-        if resp.status_code >= 400:
-            return None
-        html = resp.text or ""
-        # First: explicit .pdf links
-        for m in re.finditer(r'href=["\']([^"\']+\.pdf[^"\']*)["\']', html, re.I):
-            return urljoin(resp.url or url, m.group(1))
-        # Second: common download endpoints that imply file payload
-        for m in re.finditer(
-            r'href=["\']([^"\']*(?:download|attachment|file)[^"\']*)["\']', html, re.I
-        ):
-            candidate = urljoin(resp.url or url, m.group(1))
-            if "pdf" in candidate.lower():
-                return candidate
-    except Exception as e:
-        logger.debug("Landing-page PDF resolve failed for %s: %s", url, e)
-    return None
-
-
-def _resolve_pdf_url_via_browser(url: str, timeout_ms: int = 20000) -> str | None:
-    """Browser-based fallback: render page and discover PDF links/network responses."""
-    if not ENABLE_BROWSER_PDF_FALLBACK:
-        return None
-    try:
-        from playwright.sync_api import sync_playwright
-    except ImportError:
-        logger.debug("playwright not installed; skip browser PDF fallback")
-        return None
-
-    found: list[str] = []
-    try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            try:
-                page = browser.new_page()
-
-                def _on_response(resp):
-                    try:
-                        ct = (resp.headers.get("content-type") or "").lower()
-                    except Exception:
-                        ct = ""
-                    rurl = resp.url or ""
-                    if "pdf" in ct or ".pdf" in rurl.lower():
-                        found.append(rurl)
-
-                page.on("response", _on_response)
-                page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
-                page.wait_for_timeout(2500)
-
-                if found:
-                    return found[0]
-
-                links = (
-                    page.eval_on_selector_all(
-                        "a[href]",
-                        "els => els.map(e => e.href).filter(Boolean)",
-                    )
-                    or []
-                )
-                for href in links:
-                    if ".pdf" in str(href).lower():
-                        return str(href)
-
-                html = page.content() or ""
-                for m in re.finditer(r'href=["\']([^"\']+\.pdf[^"\']*)["\']', html, re.I):
-                    return urljoin(page.url or url, m.group(1))
-            finally:
-                browser.close()
-    except Exception as e:
-        logger.debug("Browser PDF resolve failed for %s: %s", url, e)
-    return None
 
 
 # ---------------------------------------------------------------------------
@@ -311,6 +144,7 @@ def _extract_text_from_pdf(pdf_bytes: bytes, max_pages: int = MAX_PAGES) -> dict
         logger.warning("pdfplumber extraction failed: %s", e)
         return _extract_text_fallback(pdf_bytes, max_pages)
 
+    result["extraction_method"] = "pdfplumber"
     return result
 
 
@@ -336,6 +170,7 @@ def _extract_text_pymupdf(pdf_bytes: bytes, max_pages: int = MAX_PAGES) -> dict[
             "metadata": {"page_count": len(pages)},
             "total_text": "\n\n".join(all_text),
             "table_count": 0,
+            "extraction_method": "pymupdf",
         }
     except Exception as e:
         logger.debug("PyMuPDF extraction failed: %s", e)
@@ -358,6 +193,7 @@ def _extract_text_fallback(pdf_bytes: bytes, max_pages: int = MAX_PAGES) -> dict
                 "metadata": {},
                 "total_text": text,
                 "table_count": 0,
+                "extraction_method": "pdfminer",
             }
     except Exception:
         pass
@@ -609,6 +445,9 @@ def process_document(
         # Automatic extraction if not provided
         auto_extracted = False
         processing_metadata: dict[str, Any] = {"method": "manual"}
+        provenance_file_hash: str | None = None
+        provenance_file_size_bytes: int | None = None
+        provenance_extraction_method: str | None = None
         prev_attempts = 0
         if existing_metadata and isinstance(existing_metadata, dict):
             proc = existing_metadata.get("processing") or {}
@@ -635,6 +474,10 @@ def process_document(
                     processing_metadata["resolved_url"] = pdf_result.get("resolved_url")
                 if pdf_result.get("resolved_via"):
                     processing_metadata["resolved_via"] = pdf_result.get("resolved_via")
+                if pdf_result.get("file_hash"):
+                    provenance_file_hash = pdf_result.get("file_hash")
+                    provenance_file_size_bytes = pdf_result.get("file_size_bytes")
+                    provenance_extraction_method = pdf_result.get("extraction_method")
             else:
                 error_msg = pdf_result.get("error", "unknown")
                 attempts = prev_attempts + 1
@@ -654,6 +497,14 @@ def process_document(
                         attempts,
                         error_msg[:80],
                     )
+                    if "HTTP 403" in error_msg or "HTTP 404" in error_msg:
+                        logger.warning(
+                            "Document %s: repeated HTTP access failure — if many rows share "
+                            "source_type, assess that collector (RSS/HTML → PDF links, bot blocks). "
+                            "See GET /api/system_monitoring/document_sources/health and "
+                            "document_sources.automated_sources in orchestrator_governance.yaml.",
+                            document_id,
+                        )
 
         # Store results
         conn = get_db_connection()
@@ -678,6 +529,16 @@ def process_document(
                 # Store processing metadata
                 updates.append("metadata = COALESCE(metadata, '{}') || %s")
                 params.append(json.dumps({"processing": processing_metadata}))
+
+                if provenance_file_hash is not None:
+                    updates.append("file_hash = %s")
+                    params.append(provenance_file_hash)
+                if provenance_file_size_bytes is not None:
+                    updates.append("file_size_bytes = %s")
+                    params.append(provenance_file_size_bytes)
+                if provenance_extraction_method:
+                    updates.append("extraction_method = %s")
+                    params.append(provenance_extraction_method)
 
                 params.append(document_id)
                 cur.execute(
@@ -718,7 +579,7 @@ def process_document(
                     )
                     di_id = cur.fetchone()[0]
 
-                # v7: Create intelligence.contexts for each section so they join extraction/synthesis pipeline
+                # Create intelligence.contexts for each section so they join extraction/synthesis pipeline
                 # v8: domain_key from document metadata (politics/finance/science-tech) for discovery/synthesis
                 cur.execute(
                     """
@@ -788,26 +649,7 @@ def process_document(
 
 def _process_from_url(url: str, title: str) -> dict[str, Any]:
     """Download PDF from URL and extract text, sections, entities, findings."""
-    pdf_url = url
-    resolved_via: str | None = None
-    pdf_bytes, download_error = _download_pdf(pdf_url)
-    # If source URL is likely a landing page or is blocked, try to resolve a direct PDF URL.
-    should_try_resolution = bool(download_error) and any(
-        marker in download_error.lower()
-        for marker in ("not a pdf", "http 4", "timeout", "download failed")
-    )
-    if should_try_resolution:
-        resolved = _resolve_pdf_url_from_landing_page(url)
-        if resolved and resolved != url:
-            pdf_url = resolved
-            resolved_via = "html"
-            pdf_bytes, download_error = _download_pdf(pdf_url, head_first=False)
-    if should_try_resolution and download_error:
-        resolved_browser = _resolve_pdf_url_via_browser(url)
-        if resolved_browser and resolved_browser != url:
-            pdf_url = resolved_browser
-            resolved_via = "browser"
-            pdf_bytes, download_error = _download_pdf(pdf_url, head_first=False)
+    pdf_bytes, download_error, pdf_url, resolved_via = fetch_pdf_from_url(url)
     if download_error:
         return {"success": False, "error": download_error}
 
@@ -823,6 +665,12 @@ def _process_from_url(url: str, title: str) -> dict[str, Any]:
     entities = _extract_entities_from_text(total_text)
     key_findings = _extract_key_findings(title, sections)
 
+    file_hash = hashlib.sha256(pdf_bytes).hexdigest()
+    file_size_bytes = len(pdf_bytes)
+    extraction_method = extraction.get("extraction_method")
+    if not extraction_method:
+        extraction_method = "pdfplumber"
+
     return {
         "success": True,
         "resolved_url": pdf_url if pdf_url != url else None,
@@ -834,6 +682,9 @@ def _process_from_url(url: str, title: str) -> dict[str, Any]:
         "table_count": extraction.get("table_count", 0),
         "text_length": len(total_text),
         "tables": [t for page in extraction.get("pages", []) for t in page.get("tables", [])],
+        "file_hash": file_hash,
+        "file_size_bytes": file_size_bytes,
+        "extraction_method": extraction_method,
     }
 
 
@@ -884,6 +735,10 @@ def process_uploaded_pdf(
     entities = _extract_entities_from_text(total_text)
     key_findings = _extract_key_findings(title, sections)
 
+    file_hash_hex = hashlib.sha256(pdf_bytes).hexdigest()
+    file_size_bytes = len(pdf_bytes)
+    extraction_method = extraction.get("extraction_method") or "pdfplumber"
+
     # Create document record
     conn = get_db_connection()
     if not conn:
@@ -895,8 +750,9 @@ def process_uploaded_pdf(
                 """
                 INSERT INTO intelligence.processed_documents
                 (source_type, source_name, title, document_type,
-                 extracted_sections, key_findings, entities_mentioned, metadata)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                 extracted_sections, key_findings, entities_mentioned, metadata,
+                 file_hash, file_size_bytes, extraction_method)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id
                 """,
                 (
@@ -918,6 +774,9 @@ def process_uploaded_pdf(
                             }
                         }
                     ),
+                    file_hash_hex,
+                    file_size_bytes,
+                    extraction_method,
                 ),
             )
             doc_id = cur.fetchone()[0]

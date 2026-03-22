@@ -114,7 +114,7 @@ class TopicClusteringService:
             existing_topics = article.get("topics", []) or []
 
             # Limit content length for LLM
-            content_preview = content[:5000] if len(content) > 5000 else content  # v7: full-text
+            content_preview = content[:5000] if len(content) > 5000 else content  # long-form body preview
 
             # Domain-specific context so the LLM knows what matters for this domain
             domain_hint = ""

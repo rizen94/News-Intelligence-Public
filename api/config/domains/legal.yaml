@@ -13,7 +13,7 @@ is_active: false
 
 _instructions: |
   After public.domains + schema legal exist, set is_active: true and ensure
-  web/src/utils/domainHelper.ts includes 'legal'. See docs/LEGAL_DOMAIN_DEPLOYMENT.md.
+  web/src/utils/domainHelper.ts includes 'legal'. See docs/_archive/retired_root_docs_2026_03/LEGAL_DOMAIN_DEPLOYMENT.md.
 
 data_sources:
   rss:

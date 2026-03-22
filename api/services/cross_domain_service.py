@@ -16,6 +16,89 @@ logger = logging.getLogger(__name__)
 DOMAINS = ("politics", "finance", "science_tech")
 
 
+def _norm_tracked_domain_key(d: str) -> str:
+    x = str(d).lower().strip()
+    if x == "science-tech":
+        return "science_tech"
+    return x
+
+
+def _entity_profile_ids_from_row(val: Any) -> set[int]:
+    out: set[int] = set()
+    if not isinstance(val, list):
+        return out
+    for x in val:
+        if isinstance(x, int):
+            out.add(x)
+        elif isinstance(x, float) and x == int(x):
+            out.add(int(x))
+        elif isinstance(x, dict) and "id" in x:
+            try:
+                out.add(int(x["id"]))
+            except (TypeError, ValueError):
+                pass
+    return out
+
+
+def _pairwise_entity_correlations(
+    rows: list[tuple[Any, ...]],
+    target_domains: list[str],
+    *,
+    correlation_threshold: float,
+    max_rows: int = 280,
+    max_pairs: int = 150,
+) -> list[dict[str, Any]]:
+    """Distinct event pairs sharing participant entity profiles and jointly touching 2+ target domains."""
+    tset = set(target_domains)
+    parsed: list[dict[str, Any]] = []
+    for r in rows[:max_rows]:
+        event_id, _et, _name, _sd, domain_keys, key_participant = r
+        dks_raw = list(domain_keys) if domain_keys else []
+        doms = [_norm_tracked_domain_key(x) for x in dks_raw]
+        doms = [d for d in doms if d in tset]
+        ent = _entity_profile_ids_from_row(key_participant)
+        if not ent:
+            continue
+        try:
+            eid = int(event_id)
+        except (TypeError, ValueError):
+            continue
+        parsed.append({"id": eid, "domains": doms, "entities": ent})
+
+    out: list[dict[str, Any]] = []
+    seen_pairs: set[frozenset[int]] = set()
+    for i, a in enumerate(parsed):
+        for b in parsed[i + 1 :]:
+            if len(out) >= max_pairs:
+                return out
+            shared = a["entities"] & b["entities"]
+            if not shared:
+                continue
+            udom = (set(a["domains"]) | set(b["domains"])) & tset
+            if len(udom) < 2:
+                continue
+            ek = frozenset({a["id"], b["id"]})
+            if ek in seen_pairs:
+                continue
+            seen_pairs.add(ek)
+            ds = sorted(udom)
+            d1, d2 = ds[0], ds[1]
+            strength = min(1.0, 0.55 + 0.04 * min(len(shared), 8))
+            if strength < correlation_threshold:
+                continue
+            out.append(
+                {
+                    "domain_1": d1,
+                    "domain_2": d2,
+                    "event_ids": [a["id"], b["id"]],
+                    "entity_profile_ids": list(shared)[:80],
+                    "correlation_type": "entity_overlap",
+                    "correlation_strength": strength,
+                }
+            )
+    return out
+
+
 def run_cross_domain_synthesis(
     domains: list[str] | None = None,
     time_window_days: int = 30,  # v8: full-history
@@ -66,7 +149,10 @@ def run_cross_domain_synthesis(
     seen_pairs: dict[tuple, dict[str, Any]] = {}
     for r in rows:
         event_id, event_type, event_name, start_date, domain_keys, key_participant = r
-        event_domains = list(domain_keys) if isinstance(domain_keys, (list, tuple)) else []
+        event_domains = [
+            _norm_tracked_domain_key(x)
+            for x in (list(domain_keys) if isinstance(domain_keys, (list, tuple)) else [])
+        ]
         entity_ids = []
         if isinstance(key_participant, list):
             for x in key_participant:
@@ -94,6 +180,36 @@ def run_cross_domain_synthesis(
                 for eid in entity_ids:
                     if eid not in rec["entity_profile_ids"]:
                         rec["entity_profile_ids"].append(eid)
+
+    pairwise_recs = _pairwise_entity_correlations(
+        rows,
+        target_domains,
+        correlation_threshold=correlation_threshold,
+    )
+    for rec in pairwise_recs:
+        pair = tuple(sorted((rec["domain_1"], rec["domain_2"])))
+        if pair not in seen_pairs:
+            seen_pairs[pair] = {
+                "domain_1": pair[0],
+                "domain_2": pair[1],
+                "event_ids": list(rec.get("event_ids", [])),
+                "entity_profile_ids": list(rec.get("entity_profile_ids", [])),
+                "correlation_type": rec.get("correlation_type", "entity_overlap"),
+                "correlation_strength": rec.get("correlation_strength", correlation_threshold),
+            }
+        else:
+            existing = seen_pairs[pair]
+            for eid in rec.get("event_ids", []):
+                if eid not in existing["event_ids"]:
+                    existing["event_ids"].append(eid)
+            for eid in rec.get("entity_profile_ids", []):
+                if eid not in existing["entity_profile_ids"]:
+                    existing["entity_profile_ids"].append(eid)
+            if (
+                rec.get("correlation_type") == "entity_overlap"
+                and existing.get("correlation_type") == "temporal"
+            ):
+                existing["correlation_type"] = "mixed"
 
     if not seen_pairs:
         return {"success": True, "correlation_id": None, "correlations": [], "meta_storylines": []}

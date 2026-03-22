@@ -5,16 +5,40 @@ import { getApi } from './client';
 import { getCurrentDomain } from '../../utils/domainHelper';
 import Logger from '../../utils/logger';
 
+const ARTICLE_LIST_PARAM_KEYS = [
+  'search',
+  'source_domain',
+  'sort',
+  'hours',
+  'processing_status',
+  'quality_first',
+  'max_quality_tier',
+  'sentiment',
+  'min_quality_score',
+  'max_quality_score',
+] as const;
+
 export const articlesApi = {
-  async getArticles(params: any = {}, domain?: string) {
+  async getArticles(params: Record<string, unknown> = {}, domain?: string) {
     try {
       const domainKey = domain || getCurrentDomain();
-      const requestParams: any = { ...params };
-      if (params.page !== undefined && params.limit !== undefined) {
-        requestParams.offset = (params.page - 1) * params.limit;
-        delete requestParams.page;
+      const limit = Number(params.limit) > 0 ? Number(params.limit) : 50;
+      const page = Number(params.page) > 0 ? Number(params.page) : 1;
+      const requestParams: Record<string, unknown> = {
+        limit,
+        offset: (page - 1) * limit,
+      };
+
+      for (const key of ARTICLE_LIST_PARAM_KEYS) {
+        const v = params[key];
+        if (v === undefined || v === null || v === '') continue;
+        requestParams[key] = v;
       }
-      if (params.hours !== undefined) requestParams.hours = params.hours;
+
+      if (params.unlinked === true) {
+        requestParams.unlinked = true;
+      }
+
       const response = await getApi().get(`/api/${domainKey}/articles`, {
         params: requestParams,
       });
@@ -22,6 +46,23 @@ export const articlesApi = {
     } catch (error) {
       Logger.apiError('Failed to fetch articles', error as Error);
       return { success: false, error: (error as any).message };
+    }
+  },
+
+  async getArticleSources(domain?: string) {
+    try {
+      const domainKey = domain || getCurrentDomain();
+      const response = await getApi().get(
+        `/api/${domainKey}/articles/source_options`
+      );
+      return response.data;
+    } catch (error) {
+      Logger.apiError('Failed to fetch article sources', error as Error);
+      return {
+        success: false,
+        data: { sources: [] as string[] },
+        error: (error as any).message,
+      };
     }
   },
 

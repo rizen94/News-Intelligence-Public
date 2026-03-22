@@ -1,6 +1,6 @@
 # Codebase map (where things live)
 
-**Audience:** Developers and reviewers cloning the repo. Use this with [CODE_REVIEW_AND_RUN_CAVEATS.md](CODE_REVIEW_AND_RUN_CAVEATS.md), [PROJECT_OVERVIEW.md](PROJECT_OVERVIEW.md), and [AGENTS.md](../AGENTS.md).
+**Audience:** Developers and reviewers cloning the repo. Use this with [CODE_REVIEW_AND_RUN_CAVEATS.md](CODE_REVIEW_AND_RUN_CAVEATS.md), [SYSTEM_OVERVIEW.md](SYSTEM_OVERVIEW.md), and [AGENTS.md](../AGENTS.md).
 
 ---
 
@@ -8,7 +8,7 @@
 
 1. **[README.md](../README.md)** — product summary, reviewer section, doc links.
 2. **[AGENTS.md](../AGENTS.md)** — terminology (`storylines`, `domains`, `/api/...`), entry points.
-3. **[PROJECT_OVERVIEW.md](PROJECT_OVERVIEW.md)** — end-to-end behavior and v8 pipeline conceptually.
+3. **[SYSTEM_OVERVIEW.md](SYSTEM_OVERVIEW.md)** — routes, services, and data flow; stakeholder-style overview (archived): [_archive/retired_root_docs_2026_03/PROJECT_OVERVIEW.md](_archive/retired_root_docs_2026_03/PROJECT_OVERVIEW.md).
 4. **[DATA_FLOW_ARCHITECTURE.md](DATA_FLOW_ARCHITECTURE.md)** — intelligence cascade (article → contexts → claims → storylines → editorial).
 5. **[SYSTEM_OVERVIEW.md](SYSTEM_OVERVIEW.md)** — API routes and web areas (long but authoritative).
 6. **[PIPELINE_AND_ORDER_OF_OPERATIONS.md](PIPELINE_AND_ORDER_OF_OPERATIONS.md)** — automation phases and dependencies (follow-along with code).
@@ -82,7 +82,7 @@ Shared cross-domain schema lives in PostgreSQL **`intelligence`**; per-domain co
 
 ## Tests and scripts
 
-- **`api/tests/`** — API and import smoke tests (DB often required for full suite).
+- **`tests/`** (repo root) — **CI pytest** target. Legacy tree was moved to **`api/_archived/legacy_pytest_tree_2026_03/`** (unmaintained vs CI).
 - **`scripts/`** — Operational scripts; **`api/scripts/`** — migrations, registers, verifiers.
 
 See [DOCS_INDEX.md](DOCS_INDEX.md) for the full documentation set.

@@ -75,6 +75,58 @@ def _terms_for_topic_and_query(topic: str, query: str | None) -> set[str]:
     return terms
 
 
+# Words immediately before "oil …" that indicate non–crude-oil meaning (cooking, cosmetics, etc.)
+_OIL_NON_ENERGY_PREFIX_WORDS: frozenset[str] = frozenset(
+    {
+        "cooking",
+        "olive",
+        "motor",
+        "essential",
+        "vegetable",
+        "coconut",
+        "fish",
+        "hemp",
+        "palm",
+        "seed",
+        "canola",
+        "sunflower",
+        "linseed",
+    }
+)
+
+
+def _anchor_term_matches(
+    text: str, anchor: str, *, commodity: str | None = None
+) -> bool:
+    """
+    Single token: whole word only. Multi-word phrase: bounded match so
+    'oil price' is not a prefix match inside 'oil prices' unless the anchor is that phrase.
+
+    For commodity ``oil``, phrases starting with ``oil `` (except ``crude oil``) are rejected
+    when the word immediately before the phrase is a non-energy oil (e.g. cooking, olive).
+    """
+    a = (anchor or "").strip().lower()
+    if not a or not text:
+        return False
+    lower = text.lower()
+    if " " in a:
+        pattern = r"(?<![a-z0-9])" + re.escape(a) + r"(?![a-z0-9])"
+        m = re.search(pattern, lower)
+        if not m:
+            return False
+        if (
+            (commodity or "").lower() == "oil"
+            and a.startswith("oil ")
+            and a != "crude oil"
+        ):
+            window = lower[max(0, m.start() - 60) : m.start()]
+            words = re.findall(r"[a-z]+", window)
+            if words and words[-1] in _OIL_NON_ENERGY_PREFIX_WORDS:
+                return False
+        return True
+    return bool(re.search(r"\b" + re.escape(a) + r"\b", lower))
+
+
 def _term_matches(text: str, term: str, topic: str | None = None) -> bool:
     """True if term appears in text. Terms in word_boundary set match as whole word only (e.g. gold vs Goldman Sachs)."""
     if not text or not term:
@@ -138,13 +190,26 @@ def _financial_score(text: str | None, commodity: str) -> float:
 
 def is_relevant_to_commodity(text: str | None, commodity: str) -> bool:
     """
-    Return True if text (e.g. event_name) is relevant to the given commodity.
-    Uses registry topic_keywords and word_boundary when commodity is in registry;
-    otherwise fallback dict. "gold" matches as whole word so "Goldman Sachs" is not gold-the-metal.
+    Return True if text (e.g. event_name, article body) is relevant to the given commodity.
+    For registry commodities with relevance_anchors, at least one anchor must match (stops
+    silver/copper stories from matching gold via shared terms like 'ounce' or 'precious metal').
+    Otherwise uses topic_keywords + word_boundary scoring.
     """
     if not text or not commodity:
         return False
     topic_lower = (commodity or "").lower()
+    try:
+        from domains.finance.commodity_registry import get_commodity_ids, get_relevance_anchors
+
+        in_registry = topic_lower in [x.lower() for x in get_commodity_ids()]
+        if in_registry:
+            anchors = get_relevance_anchors(topic_lower)
+            if anchors:
+                return any(
+                    _anchor_term_matches(text, a, commodity=topic_lower) for a in anchors
+                )
+    except Exception:
+        pass
     terms = set(_get_topic_keywords(topic_lower))
     if not terms:
         return True
@@ -192,6 +257,8 @@ def get_shortlist(
             content = a.get("content") or a.get("summary") or ""
             snippet = (content or title)[:400]
             combined = f"{title} {snippet}"
+            if is_registry_commodity and not is_relevant_to_commodity(combined, topic_lower):
+                continue
             if is_registry_commodity and _matches_non_financial_exclude(combined, topic_lower):
                 continue
             topic_score = _score_text(title, terms, topic=topic) * 2.0 + _score_text(
@@ -245,6 +312,10 @@ def get_shortlist(
                     title = (title or "")[:500]
                     snippet = (content or "")[:400]
                     combined = f"{title} {snippet}"
+                    if is_registry_commodity and not is_relevant_to_commodity(
+                        combined, topic_lower
+                    ):
+                        continue
                     if is_registry_commodity and _matches_non_financial_exclude(
                         combined, topic_lower
                     ):
@@ -335,6 +406,8 @@ def get_supply_chain_items(
             title = (title or "")[:500]
             snippet = (content or "")[:400]
             combined = f"{title} {snippet}"
+            if is_registry_commodity and not is_relevant_to_commodity(combined, topic_lower):
+                continue
             if is_registry_commodity and _matches_non_financial_exclude(combined, topic_lower):
                 continue
             topic_score = _score_text(title, terms, topic=topic_lower) * 2.0 + _score_text(

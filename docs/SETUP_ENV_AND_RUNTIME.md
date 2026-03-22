@@ -16,7 +16,7 @@ From the project root:
 ./restart_system.sh        # after .env changes (e.g. API keys)
 ```
 
-- **Frontend:** often `http://localhost:3000` (dev) or port 80 via Docker/proxy.
+- **Frontend:** typically `http://localhost:3000` (Vite dev) or your reverse proxy in production.
 - **API:** `http://localhost:8000` — health: `/api/system_monitoring/health`.
 - **Ollama:** `http://localhost:11434` (user-level `ollama serve` — see below).
 
@@ -31,7 +31,7 @@ From the project root:
   source .venv/bin/activate   # or ./activate.sh if present
   ```
 - **Node.js 16+** for `web/` (`npm install`, `npm run dev` / build).
-- **Redis** — optional; Docker compose or host install if you use Redis features.
+- **Redis** — optional; host install if you use Redis features.
 - **Ollama** — local LLM inference; models pulled to `~/.ollama/models`.
 - **NVIDIA GPU** — optional; used for CUDA PyTorch workloads and Ollama GPU inference. Driver/CUDA per machine.
 
@@ -68,7 +68,7 @@ ChromaDB (evidence embeddings) needs a **Python 3.11+** venv and successful `uv 
 - **Start:** `./scripts/start_ollama_optimized.sh` (recommended) or `ollama serve` with tunables:
   - `OLLAMA_NUM_PARALLEL`, `OLLAMA_MAX_LOADED_MODELS`, `OLLAMA_KEEP_ALIVE`, etc.
 - **Models:** align tags with `api/config/settings.py` `MODELS` and `ollama pull`. Refresh weights: `PYTHONPATH=api uv run python api/scripts/refresh_ollama_models.py` (see [scripts/SCRIPTS_INDEX.md](../scripts/SCRIPTS_INDEX.md)).
-- **Optional large model:** narrative finisher (~70B) — [STORYLINE_70B_NARRATIVE_FINISHER.md](STORYLINE_70B_NARRATIVE_FINISHER.md).
+- **Optional large model:** narrative finisher (~70B) — [_archive/retired_root_docs_2026_03/STORYLINE_70B_NARRATIVE_FINISHER.md](_archive/retired_root_docs_2026_03/STORYLINE_70B_NARRATIVE_FINISHER.md).
 
 Full historical detail (storage sizes, extra commands): [_archive/consolidated/OLLAMA_SETUP.md](_archive/consolidated/OLLAMA_SETUP.md).
 

@@ -37,6 +37,7 @@ export { getAPIConnectionManager };
 class APIService {
   // Articles
   getArticles = articlesApi.getArticles;
+  getArticleSources = articlesApi.getArticleSources;
   getArticle = articlesApi.getArticle;
   deleteArticle = articlesApi.deleteArticle;
   deleteArticlesBulk = articlesApi.deleteArticlesBulk;
@@ -101,6 +102,8 @@ class APIService {
   getMegaStorylines = storylinesApi.getMegaStorylines;
   mergeStorylines = storylinesApi.mergeStorylines;
   getRelatedStorylines = storylinesApi.getRelatedStorylines;
+  getRelatedCrossDomainStorylines =
+    storylinesApi.getRelatedCrossDomainStorylines;
   analyzeStoryline = storylinesApi.analyzeStoryline;
   getAvailableArticles = storylinesApi.getAvailableArticles;
   addArticleToStoryline = storylinesApi.addArticleToStoryline;
@@ -188,6 +191,7 @@ class APIService {
   getProcessRunSummary = monitoringApi.getProcessRunSummary;
   getAutomationStatus = monitoringApi.getAutomationStatus;
   getBacklogStatus = monitoringApi.getBacklogStatus;
+  getDocumentSourcesHealth = monitoringApi.getDocumentSourcesHealth;
   getDatabaseConnections = monitoringApi.getDatabaseConnections;
   triggerPhase = monitoringApi.triggerPhase;
   triggerPipeline = monitoringApi.triggerPipeline;

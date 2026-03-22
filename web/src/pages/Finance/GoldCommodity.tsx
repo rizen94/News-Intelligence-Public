@@ -276,9 +276,14 @@ export default function GoldCommodity() {
       <Card variant='outlined' sx={{ mb: 3 }}>
         <CardHeader
           title='Geographic intelligence'
-          subheader='Event density by region'
+          subheader='Tracked finance events for gold with a mappable region (see map note below).'
         />
         <CardContent>
+          {!loading && geoEvents.events.length === 0 && (
+            <Typography variant='body2' color='text.secondary' sx={{ mb: 2 }}>
+              No gold-filtered events with geographic scope in this window yet.
+            </Typography>
+          )}
           {selectedCountry && (
             <Chip
               label={`Filter: ${selectedCountry}`}

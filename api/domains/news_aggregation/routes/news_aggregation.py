@@ -429,6 +429,17 @@ async def get_domain_articles(
     max_quality_tier: int | None = Query(
         None, ge=1, le=4, description="Only articles with quality_tier <= this (1=best, 4=worst)"
     ),
+    sort: str | None = Query(
+        "date",
+        description="Sort: date, title, source_domain, quality, relevance",
+    ),
+    sentiment: str | None = Query(None, description="Filter by sentiment_label (case-insensitive)"),
+    min_quality_score: float | None = Query(
+        None, ge=0.0, le=1.0, description="Minimum quality_score (0–1)"
+    ),
+    max_quality_score: float | None = Query(
+        None, ge=0.0, le=1.0, description="Maximum quality_score (0–1)"
+    ),
 ):
     """
     Get articles for a specific domain with optional filtering and pagination.
@@ -443,10 +454,10 @@ async def get_domain_articles(
         # Create domain-aware service
         article_service = ArticleService(domain=domain)
 
-        # Build filters
-        filters = {}
-        if source_domain:
-            filters["source_domain"] = source_domain
+        # Build filters (search / sort / quality / sentiment applied in SQL before LIMIT)
+        filters: dict[str, Any] = {}
+        if source_domain and str(source_domain).strip():
+            filters["source_domain"] = str(source_domain).strip()
         if processing_status:
             filters["processing_status"] = processing_status
         if hours:
@@ -459,22 +470,19 @@ async def get_domain_articles(
             filters["quality_first"] = True
         if max_quality_tier is not None:
             filters["max_quality_tier"] = max_quality_tier
+        if search and str(search).strip():
+            filters["search"] = str(search).strip()
+        if sort and str(sort).strip():
+            filters["sort"] = str(sort).strip()
+        if sentiment and str(sentiment).strip():
+            filters["sentiment"] = str(sentiment).strip()
+        if min_quality_score is not None:
+            filters["min_quality_score"] = min_quality_score
+        if max_quality_score is not None:
+            filters["max_quality_score"] = max_quality_score
 
         # Get articles
         result = article_service.get_articles(limit=limit, offset=offset, filters=filters)
-
-        # Apply search filter if provided (post-query for now, can be optimized)
-        if search:
-            articles = result["data"]["articles"]
-            search_lower = search.lower()
-            filtered_articles = [
-                a
-                for a in articles
-                if search_lower in (a.get("title", "") or "").lower()
-                or search_lower in (a.get("content", "") or "").lower()
-            ]
-            result["data"]["articles"] = filtered_articles
-            result["data"]["count"] = len(filtered_articles)
 
         return result
 
@@ -484,6 +492,24 @@ async def get_domain_articles(
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Error fetching articles for domain {domain}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{domain}/articles/source_options")
+async def get_domain_article_source_options(
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
+):
+    """Distinct source_domain values for article list filters (dropdown)."""
+    try:
+        if not validate_domain(domain):
+            raise HTTPException(status_code=400, detail=f"Invalid or inactive domain: {domain}")
+        article_service = ArticleService(domain=domain)
+        sources = article_service.get_distinct_source_domains(limit=400)
+        return {"success": True, "data": {"sources": sources, "domain": domain}}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error listing article sources for domain {domain}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 

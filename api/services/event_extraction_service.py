@@ -11,7 +11,7 @@ import hashlib
 import json
 import logging
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
 from shared.services.llm_service import LLMService, ModelType
@@ -119,6 +119,20 @@ def compute_event_fingerprint(
     ]
     raw = "::".join(parts)
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:64]
+
+
+def compute_temporal_status(resolved_date: date | None, pub_date: datetime | None) -> str:
+    """
+    occurred: event date is on or before the source article's publication calendar date.
+    scheduled: event date is strictly after publication date (e.g. upcoming payment date).
+    unknown: missing event date or publication date.
+    """
+    if resolved_date is None or pub_date is None:
+        return "unknown"
+    pub_d = pub_date.date() if isinstance(pub_date, datetime) else pub_date
+    if resolved_date > pub_d:
+        return "scheduled"
+    return "occurred"
 
 
 class EventExtractionService:
@@ -253,6 +267,8 @@ class EventExtractionService:
             resolved_date.isoformat() if resolved_date else None,
         )
 
+        temporal_status = compute_temporal_status(resolved_date, pub_date)
+
         return {
             "event_id": str(uuid.uuid4()),
             "storyline_id": storyline_id or "",
@@ -277,6 +293,7 @@ class EventExtractionService:
             "continuation_signals": json.dumps(continuation_signals),
             "date_precision": date_precision,
             "event_sequence_position": sequence,
+            "temporal_status": temporal_status,
         }
 
     async def save_events(self, events: list[dict[str, Any]], conn) -> int:
@@ -297,7 +314,7 @@ class EventExtractionService:
                         extraction_model, extraction_confidence, importance_score,
                         location, entities, event_fingerprint, source_count,
                         key_actors, outcome, is_ongoing, continuation_signals,
-                        date_precision, event_sequence_position
+                        date_precision, event_sequence_position, temporal_status
                     ) VALUES (
                         %(event_id)s, %(storyline_id)s, %(title)s, %(description)s,
                         %(event_type)s, %(actual_event_date)s,
@@ -308,7 +325,7 @@ class EventExtractionService:
                         %(event_fingerprint)s, %(source_count)s,
                         %(key_actors)s, %(outcome)s, %(is_ongoing)s,
                         %(continuation_signals)s, %(date_precision)s,
-                        %(event_sequence_position)s
+                        %(event_sequence_position)s, %(temporal_status)s
                     )
                     ON CONFLICT (event_id) DO NOTHING
                 """,

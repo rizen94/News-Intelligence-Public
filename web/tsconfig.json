@@ -62,8 +62,7 @@
     "build",
     "dist",
     "public",
-    "src/_archived_interface",
-    "src/pages/Intelligence"
+    "src/_archived_duplicates"
   ],
   "ts-node": {
     "esm": true

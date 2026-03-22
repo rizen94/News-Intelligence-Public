@@ -110,6 +110,19 @@ def get_non_financial_exclude(commodity_id: str) -> list[str]:
     return list(cfg.get("non_financial_exclude") or [])
 
 
+def get_relevance_anchors(commodity_id: str) -> list[str]:
+    """
+    Phrases/terms at least one of which must appear for commodity-scoped news, supply-chain,
+    and geo/regulatory event filtering. Keeps shared scoring terms (e.g. 'ounce', 'precious metal')
+    from admitting the wrong metal.
+    """
+    cfg = get_commodity_config(commodity_id)
+    if not cfg:
+        return []
+    raw = cfg.get("relevance_anchors") or []
+    return [str(x).strip().lower() for x in raw if str(x).strip()]
+
+
 def get_commodity_list_for_api() -> list[dict[str, Any]]:
     """Minimal list for GET /{domain}/finance/commodities: [{ id, label }, ...]."""
     reg = _load_registry()
@@ -121,14 +134,16 @@ def get_commodity_list_for_api() -> list[dict[str, Any]]:
 
 
 def get_fred_series_id(commodity_id: str) -> str | None:
-    """FRED series ID for this commodity: from registry fred_series_id, then env FRED_{ID}_SERIES_ID."""
-    cfg = get_commodity_config(commodity_id)
+    """FRED series ID: env FRED_{ID}_SERIES_ID wins when set; else registry fred_series_id."""
+    cid = (commodity_id or "").lower()
+    cfg = get_commodity_config(cid)
     if not cfg:
         return None
+    env_key = "FRED_" + cid.upper().replace("-", "_") + "_SERIES_ID"
+    env_sid = (os.environ.get(env_key) or "").strip()
+    if env_sid:
+        return env_sid
     sid = (cfg.get("fred_series_id") or "").strip()
-    if not sid:
-        env_key = "FRED_" + (commodity_id or "").upper().replace("-", "_") + "_SERIES_ID"
-        sid = (os.environ.get(env_key) or "").strip()
     return sid or None
 
 

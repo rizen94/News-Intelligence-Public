@@ -1566,7 +1566,7 @@ def _extract_timeline_events_from_articles(
                         source, url, importance_score, event_type, location, entities, tags,
                         ml_generated, confidence_score, source_article_ids, created_at, updated_at
                     ) VALUES (
-                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
                     ) ON CONFLICT (event_id) DO UPDATE SET
                         title = EXCLUDED.title,
                         description = EXCLUDED.description,

@@ -693,67 +693,30 @@ async def get_gold_authority(
 async def get_gold_geo_events(
     domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     limit: int = Query(50, ge=1, le=200),
+    include_cross_domain: bool = Query(False),
+    include_map_overlays: bool = Query(True),
+    include_supply_chain_geo: bool = Query(False),
 ):
-    """Finance-domain tracked events relevant to gold (event_name/scope matched to gold topic keywords)."""
+    """Tracked events relevant to gold for the choropleth (same assembly as commodity/geo-events)."""
     _check_domain(domain)
-    conn = get_db_connection()
-    if not conn:
-        raise HTTPException(status_code=503, detail="Database unavailable")
     try:
-        fetch_limit = limit * 3
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT id, event_type, event_name, start_date, end_date, geographic_scope, domain_keys
-                FROM intelligence.tracked_events
-                WHERE %s = ANY(domain_keys)
-                ORDER BY start_date DESC NULLS LAST
-                LIMIT %s
-                """,
-                (domain, fetch_limit),
-            )
-            rows = cur.fetchall()
-        conn.close()
-        events = [
-            {
-                "id": r[0],
-                "event_type": r[1],
-                "event_name": r[2],
-                "start_date": str(r[3]) if r[3] else None,
-                "end_date": str(r[4]) if r[4] else None,
-                "geographic_scope": r[5],
-                "domain_keys": list(r[6]) if r[6] else [],
-            }
-            for r in rows
-        ]
-        from domains.finance.news_orchestrator import is_relevant_to_commodity
-
-        combined = [
-            (ev, (ev.get("event_name") or "") + " " + (ev.get("geographic_scope") or ""))
-            for ev in events
-        ]
-        events = [ev for ev, text in combined if is_relevant_to_commodity(text, "gold")][:limit]
-        by_region = {}
-        for ev in events:
-            scope = (ev.get("geographic_scope") or "").strip()
-            if not scope:
-                continue
-            for part in scope.replace(",", " ").split():
-                region = part.strip()
-                if len(region) < 2:
-                    continue
-                by_region.setdefault(region, []).append(ev["id"])
+        data = _commodity_geo_events_assemble(
+            domain,
+            limit,
+            "gold",
+            include_cross_domain=include_cross_domain,
+            include_map_overlays=include_map_overlays,
+            include_supply_chain_geo=include_supply_chain_geo,
+        )
         return {
             "success": True,
-            "data": {"events": events, "by_region": by_region},
+            "data": data,
             "timestamp": datetime.now().isoformat(),
         }
+    except RuntimeError:
+        raise HTTPException(status_code=503, detail="Database unavailable")
     except Exception as e:
         logger.error(f"Error fetching gold geo-events: {e}", exc_info=True)
-        try:
-            conn.close()
-        except Exception:
-            pass
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -811,7 +774,7 @@ async def get_commodity_news(
     hours: int = Query(168, ge=24, le=720),
     max_items: int = Query(20, ge=1, le=50),
 ):
-    """Commodity-relevant news and contexts (financial relevance filter applied)."""
+    """Commodity-relevant news and contexts; registry commodities require relevance_anchors match."""
     _check_domain(domain)
     _validate_commodity(commodity)
     try:
@@ -839,7 +802,7 @@ async def get_commodity_supply_chain(
     hours: int = Query(168, ge=24, le=720),
     max_items: int = Query(15, ge=1, le=50),
 ):
-    """Commodity-relevant contexts (mining, EDGAR, supply-chain). Financial relevance filter applied."""
+    """Commodity-relevant contexts (mining, EDGAR, supply-chain); anchors + financial relevance."""
     _check_domain(domain)
     _validate_commodity(commodity)
     try:
@@ -881,23 +844,46 @@ async def get_commodity_history(
 
             obs = get_history(days=days, fetch_if_empty=fetch_if_empty)
         else:
+            from config.settings import FRED_API_KEY
+            from domains.finance.commodity_fetcher import fetch_commodity
             from domains.finance.data_sources.fred_commodity import (
                 fetch_commodity_history_from_fred,
+                get_stored_fred_commodity_history,
+            )
+            from domains.finance.history_staleness import (
+                bounded_refresh_start_end,
+                observations_stale,
             )
 
             end_dt = datetime.now(timezone.utc).date()
             start_dt = end_dt - timedelta(days=max(1, days))
             start = start_dt.strftime("%Y-%m-%d")
             end = end_dt.strftime("%Y-%m-%d")
-            fred_result = fetch_commodity_history_from_fred(cid, start=start, end=end, store=False)
-            if fred_result.success and fred_result.data:
-                obs = fred_result.data
-            elif get_metals_dev(cid):
-                from domains.finance.commodity_store import get_manual_history
 
-                obs = get_manual_history(cid, days=days)
-            else:
-                obs = []
+            def _non_gold_history() -> list[dict]:
+                fred_result = fetch_commodity_history_from_fred(
+                    cid, start=start, end=end, store=False
+                )
+                if fred_result.success and fred_result.data:
+                    return fred_result.data
+                stored = get_stored_fred_commodity_history(cid, start, end)
+                if stored:
+                    return stored
+                if get_metals_dev(cid):
+                    from domains.finance.commodity_store import get_manual_history
+
+                    return get_manual_history(cid, days=days)
+                return []
+
+            obs = _non_gold_history()
+            if not obs and fetch_if_empty and (FRED_API_KEY or get_metals_dev(cid)):
+                fetch_commodity(cid, start=start, end=end, store=True)
+                obs = _non_gold_history()
+            elif obs and fetch_if_empty and (FRED_API_KEY or get_metals_dev(cid)):
+                if observations_stale(obs):
+                    rs, re = bounded_refresh_start_end(start, end)
+                    fetch_commodity(cid, start=rs, end=re, store=True)
+                    obs = _non_gold_history()
         return {
             "success": True,
             "data": {"observations": obs, "days": days},
@@ -905,6 +891,59 @@ async def get_commodity_history(
         }
     except Exception as e:
         logger.error("Error fetching %s history: %s", commodity, e, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/{domain}/finance/commodity/{commodity}/fetch")
+async def trigger_commodity_price_fetch(
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
+    commodity: str = Path(..., description="Registry commodity id (gold, silver, oil, gas, ...)"),
+    days: int = Query(365, ge=7, le=3650, description="Date range to pull and store"),
+):
+    """
+    Manually collect prices for one commodity and persist (FRED store, gold amalgamator, or metals.dev fallback).
+    Use after changing FRED series or to backfill oil/gas (FRED-only).
+    """
+    _check_domain(domain)
+    _validate_commodity(commodity)
+    cid = commodity.lower()
+    end_dt = datetime.now(timezone.utc).date()
+    start_dt = end_dt - timedelta(days=days)
+    start_s = start_dt.strftime("%Y-%m-%d")
+    end_s = end_dt.strftime("%Y-%m-%d")
+    try:
+        from domains.finance.commodity_fetcher import fetch_commodity
+
+        out = fetch_commodity(cid, start=start_s, end=end_s, store=True)
+        if out.get("unavailable"):
+            raise HTTPException(
+                status_code=503,
+                detail=out.get("message") or "Price fetch returned no data",
+            )
+        sources: dict[str, int] = {}
+        total = 0
+        for k, v in out.items():
+            if k in ("unavailable", "message"):
+                continue
+            if isinstance(v, list):
+                sources[k] = len(v)
+                total += len(v)
+        return {
+            "success": True,
+            "data": {
+                "commodity": cid,
+                "days": days,
+                "start": start_s,
+                "end": end_s,
+                "sources": sources,
+                "observations_fetched": total,
+            },
+            "timestamp": datetime.now().isoformat(),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("commodity fetch failed for %s: %s", commodity, e, exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1012,88 +1051,252 @@ async def get_commodity_authority(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def _row_to_geo_event(r: tuple[Any, ...]) -> dict[str, Any]:
+    return {
+        "id": r[0],
+        "event_type": r[1],
+        "event_name": r[2],
+        "start_date": str(r[3]) if r[3] else None,
+        "end_date": str(r[4]) if r[4] else None,
+        "geographic_scope": r[5],
+        "domain_keys": list(r[6]) if r[6] else [],
+    }
+
+
+def _commodity_geo_events_assemble(
+    path_domain: str,
+    limit: int,
+    commodity: str | None,
+    *,
+    include_cross_domain: bool = False,
+    include_map_overlays: bool = True,
+    include_supply_chain_geo: bool = False,
+) -> dict[str, Any]:
+    """Shared assembly for commodity choropleth: finance-native + optional cross-domain rows."""
+    from services.commodity_event_bridge import (
+        cross_domain_sql_domains_array,
+        event_visible_on_commodity_map,
+        geo_event_provenance,
+        load_map_overlays_for_commodity,
+        row_eligible_for_cross_domain_geo,
+    )
+    from domains.finance.commodity_registry import get_commodity_ids
+    from domains.finance.news_orchestrator import is_relevant_to_commodity
+
+    try:
+        valid_ids = [x.lower() for x in get_commodity_ids()]
+    except Exception:
+        valid_ids = ["gold", "silver", "platinum", "oil", "gas"]
+    comm_lower = (commodity or "").lower()
+    fetch_limit = limit * 6 if commodity and comm_lower in valid_ids else limit
+
+    conn = get_db_connection()
+    if not conn:
+        raise RuntimeError("Database unavailable")
+    merged: dict[int, dict[str, Any]] = {}
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, event_type, event_name, start_date, end_date, geographic_scope, domain_keys
+                FROM intelligence.tracked_events
+                WHERE %s = ANY(COALESCE(domain_keys, '{}'))
+                ORDER BY start_date DESC NULLS LAST
+                LIMIT %s
+                """,
+                (path_domain, fetch_limit),
+            )
+            for r in cur.fetchall() or []:
+                ev = _row_to_geo_event(r)
+                ev["display_source"] = geo_event_provenance(ev["domain_keys"], path_domain)
+                merged[ev["id"]] = ev
+
+            if include_cross_domain or include_supply_chain_geo:
+                xdoms = cross_domain_sql_domains_array()
+                et_allow = list(CROSS_DOMAIN_GEO_EVENT_TYPES)
+                cur.execute(
+                    """
+                    SELECT id, event_type, event_name, start_date, end_date, geographic_scope, domain_keys
+                    FROM intelligence.tracked_events
+                    WHERE COALESCE(domain_keys, '{}') && %s::text[]
+                      AND NOT (%s = ANY(COALESCE(domain_keys, '{}')))
+                      AND geographic_scope IS NOT NULL AND BTRIM(geographic_scope) != ''
+                    ORDER BY start_date DESC NULLS LAST
+                    LIMIT %s
+                    """,
+                    (xdoms, path_domain, fetch_limit * 3),
+                )
+                for r in cur.fetchall() or []:
+                    ev = _row_to_geo_event(r)
+                    if not row_eligible_for_cross_domain_geo(ev.get("event_type")):
+                        continue
+                    text = f"{ev.get('event_name') or ''} {ev.get('geographic_scope') or ''}"
+                    if commodity and comm_lower in valid_ids:
+                        if not event_visible_on_commodity_map(
+                            text,
+                            comm_lower,
+                            include_supply_chain_geo=include_supply_chain_geo,
+                        ):
+                            continue
+                    elif not (include_cross_domain or include_supply_chain_geo):
+                        continue
+                    ev["display_source"] = "cross_domain"
+                    if ev["id"] not in merged:
+                        merged[ev["id"]] = ev
+    finally:
+        conn.close()
+
+    events = list(merged.values())
+    if commodity and comm_lower in valid_ids:
+        combined = [
+            (ev, (ev.get("event_name") or "") + " " + (ev.get("geographic_scope") or ""))
+            for ev in events
+        ]
+        filtered: list[dict[str, Any]] = []
+        for ev, text in combined:
+            if ev.get("display_source") == "cross_domain":
+                filtered.append(ev)
+            elif is_relevant_to_commodity(text, comm_lower):
+                filtered.append(ev)
+        events = filtered[:limit]
+    else:
+        events = events[:limit]
+
+    by_region: dict[str, list[int]] = {}
+    for ev in events:
+        scope = (ev.get("geographic_scope") or "").strip()
+        if not scope:
+            continue
+        for part in scope.replace(",", " ").split():
+            region = part.strip()
+            if len(region) < 2:
+                continue
+            by_region.setdefault(region, []).append(ev["id"])
+
+    out: dict[str, Any] = {"events": events, "by_region": by_region}
+    if include_map_overlays and commodity and comm_lower in valid_ids:
+        out["map_overlays"] = load_map_overlays_for_commodity(comm_lower)
+    return out
+
+
 @router.get("/{domain}/finance/commodity/geo-events")
 async def get_commodity_geo_events(
     domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
     limit: int = Query(50, ge=1, le=200),
     commodity: str | None = Query(
         None,
-        description="Filter to events relevant to this commodity (gold, silver, platinum). Omit to return all finance events.",
+        description="Filter to events relevant to this commodity (gold, silver, platinum, oil, gas). Omit to return all finance-silo events.",
+    ),
+    include_cross_domain: bool = Query(
+        False,
+        description="Include politics/science-tech tracked_events with mappable scope when relevant to the commodity.",
+    ),
+    include_map_overlays: bool = Query(
+        True,
+        description="Include static reference GeoJSON (chokepoints/corridors) when commodity is set.",
+    ),
+    include_supply_chain_geo: bool = Query(
+        False,
+        description="When set with include_cross_domain, allow logistics/shipping-tagged rows with weaker keyword overlap.",
     ),
 ):
-    """Finance-domain tracked events with geographic_scope for choropleth.
-    When commodity is set (gold/silver/platinum), only events whose name/scope match that commodity's
-    topic keywords are returned, so the timeline is specific to the metal rather than all market news.
-    """
+    """Tracked events with geographic_scope for the commodity choropleth (finance-native plus optional cross-domain)."""
     _check_domain(domain)
-    conn = get_db_connection()
-    if not conn:
-        raise HTTPException(status_code=503, detail="Database unavailable")
     try:
-        # Fetch more rows if we filter by commodity so we still have enough after filtering
-        try:
-            from domains.finance.commodity_registry import get_commodity_ids
-
-            valid_ids = [x.lower() for x in get_commodity_ids()]
-        except Exception:
-            valid_ids = ["gold", "silver", "platinum"]
-        fetch_limit = limit * 3 if commodity and (commodity or "").lower() in valid_ids else limit
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT id, event_type, event_name, start_date, end_date, geographic_scope, domain_keys
-                FROM intelligence.tracked_events
-                WHERE %s = ANY(domain_keys)
-                ORDER BY start_date DESC NULLS LAST
-                LIMIT %s
-                """,
-                (domain, fetch_limit),
-            )
-            rows = cur.fetchall()
-        conn.close()
-        events = [
-            {
-                "id": r[0],
-                "event_type": r[1],
-                "event_name": r[2],
-                "start_date": str(r[3]) if r[3] else None,
-                "end_date": str(r[4]) if r[4] else None,
-                "geographic_scope": r[5],
-                "domain_keys": list(r[6]) if r[6] else [],
-            }
-            for r in rows
-        ]
-        if commodity and (commodity or "").lower() in valid_ids:
-            from domains.finance.news_orchestrator import is_relevant_to_commodity
-
-            combined = [
-                (ev, (ev.get("event_name") or "") + " " + (ev.get("geographic_scope") or ""))
-                for ev in events
-            ]
-            events = [ev for ev, text in combined if is_relevant_to_commodity(text, commodity)][
-                :limit
-            ]
-        by_region = {}
-        for ev in events:
-            scope = (ev.get("geographic_scope") or "").strip()
-            if not scope:
-                continue
-            for part in scope.replace(",", " ").split():
-                region = part.strip()
-                if len(region) < 2:
-                    continue
-                by_region.setdefault(region, []).append(ev["id"])
+        data = _commodity_geo_events_assemble(
+            domain,
+            limit,
+            commodity,
+            include_cross_domain=include_cross_domain,
+            include_map_overlays=include_map_overlays,
+            include_supply_chain_geo=include_supply_chain_geo,
+        )
         return {
             "success": True,
-            "data": {"events": events, "by_region": by_region},
+            "data": data,
             "timestamp": datetime.now().isoformat(),
         }
+    except RuntimeError:
+        raise HTTPException(status_code=503, detail="Database unavailable")
     except Exception as e:
         logger.error(f"Error fetching commodity geo-events: {e}", exc_info=True)
-        try:
-            conn.close()
-        except Exception:
-            pass
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{domain}/finance/commodity/{commodity}/cross-domain-events")
+async def get_commodity_cross_domain_events(
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
+    commodity: str = Path(..., description="Commodity id from registry"),
+    limit: int = Query(30, ge=1, le=100),
+):
+    """Cross-domain tracked_events relevant to a commodity (subset of geo-events assembly)."""
+    _check_domain(domain)
+    _validate_commodity(commodity)
+    try:
+        data = _commodity_geo_events_assemble(
+            domain,
+            limit,
+            commodity,
+            include_cross_domain=True,
+            include_map_overlays=False,
+            include_supply_chain_geo=True,
+        )
+        cross_only = [e for e in data["events"] if e.get("display_source") == "cross_domain"]
+        return {
+            "success": True,
+            "data": {"events": cross_only, "by_region": data.get("by_region", {})},
+            "timestamp": datetime.now().isoformat(),
+        }
+    except RuntimeError:
+        raise HTTPException(status_code=503, detail="Database unavailable")
+    except Exception as e:
+        logger.error("get_commodity_cross_domain_events: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{domain}/finance/commodity/{commodity}/context-lens")
+async def get_commodity_context_lens(
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
+    commodity: str = Path(..., description="Commodity id from registry"),
+    limit: int = Query(6, ge=1, le=15),
+):
+    """Short narrative tying recent cross-domain tracked_events to this commodity (template + cited ids)."""
+    _check_domain(domain)
+    _validate_commodity(commodity)
+    try:
+        data = _commodity_geo_events_assemble(
+            domain,
+            max(limit * 5, 24),
+            commodity,
+            include_cross_domain=True,
+            include_map_overlays=False,
+            include_supply_chain_geo=True,
+        )
+        cross = [e for e in data["events"] if e.get("display_source") == "cross_domain"][:limit]
+        if not cross:
+            lens_text = (
+                f"No cross-domain tracked events with geographic scope matched this commodity in the "
+                f"recent window. Finance-tagged events may still appear on the map."
+            )
+        else:
+            bits = [f"{e.get('event_name') or 'Event'} (#{e['id']})" for e in cross]
+            lens_text = (
+                f"Cross-domain context for {commodity}: "
+                + "; ".join(bits)
+                + ". Use as background only — verify against prices and primary reporting."
+            )
+        return {
+            "success": True,
+            "data": {
+                "lens_text": lens_text,
+                "cited_event_ids": [e["id"] for e in cross],
+            },
+            "timestamp": datetime.now().isoformat(),
+        }
+    except RuntimeError:
+        raise HTTPException(status_code=503, detail="Database unavailable")
+    except Exception as e:
+        logger.error("get_commodity_context_lens: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1123,7 +1326,7 @@ async def get_commodity_regulatory_events(
             reg_ids = [x.lower() for x in get_commodity_ids()]
         except Exception:
             reg_ids = ["gold", "silver", "platinum"]
-        fetch_limit = limit * 3 if commodity and (commodity or "").lower() in reg_ids else limit
+        fetch_limit = limit * 6 if commodity and (commodity or "").lower() in reg_ids else limit
         with conn.cursor() as cur:
             cur.execute(
                 """

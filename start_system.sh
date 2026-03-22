@@ -323,8 +323,19 @@ start_api() {
     # - MLProcessingService
     log "Starting API server (includes AutomationManager and ML Processing Service)..."
     log "Using SSH tunnel: DB_HOST=${DB_HOST} DB_PORT=${DB_PORT}"
-    nohup env DB_HOST="${DB_HOST}" DB_PORT="${DB_PORT}" DB_NAME="${DB_NAME}" DB_USER="${DB_USER}" DB_PASSWORD="${DB_PASSWORD}" \
-        NEWS_API_KEY="${NEWS_API_KEY:-}" FRED_API_KEY="${FRED_API_KEY:-}" \
+    # Do not pass NEWS_API_KEY / FRED_API_KEY when unset or empty: an explicit empty value is
+    # already in the process environment and main.py's load_dotenv(override=False) will not
+    # replace it from project-root .env (FRED spot/history would stay empty despite a valid .env).
+    ENV_FOR_API=(
+        DB_HOST="${DB_HOST}"
+        DB_PORT="${DB_PORT}"
+        DB_NAME="${DB_NAME}"
+        DB_USER="${DB_USER}"
+        DB_PASSWORD="${DB_PASSWORD}"
+    )
+    [[ -n "${NEWS_API_KEY:-}" ]] && ENV_FOR_API+=(NEWS_API_KEY="${NEWS_API_KEY}")
+    [[ -n "${FRED_API_KEY:-}" ]] && ENV_FOR_API+=(FRED_API_KEY="${FRED_API_KEY}")
+    nohup env "${ENV_FOR_API[@]}" \
         "$PYTHON_BIN" -m uvicorn main:app --host 0.0.0.0 --port 8000 > "$API_LOG" 2>&1 &
     API_PID=$!
     

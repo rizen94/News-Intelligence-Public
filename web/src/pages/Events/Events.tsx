@@ -21,6 +21,7 @@ import {
   FormControlLabel,
   TablePagination,
   Link,
+  Tooltip,
 } from '@mui/material';
 import { useDomain } from '../../contexts/DomainContext';
 import apiService from '../../services/apiService';
@@ -174,6 +175,7 @@ const Events: React.FC = () => {
             <TableHead>
               <TableRow>
                 <TableCell>Date</TableCell>
+                <TableCell>Timing</TableCell>
                 <TableCell>Title</TableCell>
                 <TableCell>Type</TableCell>
                 <TableCell>Location</TableCell>
@@ -212,6 +214,19 @@ const Events: React.FC = () => {
                           ~{evt.date_precision}
                         </Typography>
                       )}
+                  </TableCell>
+                  <TableCell sx={{ whiteSpace: 'nowrap' }}>
+                    {evt.temporal_status === 'scheduled' ? (
+                      <Tooltip title='Event date is after the source article publication date'>
+                        <Chip label='Scheduled' size='small' color='warning' />
+                      </Tooltip>
+                    ) : evt.temporal_status === 'occurred' ? (
+                      <Tooltip title='Event date is on or before the source article publication date'>
+                        <Chip label='Occurred' size='small' variant='outlined' />
+                      </Tooltip>
+                    ) : (
+                      <Chip label='Unknown' size='small' variant='outlined' color='default' />
+                    )}
                   </TableCell>
                   <TableCell>{evt.title}</TableCell>
                   <TableCell>
@@ -292,7 +307,7 @@ const Events: React.FC = () => {
               ))}
               {events.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={10} align='center' sx={{ py: 4 }}>
+                  <TableCell colSpan={11} align='center' sx={{ py: 4 }}>
                     <Typography color='text.secondary'>
                       No events found
                     </Typography>

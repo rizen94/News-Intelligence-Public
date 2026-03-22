@@ -191,7 +191,7 @@ Or once: `ollama pull llama3.1:70b`. Optional tag is also documented as `OLLAMA_
 
 `OLLAMA_PULL_NARRATIVE_FINISHER=true`
 
-(See `docs/STORYLINE_70B_NARRATIVE_FINISHER.md`.)
+(See `../retired_root_docs_2026_03/STORYLINE_70B_NARRATIVE_FINISHER.md`.)
 
 **Suggested schedule:** weekly cron on the machine that runs Ollama (e.g. Primary). After pulls, no API restart is required unless you change `MODELS` in code.
 

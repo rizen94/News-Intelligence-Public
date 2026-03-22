@@ -267,7 +267,7 @@ class FinanceOrchestrator:
                 "end": end,
                 "filings_per_company": task.parameters.get("filings_per_company", 1),
             }
-        if topic in ("gold", "silver", "platinum"):
+        if topic in ("gold", "silver", "platinum", "oil", "gas"):
             return {"actions": [topic], "start": start, "end": end}
         if topic == "edgar":
             return {
@@ -343,7 +343,7 @@ class FinanceOrchestrator:
         tasks_to_run = []
         if "gold" in actions:
             tasks_to_run.append(("gold", _run_gold()))
-        for commodity in ("silver", "platinum"):
+        for commodity in ("silver", "platinum", "oil", "gas"):
             if commodity in actions:
                 tasks_to_run.append((commodity, _run_commodity(commodity)))
         if "edgar" in actions:
@@ -382,7 +382,7 @@ class FinanceOrchestrator:
         chunk_ids: list[str] = []
 
         for name, data in results.items():
-            if name == "gold" or name in ("silver", "platinum"):
+            if name == "gold" or name in ("silver", "platinum", "oil", "gas"):
                 r = data.get("results") or {}
                 for sid, obs_list in r.items():
                     count = len(obs_list) if isinstance(obs_list, list) else 0
@@ -450,7 +450,7 @@ class FinanceOrchestrator:
         # Gold: observations from each source
         gold_data = results.get("gold", {}).get("results") or {}
         max_per_source = 100
-        for metal in ("silver", "platinum"):
+        for metal in ("silver", "platinum", "oil", "gas"):
             metal_raw = results.get(metal) or {}
             metal_data = (
                 metal_raw.get("results")
@@ -702,7 +702,7 @@ class FinanceOrchestrator:
         deep = plan.get("deep", False)
 
         # Ensure we have data: run refresh to build evidence index (or use cache if fresh for gold-only)
-        if topic in ("gold", "silver", "platinum", "all", "fred", ""):
+        if topic in ("gold", "silver", "platinum", "oil", "gas", "all", "fred", ""):
             now = datetime.now(timezone.utc)
             cache_key = topic or "gold"
             cached = self._evidence_cache.get(cache_key) if topic == "gold" else None
@@ -946,7 +946,7 @@ Do not invent or guess values. Structure your response: (1) establish what happe
         parts = [f"## Query\n{query}\n"]
         index = task.context.evidence_index or []
         # Reserve space for both price and narrative: price entries can crowd out articles if we only take first N
-        price_sources = ("gold", "silver", "platinum", "fred", "edgar_10k")
+        price_sources = ("gold", "silver", "platinum", "oil", "gas", "fred", "edgar_10k")
         narrative_sources = ("rss", "historic")
         price_entries = [e for e in index if e.source in price_sources][:80]
         narrative_entries = [e for e in index if e.source in narrative_sources][:50]

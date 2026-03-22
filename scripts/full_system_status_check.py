@@ -7,7 +7,7 @@ import os
 import sys
 from datetime import datetime, timezone
 
-# Paths: project root and api for DB/GPU; scripts dir for check_v7_data_collection
+# Paths: project root and api for DB/GPU; scripts dir for check_data_collection_health
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 SCRIPTS = os.path.join(ROOT, "scripts")
 API = os.path.join(ROOT, "api")
@@ -103,8 +103,8 @@ def main():
     for line in _resource_section():
         print(line)
 
-    # 2) Data quality (reuse v7 check)
-    from check_v7_data_collection import get_conn, run_checks
+    # 2) Data quality (shared health check script)
+    from check_data_collection_health import get_conn, run_checks
     conn = get_conn()
     if not conn:
         print("")

@@ -319,5 +319,5 @@ All under `/api` unless noted.
 ## 9. Related docs
 
 - [WEB_API_CONNECTIONS.md](WEB_API_CONNECTIONS.md) — Frontend–API connection and troubleshooting.
-- [API_DESIGN_PRINCIPLES.md](API_DESIGN_PRINCIPLES.md) — Response standards and narrative-first design.
+- [API_DESIGN_PRINCIPLES.md](_archive/retired_root_docs_2026_03/API_DESIGN_PRINCIPLES.md) — Response standards and narrative-first design (archived).
 - [DOCS_INDEX.md](DOCS_INDEX.md) — Full documentation index.

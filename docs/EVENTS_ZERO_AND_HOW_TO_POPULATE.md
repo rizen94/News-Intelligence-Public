@@ -3,7 +3,7 @@
 > **Different from “Extracted Events” on the domain `/events` page**  
 > That page lists **`public.chronological_events`** (LLM + `event_extraction` automation).  
 > This doc is about **`intelligence.tracked_events`** (investigation / dashboard).  
-> See [EXTRACTED_EVENTS_AND_ENTITY_PIPELINE.md](./EXTRACTED_EVENTS_AND_ENTITY_PIPELINE.md) and run `scripts/poll_extracted_events_and_pipeline.py` to audit chronological events.
+> See [_archive/retired_root_docs_2026_03/EXTRACTED_EVENTS_AND_ENTITY_PIPELINE.md](_archive/retired_root_docs_2026_03/EXTRACTED_EVENTS_AND_ENTITY_PIPELINE.md) and run `scripts/poll_extracted_events_and_pipeline.py` to audit chronological events.
 
 The status bar shows **Contexts**, **Entities**, and **Events**:
 

@@ -135,6 +135,10 @@ class StorylineEntitySummary(BaseModel):
 class StorylineDetailResponse(StorylineResponse):
     """Detailed storyline response with articles and entities"""
 
+    master_summary: str | None = Field(
+        None,
+        description="ML pipeline narrative (often populated before analysis_summary / deep analysis)",
+    )
     articles: list[ArticleSummary] = Field(default_factory=list)
     background_information: dict[str, Any] | None = None
     context_last_updated: datetime | None = None

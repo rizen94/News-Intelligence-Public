@@ -45,7 +45,7 @@ git status --short
 read -p "Commit 4 (API routes)? [y/N] " r; if [ "$r" = "y" ] || [ "$r" = "Y" ]; then git commit -m "feat(api): context-centric read-only API (entity_profiles, contexts, tracked_events, claims, status, quality)"; fi
 
 echo "=== 5. Test for context-centric ==="
-git add api/tests/test_context_centric_imports.py
+git add api/_archived/legacy_pytest_tree_2026_03/test_context_centric_imports.py
 git status --short
 read -p "Commit 5 (test)? [y/N] " r; if [ "$r" = "y" ] || [ "$r" = "Y" ]; then git commit -m "test: context-centric import and route registration smoke test"; fi
 
@@ -58,8 +58,7 @@ git add \
   docs/PROJECT_SCOPE_AND_DEVELOPMENT_STATUS.md \
   docs/CONTROLLER_ARCHITECTURE.md \
   docs/ORCHESTRATOR_ROADMAP_TO_INITIATIVE.md \
-  docs/V6_QUALITY_FIRST_TODO.md \
-  docs/V6_QUALITY_FIRST_UPGRADE_PLAN.md \
+  docs/archive/planning_incubator/V6_QUALITY_FIRST_UPGRADE_PLAN.md \
   docs/README.md
 git status --short
 read -p "Commit 6 (docs)? [y/N] " r; if [ "$r" = "y" ] || [ "$r" = "Y" ]; then git commit -m "docs: context-centric plan, DOCS_INDEX, REPO_MAINTENANCE, cleanup and cross-links"; fi

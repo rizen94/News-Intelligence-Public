@@ -1,6 +1,6 @@
 """
-Commodity fetcher — gold (amalgamator), silver, platinum.
-Default: FRED first; metals.dev only as fallback. Gold uses gold_amalgamator (FRED preferred).
+Commodity fetcher — gold (amalgamator); all other registry ids via FRED when configured.
+Silver/platinum: FRED first (optional store), then metals.dev. Oil/gas: FRED only (no metals.dev).
 """
 
 import logging
@@ -21,8 +21,9 @@ def fetch_commodity(
     store: bool = True,
 ) -> dict[str, list[dict] | bool | str]:
     """
-    Fetch commodity data. topic in ("gold", "silver", "platinum").
-    Gold delegates to gold_amalgamator (FRED first). Silver/platinum: FRED first, then metals.dev.
+    Fetch commodity data for any registry id (gold, silver, platinum, oil, gas, ...).
+    Gold: amalgamator. Others: FRED when series configured; respect ``store`` for FRED persistence.
+    Silver/platinum: metals.dev fallback if FRED empty. Oil/gas: no metals fallback.
     Returns {source_id: [obs, ...]}. When both sources fail, also includes "unavailable": True and "message": str.
     """
     topic = (topic or "gold").lower()
@@ -31,7 +32,7 @@ def fetch_commodity(
 
         return fetch_all(start=start, end=end, store=store)
 
-    # Silver/platinum: try FRED first, then metals.dev
+    # Non-gold: FRED when configured; metals.dev only for metals_dev commodities
     report_id = f"{topic}_fetch_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
     end_dt = None
     start_dt = None
@@ -54,12 +55,14 @@ def fetch_commodity(
 
     from domains.finance.data.evidence_ledger import record as ledger_record
 
-    # 1) Try FRED first
+    from domains.finance.commodity_registry import get_metals_dev
+
+    # 1) Try FRED when this commodity has a series id
     try:
         from domains.finance.data_sources.fred_commodity import fetch_commodity_history_from_fred
 
         fred_result = fetch_commodity_history_from_fred(
-            topic, start=start_str, end=end_str, store=False
+            topic, start=start_str, end=end_str, store=store
         )
         if fred_result.success and fred_result.data:
             obs = fred_result.data
@@ -85,7 +88,29 @@ def fetch_commodity(
     except Exception as e:
         logger.debug("Commodity fetcher FRED flow failed for %s: %s", topic, e, exc_info=True)
 
-    # 2) Fallback: metals.dev
+    # 2) Fallback: metals.dev (precious metals only)
+    if not get_metals_dev(topic):
+        try:
+            ledger_record(
+                report_id=report_id,
+                source_type=f"{topic}_price",
+                source_id=f"unavailable_{topic}",
+                evidence_data={
+                    "status": "unavailable",
+                    "observations_count": 0,
+                    "description": f"{topic}: FRED returned no data or is not configured (oil/gas use FRED only)",
+                    "retrieved_at": datetime.now(timezone.utc).isoformat(),
+                },
+            )
+        except Exception:
+            pass
+        logger.info("Commodity fetcher: %s unavailable (FRED only / no metals.dev)", topic)
+        return {
+            f"stub_{topic}": [],
+            "unavailable": True,
+            "message": "FRED unavailable or returned no data for this commodity.",
+        }
+
     try:
         from domains.finance.data_sources.metals_dev import fetch_timeseries
 
@@ -132,14 +157,13 @@ def fetch_commodity(
             evidence_data={
                 "status": "unavailable",
                 "observations_count": 0,
-                "description": f"{topic} collection requested; FRED and metals.dev unavailable",
+                "description": f"{topic} collection requested; FRED and metals.dev both unavailable",
                 "retrieved_at": datetime.now(timezone.utc).isoformat(),
             },
         )
     except Exception:
         pass
     logger.info("Commodity fetcher: %s unavailable (FRED and metals.dev failed)", topic)
-    # Same shape as success: {source_id: [obs]}; extra keys so callers can show clear message
     return {
         f"stub_{topic}": [],
         "unavailable": True,

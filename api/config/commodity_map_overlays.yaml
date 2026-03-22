@@ -1,0 +1,56 @@
+# Static reference overlays for the finance commodity choropleth (not live shipping data).
+# Coordinates are [lon, lat] per GeoJSON.
+
+overlays:
+  - id: strait_of_hormuz
+    label: Strait of Hormuz (reference)
+    layer: chokepoint
+    commodities: [oil, gas]
+    geometry:
+      type: Point
+      coordinates: [56.5, 26.5]
+
+  - id: strait_of_malacca
+    label: Strait of Malacca (reference)
+    layer: chokepoint
+    commodities: [oil, gas]
+    geometry:
+      type: Point
+      coordinates: [100.5, 4.0]
+
+  - id: suez_canal
+    label: Suez Canal (reference)
+    layer: chokepoint
+    commodities: [oil, gas]
+    geometry:
+      type: Point
+      coordinates: [32.35, 30.05]
+
+  - id: panama_canal
+    label: Panama Canal (reference)
+    layer: chokepoint
+    commodities: [oil, gas]
+    geometry:
+      type: Point
+      coordinates: [-79.92, 9.08]
+
+  - id: johannesburg_mining_belt_ref
+    label: Southern Africa mining (reference)
+    layer: region
+    commodities: [gold, platinum]
+    geometry:
+      type: Point
+      coordinates: [28.0, -26.0]
+
+  # Simplified corridor — great-circle style polyline for UI only
+  - id: middle_east_to_asia_oil_route
+    label: Middle East → Asia (illustrative route)
+    layer: corridor
+    commodities: [oil, gas]
+    geometry:
+      type: LineString
+      coordinates:
+        - [56.5, 26.5]
+        - [65.0, 20.0]
+        - [78.0, 12.0]
+        - [100.5, 4.0]

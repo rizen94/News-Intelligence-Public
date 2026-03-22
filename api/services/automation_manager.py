@@ -119,6 +119,17 @@ QUEUE_PAUSE_ALLOW_SCHEDULED = frozenset(
     if x.strip()
 )
 
+# Ollama tasks normally yield when a non-polling browser request hit the API recently; storyline
+# deep analysis must still run or the UI shows "processing" forever while users read those pages.
+_OLLAMA_YIELD_EXEMPT = frozenset(
+    x.strip()
+    for x in os.environ.get(
+        "OLLAMA_YIELD_EXEMPT_TASKS",
+        "content_refinement_queue",
+    ).split(",")
+    if x.strip()
+)
+
 # Cap how long we wait after a dependency completes before a dependent may run. Without this,
 # collection_cycle's large estimated_duration (~1800s) kept dependents (e.g. storyline_discovery)
 # permanently ineligible while collection runs often.
@@ -287,9 +298,8 @@ PHASE_ESTIMATED_DURATION_SECONDS = {
     "research_topic_refinement": 60,  # pick one topic, submit to finance orchestrator (idle-only)
     "editorial_document_generation": 300,  # LLM-generate/refine editorial_document on storylines
     "editorial_briefing_generation": 300,  # LLM-generate/refine editorial_briefing on tracked_events
-    # v7: full-text enrichment, document pipeline, auto synthesis
+    # Content enrichment, document pipeline, synthesis-related phases
     "content_enrichment": 120,  # trafilatura fetch per article, rate-limited
-    "document_collection": 300,  # government + academic PDF discovery
     "document_processing": 180,  # observed ~152s when small batch; was 600
     "storyline_synthesis": 600,  # deep content synthesis per storyline
     "daily_briefing_synthesis": 300,  # breaking news synthesis per domain
@@ -791,7 +801,7 @@ class AutomationManager:
                 "depends_on": ["editorial_document_generation"],
                 "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["digest_generation"],
             },
-            # v7: Auto storyline synthesis (Wikipedia-style articles)
+            # Auto storyline synthesis (Wikipedia-style articles)
             "storyline_synthesis": {
                 "interval": 3600,  # 60 minutes
                 "last_run": None,
@@ -801,7 +811,7 @@ class AutomationManager:
                 "depends_on": ["storyline_processing"],
                 "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["storyline_synthesis"],
             },
-            # v7: Auto daily briefing synthesis (breaking news)
+            # Auto daily briefing synthesis (breaking news)
             "daily_briefing_synthesis": {
                 "interval": 14400,  # 4 hours
                 "last_run": None,
@@ -1092,16 +1102,27 @@ class AutomationManager:
         domain: str | None = None,
         storyline_id: int | None = None,
         requested_activity_id: str | None = None,
+        *,
+        force_nightly_unified_pipeline: bool = False,
     ) -> None:
         """
         Request a phase to run (thread-safe). Call from coordinator or API.
         The scheduler will drain this queue and enqueue tasks with metadata.
         If requested_activity_id is set (e.g. from Monitor trigger), the worker
         will complete that activity when the task starts so Current activity shows the real task.
+
+        For nightly_enrichment_context only: pass force_nightly_unified_pipeline=True to run
+        run_nightly_unified_pipeline_drain even outside NIGHTLY_PIPELINE_* local hours (manual override).
         """
         try:
             self._phase_request_queue.put_nowait(
-                (phase_name, domain, storyline_id, requested_activity_id)
+                {
+                    "phase": phase_name,
+                    "domain": domain,
+                    "storyline_id": storyline_id,
+                    "requested_activity_id": requested_activity_id,
+                    "force_nightly_unified_pipeline": bool(force_nightly_unified_pipeline),
+                }
             )
         except Exception as e:
             logger.warning("AutomationManager request_phase failed: %s", e)
@@ -1219,12 +1240,29 @@ class AutomationManager:
                     except Exception as e:
                         logger.debug("Pending counts unavailable: %s", e)
 
+                try:
+                    from services.content_refinement_queue_service import (
+                        maybe_auto_enqueue_comprehensive_rag_from_scheduler,
+                    )
+
+                    maybe_auto_enqueue_comprehensive_rag_from_scheduler()
+                except Exception as e:
+                    logger.debug("scheduler auto_enqueue comprehensive_rag: %s", e)
+
                 # Drain coordinator-driven phase requests (thread-safe); respect enrichment-backlog-first
                 try:
                     while True:
                         item = self._phase_request_queue.get_nowait()
-                        # Support both 3-tuple (legacy) and 4-tuple (with requested_activity_id)
-                        if len(item) == 4:
+                        force_nightly_unified_pipeline = False
+                        if isinstance(item, dict):
+                            phase_name = item.get("phase")
+                            domain = item.get("domain")
+                            storyline_id = item.get("storyline_id")
+                            requested_activity_id = item.get("requested_activity_id")
+                            force_nightly_unified_pipeline = bool(
+                                item.get("force_nightly_unified_pipeline")
+                            )
+                        elif len(item) == 4:
                             phase_name, domain, storyline_id, requested_activity_id = item
                         else:
                             phase_name, domain, storyline_id = item[0], item[1], item[2]
@@ -1259,6 +1297,7 @@ class AutomationManager:
                                 "domain": domain,
                                 "storyline_id": storyline_id,
                                 "requested_activity_id": requested_activity_id,
+                                "force_nightly_unified_pipeline": force_nightly_unified_pipeline,
                             },
                         )
                         await self._requested_task_queue.put(task)
@@ -1867,7 +1906,7 @@ class AutomationManager:
             try:
                 from shared.services.api_request_tracker import should_yield_to_api
 
-                if should_yield_to_api():
+                if task.name not in _OLLAMA_YIELD_EXEMPT and should_yield_to_api():
                     logger.debug(
                         f"Yielding to API — deferring {task.name} (web page load takes priority)"
                     )
@@ -2336,7 +2375,7 @@ class AutomationManager:
             logger.warning(f"RSS processing failed: {e}")
 
     async def _execute_content_enrichment(self, task: Task):
-        """v7: Fetch full article text with trafilatura for articles with short content."""
+        """Fetch full article text with trafilatura for articles with short content."""
         import asyncio
 
         try:
@@ -2360,7 +2399,7 @@ class AutomationManager:
             logger.warning(f"Content enrichment failed: {e}")
 
     async def _execute_document_collection(self, task: Task):
-        """v7: Discover government and academic PDF documents."""
+        """Discover government and academic PDF documents (invoked from collection_cycle)."""
         import asyncio
 
         try:
@@ -2374,7 +2413,7 @@ class AutomationManager:
             logger.warning(f"Document collection failed: {e}")
 
     async def _execute_document_processing(self, task: Task):
-        """v7: Process pending PDFs (download, extract text, sections, entities)."""
+        """Process pending PDFs (download, extract text, sections, entities)."""
         import asyncio
 
         try:
@@ -2492,7 +2531,7 @@ class AutomationManager:
             logger.info("Collection cycle drained %s pending collection request(s)", drained)
 
     async def _execute_storyline_synthesis(self, task: Task):
-        """v7: Auto-synthesize storylines (Wikipedia-style) that have 3+ articles."""
+        """Auto-synthesize storylines (Wikipedia-style) that have 3+ articles."""
         import asyncio
 
         try:
@@ -2570,7 +2609,7 @@ class AutomationManager:
             logger.warning(f"Storyline synthesis phase failed: {e}")
 
     async def _execute_daily_briefing_synthesis(self, task: Task):
-        """v7: Generate breaking-news synthesis per domain for briefing page."""
+        """Generate breaking-news synthesis per domain for briefing page."""
         import asyncio
 
         try:
@@ -2729,7 +2768,7 @@ class AutomationManager:
 
             result = run_cross_domain_synthesis(
                 domains=None,
-                time_window_days=30,  # v8: full-history
+                time_window_days=90,
                 correlation_threshold=0.5,
             )
             if result.get("correlations"):
@@ -2881,6 +2920,7 @@ class AutomationManager:
     async def _execute_content_refinement_queue(self, task: Task):
         """Drain intelligence.content_refinement_queue (storyline RAG, timeline narratives, ~70B finisher)."""
         from services.content_refinement_queue_service import (
+            auto_enqueue_comprehensive_rag_for_automation,
             in_nightly_gpu_refinement_window_est,
             process_content_refinement_queue_batch,
         )
@@ -2892,6 +2932,7 @@ class AutomationManager:
             return
 
         try:
+            auto_enqueue_comprehensive_rag_for_automation()
             stats = await process_content_refinement_queue_batch()
             if stats.get("processed", 0) > 0 or stats.get("failed", 0) > 0:
                 logger.info(
@@ -2910,11 +2951,18 @@ class AutomationManager:
             run_nightly_unified_pipeline_drain,
         )
 
-        if not in_nightly_pipeline_window_est():
+        force = bool((task.metadata or {}).get("force_nightly_unified_pipeline"))
+        if not in_nightly_pipeline_window_est() and not force:
             return
+        if force and not in_nightly_pipeline_window_est():
+            logger.info(
+                "nightly_enrichment_context: manual force — running unified pipeline outside local window"
+            )
 
         try:
-            stats = await run_nightly_unified_pipeline_drain()
+            stats = await run_nightly_unified_pipeline_drain(
+                force_outside_window=force,
+            )
             if (
                 stats.get("enrichment_articles", 0)
                 or stats.get("contexts_created", 0)
@@ -4448,6 +4496,18 @@ class AutomationManager:
                     continue
             except Exception:
                 pass
+            # Watchdog lists every pipeline phase; nightly_enrichment_context must not be
+            # request_phase'd outside the clock window (scheduler already gates scheduled runs).
+            if phase_name == "nightly_enrichment_context":
+                try:
+                    from services.nightly_ingest_window_service import (
+                        in_nightly_pipeline_window_est,
+                    )
+
+                    if not in_nightly_pipeline_window_est():
+                        continue
+                except Exception:
+                    continue
             last_run = schedule.get("last_run") or self._last_completed_at_by_phase.get(phase_name)
             if last_run and collection_started_at and last_run >= collection_started_at:
                 continue

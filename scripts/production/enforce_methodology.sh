@@ -74,43 +74,24 @@ check_port_conflicts() {
     fi
 }
 
-# Function to check Docker container status
-check_docker_status() {
-    local containers=("news-intelligence-postgres" "news-intelligence-redis" "news-intelligence-api" "news-intelligence-frontend" "news-intelligence-monitoring")
-    local unhealthy=()
-    
-    for container in "${containers[@]}"; do
-        if ! docker ps --format "table {{.Names}}\t{{.Status}}" | grep -q "$container"; then
-            unhealthy+=("$container")
-        fi
-    done
-    
-    if [ ${#unhealthy[@]} -gt 0 ]; then
-        print_warning "Some containers are not running: ${unhealthy[*]}"
-        print_status "Run: docker-compose up -d"
-    else
-        print_success "All Docker containers are running"
-    fi
-}
-
 # Function to check API health
 check_api_health() {
-    if curl -s "http://localhost:8000/api/health/" | jq -e '.success' >/dev/null 2>&1; then
+    if curl -sf "http://localhost:8000/api/system_monitoring/health" >/dev/null 2>&1; then
         print_success "API is healthy"
     else
         print_error "API health check failed"
-        print_status "Check API container logs: docker logs news-intelligence-api"
+        print_status "Check logs/api_server.log and restart: ./stop_system.sh && ./start_system.sh"
         exit 1
     fi
 }
 
 # Function to check frontend accessibility
 check_frontend_accessibility() {
-    if curl -s "http://localhost:80" | grep -q "News Intelligence System"; then
-        print_success "Frontend is accessible"
+    if curl -s "http://localhost:3000" | grep -q -E "root|vite|html"; then
+        print_success "Frontend is accessible (Vite dev server)"
     else
-        print_error "Frontend is not accessible"
-        print_status "Check frontend container logs: docker logs news-intelligence-frontend"
+        print_error "Frontend is not accessible on http://localhost:3000"
+        print_status "Check logs/frontend.log and restart: ./start_system.sh"
         exit 1
     fi
 }
@@ -160,9 +141,6 @@ promote_to_production() {
     
     # Check for port conflicts
     check_port_conflicts
-    
-    # Check Docker status
-    check_docker_status
     
     # Check API health
     check_api_health
@@ -220,24 +198,20 @@ show_status() {
     echo "Current branch: $(git branch --show-current)"
     echo "Last commit: $(git log -1 --oneline)"
     
-    # Docker status
-    echo "Docker containers:"
-    docker ps --format "table {{.Names}}\t{{.Status}}" | grep news-intelligence || echo "No containers running"
-    
     # Port status
     echo "Port usage:"
     netstat -tlnp 2>/dev/null | grep -E ":(3000|8000|80|5432|6379|9090) " || echo "No relevant ports in use"
     
     # API health
-    if curl -s "http://localhost:8000/api/health/" | jq -e '.success' >/dev/null 2>&1; then
+    if curl -sf "http://localhost:8000/api/system_monitoring/health" >/dev/null 2>&1; then
         echo "API Status: ✅ Healthy"
     else
         echo "API Status: ❌ Unhealthy"
     fi
     
-    # Frontend accessibility
-    if curl -s "http://localhost:80" | grep -q "News Intelligence System"; then
-        echo "Frontend Status: ✅ Accessible"
+    # Frontend (Vite)
+    if curl -s "http://localhost:3000" | grep -q -E "root|vite|html"; then
+        echo "Frontend Status: ✅ Accessible (port 3000)"
     else
         echo "Frontend Status: ❌ Not accessible"
     fi
@@ -251,7 +225,6 @@ main() {
             check_branch "master"
             check_clean_working_directory
             check_port_conflicts
-            check_docker_status
             check_api_health
             check_frontend_accessibility
             print_success "All checks passed!"

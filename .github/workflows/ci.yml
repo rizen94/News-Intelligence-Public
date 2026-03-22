@@ -1,4 +1,4 @@
-# Unified CI: Python (api/tests) + frontend (web). Single workflow — no duplicate frontend jobs.
+# Unified CI: Python (repo tests/) + frontend (web). Single workflow — no duplicate frontend jobs.
 name: CI
 
 on:

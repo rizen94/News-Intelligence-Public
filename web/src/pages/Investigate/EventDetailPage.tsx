@@ -93,6 +93,7 @@ export default function EventDetailPage() {
   const [editSubmitting, setEditSubmitting] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
   const [chronicleRefreshing, setChronicleRefreshing] = useState(false);
+  const [linkedEvents, setLinkedEvents] = useState<TrackedEvent[]>([]);
 
   const numId = id ? parseInt(id, 10) : NaN;
 
@@ -142,6 +143,17 @@ export default function EventDetailPage() {
   useEffect(() => {
     if (!Number.isNaN(numId)) loadReport();
   }, [numId, loadReport]);
+
+  useEffect(() => {
+    if (Number.isNaN(numId)) {
+      setLinkedEvents([]);
+      return;
+    }
+    contextCentricApi
+      .getTrackedEventLinkedEvents(numId, 12)
+      .then(r => setLinkedEvents(r.items ?? []))
+      .catch(() => setLinkedEvents([]));
+  }, [numId]);
 
   const handleEditOpen = useCallback(() => {
     if (!event) return;
@@ -426,6 +438,34 @@ export default function EventDetailPage() {
               </Box>
             </CardContent>
           </Card>
+
+          {linkedEvents.length > 0 && (
+            <Card variant='outlined'>
+              <CardHeader
+                title='Linked events (cross-domain)'
+                titleTypographyProps={{ variant: 'subtitle1', fontWeight: 600 }}
+              />
+              <CardContent sx={{ pt: 0 }}>
+                <List dense disablePadding>
+                  {linkedEvents.map(le => (
+                    <ListItemButton
+                      key={le.id}
+                      onClick={() =>
+                        navigate(`/${domain}/investigate/events/${le.id}`)
+                      }
+                    >
+                      <ListItemText
+                        primary={le.event_name || `Event #${le.id}`}
+                        secondary={[le.event_type, (le.domain_keys || []).join(', ')]
+                          .filter(Boolean)
+                          .join(' · ')}
+                      />
+                    </ListItemButton>
+                  ))}
+                </List>
+              </CardContent>
+            </Card>
+          )}
 
           {event.chronicles && event.chronicles.length > 0 && (
             <Card variant='outlined'>

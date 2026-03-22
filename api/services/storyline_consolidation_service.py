@@ -580,7 +580,7 @@ class StorylineConsolidationService:
                      article_count, total_articles, is_mega_storyline,
                      consolidation_score, created_at, updated_at)
                     VALUES (
-                        gen_random_uuid()::text, %s, %s, 'active', 'completed',
+                        gen_random_uuid(), %s, %s, 'active', 'completed',
                         %s, %s, TRUE, %s, NOW(), NOW()
                     )
                     RETURNING id

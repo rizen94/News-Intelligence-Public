@@ -388,6 +388,27 @@ export const storylinesApi = {
     }
   },
 
+  async getRelatedCrossDomainStorylines(
+    storylineId: string | number,
+    limit: number = 8,
+    domain?: string
+  ) {
+    try {
+      const domainKey = domain || getCurrentDomain();
+      const response = await getApi().get(
+        `/api/${domainKey}/storylines/${storylineId}/related_cross_domain`,
+        { params: { limit } }
+      );
+      return response.data;
+    } catch (error) {
+      Logger.apiError(
+        'Failed to get cross-domain related storylines',
+        error as Error
+      );
+      return { success: false, data: { storylines: [] }, error: (error as any).message };
+    }
+  },
+
   async analyzeStoryline(id: string | number, domain?: string) {
     const domainKey = domain || getCurrentDomain();
     try {

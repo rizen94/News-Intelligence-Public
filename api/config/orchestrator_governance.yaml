@@ -100,7 +100,13 @@ source_credibility:
       name_keywords: []
 
 # Phase 3 T3.1: document acquisition — sources and types for pipeline
-# v7: automated_sources list enables document_collection phase (CRS, GAO, CBO, arXiv)
+# automated_sources: built-in PDF collectors run during collection_cycle (CRS, GAO, CBO, arXiv)
+#
+# If PDFs rarely succeed (consistent HTTP 403/404 in Monitor or in
+# GET /api/system_monitoring/document_sources/health), the RSS/HTML links are
+# wrong, paywalled, or blocking the bot — not a parser issue. Remove that
+# source key from automated_sources below (or fix upstream URLs) so the
+# document_processing phase does not waste retries on dead links.
 document_sources:
   source_priorities:
     - government
@@ -110,7 +116,7 @@ document_sources:
     - report
     - analysis
     - briefing
-  # v7: which automated collectors to run (crs, gao, cbo, arxiv)
+  # Which automated collectors to run (crs, gao, cbo, arxiv)
   automated_sources:
     - crs
     - gao
@@ -129,9 +135,8 @@ collection:
   breaking_news_threshold: 0.8
   # Source ids and how the orchestrator formats requests (e.g. finance topic)
   # Order affects rotation: each source runs when its interval has elapsed.
-  # Commodity price sources (gold, silver, platinum): use longer intervals so we
-  # don't poll prices every 5 min; during off-hours use even longer (daily price won't change).
-  # Commodity *news* comes from RSS (finance domain feeds: Kitco, Mining.com, etc.), not from these.
+  # Commodity price sources (metals + oil/gas via FRED): longer intervals; off-hours slower.
+  # Commodity *news* comes from RSS (finance domain feeds), not from these.
   sources:
     - source_id: rss
       handler: rss
@@ -148,6 +153,16 @@ collection:
     - source_id: platinum
       handler: finance
       topic: platinum
+      min_fetch_interval_seconds: 3600
+      off_hours_interval_seconds: 14400
+    - source_id: oil
+      handler: finance
+      topic: oil
+      min_fetch_interval_seconds: 3600
+      off_hours_interval_seconds: 14400
+    - source_id: gas
+      handler: finance
+      topic: gas
       min_fetch_interval_seconds: 3600
       off_hours_interval_seconds: 14400
     - source_id: edgar

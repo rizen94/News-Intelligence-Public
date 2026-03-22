@@ -9,7 +9,7 @@
  * and global `/api/...` routes (see docs/WEB_API_CONNECTIONS.md).
  *
  * Layout: Hero status bar + sidebar (Discover, Investigate, Monitor, Analyze).
- * See docs/WEB_PRODUCT_DISPLAY_PLAN.md for product notes.
+ * Product display notes (incorporation candidate): docs/archive/planning_incubator/WEB_PRODUCT_DISPLAY_PLAN.md
  */
 import React, { useEffect } from 'react';
 import {

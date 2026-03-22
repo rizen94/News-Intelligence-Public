@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify critical DB migrations are applied (133, 160–172, 176 ledger, 177–179 domain event pipeline columns).
+"""Verify critical DB migrations are applied (133, 160–172, 176 ledger, 177–179 domain event pipeline, 183 temporal_status, 184 processed_documents provenance).
 
 Run from project root (requires DB_PASSWORD and network to DB):
 
@@ -20,6 +20,8 @@ Checks:
   178  politics.articles.timeline_events_generated (event_extraction article UPDATE)
   179  politics (sample) story_entity_index for story_continuation matching
   180  legal.* core tables — only when public.domains.domain_key = 'legal' exists (optional domain)
+  183  public.chronological_events.temporal_status (scheduled vs occurred)
+  184  intelligence.processed_documents file_hash, file_size_bytes, extraction_method
 """
 
 import os
@@ -204,12 +206,26 @@ def main():
         else:
             missing.append("179: politics.story_entity_index")
 
+        # --- 183 ---
+        if check_column(cur, "public", "chronological_events", "temporal_status"):
+            ok.append("183: public.chronological_events.temporal_status")
+        else:
+            missing.append("183: public.chronological_events.temporal_status")
+
+        # --- 184 (processed_documents provenance) ---
+        if check_column(cur, "intelligence", "processed_documents", "file_hash") and check_column(
+            cur, "intelligence", "processed_documents", "file_size_bytes"
+        ) and check_column(cur, "intelligence", "processed_documents", "extraction_method"):
+            ok.append("184: intelligence.processed_documents file provenance columns")
+        else:
+            missing.append("184: intelligence.processed_documents file provenance columns")
+
         cur.close()
     finally:
         conn.close()
 
     print("=" * 60)
-    print("Migration verification (133, 160–172, 176, 177, 178, 179, 180 if legal registered)")
+    print("Migration verification (133, 160–172, 176, 177, 178, 179, 180 if legal, 183, 184)")
     print("=" * 60)
     for s in ok:
         print(f"  OK   {s}")

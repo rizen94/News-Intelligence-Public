@@ -21,7 +21,7 @@ for p in (ROOT, os.path.join(ROOT, "api")):
     if p not in sys.path:
         sys.path.insert(0, p)
 
-# Load .env for DB (same pattern as check_v7_data_collection.py)
+# Load .env for DB (same pattern as check_data_collection_health.py)
 env_path = os.path.join(ROOT, ".env")
 if os.path.isfile(env_path):
     with open(env_path) as f:

@@ -2,9 +2,9 @@
 
 How content flows from RSS ingestion through intelligence extraction to editorial output. Every step must preserve and enrich content, never reduce it to counts.
 
-See [CORE_ARCHITECTURE_PRINCIPLES.md](CORE_ARCHITECTURE_PRINCIPLES.md) for the principles behind this design.
+See [CORE_ARCHITECTURE_PRINCIPLES.md](_archive/retired_root_docs_2026_03/CORE_ARCHITECTURE_PRINCIPLES.md) for the principles behind this design (archived).
 
-**Related:** [SYSTEM_OVERVIEW.md](SYSTEM_OVERVIEW.md) (where services live) · [ARCHITECTURE_AND_OPERATIONS.md](ARCHITECTURE_AND_OPERATIONS.md) · [PROJECT_OVERVIEW.md](PROJECT_OVERVIEW.md) · [PIPELINE_AND_ORDER_OF_OPERATIONS.md](PIPELINE_AND_ORDER_OF_OPERATIONS.md) (when each automation phase runs)
+**Related:** [SYSTEM_OVERVIEW.md](SYSTEM_OVERVIEW.md) (where services live) · [ARCHITECTURE_AND_OPERATIONS.md](ARCHITECTURE_AND_OPERATIONS.md) · [PIPELINE_AND_ORDER_OF_OPERATIONS.md](PIPELINE_AND_ORDER_OF_OPERATIONS.md) (when each automation phase runs) · stakeholder overview (archived): [_archive/retired_root_docs_2026_03/PROJECT_OVERVIEW.md](_archive/retired_root_docs_2026_03/PROJECT_OVERVIEW.md)
 
 ---
 

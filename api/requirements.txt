@@ -30,6 +30,13 @@ feedparser==6.0.10
 beautifulsoup4==4.12.2
 lxml==4.9.3
 chardet==5.2.0
+trafilatura>=1.6.0
+
+# PDF ingestion (intelligence.processed_documents — document_processing phase)
+# Without these, Monitor shows "No PDF parser available" and rows hit permanent_failure.
+pdfplumber>=0.11.0
+pdfminer.six>=20221105
+pymupdf>=1.23.0
 
 # Scheduling & Background Tasks
 schedule==1.2.0

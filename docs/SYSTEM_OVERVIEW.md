@@ -4,7 +4,7 @@
 
 This document maps the full system: API route structure, web interface structure, data flow, and key services. Use it as the single reference for "what exists and where."
 
-**Related:** [ARCHITECTURE_AND_OPERATIONS.md](ARCHITECTURE_AND_OPERATIONS.md) (hosts, ops, scripts) · [DATA_FLOW_ARCHITECTURE.md](DATA_FLOW_ARCHITECTURE.md) (intelligence cascade) · [PROJECT_OVERVIEW.md](PROJECT_OVERVIEW.md) (stakeholder summary)
+**Related:** [ARCHITECTURE_AND_OPERATIONS.md](ARCHITECTURE_AND_OPERATIONS.md) (hosts, ops, scripts) · [DATA_FLOW_ARCHITECTURE.md](DATA_FLOW_ARCHITECTURE.md) (intelligence cascade) · stakeholder summary (archived): [_archive/retired_root_docs_2026_03/PROJECT_OVERVIEW.md](_archive/retired_root_docs_2026_03/PROJECT_OVERVIEW.md)
 
 ---
 
@@ -522,7 +522,7 @@ Content must be preserved and enriched at every step of the pipeline. If content
 | `intelligence.entity_profiles` | `sections` / `relationships_summary` | Entity dossier | Schema exists (migration 143); populated by entity_profile_builder |
 | `{domain}.articles` | `ml_data` | ML outputs (summary, key_points, sentiment) | Populated by ML pipeline |
 
-See `docs/CORE_ARCHITECTURE_PRINCIPLES.md` for architectural guardrails and `docs/DATABASE_DESIGN_PHILOSOPHY.md` for the intended JSONB structures.
+See `docs/_archive/retired_root_docs_2026_03/CORE_ARCHITECTURE_PRINCIPLES.md` for architectural guardrails and `docs/_archive/retired_root_docs_2026_03/DATABASE_DESIGN_PHILOSOPHY.md` for the intended JSONB structures (archived).
 
 ---
 

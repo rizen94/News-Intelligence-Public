@@ -1,6 +1,6 @@
 /**
  * Intelligence Dashboard — 3 columns: What's New, Active Investigations, System Intelligence.
- * Aligned with WEB_PRODUCT_DISPLAY_PLAN.
+ * Product notes: docs/archive/planning_incubator/WEB_PRODUCT_DISPLAY_PLAN.md
  */
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -19,7 +19,13 @@ import {
   Skeleton,
   Divider,
 } from '@mui/material';
-import { contextCentricApi, type Context, type TrackedEvent, type ContextCentricStatus } from '../../services/api/contextCentric';
+import {
+  contextCentricApi,
+  heroBarEventsStoredCount,
+  type Context,
+  type TrackedEvent,
+  type ContextCentricStatus,
+} from '../../services/api/contextCentric';
 import apiService from '../../services/apiService';
 import { useDomainRoute } from '../../hooks/useDomainRoute';
 
@@ -66,7 +72,7 @@ export default function Dashboard() {
       setStatusOrchLoading(true);
 
       // Wave 1: light endpoints so "System Intelligence" appears quickly
-      const stRes = contextCentricApi.getStatus(domain).catch(() => null);
+      const stRes = contextCentricApi.getStatus(null).catch(() => null);
       const oRes = (async () => {
         try {
           const fn = apiService.getOrchestratorDashboard;
@@ -203,7 +209,10 @@ export default function Dashboard() {
                     <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mb: 2 }}>
                       <Chip size="small" label={`Contexts: ${status.contexts}`} />
                       <Chip size="small" label={`Entity Profiles: ${status.entity_profiles}`} />
-                      <Chip size="small" label={`Events: ${status.extracted_events ?? status.tracked_events}`} />
+                      <Chip
+                        size="small"
+                        label={`Events: ${heroBarEventsStoredCount(status)}`}
+                      />
                     </Box>
                   )}
                   <Typography variant="body2" color="text.secondary" gutterBottom>

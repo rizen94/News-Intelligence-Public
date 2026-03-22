@@ -4,7 +4,7 @@ Compare live PostgreSQL objects to what the v8 data pipeline reads/writes.
 
 Read-only. From repo root:
   PYTHONPATH=api uv run python scripts/verify_pipeline_db_alignment.py
-  PYTHONPATH=api uv run python scripts/verify_pipeline_db_alignment.py --write-report docs/PIPELINE_DB_ALIGNMENT_REPORT.md
+  PYTHONPATH=api uv run python scripts/verify_pipeline_db_alignment.py --write-report docs/generated/PIPELINE_DB_ALIGNMENT_REPORT.md
 
 Exit 1 if any required table/column is missing.
 """

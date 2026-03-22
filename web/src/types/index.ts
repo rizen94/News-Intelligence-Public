@@ -162,6 +162,8 @@ export interface Storyline {
   article_count: number;
   quality_score: number | null;
   analysis_summary: string | null;
+  /** Filled by ML processing; UI falls back when analysis_summary is empty */
+  master_summary?: string | null;
   created_at: string;
   updated_at: string;
   last_evolution_at?: string | null;

@@ -54,7 +54,7 @@ import {
   TimelineDot,
   TimelineOppositeContent,
 } from '@mui/lab';
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 
 import apiService from '../../services/apiService';
@@ -70,6 +70,16 @@ import { Link as RouterLink } from 'react-router-dom';
 import { useDomainNavigation } from '../../hooks/useDomainNavigation';
 import { useDomainRoute } from '../../hooks/useDomainRoute';
 import { usePublicDemoMode } from '../../contexts/PublicDemoContext';
+import type { StorylineDetail as StorylineDetailType } from '../../types';
+
+function pickStorylineAnalysisDisplay(storyline: StorylineDetailType | null) {
+  if (!storyline) return null;
+  const a = (storyline.analysis_summary ?? '').trim();
+  const m = (storyline.master_summary ?? '').trim();
+  if (a) return { text: storyline.analysis_summary as string, source: 'comprehensive' as const };
+  if (m) return { text: storyline.master_summary as string, source: 'ml_master' as const };
+  return null;
+}
 
 const StorylineDetail = () => {
   const { id } = useParams();
@@ -104,6 +114,15 @@ const StorylineDetail = () => {
   const [storyAudit, setStoryAudit] = useState(null);
   const [storyAuditLoading, setStoryAuditLoading] = useState(false);
   const [storyAuditErr, setStoryAuditErr] = useState(null);
+  const [crossRelatedStorylines, setCrossRelatedStorylines] = useState<
+    Array<{
+      id: number;
+      title: string;
+      updated_at: string;
+      origin_domain: string;
+      link_reason: string;
+    }>
+  >([]);
   const [showFullSynthesis, setShowFullSynthesis] = useState(false);
   const [detailDepth, setDetailDepth] = useState<
     'narrative' | 'structured' | 'raw'
@@ -115,6 +134,11 @@ const StorylineDetail = () => {
   const mountedRef = useRef(true);
   const articleSearchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(
     null
+  );
+
+  const analysisDisplay = useMemo(
+    () => pickStorylineAnalysisDisplay(storyline as StorylineDetailType | null),
+    [storyline]
   );
 
   const startProcessingPoll = () => {
@@ -145,7 +169,8 @@ const StorylineDetail = () => {
           if (Math.random() < 0.3) await loadStoryline();
         } else if (
           storylineData.ml_processing_status === 'completed' &&
-          storylineData.analysis_summary
+          (storylineData.analysis_summary ||
+            (storylineData as { master_summary?: string }).master_summary)
         ) {
           setIsProcessing(false);
           setProcessingStatus(null);
@@ -633,6 +658,29 @@ const StorylineDetail = () => {
     };
   }, [id, effectiveDomain]);
 
+  useEffect(() => {
+    if (!id || !effectiveDomain) return;
+    let cancelled = false;
+    apiService
+      .getRelatedCrossDomainStorylines(id, 8, effectiveDomain)
+      .then((r: unknown) => {
+        if (cancelled) return;
+        const res = r as {
+          success?: boolean;
+          data?: { storylines?: typeof crossRelatedStorylines };
+        };
+        if (res?.success && res.data?.storylines)
+          setCrossRelatedStorylines(res.data.storylines);
+        else setCrossRelatedStorylines([]);
+      })
+      .catch(() => {
+        if (!cancelled) setCrossRelatedStorylines([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [id, effectiveDomain]);
+
   const checkCachedSynthesis = async () => {
     try {
       const response = await fetch(
@@ -1036,6 +1084,33 @@ const StorylineDetail = () => {
                 </Typography>
               )}
 
+              {crossRelatedStorylines.length > 0 && (
+                <Paper variant='outlined' sx={{ p: 2, mb: 2, bgcolor: 'grey.50' }}>
+                  <Typography variant='subtitle2' fontWeight={600} sx={{ mb: 1 }}>
+                    Related in other domains
+                  </Typography>
+                  <List dense disablePadding>
+                    {crossRelatedStorylines.map(s => (
+                      <ListItem key={`${s.origin_domain}-${s.id}`} disablePadding>
+                        <ListItemText
+                          primary={
+                            <Link
+                              component={RouterLink}
+                              to={`/${s.origin_domain}/storylines/${s.id}`}
+                              underline='hover'
+                            >
+                              {s.title || `Storyline #${s.id}`}
+                            </Link>
+                          }
+                          secondary={`${s.origin_domain} · ${s.link_reason}`}
+                          primaryTypographyProps={{ variant: 'body2' }}
+                        />
+                      </ListItem>
+                    ))}
+                  </List>
+                </Paper>
+              )}
+
               {/* Editorial Summary (5W1H or legacy) */}
               {storyline.editorial_document &&
                 typeof storyline.editorial_document === 'object' && (
@@ -1318,8 +1393,8 @@ const StorylineDetail = () => {
                 </Box>
               ) : null}
 
-              {/* Analysis Summary Section */}
-              {storyline.analysis_summary ? (
+              {/* Analysis Summary Section (analysis_summary || master_summary) */}
+              {analysisDisplay ? (
                 <Box
                   sx={{
                     mb: 2,
@@ -1336,18 +1411,44 @@ const StorylineDetail = () => {
                       alignItems: 'center',
                       gap: 1,
                       mb: 2,
+                      flexWrap: 'wrap',
                     }}
                   >
                     <AutoAwesomeIcon color='primary' />
-                    <Typography variant='h6'>Comprehensive Analysis</Typography>
-                    {storyline.ml_processing_status === 'completed' && (
+                    <Typography variant='h6'>Storyline summary</Typography>
+                    {analysisDisplay.source === 'comprehensive' ? (
                       <Chip
-                        label='LLM Generated'
+                        label='Deep analysis'
                         size='small'
-                        color='success'
+                        color='primary'
+                        variant='outlined'
+                      />
+                    ) : (
+                      <Chip
+                        label='ML narrative'
+                        size='small'
+                        color='info'
+                        variant='outlined'
                       />
                     )}
+                    {storyline.ml_processing_status === 'completed' &&
+                      analysisDisplay.source === 'comprehensive' && (
+                        <Chip
+                          label='LLM Generated'
+                          size='small'
+                          color='success'
+                        />
+                      )}
                   </Box>
+                  <Typography
+                    variant='body2'
+                    color='text.secondary'
+                    sx={{ mb: 1 }}
+                  >
+                    {analysisDisplay.source === 'comprehensive'
+                      ? 'Stored in analysis_summary (includes queue deep analysis when run).'
+                      : 'Stored in master_summary from the ML pipeline; queue deep analysis to upgrade this block.'}
+                  </Typography>
                   <Typography
                     variant='body1'
                     component='div'
@@ -1388,7 +1489,7 @@ const StorylineDetail = () => {
                       },
                     }}
                   >
-                    {storyline.analysis_summary}
+                    {analysisDisplay.text}
                   </Typography>
                   {storyline.quality_score && (
                     <Box

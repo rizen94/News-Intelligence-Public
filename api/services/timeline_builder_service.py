@@ -93,6 +93,25 @@ class TimelineBuilderService:
 
     def _load_events(self, storyline_id: int) -> list[dict]:
         cursor = self.conn.cursor()
+        try:
+            cursor.execute(
+                """
+                SELECT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'chronological_events'
+                      AND column_name = 'temporal_status'
+                )
+                """
+            )
+            has_temporal = bool(cursor.fetchone()[0])
+        except Exception:
+            has_temporal = False
+
+        temporal_sql = (
+            ", COALESCE(ce.temporal_status, 'unknown') AS temporal_status"
+            if has_temporal
+            else ""
+        )
         cursor.execute(
             f"""
             SELECT ce.id, ce.title, ce.description, ce.event_type,
@@ -102,6 +121,7 @@ class TimelineBuilderService:
                    ce.source_count, ce.is_ongoing, ce.outcome,
                    ce.canonical_event_id, ce.extraction_method,
                    ce.extraction_confidence
+                   {temporal_sql}
             FROM {_CHRONO_EVENTS} ce
             WHERE ce.storyline_id = %s::text
               AND ce.canonical_event_id IS NULL
@@ -128,12 +148,12 @@ class TimelineBuilderService:
                 "source_count": r[11] or 1,
                 "is_ongoing": r[12],
                 "outcome": r[13],
-                # r[14] canonical_event_id — NULL for rows shown on timeline (primary row for a dedup cluster)
                 "canonical_event_id": r[14] if len(r) > 14 else None,
                 "extraction_method": r[15] if len(r) > 15 else None,
                 "extraction_confidence": float(r[16])
                 if len(r) > 16 and r[16] is not None
                 else None,
+                "temporal_status": r[17] if has_temporal and len(r) > 17 else "unknown",
                 "timeline_row_role": "primary",
             }
             for r in rows

@@ -59,6 +59,7 @@
 | `api/scripts/register_applied_migration.py` | Record an applied migration in the ledger: `PYTHONPATH=api uv run python api/scripts/register_applied_migration.py 176 --env dev --notes "..." [--file path.sql]` |
 | `api/scripts/migration_ledger_report.py` | Compare `public.applied_migrations` to SQL on disk (active + archive): `PYTHONPATH=api uv run python api/scripts/migration_ledger_report.py` (`--json`, `--active-only` for 176+ gaps only) |
 | `api/scripts/refresh_ollama_models.py` | **`ollama pull`** for each model in `settings.ollama_pull_model_names()` (refresh weights for same tags). `PYTHONPATH=api uv run python api/scripts/refresh_ollama_models.py` — see `docs/SETUP_ENV_AND_RUNTIME.md`. |
+| `api/scripts/reset_pdf_parser_failed_documents.py` | After installing **pdfplumber** + **pdfminer.six** (`uv pip install -r api/requirements.txt` or `.venv/bin/python -m pip install -r api/requirements.txt` — not system pip on PEP 668), clear `permanent_failure` on matching rows. Loads repo-root `.env` for `DB_*`. `PYTHONPATH=api uv run python api/scripts/reset_pdf_parser_failed_documents.py` (`--dry-run` to list only). |
 
 ## Utilities
 
@@ -68,15 +69,15 @@
 | `automation_run_analysis.py` | **Automation run analysis:** last N hours from `automation_run_history` — run counts per phase, actual vs estimated duration, phases not run in 2h. Run: `PYTHONPATH=api uv run python scripts/automation_run_analysis.py --hours 3 --window-2h`. Use to tune schedule intervals and `PHASE_ESTIMATED_DURATION_SECONDS`. |
 | `run_daily_analytics_rollup.py` | **Daily analytics rollup:** populates `automation_run_history_daily` + `log_archive_daily_rollup` for weekly/monthly analytics from summarized daily data. Run: `PYTHONPATH=api uv run python scripts/run_daily_analytics_rollup.py` (defaults to yesterday UTC). |
 | `backlog_eta.py` | **Backlog ETA:** estimate time to clear article enrichment, document processing, and storyline synthesis backlogs. Run: `uv run python scripts/backlog_eta.py` |
-| `check_v7_data_collection.py` | Data quality only: articles, v7 phases, documents, storylines, contexts. Run: `uv run python scripts/check_v7_data_collection.py` |
+| `check_data_collection_health.py` | Data quality: articles, selected automation phases (e.g. `collection_cycle`, `document_processing`), documents, storylines, contexts. Run: `uv run python scripts/check_data_collection_health.py` |
 | `db_full_inventory.py` | **DB inventory:** row counts + empty tables per schema + critical table presence. `PYTHONPATH=api uv run python scripts/db_full_inventory.py` (`--json`) |
 | `db_persistence_gates.py` | **Persistence gates:** critical tables + recent `automation_run_history`. `PYTHONPATH=api uv run python scripts/db_persistence_gates.py [--require-automation]` |
 | `db_maintenance_analyze.py` | **Planner stats:** `ANALYZE` on hot tables; optional `--vacuum` in maintenance window. `PYTHONPATH=api uv run python scripts/db_maintenance_analyze.py` |
-| `poll_extracted_events_and_pipeline.py` | **Extracted events + pipeline trace:** `chronological_events` counts per domain, article gates for `event_extraction`, `article_entities` footprint, `automation_run_history` (48h). Run: `PYTHONPATH=api uv run python scripts/poll_extracted_events_and_pipeline.py` — see [docs/EXTRACTED_EVENTS_AND_ENTITY_PIPELINE.md](../docs/EXTRACTED_EVENTS_AND_ENTITY_PIPELINE.md) |
+| `poll_extracted_events_and_pipeline.py` | **Extracted events + pipeline trace:** `chronological_events` counts per domain, article gates for `event_extraction`, `article_entities` footprint, `automation_run_history` (48h). Run: `PYTHONPATH=api uv run python scripts/poll_extracted_events_and_pipeline.py` — see [docs/_archive/retired_root_docs_2026_03/EXTRACTED_EVENTS_AND_ENTITY_PIPELINE.md](../docs/_archive/retired_root_docs_2026_03/EXTRACTED_EVENTS_AND_ENTITY_PIPELINE.md) |
 | `run_event_pipeline_manual.py` | **Manual event extraction + dedup:** runs LLM extraction for N eligible articles, writes `public.chronological_events`, updates article flags; optional dedup. `PYTHONPATH=api uv run python scripts/run_event_pipeline_manual.py [--domain politics] [--limit 1] [--dry-run]` |
-| `verify_pipeline_db_alignment.py` | **Pipeline ↔ DB audit:** required tables/columns vs collection, enrichment, entities, events, contexts, documents, automation; writes optional `docs/PIPELINE_DB_ALIGNMENT_REPORT.md`. `PYTHONPATH=api uv run python scripts/verify_pipeline_db_alignment.py [--write-report docs/PIPELINE_DB_ALIGNMENT_REPORT.md]` |
-| `verify_storyline_event_entity_chains.py` | **Storylines ↔ events ↔ entities:** domain `storylines` / `story_entity_index`, events linked via `chronological_events.storyline_id`, multi-event chains, article–entity overlap. See [docs/STORYLINE_EVENT_ENTITY_CHAINS.md](../docs/STORYLINE_EVENT_ENTITY_CHAINS.md). `PYTHONPATH=api uv run python scripts/verify_storyline_event_entity_chains.py [--write-report docs/STORYLINE_EVENT_ENTITY_CHAINS_REPORT.md]` |
-| `verify_intelligence_phases_productivity.py` | **Intelligence phases productivity:** cross-domain synthesis, entity enrichment, claims_to_facts, pattern recognition, event coherence review, pattern matching. Checks automation_run_history + output tables. `PYTHONPATH=api uv run python scripts/verify_intelligence_phases_productivity.py [--write-report docs/INTELLIGENCE_PHASES_PRODUCTIVITY_REPORT.md] [--hours 48]` |
+| `verify_pipeline_db_alignment.py` | **Pipeline ↔ DB audit:** required tables/columns vs collection, enrichment, entities, events, contexts, documents, automation; writes optional `docs/generated/PIPELINE_DB_ALIGNMENT_REPORT.md`. `PYTHONPATH=api uv run python scripts/verify_pipeline_db_alignment.py [--write-report docs/generated/PIPELINE_DB_ALIGNMENT_REPORT.md]` |
+| `verify_storyline_event_entity_chains.py` | **Storylines ↔ events ↔ entities:** domain `storylines` / `story_entity_index`, events linked via `chronological_events.storyline_id`, multi-event chains, article–entity overlap. See [docs/_archive/retired_root_docs_2026_03/STORYLINE_EVENT_ENTITY_CHAINS.md](../docs/_archive/retired_root_docs_2026_03/STORYLINE_EVENT_ENTITY_CHAINS.md). `PYTHONPATH=api uv run python scripts/verify_storyline_event_entity_chains.py [--write-report docs/generated/STORYLINE_EVENT_ENTITY_CHAINS_REPORT.md]` |
+| `verify_intelligence_phases_productivity.py` | **Intelligence phases productivity:** cross-domain synthesis, entity enrichment, claims_to_facts, pattern recognition, event coherence review, pattern matching. Checks automation_run_history + output tables. `PYTHONPATH=api uv run python scripts/verify_intelligence_phases_productivity.py [--write-report docs/generated/INTELLIGENCE_PHASES_PRODUCTIVITY_REPORT.md] [--hours 48]` |
 | `diagnose_claims_to_facts.py` | **Quick diagnostic for claims_to_facts:** extracted_claims counts, unpromoted high-confidence claims, entity resolution match rate. `PYTHONPATH=api uv run python scripts/diagnose_claims_to_facts.py` |
 | `enable_all_storyline_automation.py` | **Bulk-enable storyline automation** on all domain `storylines` (`automation_enabled`, `automation_mode`, suggestions queue / `auto_approve`, optional `last_automation_run` reset). `PYTHONPATH=api uv run python scripts/enable_all_storyline_automation.py [--dry-run] [--mode review_queue\|suggest_only\|auto_approve]` |
 | `verify_gpu.py` | GPU/ML verification |
@@ -92,6 +93,15 @@
 ## Archived
 
 `scripts/archive/` — legacy NAS scripts, one-time migrations, deprecated.
+
+**2026-03 housekeeping** (see [docs/archive/CLEANUP_2026_03.md](../docs/archive/CLEANUP_2026_03.md)):
+
+| Was | Now |
+|-----|-----|
+| `development/scripts/*` | `docs/archive/development_ai_session_tooling/development/scripts/` |
+| Root `monitoring/` | `docs/archive/observability_stack_unused/monitoring/` |
+| Root `analysis/` | `docs/archive/root_analysis_snapshots/analysis/` |
+| `docker-compose.yml` etc. | `docs/archive/docker_stack/` |
 
 Service archives (handled via git history):
 - `api/services/article_service.py` (legacy global-table SQL, unused)

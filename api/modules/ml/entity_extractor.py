@@ -100,7 +100,37 @@ class LocalEntityExtractor:
                         logger.info(
                             f"Using cached entity extraction result for text: {text[:50]}..."
                         )
-                        return EntityExtractionResult(**cached_result["data"])
+                        sel = model or self.default_model
+                        raw = cached_result["data"]
+                        entities_list: list[Entity] = []
+                        for e in raw.get("entities", []):
+                            if isinstance(e, Entity):
+                                entities_list.append(e)
+                            elif isinstance(e, dict):
+                                entities_list.append(
+                                    Entity(
+                                        text=e.get("text", ""),
+                                        label=e.get("label", "UNKNOWN"),
+                                        confidence=max(
+                                            0.0,
+                                            min(1.0, float(e.get("confidence", 0.5))),
+                                        ),
+                                        start_pos=int(e.get("start_pos", 0)),
+                                        end_pos=int(e.get("end_pos", 0)),
+                                        context=e.get("context", ""),
+                                        model_used=e.get("model_used", sel),
+                                        local_processing=e.get("local_processing", True),
+                                    )
+                                )
+                        return EntityExtractionResult(
+                            entities=entities_list,
+                            text=raw.get("text", text),
+                            model_used=raw.get("model_used", sel),
+                            processing_time=raw.get("processing_time", 0.0),
+                            total_entities=raw.get("total_entities", len(entities_list)),
+                            entity_types=raw.get("entity_types", {}),
+                            local_processing=raw.get("local_processing", True),
+                        )
 
             # Select model
             selected_model = model or self.default_model

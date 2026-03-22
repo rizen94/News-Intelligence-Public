@@ -788,12 +788,21 @@ async def trigger_phase(request: Request, body: dict[str, Any] = Body(..., embed
         )
     except Exception as e:
         logger.debug("Activity feed add_current (requested): %s", e)
+    raw_force = body.get("force_nightly_unified_pipeline", body.get("force_nightly"))
+    if isinstance(raw_force, str):
+        force_nightly = raw_force.lower() in ("1", "true", "yes")
+    else:
+        force_nightly = bool(raw_force)
+    if force_nightly and phase != "nightly_enrichment_context":
+        force_nightly = False
+
     try:
         automation.request_phase(
             phase,
             domain=body.get("domain"),
             storyline_id=body.get("storyline_id"),
             requested_activity_id=requested_activity_id,
+            force_nightly_unified_pipeline=force_nightly,
         )
     except Exception as e:
         logger.warning("trigger_phase failed: %s", e)
@@ -807,6 +816,8 @@ async def trigger_phase(request: Request, body: dict[str, Any] = Body(..., embed
             pass
         raise HTTPException(status_code=500, detail=str(e))
     msg = f"Phase {phase} requested; check Current activity on Monitor."
+    if force_nightly and phase == "nightly_enrichment_context":
+        msg += " Running unified nightly drain even outside local night window (manual force)."
     warning = None
     if hasattr(automation, "get_phase_request_warning"):
         try:

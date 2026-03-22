@@ -8,32 +8,32 @@
 
 For full-stack DB alignment (schema, API, web, automation persistence), baseline scripts, and cleanup bundles:
 
-- [DB_FULL_ASSESSMENT.md](DB_FULL_ASSESSMENT.md) — matrices, gates, expert checklist  
-- [DB_CLEANUP_BUNDLES.md](DB_CLEANUP_BUNDLES.md) — bundles A/B/C and pre-delete rules  
+- [_archive/retired_root_docs_2026_03/DB_FULL_ASSESSMENT.md](_archive/retired_root_docs_2026_03/DB_FULL_ASSESSMENT.md) — matrices, gates, expert checklist  
+- [_archive/retired_root_docs_2026_03/DB_CLEANUP_BUNDLES.md](_archive/retired_root_docs_2026_03/DB_CLEANUP_BUNDLES.md) — bundles A/B/C and pre-delete rules  
 - Commands: `PYTHONPATH=api uv run python api/scripts/verify_migrations_160_167.py`, `PYTHONPATH=api uv run python scripts/db_full_inventory.py`, `PYTHONPATH=api uv run python scripts/db_persistence_gates.py`
 
 ### **`claims_to_facts` runs but `versioned_facts` stays empty**
 
 Automation can report success while **zero rows** are inserted if claim subjects cannot be resolved to `intelligence.entity_profiles.id`. A resolver bug (invalid `display_name` column + wrong `old_entity_to_new` join) caused **all** resolutions to fail until fixed.
 
-- Doc: [CLAIMS_TO_FACTS_ENTITY_RESOLUTION.md](CLAIMS_TO_FACTS_ENTITY_RESOLUTION.md)  
+- Doc (archived): [_archive/retired_root_docs_2026_03/CLAIMS_TO_FACTS_ENTITY_RESOLUTION.md](_archive/retired_root_docs_2026_03/CLAIMS_TO_FACTS_ENTITY_RESOLUTION.md)  
 - Diagnose: `PYTHONPATH=api uv run python scripts/diagnose_claims_to_facts.py`
 
 ### **Entity enrichment never updates `entity_profiles`**
 
 If the backlog of profiles missing a Wikipedia section exceeds the old **1000-row** guard, the batch used to **skip entirely**. That guard is relaxed (warn-only above `ENTITY_ENRICHMENT_QUEUE_WARN_THRESHOLD`, default 5000). See `api/services/entity_enrichment_service.py`.
 
-### **System Health Check**
+### **System Health Check** (bare metal)
 ```bash
-# Check if all services are running
-docker ps
+# API process and health
+pgrep -fa "uvicorn.*main:app"
+curl -s --max-time 5 http://localhost:8000/api/system_monitoring/health
 
-# Check system health
-curl http://localhost:8000/api/health/
-
-# Check web interface
-curl http://localhost:80
+# Frontend (Vite dev server)
+curl -s --max-time 3 http://localhost:3000 | head -1
 ```
+
+Legacy Docker commands (if you restore Compose) live in [`archive/docker_stack/TROUBLESHOOTING_DOCKER_LEGACY.md`](archive/docker_stack/TROUBLESHOOTING_DOCKER_LEGACY.md).
 
 ### **Common Issues & Solutions**
 
@@ -215,24 +215,7 @@ If this is 0, no storylines have been created for finance yet; run discovery or 
 
 ---
 
-### **API Not Responding (legacy Docker — v3)**
-**Symptoms**: 500 errors, connection refused, timeout
-**Solutions**:
-```bash
-# Check API container status
-docker ps | grep api
-
-# Restart API container
-docker restart news-intelligence-api
-
-# Check API logs
-docker logs news-intelligence-api --tail 50
-
-# Check if port 8000 is available
-netstat -tlnp | grep 8000
-```
-
-### **Monitoring page down after CLI restart** (non-Docker)
+### **Monitoring page down after CLI restart**
 **Symptoms**: After running `./start_system.sh` or `start-news-intelligence`, the Monitoring page shows errors or "down"; startup log may say "API server already running" then "❌ API Server: Not responding".
 
 **Cause**: The script had previously skipped starting the API when it saw a leftover uvicorn process (e.g. still shutting down after `pkill`), so no healthy API was running.
@@ -240,20 +223,12 @@ netstat -tlnp | grep 8000
 **Fix (in script)**: `start_system.sh` now (1) waits for the API process to exit after `pkill` (and uses SIGKILL if needed), and (2) if it thinks the API is already running, it checks `GET /api/system_monitoring/health`; if that fails, it force-kills and starts a new API. After updating the script, run `./start_system.sh` again. If the Monitoring page is still down, run: `curl -s http://localhost:8000/api/system_monitoring/health` to confirm the API is up.
 
 ### **Database Connection Issues**
-**Symptoms**: Database errors, connection timeouts
-**Solutions**:
+**Symptoms**: Database errors, connection timeouts  
+**Solutions** (Widow or tunnel — see `.env` `DB_HOST` / `DB_PORT` / `DB_NAME`):
 ```bash
-# Check database container
-docker ps | grep postgres
-
-# Restart database
-docker restart news-intelligence-postgres
-
-# Check database logs
-docker logs news-intelligence-postgres --tail 50
-
-# Test database connection
-docker exec news-intelligence-postgres psql -U newsapp -d news_intelligence -c "SELECT 1;"
+pg_isready -h "$DB_HOST" -p "$DB_PORT" -U newsapp
+# Example direct test:
+psql -h "$DB_HOST" -p "$DB_PORT" -U newsapp -d news_intel -c "SELECT 1;"
 ```
 
 ### **Web page slow or failing to load (API logs: assignment_context does not exist)**
@@ -267,20 +242,12 @@ PYTHONPATH=api .venv/bin/python3 api/scripts/run_migration_166.py
 ```
 
 ### **Frontend Not Loading**
-**Symptoms**: 404 errors, blank page, connection refused
-**Solutions**:
+**Symptoms**: 404 errors, blank page, connection refused  
+**Solutions** (default dev: Vite on **3000**):
 ```bash
-# Check nginx container
-docker ps | grep nginx
-
-# Restart nginx
-docker restart news-intelligence-nginx
-
-# Check nginx logs
-docker logs news-intelligence-nginx --tail 50
-
-# Check if port 80 is available
-netstat -tlnp | grep 80
+ss -tlnp | grep 3000
+tail -40 logs/frontend.log
+./stop_system.sh && ./start_system.sh
 ```
 
 ### **Database not accessible (503, "Save as topic" fails)**
@@ -423,182 +390,84 @@ grep "Content enrichment failed" logs/api_server.log | tail -20
 ## 🐛 Error Messages
 
 ### **"generator object has no attribute 'query'"**
-**Cause**: Database connection pattern issue
-**Solution**: This was fixed in the latest update. Restart the API container:
-```bash
-docker restart news-intelligence-api
-```
+**Cause**: Database connection pattern issue  
+**Solution**: Fixed in current code. Restart the API: `./stop_system.sh && ./start_system.sh`
 
 ### **"column does not exist"**
-**Cause**: Database schema mismatch
-**Solution**: Check database schema and run migrations:
-```bash
-# Check table structure
-docker exec news-intelligence-postgres psql -U newsapp -d news_intelligence -c "\d articles"
-
-# Check for missing columns
-docker exec news-intelligence-postgres psql -U newsapp -d news_intelligence -c "SELECT column_name FROM information_schema.columns WHERE table_name = 'articles';"
-```
+**Cause**: Database schema mismatch  
+**Solution**: Run the relevant migration, then verify with `psql` against your `DB_HOST` / `DB_NAME` (see [DATABASE.md](DATABASE.md)).
 
 ### **"connection refused"**
-**Cause**: Service not running or port conflict
-**Solution**: Check service status and ports:
+**Cause**: Service not running or port conflict  
+**Solution**:
 ```bash
-# Check all containers
-docker ps
-
-# Check port usage
-netstat -tlnp | grep -E "(80|8000|5432|6379)"
-
-# Restart all services
-docker-compose down && docker-compose up -d
+ss -tlnp | grep -E ":(3000|8000|5432) "
+pgrep -fa "uvicorn.*main:app"
+./stop_system.sh && ./start_system.sh
 ```
 
 ### **"invalid input syntax for type integer"**
-**Cause**: Route conflict (e.g., /stats being caught by /{id} route)
-**Solution**: This was fixed in the latest update. Restart the API container:
-```bash
-docker restart news-intelligence-api
-```
+**Cause**: Route conflict (e.g., /stats being caught by /{id} route)  
+**Solution**: Fixed in current code. Restart the API: `./stop_system.sh && ./start_system.sh`
 
 ## 🔍 Log Analysis
 
 ### **API Logs**
 ```bash
-# View recent API logs
-docker logs news-intelligence-api --tail 100
-
-# Follow API logs in real-time
-docker logs -f news-intelligence-api
-
-# Search for errors
-docker logs news-intelligence-api 2>&1 | grep -i error
+tail -100 logs/api_server.log
+tail -f logs/api_server.log
+grep -i error logs/api_server.log | tail -40
 ```
 
-### **Database Logs**
+### **Database**
+PostgreSQL runs on **Widow** (or tunnel); use host logs or `psql` from any client with your `.env` credentials — not container logs.
+
+### **Frontend**
 ```bash
-# View database logs
-docker logs news-intelligence-postgres --tail 100
-
-# Search for database errors
-docker logs news-intelligence-postgres 2>&1 | grep -i error
-```
-
-### **Nginx Logs**
-```bash
-# View nginx logs
-docker logs news-intelligence-nginx --tail 100
-
-# Check access logs
-docker logs news-intelligence-nginx 2>&1 | grep "GET /"
+tail -80 logs/frontend.log
 ```
 
 ## 🔄 Recovery Procedures
 
-### **Complete System Restart**
+### **Complete application restart** (API + Vite)
 ```bash
-# Stop all services
-docker-compose down
-
-# Remove containers (if needed)
-docker-compose down --volumes
-
-# Start services
-docker-compose up -d
-
-# Wait for services to start
-sleep 30
-
-# Check health
-curl http://localhost:8000/api/health/
+./stop_system.sh && ./start_system.sh
+curl -s --max-time 5 http://localhost:8000/api/system_monitoring/health
 ```
 
-### **Database Recovery**
-```bash
-# Check database status
-docker exec news-intelligence-postgres psql -U newsapp -d news_intelligence -c "SELECT 1;"
+### **Database recovery**
+Use your normal PostgreSQL backup/restore on **Widow** (or NAS). There is no Compose volume reset in the default bare-metal layout.
 
-# If database is corrupted, restore from backup
-# (Backup procedures should be implemented)
-
-# Reset database (WARNING: This will lose all data)
-docker-compose down
-docker volume rm news-intelligence_postgres_data
-docker-compose up -d
-```
-
-### **File Synchronization Issues**
-```bash
-# Check if container files are up to date
-docker exec news-intelligence-api ls -la /app/domains/news_aggregation/routes/
-
-# Copy updated route file to container (example: news_aggregation domain)
-docker cp api/domains/news_aggregation/routes/news_aggregation.py news-intelligence-api:/app/domains/news_aggregation/routes/news_aggregation.py
-
-# Restart API container
-docker restart news-intelligence-api
-```
+### **Code not reflected after edit**
+You run from the repo checkout; restart the API so uvicorn reloads (or rely on `--reload` only in dev — production-style starts use `start_system.sh` without reload).
 
 ## 📊 Performance Issues
 
 ### **Slow API Responses**
-**Symptoms**: API responses > 1 second
-**Solutions**:
 ```bash
-# Check database performance
-docker exec news-intelligence-postgres psql -U newsapp -d news_intelligence -c "SELECT * FROM pg_stat_activity;"
-
-# Check system resources
-docker stats
-
-# Check for memory leaks
-docker exec news-intelligence-api ps aux
+psql -h "$DB_HOST" -p "$DB_PORT" -U newsapp -d news_intel -c "SELECT * FROM pg_stat_activity LIMIT 20;"
+free -h
+top -b -n1 | head -20
 ```
 
 ### **High Memory Usage**
-**Symptoms**: System running out of memory
-**Solutions**:
 ```bash
-# Check memory usage
 free -h
-docker stats
-
-# Restart services to free memory
-docker-compose restart
-
-# Check for memory leaks in logs
-docker logs news-intelligence-api 2>&1 | grep -i memory
+./stop_system.sh && ./start_system.sh
+grep -i memory logs/api_server.log | tail -20
 ```
 
 ## 🔧 Maintenance
 
-### **Regular Health Checks**
+### **Regular health checks**
 ```bash
-# Daily health check script
-#!/bin/bash
-echo "=== News Intelligence System Health Check ==="
-echo "1. API Health:"
-curl -s http://localhost:8000/api/health/ | jq .success
-echo "2. Database:"
-docker exec news-intelligence-postgres psql -U newsapp -d news_intelligence -c "SELECT 1;" > /dev/null && echo "OK" || echo "ERROR"
-echo "3. Frontend:"
-curl -s http://localhost:80 > /dev/null && echo "OK" || echo "ERROR"
-echo "4. Container Status:"
-docker ps --format "table {{.Names}}\t{{.Status}}"
+curl -s http://localhost:8000/api/system_monitoring/health
+curl -s -o /dev/null -w "%{http_code}" http://localhost:3000
+pg_isready -h "${DB_HOST:-192.168.93.101}" -p "${DB_PORT:-5432}" -U newsapp || true
 ```
 
-### **Log Rotation**
-```bash
-# Set up log rotation for Docker logs
-# Add to /etc/docker/daemon.json:
-{
-  "log-driver": "json-file",
-  "log-opts": {
-    "max-size": "10m",
-    "max-file": "3"
-  }
-}
-```
+### **Log rotation**
+Rotate `logs/*.log` with **logrotate** or your distro defaults; optional Docker log-driver settings are irrelevant when not using containers.
 
 ## 📞 Getting Help
 

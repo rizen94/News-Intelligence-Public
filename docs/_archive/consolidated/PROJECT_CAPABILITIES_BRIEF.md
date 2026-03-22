@@ -1,4 +1,4 @@
-> **Status:** Superseded — canonical summary: [PROJECT_OVERVIEW.md](../../PROJECT_OVERVIEW.md) §5–6; full detail preserved here.
+> **Status:** Superseded — canonical summary: [PROJECT_OVERVIEW.md](../retired_root_docs_2026_03/PROJECT_OVERVIEW.md) §5–6; full detail preserved here.
 
 # News Intelligence — Current Capabilities Brief
 

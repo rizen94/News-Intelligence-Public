@@ -6,7 +6,7 @@ Checks automation_run_history (are they running?) + output tables (are they writ
 
 From repo root:
   PYTHONPATH=api uv run python scripts/verify_intelligence_phases_productivity.py
-  PYTHONPATH=api uv run python scripts/verify_intelligence_phases_productivity.py --write-report docs/INTELLIGENCE_PHASES_PRODUCTIVITY_REPORT.md
+  PYTHONPATH=api uv run python scripts/verify_intelligence_phases_productivity.py --write-report docs/generated/INTELLIGENCE_PHASES_PRODUCTIVITY_REPORT.md
 """
 from __future__ import annotations
 
@@ -92,7 +92,7 @@ def main() -> int:
     p.add_argument(
         "--write-report",
         metavar="PATH",
-        help="Write markdown report (e.g. docs/INTELLIGENCE_PHASES_PRODUCTIVITY_REPORT.md)",
+        help="Write markdown report (e.g. docs/generated/INTELLIGENCE_PHASES_PRODUCTIVITY_REPORT.md)",
     )
     p.add_argument("--hours", type=int, default=48, help="Window for recent activity (default: 48)")
     args = p.parse_args()
@@ -272,7 +272,7 @@ def main() -> int:
         )
         lines.append("")
         lines.append("**Claims → facts:** If `versioned_facts` stays empty while `claims_to_facts` succeeds, see "
-                     "[CLAIMS_TO_FACTS_ENTITY_RESOLUTION.md](CLAIMS_TO_FACTS_ENTITY_RESOLUTION.md) and "
+                     "[CLAIMS_TO_FACTS_ENTITY_RESOLUTION.md](../_archive/retired_root_docs_2026_03/CLAIMS_TO_FACTS_ENTITY_RESOLUTION.md) and "
                      "`scripts/diagnose_claims_to_facts.py`.")
         lines.append("")
 

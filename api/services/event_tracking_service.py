@@ -11,6 +11,8 @@ from typing import Any, TypedDict
 
 from shared.services.llm_service import LLMService, ModelType
 
+from services.commodity_event_bridge import maybe_append_finance_domain_key
+
 logger = logging.getLogger(__name__)
 
 EVENT_GROUPING_PROMPT = """You are a news intelligence analyst. Given these article headlines and summaries, identify the distinct real-world EVENTS they describe.
@@ -222,6 +224,12 @@ async def discover_events_from_contexts(
             "government_bond (treasury, sovereign debt, yield moves), regulatory (SEC, Fed, enforcement), or investigation "
             "(corporate probes, fraud, DOJ). Name events specifically (e.g. 'Fed rate decision March 2026', 'SEC investigation into X')."
         )
+    elif domain_key in ("politics", "science_tech", "science-tech"):
+        domain_hint = (
+            "\n\nIf the story materially affects global commodities, energy, shipping chokepoints, critical minerals, "
+            "sanctions, or major macro markets, state that clearly in geographic_scope or summary "
+            "(e.g. oil/LNG, straits, OPEC, gold mining, tariffs) so cross-domain finance maps can surface it."
+        )
 
     prompt = (
         EVENT_GROUPING_PROMPT.format(articles=articles_text, domain_hint=domain_hint)
@@ -358,6 +366,10 @@ async def discover_events_from_contexts(
                         "UPDATE intelligence.tracked_events SET key_participant_entity_ids = %s WHERE id = %s",
                         (json.dumps(profile_ids), event_id),
                     )
+
+                maybe_append_finance_domain_key(
+                    conn, event_id, event_name, geo, summary or "", domains
+                )
 
                 created_events.append(
                     {

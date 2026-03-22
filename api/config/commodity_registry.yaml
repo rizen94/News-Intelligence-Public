@@ -1,5 +1,7 @@
 # Commodity registry — single source of truth for finance commodity tracking.
 # Used by news_orchestrator (relevance), finance routes (validation), FRED/price, and dashboard.
+# relevance_anchors: at least one must match in text for that commodity's news/supply-chain/geo views
+# (shared topic_keywords like "ounce" / "precious metal" are for scoring only after the anchor gate).
 # FRED: set fred_series_id here or via env FRED_{COMMODITY_ID}_SERIES_ID (e.g. FRED_OIL_SERIES_ID).
 
 # Shared financial context signals (market/trading/regulatory). Content matching these is boosted.
@@ -30,6 +32,11 @@ commodities:
     unit: USD/oz
     metals_dev: true
     fred_series_id: "IQ12260"
+    # At least one anchor must match for news/supply-chain/geo relevance (avoids silver/copper via "ounce"/"precious metal").
+    relevance_anchors:
+      - gold
+      - bullion
+      - yellow metal
     topic_keywords:
       - gold
       - bullion
@@ -55,6 +62,9 @@ commodities:
     unit: USD/oz
     metals_dev: true
     fred_series_id: ""
+    relevance_anchors:
+      - silver
+      - xag
     topic_keywords:
       - silver
       - precious metal
@@ -78,6 +88,12 @@ commodities:
     unit: USD/oz
     metals_dev: true
     fred_series_id: ""
+    relevance_anchors:
+      - platinum
+      - palladium
+      - pgm
+      - xpt
+      - xpd
     topic_keywords:
       - platinum
       - pgm
@@ -99,7 +115,18 @@ commodities:
     label: Oil
     unit: USD/bbl
     metals_dev: false
-    fred_series_id: ""
+    # WTI Cushing, OK — daily ($/bbl). Override: FRED_OIL_SERIES_ID (e.g. DCOILBRENTEU for Brent).
+    fred_series_id: "DCOILWTICO"
+    relevance_anchors:
+      - crude oil
+      - oil price
+      - oil prices
+      - oil market
+      - brent
+      - wti
+      - opec
+      - oil production
+      - oil demand
     topic_keywords:
       - crude oil
       - oil price
@@ -124,7 +151,17 @@ commodities:
     label: Natural gas
     unit: USD/mmbtu
     metals_dev: false
-    fred_series_id: ""
+    # Henry Hub spot — daily ($/MMBtu). Override: FRED_GAS_SERIES_ID.
+    fred_series_id: "DHHNGSP"
+    relevance_anchors:
+      - natural gas
+      - gas price
+      - gas prices
+      - gas market
+      - henry hub
+      - lng
+      - gas demand
+      - gas production
     topic_keywords:
       - natural gas
       - gas price

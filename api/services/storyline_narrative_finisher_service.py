@@ -1,7 +1,7 @@
 """
 Storyline narrative finisher — ~70B editorial pass over aggregated 8B/Mistral work.
 
-See docs/STORYLINE_70B_NARRATIVE_FINISHER.md. This module builds the finisher prompt and
+See docs/_archive/retired_root_docs_2026_03/STORYLINE_70B_NARRATIVE_FINISHER.md. This module builds the finisher prompt and
 calls Ollama via OllamaModelCaller with InvocationKind.STORYLINE_NARRATIVE_FINISH.
 
 Loads storyline + linked articles + entities from the domain schema; optional timeline rows from

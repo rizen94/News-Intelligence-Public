@@ -12,6 +12,7 @@ from typing import Any
 
 from shared.database.connection import get_db_connection
 from shared.services.llm_service import LLMService
+from shared.services.ollama_model_caller import get_ollama_model_caller
 from shared.services.ollama_model_policy import InvocationKind
 
 from services.entity_relational_expansion_service import expand_relational_entity_async
@@ -60,6 +61,7 @@ class ArticleEntityExtractionService:
 
     def __init__(self, ollama_url: str = "http://localhost:11434"):
         self.llm = LLMService(ollama_base_url=ollama_url)
+        self._caller = get_ollama_model_caller()
 
     async def extract_and_store(
         self,
@@ -73,7 +75,7 @@ class ArticleEntityExtractionService:
         Returns counts of stored entities.
         """
         content = content or ""
-        combined = f"{title}\n\n{content}"[:12000]  # v7: increased for full-text articles
+        combined = f"{title}\n\n{content}"[:12000]  # long-form article text window
 
         if len(combined.strip()) < 50:
             logger.debug(f"Article {article_id}: text too short for entity extraction")

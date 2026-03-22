@@ -316,7 +316,7 @@ class LLMTopicExtractor:
             )
 
             # Combine text for analysis
-            text = f"{title} {summary or ''} {content[:5000] if content else ''}"  # v7: full-text
+            text = f"{title} {summary or ''} {content[:5000] if content else ''}"  # full article body (capped)
 
             # Extract entities using NER (structured, fast)
             entities_result = self.entity_extractor.extract_entities(text, use_cache=True)
@@ -332,7 +332,7 @@ class LLMTopicExtractor:
 
                 article_dict = {
                     "title": title,
-                    "content": content[:5000] if content else "",  # v7: full-text
+                    "content": content[:5000] if content else "",  # full article body (capped)
                     "excerpt": summary or "",
                 }
 
@@ -344,20 +344,21 @@ class LLMTopicExtractor:
             # Combine entities and LLM topics
             topics = []
 
-            # Add entities as topics
+            # Add entities as topics (normalize dict vs Entity — cache can leak dicts)
             for entity in entities_result.entities:
-                if entity.confidence > 0.5:  # Filter low-confidence entities
+                conf, ent_text, ent_label = self._ner_entity_fields(entity)
+                if conf > 0.5 and ent_text:
                     topics.append(
                         TopicInsight(
-                            name=entity.text,
+                            name=ent_text,
                             frequency=1,
-                            relevance_score=entity.confidence,
+                            relevance_score=conf,
                             trend_direction="stable",
                             articles=[article_id],
-                            keywords=[entity.text],
+                            keywords=[ent_text],
                             sentiment="neutral",
-                            category=self._map_entity_to_category(entity.label),
-                            entity_type=entity.label,
+                            category=self._map_entity_to_category(ent_label),
+                            entity_type=ent_label,
                             created_at=datetime.now(),
                         )
                     )
@@ -432,6 +433,26 @@ class LLMTopicExtractor:
         if len(topic_name.split()) >= 3:
             return matches >= 2
         return matches >= 1
+
+    @staticmethod
+    def _ner_entity_fields(entity: Any) -> tuple[float, str, str]:
+        """Confidence, display text, and label from Entity or dict-shaped cache rows."""
+        if isinstance(entity, dict):
+            try:
+                c = float(entity.get("confidence", 0.5))
+            except (TypeError, ValueError):
+                c = 0.5
+            txt = (entity.get("text") or entity.get("name") or "").strip()
+            lab = str(entity.get("label") or "UNKNOWN")
+            return max(0.0, min(1.0, c)), txt, lab
+        c = getattr(entity, "confidence", 0.5)
+        try:
+            c = float(c)
+        except (TypeError, ValueError):
+            c = 0.5
+        txt = str(getattr(entity, "text", "") or "").strip()
+        lab = str(getattr(entity, "label", "UNKNOWN") or "UNKNOWN")
+        return max(0.0, min(1.0, c)), txt, lab
 
     def _map_entity_to_category(self, entity_type: str) -> str:
         """Map entity type to topic category"""

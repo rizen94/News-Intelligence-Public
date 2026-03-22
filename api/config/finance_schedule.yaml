@@ -7,6 +7,16 @@ schedule:
     parameters: { topic: gold }
     interval_hours: 24
     description: "Daily gold price refresh"
+  silver_refresh:
+    task_type: refresh
+    parameters: { topic: silver }
+    interval_hours: 24
+    description: "Daily silver price refresh"
+  platinum_refresh:
+    task_type: refresh
+    parameters: { topic: platinum }
+    interval_hours: 24
+    description: "Daily platinum price refresh"
   edgar_ingest:
     task_type: ingest
     parameters: { source: edgar, filings_per_company: 1 }

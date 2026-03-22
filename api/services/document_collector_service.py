@@ -7,29 +7,16 @@ Inserts metadata into intelligence.processed_documents for document_processing p
 import logging
 import re
 from typing import Any
-from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
+from urllib.parse import urljoin
 
 logger = logging.getLogger(__name__)
 
 
 def _normalize_url(url: str) -> str:
-    """Normalize URL for dedupe (strip fragments + common tracking params)."""
-    if not url:
-        return ""
-    try:
-        p = urlparse(url.strip())
-        if not p.scheme:
-            return url.strip()
-        query = [
-            (k, v)
-            for k, v in parse_qsl(p.query, keep_blank_values=True)
-            if not k.lower().startswith("utm_")
-            and k.lower() not in {"gclid", "fbclid", "mc_cid", "mc_eid"}
-        ]
-        clean = p._replace(fragment="", query=urlencode(query, doseq=True))
-        return urlunparse(clean)
-    except Exception:
-        return url.strip()
+    """Normalize URL for dedupe; shared rules with document_download_service."""
+    from services.document_download_service import normalize_source_url
+
+    return normalize_source_url(url)
 
 
 def _extract_pdf_from_entry(entry: Any, base_url: str | None = None) -> str | None:
@@ -67,29 +54,10 @@ def _extract_pdf_from_entry(entry: Any, base_url: str | None = None) -> str | No
 
 
 def _resolve_pdf_url_from_page(url: str, timeout: int = 20) -> str | None:
-    """Resolve a direct PDF URL from a landing page when feed only has HTML links."""
-    try:
-        import requests
-    except Exception:
-        return None
-    try:
-        resp = requests.get(
-            url,
-            timeout=timeout,
-            allow_redirects=True,
-            headers={
-                "User-Agent": "Mozilla/5.0 (compatible; NewsIntelligence/1.0; +https://news-intel/document-bot)",
-                "Accept": "text/html,application/xhtml+xml,*/*",
-            },
-        )
-        if resp.status_code >= 400:
-            return None
-        html = resp.text or ""
-        for m in re.finditer(r'href=["\']([^"\']+\.pdf[^"\']*)["\']', html, re.I):
-            return _normalize_url(urljoin(resp.url or url, m.group(1)))
-    except Exception as e:
-        logger.debug("Resolve landing page PDF failed for %s: %s", url, e)
-    return None
+    """Delegate to document_download_service (single implementation for HTML PDF discovery)."""
+    from services.document_download_service import resolve_pdf_url_from_landing_page
+
+    return resolve_pdf_url_from_landing_page(url, timeout=timeout)
 
 
 def _fetch_crs(max_items: int) -> list[tuple[str, str, str, str]]:

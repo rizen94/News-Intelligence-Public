@@ -103,6 +103,7 @@ interface ArticleItem {
   url?: string;
   image_url?: string;
   sentiment?: string;
+  sentiment_label?: string;
   quality_score?: number;
   category?: string;
   entities?: string[];
@@ -154,6 +155,8 @@ const Articles: React.FC = () => {
   });
   const [showUnlinkedOnly, setShowUnlinkedOnly] = useState(true);
   const [filterTopic, setFilterTopic] = useState('');
+  const [sourceOptions, setSourceOptions] = useState<string[]>([]);
+  const [debouncedSearch, setDebouncedSearch] = useState('');
 
   // Topic clustering state
   const [topics, setTopics] = useState<Topic[]>([]);
@@ -305,13 +308,30 @@ const Articles: React.FC = () => {
     }
   }, [articles, domain]);
 
-  // Initial load - only run when actual dependencies change
+  useEffect(() => {
+    setPage(1);
+  }, [domain]);
+
+  useEffect(() => {
+    const t = window.setTimeout(() => setDebouncedSearch(searchQuery.trim()), 350);
+    return () => window.clearTimeout(t);
+  }, [searchQuery]);
+
   useEffect(() => {
     loadArticles();
+  }, [loadArticles]);
+
+  useEffect(() => {
     loadStorylines();
+  }, [loadStorylines]);
+
+  useEffect(() => {
+    loadSourceOptions();
+  }, [loadSourceOptions]);
+
+  useEffect(() => {
     loadTopics();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, searchQuery, filterSource, sortBy, showUnlinkedOnly, domain]);
+  }, [loadTopics]);
 
   // Trigger NEW topic clustering (creates new topics in database)
   const clusterArticles = useCallback(async () => {
@@ -519,14 +539,11 @@ const Articles: React.FC = () => {
     }
   };
 
-  // Apply quick filters to articles
+  // Topic + reading-time only (quality/sentiment are server-side query params)
   const filteredArticles = articles.filter(article => {
-    // Topic filter
     if (selectedTopic && !selectedTopic.articles.includes(article)) {
       return false;
     }
-
-    // Quick filters
     if (quickFilters.readingTime) {
       const readingTime = getArticleReadingTime(article);
       if (quickFilters.readingTime === 'short' && readingTime >= 3)
@@ -537,23 +554,6 @@ const Articles: React.FC = () => {
       )
         return false;
       if (quickFilters.readingTime === 'long' && readingTime <= 5) return false;
-    }
-    if (quickFilters.quality && article.quality_score !== undefined) {
-      if (quickFilters.quality === 'high' && article.quality_score < 0.7)
-        return false;
-      if (
-        quickFilters.quality === 'medium' &&
-        (article.quality_score < 0.5 || article.quality_score >= 0.7)
-      )
-        return false;
-      if (quickFilters.quality === 'low' && article.quality_score >= 0.5)
-        return false;
-    }
-    if (quickFilters.sentiment && article.sentiment) {
-      if (
-        article.sentiment.toLowerCase() !== quickFilters.sentiment.toLowerCase()
-      )
-        return false;
     }
     return true;
   });
@@ -1149,7 +1149,7 @@ const Articles: React.FC = () => {
           <Grid item xs={12} md={4}>
             <TextField
               fullWidth
-              placeholder='Search articles by title, content, or source...'
+              placeholder='Search title, summary, source, or URL…'
               value={searchQuery}
               onChange={handleSearch}
               InputProps={{
@@ -1172,10 +1172,11 @@ const Articles: React.FC = () => {
                 }
               >
                 <MenuItem value=''>All Sources</MenuItem>
-                <MenuItem value='bbc'>BBC</MenuItem>
-                <MenuItem value='cnn'>CNN</MenuItem>
-                <MenuItem value='reuters'>Reuters</MenuItem>
-                <MenuItem value='ap'>Associated Press</MenuItem>
+                {sourceOptions.map(src => (
+                  <MenuItem key={src} value={src}>
+                    {src}
+                  </MenuItem>
+                ))}
               </Select>
             </FormControl>
           </Grid>
@@ -1275,10 +1276,15 @@ const Articles: React.FC = () => {
         </Grid>
 
         {/* Quick Filter Chips */}
-        <Box sx={{ mt: 2, display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-          <Typography variant='body2' sx={{ mr: 1, alignSelf: 'center' }}>
-            Quick Filters:
+        <Box sx={{ mt: 2 }}>
+          <Typography variant='body2' gutterBottom>
+            Quick Filters
           </Typography>
+          <Typography variant='caption' color='text.secondary' display='block' sx={{ mb: 1 }}>
+            Quality and sentiment apply to the full result set. Reading length refines
+            the current page only (estimated from summary).
+          </Typography>
+          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
 
           {/* Reading Time Filters */}
           <Chip
@@ -1364,6 +1370,7 @@ const Articles: React.FC = () => {
             }
             size='small'
           />
+          </Box>
         </Box>
       </Paper>
 

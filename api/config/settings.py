@@ -75,7 +75,7 @@ OLLAMA_EXTRA_PULL_MODELS: tuple[str, ...] = tuple(
     m.strip() for m in os.environ.get("OLLAMA_EXTRA_PULL_MODELS", "").split(",") if m.strip()
 )
 
-# Narrative finisher (~70B): final editorial pass on storylines (see docs/STORYLINE_70B_NARRATIVE_FINISHER.md).
+# Narrative finisher (~70B): final editorial pass on storylines (see docs/_archive/retired_root_docs_2026_03/STORYLINE_70B_NARRATIVE_FINISHER.md).
 NARRATIVE_FINISHER_MODEL = os.environ.get(
     "OLLAMA_NARRATIVE_FINISHER_MODEL",
     os.environ.get("OLLAMA_OPTIONAL_QUALITY_MODEL", "llama3.1:70b"),
@@ -191,8 +191,8 @@ def news_intel_rate_limit_per_minute() -> int:
 # ============================================================
 FRED_API_KEY = os.environ.get("FRED_API_KEY", "")
 FRED_RATE_LIMIT_PER_MINUTE = 120
-# Optional FRED series IDs for commodities (registry + env; empty = skip FRED for that commodity)
-# Gold default in registry; others override via FRED_{COMMODITY}_SERIES_ID (e.g. FRED_OIL_SERIES_ID, FRED_GAS_SERIES_ID)
+# Optional FRED series ID overrides for commodities (registry holds defaults; env wins when set)
+# Gold default in registry; oil/gas defaults: DCOILWTICO, DHHNGSP in commodity_registry.yaml
 FRED_GOLD_SERIES_ID = os.environ.get("FRED_GOLD_SERIES_ID", "IQ12260")
 FRED_SILVER_SERIES_ID = os.environ.get("FRED_SILVER_SERIES_ID", "")
 FRED_PLATINUM_SERIES_ID = os.environ.get("FRED_PLATINUM_SERIES_ID", "")

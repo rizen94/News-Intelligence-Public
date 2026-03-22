@@ -10,7 +10,7 @@ The News Intelligence System consists of multiple services that need to run conc
    - Auto-starts MLProcessingService
 3. **Frontend** - React development server (port 3000)
 
-Redis and Docker are not required for normal runs; the start script only needs PostgreSQL, API, and Frontend.
+Redis and Docker are **not** required for normal runs; `start_system.sh` needs PostgreSQL (e.g. on Widow), the API, and the frontend.
 
 ## Quick Start
 
@@ -74,7 +74,7 @@ This script will:
 ./stop_system.sh
 ```
 
-**Note:** This stops API and Frontend but keeps PostgreSQL and Redis running.
+**Note:** This stops API and Frontend; PostgreSQL stays on Widow (or your configured host).
 
 ### Restart (stop then start)
 
@@ -95,12 +95,8 @@ sudo systemctl start postgresql
 sudo systemctl start postgresql@*
 ```
 
-#### Redis
-```bash
-docker start news-intelligence-redis
-# or if using docker-compose
-docker-compose up -d redis
-```
+#### Redis (optional)
+If you use Redis outside Docker, start it the way you installed it (e.g. `sudo systemctl start redis-server`).
 
 #### API Server
 ```bash
@@ -162,8 +158,8 @@ kill -9 <PID>
 
 1. Check logs: `tail -f logs/api_server.log`
 2. Verify dependencies:
-   - PostgreSQL: `pg_isready -h localhost -p 5432 -U newsapp`
-   - Redis: `docker exec news-intelligence-redis redis-cli ping`
+   - PostgreSQL: `pg_isready -h <WIDOW_HOST_IP> -p 5432 -U newsapp` (or your `DB_HOST` from `.env`)
+   - Redis (if used): `redis-cli ping`
    - Python: `python3 --version`
    - Node: `node --version`
 
@@ -181,11 +177,10 @@ pg_isready -h <WIDOW_HOST_IP> -p 5432 -U newsapp
 
 ## System Requirements
 
-- **PostgreSQL** 16 (on Widow <WIDOW_HOST_IP>:5432)
-- **Docker** (for Redis)
-- **Python** 3.9+ (with virtual environment)
-- **Node.js** 16+ (with npm)
-- **Redis** (via Docker container)
+- **PostgreSQL** (on Widow `<WIDOW_HOST_IP>:5432` or NAS tunnel — see `.env`)
+- **Python** 3.10+ (project uses `uv` / `.venv`)
+- **Node.js** 18+ (with npm)
+- **Redis** — optional; not required for the default v8 pipeline
 
 ## After reboot
 

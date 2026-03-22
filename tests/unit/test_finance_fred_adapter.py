@@ -89,3 +89,27 @@ def test_fetch_observations_http_error(monkeypatch, _fred_test_env):
     result = client.fetch_observations("IQ12260", store=False)
     assert not result.success
     assert result.error_type == "network"
+
+
+def test_get_fred_series_id_env_overrides_registry(monkeypatch):
+    """FRED_OIL_SERIES_ID overrides commodity_registry.yaml when set."""
+    import domains.finance.commodity_registry as cr
+
+    monkeypatch.setenv("FRED_OIL_SERIES_ID", "CUSTOM_OIL_SERIES")
+    cr._cached = None
+    try:
+        assert cr.get_fred_series_id("oil") == "CUSTOM_OIL_SERIES"
+    finally:
+        cr._cached = None
+
+
+def test_get_fred_series_id_registry_default(monkeypatch):
+    """Without env override, oil uses registry default DCOILWTICO."""
+    import domains.finance.commodity_registry as cr
+
+    monkeypatch.delenv("FRED_OIL_SERIES_ID", raising=False)
+    cr._cached = None
+    try:
+        assert cr.get_fred_series_id("oil") == "DCOILWTICO"
+    finally:
+        cr._cached = None

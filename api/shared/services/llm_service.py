@@ -1,7 +1,7 @@
 """
-Shared LLM Service for News Intelligence System v7
+Shared LLM service for the News Intelligence system.
 Uses Ollama-hosted Llama 3.1 8B (primary) and Mistral 7B (secondary).
-v7: Global concurrency limit so async Ollama callers share one cap.
+Global concurrency limit so async Ollama callers share one cap.
 """
 
 import asyncio
@@ -16,7 +16,7 @@ from config.settings import NARRATIVE_FINISHER_MODEL, OLLAMA_HOST
 
 logger = logging.getLogger(__name__)
 
-# v7: Global cap. Burst (48h catch-up): 6; revert to 5 after
+# Global cap. Burst (48h catch-up): 6; revert to 5 after
 OLLAMA_CONCURRENCY = 6
 _ollama_semaphore: asyncio.Semaphore | None = None
 
@@ -318,7 +318,7 @@ class LLMService:
             return {"success": False, "error": str(e)}
 
     async def _call_ollama(self, model: ModelType, prompt: str) -> str:
-        """Make API call to Ollama with circuit breaker protection. v7: acquires global semaphore."""
+        """Make API call to Ollama with circuit breaker protection; acquires global semaphore."""
         sem = _get_ollama_semaphore()
         async with sem:
             return await self._call_ollama_impl(model, prompt)

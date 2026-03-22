@@ -2,7 +2,7 @@
 
 Hard rules for building features in the News Intelligence System. These are not guidelines — they are constraints. Code that violates them is architecturally wrong regardless of whether it "works."
 
-See `docs/CORE_ARCHITECTURE_PRINCIPLES.md` for the reasoning behind each constraint.
+See `docs/_archive/retired_root_docs_2026_03/CORE_ARCHITECTURE_PRINCIPLES.md` for the reasoning behind each constraint (archived).
 
 ---
 
