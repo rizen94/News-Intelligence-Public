@@ -1,6 +1,6 @@
 #!/bin/bash
 # Check entity pipeline status on Widow: DB counts and optional process check.
-# From project root: ./scripts/check_widow_entity_status.sh
+# From project root: ./scripts/archive/retired_scripts_2026_03/check_widow_entity_status.sh
 
 set -euo pipefail
 
@@ -18,7 +18,7 @@ echo "Checking Widow (${SSH_TARGET}) entity status..."
 echo ""
 
 # 1) Entity DB status (run Python on Widow with local .env)
-ssh "$SSH_TARGET" "cd ${REMOTE_DIR} && set -a && [ -f .env ] && . ./.env && set +a && source .venv/bin/activate 2>/dev/null || true && PYTHONPATH=api python scripts/check_widow_entity_status.py"
+ssh "$SSH_TARGET" "cd ${REMOTE_DIR} && set -a && [ -f .env ] && . ./.env && set +a && source .venv/bin/activate 2>/dev/null || true && PYTHONPATH=api python scripts/archive/retired_scripts_2026_03/check_widow_entity_status.py"
 STATUS=$?
 
 # 2) Any entity-related processes currently running?

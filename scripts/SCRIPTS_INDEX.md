@@ -30,6 +30,7 @@
 | `widow_setup_public_nginx.sh` | **Widow:** install nginx — HTTP→HTTPS, ACME path, self-signed 443 until certbot; `PUBLIC_DEMO_HOSTNAME` / `PUBLIC_API_UPSTREAM` — [docs/DYNAMIC_DNS_WIDOW.md](../docs/DYNAMIC_DNS_WIDOW.md) §6 |
 | `deploy_public_demo_to_widow.sh` | **`npm run build:bundle`** + rsync `web/dist` → Widow `/var/www/news-intelligence/web/dist` |
 | `widow_disable_public_api.sh` | **Widow (sudo):** disable `news-intelligence-api-public` — API stays on main GPU host; nginx uses `PUBLIC_API_UPSTREAM` |
+| `decommission_nas_postgresql.sh` | **One-time / rare:** NAS PostgreSQL decommission (see script header); rollback notes in [docs/NAS_LEGACY_AND_STORAGE.md](../docs/NAS_LEGACY_AND_STORAGE.md) |
 | `../api/scripts/run_widow_db_adjacent.py` | **Widow cron:** RSS / context_sync / entity_profile_sync / pending_db_flush without API — [docs/WIDOW_DB_ADJACENT_CRON.md](../docs/WIDOW_DB_ADJACENT_CRON.md) |
 | `run_backfill_on_widow.sh` | Run entity description backfill on Widow (DB local). `./scripts/run_backfill_on_widow.sh [--deploy] [--limit N]` — sources .env on remote so DB_HOST=127.0.0.1. |
 
@@ -89,10 +90,17 @@
 | `setup_log_archive_cron.sh` | Install log-archive-to-NAS cron (6/18) with quoted paths |
 | `setup_log_cleanup_cron.sh` | Install pipeline_trace.log cleanup (2 AM) with quoted path |
 | `backup_database.sh` | DB backup |
+| `doc_obfuscation.py` | **Public-repo docs:** expand/scrub LAN placeholders — [docs/OBFUSCATION.md](../docs/OBFUSCATION.md) |
+| `commit_context_centric.sh` | **Interactive chunk commits** for large changes — [docs/REPO_MAINTENANCE.md](../docs/REPO_MAINTENANCE.md) |
+| `last_24h_activity_report.py` | Activity report (usually via `run_last_24h_report.sh`) |
 
 ## Archived
 
 `scripts/archive/` — legacy NAS scripts, one-time migrations, deprecated.
+
+### `archive/retired_scripts_2026_03/` (one-off / not invoked by the API)
+
+Diagnostics, Pi helpers, old migration shells, dev benchmarks, manual CSV import/export, duplicate cron installer, and superseded `maintenance/` + `production/` helpers. Catalog: [archive/retired_scripts_2026_03/README.md](archive/retired_scripts_2026_03/README.md).
 
 **2026-03 housekeeping** (see [docs/archive/CLEANUP_2026_03.md](../docs/archive/CLEANUP_2026_03.md)):
 

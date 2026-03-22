@@ -58,7 +58,7 @@ Legacy step-by-step for `news_intelligence` vs `news_intel` names may appear in 
 
 ## Finance / ChromaDB
 
-ChromaDB (evidence embeddings) needs a **Python 3.11+** venv and successful `uv sync`. Data under `data/finance/chroma/`. Validate with `scripts/validate_finance_pipeline.py` when available.
+ChromaDB (evidence embeddings) needs a **Python 3.11+** venv and successful `uv sync`. Data under `data/finance/chroma/`. Optional Chroma/RAG check script (archived): `scripts/archive/retired_scripts_2026_03/validate_finance_pipeline.py`.
 
 ---
 

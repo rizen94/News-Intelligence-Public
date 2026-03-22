@@ -3,7 +3,7 @@
 Check entity pipeline status on the database: per-domain entity_canonical and
 article_entities counts, description backfill coverage, and recent update times.
 Run on Widow (with local .env) or from Primary (DB points at Widow).
-  PYTHONPATH=api python scripts/check_widow_entity_status.py
+  PYTHONPATH=api python scripts/archive/retired_scripts_2026_03/check_widow_entity_status.py
 """
 import os
 import sys

@@ -13,3 +13,9 @@ Consolidated archival pass: move **unused or non-canonical** trees out of day-to
 | `web/NEXT_STEPS.md` | `docs/archive/frontend_stale_notes/` |
 
 **Still active:** `infrastructure/` (referenced by `WIDOW_DB_ADJACENT_CRON.md`), `api/orchestration/` (loaded from `main.py`), `docs/_archive/` (historical docs policy).
+
+## Scripts (2026-03)
+
+| Was | Now |
+|-----|-----|
+| One-off / diagnostic / Pi / old migration shells / `maintenance/` / `production/` under `scripts/` | `scripts/archive/retired_scripts_2026_03/` (see README there) |
