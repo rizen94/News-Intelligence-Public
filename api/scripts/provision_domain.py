@@ -13,7 +13,7 @@ Usage (from repo root):
   --teardown-only  Only run teardown for domain_key/schema_name from config (dangerous).
   --no-seed-rss / --skip-rss-seed  Skip inserting data_sources.rss.seed_feed_urls into {schema}.rss_feeds.
   --print-checklist-only  Print post-install checklist and exit (needs --config; no DB).
-  --activate-in-db  After successful verify, SET public.domains.is_active = TRUE for this domain_key.
+  --no-activate-in-db  Skip UPDATE public.domains SET is_active = TRUE (default is to activate).
 """
 
 from __future__ import annotations
@@ -50,6 +50,7 @@ from psycopg2 import sql as psql  # noqa: E402
 from shared.database.connection import get_db_connection  # noqa: E402
 from shared.domain_registry import RESERVED_SCHEMA_NAMES  # noqa: E402
 from shared.services.domain_rss_seed import seed_from_domain_config  # noqa: E402
+from shared.services.domain_silo_post_migration import activate_domain_row  # noqa: E402
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
@@ -134,10 +135,10 @@ def print_post_provision_checklist(
     print(
         """
 --- Post-provision checklist ---
-[ ] public.domains: row exists; if automation should process this silo, set is_active = TRUE
-    (or re-run this script with --activate-in-db). Align with YAML is_active for API routing.
-[ ] Onboarding YAML: set is_active: true only after verify passed; restart API + workers
-    (DOMAIN_PATH_PATTERN / ACTIVE_DOMAIN_KEYS are import-time — see api/config/domains/README.md).
+[ ] public.domains: row exists with is_active = TRUE (this script does that by default; use --no-activate-in-db to skip).
+    Align YAML is_active: true so API/registry and RSS collection agree (see api/config/domains/README.md).
+[ ] Onboarding YAML: set is_active: true; API domain path pattern accepts new keys without restart;
+    is_valid_domain_key() reads YAML each call — reload workers only if they cache domain lists elsewhere.
 [ ] api/config/domain_synthesis_config.yaml: add a block for this domain if synthesis/topic bias
     should differ from defaults (separate from api/config/domains/*.yaml).
 [ ] Grep for hardcoded domain lists until fully centralized, e.g.:
@@ -221,9 +222,9 @@ def main() -> None:
         help="Print post-install checklist for the domain in --config and exit (no DB)",
     )
     parser.add_argument(
-        "--activate-in-db",
+        "--no-activate-in-db",
         action="store_true",
-        help="After successful run, UPDATE public.domains SET is_active=TRUE for this domain_key",
+        help="Do not UPDATE public.domains SET is_active=TRUE after successful run (default activates)",
     )
     args = parser.parse_args()
 
@@ -305,25 +306,21 @@ def main() -> None:
                 conn.commit()
                 raise SystemExit(f"Verify failed (exit {rc}), tore down target domain")
 
-        if args.activate_in_db:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "UPDATE public.domains SET is_active = TRUE WHERE domain_key = %s",
-                    (domain_key,),
+        if not args.no_activate_in_db:
+            if activate_domain_row(conn, domain_key) == 0:
+                print(
+                    "  [warn] activate-in-db: no public.domains row updated "
+                    f"(domain_key={domain_key!r} missing?)",
+                    file=sys.stderr,
                 )
-                if cur.rowcount == 0:
-                    print(
-                        "  [warn] --activate-in-db: no public.domains row updated "
-                        f"(domain_key={domain_key!r} missing?)",
-                        file=sys.stderr,
-                    )
             conn.commit()
 
         conn.commit()
         print("✅ Provision complete for", domain_key)
         print(
-            "Next: align YAML is_active with DB if needed, restart API/workers; "
-            "SPA loads domains from GET /api/system_monitoring/registry_domains"
+            "Next: set YAML is_active: true if not already; SPA loads domains from "
+            "GET /api/system_monitoring/registry_domains. RSS/pipeline use url_schema_pairs() "
+            "(reads YAML each run) once feeds exist."
         )
         print_post_provision_checklist(
             domain_key, schema_name, config_path=str(args.config.resolve())

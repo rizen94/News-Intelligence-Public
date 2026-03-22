@@ -32,14 +32,12 @@ from collections.abc import Callable
 from typing import Any
 
 from shared.database.connection import get_db_connection
-from shared.domain_registry import ACTIVE_DOMAIN_KEYS_SET
+from shared.domain_registry import get_active_domain_keys
 
 logger = logging.getLogger(__name__)
 
 # Throttle scheduler-driven enqueue so we fill the DB queue even if the refinement phase is starved.
 _last_scheduler_auto_enqueue_monotonic: float = 0.0
-
-ALLOWED_DOMAIN_KEYS = ACTIVE_DOMAIN_KEYS_SET
 
 JOB_COMPREHENSIVE_RAG = "comprehensive_rag"
 JOB_NARRATIVE_FINISHER = "narrative_finisher"
@@ -126,7 +124,7 @@ def enqueue_content_refinement(
     Insert a pending job if none exists for (domain, storyline, job_type).
     Returns { success, queue_id?, already_queued?, error? }.
     """
-    if domain_key not in ALLOWED_DOMAIN_KEYS:
+    if domain_key not in get_active_domain_keys():
         return {"success": False, "error": "invalid_domain"}
     if job_type not in VALID_JOB_TYPES:
         return {"success": False, "error": "invalid_job_type"}
@@ -207,7 +205,7 @@ def list_pending_job_types(domain_key: str, storyline_id: int) -> list[str]:
 
 def storyline_needs_initial_master_narrative(domain_key: str, storyline_id: int) -> bool:
     """True if ~70B canonical narrative has never been stored (first finisher pass)."""
-    if domain_key not in ALLOWED_DOMAIN_KEYS:
+    if domain_key not in get_active_domain_keys():
         return True
     schema = domain_key.replace("-", "_")
     conn = get_db_connection()
@@ -272,7 +270,7 @@ def auto_enqueue_comprehensive_rag_for_automation() -> dict[str, Any]:
     limit = max(1, int(os.environ.get("AUTO_ENQUEUE_COMPREHENSIVE_RAG_PER_DOMAIN", "8")))
     stats: dict[str, Any] = {"enqueued": 0, "already_queued": 0, "errors": 0, "by_domain": {}}
 
-    for domain_key in sorted(ALLOWED_DOMAIN_KEYS):
+    for domain_key in sorted(get_active_domain_keys()):
         schema = domain_key.replace("-", "_")
         d_stats = {"enqueued": 0, "already_queued": 0}
         conn = get_db_connection()
@@ -430,7 +428,7 @@ def _need_initial_narrative_map_for_batch(
         if len(row) < 4:
             continue
         dkey, sid, jtype = row[1], int(row[2]), row[3]
-        if jtype != JOB_NARRATIVE_FINISHER or dkey not in ALLOWED_DOMAIN_KEYS:
+        if jtype != JOB_NARRATIVE_FINISHER or dkey not in get_active_domain_keys():
             continue
         by_dkey[str(dkey)].append(sid)
 

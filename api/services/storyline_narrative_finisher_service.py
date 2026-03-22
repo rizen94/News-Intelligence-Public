@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from shared.database.connection import get_db_connection
-from shared.domain_registry import ACTIVE_DOMAIN_KEYS_SET, domain_key_to_schema
+from shared.domain_registry import domain_key_to_schema, is_valid_domain_key
 from shared.services.ollama_model_caller import get_ollama_model_caller
 from shared.services.ollama_model_policy import InvocationKind
 
@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 
 def _schema_name(domain_key: str) -> str | None:
-    if domain_key not in ACTIVE_DOMAIN_KEYS_SET:
+    if not is_valid_domain_key(domain_key):
         return None
     try:
         return domain_key_to_schema(domain_key)

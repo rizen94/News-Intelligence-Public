@@ -6,6 +6,8 @@ db_data/
 *.sqlite
 postgres_data/
 redis_data/
+# Runtime spill when DB is unavailable (e.g. automation pending writes)
+.local/
 
 # Docker volumes and data
 docker/data/

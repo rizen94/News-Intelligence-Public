@@ -8,15 +8,15 @@ Optional domains (beyond the built-in **politics**, **finance**, **science-tech*
 
 | Location | What it does |
 |----------|----------------|
-| **This YAML file — `is_active`** | If `false`, the file is **not loaded**; the domain is absent from **`ACTIVE_DOMAIN_KEYS`**, FastAPI **`DOMAIN_PATH_PATTERN`**, and **`get_schema_names_active()`** / RSS **`url_schema_pairs()`**. |
+| **This YAML file — `is_active`** | If `false`, the file is **not loaded**; the domain is absent from **`get_active_domain_keys()`**, **`is_valid_domain_key()`**, and **`get_schema_names_active()`** / RSS **`url_schema_pairs()`** (those re-read YAML each call). FastAPI **`DOMAIN_PATH_PATTERN`** only constrains URL shape (hyphenated slug). |
 | **`public.domains.is_active`** | Read by **`get_all_domains()`** ([`domain_aware_service`](../../shared/services/domain_aware_service.py)) for automation that iterates the DB catalog. |
 
-A silo can exist in the DB with **`is_active: false`** in YAML (no API route) or appear in YAML while **`public.domains.is_active`** is false (automation may skip it). For a normal rollout, align **both** after verify (see **`provision_domain.py --activate-in-db`**).
+A silo can exist in the DB with **`is_active: false`** in YAML (no registry / RSS) or appear in YAML while **`public.domains.is_active`** is false (**`DomainAwareService`** / **`validate_domain`** reject it). For a normal rollout, align **both** after verify; **`provision_domain.py`** sets **`public.domains.is_active = TRUE`** by default (use **`--no-activate-in-db`** to skip).
 
 ## Loader rules (must match code)
 
 - **Ignored files:** Any `*.yaml` whose filename **starts with `_`** (e.g. `_template.example.yaml`) is **not** loaded for registration. Copy the template to `my-domain.yaml` — never `__my-domain.yaml` for a real domain.
-- **`is_active`:** If `is_active: false`, the file is **skipped** — the `domain_key` will **not** appear in `ACTIVE_DOMAIN_KEYS` or FastAPI `DOMAIN_PATH_PATTERN`. If the key is omitted, YAML treats it as missing; the loader defaults missing to **true** (`raw.get("is_active", True)`), so **always set `is_active: false` explicitly** until you are ready.
+- **`is_active`:** If `is_active: false`, the file is **skipped** — the `domain_key` will **not** appear in **`get_active_domain_keys()`** / RSS / iterators. If the key is omitted, YAML treats it as missing; the loader defaults missing to **true** (`raw.get("is_active", True)`), so **always set `is_active: false` explicitly** until you are ready.
 - **Underscore keys:** Any YAML key whose name starts with `_` (e.g. `_instructions`, `_comment`) is **removed** before merge — **human documentation only**, never read by application logic.
 - **Core domains:** YAML **cannot** override `politics`, `finance`, or `science-tech` (ignored if present).
 
@@ -87,22 +87,16 @@ Until every path uses **`domain_registry`** / **`get_schema_names_active()`** / 
 3. Validate YAML (see **Validation** in [`docs/DOMAIN_EXTENSION_TEMPLATE.md`](../../../docs/DOMAIN_EXTENSION_TEMPLATE.md)).
 4. Apply SQL migration for the new silo (`public.domains`, `CREATE SCHEMA`, table parity — see template doc).
 5. Run **`api/scripts/provision_domain.py`** with your config path, SQL file, and verify command (see template doc). That run seeds **`data_sources.rss.seed_feed_urls`** into **`rss_feeds`** unless you pass **`--no-seed-rss`**.
-6. When verify exits **0**: set **`is_active: true`**, then **restart every Python process** that serves the app or runs pipeline work (see below).
+6. When verify exits **0**: set **`is_active: true`** in YAML. **`public.domains.is_active`** is set by **`provision_domain.py`** unless you passed **`--no-activate-in-db`**. Restart long-lived workers only if they still cache domain lists at import (see below).
 7. The web UI loads the domain list from **`GET /api/system_monitoring/registry_domains`** at startup (with a static fallback if the API is unreachable). You do not need to edit `domainHelper.ts` for each new domain.
 
-### Process restart (required after YAML or `is_active` changes)
+### Process restart (when still required)
 
-`domain_registry` reads YAML at **import time**. These values are fixed for the lifetime of the process:
+**`get_domain_entries()`** / **`get_active_domain_keys()`** / **`url_schema_pairs()`** and **`is_valid_domain_key()`** re-read YAML on **each call** — RSS collection and most iterators pick up a new optional domain **without** restarting the API.
 
-- `DOMAIN_PATH_PATTERN`, `ACTIVE_DOMAIN_KEYS`, `ACTIVE_DOMAIN_KEYS_SET` in [`domain_registry.py`](../../shared/domain_registry.py)
-- Any module that imported `ACTIVE_DOMAIN_KEYS_SET` or similar at startup (e.g. refinement queue allowlist)
+**Import-time snapshot** [`ACTIVE_DOMAIN_KEYS`](../../shared/domain_registry.py) / [`ACTIVE_DOMAIN_KEYS_SET`](../../shared/domain_registry.py) is **stale** after YAML edits; prefer **`get_active_domain_keys()`** in new code. **`DOMAIN_PATH_PATTERN`** is a **shape-only** regex (not the allowlist).
 
-After adding a domain file, toggling **`is_active`**, or changing **`domain_key` / `schema_name`**, restart:
-
-- **API** (FastAPI / `uvicorn` / gunicorn workers)
-- **Background workers** on the same machine (topic extraction thread, automation manager, separate worker processes) so they reload YAML and route patterns
-
-Until restart, new keys may 404 on `/api/{domain}/...` or be ignored by long-lived workers.
+Restart **API and workers** after YAML changes if you hit code that still **cached** domain lists at startup, or after changing **`domain_key` / `schema_name`** in a file (any process that read the old path).
 
 ## Authority: YAML registry vs `public.domains`
 
@@ -115,7 +109,7 @@ Until restart, new keys may 404 on `/api/{domain}/...` or be ignored by long-liv
 | Symptom | Likely cause |
 |---------|----------------|
 | **YAML parse error** | Invalid syntax, wrong encoding, unquoted `:` or `#` in a plain scalar |
-| **404** on `/api/{key}/...` | Key not in **`ACTIVE_DOMAIN_KEYS`** — check **`is_active: true`**, filename does not start with **`_`**, restart API |
+| **404** on `/api/{key}/...` | Key fails **`is_valid_domain_key`** (YAML off or missing) or **`validate_domain`** (**`public.domains`** inactive / missing) — check **`is_active: true`**, filename does not start with **`_`** |
 | **Duplicate `domain_key`** | Two YAML files defining the same key — keep one file per key |
 | **DB insert fails** | `domain_key` / `schema_name` violates **`^...$`** checks or **`display_name` > 100** |
 | **YAML ↔ DB mismatch** | `schema_name` in YAML must match **`public.domains.schema_name`** for that key (see **Authority** below) |

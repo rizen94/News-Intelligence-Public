@@ -10,7 +10,7 @@ This page explains **why** paths are ignored so you can add new patterns consist
 
 | Category | Patterns (representative) | Why |
 |----------|---------------------------|-----|
-| Data / DB | `db_data/`, `*.db`, `postgres_data/`, `redis_data/`, `data/` | Local databases and dumps must not enter Git. |
+| Data / DB | `db_data/`, `*.db`, `postgres_data/`, `redis_data/`, `.local/`, `data/` | Local databases, dumps, and runtime spill (e.g. `db_pending_writes`) must not enter Git. |
 | Docker / volumes | `docker/data/`, `volumes/` | Ephemeral container state. |
 | Python | `.venv/`, `.venv.backup/`, `__pycache__/`, `*.pyc`, `.coverage`, `htmlcov/`, `.pytest_cache/` | Environments and build/cache artifacts. |
 | Secrets | `.env`, `.env.local`, `.env.production`, `configs/ddns.env`, `config/.secrets`, `api/config/.secrets`, `.db_password_widow` | Credentials and tokens. |

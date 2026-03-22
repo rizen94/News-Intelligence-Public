@@ -6,13 +6,12 @@
 # Loader: api/shared/domain_registry.py
 # Procedure: docs/DOMAIN_EXTENSION_TEMPLATE.md + api/config/domains/README.md
 #
-# WORKFLOW (summary)
-#   1) Fill this file; keep is_active: false until DB silo exists.
+# WORKFLOW (summary — this silo is live: is_active true below)
+#   1) New domains: start with is_active: false until DB silo + verify exist, then set true.
 #   2) Validate YAML (syntax + UTF-8).
 #   3) SQL migration: public.domains row + CREATE SCHEMA + silo tables (parity with existing domains).
 #   4) Run api/scripts/provision_domain.py (YAML + SQL + verify command).
-#   5) When verify exits 0: set is_active: true, restart API (and workers). SPA loads domains from
-#      GET /api/system_monitoring/registry_domains — no manual frontend list edit required.
+#   5) SPA loads domains from GET /api/system_monitoring/registry_domains — no manual frontend list edit.
 #
 # DATABASE / URL RULES
 #   domain_key:     ^[a-z0-9-]+$   (hyphens OK; no underscores)
@@ -37,8 +36,8 @@ description: >-
 # --- OPTIONAL ----------------------------------------------------------------
 display_order: 20
 
-# --- REQUIRED FOR SAFE ROLLOUT -----------------------------------------------
-# true: live in domain_registry — restart API/workers after changing.
+# --- REGISTRY ---------------------------------------------------------------
+# true: included in domain_registry / url_schema_pairs (YAML re-read each call for iterators).
 is_active: true
 
 # --- HUMAN-ONLY (stripped by loader — use for notes to operators) ------------

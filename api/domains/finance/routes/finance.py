@@ -20,7 +20,7 @@ from fastapi import APIRouter, Body, HTTPException, Path, Query, Request
 from fastapi.responses import JSONResponse
 from psycopg2.extras import RealDictCursor
 from shared.database.connection import get_db_connection
-from shared.domain_registry import ACTIVE_DOMAIN_KEYS_SET, DOMAIN_PATH_PATTERN
+from shared.domain_registry import DOMAIN_PATH_PATTERN, is_valid_domain_key
 from shared.services.domain_aware_service import validate_domain
 
 from domains.finance.orchestrator_types import TaskPriority, TaskType
@@ -82,7 +82,7 @@ router = APIRouter(prefix="/api", tags=["Finance"], responses={404: {"descriptio
 
 def _check_domain(domain: str) -> None:
     """Validate domain; finance infrastructure endpoints work without main DB."""
-    if domain not in ACTIVE_DOMAIN_KEYS_SET:
+    if not is_valid_domain_key(domain):
         raise HTTPException(status_code=400, detail=f"Invalid domain: {domain}")
 
 

@@ -1,5 +1,5 @@
-# Legal intelligence silo — enable only after migration 180 + verify (see template doc).
-# domain_registry loads this only when is_active: true.
+# Legal intelligence silo — requires migration 180 + DB row (see template doc).
+# domain_registry loads this only when is_active: true (on below).
 
 domain_key: legal
 schema_name: legal
@@ -9,11 +9,11 @@ description: >-
   emphasis on Newton/West Newton and Greater Boston, Massachusetts state law,
   and federal law — including implementation, proceedings, and stakeholder tradeoffs.
 display_order: 4
-is_active: false
+is_active: true
 
 _instructions: |
-  After public.domains + schema legal exist, set is_active: true and ensure
-  web/src/utils/domainHelper.ts includes 'legal'. See docs/_archive/retired_root_docs_2026_03/LEGAL_DOMAIN_DEPLOYMENT.md.
+  Silo must exist (migration 180 / provision_domain). UI discovers domains via
+  GET /api/system_monitoring/registry_domains. See docs/_archive/retired_root_docs_2026_03/LEGAL_DOMAIN_DEPLOYMENT.md.
 
 data_sources:
   rss:

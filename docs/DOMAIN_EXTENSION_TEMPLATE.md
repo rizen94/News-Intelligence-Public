@@ -2,7 +2,7 @@
 
 **Concept:** One **onboarding YAML** per optional domain (`api/config/domains/{domain_key}.yaml`) plus a **mechanical path**: SQL migration, [`api/scripts/provision_domain.py`](../api/scripts/provision_domain.py), and verification. The web app discovers domains from **`GET /api/system_monitoring/registry_domains`** (backed by [`domain_registry`](../api/shared/domain_registry.py)); built-ins **politics**, **finance**, **science-tech** are always present.
 
-**Onboarding YAML is not Docker or Kubernetes.** These files are **application configuration** read by Python at import time. They do not start containers or sidecars. Think of a domain as an **isolated silo** (Postgres schema + declared metadata), not a separate runtime unit.
+**Onboarding YAML is not Docker or Kubernetes.** These files are **application configuration** read by Python (**`get_domain_entries()`** re-reads YAML on each call). They do not start containers or sidecars. Think of a domain as an **isolated silo** (Postgres schema + declared metadata), not a separate runtime unit.
 
 **`public.domains` shape** (constraints evolved from archived [`122_domain_silo_infrastructure.sql`](../api/database/migrations/archive/historical/122_domain_silo_infrastructure.sql); **new silos** should follow a migration in the style of [`180_legal_domain_silo.sql`](../api/database/migrations/180_legal_domain_silo.sql)):
 
@@ -30,17 +30,17 @@ Several subsystems read **different** flags:
 
 | Source | Effect |
 |--------|--------|
-| **YAML `is_active: true`** in `api/config/domains/*.yaml` | Domain is merged into `domain_registry`; **`ACTIVE_DOMAIN_KEYS`**, **`DOMAIN_PATH_PATTERN`**, RSS collection over `url_schema_pairs()`, and `get_schema_names_active()` include it. |
+| **YAML `is_active: true`** in `api/config/domains/*.yaml` | Domain is merged into `domain_registry`; **`get_active_domain_keys()`** / **`is_valid_domain_key()`**, RSS over **`url_schema_pairs()`**, and **`get_schema_names_active()`** include it (read fresh each call). FastAPI **`DOMAIN_PATH_PATTERN`** is shape-only. |
 | **`public.domains.is_active = TRUE`** | Used by `get_all_domains()` in [`domain_aware_service`](../api/shared/services/domain_aware_service.py) for automation that keys off the DB catalog. |
 
-**Risk:** YAML on and DB off (or the reverse) → API routes vs automation or metrics disagree. **Treat activation as one runbook step:** after verify, set **both** to active (or use `provision_domain.py` **`--activate-in-db`** after you set YAML active, depending on your order — see script docstring).
+**Risk:** YAML on and DB off (or the reverse) → registry/RSS vs **`DomainAwareService`** / **`get_all_domains()`** disagree. **Treat activation as one runbook step:** after verify, set YAML **`is_active: true`**; **`provision_domain.py`** sets **`public.domains.is_active = TRUE`** by default (**`--no-activate-in-db`** to skip).
 
 ```mermaid
 flowchart LR
   yaml[domains YAML is_active]
-  registry[domain_registry ACTIVE_DOMAIN_KEYS]
+  registry[get_active_domain_keys / url_schema_pairs]
   db[public.domains is_active]
-  api[FastAPI DOMAIN_PATH_PATTERN]
+  api[is_valid_domain_key + path shape]
   auto[Automation get_all_domains]
   yaml --> registry
   registry --> api
@@ -79,8 +79,8 @@ print('OK:', p)
 3. **Author a SQL migration** (active dir: `api/database/migrations/`) modeled on **`180_legal_domain_silo.sql`**: `INSERT` into `public.domains` / `public.domain_metadata` (`ON CONFLICT DO NOTHING`), `CREATE SCHEMA`, `create_domain_table('<schema>', '<table>', 'science_tech')` for each core table, `add_domain_foreign_keys` / `create_domain_indexes` / `create_domain_triggers`, then **manual FK fixes** where `LIKE` does not copy references (e.g. `article_entities` → `articles` / `entity_canonical`), plus any table not covered by the generic helpers (e.g. `story_entity_index`). Prefer **looping over `public.domains`** in *future* migrations that alter every silo — avoid hardcoding `legal.*` only when the change applies to all domains (see migration `177_*` style).
 4. Apply the migration (your usual runner / DBA process), then register it in **`public.applied_migrations`** if your ops use the ledger ([`register_applied_migration.py`](../api/scripts/register_applied_migration.py)).
 5. Run **`provision_domain.py`** with **`--config`**, **`--sql`**, and **`--verify-cmd`** (see script docstring). Order inside the script: **apply SQL → commit → RSS seed → commit → verify**. **`data_sources.rss.seed_feed_urls`** (list of URL strings or `{feed_name, feed_url, fetch_interval_seconds?}` objects) is inserted into **`{schema_name}.rss_feeds`** unless you pass **`--no-seed-rss`** or **`--skip-rss-seed`**. Optional **`data_sources.rss.seed_feed_category`** sets **`rss_feeds.category`** (required NOT NULL on silo tables). For an already-provisioned silo, use **`api/scripts/seed_domain_rss_from_yaml.py`**.
-6. On success: set **`is_active: true`** in YAML; optionally **`--activate-in-db`** on the provisioner; add **`domain_synthesis_config.yaml`** block if needed.
-7. **Restart the API and workers** on that host (`domain_registry` is read at import time — see README *Process restart*).
+6. On success: set **`is_active: true`** in YAML; **`provision_domain.py`** activates **`public.domains`** by default; add **`domain_synthesis_config.yaml`** block if needed.
+7. **Restart** only if a long-lived process still caches domains at import (see README *Process restart*); RSS and most iterators read YAML each run.
 8. Confirm **`GET /api/system_monitoring/registry_domains`** lists the key; run your grep pass from the checklist below for any remaining literals.
 
 ### Registry vs `public.domains`
@@ -101,8 +101,8 @@ print('OK:', p)
 | Ledger | Register migration if your environment uses **`applied_migrations`**. |
 | Provision | `provision_domain.py --config … --sql … --verify-cmd "PYTHONPATH=api uv run python api/scripts/verify_migrations_160_167.py"`; omit **`--skip-rss-seed`** if you want YAML RSS URLs inserted. |
 | Verify | Script checks **167** enrichment columns and **177–179** pipeline objects for **every** `public.domains` schema that has **`articles`**, not only built-ins. |
-| Activate | YAML **`is_active: true`**; **`public.domains.is_active`** (manual or **`--activate-in-db`**). |
-| Restart | API + background workers. |
+| Activate | YAML **`is_active: true`**; **`public.domains.is_active`** (default from **`provision_domain.py`**, or **`--no-activate-in-db`** to leave unchanged). |
+| Restart | Only if needed for stale import-time caches (see domains README). |
 | Audit | Grep for `science_tech`, `("politics", "finance"`, and your URL key; fix stragglers or extend shared helpers (see domains README). |
 | Reserved | After the silo exists, consider adding **`schema_name`** to **`RESERVED_SCHEMA_NAMES`** in `domain_registry.py` so a future mistaken provision cannot reuse it (optional hardening). |
 

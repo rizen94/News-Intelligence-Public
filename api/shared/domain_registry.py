@@ -14,6 +14,9 @@ Loader rules (keep in sync with api/config/domains/README.md):
 They are inserted into ``{schema_name}.rss_feeds`` by ``api/scripts/provision_domain.py`` (after SQL)
 and ``api/scripts/seed_domain_rss_from_yaml.py`` (backfill).
 
+``DOMAIN_PATH_PATTERN`` only constrains URL shape; ``is_valid_domain_key()`` re-reads YAML each call
+so optional domains work without restarting the API. ``ACTIVE_DOMAIN_KEYS*`` at import is a snapshot only.
+
 See docs/DOMAIN_EXTENSION_TEMPLATE.md and api/config/domains/README.md.
 """
 
@@ -162,16 +165,17 @@ def url_schema_pairs() -> tuple[tuple[str, str], ...]:
     return tuple(iter_url_schema_pairs())
 
 
-# FastAPI / Pydantic Path pattern: single segment, full match
-_DOMAIN_KEYS_ESCAPED = "|".join(re.escape(k) for k in get_active_domain_keys())
-DOMAIN_PATH_PATTERN = f"^({_DOMAIN_KEYS_ESCAPED})$"
+# FastAPI Path: shape-only so new optional domains work without restarting the API process.
+# Authoritative allowlist is ``get_active_domain_keys()`` / ``is_valid_domain_key`` (YAML + builtins).
+DOMAIN_PATH_PATTERN = r"^[a-z0-9]+(?:-[a-z0-9]+)*$"
 
+# Snapshot at import — prefer ``get_active_domain_keys()`` when the list must reflect current YAML.
 ACTIVE_DOMAIN_KEYS: tuple[str, ...] = get_active_domain_keys()
 ACTIVE_DOMAIN_KEYS_SET: frozenset[str] = frozenset(ACTIVE_DOMAIN_KEYS)
 
 
 def is_valid_domain_key(key: str) -> bool:
-    return key in ACTIVE_DOMAIN_KEYS_SET
+    return key in get_active_domain_keys()
 
 
 def rss_feed_lookup_union_sql() -> str:

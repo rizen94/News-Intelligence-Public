@@ -103,8 +103,19 @@ _LOGISTICS_MARKERS: frozenset[str] = frozenset(
 
 
 def cross_domain_sql_domains_array() -> list[str]:
-    """Domains in DB/API that may host cross-domain rows (overlap with domain_keys)."""
-    return ["politics", "science_tech", "science-tech"]
+    """URL keys and schema-style tokens for active silos except finance (tracked_events.domain_keys)."""
+    from shared.domain_registry import domain_key_to_schema, get_active_domain_keys
+
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for dk in get_active_domain_keys():
+        if dk == "finance":
+            continue
+        for token in (dk, dk.replace("-", "_"), domain_key_to_schema(dk)):
+            if token and token not in seen:
+                seen.add(token)
+                ordered.append(token)
+    return ordered
 
 
 def maybe_append_finance_domain_key(
