@@ -22,6 +22,7 @@ import numpy as np
 from psycopg2.extras import RealDictCursor
 
 from services.ai_storyline_discovery import get_discovery_service
+from shared.domain_registry import get_active_domain_keys
 
 logger = logging.getLogger(__name__)
 
@@ -771,7 +772,7 @@ class StorylineConsolidationService:
 
     def run_all_domains(self) -> dict[str, Any]:
         """Run consolidation for all domains"""
-        domains = ["politics", "finance", "science-tech"]
+        domains = list(get_active_domain_keys())
         results = {}
 
         for domain in domains:

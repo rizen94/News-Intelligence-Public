@@ -11,6 +11,8 @@ import logging
 import time
 from typing import Dict, Optional
 
+from shared.domain_registry import get_schema_names_active, url_schema_pairs
+
 logger = logging.getLogger(__name__)
 
 # Cache TTL seconds; scheduler runs every 5s, we refresh counts every 30s
@@ -159,7 +161,7 @@ def _count_content_enrichment_backlog() -> int:
         return 0
     total = 0
     try:
-        for schema in ("politics", "finance", "science_tech"):
+        for schema in get_schema_names_active():
             with conn.cursor() as cur:
                 cur.execute(
                     f"""
@@ -188,8 +190,7 @@ def _count_context_sync_backlog() -> int:
         return 0
     total = 0
     try:
-        # domain_key in article_to_context: politics, finance, science-tech
-        for schema, domain_key in [("politics", "politics"), ("finance", "finance"), ("science_tech", "science-tech")]:
+        for domain_key, schema in url_schema_pairs():
             with conn.cursor() as cur:
                 cur.execute(
                     f"""
@@ -370,9 +371,6 @@ def _count_document_processing_backlog() -> int:
             pass
 
 
-_SCHEMAS = ("politics", "finance", "science_tech")
-
-
 def _count_metadata_enrichment_pending() -> int:
     """Articles pending metadata batch (matches run_metadata_enrichment_batch_for_domains)."""
     conn = _get_conn()
@@ -380,7 +378,7 @@ def _count_metadata_enrichment_pending() -> int:
         return 0
     total = 0
     try:
-        for schema in _SCHEMAS:
+        for schema in get_schema_names_active():
             with conn.cursor() as cur:
                 cur.execute("SET LOCAL statement_timeout = '3s'")
                 cur.execute(
@@ -409,7 +407,7 @@ def _count_ml_processing_pending() -> int:
         return 0
     total = 0
     try:
-        for schema in _SCHEMAS:
+        for schema in get_schema_names_active():
             with conn.cursor() as cur:
                 cur.execute("SET LOCAL statement_timeout = '3s'")
                 cur.execute(
@@ -439,7 +437,7 @@ def _count_entity_extraction_pending() -> int:
         return 0
     total = 0
     try:
-        for schema in _SCHEMAS:
+        for schema in get_schema_names_active():
             with conn.cursor() as cur:
                 cur.execute("SET LOCAL statement_timeout = '3s'")
                 cur.execute(
@@ -473,7 +471,7 @@ def _count_sentiment_analysis_pending() -> int:
         return 0
     total = 0
     try:
-        for schema in _SCHEMAS:
+        for schema in get_schema_names_active():
             with conn.cursor() as cur:
                 cur.execute("SET LOCAL statement_timeout = '3s'")
                 cur.execute(
@@ -502,7 +500,7 @@ def _count_quality_scoring_pending() -> int:
         return 0
     total = 0
     try:
-        for schema in _SCHEMAS:
+        for schema in get_schema_names_active():
             with conn.cursor() as cur:
                 cur.execute("SET LOCAL statement_timeout = '3s'")
                 cur.execute(
@@ -532,7 +530,7 @@ def _count_storyline_processing_pending() -> int:
         return 0
     total = 0
     try:
-        for schema in _SCHEMAS:
+        for schema in get_schema_names_active():
             with conn.cursor() as cur:
                 cur.execute("SET LOCAL statement_timeout = '3s'")
                 cur.execute(
@@ -568,7 +566,7 @@ def _count_topic_clustering_pending() -> int:
     total = 0
     conf = 0.93
     try:
-        for schema in _SCHEMAS:
+        for schema in get_schema_names_active():
             with conn.cursor() as cur:
                 cur.execute("SET LOCAL statement_timeout = '3s'")
                 cur.execute(
@@ -605,7 +603,7 @@ def _count_timeline_generation_pending() -> int:
         return 0
     total = 0
     try:
-        for schema in _SCHEMAS:
+        for schema in get_schema_names_active():
             with conn.cursor() as cur:
                 cur.execute("SET LOCAL statement_timeout = '3s'")
                 cur.execute(
@@ -645,7 +643,7 @@ def _count_storyline_discovery_pending() -> int:
         return 0
     total = 0
     try:
-        for schema in _SCHEMAS:
+        for schema in get_schema_names_active():
             with conn.cursor() as cur:
                 cur.execute("SET LOCAL statement_timeout = '3s'")
                 cur.execute(
@@ -678,7 +676,7 @@ def _count_rag_enhancement_pending() -> int:
         return 0
     total = 0
     try:
-        for schema in _SCHEMAS:
+        for schema in get_schema_names_active():
             with conn.cursor() as cur:
                 cur.execute("SET LOCAL statement_timeout = '3s'")
                 cur.execute(
@@ -714,7 +712,7 @@ def _count_event_extraction_pending() -> int:
         return 0
     total = 0
     try:
-        for schema in _SCHEMAS:
+        for schema in get_schema_names_active():
             with conn.cursor() as cur:
                 cur.execute("SET LOCAL statement_timeout = '3s'")
                 cur.execute(

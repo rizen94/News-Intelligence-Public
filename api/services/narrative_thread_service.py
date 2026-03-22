@@ -10,14 +10,9 @@ import logging
 from typing import Any
 
 from shared.database.connection import get_db_connection
+from shared.domain_registry import is_valid_domain_key, resolve_domain_schema
 
 logger = logging.getLogger(__name__)
-
-DOMAIN_TO_SCHEMA = {
-    "politics": "politics",
-    "finance": "finance",
-    "science-tech": "science_tech",
-}
 
 
 async def _llm_synthesize(prompt: str) -> str | None:
@@ -39,9 +34,9 @@ def ensure_narrative_thread(domain_key: str, storyline_id: int) -> dict[str, Any
     populate linked_article_ids from storyline_articles and optional summary from storyline title/analysis_summary.
     Returns { success, thread_id, created: bool }.
     """
-    schema = DOMAIN_TO_SCHEMA.get(domain_key)
-    if not schema:
+    if not is_valid_domain_key(domain_key):
         return {"success": False, "error": f"Unknown domain_key: {domain_key}"}
+    schema = resolve_domain_schema(domain_key)
 
     conn = get_db_connection()
     if not conn:
@@ -125,9 +120,9 @@ def build_threads_for_domain(domain_key: str, limit: int = 50) -> dict[str, Any]
     Create or update narrative_threads for recent storylines in the domain.
     Returns { success, built: int, errors: [] }.
     """
-    schema = DOMAIN_TO_SCHEMA.get(domain_key)
-    if not schema:
+    if not is_valid_domain_key(domain_key):
         return {"success": False, "built": 0, "errors": [f"Unknown domain_key: {domain_key}"]}
+    schema = resolve_domain_schema(domain_key)
 
     conn = None
     built = 0

@@ -24,6 +24,7 @@ import {
   isValidDomain,
   type DomainKey,
   getPathAfterDomain,
+  getDefaultDomainKey,
 } from '../utils/domainHelper';
 
 const MainLayout: React.FC = () => {
@@ -39,7 +40,8 @@ const MainLayout: React.FC = () => {
   }, [urlDomain, contextDomain, setDomain]);
 
   if (!urlDomain || !isValidDomain(urlDomain)) {
-    return <Navigate to='/politics/dashboard' replace />;
+    const d = getDefaultDomainKey();
+    return <Navigate to={`/${d}/dashboard`} replace />;
   }
 
   const handleDomainChange = (newDomain: string) => {

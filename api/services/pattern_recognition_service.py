@@ -9,6 +9,7 @@ import logging
 from typing import Any
 
 from shared.database.connection import get_db_connection
+from shared.domain_registry import get_active_domain_keys
 
 logger = logging.getLogger(__name__)
 
@@ -280,7 +281,7 @@ def run_pattern_discovery(domain_key: str | None = None, limit_per_type: int = 2
 def run_pattern_discovery_batch() -> int:
     """Run pattern discovery for each domain, then global (temporal + event). Returns total inserted."""
     total = 0
-    for domain_key in ("politics", "finance", "science-tech"):
+    for domain_key in get_active_domain_keys():
         total += run_pattern_discovery(domain_key=domain_key, limit_per_type=15)
     total += run_pattern_discovery(domain_key=None, limit_per_type=10)
     return total

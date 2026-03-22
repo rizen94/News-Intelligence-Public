@@ -13,9 +13,9 @@ from typing import Any
 from domains.news_aggregation.services.article_service import ArticleService
 from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, Path, Query
 from shared.database.connection import get_db_connection
-from shared.domain_registry import DOMAIN_PATH_PATTERN
+from shared.domain_registry import DOMAIN_PATH_PATTERN, get_active_domain_keys, is_valid_domain_key
 from shared.services.domain_aware_service import (
-    DOMAIN_DATA_SCHEMAS,
+    get_domain_data_schemas,
     resolve_article_id_to_schema,
     validate_domain,
 )
@@ -341,10 +341,12 @@ async def delete_domain_rss_feed(
 @router.post("/rss_feeds")
 async def create_rss_feed(feed_data: dict[str, Any] = Body(...)):
     """Create RSS feed (legacy). Prefer POST /{domain}/rss_feeds. Uses domain from body or defaults to politics."""
-    domain = feed_data.get("domain") or "politics"
-    if domain not in ("politics", "finance", "science-tech"):
+    active = get_active_domain_keys()
+    domain = feed_data.get("domain") or (active[0] if active else "politics")
+    if not is_valid_domain_key(domain):
         raise HTTPException(
-            status_code=400, detail="domain must be politics, finance, or science-tech"
+            status_code=400,
+            detail=f"domain must be an active domain key ({', '.join(active)})",
         )
     # Delegate to domain-scoped create
     return await create_domain_rss_feed(domain=domain, feed_data=feed_data)
@@ -775,7 +777,7 @@ async def get_aggregation_statistics():
                 active_feeds = 0
                 weighted_q = 0.0
                 q_rows = 0
-                for sch in DOMAIN_DATA_SCHEMAS:
+                for sch in get_domain_data_schemas():
                     cur.execute(f"SELECT COUNT(*) FROM {sch}.articles")
                     total_articles += cur.fetchone()[0] or 0
                     cur.execute(

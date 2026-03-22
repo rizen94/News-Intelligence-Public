@@ -1,0 +1,143 @@
+# =============================================================================
+# DOMAIN ONBOARDING - Artificial Intelligence
+# =============================================================================
+#
+# Save as: api/config/domains/artificial-intelligence.yaml
+# Loader: api/shared/domain_registry.py
+# Procedure: docs/DOMAIN_EXTENSION_TEMPLATE.md + api/config/domains/README.md
+#
+# WORKFLOW (summary)
+#   1) Fill this file; keep is_active: false until DB silo exists.
+#   2) Validate YAML (syntax + UTF-8).
+#   3) SQL migration: api/database/migrations/188_artificial_intelligence_domain_silo.sql
+#      (or: PYTHONPATH=api uv run python api/scripts/run_migration_188.py)
+#   4) Run api/scripts/provision_domain.py --config this file --sql 188_....sql --verify-cmd "..."
+#   5) When verify exits 0: set is_active: true, restart API (and workers).
+#
+# DATABASE / URL RULES
+#   domain_key:     ^[a-z0-9-]+$   (hyphens OK; no underscores)
+#   schema_name:    ^[a-z0-9_]+$   (underscores OK; no hyphens)
+#   display_name:   max 100 chars → public.domains.name
+#
+# =============================================================================
+
+# --- REQUIRED ----------------------------------------------------------------
+domain_key: artificial-intelligence
+
+# --- REQUIRED ----------------------------------------------------------------
+schema_name: artificial_intelligence
+
+# --- REQUIRED ----------------------------------------------------------------
+display_name: Artificial Intelligence & Machine Learning
+
+# --- OPTIONAL ----------------------------------------------------------------
+description: >-
+  AI research breakthroughs, model comparisons, practical applications, enterprise adoption,
+  and emerging AI careers. Covers LLMs, computer vision, robotics, and AI governance.
+
+# --- OPTIONAL ----------------------------------------------------------------
+display_order: 25
+
+# --- REQUIRED FOR SAFE ROLLOUT -----------------------------------------------
+is_active: true
+
+# --- HUMAN-ONLY (stripped by loader — use for notes to operators) ------------
+_instructions: |
+  Focus on substantive AI advances, benchmark comparisons, real-world deployments,
+  and enterprise case studies. Track AI job market trends, skill requirements,
+  and career trajectories. Include regulatory developments and safety research.
+
+# --- OPTIONAL ----------------------------------------------------------------
+data_sources:
+  rss:
+    seed_feed_urls:
+      - https://arxiv.org/rss/cs.AI
+      - https://arxiv.org/rss/cs.LG
+      - https://arxiv.org/rss/cs.CL
+      - https://arxiv.org/rss/cs.CV
+      - https://arxiv.org/rss/cs.RO
+      - https://distill.pub/rss.xml
+      - https://openai.com/blog/rss.xml
+      - https://www.anthropic.com/rss.xml
+      - https://ai.googleblog.com/feeds/posts/default
+      - https://blogs.microsoft.com/ai/feed/
+      - https://huggingface.co/blog/feed.xml
+      - https://machinelearningmastery.com/blog/feed/
+      - https://thegradient.pub/rss/
+      - https://hai.stanford.edu/news/rss.xml
+      - https://news.mit.edu/rss/topic/artificial-intelligence2
+      - https://deepmind.google/blog/rss.xml
+
+# --- OPTIONAL ----------------------------------------------------------------
+focus_areas:
+  - Major model releases and architectural breakthroughs
+  - Benchmark comparisons and performance evaluations
+  - Practical AI implementation best practices
+  - Enterprise AI adoption and ROI case studies
+  - AI career paths and skill development
+  - Model capabilities and limitations analysis
+  - AI safety and alignment research
+  - Open source AI tools and frameworks
+  - Industry-specific AI applications
+  - AI regulation and governance developments
+
+# --- OPTIONAL ----------------------------------------------------------------
+llm_prompt_guidance: |
+  Prioritize concrete technical advances and empirical results over speculation. For model
+  comparisons, include specific benchmarks, compute requirements, and practical trade-offs.
+  Highlight real-world implementation details, costs, and measurable business impacts.
+  For career content, focus on specific roles, required skills, salary trends, and growth
+  trajectories. Distinguish between research breakthroughs and production-ready tools.
+  Include deployment considerations, scaling challenges, and best practices from actual
+  implementations.
+
+# --- OPTIONAL ----------------------------------------------------------------
+workload_assumptions:
+  expected_active_feeds: 35
+  rough_new_articles_per_day: 150
+  llm_heavy_phases_enabled: true
+
+# --- OPTIONAL ----------------------------------------------------------------
+metadata_enrichment:
+  model_tracking:
+    - model_name
+    - parameter_count
+    - training_compute
+    - benchmark_scores
+    - release_date
+    - organization
+
+  company_tracking:
+    - company_name
+    - industry_vertical
+    - ai_use_case
+    - implementation_scale
+    - reported_roi
+
+  career_tracking:
+    - job_title
+    - required_skills
+    - experience_level
+    - salary_range
+    - growth_rate
+
+# --- OPTIONAL ----------------------------------------------------------------
+content_priorities:
+  high_value:
+    - New model architectures with significant performance gains
+    - Head-to-head model comparisons with standardized benchmarks
+    - Detailed enterprise implementation case studies
+    - Breakthrough applications in new domains
+    - Comprehensive best practice guides
+    - AI job market analysis with data
+
+  medium_value:
+    - Incremental model improvements
+    - Theoretical AI safety discussions
+    - Conference announcements
+    - Tool and framework updates
+
+  low_value:
+    - Speculative AI predictions without evidence
+    - Marketing announcements without technical details
+    - Opinion pieces without data backing

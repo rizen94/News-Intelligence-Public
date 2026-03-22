@@ -313,7 +313,7 @@ All pool sizes are configurable via environment variables.
 
 | Pool | Library | Env Vars | Defaults | Purpose |
 |------|---------|----------|----------|---------|
-| **Worker** | psycopg2 `ThreadedConnectionPool` | `DB_POOL_WORKER_MIN/MAX` | 4 / 48 | Background processing (automation, enrichment, collection) |
+| **Worker** | psycopg2 `ThreadedConnectionPool` | `DB_POOL_WORKER_MIN/MAX` | 2 / 48 | Background processing (automation, enrichment, collection); raise `MIN` if needed |
 | **UI** | psycopg2 `ThreadedConnectionPool` | `DB_POOL_UI_MIN/MAX` | 2 / 16 | Page loads, monitoring endpoints |
 | **SQLAlchemy** | SQLAlchemy `QueuePool` | `DB_POOL_SA_SIZE/OVERFLOW` | 4 / 12 | ORM-based services (storylines, RSS, timelines) |
 

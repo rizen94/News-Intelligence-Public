@@ -8,18 +8,13 @@ import json
 import logging
 from typing import Any
 
-logger = logging.getLogger(__name__)
+from shared.domain_registry import resolve_domain_schema
 
-# Domain key -> schema name (same as rss_collector)
-DOMAIN_SCHEMA = {
-    "politics": "politics",
-    "finance": "finance",
-    "science-tech": "science_tech",
-}
+logger = logging.getLogger(__name__)
 
 
 def _schema_for_domain(domain_key: str) -> str:
-    return DOMAIN_SCHEMA.get(domain_key, domain_key.replace("-", "_"))
+    return resolve_domain_schema(domain_key)
 
 
 def ensure_context_for_article(domain_key: str, article_id: int) -> int | None:

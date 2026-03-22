@@ -9,7 +9,7 @@ from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from shared.database.connection import get_db_connection
-from shared.services.domain_aware_service import DOMAIN_DATA_SCHEMAS
+from shared.services.domain_aware_service import get_domain_data_schemas
 from shared.services.llm_service import TaskType, llm_service
 
 logger = logging.getLogger(__name__)
@@ -131,7 +131,7 @@ async def generate_intelligence_insights(background_tasks: BackgroundTasks):
                 since = datetime.now() - timedelta(days=7)
                 branches = []
                 params = []
-                for sch in DOMAIN_DATA_SCHEMAS:
+                for sch in get_domain_data_schemas():
                     branches.append(f"""
                         SELECT id, title, content,
                                COALESCE(source, source_domain) AS source,
@@ -264,7 +264,7 @@ async def predict_trends(request: dict[str, Any], background_tasks: BackgroundTa
                 since = datetime.now() - timedelta(days=30)
                 branches = []
                 params = []
-                for sch in DOMAIN_DATA_SCHEMAS:
+                for sch in get_domain_data_schemas():
                     branches.append(f"""
                         SELECT id, title, content,
                                COALESCE(source, source_domain) AS source,
@@ -336,7 +336,7 @@ async def get_analytics_summary():
                 aq_n = 0
                 weighted_sq = 0.0
                 sq_n = 0
-                for sch in DOMAIN_DATA_SCHEMAS:
+                for sch in get_domain_data_schemas():
                     cur.execute(f"SELECT COUNT(*) FROM {sch}.articles")
                     analytics["total_articles"] += cur.fetchone()[0] or 0
                     cur.execute(
@@ -527,7 +527,7 @@ async def get_topic_clusters(time_period: str = "7d", min_articles: int = 3, lim
 
                 # Per-domain topic clusters (matches {domain}.topic_clusters + article_topic_clusters)
                 candidates = []
-                for sch in DOMAIN_DATA_SCHEMAS:
+                for sch in get_domain_data_schemas():
                     try:
                         cur.execute(
                             f"""
@@ -616,7 +616,7 @@ async def get_trending_topics(time_period: str = "24h", limit: int = 10):
                     time_filter = datetime.now() - timedelta(hours=24)
 
                 candidates = []
-                for sch in DOMAIN_DATA_SCHEMAS:
+                for sch in get_domain_data_schemas():
                     try:
                         cur.execute(
                             f"""

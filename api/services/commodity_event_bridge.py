@@ -13,6 +13,23 @@ import yaml
 
 logger = logging.getLogger(__name__)
 
+
+def _non_finance_domain_tokens() -> frozenset[str]:
+    """Lowercased URL keys and schema names for active silos except finance (cross-domain map provenance)."""
+    from shared.domain_registry import domain_key_to_schema, get_active_domain_keys
+
+    out: set[str] = set()
+    for dk in get_active_domain_keys():
+        if dk == "finance":
+            continue
+        out.add(dk.lower())
+        try:
+            out.add(domain_key_to_schema(dk).lower())
+        except KeyError:
+            pass
+    return frozenset(out)
+
+
 # Event types that often carry geopolitical / macro signal for commodity maps.
 CROSS_DOMAIN_GEO_EVENT_TYPES: frozenset[str] = frozenset(
     {
@@ -142,7 +159,8 @@ def geo_event_provenance(domain_keys: list[str] | None, path_domain: str = "fina
     dk = [str(x).lower() for x in (domain_keys or [])]
     if path_domain.lower() in dk:
         return "finance_native"
-    if any(x in dk for x in ("politics", "science_tech", "science-tech")):
+    cross = _non_finance_domain_tokens()
+    if set(dk) & cross:
         return "cross_domain"
     return "other"
 

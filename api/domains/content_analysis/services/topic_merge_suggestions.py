@@ -107,6 +107,46 @@ def _compute_similarity(
     return score, reason
 
 
+def _keywords_list_from_db(raw: Any) -> list[str]:
+    """Normalize topics.keywords from DB (jsonb list or dict) into string keywords."""
+    if raw is None:
+        return []
+    if isinstance(raw, list):
+        return [str(x) for x in raw if isinstance(x, str) and len(x.strip()) >= 2]
+    if isinstance(raw, dict):
+        inner = raw.get("keywords", raw.get("terms", []))
+        if isinstance(inner, list):
+            return [str(x) for x in inner if isinstance(x, str) and len(x.strip()) >= 2]
+    return []
+
+
+def find_best_matching_topic(
+    name: str,
+    keywords: list[str] | None,
+    existing_rows: list[tuple[int, str, Any]],
+    min_score: float = 0.58,
+) -> tuple[int, str, float] | None:
+    """
+    Pick the existing topic row that best matches the proposed name/keywords.
+
+    Used by automation (topic_clustering) to attach articles to canonical topics
+    instead of inserting near-duplicate rows. Scoring matches merge_suggestions.
+    """
+    name = (name or "").strip()
+    if not name or not existing_rows:
+        return None
+    kw = keywords if isinstance(keywords, list) else []
+    best: tuple[int, str, float] | None = None
+    for tid, existing_name, raw_kw in existing_rows:
+        if not existing_name or not isinstance(existing_name, str):
+            continue
+        ekw = _keywords_list_from_db(raw_kw)
+        score, _reason = _compute_similarity(name, kw, existing_name.strip(), ekw)
+        if score >= min_score and (best is None or score > best[2]):
+            best = (int(tid), existing_name.strip(), float(score))
+    return best
+
+
 def get_merge_suggestions(
     topics: list[dict[str, Any]],
     min_score: float = 0.35,

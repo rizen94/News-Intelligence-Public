@@ -14,6 +14,7 @@ route structure, where every router mounts at `/api`.
 | Domain-scoped | `/api/politics/articles` | `/api/{domain}/articles` |
 | Domain-scoped (finance) | `/api/finance/finance/gold/history` | `/api/{domain}/finance/gold/history` |
 | Global (system) | `/api/system_monitoring/health` | `/api/system_monitoring/health` |
+| Active domains (SPA) | `/api/system_monitoring/registry_domains` | `/api/system_monitoring/registry_domains` |
 | Global (orchestrator) | `/api/orchestrator/dashboard` | `/api/orchestrator/dashboard` |
 | Context-centric | `/api/entity_profiles`, `/api/contexts` | `/api/entity_profiles`, `/api/contexts` |
 | Watchlist | `/api/watchlist` | `/api/watchlist` |
@@ -39,6 +40,7 @@ route structure, where every router mounts at `/api`.
 
 3. **Request interceptor**
    - Located in `apiConnectionManager.ts`.
+   - Treats a first path segment as **domain-scoped** when it matches an active key from [`domainHelper`](../web/src/utils/domainHelper.ts) (loaded from **`/api/system_monitoring/registry_domains`**, with a static fallback list).
    - Detects whether a URL is a **global route** (system_monitoring, orchestrator, watchlist, context_centric, entity_profiles, etc.) or a **domain-scoped route**.
    - **Global routes:** base URL is set to origin only (prevents double-prefixing if a custom URL has a path).
    - **Domain-scoped routes:** if the URL does not already contain the current domain, the interceptor injects it (e.g. `/api/topics/merge` becomes `/api/politics/topics/merge`).

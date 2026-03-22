@@ -8,6 +8,7 @@ from datetime import datetime
 
 from domains.content_analysis.services.llm_activity_tracker import get_llm_activity_tracker
 from fastapi import APIRouter, HTTPException, Query
+from shared.domain_registry import get_schema_names_active
 
 logger = logging.getLogger(__name__)
 
@@ -229,7 +230,7 @@ async def get_llm_dashboard():
         if conn:
             try:
                 with conn.cursor() as cur:
-                    for schema in ["politics", "finance", "science_tech"]:
+                    for schema in get_schema_names_active():
                         try:
                             cur.execute(f"""
                                 SELECT

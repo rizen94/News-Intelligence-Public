@@ -10,7 +10,6 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from shared.database.connection import get_db_connection
 from shared.services.domain_aware_service import (
-    DOMAIN_DATA_SCHEMAS,
     normalize_domain_to_schema,
     resolve_article_id_to_schema,
     resolve_storyline_id_to_schema,
@@ -22,10 +21,17 @@ from shared.services.llm_service import llm_service
 logger = logging.getLogger(__name__)
 
 
+def _compat_schemas() -> tuple[str, ...]:
+    """Active domain silo schemas (built-in + optional YAML)."""
+    from shared.services.domain_aware_service import get_domain_data_schemas
+
+    return get_domain_data_schemas()
+
+
 def _articles_union_subquery(where_sql: str) -> str:
     """Same WHERE clause applied to each domain's articles (where_sql is '' or 'WHERE ...')."""
     parts = []
-    for sch in DOMAIN_DATA_SCHEMAS:
+    for sch in _compat_schemas():
         parts.append(
             f"""
             SELECT id, title, content, url, published_at, source_domain, category,
@@ -42,11 +48,13 @@ def _validate_compat_domain(domain: str | None) -> str:
     """Return schema name for v3 legacy domain key; default politics."""
     key = (domain or "politics").strip()
     sch = normalize_domain_to_schema(key)
-    if sch not in DOMAIN_DATA_SCHEMAS:
+    if sch not in _compat_schemas():
+        from shared.domain_registry import get_active_domain_keys
+
+        allowed = ", ".join(get_active_domain_keys())
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid domain for v3 compatibility: {domain}. "
-            f"Use politics, finance, or science-tech.",
+            detail=f"Invalid domain for v3 compatibility: {domain}. Active keys: {allowed}.",
         )
     return sch
 
@@ -140,7 +148,7 @@ async def get_articles_v3(
 
             where_sql = "WHERE " + " AND ".join(where_conditions) if where_conditions else ""
             union_inner = _articles_union_subquery(where_sql)
-            count_params = params * len(DOMAIN_DATA_SCHEMAS)
+            count_params = params * len(_compat_schemas())
             count_query = f"SELECT COUNT(*) FROM ({union_inner}) AS all_articles"
 
             with conn.cursor() as cur:
@@ -282,7 +290,7 @@ async def get_storylines_v3():
         try:
             with conn.cursor() as cur:
                 parts = []
-                for sch in DOMAIN_DATA_SCHEMAS:
+                for sch in _compat_schemas():
                     parts.append(f"""
                         SELECT id, title, description, processing_status, created_at, updated_at, created_by_user
                         FROM {sch}.storylines
@@ -466,7 +474,7 @@ async def get_rss_feeds_v3():
         try:
             with conn.cursor() as cur:
                 parts = []
-                for sch in DOMAIN_DATA_SCHEMAS:
+                for sch in _compat_schemas():
                     parts.append(f"""
                         SELECT id, feed_name, feed_url, is_active, last_fetched_at, fetch_interval_seconds,
                                created_at, updated_at, error_count, last_error_message
@@ -534,7 +542,7 @@ async def get_dashboard_stats_v3():
                 total_storylines = 0
                 active_storylines = 0
                 today = datetime.now().date()
-                for sch in DOMAIN_DATA_SCHEMAS:
+                for sch in _compat_schemas():
                     cur.execute(f"SELECT COUNT(*) FROM {sch}.articles")
                     total_articles += cur.fetchone()[0] or 0
                     cur.execute(
@@ -554,7 +562,7 @@ async def get_dashboard_stats_v3():
                     active_storylines += cur.fetchone()[0] or 0
 
                 recent_parts = []
-                for sch in DOMAIN_DATA_SCHEMAS:
+                for sch in _compat_schemas():
                     recent_parts.append(f"""
                         SELECT id, title, source_domain, created_at
                         FROM {sch}.articles
@@ -697,7 +705,7 @@ async def get_topics_v3(
                 where_clause = "WHERE " + " AND ".join(where_conditions)
 
                 branch_sqls = []
-                for sch in DOMAIN_DATA_SCHEMAS:
+                for sch in _compat_schemas():
                     branch_sqls.append(
                         f"""
                         SELECT tc.id, tc.cluster_name, tc.cluster_description, tc.cluster_type,
@@ -713,7 +721,7 @@ async def get_topics_v3(
                     """.strip()
                     )
                 union_inner = " UNION ALL ".join(branch_sqls)
-                per_branch_params = params * len(DOMAIN_DATA_SCHEMAS)
+                per_branch_params = params * len(_compat_schemas())
 
                 list_query = f"""
                     SELECT * FROM ({union_inner}) u
@@ -778,7 +786,7 @@ async def get_category_stats_v3():
         try:
             with conn.cursor() as cur:
                 agg: dict[Any, dict[str, Any]] = {}
-                for sch in DOMAIN_DATA_SCHEMAS:
+                for sch in _compat_schemas():
                     cur.execute(f"""
                         SELECT tc.cluster_type,
                                COUNT(DISTINCT tc.id) AS topic_count,
@@ -861,7 +869,7 @@ async def get_intelligence_topic_clusters_v3(
                     time_filter = datetime.now() - timedelta(days=7)
 
                 branches = []
-                for sch in DOMAIN_DATA_SCHEMAS:
+                for sch in _compat_schemas():
                     branches.append(
                         f"""
                         SELECT tc.id, tc.cluster_name, tc.cluster_description, tc.cluster_type,
@@ -881,7 +889,7 @@ async def get_intelligence_topic_clusters_v3(
                     """.strip()
                     )
                 union_inner = " UNION ALL ".join(branches)
-                topic_params = [time_filter, min_articles] * len(DOMAIN_DATA_SCHEMAS)
+                topic_params = [time_filter, min_articles] * len(_compat_schemas())
                 cur.execute(
                     f"""
                     SELECT * FROM ({union_inner}) u
@@ -960,7 +968,7 @@ async def get_trending_topics_v3(time_period: str = "24h", limit: int = 10):
                     time_filter = datetime.now() - timedelta(hours=24)
 
                 tr_branches = []
-                for sch in DOMAIN_DATA_SCHEMAS:
+                for sch in _compat_schemas():
                     tr_branches.append(
                         f"""
                         SELECT tc.cluster_name, tc.cluster_description, tc.cluster_type,
@@ -978,7 +986,7 @@ async def get_trending_topics_v3(time_period: str = "24h", limit: int = 10):
                     """.strip()
                     )
                 tr_union = " UNION ALL ".join(tr_branches)
-                tr_params = [time_filter] * len(DOMAIN_DATA_SCHEMAS) + [limit]
+                tr_params = [time_filter] * len(_compat_schemas()) + [limit]
                 cur.execute(
                     f"""
                     SELECT * FROM ({tr_union}) u
@@ -1044,7 +1052,7 @@ async def get_topic_articles_v3(topic_name: str, limit: int = 20, offset: int = 
         try:
             with conn.cursor() as cur:
                 found_topic = False
-                for sch in DOMAIN_DATA_SCHEMAS:
+                for sch in _compat_schemas():
                     cur.execute(
                         f"""
                         SELECT 1 FROM {sch}.topic_clusters
@@ -1059,7 +1067,7 @@ async def get_topic_articles_v3(topic_name: str, limit: int = 20, offset: int = 
                     raise HTTPException(status_code=404, detail="Topic not found")
 
                 ta_branches = []
-                for sch in DOMAIN_DATA_SCHEMAS:
+                for sch in _compat_schemas():
                     ta_branches.append(
                         f"""
                         SELECT a.id, a.title, a.content, a.url, a.source_domain, a.published_at,
@@ -1072,7 +1080,7 @@ async def get_topic_articles_v3(topic_name: str, limit: int = 20, offset: int = 
                     """.strip()
                     )
                 ta_union = " UNION ALL ".join(ta_branches)
-                tp = [topic_name] * len(DOMAIN_DATA_SCHEMAS)
+                tp = [topic_name] * len(_compat_schemas())
                 cur.execute(
                     f"""
                     SELECT * FROM ({ta_union}) u
@@ -1146,7 +1154,7 @@ async def get_topic_summary_v3(topic_name: str):
         try:
             with conn.cursor() as cur:
                 topic_result = None
-                for sch in DOMAIN_DATA_SCHEMAS:
+                for sch in _compat_schemas():
                     cur.execute(
                         f"""
                         SELECT id, cluster_name, cluster_description, metadata
@@ -1165,7 +1173,7 @@ async def get_topic_summary_v3(topic_name: str):
                 _topic_id, cluster_name, description, metadata = topic_result
 
                 sum_branches = []
-                for sch in DOMAIN_DATA_SCHEMAS:
+                for sch in _compat_schemas():
                     sum_branches.append(
                         f"""
                         SELECT a.title, a.summary, a.published_at, a.sentiment_score
@@ -1182,7 +1190,7 @@ async def get_topic_summary_v3(topic_name: str):
                     ORDER BY published_at DESC NULLS LAST
                     LIMIT 10
                     """,
-                    [topic_name] * len(DOMAIN_DATA_SCHEMAS),
+                    [topic_name] * len(_compat_schemas()),
                 )
 
                 articles = cur.fetchall()
@@ -1267,7 +1275,7 @@ async def convert_topic_to_storyline_v3(topic_name: str, request: dict[str, Any]
         try:
             with conn.cursor() as cur:
                 topic_sch = None
-                for sch in DOMAIN_DATA_SCHEMAS:
+                for sch in _compat_schemas():
                     cur.execute(
                         f"""
                         SELECT 1 FROM {sch}.topic_clusters

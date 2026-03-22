@@ -8,17 +8,13 @@ See docs/CONTEXT_CENTRIC_UPGRADE_PLAN.md.
 import json
 import logging
 
-logger = logging.getLogger(__name__)
+from shared.domain_registry import resolve_domain_schema
 
-DOMAIN_SCHEMA = {
-    "politics": "politics",
-    "finance": "finance",
-    "science-tech": "science_tech",
-}
+logger = logging.getLogger(__name__)
 
 
 def _schema_for_domain(domain_key: str) -> str:
-    return DOMAIN_SCHEMA.get(domain_key, domain_key.replace("-", "_"))
+    return resolve_domain_schema(domain_key)
 
 
 def backfill_entity_canonical(domain_key: str) -> int:

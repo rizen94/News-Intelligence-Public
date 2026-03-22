@@ -4,7 +4,7 @@
  * Industry best practices for feature validation
  */
 
-import { DOMAIN_KEYS_LIST } from './domainHelper';
+import { getDomainKeysList } from './domainHelper';
 
 interface TestResult {
   name: string;
@@ -214,8 +214,7 @@ export const registerDefaultTests = () => {
     test: () => {
       const domain = localStorage.getItem('currentDomain');
       return (
-        domain !== null &&
-        DOMAIN_KEYS_LIST.includes(domain as (typeof DOMAIN_KEYS_LIST)[number])
+        domain !== null && getDomainKeysList().includes(String(domain))
       );
     },
   });

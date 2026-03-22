@@ -9,17 +9,16 @@ Checks:
   133  public.chronological_events (is_ongoing, date_precision)
   160  intelligence.processed_documents
   161  public.automation_run_history
-  164–167 domain articles/storylines quality & enrichment (as before)
+  164–166 sample politics; 167 enrichment columns on articles for each public.domains schema that has articles
   168  public.automation_state
   169  intelligence.storyline_rag_context
   170  intelligence.wikipedia_knowledge + politics.entity_canonical.description
   171  intelligence.tracked_events.storyline_id
   172  public.automation_run_history_daily, public.log_archive_daily_rollup
   176  public.applied_migrations (operational ledger)
-  177  politics.articles.timeline_processed + politics.article_entities (domain event/entity pipeline)
-  178  politics.articles.timeline_events_generated (event_extraction article UPDATE)
-  179  politics (sample) story_entity_index for story_continuation matching
-  180  legal.* core tables — only when public.domains.domain_key = 'legal' exists (optional domain)
+  177  articles.timeline_processed + article_entities (all public.domains schemas with articles)
+  178  articles.timeline_events_generated (same schemas)
+  179  story_entity_index (same schemas)
   183  public.chronological_events.temporal_status (scheduled vs occurred)
   184  intelligence.processed_documents file_hash, file_size_bytes, extraction_method
 """
@@ -47,7 +46,6 @@ if not os.environ.get("DB_PASSWORD") and os.path.exists(
         pass
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 
 def check_column(cur, schema: str, table: str, column: str) -> bool:
     cur.execute(
@@ -78,6 +76,22 @@ def check_table(cur, schema: str, table: str) -> bool:
         (schema, table),
     )
     return cur.fetchone() is not None
+
+
+def domain_catalog_schemas_with_articles(cur) -> list[str]:
+    """Schema names from public.domains that already have an articles table (provisioned silos)."""
+    cur.execute(
+        """
+        SELECT d.schema_name
+        FROM public.domains d
+        WHERE EXISTS (
+            SELECT 1 FROM information_schema.tables t
+            WHERE t.table_schema = d.schema_name AND t.table_name = 'articles'
+        )
+        ORDER BY COALESCE(d.display_order, 999), d.domain_key
+        """
+    )
+    return [r[0] for r in cur.fetchall()]
 
 
 def main():
@@ -128,7 +142,8 @@ def main():
         else:
             missing.append("166: politics.article_topic_assignments.assignment_context")
 
-        for schema in ("politics", "finance", "science_tech"):
+        domain_article_schemas = domain_catalog_schemas_with_articles(cur)
+        for schema in domain_article_schemas:
             if check_column(cur, schema, "articles", "enrichment_attempts") and check_column(
                 cur, schema, "articles", "enrichment_status"
             ):
@@ -184,27 +199,26 @@ def main():
         else:
             missing.append("176: public.applied_migrations")
 
-        # --- 177 (domain timeline + article_entities; sample politics) ---
-        if check_column(cur, "politics", "articles", "timeline_processed"):
-            ok.append("177: politics.articles.timeline_processed")
-        else:
-            missing.append("177: politics.articles.timeline_processed")
-        if check_table(cur, "politics", "article_entities"):
-            ok.append("177: politics.article_entities")
-        else:
-            missing.append("177: politics.article_entities")
+        # --- 177–179 (per domain silo in public.domains with articles) ---
+        for schema in domain_article_schemas:
+            if check_column(cur, schema, "articles", "timeline_processed"):
+                ok.append(f"177: {schema}.articles.timeline_processed")
+            else:
+                missing.append(f"177: {schema}.articles.timeline_processed")
+            if check_table(cur, schema, "article_entities"):
+                ok.append(f"177: {schema}.article_entities")
+            else:
+                missing.append(f"177: {schema}.article_entities")
 
-        # --- 178 ---
-        if check_column(cur, "politics", "articles", "timeline_events_generated"):
-            ok.append("178: politics.articles.timeline_events_generated")
-        else:
-            missing.append("178: politics.articles.timeline_events_generated")
+            if check_column(cur, schema, "articles", "timeline_events_generated"):
+                ok.append(f"178: {schema}.articles.timeline_events_generated")
+            else:
+                missing.append(f"178: {schema}.articles.timeline_events_generated")
 
-        # --- 179 (story_entity_index per domain; sample politics) ---
-        if check_table(cur, "politics", "story_entity_index"):
-            ok.append("179: politics.story_entity_index")
-        else:
-            missing.append("179: politics.story_entity_index")
+            if check_table(cur, schema, "story_entity_index"):
+                ok.append(f"179: {schema}.story_entity_index")
+            else:
+                missing.append(f"179: {schema}.story_entity_index")
 
         # --- 183 ---
         if check_column(cur, "public", "chronological_events", "temporal_status"):
@@ -225,7 +239,7 @@ def main():
         conn.close()
 
     print("=" * 60)
-    print("Migration verification (133, 160–172, 176, 177, 178, 179, 180 if legal, 183, 184)")
+    print("Migration verification (133, 160–172, 176, 167+177–179 per public.domains silos, 183, 184)")
     print("=" * 60)
     for s in ok:
         print(f"  OK   {s}")

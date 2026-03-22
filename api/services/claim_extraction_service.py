@@ -13,15 +13,13 @@ from shared.services.llm_service import LLMService, ModelType
 
 logger = logging.getLogger(__name__)
 
-# domain_key on contexts / entity_profiles may be "science-tech" or "science_tech"
-_DOMAIN_KEY_TO_SCHEMA = {
-    "politics": "politics",
-    "finance": "finance",
-    "science-tech": "science_tech",
-    "science_tech": "science_tech",
-}
+def _claim_domain_key_to_schema(dk: str) -> str:
+    from shared.domain_registry import domain_key_to_schema
 
-_SCHEMAS = ("politics", "finance", "science_tech")
+    try:
+        return domain_key_to_schema(dk)
+    except KeyError:
+        return (dk or "").replace("-", "_")
 
 
 def _parse_claims_response(raw: str) -> list[tuple[str, str, str, float]]:
@@ -467,7 +465,9 @@ def _resolve_claim_to_entity_profile(
         return pid
 
     # --- 4) Any domain entity_canonical ↔ profile ---
-    for schema in _SCHEMAS:
+    from shared.domain_registry import get_schema_names_active
+
+    for schema in get_schema_names_active():
         pid = _one_int(
             f"""
             SELECT ep.id

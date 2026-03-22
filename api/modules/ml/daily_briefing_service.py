@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 
 from modules.deduplication.advanced_deduplication_service import get_deduplication_service
 from shared.database.connection import get_db_connection
+from shared.domain_registry import get_active_domain_keys
 
 from .storyline_tracker import StorylineTracker
 
@@ -325,7 +326,7 @@ class DailyBriefingService:
             current_date = week_start_date
             while current_date <= week_end_date:
                 per_domain = []
-                for domain in ("politics", "finance", "science-tech"):
+                for domain in get_active_domain_keys():
                     b = self.generate_daily_briefing(
                         current_date, include_deduplication=False, domain=domain
                     )

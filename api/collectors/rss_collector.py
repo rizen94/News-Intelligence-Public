@@ -1047,24 +1047,21 @@ def collect_rss_feeds() -> int:
     try:
         cur = conn.cursor()
 
-        # Get all active RSS feeds from all domain schemas (v5.0)
-        # Query each domain schema: politics, finance, science_tech
+        # Get all active RSS feeds from every active domain (registry: built-in + YAML).
+        from shared.domain_registry import url_schema_pairs
+
         feeds = []
-        domains = [
-            ("politics", "politics"),
-            ("finance", "finance"),
-            ("science-tech", "science_tech"),
-        ]
+        domains = list(url_schema_pairs())
 
         for domain_key, schema_name in domains:
             try:
                 cur.execute(
                     f"""
-                    SELECT id, feed_name, feed_url, %s as domain_key
+                    SELECT id, feed_name, feed_url, %s::text AS domain_key, %s::text AS schema_name
                     FROM {schema_name}.rss_feeds
                     WHERE is_active = true
                 """,
-                    (domain_key,),
+                    (domain_key, schema_name),
                 )
                 domain_feeds = cur.fetchall()
                 feeds.extend(domain_feeds)
@@ -1088,8 +1085,9 @@ def collect_rss_feeds() -> int:
             import time as _time
 
             feed_start = _time.time()
-            feed_id, feed_name, feed_url, domain_key = feed_data
-            schema_name = domain_key.replace("-", "_") if domain_key else "politics"
+            feed_id, feed_name, feed_url, domain_key, schema_name = feed_data
+            if not schema_name:
+                schema_name = (domain_key or "").replace("-", "_") or "politics"
 
             def _rss_log(status, fetched=0, saved=0, err=None):
                 try:
@@ -1738,13 +1736,13 @@ def collect_rss_feed(feed_url: str, feed_name: str = "Unknown") -> int:
                     logger.debug(f"Skipping duplicate article: {title[:60]}...")
                     continue
 
-                # Calculate domain-specific bias score
-                # Determine domain from schema_name
-                domain_key = (
-                    schema_name.replace("_", "-")
-                    if schema_name in ["science_tech"]
-                    else schema_name
-                )
+                # Calculate domain-specific bias score (URL domain key from registry)
+                from shared.domain_registry import schema_to_primary_domain_key
+
+                try:
+                    domain_key = schema_to_primary_domain_key(schema_name)
+                except KeyError:
+                    domain_key = (schema_name or "").replace("_", "-")
                 raw_bias = calculate_domain_bias_score(domain_key, title, content, feed_name)
                 # chk_quality_scores requires bias_score in [0, 1]; raw bias is [-1, 1] -> normalize
                 bias_score = (raw_bias + 1) / 2 if raw_bias is not None else 0.5

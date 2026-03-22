@@ -14,14 +14,13 @@ import logging
 from typing import Any
 
 from shared.database.connection import get_db_connection
+from shared.domain_registry import (
+    get_active_domain_keys,
+    is_valid_domain_key,
+    resolve_domain_schema,
+)
 
 logger = logging.getLogger(__name__)
-
-DOMAIN_SCHEMA = {
-    "politics": "politics",
-    "finance": "finance",
-    "science-tech": "science_tech",
-}
 
 POSITION_EXTRACTION_PROMPT = """Analyze the following article about {entity_name} and extract any policy positions, stances, votes, or public statements.
 
@@ -51,9 +50,9 @@ def extract_positions_for_entity(
 
     Returns {success, positions_extracted, articles_scanned}.
     """
-    schema = DOMAIN_SCHEMA.get(domain_key)
-    if not schema:
+    if not is_valid_domain_key(domain_key):
         return {"success": False, "error": f"Unknown domain: {domain_key}"}
+    schema = resolve_domain_schema(domain_key)
 
     conn = get_db_connection()
     if not conn:
@@ -355,13 +354,13 @@ def run_position_tracker_batch(
     Batch position extraction: find top entities by mention count, extract positions for each.
     Suitable for orchestrator scheduling.
     """
-    domains = [domain_key] if domain_key else list(DOMAIN_SCHEMA.keys())
+    domains = [domain_key] if domain_key else list(get_active_domain_keys())
     results: dict[str, Any] = {}
 
     for d in domains:
-        schema = DOMAIN_SCHEMA.get(d)
-        if not schema:
+        if not is_valid_domain_key(d):
             continue
+        schema = resolve_domain_schema(d)
 
         conn = get_db_connection()
         if not conn:

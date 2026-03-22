@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from shared.database.connection import get_db_connection
+from shared.domain_registry import get_active_domain_keys, resolve_domain_schema
 
 logger = logging.getLogger(__name__)
 
@@ -136,9 +137,7 @@ def run_pattern_matching(
         "errors": [],
     }
     try:
-        schema = {"politics": "politics", "finance": "finance", "science-tech": "science_tech"}.get(
-            domain_key, domain_key.replace("-", "_")
-        )
+        schema = resolve_domain_schema(domain_key)
         since = (datetime.now(timezone.utc) - timedelta(hours=MATCH_LOOKBACK_HOURS)).isoformat()
 
         with conn.cursor() as cur:
@@ -271,7 +270,7 @@ def _create_watchlist_alert_for_storyline(
 def run_pattern_matching_all_domains(limit_per_domain: int = 30) -> dict[str, Any]:
     """Run pattern matching for each domain. Returns combined counts and per-domain results."""
     combined = {"contexts_checked": 0, "matches_stored": 0, "alerts_created": 0, "by_domain": {}}
-    for domain in ("politics", "finance", "science-tech"):
+    for domain in get_active_domain_keys():
         r = run_pattern_matching(domain_key=domain, limit=limit_per_domain)
         combined["contexts_checked"] += r.get("contexts_checked", 0)
         combined["matches_stored"] += r.get("matches_stored", 0)

@@ -45,6 +45,8 @@ from typing import Any
 
 from psycopg2.extras import RealDictCursor
 
+from shared.domain_registry import get_active_domain_keys, get_schema_names_active, url_schema_pairs
+
 # Configure logging
 logger = logging.getLogger(__name__)
 
@@ -94,7 +96,6 @@ BATCH_PHASES_CONTINUOUS = {
     "content_refinement_queue",
 }
 MAX_REQUEUE_PER_WINDOW = 3  # v8: cap re-enqueues per analysis window so one task cannot monopolize
-_SCHEMAS = ("politics", "finance", "science_tech")
 
 # Workload-driven scheduling: order and run decisions by current work, not fixed intervals.
 # When a phase has pending work, it is eligible every tick (subject to cooldown); intervals apply only when idle.
@@ -1822,7 +1823,7 @@ class AutomationManager:
             try:
                 with conn.cursor() as cursor:
                     recent_count = 0
-                    for schema in _SCHEMAS:
+                    for schema in get_schema_names_active():
                         cursor.execute(f"""
                             SELECT COUNT(*) FROM {schema}.articles
                             WHERE created_at > NOW() - INTERVAL '1 hour'
@@ -2540,11 +2541,7 @@ class AutomationManager:
             svc = DeepContentSynthesisService()
             loop = asyncio.get_event_loop()
 
-            for domain_key, schema in (
-                ("politics", "politics"),
-                ("finance", "finance"),
-                ("science-tech", "science_tech"),
-            ):
+            for domain_key, schema in url_schema_pairs():
                 conn = await self._get_db_connection()
                 if not conn:
                     continue
@@ -2617,7 +2614,7 @@ class AutomationManager:
 
             svc = DeepContentSynthesisService()
             loop = asyncio.get_event_loop()
-            for domain_key in ("politics", "finance", "science-tech"):
+            for domain_key in get_active_domain_keys():
                 try:
                     await loop.run_in_executor(
                         None,
@@ -2654,7 +2651,7 @@ class AutomationManager:
 
         from services.context_processor_service import sync_domain_articles_to_contexts
 
-        for domain_key in ("politics", "finance", "science-tech"):
+        for domain_key in get_active_domain_keys():
             try:
                 # Production: 100 contexts/batch, ~5-10s per batch, prevents backlog
                 total = await asyncio.get_event_loop().run_in_executor(
@@ -2678,7 +2675,7 @@ class AutomationManager:
 
         from services.entity_profile_sync_service import sync_domain_entity_profiles
 
-        for domain_key in ("politics", "finance", "science-tech"):
+        for domain_key in get_active_domain_keys():
             try:
                 total = await asyncio.get_event_loop().run_in_executor(
                     None, lambda d=domain_key: sync_domain_entity_profiles(d)
@@ -3220,7 +3217,7 @@ class AutomationManager:
         """Generate/refine editorial_document for active storylines across all domains."""
         from services.editorial_document_service import generate_storyline_editorial
 
-        for domain in ("politics", "finance", "science-tech"):
+        for domain in get_active_domain_keys():
             try:
                 result = await generate_storyline_editorial(domain, limit=5)
                 logger.info("Editorial doc generation (%s): %s", domain, result)
@@ -3244,7 +3241,7 @@ class AutomationManager:
         from services.narrative_thread_service import build_threads_for_domain
 
         loop = asyncio.get_event_loop()
-        for domain in ("politics", "finance", "science-tech"):
+        for domain in get_active_domain_keys():
             try:
                 result = await loop.run_in_executor(
                     None, lambda d=domain: build_threads_for_domain(d, limit=30)
@@ -3271,7 +3268,7 @@ class AutomationManager:
             conn = await self._get_db_connection()
             try:
                 with conn.cursor() as cursor:
-                    for schema in _SCHEMAS:
+                    for schema in get_schema_names_active():
                         cursor.execute(
                             f"""
                             DELETE FROM {schema}.articles
@@ -3396,7 +3393,7 @@ class AutomationManager:
 
         rag_service = get_rag_service()
         enhanced_count = 0
-        for domain in ("politics", "finance", "science_tech"):
+        for domain in get_active_domain_keys():
             schema = domain.replace("-", "_")
             try:
                 conn = get_db_connection()
@@ -3473,7 +3470,7 @@ class AutomationManager:
             ml_processor = BackgroundMLProcessor(self.db_config)
 
             processed_count = 0
-            for schema in _SCHEMAS:
+            for schema in get_schema_names_active():
                 conn = await self._get_db_connection()
                 try:
                     with conn.cursor() as cursor:
@@ -3512,7 +3509,7 @@ class AutomationManager:
         ai_service = get_ai_service()
         analyzed_count = 0
 
-        for schema in _SCHEMAS:
+        for schema in get_schema_names_active():
             # Fetch candidates quickly, then close transaction before awaited LLM work.
             conn = await self._get_db_connection()
             try:
@@ -3569,8 +3566,7 @@ class AutomationManager:
         from shared.database.connection import get_db_connection
 
         processed_count = 0
-        for domain in ("politics", "finance", "science_tech"):
-            schema = domain.replace("-", "_")
+        for domain, schema in url_schema_pairs():
             try:
                 conn = get_db_connection()
                 if not conn:
@@ -3675,7 +3671,7 @@ class AutomationManager:
                 )
         else:
             # Run for all automation-enabled storylines (each domain)
-            for d in ("politics", "finance", "science_tech"):
+            for d in get_active_domain_keys():
                 try:
                     svc = StorylineAutomationService(domain=d)
                     conn = await self._get_db_connection()
@@ -3722,7 +3718,7 @@ class AutomationManager:
                     "Storyline enrichment failed for storyline_id=%s: %s", storyline_id, e
                 )
         else:
-            for d in ("politics", "finance", "science_tech"):
+            for d in get_active_domain_keys():
                 try:
                     svc = StorylineAutomationService(domain=d)
                     conn = await self._get_db_connection()
@@ -3758,7 +3754,7 @@ class AutomationManager:
 
             service = get_discovery_service()
             total_created = 0
-            for domain in ("politics", "finance", "science-tech"):
+            for domain in get_active_domain_keys():
                 try:
                     loop = asyncio.get_event_loop()
                     result = await loop.run_in_executor(
@@ -3790,7 +3786,7 @@ class AutomationManager:
                 ProactiveDetectionService,
             )
 
-            for domain in ("politics", "finance", "science-tech"):
+            for domain in get_active_domain_keys():
                 try:
                     svc = ProactiveDetectionService(domain=domain)
                     result = await svc.detect_emerging_storylines(hours=72, min_articles=3)
@@ -3817,7 +3813,7 @@ class AutomationManager:
             from services.fact_verification_service import verify_recent_claims
 
             loop = asyncio.get_event_loop()
-            for domain in ("politics", "finance", "science-tech"):
+            for domain in get_active_domain_keys():
                 try:
                     result = await loop.run_in_executor(
                         self._executor,
@@ -3839,16 +3835,12 @@ class AutomationManager:
 
         Routes through the canonical extraction pipeline which does:
         LLM extraction → canonical resolution → Wikipedia backfill → article_entities storage.
-        Processes all three domain schemas.
+        Processes all active domain schemas (registry).
         """
         from services.article_entity_extraction_service import ArticleEntityExtractionService
 
         extractor = ArticleEntityExtractionService()
-        domains = [
-            ("politics", "politics"),
-            ("finance", "finance"),
-            ("science-tech", "science_tech"),
-        ]
+        domains = list(url_schema_pairs())
         extracted_count = 0
 
         conn = await self._get_db_connection()
@@ -3909,7 +3901,7 @@ class AutomationManager:
                 total_events = 0
                 total_articles = 0
 
-                for schema in _SCHEMAS:
+                for schema in get_schema_names_active():
                     cursor.execute(f"""
                         SELECT a.id, a.content, a.published_at,
                                (
@@ -3971,7 +3963,7 @@ class AutomationManager:
                     "v5 event extraction completed: %s events from %s articles across %s schemas",
                     total_events,
                     total_articles,
-                    len(_SCHEMAS),
+                    len(get_schema_names_active()),
                 )
             finally:
                 cursor.close()
@@ -4018,7 +4010,7 @@ class AutomationManager:
             return
         try:
             total = {"checked": 0, "linked": 0, "flagged": 0}
-            for schema in ("politics", "finance", "science_tech"):
+            for schema in get_schema_names_active():
                 try:
                     svc = StoryContinuationService(conn, schema=schema)
                     stats = await svc.process_recent_events(limit=30)
@@ -4070,7 +4062,7 @@ class AutomationManager:
         ai_service = get_ai_service()
         scored_count = 0
 
-        for schema in _SCHEMAS:
+        for schema in get_schema_names_active():
             # Fetch candidates quickly, then close transaction before awaited LLM work.
             conn = await self._get_db_connection()
             try:
@@ -4118,7 +4110,7 @@ class AutomationManager:
 
         generated_count = 0
 
-        for schema in _SCHEMAS:
+        for schema in get_schema_names_active():
             conn_sel = await self._get_db_connection()
             storyline_ids: list[int] = []
             try:
@@ -4540,7 +4532,7 @@ class AutomationManager:
             cur = conn.cursor()
             try:
                 if phase_name == "content_enrichment":
-                    for schema in _SCHEMAS:
+                    for schema in get_schema_names_active():
                         cur.execute(
                             f"""SELECT 1 FROM {schema}.articles
                                 WHERE (enrichment_status IS NULL OR enrichment_status IN ('pending', 'failed'))
@@ -4551,7 +4543,7 @@ class AutomationManager:
                         if cur.fetchone():
                             return True
                 elif phase_name == "ml_processing":
-                    for schema in _SCHEMAS:
+                    for schema in get_schema_names_active():
                         cur.execute(
                             f"""SELECT 1 FROM {schema}.articles
                                 WHERE ml_processed = FALSE AND content IS NOT NULL AND LENGTH(content) > 100
@@ -4560,7 +4552,7 @@ class AutomationManager:
                         if cur.fetchone():
                             return True
                 elif phase_name == "entity_extraction":
-                    for schema in _SCHEMAS:
+                    for schema in get_schema_names_active():
                         cur.execute(
                             f"""SELECT 1 FROM {schema}.articles
                                 WHERE (entities IS NULL OR entities = '{{}}') AND content IS NOT NULL AND LENGTH(content) > 100
@@ -4569,7 +4561,7 @@ class AutomationManager:
                         if cur.fetchone():
                             return True
                 elif phase_name == "sentiment_analysis":
-                    for schema in _SCHEMAS:
+                    for schema in get_schema_names_active():
                         cur.execute(
                             f"""SELECT 1 FROM {schema}.articles
                                 WHERE sentiment_score IS NULL AND content IS NOT NULL AND LENGTH(content) > 50
@@ -4578,7 +4570,7 @@ class AutomationManager:
                         if cur.fetchone():
                             return True
                 elif phase_name == "storyline_processing":
-                    for schema in _SCHEMAS:
+                    for schema in get_schema_names_active():
                         cur.execute(
                             f"""SELECT 1 FROM {schema}.storylines s
                                 WHERE s.status = 'active'
@@ -4597,7 +4589,7 @@ class AutomationManager:
                         if cur.fetchone():
                             return True
                 elif phase_name == "rag_enhancement":
-                    for schema in _SCHEMAS:
+                    for schema in get_schema_names_active():
                         cur.execute(
                             f"""SELECT 1 FROM {schema}.storylines
                                 WHERE rag_enhanced_at IS NULL
@@ -4607,7 +4599,7 @@ class AutomationManager:
                         if cur.fetchone():
                             return True
                 elif phase_name == "storyline_automation":
-                    for schema in _SCHEMAS:
+                    for schema in get_schema_names_active():
                         cur.execute(
                             f"""SELECT 1 FROM {schema}.storylines
                                 WHERE automation_enabled = true
@@ -4630,7 +4622,7 @@ class AutomationManager:
                     if cur.fetchone():
                         return True
                 elif phase_name == "quality_scoring":
-                    for schema in _SCHEMAS:
+                    for schema in get_schema_names_active():
                         cur.execute(
                             f"""SELECT 1 FROM {schema}.articles
                                 WHERE quality_score IS NULL AND content IS NOT NULL AND LENGTH(content) > 100
@@ -4639,7 +4631,7 @@ class AutomationManager:
                         if cur.fetchone():
                             return True
                 elif phase_name == "timeline_generation":
-                    for schema in _SCHEMAS:
+                    for schema in get_schema_names_active():
                         cur.execute(
                             f"""SELECT 1 FROM {schema}.storylines
                                 WHERE timeline_summary IS NULL OR LENGTH(timeline_summary) < 100
@@ -4648,7 +4640,7 @@ class AutomationManager:
                         if cur.fetchone():
                             return True
                 elif phase_name == "topic_clustering":
-                    for schema in _SCHEMAS:
+                    for schema in get_schema_names_active():
                         cur.execute(
                             f"""SELECT 1 FROM {schema}.articles a
                                 WHERE a.content IS NOT NULL AND LENGTH(a.content) > 100
@@ -4661,7 +4653,7 @@ class AutomationManager:
                         if cur.fetchone():
                             return True
                 elif phase_name == "event_extraction":
-                    for schema in _SCHEMAS:
+                    for schema in get_schema_names_active():
                         cur.execute(
                             f"""SELECT 1 FROM {schema}.articles
                                 WHERE processing_status = 'completed' AND timeline_processed = false

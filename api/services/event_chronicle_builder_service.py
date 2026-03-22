@@ -11,6 +11,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from shared.database.connection import get_db_connection
+from shared.domain_registry import domain_key_to_schema, get_active_domain_keys
 
 logger = logging.getLogger(__name__)
 
@@ -48,13 +49,6 @@ def _run_scheduled_chronicle_updates(
         if result.get("success"):
             updated += 1
     return updated
-
-
-DOMAIN_TO_SCHEMA = {
-    "politics": "politics",
-    "finance": "finance",
-    "science-tech": "science_tech",
-}
 
 
 def build_chronicle_for_event(
@@ -114,12 +108,13 @@ def build_chronicle_for_event(
             elif domain_keys_raw:
                 domain_keys = [str(domain_keys_raw)]
             else:
-                domain_keys = ["politics", "finance", "science-tech"]
+                domain_keys = list(get_active_domain_keys())
 
             developments: list[dict[str, Any]] = []
             for dk in domain_keys:
-                schema = DOMAIN_TO_SCHEMA.get(dk)
-                if not schema:
+                try:
+                    schema = domain_key_to_schema(dk)
+                except KeyError:
                     continue
                 try:
                     cur.execute(

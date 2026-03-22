@@ -16,6 +16,7 @@ async def main():
         TopicExtractionQueueWorker,
     )
     from shared.database.connection import get_db_connection
+    from shared.domain_registry import url_schema_pairs
 
     print("=" * 60)
     print("1. RSS Feed Collection")
@@ -27,7 +28,7 @@ async def main():
     print("2. Queue unprocessed articles & process (entity + topic extraction)")
     print("=" * 60)
 
-    domains = [("politics", "politics"), ("finance", "finance"), ("science-tech", "science_tech")]
+    domains = list(url_schema_pairs())
     total_processed = 0
     max_batches_per_domain = 200  # Safety limit
     batch_size = 5

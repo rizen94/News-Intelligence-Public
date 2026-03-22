@@ -12,6 +12,7 @@ from typing import Any
 
 from orchestration.events.envelope import EventEnvelope
 from orchestration.events.types import EventType
+from shared.domain_registry import get_active_domain_keys
 
 logger = logging.getLogger("orchestration")
 
@@ -51,7 +52,7 @@ def reporter_tick(
     reporter_cfg = config.get("reporter") or {}
     window_minutes = reporter_cfg.get("new_article_window_minutes", 15)
     breaking_keywords = reporter_cfg.get("breaking_news_keywords") or []
-    domains = ["politics", "finance", "science-tech"]
+    domains = list(get_active_domain_keys())
 
     from orchestration.plugins.rss_source import get_new_articles
 

@@ -8,45 +8,50 @@ from typing import Any
 
 from fastapi import APIRouter, Path, Query
 from shared.database.connection import get_db_connection
+from shared.domain_registry import domain_key_to_schema, schema_to_domain_key, url_schema_pairs
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["Report"])
 
-# `tracked_events.domain_keys` may use `science_tech` (discovery batches) or `science-tech` (API paths).
+# `tracked_events.domain_keys` may use URL keys, legacy `schema_name`, or mixed forms — normalize via registry.
 
 
 def _domain_keys_matching_path(path_domain: str) -> list[str]:
     """All tokens that may appear in intelligence.tracked_events.domain_keys for this URL domain."""
-    keys = [path_domain]
-    if path_domain == "science-tech":
-        keys.append("science_tech")
-    elif path_domain == "science_tech":
-        keys.append("science-tech")
+    keys: list[str] = [path_domain]
+    try:
+        schema = domain_key_to_schema(path_domain)
+    except KeyError:
+        if path_domain == "science_tech":
+            keys.append("science-tech")
+        return list(dict.fromkeys(keys))
+    for dk in schema_to_domain_key(schema):
+        keys.append(dk)
+    if schema not in keys:
+        keys.append(schema)
     return list(dict.fromkeys(keys))
 
 
 def _path_segment_for_db_domain_key(db_key: str) -> str:
-    """Route segment for links (e.g. science_tech -> science-tech)."""
+    """Route segment for links (registry URL key preferred)."""
+    from shared.domain_registry import get_domain_entries
+
+    for e in get_domain_entries():
+        if e["domain_key"] == db_key:
+            return db_key
+        if str(e["schema_name"]) == db_key:
+            return e["domain_key"]
     if db_key == "science_tech":
         return "science-tech"
     return db_key
 
 
 def _get_schema_for_domain(domain: str) -> str | None:
-    conn = get_db_connection()
-    if not conn:
-        return None
     try:
-        with conn.cursor() as cur:
-            cur.execute("SELECT schema_name FROM domains WHERE domain_key = %s", (domain,))
-            row = cur.fetchone()
-            return row[0] if row else None
-    except Exception as e:
-        logger.debug("schema for domain %s: %s", domain, e)
+        return domain_key_to_schema(domain)
+    except KeyError:
         return None
-    finally:
-        conn.close()
 
 
 def _time_of_day() -> str:
@@ -246,11 +251,9 @@ def get_report(
         return {"success": False, "data": None, "message": str(e)}
 
 
-def _db_domain_key_for_correlations(path_domain: str) -> str:
-    """cross_domain_correlations uses science_tech (underscore)."""
-    if path_domain in ("science-tech", "science_tech"):
-        return "science_tech"
-    return path_domain
+def _db_domain_keys_for_correlations(path_domain: str) -> list[str]:
+    """Tokens that may appear in cross_domain_correlations.domain_1 / domain_2 (legacy rows differ)."""
+    return _domain_keys_matching_path(path_domain)
 
 
 def _fetch_investigations(conn, path_domain: str) -> list[dict[str, Any]]:
@@ -346,7 +349,7 @@ def _fetch_related_cross_domain(
     """
     events_out: list[dict[str, Any]] = []
     storylines_out: list[dict[str, Any]] = []
-    db_dom = _db_domain_key_for_correlations(path_domain)
+    db_keys = _db_domain_keys_for_correlations(path_domain)
     keys_for_path = set(_domain_keys_matching_path(path_domain))
 
     try:
@@ -355,18 +358,18 @@ def _fetch_related_cross_domain(
                 """
                 SELECT event_ids, domain_1, domain_2, correlation_strength, correlation_type
                 FROM intelligence.cross_domain_correlations
-                WHERE domain_1 = %s OR domain_2 = %s
+                WHERE domain_1 = ANY(%s) OR domain_2 = ANY(%s)
                 ORDER BY discovered_at DESC NULLS LAST, correlation_strength DESC NULLS LAST
                 LIMIT 40
                 """,
-                (db_dom, db_dom),
+                (db_keys, db_keys),
             )
             corr_rows = cur.fetchall() or []
 
         extra_ids: list[tuple[int, str, float | None]] = []
         seen_corr_eids: set[int] = set()
         for row in corr_rows:
-            eids_raw, d1, d2, strength, ctype = row[0], row[1], row[2], row[3], row[4]
+            eids_raw, strength, ctype = row[0], row[3], row[4]
             eids = list(eids_raw) if isinstance(eids_raw, list) else []
             link_reason = f"correlation:{ctype or 'cross_domain'}"
             for eid in eids:
@@ -401,7 +404,7 @@ def _fetch_related_cross_domain(
                     dkeys = list(er[5]) if er[5] else []
                     origin_db = next(
                         (k for k in dkeys if k not in keys_for_path),
-                        dkeys[0] if dkeys else db_dom,
+                        dkeys[0] if dkeys else path_domain,
                     )
                     sort_dt = _event_sort_date(er[2], er[3])
                     events_out.append(
@@ -425,11 +428,7 @@ def _fetch_related_cross_domain(
 
         if lead_canonical_ids:
             canon_list = list(lead_canonical_ids)[:40]
-            for schema_name, dom_seg in (
-                ("politics", "politics"),
-                ("finance", "finance"),
-                ("science_tech", "science-tech"),
-            ):
+            for dom_seg, schema_name in url_schema_pairs():
                 if schema_name == current_schema or len(storylines_out) >= max_storylines:
                     continue
                 try:

@@ -13,12 +13,13 @@ from typing import Any
 import psutil
 from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, Query, Request
 from shared.database.connection import get_ui_db_connection
-
-# Reserve dedicated pool for monitoring/page-load endpoints in this module
-get_monitoring_db_connection = get_ui_db_connection
+from shared.domain_registry import get_active_domain_keys, get_schema_names_active
 from shared.services.automation_run_history_writer import persist_automation_run_history
 from shared.services.pipeline_trace_writer import log_pipeline_trace as _log_pipeline_trace
 from shared.services.response_cache import cached_response
+
+# Reserve dedicated pool for monitoring/page-load endpoints in this module
+get_monitoring_db_connection = get_ui_db_connection
 
 logger = logging.getLogger(__name__)
 
@@ -110,6 +111,31 @@ async def orchestrator_status(request: Request):
     if orchestrator is None:
         return {"enabled": False, "running": False, "last_event_at": None, "queue_depth": 0}
     return orchestrator.get_status()
+
+
+@router.get("/registry_domains")
+@cached_response(ttl=60)
+def get_registry_domains() -> dict[str, Any]:
+    """
+    Active domains from shared.domain_registry (built-ins + active YAML).
+    Used by the web SPA for nav, domain validation, and API path detection.
+    """
+    from shared.domain_registry import get_domain_entries
+
+    rows: list[dict[str, Any]] = []
+    for e in get_domain_entries():
+        if not e.get("is_active", True):
+            continue
+        rows.append(
+            {
+                "domain_key": e["domain_key"],
+                "schema_name": str(e["schema_name"]),
+                "display_name": e.get("display_name") or e["domain_key"],
+                "display_order": int(e.get("display_order", 99) or 99),
+            }
+        )
+    rows.sort(key=lambda x: (x["display_order"], x["domain_key"]))
+    return {"success": True, "data": {"domains": rows}}
 
 
 @router.get("/health")
@@ -1170,7 +1196,7 @@ async def get_anomalies(
         from services.intelligence_analysis_service import get_intelligence_service
 
         svc = get_intelligence_service()
-        domains_to_check = [domain] if domain else ["politics", "finance", "science_tech"]
+        domains_to_check = [domain] if domain else list(get_active_domain_keys())
         all_anomalies = []
         for d in domains_to_check:
             try:
@@ -1969,7 +1995,7 @@ def execute_pipeline_orchestration():
                 try:
                     analyzed_count = 0
                     with conn.cursor() as cur:
-                        for schema in ("politics", "finance", "science_tech"):
+                        for schema in get_schema_names_active():
                             # Get recent domain articles without sentiment.
                             cur.execute(f"""
                                 SELECT id, title, content

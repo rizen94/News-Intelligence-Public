@@ -13,16 +13,9 @@ import re
 from typing import Any
 
 from shared.database.connection import get_db_connection
+from shared.domain_registry import domain_key_to_schema, get_active_domain_keys, is_valid_domain_key
 
 logger = logging.getLogger(__name__)
-
-DOMAIN_SCHEMA = {
-    "politics": "politics",
-    "finance": "finance",
-    "science-tech": "science_tech",
-}
-
-ALL_DOMAINS = ["politics", "finance", "science-tech"]
 
 TITLE_PREFIXES = re.compile(
     r"^(president|vice president|senator|rep\.|representative|"
@@ -42,7 +35,7 @@ ORG_SUFFIXES = re.compile(
 
 
 def _schema_for_domain(domain_key: str) -> str:
-    return DOMAIN_SCHEMA.get(domain_key, domain_key.replace("-", "_"))
+    return domain_key_to_schema(domain_key)
 
 
 def _normalize_name(name: str, entity_type: str) -> str:
@@ -888,6 +881,14 @@ def split_role_merged_canonicals(
             )
             rows = cur.fetchall()
 
+        try:
+            conn.commit()
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+
         for canonical_id, canonical_name, entity_type, aliases in rows:
             if max_splits is not None and split_count >= max_splits:
                 break
@@ -1019,13 +1020,13 @@ def run_entity_decouple_pipeline(
     Use from automation (data_cleanup), cron, or manual scripts.
     Returns {success, total_splits, by_domain: {domain: {split_count, canonicals_processed, ...}}, steps_run: [...]}.
     """
-    domains = list(domain_keys) if domain_keys else list(ALL_DOMAINS)
+    domains = list(domain_keys) if domain_keys else list(get_active_domain_keys())
     steps_to_run = list(steps) if steps else list(DEFAULT_DECOUPLE_STEPS)
     by_domain: dict[str, dict[str, Any]] = {}
     total_splits = 0
 
     for domain_key in domains:
-        if domain_key not in ALL_DOMAINS:
+        if not is_valid_domain_key(domain_key):
             continue
         domain_result: dict[str, Any] = {"split_count": 0, "canonicals_processed": 0}
         for step in steps_to_run:
@@ -1078,7 +1079,7 @@ def link_cross_domain_entities(
 
     try:
         domain_entities: dict[str, list[tuple[int, str, str, list[str]]]] = {}
-        for domain_key in ALL_DOMAINS:
+        for domain_key in get_active_domain_keys():
             schema = _schema_for_domain(domain_key)
             with conn.cursor() as cur:
                 try:
@@ -1092,6 +1093,16 @@ def link_cross_domain_entities(
                     domain_entities[domain_key] = cur.fetchall()
                 except Exception:
                     domain_entities[domain_key] = []
+
+        # Read-only rows are fully in memory; end the transaction before O(n²) Python work.
+        # Otherwise the session stays "idle in transaction" for a long time (blocks vacuum, burns slots).
+        try:
+            conn.commit()
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
 
         # Find cross-domain matches
         relationships: list[tuple[str, int, str, int, float, str]] = []
@@ -1201,7 +1212,7 @@ def run_resolution_batch(
     """
     results: dict[str, Any] = {"domains": {}, "cross_domain": {}}
 
-    for domain_key in ALL_DOMAINS:
+    for domain_key in get_active_domain_keys():
         domain_result: dict[str, Any] = {}
 
         alias_result = populate_aliases_from_mentions(domain_key)

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Provision a new domain silo in order: preflight → SQL → verify → success banner.
+Provision a new domain silo in order: preflight → SQL → (commit) → RSS seed → (commit) → verify → success banner.
 On failure after DB mutations, runs teardown for the target schema/domain_key only.
 
 Usage (from repo root):
@@ -11,6 +11,9 @@ Usage (from repo root):
   --dry-run   Print phases only.
   --ack-backup  Required acknowledgement flag for production-style runs (no backup performed here).
   --teardown-only  Only run teardown for domain_key/schema_name from config (dangerous).
+  --no-seed-rss / --skip-rss-seed  Skip inserting data_sources.rss.seed_feed_urls into {schema}.rss_feeds.
+  --print-checklist-only  Print post-install checklist and exit (needs --config; no DB).
+  --activate-in-db  After successful verify, SET public.domains.is_active = TRUE for this domain_key.
 """
 
 from __future__ import annotations
@@ -46,6 +49,7 @@ import yaml  # noqa: E402
 from psycopg2 import sql as psql  # noqa: E402
 from shared.database.connection import get_db_connection  # noqa: E402
 from shared.domain_registry import RESERVED_SCHEMA_NAMES  # noqa: E402
+from shared.services.domain_rss_seed import seed_from_domain_config  # noqa: E402
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
@@ -80,6 +84,74 @@ def _preflight_schema_empty(cur, schema_name: str) -> tuple[bool, str]:
     if n == 0:
         return True, "schema exists but empty"
     return False, f"schema already has {n} tables — refuse without --teardown-only"
+
+
+def _domain_row_matches(cur, domain_key: str, schema_name: str) -> bool:
+    """True when public.domains already has this URL key + Postgres schema (e.g. after a numbered migration)."""
+    cur.execute(
+        "SELECT 1 FROM public.domains WHERE domain_key = %s AND schema_name = %s",
+        (domain_key, schema_name),
+    )
+    return cur.fetchone() is not None
+
+
+def _preflight_public_domains(cur, domain_key: str, schema_name: str) -> tuple[bool, str]:
+    """Ensure YAML domain_key/schema_name does not conflict with existing public.domains rows."""
+    cur.execute(
+        "SELECT schema_name FROM public.domains WHERE domain_key = %s",
+        (domain_key,),
+    )
+    row = cur.fetchone()
+    if row and row[0] != schema_name:
+        return (
+            False,
+            f"public.domains has domain_key={domain_key!r} with schema_name={row[0]!r}, "
+            f"YAML has {schema_name!r}",
+        )
+    cur.execute(
+        """
+        SELECT domain_key FROM public.domains
+        WHERE schema_name = %s AND domain_key <> %s
+        """,
+        (schema_name, domain_key),
+    )
+    row2 = cur.fetchone()
+    if row2:
+        return (
+            False,
+            f"schema_name {schema_name!r} already belongs to domain_key={row2[0]!r}",
+        )
+    return True, ""
+
+
+def print_post_provision_checklist(
+    domain_key: str,
+    schema_name: str,
+    *,
+    config_path: str | None = None,
+) -> None:
+    cfg = f"\n  Config file: {config_path}" if config_path else ""
+    print(
+        """
+--- Post-provision checklist ---
+[ ] public.domains: row exists; if automation should process this silo, set is_active = TRUE
+    (or re-run this script with --activate-in-db). Align with YAML is_active for API routing.
+[ ] Onboarding YAML: set is_active: true only after verify passed; restart API + workers
+    (DOMAIN_PATH_PATTERN / ACTIVE_DOMAIN_KEYS are import-time — see api/config/domains/README.md).
+[ ] api/config/domain_synthesis_config.yaml: add a block for this domain if synthesis/topic bias
+    should differ from defaults (separate from api/config/domains/*.yaml).
+[ ] Grep for hardcoded domain lists until fully centralized, e.g.:
+      rg "science.tech|science_tech|politics.*finance" api web --glob "*.py" --glob "*.ts" --glob "*.tsx"
+[ ] public.applied_migrations: register the silo migration if your ops require the ledger
+    (api/scripts/register_applied_migration.py).
+[ ] RSS: data_sources.rss.seed_feed_urls applied by this script unless --skip-rss-seed; backfill:
+      PYTHONPATH=api uv run python api/scripts/seed_domain_rss_from_yaml.py --config <yaml>"""
+        + cfg
+        + f"""
+
+Target: domain_key={domain_key!r}  schema_name={schema_name!r}
+---"""
+    )
 
 
 def teardown_domain(cur, domain_key: str, schema_name: str) -> None:
@@ -136,6 +208,23 @@ def main() -> None:
     parser.add_argument(
         "--teardown-only", action="store_true", help="Only run teardown for this domain"
     )
+    parser.add_argument(
+        "--no-seed-rss",
+        "--skip-rss-seed",
+        dest="skip_rss_seed",
+        action="store_true",
+        help="Do not insert data_sources.rss.seed_feed_urls into {schema}.rss_feeds after SQL",
+    )
+    parser.add_argument(
+        "--print-checklist-only",
+        action="store_true",
+        help="Print post-install checklist for the domain in --config and exit (no DB)",
+    )
+    parser.add_argument(
+        "--activate-in-db",
+        action="store_true",
+        help="After successful run, UPDATE public.domains SET is_active=TRUE for this domain_key",
+    )
     args = parser.parse_args()
 
     if args.require_backup_ack and not args.ack_backup:
@@ -149,15 +238,17 @@ def main() -> None:
 
     if not schema_name.replace("_", "").isalnum() or not schema_name.islower():
         raise SystemExit("schema_name must be lowercase snake_case alphanumerics only")
-    if schema_name in RESERVED_SCHEMA_NAMES or domain_key in (
-        "politics",
-        "finance",
-        "science-tech",
-    ):
-        raise SystemExit("Refusing: domain_key/schema_name is reserved or core silo")
+    if domain_key in ("politics", "finance", "science-tech"):
+        raise SystemExit("Refusing: core silos are not provisioned with this script")
+
+    if args.print_checklist_only:
+        print_post_provision_checklist(
+            domain_key, schema_name, config_path=str(args.config.resolve())
+        )
+        return
 
     if args.dry_run:
-        print("dry-run: would preflight, apply SQL, verify, or teardown-only")
+        print("dry-run: would preflight, apply SQL, RSS seed, verify, or teardown-only")
         print(f"  domain_key={domain_key} schema_name={schema_name}")
         return
 
@@ -173,20 +264,38 @@ def main() -> None:
                 print("Teardown complete.")
                 return
 
-            ok, msg = _preflight_schema_empty(cur, schema_name)
-            if not ok:
-                raise SystemExit(f"Preflight failed: {msg}")
+            already_registered = _domain_row_matches(cur, domain_key, schema_name)
+            if not already_registered:
+                if schema_name in RESERVED_SCHEMA_NAMES:
+                    raise SystemExit(
+                        "Refusing: schema_name is reserved (system/core). "
+                        "Use a different schema_name for a new optional domain."
+                    )
+                ok, msg = _preflight_schema_empty(cur, schema_name)
+                if not ok:
+                    raise SystemExit(f"Preflight failed: {msg}")
+            ok2, msg2 = _preflight_public_domains(cur, domain_key, schema_name)
+            if not ok2:
+                raise SystemExit(f"Preflight failed: {msg2}")
 
         if args.sql:
             try:
                 apply_sql_file(conn, args.sql)
                 conn.commit()
+                if not args.skip_rss_seed:
+                    added, skipped = seed_from_domain_config(conn, cfg, schema_name)
+                    if added or skipped:
+                        print(
+                            f"  [rss] seeded {added} new feed(s), "
+                            f"{skipped} already in {schema_name}.rss_feeds"
+                        )
+                    conn.commit()
             except Exception as e:
                 conn.rollback()
                 with conn.cursor() as cur:
                     teardown_domain(cur, domain_key, schema_name)
                 conn.commit()
-                raise SystemExit(f"SQL failed, tore down target domain: {e}") from e
+                raise SystemExit(f"SQL or RSS seed failed, tore down target domain: {e}") from e
 
         if args.verify_cmd and not args.skip_verify:
             rc = run_verify(args.verify_cmd)
@@ -196,9 +305,29 @@ def main() -> None:
                 conn.commit()
                 raise SystemExit(f"Verify failed (exit {rc}), tore down target domain")
 
+        if args.activate_in_db:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE public.domains SET is_active = TRUE WHERE domain_key = %s",
+                    (domain_key,),
+                )
+                if cur.rowcount == 0:
+                    print(
+                        "  [warn] --activate-in-db: no public.domains row updated "
+                        f"(domain_key={domain_key!r} missing?)",
+                        file=sys.stderr,
+                    )
+            conn.commit()
+
         conn.commit()
         print("✅ Provision complete for", domain_key)
-        print("Next: set is_active: true in YAML if ready, restart API, update web domainHelper.ts")
+        print(
+            "Next: align YAML is_active with DB if needed, restart API/workers; "
+            "SPA loads domains from GET /api/system_monitoring/registry_domains"
+        )
+        print_post_provision_checklist(
+            domain_key, schema_name, config_path=str(args.config.resolve())
+        )
     finally:
         conn.close()
 

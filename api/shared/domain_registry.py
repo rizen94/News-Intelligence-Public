@@ -10,6 +10,10 @@ Loader rules (keep in sync with api/config/domains/README.md):
 - Strip every key whose name starts with ``_`` from each loaded document (human-only comments).
 - Ignore YAML that tries to redefine politics, finance, or science-tech.
 
+``data_sources.rss.seed_feed_urls`` (and optional ``seed_feed_category``) are **not** read here.
+They are inserted into ``{schema_name}.rss_feeds`` by ``api/scripts/provision_domain.py`` (after SQL)
+and ``api/scripts/seed_domain_rss_from_yaml.py`` (backfill).
+
 See docs/DOMAIN_EXTENSION_TEMPLATE.md and api/config/domains/README.md.
 """
 
@@ -63,8 +67,20 @@ RESERVED_SCHEMA_NAMES: frozenset[str] = frozenset(
         "finance",
         "science_tech",
         "intelligence",
+        "artificial_intelligence",
     }
 )
+
+
+def resolve_domain_schema(domain_key: str) -> str:
+    """
+    Map URL ``domain_key`` to Postgres ``schema_name`` for active/builtin entries.
+    Fallback: ``hyphen → underscore`` (for stale rows or tests).
+    """
+    for e in get_domain_entries():
+        if e["domain_key"] == domain_key:
+            return str(e["schema_name"])
+    return str(domain_key).replace("-", "_")
 
 
 def _strip_doc_keys(data: dict[str, Any]) -> dict[str, Any]:

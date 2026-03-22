@@ -31,6 +31,8 @@ if not os.environ.get("DB_PASSWORD") and os.path.exists(
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from shared.domain_registry import get_schema_names_active
+
 
 def run(conn, sql, params=None):
     with conn.cursor() as cur:
@@ -137,7 +139,7 @@ def main():
 
         # --- 2. NULL counts for important columns (all domains) ---
         print("\n--- 2. NULL / empty counts (articles, key columns) ---")
-        for schema in ("politics", "finance", "science_tech"):
+        for schema in get_schema_names_active():
             try:
                 set_search_path(conn, f"{schema}, public")
                 # Count rows and nulls for entities/topics/created_at
@@ -161,7 +163,7 @@ def main():
 
         # --- 3. Orphan checks ---
         print("\n--- 3. Orphan rows (join tables pointing to missing parents) ---")
-        for schema in ("politics", "finance", "science_tech"):
+        for schema in get_schema_names_active():
             try:
                 set_search_path(conn, f"{schema}, public")
                 # storyline_articles.article_id not in articles

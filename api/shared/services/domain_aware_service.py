@@ -216,8 +216,11 @@ def get_all_domains() -> list:
         conn.close()
 
 
-# Schema names for per-domain tables (articles, storylines, rss_feeds, …) — not public.
-DOMAIN_DATA_SCHEMAS: tuple[str, ...] = ("politics", "finance", "science_tech")
+def get_domain_data_schemas() -> tuple[str, ...]:
+    """Postgres schema names for all active domains (built-in + YAML). Single source: domain_registry."""
+    from shared.domain_registry import get_schema_names_active
+
+    return get_schema_names_active()
 
 
 def normalize_domain_to_schema(domain_key: str) -> str:
@@ -232,7 +235,7 @@ def resolve_article_id_to_schema(article_id: int) -> str | None:
         return None
     try:
         with conn.cursor() as cur:
-            for sch in DOMAIN_DATA_SCHEMAS:
+            for sch in get_domain_data_schemas():
                 cur.execute(
                     f"SELECT 1 FROM {sch}.articles WHERE id = %s LIMIT 1",
                     (article_id,),
@@ -254,7 +257,7 @@ def resolve_storyline_id_to_schema(storyline_id: int) -> str | None:
         return None
     try:
         with conn.cursor() as cur:
-            for sch in DOMAIN_DATA_SCHEMAS:
+            for sch in get_domain_data_schemas():
                 cur.execute(
                     f"SELECT 1 FROM {sch}.storylines WHERE id = %s LIMIT 1",
                     (storyline_id,),
@@ -277,6 +280,6 @@ def parse_optional_domain_to_schema(domain: str | None) -> str | None:
     if domain is None or str(domain).strip() == "":
         return None
     s = normalize_domain_to_schema(domain.strip())
-    if s not in DOMAIN_DATA_SCHEMAS:
+    if s not in get_domain_data_schemas():
         raise ValueError(f"Invalid domain: {domain}")
     return s

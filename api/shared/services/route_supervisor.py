@@ -15,6 +15,7 @@ from datetime import datetime, timedelta
 from enum import Enum
 
 from shared.database.connection import get_db_connection
+from shared.domain_registry import get_active_domain_keys
 from shared.services.domain_aware_service import validate_domain
 
 logger = logging.getLogger(__name__)
@@ -338,7 +339,7 @@ class RouteSupervisor:
 
     async def check_all_database_connections(self) -> list[DatabaseConnectionHealth]:
         """Check database connections for all domains"""
-        domains = ["politics", "finance", "science-tech"]
+        domains = list(get_active_domain_keys())
         results = []
 
         # Check public schema
@@ -450,7 +451,7 @@ class RouteSupervisor:
             ("/api/system_monitoring/status", "GET"),
         ]
 
-        domains = ["politics", "finance", "science-tech"]
+        domains = list(get_active_domain_keys())
         results = []
 
         for route_path, method in critical_routes:

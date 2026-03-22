@@ -20,6 +20,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 from shared.database.connection import get_db_connection
+from shared.domain_registry import is_valid_domain_key
 
 from services.document_download_service import fetch_pdf_from_url
 
@@ -590,7 +591,7 @@ def process_document(
                 )
                 row = cur.fetchone()
                 doc_domain = (row[0] if row and row[0] else None) or "documents"
-                if doc_domain and doc_domain not in ("politics", "finance", "science-tech"):
+                if doc_domain and not is_valid_domain_key(doc_domain):
                     doc_domain = "documents"
                 sections_list = extracted_sections or []
                 doc_title = (title or "Document")[:500]

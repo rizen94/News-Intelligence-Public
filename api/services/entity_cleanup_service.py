@@ -8,13 +8,9 @@ import logging
 import re
 from collections import defaultdict
 
-logger = logging.getLogger(__name__)
+from shared.domain_registry import resolve_domain_schema
 
-DOMAIN_SCHEMA = {
-    "politics": "politics",
-    "finance": "finance",
-    "science-tech": "science_tech",
-}
+logger = logging.getLogger(__name__)
 
 GENERIC_FRAGMENTS = [
     "no name",
@@ -28,7 +24,7 @@ GENERIC_FRAGMENTS = [
 
 
 def _schema(domain_key: str) -> str:
-    return DOMAIN_SCHEMA.get(domain_key, domain_key.replace("-", "_"))
+    return resolve_domain_schema(domain_key)
 
 
 def _is_noise(name: str, entity_type: str) -> bool:

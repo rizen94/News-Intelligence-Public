@@ -22,6 +22,8 @@ from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from shared.domain_registry import get_active_domain_keys
+
 logger = logging.getLogger(__name__)
 
 _nightly_ingest_lock = asyncio.Lock()
@@ -195,7 +197,7 @@ async def run_nightly_unified_pipeline_drain(
                         break
 
                     round_total = 0
-                    for domain_key in ("politics", "finance", "science-tech"):
+                    for domain_key in get_active_domain_keys():
                         if not window_active():
                             break
                         lim = sync_limit

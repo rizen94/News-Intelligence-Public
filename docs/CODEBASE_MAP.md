@@ -54,7 +54,7 @@
 | Routes | `web/src/App.tsx` | `BrowserRouter`; `/:domain/*` shell. |
 | Layout | `web/src/layout/MainLayout.tsx` | Domain switcher, sidebar, outlet. |
 | API base URL | `web/src/services/apiConnectionManager.ts` | Injects domain for scoped calls. |
-| Domain keys | `web/src/utils/domainHelper.ts` | Valid domains: `politics`, `finance`, `science-tech`. |
+| Domain keys | `web/src/utils/domainHelper.ts` | Fallback / typing; runtime list from **`registry_domains`** at SPA startup. |
 | API modules | `web/src/services/api/*.ts` | One module per resource area (articles, storylines, monitoring, …). |
 
 ---
@@ -77,6 +77,9 @@ Shared cross-domain schema lives in PostgreSQL **`intelligence`**; per-domain co
 | `api/config/orchestrator_governance.yaml` | Collection interval, analysis pipeline budgets, feature flags consumed by automation. |
 | `api/config/sources.yaml` | External source hints (finance, etc.). |
 | `api/config/domains/*.yaml` | Optional domain onboarding (see [DOMAIN_EXTENSION_TEMPLATE.md](DOMAIN_EXTENSION_TEMPLATE.md)). |
+| `api/scripts/provision_domain.py` | New silo: preflight, SQL, optional **`seed_feed_urls`** → `{schema}.rss_feeds`. |
+| `api/scripts/seed_domain_rss_from_yaml.py` | Backfill **`rss_feeds`** from YAML **`seed_feed_urls`**. |
+| `api/scripts/init_domain_yaml_from_template.py` | Create **`{domain_key}.yaml`** from **`_template.example.yaml`**. |
 
 ---
 

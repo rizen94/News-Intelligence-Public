@@ -12,7 +12,7 @@ from pydantic import BaseModel
 from shared.database.connection import get_db_config, get_db_connection
 from shared.domain_registry import DOMAIN_PATH_PATTERN
 from shared.services.domain_aware_service import (
-    DOMAIN_DATA_SCHEMAS,
+    get_domain_data_schemas,
     parse_optional_domain_to_schema,
     validate_domain,
 )
@@ -41,7 +41,7 @@ def _resolve_topic_row_schema(conn, topic_id: int, domain: str | None) -> str | 
     if domain is not None and str(domain).strip():
         schemas = [parse_optional_domain_to_schema(domain)]
     else:
-        schemas = list(DOMAIN_DATA_SCHEMAS)
+        schemas = list(get_domain_data_schemas())
     with conn.cursor() as cur:
         for sch in schemas:
             cur.execute(f"SELECT 1 FROM {sch}.topics WHERE id = %s", (topic_id,))

@@ -17,7 +17,7 @@ from fastapi import APIRouter, Body, HTTPException, Path, Query
 from pydantic import BaseModel, Field
 from services.domain_knowledge_service import get_domain_knowledge_service
 from services.rag import get_enhanced_rag_service
-from shared.domain_registry import DOMAIN_PATH_PATTERN
+from shared.domain_registry import DOMAIN_PATH_PATTERN, get_active_domain_keys
 
 logger = logging.getLogger(__name__)
 
@@ -414,7 +414,7 @@ async def cross_domain_query(request: RAGQueryRequest):
     """
     try:
         rag_service = get_enhanced_rag_service()
-        domains = ["politics", "finance", "science-tech"]
+        domains = list(get_active_domain_keys())
 
         results = {}
         all_entities = []

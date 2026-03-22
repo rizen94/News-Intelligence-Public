@@ -10,17 +10,16 @@ import logging
 from typing import Any
 
 from shared.database.connection import get_db_connection
+from shared.domain_registry import resolve_domain_schema
 
 from orchestration.events.envelope import EventEnvelope
 from orchestration.events.types import EventType
 
 logger = logging.getLogger("orchestration")
 
-DOMAIN_SCHEMA = {"politics": "politics", "finance": "finance", "science-tech": "science_tech"}
-
 
 def _schema_for_domain(domain_key: str) -> str:
-    return DOMAIN_SCHEMA.get(domain_key, domain_key.replace("-", "_"))
+    return resolve_domain_schema(domain_key)
 
 
 def _get_entity_count_and_ids(conn, domain_key: str, article_id: int) -> tuple[int, list]:

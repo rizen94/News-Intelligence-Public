@@ -1,0 +1,88 @@
+# =============================================================================
+# DOMAIN ONBOARDING (fill in for a NEW optional domain — not politics/finance/science-tech)
+# =============================================================================
+#
+# Save as: api/config/domains/<domain_key>.yaml  (filename must NOT start with _)
+# Loader: api/shared/domain_registry.py
+# Procedure: docs/DOMAIN_EXTENSION_TEMPLATE.md + api/config/domains/README.md
+#
+# WORKFLOW (summary)
+#   1) Fill this file; keep is_active: false until DB silo exists.
+#   2) Validate YAML (syntax + UTF-8).
+#   3) SQL migration: public.domains row + CREATE SCHEMA + silo tables (parity with existing domains).
+#   4) Run api/scripts/provision_domain.py (YAML + SQL + verify command).
+#   5) When verify exits 0: set is_active: true, restart API (and workers). SPA loads domains from
+#      GET /api/system_monitoring/registry_domains — no manual frontend list edit required.
+#
+# DATABASE / URL RULES
+#   domain_key:     ^[a-z0-9-]+$   (hyphens OK; no underscores)
+#   schema_name:    ^[a-z0-9_]+$   (underscores OK; no hyphens)
+#   display_name:   max 100 chars → public.domains.name
+#
+# =============================================================================
+
+# --- REQUIRED ----------------------------------------------------------------
+domain_key: medicine
+
+# --- REQUIRED ----------------------------------------------------------------
+schema_name: medicine
+
+# --- REQUIRED ----------------------------------------------------------------
+display_name: Medicine & Health Research
+
+# --- OPTIONAL ----------------------------------------------------------------
+description: >-
+  Medical research, clinical trials, epidemiology, public health, and biomedical advances.
+
+# --- OPTIONAL ----------------------------------------------------------------
+display_order: 20
+
+# --- REQUIRED FOR SAFE ROLLOUT -----------------------------------------------
+# true: live in domain_registry — restart API/workers after changing.
+is_active: true
+
+# --- HUMAN-ONLY (stripped by loader — use for notes to operators) ------------
+_instructions: |
+  Covers peer-reviewed medical research, clinical trials, FDA announcements, WHO reports,
+  and major medical journal publications. Focus on breakthrough treatments, epidemiology,
+  and public health policy impacts.
+
+# --- OPTIONAL ----------------------------------------------------------------
+data_sources:
+  rss:
+    seed_feed_urls:
+      - https://pubmed.ncbi.nlm.nih.gov/rss/search/1J7Kt9VPuLj1jzKa9JLYKXVDKw0JHqvggXUEKNwpeS8kNdHPY5/?limit=100&utm_campaign=pubmed-2&fc=20240101000000
+      - https://www.nejm.org/action/showFeed?jc=nejm&type=etoc&feed=rss
+      - https://www.thelancet.com/rssfeed/lancet_current.xml
+      - https://jamanetwork.com/feeds/site_feeds/jama
+      - https://www.bmj.com/rss
+      - https://www.nature.com/nm.rss
+      - https://www.who.int/rss-feeds/news-english.xml
+      - https://www.fda.gov/about-fda/contact-fda/stay-informed/rss-feeds/fda-newsroom/rss.xml
+      - https://clinicaltrials.gov/ct2/results/rss.xml?rcv_d=14&lup_d=14&sel_rss=new14&count=10000
+      - https://www.medrxiv.org/rss/medrxiv
+      - https://www.biorxiv.org/rss/biorxiv_rss.xml?subject=all
+
+# --- OPTIONAL ----------------------------------------------------------------
+focus_areas:
+  - Clinical trials and drug development
+  - Epidemiology and disease surveillance
+  - Medical breakthroughs and treatments
+  - Public health policy and guidelines
+  - Biomedical research and discoveries
+  - Healthcare technology and digital health
+  - Vaccine development and immunology
+  - Genetics and precision medicine
+
+# --- OPTIONAL ----------------------------------------------------------------
+llm_prompt_guidance: |
+  Focus on evidence-based medical research and clinical significance. Distinguish between
+  preliminary studies, clinical trials, and approved treatments. Highlight sample sizes,
+  study limitations, and peer review status. Avoid sensationalizing medical claims. Include
+  relevant regulatory approvals (FDA, EMA, etc.) and clinical trial phases where applicable.
+
+# --- OPTIONAL ----------------------------------------------------------------
+workload_assumptions:
+  expected_active_feeds: 25
+  rough_new_articles_per_day: 200
+  llm_heavy_phases_enabled: true

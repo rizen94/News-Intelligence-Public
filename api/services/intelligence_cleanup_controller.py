@@ -18,16 +18,9 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from shared.database.connection import get_db_connection
+from shared.domain_registry import get_active_domain_keys, resolve_domain_schema
 
 logger = logging.getLogger(__name__)
-
-DOMAIN_SCHEMA = {
-    "politics": "politics",
-    "finance": "finance",
-    "science-tech": "science_tech",
-}
-
-ALL_DOMAINS = ["politics", "finance", "science-tech"]
 
 DEFAULT_POLICY = {
     "entity_noise_removal": True,
@@ -50,7 +43,7 @@ DEFAULT_POLICY = {
 
 
 def _schema(domain_key: str) -> str:
-    return DOMAIN_SCHEMA.get(domain_key, domain_key.replace("-", "_"))
+    return resolve_domain_schema(domain_key)
 
 
 class IntelligenceCleanupController:
@@ -67,7 +60,7 @@ class IntelligenceCleanupController:
         Execute a full cleanup cycle for one domain or all domains.
         Returns a summary of actions taken.
         """
-        domains = [domain_key] if domain_key else ALL_DOMAINS
+        domains = [domain_key] if domain_key else list(get_active_domain_keys())
         results: dict[str, Any] = {}
 
         for d in domains:

@@ -87,7 +87,9 @@ def _insert_weekly_digest(
         with conn.cursor() as cur:
             # Pull editorial ledes from storylines updated this week
             editorial_suggestions = []
-            for schema in ("politics", "finance", "science_tech"):
+            from shared.domain_registry import get_schema_names_active
+
+            for schema in get_schema_names_active():
                 try:
                     cur.execute(
                         f"""

@@ -27,7 +27,6 @@ import {
   type TrackedEvent,
 } from '@/services/api/contextCentric';
 import { useDomain } from '@/contexts/DomainContext';
-import { DOMAIN_KEYS_LIST } from '@/utils/domainHelper';
 
 const EVENT_TYPE_COLORS: Record<
   string,
@@ -44,7 +43,6 @@ const EVENT_TYPE_COLORS: Record<
   market_event: 'warning',
 };
 
-const DOMAIN_KEYS = DOMAIN_KEYS_LIST;
 const EVENT_TYPES = [
   'election',
   'legislation',
@@ -67,7 +65,7 @@ const emptyForm = {
 };
 
 export default function InvestigatePage() {
-  const { domain } = useDomain();
+  const { domain, availableDomains } = useDomain();
   const navigate = useNavigate();
   const [events, setEvents] = useState<TrackedEvent[]>([]);
   const [loading, setLoading] = useState(true);
@@ -256,23 +254,23 @@ export default function InvestigatePage() {
               >
                 Domains
               </Typography>
-              {DOMAIN_KEYS.map(d => (
+              {availableDomains.map(d => (
                 <FormControlLabel
-                  key={d}
+                  key={d.key}
                   control={
                     <Checkbox
-                      checked={createForm.domain_keys.includes(d)}
+                      checked={createForm.domain_keys.includes(d.key)}
                       onChange={(_, checked) =>
                         setCreateForm(f => ({
                           ...f,
                           domain_keys: checked
-                            ? [...f.domain_keys, d]
-                            : f.domain_keys.filter(k => k !== d),
+                            ? [...f.domain_keys, d.key]
+                            : f.domain_keys.filter(k => k !== d.key),
                         }))
                       }
                     />
                   }
-                  label={d}
+                  label={`${d.name} (${d.key})`}
                 />
               ))}
             </Box>

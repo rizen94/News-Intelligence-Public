@@ -17,7 +17,7 @@ from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, Path, Query
 from shared.database.connection import get_db_connection
 from shared.domain_registry import DOMAIN_PATH_PATTERN
 from shared.services.domain_aware_service import (
-    DOMAIN_DATA_SCHEMAS,
+    get_domain_data_schemas,
     parse_optional_domain_to_schema,
     resolve_article_id_to_schema,
     validate_domain,
@@ -100,7 +100,7 @@ async def get_articles(
                 else:
                     branches = []
                     params = []
-                    for sch in DOMAIN_DATA_SCHEMAS:
+                    for sch in get_domain_data_schemas():
                         wh = " WHERE processing_status = %s" if status else ""
                         branches.append(f"""
                             SELECT id, title, content, url, source_domain, published_at,
@@ -159,7 +159,7 @@ async def get_articles(
                     total_count = cur.fetchone()[0]
                 else:
                     total_count = 0
-                    for sch in DOMAIN_DATA_SCHEMAS:
+                    for sch in get_domain_data_schemas():
                         cq = f"SELECT COUNT(*) FROM {sch}.articles"
                         cp = []
                         if status:
@@ -393,7 +393,7 @@ async def get_batch_processing_status():
                 from datetime import timedelta
 
                 last_hour = datetime.now() - timedelta(hours=1)
-                for sch in DOMAIN_DATA_SCHEMAS:
+                for sch in get_domain_data_schemas():
                     cur.execute(f"""
                         SELECT COUNT(*) FROM {sch}.articles
                         WHERE analysis_updated_at IS NULL
@@ -439,7 +439,7 @@ async def start_batch_processing(background_tasks: BackgroundTasks):
             with conn.cursor() as cur:
                 branches = []
                 params = []
-                for sch in DOMAIN_DATA_SCHEMAS:
+                for sch in get_domain_data_schemas():
                     branches.append(f"""
                         SELECT id, title, content, %s::text AS _schema, created_at
                         FROM {sch}.articles

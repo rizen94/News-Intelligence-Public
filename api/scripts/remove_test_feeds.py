@@ -37,12 +37,6 @@ if not os.environ.get("DB_PASSWORD") and os.path.exists(
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-DOMAIN_SCHEMAS = [
-    ("politics", "politics"),
-    ("finance", "finance"),
-    ("science_tech", "science-tech"),
-]
-
 
 def main():
     parser = argparse.ArgumentParser(description="Remove test/sample RSS feeds from domain tables.")
@@ -63,7 +57,7 @@ def main():
     to_delete_by_schema = []
 
     try:
-        for schema, domain_key in DOMAIN_SCHEMAS:
+        for domain_key, schema in url_schema_pairs():
             with conn.cursor() as cur:
                 cur.execute(
                     f"""

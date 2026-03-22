@@ -17,10 +17,6 @@ from .summarization_service import MLSummarizationService
 
 logger = logging.getLogger(__name__)
 
-# Domain-scoped article tables (not public.articles).
-_DOMAIN_ARTICLE_SCHEMAS = ("politics", "finance", "science_tech")
-
-
 class BackgroundMLProcessor:
     """
     Background processor for ML operations with timing tracking
@@ -60,8 +56,10 @@ class BackgroundMLProcessor:
             conn = get_db_connection()
             if not conn:
                 return None
+            from shared.domain_registry import get_schema_names_active
+
             with conn.cursor() as cursor:
-                for schema in _DOMAIN_ARTICLE_SCHEMAS:
+                for schema in get_schema_names_active():
                     cursor.execute(
                         f"SELECT 1 FROM {schema}.articles WHERE id = %s LIMIT 1",
                         (article_id,),
@@ -162,8 +160,10 @@ class BackgroundMLProcessor:
         try:
             schema = self._resolve_article_schema(article_id)
             if not schema:
+                from shared.domain_registry import get_schema_names_active
+
                 raise Exception(
-                    f"Article {article_id} not found in domain schemas {_DOMAIN_ARTICLE_SCHEMAS}"
+                    f"Article {article_id} not found in domain schemas {get_schema_names_active()}"
                 )
 
             # Get article data
@@ -340,8 +340,10 @@ class BackgroundMLProcessor:
                         "model_used": row[7],
                     }
 
+                from shared.domain_registry import get_schema_names_active
+
                 subqueries = []
-                for sch in _DOMAIN_ARTICLE_SCHEMAS:
+                for sch in get_schema_names_active():
                     subqueries.append(f"""
                             SELECT
                                 a.id, a.title, a.ml_processing_status,

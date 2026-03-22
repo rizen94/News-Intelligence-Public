@@ -5,6 +5,7 @@ Uses LLM to intelligently cluster articles by topic and learn from feedback
 
 import json
 import logging
+import os
 import re
 from typing import Any
 
@@ -40,6 +41,12 @@ class TopicClusteringService:
         self.timeout = 120  # 2 minutes timeout
         self.domain = domain
         self.schema = self._get_schema_name(domain)
+        try:
+            self.topic_auto_match_min_score = float(
+                os.environ.get("TOPIC_AUTO_MATCH_MIN_SCORE", "0.58")
+            )
+        except ValueError:
+            self.topic_auto_match_min_score = 0.58
 
     def _get_schema_name(self, domain: str) -> str:
         """Convert domain key to schema name"""
@@ -221,6 +228,38 @@ JSON Response:"""
             logger.error(f"Error extracting topics from article: {e}")
             return []
 
+    @staticmethod
+    def _allow_fuzzy_topic_match(topic_name: str) -> bool:
+        """Skip lexical similarity for very short single-token names (e.g. WHO, Fed) to limit false merges."""
+        toks = re.findall(r"[a-z0-9']+", topic_name.lower())
+        return not (len(toks) == 1 and len(toks[0]) <= 4)
+
+    def _fetch_similar_topic_candidates(self, cur, topic_name: str) -> list[tuple[int, str, Any]]:
+        """
+        Bounded candidate set: active topics whose name matches at least one significant token
+        from the proposed topic (aligned with merge_suggestions scoring).
+        """
+        words = [w for w in re.findall(r"[a-z0-9']+", topic_name.lower()) if len(w) >= 3][:8]
+        if not words:
+            s = topic_name.lower().strip()
+            if len(s) >= 2:
+                words = [s[:64]]
+            else:
+                return []
+        ors = " OR ".join(["lower(name) LIKE %s"] * len(words))
+        params = tuple(f"%{w}%" for w in words)
+        cur.execute(
+            f"""
+            SELECT id, name, keywords
+            FROM {self.schema}.topics
+            WHERE status IS DISTINCT FROM 'merged'
+              AND ({ors})
+            LIMIT 400
+            """,
+            params,
+        )
+        return [(int(r[0]), r[1], r[2]) for r in cur.fetchall() if r[1]]
+
     async def assign_topics_to_article(
         self, article_id: int, topics: list[dict[str, Any]]
     ) -> dict[str, Any]:
@@ -234,6 +273,8 @@ JSON Response:"""
         Returns:
             Dictionary with assignment results
         """
+        from domains.content_analysis.services.topic_merge_suggestions import find_best_matching_topic
+
         conn = None
         try:
             conn = self._get_db_connection()
@@ -241,29 +282,75 @@ JSON Response:"""
 
             assigned_topics = []
             created_topics = []
+            matched_similarity: list[dict[str, Any]] = []
 
             for topic_data in topics:
                 topic_name = topic_data.get("name", "").strip()
                 if not topic_name:
                     continue
 
-                # Check if topic exists in domain schema
+                keywords_list = topic_data.get("keywords", [])
+                if not isinstance(keywords_list, list):
+                    keywords_list = []
+
+                assignment_method = "auto"
+                canonical_name = topic_name
+
                 cur.execute(
-                    f"SELECT id, confidence_score, accuracy_score FROM {self.schema}.topics WHERE name = %s",
-                    (topic_name,),
+                    f"""
+                    SELECT id, confidence_score, accuracy_score, name
+                    FROM {self.schema}.topics
+                    WHERE name = %s OR lower(trim(name)) = lower(trim(%s))
+                    LIMIT 1
+                    """,
+                    (topic_name, topic_name),
                 )
                 existing_topic = cur.fetchone()
 
+                if not existing_topic and self._allow_fuzzy_topic_match(topic_name):
+                    min_score = self.topic_auto_match_min_score
+                    toks = re.findall(r"[a-z0-9']+", topic_name.lower())
+                    if len(toks) == 1:
+                        min_score = max(min_score, 0.72)
+                    candidates = self._fetch_similar_topic_candidates(cur, topic_name)
+                    best = find_best_matching_topic(
+                        topic_name, keywords_list, candidates, min_score=min_score
+                    )
+                    if best:
+                        tid, cname, sim_score = best
+                        cur.execute(
+                            f"""
+                            SELECT id, confidence_score, accuracy_score, name
+                            FROM {self.schema}.topics
+                            WHERE id = %s
+                            """,
+                            (tid,),
+                        )
+                        existing_topic = cur.fetchone()
+                        if existing_topic:
+                            assignment_method = "auto_similarity"
+                            canonical_name = existing_topic[3] or cname
+                            matched_similarity.append(
+                                {
+                                    "llm_name": topic_name,
+                                    "canonical_name": canonical_name,
+                                    "score": round(sim_score, 3),
+                                }
+                            )
+                            logger.info(
+                                "Topic auto-match: %r → %r (score=%.2f)",
+                                topic_name,
+                                canonical_name,
+                                sim_score,
+                            )
+
                 if existing_topic:
                     topic_id = existing_topic[0]
-                    # Use existing topic's confidence as base, blend with new confidence
                     existing_confidence = existing_topic[1] or 0.5
+                    canonical_name = existing_topic[3] or canonical_name
                     new_confidence = topic_data.get("confidence", 0.5)
                     blended_confidence = (existing_confidence * 0.7) + (new_confidence * 0.3)
                 else:
-                    # Create new topic in domain schema
-                    # Convert keywords list to JSONB
-                    keywords_list = topic_data.get("keywords", [])
                     cur.execute(
                         f"""
                         INSERT INTO {self.schema}.topics (
@@ -277,7 +364,7 @@ JSON Response:"""
                             topic_name,
                             f"Auto-generated topic: {topic_name}",
                             topic_data.get("category", "other"),
-                            Json(keywords_list),  # Convert to JSONB
+                            Json(keywords_list),
                             topic_data.get("confidence", 0.5),
                             True,
                             "active",
@@ -286,8 +373,8 @@ JSON Response:"""
                     topic_id = cur.fetchone()[0]
                     created_topics.append(topic_name)
                     blended_confidence = topic_data.get("confidence", 0.5)
+                    canonical_name = topic_name
 
-                # Check if assignment already exists in domain schema
                 cur.execute(
                     f"""
                     SELECT id FROM {self.schema}.article_topic_assignments
@@ -297,13 +384,13 @@ JSON Response:"""
                 )
 
                 if cur.fetchone():
-                    # Update existing assignment in domain schema
                     cur.execute(
                         f"""
                         UPDATE {self.schema}.article_topic_assignments
                         SET confidence_score = %s,
                             relevance_score = %s,
                             assignment_context = %s,
+                            assignment_method = %s,
                             updated_at = CURRENT_TIMESTAMP
                         WHERE article_id = %s AND topic_id = %s
                     """,
@@ -311,12 +398,12 @@ JSON Response:"""
                             blended_confidence,
                             topic_data.get("confidence", 0.5),
                             Json(topic_data),
+                            assignment_method,
                             article_id,
                             topic_id,
                         ),
                     )
                 else:
-                    # Create new assignment in domain schema
                     cur.execute(
                         f"""
                         INSERT INTO {self.schema}.article_topic_assignments (
@@ -331,7 +418,7 @@ JSON Response:"""
                             topic_id,
                             blended_confidence,
                             topic_data.get("confidence", 0.5),
-                            "auto",
+                            assignment_method,
                             Json(topic_data),
                             self.model_name,
                         ),
@@ -340,12 +427,11 @@ JSON Response:"""
                 assigned_topics.append(
                     {
                         "topic_id": topic_id,
-                        "topic_name": topic_name,
+                        "topic_name": canonical_name,
                         "confidence": blended_confidence,
                     }
                 )
 
-            # Update article's updated_at in domain schema (topic names are in assignment_context on assignments)
             cur.execute(
                 f"""
                 UPDATE {self.schema}.articles
@@ -362,6 +448,7 @@ JSON Response:"""
                 "article_id": article_id,
                 "assigned_topics": assigned_topics,
                 "created_topics": created_topics,
+                "matched_similarity": matched_similarity,
                 "total_assigned": len(assigned_topics),
             }
 

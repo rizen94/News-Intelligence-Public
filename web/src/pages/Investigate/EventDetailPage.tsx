@@ -36,8 +36,8 @@ import {
   contextCentricApi,
   type TrackedEvent,
 } from '@/services/api/contextCentric';
+import { useDomain } from '@/contexts/DomainContext';
 
-const DOMAIN_KEYS = ['politics', 'finance', 'science-tech'];
 const EVENT_TYPES = [
   'election',
   'legislation',
@@ -63,6 +63,7 @@ interface Chronicle {
 type EventWithChronicles = TrackedEvent & { chronicles?: Chronicle[] };
 
 export default function EventDetailPage() {
+  const { availableDomains } = useDomain();
   const { domain, id } = useParams<{ domain: string; id: string }>();
   const navigate = useNavigate();
   const [event, setEvent] = useState<EventWithChronicles | null>(null);
@@ -349,23 +350,23 @@ export default function EventDetailPage() {
               >
                 Domains
               </Typography>
-              {DOMAIN_KEYS.map(d => (
+              {availableDomains.map(d => (
                 <FormControlLabel
-                  key={d}
+                  key={d.key}
                   control={
                     <Checkbox
-                      checked={editForm.domain_keys.includes(d)}
+                      checked={editForm.domain_keys.includes(d.key)}
                       onChange={(_, checked) =>
                         setEditForm(f => ({
                           ...f,
                           domain_keys: checked
-                            ? [...f.domain_keys, d]
-                            : f.domain_keys.filter(k => k !== d),
+                            ? [...f.domain_keys, d.key]
+                            : f.domain_keys.filter(k => k !== d.key),
                         }))
                       }
                     />
                   }
-                  label={d}
+                  label={`${d.name} (${d.key})`}
                 />
               ))}
             </Box>

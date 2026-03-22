@@ -66,14 +66,22 @@ VALID_EVENT_TYPES = {
     "regulatory",
 }
 
-# Domain key as stored in article_to_context / contexts -> schema name for article_entities
-_DOMAIN_TO_SCHEMA = {
-    "politics": "politics",
-    "finance": "finance",
-    "science-tech": "science_tech",
-    "science_tech": "science_tech",
-}
 _MAX_KEY_PARTICIPANTS = 20
+
+
+def _domain_key_to_schema(domain_key: str) -> str:
+    from shared.domain_registry import domain_key_to_schema
+
+    try:
+        return domain_key_to_schema(domain_key)
+    except KeyError:
+        return (domain_key or "").replace("-", "_")
+
+
+def _active_schema_set() -> frozenset[str]:
+    from shared.domain_registry import get_schema_names_active
+
+    return frozenset(get_schema_names_active())
 
 
 def _resolve_context_ids_to_entity_profile_ids(conn, context_ids: list[int]) -> list[int]:
@@ -102,8 +110,8 @@ def _resolve_context_ids_to_entity_profile_ids(conn, context_ids: list[int]) -> 
 
         canonical_pairs: set = set()
         for domain_key, article_ids in by_domain.items():
-            schema = _DOMAIN_TO_SCHEMA.get(domain_key) or domain_key.replace("-", "_")
-            if schema not in ("politics", "finance", "science_tech"):
+            schema = _domain_key_to_schema(domain_key)
+            if schema not in _active_schema_set():
                 continue
             with conn.cursor() as cur:
                 cur.execute(
@@ -224,7 +232,7 @@ async def discover_events_from_contexts(
             "government_bond (treasury, sovereign debt, yield moves), regulatory (SEC, Fed, enforcement), or investigation "
             "(corporate probes, fraud, DOJ). Name events specifically (e.g. 'Fed rate decision March 2026', 'SEC investigation into X')."
         )
-    elif domain_key in ("politics", "science_tech", "science-tech"):
+    elif domain_key and domain_key != "finance":
         domain_hint = (
             "\n\nIf the story materially affects global commodities, energy, shipping chokepoints, critical minerals, "
             "sanctions, or major macro markets, state that clearly in geographic_scope or summary "
@@ -397,10 +405,6 @@ async def discover_events_from_contexts(
         return {"error": str(e)}
 
 
-# Domains that have contexts and should get event discovery batches.
-EVENT_DISCOVERY_DOMAINS = ("politics", "finance", "science_tech")
-
-
 def _backfill_key_participants_for_event(conn, event_id: int) -> bool:
     """
     Populate key_participant_entity_ids for an existing event from its chronicle developments.
@@ -542,8 +546,8 @@ def link_tracked_events_to_storylines(limit: int = 50) -> int:
                 best_storyline_id = None
                 best_overlap = 0
                 for domain_key, canonical_ids in by_domain.items():
-                    schema = _DOMAIN_TO_SCHEMA.get(domain_key) or domain_key.replace("-", "_")
-                    if schema not in ("politics", "finance", "science_tech"):
+                    schema = _domain_key_to_schema(domain_key)
+                    if schema not in _active_schema_set():
                         continue
                     with conn.cursor() as cur:
                         cur.execute(
@@ -604,7 +608,9 @@ async def run_event_tracking_batch(limit: int = 300) -> int:
     """
     batch_size = 30  # small enough for 8B model to return valid JSON
     created_total = 0
-    for domain in EVENT_DISCOVERY_DOMAINS:
+    from shared.domain_registry import get_active_domain_keys
+
+    for domain in get_active_domain_keys():
         for offset in range(0, limit, batch_size):
             result = await discover_events_from_contexts(domain_key=domain, limit=batch_size)
             created_total += result.get("events_created", 0)

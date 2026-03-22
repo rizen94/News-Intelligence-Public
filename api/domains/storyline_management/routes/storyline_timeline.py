@@ -7,7 +7,7 @@ import logging
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query
 from shared.database.connection import get_db_connection
-from shared.domain_registry import DOMAIN_PATH_PATTERN
+from shared.domain_registry import DOMAIN_PATH_PATTERN, domain_key_to_schema, is_valid_domain_key
 
 from ..schemas.storyline_schemas import StorylineRefinementEnqueueRequest
 from .storyline_crud import validate_domain_dependency
@@ -80,6 +80,12 @@ router = APIRouter(
 )
 
 
+def _require_domain_schema(domain: str) -> str:
+    if not is_valid_domain_key(domain):
+        raise HTTPException(status_code=400, detail=f"Invalid domain: {domain}")
+    return domain_key_to_schema(domain)
+
+
 @router.get("/{domain}/storylines/{storyline_id}/timeline")
 async def get_storyline_timeline(
     domain: str = Path(...),
@@ -88,9 +94,7 @@ async def get_storyline_timeline(
     """Build and return a structured chronological timeline for a storyline."""
     from services.timeline_builder_service import TimelineBuilderService
 
-    schema = domain.replace("-", "_")
-    if schema not in {"politics", "finance", "science_tech"}:
-        raise HTTPException(status_code=400, detail=f"Invalid domain: {domain}")
+    schema = _require_domain_schema(domain)
 
     conn = get_db_connection()
     if not conn:
@@ -119,9 +123,7 @@ async def get_storyline_audit(
     storyline_id: int = Path(...),
 ):
     """Audit counts for storyline vs timeline (chronological_events) and doc/ML metadata."""
-    schema = domain.replace("-", "_")
-    if schema not in {"politics", "finance", "science_tech"}:
-        raise HTTPException(status_code=400, detail=f"Invalid domain: {domain}")
+    schema = _require_domain_schema(domain)
 
     conn = get_db_connection()
     if not conn:
@@ -230,9 +232,7 @@ async def get_storyline_narrative(
         list_pending_job_types,
     )
 
-    schema = domain.replace("-", "_")
-    if schema not in {"politics", "finance", "science_tech"}:
-        raise HTTPException(status_code=400, detail=f"Invalid domain: {domain}")
+    schema = _require_domain_schema(domain)
 
     conn = get_db_connection()
     if not conn:
@@ -350,9 +350,7 @@ async def list_domain_events(
     article_id: int = Query(None),
 ):
     """List extracted events, optionally filtered by type, ongoing status, or source article."""
-    schema = domain.replace("-", "_")
-    if schema not in {"politics", "finance", "science_tech"}:
-        raise HTTPException(status_code=400, detail=f"Invalid domain: {domain}")
+    schema = _require_domain_schema(domain)
 
     conn = get_db_connection()
     if not conn:

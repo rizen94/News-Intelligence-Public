@@ -42,12 +42,6 @@ _WAYBACK_SLEEP = 1.5
 _ARCHIVETODAY_SLEEP = 1.5
 _FETCH_TIMEOUT = 10
 
-DOMAIN_SCHEMA = {
-    "politics": "politics",
-    "finance": "finance",
-    "science-tech": "science_tech",
-}
-
 MAX_CONTENT_CHARS = 50_000
 MIN_CONTENT_TO_ENRICH = 500
 # Burst (48h catch-up): 0.4s between fetches; revert to 0.6 after catch-up
@@ -303,6 +297,7 @@ def enrich_articles_batch(batch_size: int = 20) -> int:
         return 0
 
     from shared.database.connection import get_db_config, get_db_connection
+    from shared.domain_registry import url_schema_pairs
 
     from services.context_processor_service import update_context_content_for_article
 
@@ -317,7 +312,7 @@ def enrich_articles_batch(batch_size: int = 20) -> int:
             cur.execute("SET statement_timeout = '300s'")
         enriched = 0
         remaining = batch_size
-        for domain_key, schema_name in DOMAIN_SCHEMA.items():
+        for domain_key, schema_name in url_schema_pairs():
             if remaining <= 0:
                 break
             with conn.cursor() as cur:

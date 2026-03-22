@@ -9,7 +9,7 @@ or duplicate env parsing. Config is **only** ``DB_*`` environment variables
 (see ``get_db_config``). Docker samples that use ``DATABASE_URL`` are not authoritative.
 
 Pool architecture (3 independent pools, same PostgreSQL instance):
-  - Worker pool (psycopg2): background processing — DB_POOL_WORKER_MIN/MAX (default 4/48)
+  - Worker pool (psycopg2): background processing — DB_POOL_WORKER_MIN/MAX (default 2/48; raise MIN on busy hosts)
   - UI pool     (psycopg2): page loads & monitoring — DB_POOL_UI_MIN/MAX     (default 2/16)
   - SA pool   (SQLAlchemy): ORM-based services      — DB_POOL_SA_SIZE/OVERFLOW (default 4/12)
 
@@ -183,7 +183,8 @@ def _pool_sizes(pool_kind: str) -> tuple[int, int]:
         minconn = int(os.getenv("DB_POOL_UI_MIN", "2"))
         maxconn = int(os.getenv("DB_POOL_UI_MAX", "16"))
     else:
-        minconn = int(os.getenv("DB_POOL_WORKER_MIN", str(max(legacy_min, 4))))
+        # Default min 2 (not 4) to reduce idle server sessions; set DB_POOL_WORKER_MIN higher if needed.
+        minconn = int(os.getenv("DB_POOL_WORKER_MIN", str(max(legacy_min, 2))))
         maxconn = int(os.getenv("DB_POOL_WORKER_MAX", str(max(legacy_max, 48))))
     maxconn = max(minconn, min(maxconn, 100))
     return minconn, maxconn
@@ -245,15 +246,23 @@ def _validate_connection(conn) -> bool:
 
 
 def _getconn_from_pool(pool_ref):
-    """Get one connection from pool and validate; used with optional timeout."""
+    """Get one connection from pool and validate; used with optional timeout.
+
+    Stale connections must be returned with ``putconn(..., close=True)``. Calling
+    ``conn.close()`` alone leaves the slot in the pool's ``_used`` map and exhausts
+    the pool (looks like Postgres or checkout timeouts failed).
+    """
     for _ in range(2):
         conn = pool_ref.getconn()
         if _validate_connection(conn):
             return PooledConnection(conn, pool_ref)
         try:
-            conn.close()
+            pool_ref.putconn(conn, close=True)
         except Exception:
-            pass
+            try:
+                conn.close()
+            except Exception:
+                pass
     return None
 
 
@@ -317,8 +326,13 @@ def get_db_connection(use_reserved: bool = False):
 
 
 def close_pool() -> None:
-    """Close all worker/UI pools (call on shutdown)."""
-    global _connection_pool, _ui_connection_pool
+    """Close all worker/UI psycopg2 pools and dispose the SQLAlchemy engine (call on shutdown).
+
+    After this, the next ``get_db_connection()`` / ORM use will open fresh pools (up to ``minconn`` each).
+    Operators can also call this from a one-off script to drop client-side sockets after draining traffic,
+    then let the next request recreate pools — use only when no other thread is using the DB.
+    """
+    global _connection_pool, _ui_connection_pool, _sqlalchemy_engine, _sqlalchemy_session_factory
     if _connection_pool is not None:
         _connection_pool.closeall()
         _connection_pool = None
@@ -327,6 +341,15 @@ def close_pool() -> None:
         _ui_connection_pool.closeall()
         _ui_connection_pool = None
         logger.info("UI connection pool closed")
+    with _sqlalchemy_lock:
+        if _sqlalchemy_engine is not None:
+            try:
+                _sqlalchemy_engine.dispose()
+            except Exception as e:
+                logger.warning("SQLAlchemy engine dispose failed: %s", e)
+            _sqlalchemy_engine = None
+            _sqlalchemy_session_factory = None
+            logger.info("SQLAlchemy engine disposed")
 
 def probe_database_server_reachable(connect_timeout: Optional[int] = None) -> bool:
     """

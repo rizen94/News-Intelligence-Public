@@ -15,8 +15,6 @@ logger = logging.getLogger(__name__)
 ACTIVE_GAP_DAYS = 7
 SLOW_GAP_DAYS = 30
 
-# Per-domain storylines/articles live in these schemas (not public).
-_DOMAIN_SCHEMAS = ("politics", "finance", "science_tech")
 # Extracted timeline rows live in public (migrations 060, 133).
 _CHRONO_EVENTS = "public.chronological_events"
 
@@ -199,7 +197,9 @@ class TimelineBuilderService:
 
     def _gap_threshold(self, storyline_id: int) -> int:
         """Use a shorter threshold for active stories, longer for slow-moving ones."""
-        schemas = [self.schema_name] if self.schema_name else list(_DOMAIN_SCHEMAS)
+        from shared.services.domain_aware_service import get_domain_data_schemas
+
+        schemas = [self.schema_name] if self.schema_name else list(get_domain_data_schemas())
         cursor = self.conn.cursor()
         try:
             status = "active"

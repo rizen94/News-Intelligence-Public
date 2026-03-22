@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from scripts.article_deduplication import ArticleDeduplicationSystem
 from shared.database.connection import get_db_connection
 from shared.services.domain_aware_service import (
-    DOMAIN_DATA_SCHEMAS,
+    get_domain_data_schemas,
     resolve_article_id_to_schema,
 )
 
@@ -283,7 +283,7 @@ async def get_deduplication_stats():
                 url_duplicate_count = 0
                 content_duplicate_count = 0
                 daily_map = {}
-                for sch in DOMAIN_DATA_SCHEMAS:
+                for sch in get_domain_data_schemas():
                     cur.execute(f"SELECT COUNT(*) FROM {sch}.articles")
                     total_articles += cur.fetchone()[0] or 0
                     cur.execute(

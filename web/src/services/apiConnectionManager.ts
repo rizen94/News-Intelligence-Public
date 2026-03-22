@@ -8,7 +8,7 @@ import API_CONFIG, {
   getCurrentApiUrl,
   getApiOrigin,
 } from '../config/apiConfig';
-import { getCurrentDomain } from '../utils/domainHelper';
+import { getCurrentDomain, isRegistryDomainPathSegment } from '../utils/domainHelper';
 import errorHandler from './errorHandler';
 
 class APIConnectionManager {
@@ -37,11 +37,7 @@ class APIConnectionManager {
         if (config.url?.includes('/api/')) {
           const match = config.url.match(/\/api\/(.+)$/);
           const firstSegment = match ? match[1].split('/')[0] : '';
-          const globalRoutes = [
-            'politics',
-            'finance',
-            'science-tech',
-            'legal',
+          const globalApiPrefixes = [
             'system_monitoring',
             'route_supervisor',
             'watchlist',
@@ -60,7 +56,9 @@ class APIConnectionManager {
             'synthesis',
             'entities',
           ];
-          const isGlobalRoute = globalRoutes.includes(firstSegment);
+          const isGlobalRoute =
+            globalApiPrefixes.includes(firstSegment) ||
+            isRegistryDomainPathSegment(firstSegment);
           // Global routes (context_centric, entity_profiles, etc.) use origin-only base so path stays /api/...
           if (isGlobalRoute) {
             const origin = getApiOrigin();

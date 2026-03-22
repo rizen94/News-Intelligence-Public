@@ -2,8 +2,8 @@
  * News Intelligence — web SPA entry (React + Vite + MUI).
  *
  * Routing: React Router wraps the app; routes live under `/:domain/*` (e.g.
- * `/politics/dashboard`) via MainLayout. Valid domains: politics | finance |
- * science-tech | legal (see `utils/domainHelper` and AGENTS.md).
+ * `/{domain}/dashboard`) via MainLayout. Domains come from the API
+ * (`/api/system_monitoring/registry_domains`) with a static fallback — see `utils/domainHelper` and AGENTS.md.
  *
  * API calls: `apiConnectionManager` sets base URL and domain for `/api/{domain}/...`
  * and global `/api/...` routes (see docs/WEB_API_CONNECTIONS.md).
@@ -32,6 +32,7 @@ import './utils/debugHelper';
 import './utils/featureTestHelper';
 
 import MainLayout from './layout/MainLayout';
+import { getDefaultDomainKey } from './utils/domainHelper';
 import Dashboard from './pages/Dashboard/Dashboard';
 import DiscoverPage from './pages/Discover/DiscoverPage';
 import ContextDetailPage from './pages/Discover/ContextDetailPage';
@@ -80,6 +81,7 @@ const theme = createTheme({
 });
 
 function App() {
+  const defaultDomainPath = `/${getDefaultDomainKey()}/dashboard`;
   useEffect(() => {
     errorHandler.initialize();
     loggingService.info('News Intelligence (Dashboard) initialized', {
@@ -105,7 +107,7 @@ function App() {
                 <Routes>
                 <Route
                   path='/'
-                  element={<Navigate to='/politics/dashboard' replace />}
+                  element={<Navigate to={defaultDomainPath} replace />}
                 />
                 <Route path='/:domain' element={<MainLayout />}>
                   <Route index element={<Navigate to='dashboard' replace />} />
@@ -265,7 +267,7 @@ function App() {
                 </Route>
                 <Route
                   path='*'
-                  element={<Navigate to='/politics/dashboard' replace />}
+                  element={<Navigate to={defaultDomainPath} replace />}
                 />
               </Routes>
             </div>

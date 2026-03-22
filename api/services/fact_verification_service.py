@@ -17,14 +17,9 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from shared.database.connection import get_db_connection
+from shared.domain_registry import resolve_domain_schema
 
 logger = logging.getLogger(__name__)
-
-DOMAIN_SCHEMA = {
-    "politics": "politics",
-    "finance": "finance",
-    "science-tech": "science_tech",
-}
 
 # Minimum articles/sources needed to move from "unverified" to "corroborated"
 MIN_CORROBORATION_SOURCES = 2
@@ -161,7 +156,7 @@ def corroborate_claim(
         confidence: 0.0-1.0,
     }
     """
-    schema = DOMAIN_SCHEMA.get(domain_key, domain_key.replace("-", "_"))
+    schema = resolve_domain_schema(domain_key)
     conn = get_db_connection()
     if not conn:
         return {"status": "error", "error": "Database connection failed"}
@@ -590,7 +585,7 @@ def assess_completeness(
 
     Returns {completeness_score, source_diversity, temporal_coverage, gaps, assessment}.
     """
-    schema = DOMAIN_SCHEMA.get(domain_key, domain_key.replace("-", "_"))
+    schema = resolve_domain_schema(domain_key)
     conn = get_db_connection()
     if not conn:
         return {"success": False, "error": "Database connection failed"}

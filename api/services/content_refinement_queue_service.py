@@ -32,13 +32,14 @@ from collections.abc import Callable
 from typing import Any
 
 from shared.database.connection import get_db_connection
+from shared.domain_registry import ACTIVE_DOMAIN_KEYS_SET
 
 logger = logging.getLogger(__name__)
 
 # Throttle scheduler-driven enqueue so we fill the DB queue even if the refinement phase is starved.
 _last_scheduler_auto_enqueue_monotonic: float = 0.0
 
-ALLOWED_DOMAIN_KEYS = frozenset({"politics", "finance", "science-tech"})
+ALLOWED_DOMAIN_KEYS = ACTIVE_DOMAIN_KEYS_SET
 
 JOB_COMPREHENSIVE_RAG = "comprehensive_rag"
 JOB_NARRATIVE_FINISHER = "narrative_finisher"

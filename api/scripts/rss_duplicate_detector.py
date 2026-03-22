@@ -19,7 +19,7 @@ import requests
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from shared.services.domain_aware_service import DOMAIN_DATA_SCHEMAS
+from shared.services.domain_aware_service import get_domain_data_schemas
 
 # Configure logging
 logging.basicConfig(
@@ -61,7 +61,7 @@ class RSSDuplicateDetector:
 
         duplicates: list[dict[str, Any]] = []
         with self.conn.cursor() as cur:
-            for sch in DOMAIN_DATA_SCHEMAS:
+            for sch in get_domain_data_schemas():
                 cur.execute(f"""
                     SELECT feed_url, COUNT(*) as count,
                            STRING_AGG(feed_name, ' | ') as names,
@@ -94,7 +94,7 @@ class RSSDuplicateDetector:
 
         similar_groups: list[dict[str, Any]] = []
         with self.conn.cursor() as cur:
-            for sch in DOMAIN_DATA_SCHEMAS:
+            for sch in get_domain_data_schemas():
                 cur.execute(f"""
                     SELECT id, feed_name, feed_url, is_active
                     FROM {sch}.rss_feeds
@@ -141,7 +141,7 @@ class RSSDuplicateDetector:
 
         name_duplicates: list[dict[str, Any]] = []
         with self.conn.cursor() as cur:
-            for sch in DOMAIN_DATA_SCHEMAS:
+            for sch in get_domain_data_schemas():
                 cur.execute(f"""
                     SELECT id, feed_name, feed_url, is_active
                     FROM {sch}.rss_feeds
@@ -288,7 +288,7 @@ class RSSDuplicateDetector:
 
             try:
                 sch = duplicate.get("domain_schema")
-                if not sch or sch not in DOMAIN_DATA_SCHEMAS:
+                if not sch or sch not in get_domain_data_schemas():
                     merge_results["errors"].append(
                         f"Missing or invalid domain_schema for {duplicate.get('url')!r}"
                     )
@@ -382,7 +382,7 @@ class RSSDuplicateDetector:
 
         all_ok = True
         with self.conn.cursor() as cur:
-            for sch in DOMAIN_DATA_SCHEMAS:
+            for sch in get_domain_data_schemas():
                 idx_name = f"idx_rss_feeds_feed_url_unique_{sch}"
                 try:
                     cur.execute(f"""

@@ -106,16 +106,11 @@ async def get_database_stats():
                 """)
                 schemas = [{"schema": row[0], "table_count": row[1]} for row in cur.fetchall()]
 
-                # Record counts for known domain tables (articles, storylines, rss_feeds per schema)
-                try:
-                    cur.execute("""
-                        SELECT schema_name FROM domains WHERE is_active = true ORDER BY schema_name
-                    """)
-                    domain_schemas = [row[0] for row in cur.fetchall()]
-                except Exception:
-                    domain_schemas = []
-                if not domain_schemas:
-                    domain_schemas = ["politics", "finance", "science_tech"]
+                # Record counts for domain silos — use domain_registry (same as pipeline), not only public.domains,
+                # so monitor counts stay aligned when DB catalog and YAML drift.
+                from shared.domain_registry import get_schema_names_active
+
+                domain_schemas = list(get_schema_names_active())
 
                 table_record_counts: list[dict[str, Any]] = []
                 for schema in domain_schemas:
@@ -209,7 +204,9 @@ def get_backlog_status() -> dict[str, Any]:
         enriched_last_1h = 0
         enriched_last_24h = 0
         enriched_last_4d = 0
-        for schema in ("politics", "finance", "science_tech"):
+        from shared.domain_registry import get_schema_names_active, url_schema_pairs
+
+        for schema in get_schema_names_active():
             try:
                 cur.execute(
                     f"""
@@ -272,7 +269,7 @@ def get_backlog_status() -> dict[str, Any]:
             _rollback_db_connection(conn)
 
         storyline_backlog = 0
-        for schema in ("politics", "finance", "science_tech"):
+        for schema in get_schema_names_active():
             try:
                 cur.execute(
                     f"""
@@ -474,11 +471,7 @@ def get_backlog_status() -> dict[str, Any]:
         synthesis_last_1h: dict[str, int] = {}
         synthesis_last_2h: dict[str, int] = {}
         synthesis_last_4d: dict[str, int] = {}
-        for schema, domain_key in [
-            ("politics", "politics"),
-            ("finance", "finance"),
-            ("science_tech", "science_tech"),
-        ]:
+        for domain_key, schema in url_schema_pairs():
             try:
                 cur.execute(
                     f"""

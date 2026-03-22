@@ -343,18 +343,18 @@ async def lifespan(app: FastAPI):
 
                 async def start_workers():
                     """Start queue workers for all active domains"""
-                    domains = ["politics", "finance", "science-tech"]
+                    from shared.domain_registry import url_schema_pairs
+
                     workers = []
-                    for domain in domains:
+                    for _domain_key, schema in url_schema_pairs():
                         try:
-                            schema = domain.replace("-", "_")
                             worker = TopicExtractionQueueWorker(get_db_connection, schema=schema)
                             workers.append(worker)
                             # Start worker in background task
                             asyncio.create_task(worker.start())
-                            logger.info(f"✅ Started topic extraction queue worker for {domain}")
+                            logger.info(f"✅ Started topic extraction queue worker for {_domain_key} ({schema})")
                         except Exception as e:
-                            logger.error(f"❌ Failed to start queue worker for {domain}: {e}")
+                            logger.error(f"❌ Failed to start queue worker for {_domain_key}: {e}")
 
                     # Keep workers running
                     while True:
@@ -616,6 +616,15 @@ async def lifespan(app: FastAPI):
                     logger.info("Newsroom Orchestrator stopped")
     except Exception as e:
         logger.error(f"Error stopping Newsroom Orchestrator: {e}")
+
+    # Close DB pools last (releases server-side sessions for this process)
+    try:
+        from shared.database.connection import close_pool
+
+        close_pool()
+        logger.info("Database connection pools closed")
+    except Exception as e:
+        logger.error("Error closing database pools: %s", e)
 
 
 # OpenAPI / docs — disabled in production unless NEWS_INTEL_ENABLE_API_DOCS=true

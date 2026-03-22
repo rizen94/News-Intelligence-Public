@@ -43,8 +43,9 @@ def _run_rss() -> int:
 
 def _run_context_sync() -> None:
     from services.context_processor_service import sync_domain_articles_to_contexts
+    from shared.domain_registry import get_active_domain_keys
 
-    for domain_key in ("politics", "finance", "science-tech"):
+    for domain_key in get_active_domain_keys():
         try:
             total = sync_domain_articles_to_contexts(domain_key, limit=100)
             if total > 0:
@@ -55,8 +56,9 @@ def _run_context_sync() -> None:
 
 def _run_entity_profile_sync() -> None:
     from services.entity_profile_sync_service import sync_domain_entity_profiles
+    from shared.domain_registry import get_active_domain_keys
 
-    for domain_key in ("politics", "finance", "science-tech"):
+    for domain_key in get_active_domain_keys():
         try:
             total = sync_domain_entity_profiles(domain_key)
             if total > 0:

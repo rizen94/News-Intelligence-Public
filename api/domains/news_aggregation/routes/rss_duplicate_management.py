@@ -10,13 +10,13 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from shared.database.connection import get_db_connection
-from shared.services.domain_aware_service import DOMAIN_DATA_SCHEMAS
+from shared.services.domain_aware_service import get_domain_data_schemas
 
 
 def _find_rss_feed_schema(conn, feed_id: int) -> str | None:
     """Return domain schema name containing this rss_feeds.id, or None."""
     with conn.cursor() as cur:
-        for sch in DOMAIN_DATA_SCHEMAS:
+        for sch in get_domain_data_schemas():
             cur.execute(
                 f"SELECT 1 FROM {sch}.rss_feeds WHERE id = %s LIMIT 1",
                 (feed_id,),
@@ -282,7 +282,7 @@ async def get_duplicate_stats():
                 active_feeds = 0
                 feeds_with_articles = 0
                 duplicate_count = 0
-                for sch in DOMAIN_DATA_SCHEMAS:
+                for sch in get_domain_data_schemas():
                     cur.execute(f"SELECT COUNT(*) FROM {sch}.rss_feeds")
                     total_feeds += cur.fetchone()[0] or 0
                     cur.execute(f"SELECT COUNT(*) FROM {sch}.rss_feeds WHERE is_active = true")

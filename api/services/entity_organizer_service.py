@@ -81,14 +81,18 @@ def get_key_entities(
     if not conn:
         return {"success": False, "entities": [], "error": "Database connection failed"}
 
-    domains: list[str] = [domain_key] if domain_key else ["politics", "finance", "science-tech"]
-    schema_map = {"politics": "politics", "finance": "finance", "science-tech": "science_tech"}
+    from shared.domain_registry import domain_key_to_schema, get_active_domain_keys
+
+    domains: list[str] = [domain_key] if domain_key else list(get_active_domain_keys())
     entities: list[dict[str, Any]] = []
 
     try:
         with conn.cursor() as cur:
             for d in domains:
-                schema = schema_map.get(d, d.replace("-", "_"))
+                try:
+                    schema = domain_key_to_schema(d)
+                except KeyError:
+                    continue
                 cur.execute(f"SET search_path TO {schema}, public")
                 cur.execute(
                     """

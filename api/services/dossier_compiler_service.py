@@ -12,6 +12,7 @@ from datetime import date
 from typing import Any
 
 from shared.database.connection import get_db_connection
+from shared.domain_registry import is_valid_domain_key, resolve_domain_schema
 
 logger = logging.getLogger(__name__)
 
@@ -107,14 +108,6 @@ def _generate_dossier_narrative(
         return None
 
 
-# domain_key -> schema_name (per domains table / 122)
-DOMAIN_TO_SCHEMA = {
-    "politics": "politics",
-    "finance": "finance",
-    "science-tech": "science_tech",
-}
-
-
 def compile_dossier(domain_key: str, entity_id: int) -> dict[str, Any]:
     """
     Build or refresh the entity dossier for (domain_key, entity_id).
@@ -123,9 +116,9 @@ def compile_dossier(domain_key: str, entity_id: int) -> dict[str, Any]:
     and storylines that contain those articles. Upserts into intelligence.entity_dossiers.
     Returns the dossier row (id, domain_key, entity_id, compilation_date, chronicle_data, ...).
     """
-    schema = DOMAIN_TO_SCHEMA.get(domain_key)
-    if not schema:
+    if not is_valid_domain_key(domain_key):
         return {"success": False, "error": f"Unknown domain_key: {domain_key}"}
+    schema = resolve_domain_schema(domain_key)
 
     conn = get_db_connection()
     if not conn:

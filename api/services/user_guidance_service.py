@@ -14,9 +14,6 @@ try:
 except Exception:
     logger = logging.getLogger(__name__)
 
-DOMAINS = ("politics", "finance", "science_tech")
-
-
 def get_user_guidance(get_db_connection) -> dict[str, Any]:
     """
     Load watchlist storyline IDs and automation-enabled storylines from all domains.
@@ -32,9 +29,10 @@ def get_user_guidance(get_db_connection) -> dict[str, Any]:
     if not conn:
         return out
     try:
+        from shared.domain_registry import url_schema_pairs
+
         cur = conn.cursor()
-        for domain in DOMAINS:
-            schema = domain.replace("-", "_")
+        for domain, schema in url_schema_pairs():
             # Watchlist: storyline_id per domain (watchlist lives in same schema as storylines)
             try:
                 cur.execute(f"""

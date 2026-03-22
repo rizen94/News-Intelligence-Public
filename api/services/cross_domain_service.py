@@ -13,8 +13,6 @@ from shared.database.connection import get_db_connection
 
 logger = logging.getLogger(__name__)
 
-DOMAINS = ("politics", "finance", "science_tech")
-
 
 def _norm_tracked_domain_key(d: str) -> str:
     x = str(d).lower().strip()
@@ -111,7 +109,10 @@ def run_cross_domain_synthesis(
     conn = get_db_connection()
     if not conn:
         return {"success": False, "error": "Database connection failed", "correlations": []}
-    target_domains = [d for d in (domains or list(DOMAINS)) if d in DOMAINS]
+    from shared.domain_registry import get_schema_names_active
+
+    allowed = frozenset(get_schema_names_active())
+    target_domains = [d for d in (domains or list(allowed)) if d in allowed]
     if len(target_domains) < 2:
         return {
             "success": True,

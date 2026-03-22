@@ -1,9 +1,17 @@
 /**
  * Domain Helper Utility
- * Provides domain context and helper functions for v5.0 multi-domain architecture
+ * Provides domain context and helper functions for v5.0 multi-domain architecture.
+ *
+ * Active domains load from GET /api/system_monitoring/registry_domains (see AGENTS.md).
+ * FALLBACK_DOMAINS is used until the first successful fetch or when the API is down.
+ *
+ * Registry URL must match apiConfig (VITE_API_URL + localStorage news_intelligence_api_url),
+ * same as apiConnectionManager health checks — otherwise fetch fails and the UI stays on fallback.
  */
 
-export type DomainKey = 'politics' | 'finance' | 'science-tech' | 'legal';
+import { getApiOrigin, getCurrentApiUrl } from '../config/apiConfig';
+
+export type DomainKey = string;
 
 export interface Domain {
   key: DomainKey;
@@ -11,30 +19,134 @@ export interface Domain {
   schema: string;
 }
 
-export const AVAILABLE_DOMAINS: Domain[] = [
+/** Used when the API is unreachable or returned no domains (SSR, offline, boot). */
+const FALLBACK_DOMAINS: Domain[] = [
   { key: 'politics', name: 'Politics', schema: 'politics' },
   { key: 'finance', name: 'Finance', schema: 'finance' },
-  { key: 'science-tech', name: 'Science & Technology', schema: 'science_tech' },
+  {
+    key: 'science-tech',
+    name: 'Science & Technology',
+    schema: 'science_tech',
+  },
   { key: 'legal', name: 'Legal', schema: 'legal' },
 ];
 
-/** Alternation for first path segment after `/` (domain keys). Keep in sync with AVAILABLE_DOMAINS. */
-export const DOMAIN_ROUTE_ALTERNATION = AVAILABLE_DOMAINS.map(d => d.key).join(
-  '|'
-);
+let _cachedDomains: Domain[] | null = null;
 
-/** Keys in nav/API order — use for forms and filters that list all domains. */
-export const DOMAIN_KEYS_LIST: DomainKey[] = AVAILABLE_DOMAINS.map(d => d.key);
+/** Path segments that are domain keys (for API client: /api/{segment}/...). */
+let _domainKeySet: Set<string> = new Set(FALLBACK_DOMAINS.map(d => d.key));
 
-const DEFAULT_DOMAIN: DomainKey = 'politics';
+function domainsList(): Domain[] {
+  return _cachedDomains && _cachedDomains.length > 0
+    ? _cachedDomains
+    : FALLBACK_DOMAINS;
+}
+
+/** Nav / forms — reactive callers should re-read after registry fetch (e.g. DomainContext). */
+export function getAvailableDomains(): Domain[] {
+  return domainsList();
+}
+
+/** @deprecated Prefer getAvailableDomains() — kept for minimal churn in imports. */
+export const AVAILABLE_DOMAINS: Domain[] = FALLBACK_DOMAINS;
 
 /**
- * Path after the domain segment: `/politics/storylines` → `/storylines`; `/legal` → `/dashboard`.
+ * Apply domains from API (sorted by display_order). Updates routing set for apiConnectionManager.
+ */
+export function applyRegistryDomains(apiDomains: Domain[]): void {
+  if (!apiDomains.length) {
+    return;
+  }
+  _cachedDomains = apiDomains;
+  _domainKeySet = new Set(apiDomains.map(d => d.key));
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('registryDomainsUpdated'));
+  }
+}
+
+/** True if this first path segment after /api/ is a domain key (flat /api/{domain}/...). */
+export function isRegistryDomainPathSegment(segment: string): boolean {
+  return _domainKeySet.has(segment);
+}
+
+export function getDomainRouteAlternation(): string {
+  return domainsList()
+    .map(d => d.key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .join('|');
+}
+
+/** Keys in nav/API order — use for forms and filters that list all domains. */
+export function getDomainKeysList(): DomainKey[] {
+  return domainsList().map(d => d.key);
+}
+
+/** @deprecated Use getDomainKeysList() after registry load. */
+export const DOMAIN_KEYS_LIST: DomainKey[] = FALLBACK_DOMAINS.map(d => d.key);
+
+export function getDefaultDomainKey(): DomainKey {
+  const list = domainsList();
+  return list[0]?.key ?? 'politics';
+}
+
+/** Full URL for registry_domains — aligned with getCurrentApiUrl / getApiOrigin (see apiConnectionManager health). */
+function getRegistryDomainsUrl(): string {
+  const path = '/api/system_monitoring/registry_domains';
+  const base = getCurrentApiUrl();
+  const origin = getApiOrigin();
+  if (!base || base === '') {
+    return path;
+  }
+  const root = (origin !== '' ? origin : base).replace(/\/$/, '');
+  return `${root}${path}`;
+}
+
+/**
+ * Fetch active domains from the API.
+ */
+export async function fetchRegistryDomains(): Promise<Domain[]> {
+  const url = getRegistryDomainsUrl();
+  const res = await fetch(url, { credentials: 'same-origin' });
+  if (!res.ok) {
+    throw new Error(`registry_domains HTTP ${res.status}`);
+  }
+  const body = (await res.json()) as {
+    success?: boolean;
+    data?: { domains?: Array<Record<string, unknown>> };
+  };
+  const raw = body.data?.domains;
+  if (!body.success || !Array.isArray(raw) || !raw.length) {
+    throw new Error('registry_domains: empty or invalid payload');
+  }
+  const out: Domain[] = [];
+  for (const row of raw) {
+    const key = String(row.domain_key || '').trim();
+    const schema = String(row.schema_name || '').trim();
+    const name = String(row.display_name || key || '').trim() || key;
+    if (!key || !schema) {
+      continue;
+    }
+    out.push({ key, name, schema });
+  }
+  if (!out.length) {
+    throw new Error('registry_domains: no valid rows');
+  }
+  return out;
+}
+
+/**
+ * Path after the domain segment: `/politics/storylines` → `/storylines`; `/politics` → `/dashboard`.
  */
 export function getPathAfterDomain(pathname: string): string {
-  const re = new RegExp(`^/(?:${DOMAIN_ROUTE_ALTERNATION})(/.*)?$`);
-  const m = pathname.match(re);
-  return m?.[1] || '/dashboard';
+  const m = pathname.match(/^\/([^/]+)(\/.*)?$/);
+  if (!m) {
+    return '/dashboard';
+  }
+  const seg = m[1];
+  const rest = m[2];
+  if (!isValidDomain(seg)) {
+    return '/dashboard';
+  }
+  return rest && rest.length > 0 ? rest : '/dashboard';
 }
 
 /**
@@ -42,15 +154,15 @@ export function getPathAfterDomain(pathname: string): string {
  */
 export const getCurrentDomain = (): DomainKey => {
   if (typeof window === 'undefined') {
-    return DEFAULT_DOMAIN;
+    return getDefaultDomainKey();
   }
 
   const stored = localStorage.getItem('news_intelligence_domain');
   if (stored && isValidDomain(stored)) {
-    return stored as DomainKey;
+    return stored;
   }
 
-  return DEFAULT_DOMAIN;
+  return getDefaultDomainKey();
 };
 
 /**
@@ -70,14 +182,14 @@ export const setCurrentDomain = (domain: DomainKey): void => {
  * Validate if a string is a valid domain key
  */
 export const isValidDomain = (domain: string): boolean => {
-  return AVAILABLE_DOMAINS.some(d => d.key === domain);
+  return domainsList().some(d => d.key === domain);
 };
 
 /**
  * Get domain object by key
  */
 export const getDomain = (key: DomainKey): Domain | undefined => {
-  return AVAILABLE_DOMAINS.find(d => d.key === key);
+  return domainsList().find(d => d.key === key);
 };
 
 /**

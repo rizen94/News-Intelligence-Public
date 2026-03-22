@@ -10,10 +10,9 @@ from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-logger = logging.getLogger("orchestration")
+from shared.domain_registry import domain_key_to_schema, get_active_domain_keys
 
-# Domain key -> schema name
-DOMAIN_SCHEMAS = {"politics": "politics", "finance": "finance", "science-tech": "science_tech"}
+logger = logging.getLogger("orchestration")
 
 
 def get_new_articles(
@@ -30,12 +29,15 @@ def get_new_articles(
     conn = get_db_connection()
     if not conn:
         return []
-    domains = domains or list(DOMAIN_SCHEMAS)
+    domains = domains or list(get_active_domain_keys())
     since = (datetime.now(timezone.utc) - timedelta(minutes=window_minutes)).isoformat()
     out = []
     try:
         for domain_key in domains:
-            schema = DOMAIN_SCHEMAS.get(domain_key, domain_key.replace("-", "_"))
+            try:
+                schema = domain_key_to_schema(domain_key)
+            except KeyError:
+                continue
             try:
                 cur = conn.cursor()
                 cur.execute(

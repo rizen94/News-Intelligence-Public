@@ -10,9 +10,16 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, List, Optional
 
-from fastapi import APIRouter, HTTPException, Query, Body
-
+from fastapi import APIRouter, Body, HTTPException, Query
 from shared.database.connection import get_db_connection
+from shared.domain_registry import (
+    domain_key_to_schema,
+    get_active_domain_keys,
+    get_schema_names_active,
+    is_valid_domain_key,
+    resolve_domain_schema,
+    url_schema_pairs,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +68,7 @@ def _count_extracted_events_for_status(cur, domain_key: str | None) -> int:
     """
     Same scope as GET /api/{domain}/events — rows in public.chronological_events whose
     source_article_id exists in that domain's articles. When domain_key is None, count events
-    tied to any built-in domain (no double-counting).
+    tied to any active domain silo (no double-counting).
     """
     try:
         cur.execute(
@@ -78,9 +85,9 @@ def _count_extracted_events_for_status(cur, domain_key: str | None) -> int:
         return 0
 
     if domain_key:
-        schema_map = {"politics": "politics", "finance": "finance", "science-tech": "science_tech"}
-        schema = schema_map.get(domain_key)
-        if not schema:
+        try:
+            schema = domain_key_to_schema(domain_key)
+        except KeyError:
             return 0
         try:
             cur.execute(
@@ -96,13 +103,18 @@ def _count_extracted_events_for_status(cur, domain_key: str | None) -> int:
         except Exception:
             return 0
 
+    schemas = get_schema_names_active()
+    if not schemas:
+        return 0
+    parts = [
+        f"EXISTS (SELECT 1 FROM {schema}.articles a WHERE a.id = ce.source_article_id)"
+        for schema in schemas
+    ]
     try:
         cur.execute(
-            """
+            f"""
             SELECT COUNT(*) FROM public.chronological_events ce
-            WHERE EXISTS (SELECT 1 FROM politics.articles a WHERE a.id = ce.source_article_id)
-               OR EXISTS (SELECT 1 FROM finance.articles a WHERE a.id = ce.source_article_id)
-               OR EXISTS (SELECT 1 FROM science_tech.articles a WHERE a.id = ce.source_article_id)
+            WHERE {" OR ".join(parts)}
             """
         )
         row = cur.fetchone()
@@ -112,7 +124,7 @@ def _count_extracted_events_for_status(cur, domain_key: str | None) -> int:
 
 
 @router.post("/context_centric/sync_entity_profiles", response_model=dict)
-def sync_entity_profiles(domain_key: Optional[str] = Query(None, description="Sync this domain only; omit to sync all")) -> dict:
+def sync_entity_profiles(domain_key: str | None = Query(None, description="Sync this domain only; omit to sync all")) -> dict:
     """
     Run entity_profile_sync: backfill entity_canonical from article_entities, then
     copy entity_canonical -> intelligence.entity_profiles for the given domain (or all).
@@ -124,11 +136,17 @@ def sync_entity_profiles(domain_key: Optional[str] = Query(None, description="Sy
             return {"success": False, "error": "entity_profile_sync task is disabled in context_centric config"}
     except Exception:
         pass
-    from services.entity_profile_sync_service import backfill_entity_canonical, sync_domain_entity_profiles
+    from services.entity_profile_sync_service import (
+        backfill_entity_canonical,
+        sync_domain_entity_profiles,
+    )
 
-    domains = [domain_key] if domain_key else ["politics", "finance", "science-tech"]
-    if domain_key and domain_key not in ("politics", "finance", "science-tech"):
-        raise HTTPException(status_code=400, detail="domain_key must be one of politics, finance, science-tech")
+    domains = [domain_key] if domain_key else list(get_active_domain_keys())
+    if domain_key and not is_valid_domain_key(domain_key):
+        raise HTTPException(
+            status_code=400,
+            detail=f"domain_key must be an active domain ({', '.join(get_active_domain_keys())}) or omitted",
+        )
 
     backfill_counts: dict[str, int] = {}
     result: dict[str, int] = {}
@@ -159,7 +177,10 @@ def run_story_state_triggers(
     See docs/STORY_STATE_UPDATE_TRIGGERS.md.
     """
     try:
-        from services.story_state_trigger_service import process_fact_change_log, process_story_update_queue
+        from services.story_state_trigger_service import (
+            process_fact_change_log,
+            process_story_update_queue,
+        )
         fact_processed = 0
         queue_processed = 0
         if step in ("fact_log", "both"):
@@ -194,7 +215,7 @@ async def run_enhancement_cycle(
 
 @router.post("/context_centric/run_pattern_matching", response_model=dict)
 def run_pattern_matching(
-    domain_key: Optional[str] = Query(None, description="Run for this domain only; omit to run all domains"),
+    domain_key: str | None = Query(None, description="Run for this domain only; omit to run all domains"),
     limit: int = Query(50, ge=1, le=200, description="Max contexts per domain to check"),
 ) -> dict:
     """
@@ -203,10 +224,14 @@ def run_pattern_matching(
     See docs/RAG_ENHANCEMENT_ROADMAP.md.
     """
     try:
-        from services.watch_pattern_service import run_pattern_matching as run_pattern_matching_svc, run_pattern_matching_all_domains
+        from services.watch_pattern_service import run_pattern_matching as run_pattern_matching_svc
+        from services.watch_pattern_service import run_pattern_matching_all_domains
         if domain_key:
-            if domain_key not in ("politics", "finance", "science-tech"):
-                raise HTTPException(status_code=400, detail="domain_key must be one of politics, finance, science-tech")
+            if not is_valid_domain_key(domain_key):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"domain_key must be an active domain ({', '.join(get_active_domain_keys())}) or omitted",
+                )
             result = run_pattern_matching_svc(domain_key=domain_key, limit=limit)
         else:
             result = run_pattern_matching_all_domains(limit_per_domain=min(limit, 100))
@@ -236,7 +261,7 @@ def run_entity_enrichment(limit: int = Query(20, ge=1, le=50, description="Max p
 
 @router.post("/context_centric/sync_contexts", response_model=dict)
 def sync_contexts(
-    domain_key: Optional[str] = Query(None, description="Sync this domain only; omit to sync all"),
+    domain_key: str | None = Query(None, description="Sync this domain only; omit to sync all"),
     limit: int = Query(100, ge=1, le=500, description="Max articles to backfill per domain (production: 100)"),
 ) -> dict:
     """
@@ -246,9 +271,12 @@ def sync_contexts(
     """
     from services.context_processor_service import sync_domain_articles_to_contexts
 
-    domains = [domain_key] if domain_key else ["politics", "finance", "science-tech"]
-    if domain_key and domain_key not in ("politics", "finance", "science-tech"):
-        raise HTTPException(status_code=400, detail="domain_key must be one of politics, finance, science-tech")
+    domains = [domain_key] if domain_key else list(get_active_domain_keys())
+    if domain_key and not is_valid_domain_key(domain_key):
+        raise HTTPException(
+            status_code=400,
+            detail=f"domain_key must be an active domain ({', '.join(get_active_domain_keys())}) or omitted",
+        )
 
     result: dict[str, int] = {}
     for d in domains:
@@ -256,22 +284,25 @@ def sync_contexts(
             created = sync_domain_articles_to_contexts(d, limit=limit)
             result[d] = created
         except Exception as e:
-            logger.warning(f"sync_contexts %s: %s", d, e)
+            logger.warning("sync_contexts %s: %s", d, e)
             result[d] = -1
     return {"success": True, "contexts_created_by_domain": result}
 
 
 @router.post("/context_centric/cleanup", response_model=dict)
 def run_intelligence_cleanup(
-    domain_key: Optional[str] = Query(None, description="Clean this domain only; omit for all"),
+    domain_key: str | None = Query(None, description="Clean this domain only; omit for all"),
 ) -> dict:
     """
     Run the full intelligence cleanup cycle: noise removal, duplicate merge,
     low-value entity pruning, orphan profile cleanup, entity cap, and stale
     event archival. Safe to call repeatedly (idempotent).
     """
-    if domain_key and domain_key not in ("politics", "finance", "science-tech"):
-        raise HTTPException(status_code=400, detail="domain_key must be one of politics, finance, science-tech")
+    if domain_key and not is_valid_domain_key(domain_key):
+        raise HTTPException(
+            status_code=400,
+            detail=f"domain_key must be an active domain ({', '.join(get_active_domain_keys())}) or omitted",
+        )
     from services.intelligence_cleanup_controller import IntelligenceCleanupController
     controller = IntelligenceCleanupController()
     return controller.run(domain_key=domain_key)
@@ -279,7 +310,7 @@ def run_intelligence_cleanup(
 
 @router.post("/context_centric/discover_events", response_model=dict)
 async def discover_events(
-    domain_key: Optional[str] = Query(None, description="Discover events in this domain only; omit for all"),
+    domain_key: str | None = Query(None, description="Discover events in this domain only; omit for all"),
     limit: int = Query(100, ge=1, le=500, description="Max contexts to analyze"),
 ) -> dict:
     """Analyze recent contexts with LLM to discover and create tracked events."""
@@ -290,7 +321,7 @@ async def discover_events(
 
 @router.post("/context_centric/review_events", response_model=dict)
 async def review_event_coherence_api(
-    event_id: Optional[int] = Query(None, description="Review a single event; omit to review all open events"),
+    event_id: int | None = Query(None, description="Review a single event; omit to review all open events"),
     threshold: float = Query(0.5, ge=0.0, le=1.0, description="Relevance threshold — contexts scoring below are removed"),
     auto_remove: bool = Query(True, description="Automatically remove irrelevant contexts"),
 ) -> dict:
@@ -298,7 +329,7 @@ async def review_event_coherence_api(
     LLM-powered coherence review: for each context in an event, verify it
     actually belongs. Removes mismatches and logs reasoning.
     """
-    from services.event_coherence_reviewer import review_event_coherence, review_all_open_events
+    from services.event_coherence_reviewer import review_all_open_events, review_event_coherence
     if event_id is not None:
         return await review_event_coherence(event_id, relevance_threshold=threshold, auto_remove=auto_remove)
     return await review_all_open_events(relevance_threshold=threshold, auto_remove=auto_remove)
@@ -306,18 +337,18 @@ async def review_event_coherence_api(
 
 @router.get("/context_centric/status", response_model=dict)
 def context_centric_status(
-    domain_key: Optional[str] = Query(
+    domain_key: str | None = Query(
         None,
-        description="When set (politics|finance|science-tech), contexts/entity_profiles/extracted_events "
+        description="When set to an active domain key, contexts/entity_profiles/extracted_events "
         "are scoped to this domain. Omit for aggregate totals. "
         "events_stored_total and chronological_events_total are always full-database counts.",
     ),
 ) -> dict:
     """Return counts for context-centric pipeline (Phase 3.2 quality validation)."""
-    if domain_key is not None and domain_key not in ("politics", "finance", "science-tech"):
+    if domain_key is not None and not is_valid_domain_key(domain_key):
         raise HTTPException(
             status_code=400,
-            detail="domain_key must be one of politics, finance, science-tech, or omitted",
+            detail=f"domain_key must be an active domain ({', '.join(get_active_domain_keys())}) or omitted",
         )
 
     conn = get_db_connection()
@@ -406,13 +437,10 @@ def context_centric_quality() -> dict:
     conn = get_db_connection()
     if not conn:
         raise HTTPException(status_code=503, detail="Database unavailable")
-    domains = ("politics", "finance", "science_tech")
-    schema_map = {"politics": "politics", "finance": "finance", "science-tech": "science_tech"}
     by_domain = {}
     try:
         with conn.cursor() as cur:
-            for domain_key in ("politics", "finance", "science-tech"):
-                schema = schema_map.get(domain_key, domain_key.replace("-", "_"))
+            for domain_key, schema in url_schema_pairs():
                 row = {
                     "domain": domain_key,
                     "rss_feeds_active": None,
@@ -506,8 +534,8 @@ def context_centric_quality() -> dict:
 
 @router.get("/pattern_discoveries", response_model=dict)
 def list_pattern_discoveries(
-    pattern_type: Optional[str] = Query(None, description="behavioral, temporal, network, event"),
-    domain_key: Optional[str] = Query(None),
+    pattern_type: str | None = Query(None, description="behavioral, temporal, network, event"),
+    domain_key: str | None = Query(None),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ) -> dict:
@@ -616,7 +644,7 @@ def _row_to_profile_brief(row: tuple) -> dict:
 
 @router.get("/entity_profiles", response_model=dict)
 def list_entity_profiles(
-    domain_key: Optional[str] = Query(None, description="Filter by domain"),
+    domain_key: str | None = Query(None, description="Filter by domain"),
     limit: int = Query(
         50,
         ge=1,
@@ -852,8 +880,8 @@ def merge_entity_profiles(
                 (source_profile_id,),
             )
             r = cur.fetchone()
-            from datetime import datetime
             import json
+            from datetime import datetime
             meta = dict(r[0]) if r and r[0] else {}
             meta["merged_into_profile_id"] = profile_id
             meta["merged_at"] = datetime.utcnow().isoformat() + "Z"
@@ -894,8 +922,8 @@ def _row_to_context(row: tuple, max_content_len: int = 2000) -> dict:
 
 
 def _contexts_list_where_params(
-    domain_key: Optional[str],
-    source_type: Optional[str],
+    domain_key: str | None,
+    source_type: str | None,
 ) -> tuple:
     """Returns (WHERE fragment without WHERE keyword, tuple of bind params)."""
     if domain_key and source_type:
@@ -909,8 +937,8 @@ def _contexts_list_where_params(
 
 @router.get("/contexts", response_model=dict)
 def list_contexts(
-    domain_key: Optional[str] = Query(None),
-    source_type: Optional[str] = Query(None, description="e.g. article"),
+    domain_key: str | None = Query(None),
+    source_type: str | None = Query(None, description="e.g. article"),
     limit: int = Query(
         50,
         ge=1,
@@ -1006,8 +1034,7 @@ def get_context(context_id: int) -> dict:
                 link_row = cur.fetchone()
                 if link_row:
                     article_id = link_row[0]
-                    schema_map = {"politics": "politics", "finance": "finance", "science-tech": "science_tech"}
-                    schema = schema_map.get(ctx["domain_key"], ctx["domain_key"].replace("-", "_"))
+                    schema = resolve_domain_schema(ctx["domain_key"])
                     cur.execute(
                         f"""
                         SELECT id, title, url, source, summary, published_date, content
@@ -1207,8 +1234,8 @@ def _row_to_event(row: tuple) -> dict:
 
 @router.get("/tracked_events", response_model=dict)
 def list_tracked_events(
-    event_type: Optional[str] = Query(None),
-    domain_key: Optional[str] = Query(None, description="Filter: events that include this domain"),
+    event_type: str | None = Query(None),
+    domain_key: str | None = Query(None, description="Filter: events that include this domain"),
     limit: int = Query(
         50,
         ge=1,
@@ -1723,7 +1750,7 @@ def compile_entity_dossier(body: dict = Body(..., example={"domain_key": "politi
 
 @router.get("/processed_documents", response_model=dict)
 def list_processed_documents(
-    source_type: Optional[str] = Query(None),
+    source_type: str | None = Query(None),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ) -> dict:
@@ -1907,7 +1934,7 @@ def batch_process_documents(
 
 @router.get("/narrative_threads", response_model=dict)
 def list_narrative_threads(
-    domain_key: Optional[str] = Query(None),
+    domain_key: str | None = Query(None),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ) -> dict:
@@ -1990,7 +2017,7 @@ def synthesize_narrative_threads(
 
 @router.post("/context_centric/entities/consolidate", response_model=dict)
 def run_entity_consolidation(
-    domain_key: Optional[str] = Query(None, description="Run for this domain only; omit for all domains"),
+    domain_key: str | None = Query(None, description="Run for this domain only; omit for all domains"),
 ) -> dict:
     """
     Run entity consolidation: merge duplicate entities, prune low-value, extract relationships.
@@ -2029,7 +2056,7 @@ def run_investigation_consolidation(
 
 @router.get("/claims", response_model=dict)
 def list_claims(
-    context_id: Optional[int] = Query(None),
+    context_id: int | None = Query(None),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ) -> dict:
@@ -2096,14 +2123,14 @@ def list_claims(
 
 @router.get("/context_centric/search", response_model=dict)
 def context_centric_search(
-    q: Optional[str] = Query(None, description="Full-text search (claims subject/predicate/object, context title/content)"),
-    claim_subject: Optional[str] = Query(None, description="Filter claims by subject text (ILIKE)"),
-    claim_predicate: Optional[str] = Query(None, description="Filter claims by predicate text (ILIKE)"),
-    entity_id: Optional[int] = Query(None, description="Filter by entity_profile_id (claims/contexts mentioning this entity)"),
-    pattern_type: Optional[str] = Query(None, description="Filter pattern_discoveries by type: behavioral, temporal, network, event"),
-    valid_from: Optional[str] = Query(None, description="Temporal: claims valid on or after this date (YYYY-MM-DD)"),
-    valid_to: Optional[str] = Query(None, description="Temporal: claims valid on or before this date (YYYY-MM-DD)"),
-    domain_key: Optional[str] = Query(None, description="Restrict to domain"),
+    q: str | None = Query(None, description="Full-text search (claims subject/predicate/object, context title/content)"),
+    claim_subject: str | None = Query(None, description="Filter claims by subject text (ILIKE)"),
+    claim_predicate: str | None = Query(None, description="Filter claims by predicate text (ILIKE)"),
+    entity_id: int | None = Query(None, description="Filter by entity_profile_id (claims/contexts mentioning this entity)"),
+    pattern_type: str | None = Query(None, description="Filter pattern_discoveries by type: behavioral, temporal, network, event"),
+    valid_from: str | None = Query(None, description="Temporal: claims valid on or after this date (YYYY-MM-DD)"),
+    valid_to: str | None = Query(None, description="Temporal: claims valid on or before this date (YYYY-MM-DD)"),
+    domain_key: str | None = Query(None, description="Restrict to domain"),
     limit: int = Query(30, ge=1, le=100),
     offset: int = Query(0, ge=0),
 ) -> dict:
@@ -2277,15 +2304,15 @@ def resolve_entity(
 
 @router.post("/entities/populate_aliases", response_model=dict)
 def populate_entity_aliases(
-    domain_key: Optional[str] = Query(None, description="Domain to process; omit for all"),
+    domain_key: str | None = Query(None, description="Domain to process; omit for all"),
     min_mentions: int = Query(2, description="Minimum articles for an alias to be added"),
 ) -> dict:
     """
     Batch-populate entity_canonical.aliases from article_entities mention variants.
     """
-    from services.entity_resolution_service import populate_aliases_from_mentions, ALL_DOMAINS
+    from services.entity_resolution_service import populate_aliases_from_mentions
 
-    domains = [domain_key] if domain_key else ALL_DOMAINS
+    domains = [domain_key] if domain_key else list(get_active_domain_keys())
     results = {}
     for d in domains:
         results[d] = populate_aliases_from_mentions(d, min_mentions=min_mentions)
@@ -2326,7 +2353,7 @@ def merge_entities(
 
 @router.post("/entities/auto_merge", response_model=dict)
 def auto_merge_entities(
-    domain_key: Optional[str] = Query(None, description="Domain to auto-merge; omit for all"),
+    domain_key: str | None = Query(None, description="Domain to auto-merge; omit for all"),
     min_confidence: float = Query(0.9, description="Only merge above this confidence (use 0.6 for Trump/Donald Trump–style consolidation)"),
 ) -> dict:
     """
@@ -2334,9 +2361,9 @@ def auto_merge_entities(
     Keeps the primary (full) name and merges variants into it (variants become aliases).
     Use min_confidence=0.6 to consolidate last-name and variant matches (e.g. Trump, Donald J Trump, King Trump).
     """
-    from services.entity_resolution_service import auto_merge_high_confidence, ALL_DOMAINS
+    from services.entity_resolution_service import auto_merge_high_confidence
 
-    domains = [domain_key] if domain_key else ALL_DOMAINS
+    domains = [domain_key] if domain_key else list(get_active_domain_keys())
     results = {}
     for d in domains:
         results[d] = auto_merge_high_confidence(d, min_confidence=min_confidence)
@@ -2375,8 +2402,8 @@ def run_entity_resolution_batch(
 @router.get("/entities/canonical", response_model=dict)
 def list_canonical_entities(
     domain_key: str = Query(..., description="Domain to query"),
-    entity_type: Optional[str] = Query(None, description="Filter by type (person, organization, subject, recurring_event)"),
-    search: Optional[str] = Query(None, description="Search canonical_name or aliases"),
+    entity_type: str | None = Query(None, description="Filter by type (person, organization, subject, recurring_event)"),
+    search: str | None = Query(None, description="Search canonical_name or aliases"),
     min_mentions: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
@@ -2485,7 +2512,7 @@ def extract_entity_positions(
 
 @router.post("/entity_positions/batch", response_model=dict)
 def run_position_tracker_batch(
-    domain_key: Optional[str] = Query(None),
+    domain_key: str | None = Query(None),
     min_mentions: int = Query(5, ge=1),
     max_entities: int = Query(10, ge=1, le=50),
 ) -> dict:
@@ -2510,7 +2537,7 @@ def get_domain_synthesis(
     domain_key: str = Query(...),
     hours: int = Query(24, ge=1, le=168),
     max_articles: int = Query(30, ge=1, le=100),
-    max_quality_tier: Optional[int] = Query(None, ge=1, le=4, description="Only include articles with quality_tier <= this (1=best, 4=worst)"),
+    max_quality_tier: int | None = Query(None, ge=1, le=4, description="Only include articles with quality_tier <= this (1=best, 4=worst)"),
 ) -> dict:
     """
     Synthesize all intelligence for a domain within a time window.
@@ -2613,8 +2640,8 @@ def get_contradictions(
 @router.get("/verification/completeness", response_model=dict)
 def get_completeness_assessment(
     domain_key: str = Query(...),
-    topic: Optional[str] = Query(None),
-    storyline_id: Optional[int] = Query(None),
+    topic: str | None = Query(None),
+    storyline_id: int | None = Query(None),
     hours: int = Query(72, ge=1, le=720),
 ) -> dict:
     """
