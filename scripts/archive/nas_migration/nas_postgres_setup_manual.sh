@@ -373,7 +373,7 @@ Copy these files to your NAS:
 **Method 2: Via SMB/CIFS Mount**
 ```bash
 sudo mount -t cifs //192.168.93.100/public /mnt/nas \
-  -o username=Admin,password=Pooter@STORAGE2024,domain=LAKEHOUSE
+  -o username=Admin,password=<NAS_PASSWORD_PLACEHOLDER>,domain=LAKEHOUSE
 cp docker-compose-postgres-nas.yml /mnt/nas/
 cp migrations.tar.gz /mnt/nas/
 cp setup_postgres_on_nas.sh /mnt/nas/

@@ -41,7 +41,7 @@ From the project root:
 
 1. Copy or merge from `configs/env.example` → project-root `.env`.
 2. **Required for DB:** `DB_PASSWORD` (and usually `DB_HOST`, `DB_NAME`, `DB_USER`). Never commit `.env`.
-3. **Optional:** `NEWS_API_KEY`, `FRED_API_KEY`, `OLLAMA_HOST`, finance keys — see `configs/env.example` and [SOURCES_AND_EXPECTED_USAGE.md](SOURCES_AND_EXPECTED_USAGE.md).
+3. **Optional:** `NEWS_API_KEY`, `FRED_API_KEY`, `OLLAMA_HOST`, finance keys — see `configs/env.example` and [_archive/retired_root_docs_2026_03/SOURCES_AND_EXPECTED_USAGE.md](_archive/retired_root_docs_2026_03/SOURCES_AND_EXPECTED_USAGE.md) (archived source inventory).
 4. **Production / exposure:** see [SECURITY_OPERATIONS.md](SECURITY_OPERATIONS.md) — `NEWS_INTEL_ENV`, `NEWS_INTEL_CORS_ORIGINS`, `NEWS_INTEL_TRUSTED_HOSTS`, API docs toggles.
 
 ---
@@ -65,7 +65,7 @@ ChromaDB (evidence embeddings) needs a **Python 3.11+** venv and successful `uv 
 ## Ollama
 
 - **Install:** user-level Ollama; **not** required to run in Docker for typical setups.
-- **Start:** `./scripts/start_ollama_optimized.sh` (recommended) or `ollama serve` with tunables:
+- **Start:** `ollama serve` (tune `OLLAMA_*` env vars per host; see [scripts/SCRIPTS_INDEX.md](../scripts/SCRIPTS_INDEX.md) and `api/scripts/refresh_ollama_models.py`):
   - `OLLAMA_NUM_PARALLEL`, `OLLAMA_MAX_LOADED_MODELS`, `OLLAMA_KEEP_ALIVE`, etc.
 - **Models:** align tags with `api/config/settings.py` `MODELS` and `ollama pull`. Refresh weights: `PYTHONPATH=api uv run python api/scripts/refresh_ollama_models.py` (see [scripts/SCRIPTS_INDEX.md](../scripts/SCRIPTS_INDEX.md)).
 - **Optional large model:** narrative finisher (~70B) — [_archive/retired_root_docs_2026_03/STORYLINE_70B_NARRATIVE_FINISHER.md](_archive/retired_root_docs_2026_03/STORYLINE_70B_NARRATIVE_FINISHER.md).

@@ -326,8 +326,16 @@ const Articles: React.FC = () => {
   }, [loadStorylines]);
 
   useEffect(() => {
-    loadSourceOptions();
-  }, [loadSourceOptions]);
+    const srcs = [
+      ...new Set(
+        articles
+          .map((a: ArticleItem) => a.source)
+          .filter((s): s is string => Boolean(s && String(s).trim()))
+      ),
+    ];
+    srcs.sort((a, b) => a.localeCompare(b));
+    setSourceOptions(srcs);
+  }, [articles]);
 
   useEffect(() => {
     loadTopics();

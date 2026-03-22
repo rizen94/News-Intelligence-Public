@@ -188,7 +188,7 @@ const ArticleReader = ({
         throw new Error('Invalid article ID');
       }
 
-      let storylineId = selectedStoryline;
+      const storylineId = selectedStoryline;
 
       // Create new storyline if needed (link article in same request — avoids empty storylines)
       if (!selectedStoryline && newStorylineTitle.trim()) {

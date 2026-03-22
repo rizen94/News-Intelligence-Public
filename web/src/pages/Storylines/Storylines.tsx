@@ -247,14 +247,6 @@ const Storylines: React.FC = () => {
           )
         );
         setTotalStorylines(response.data.total || 0);
-      } else if (response.success && response.data?.storylines) {
-        storylinesData = response.data.storylines || [];
-        setTotalPages(
-          Math.ceil(
-            (response.data.total || 0) / (viewMode === 'grid' ? 12 : 20)
-          )
-        );
-        setTotalStorylines(response.data.total || 0);
       } else {
         storylinesData = [];
         setTotalPages(1);

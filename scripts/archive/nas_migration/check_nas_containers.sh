@@ -5,7 +5,7 @@
 NAS_HOST="192.168.93.100"
 NAS_SSH_PORT="9222"
 NAS_USER="Admin"
-NAS_PASSWORD="Pooter@STORAGE2024"
+NAS_PASSWORD="<NAS_PASSWORD_PLACEHOLDER>"
 
 echo "🔍 Checking NAS Docker Containers"
 echo "================================="

@@ -5,7 +5,7 @@
 NAS_HOST="192.168.93.100"
 SSH_PORT="9222"
 SSH_USER="Admin"
-SSH_PASSWORD="Pooter@STORAGE2024"
+SSH_PASSWORD="<NAS_PASSWORD_PLACEHOLDER>"
 
 if ! command -v sshpass &> /dev/null; then
     echo "⚠️  sshpass not installed."

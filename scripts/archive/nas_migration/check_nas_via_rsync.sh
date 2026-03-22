@@ -5,7 +5,7 @@
 NAS_HOST="192.168.93.100"
 RSYNC_PORT="873"
 RSYNC_USER="rsync"
-RSYNC_PASSWORD="Pooter@STORAGE2024"
+RSYNC_PASSWORD="<NAS_PASSWORD_PLACEHOLDER>"
 RSYNC_MODULE=""  # May need to be configured based on NAS setup
 
 echo "🔍 Checking NAS Containers via rsync"

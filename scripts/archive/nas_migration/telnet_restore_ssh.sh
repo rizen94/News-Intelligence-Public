@@ -12,7 +12,7 @@ Telnet Commands to Restore SSH Access
 
 2. Login:
    Username: Admin
-   Password: Pooter@STORAGE2024
+   Password: <NAS_PASSWORD_PLACEHOLDER>
 
 3. Once logged in, run these commands:
 

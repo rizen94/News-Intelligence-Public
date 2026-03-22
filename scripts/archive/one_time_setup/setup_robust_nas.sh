@@ -10,7 +10,7 @@ NAS_HOST="192.168.93.100"
 NAS_SHARE="public"
 NAS_USER="Admin"
 NAS_WORKGROUP="LAKEHOUSE"
-NAS_PASSWORD="Pooter@STORAGE2024"
+NAS_PASSWORD="<NAS_PASSWORD_PLACEHOLDER>"
 NAS_MOUNT_PATH="/mnt/nas"
 LOCAL_CACHE_PATH="/opt/news-intelligence/cache"
 BACKUP_PATH="/mnt/nas/public/docker-postgres-data/backups"
@@ -123,7 +123,7 @@ mount_nas() {
         mount -t nfs 192.168.93.100:/public "$NAS_MOUNT_PATH/public" -o rsize=65536,wsize=65536,hard,intr,timeo=600,retrans=2
     else
         log "Using CIFS mount with optimizations"
-        mount -t cifs //192.168.93.100/public "$NAS_MOUNT_PATH/public" -o username=Admin,password=Pooter@STORAGE2024,domain=LAKEHOUSE,uid=0,gid=0,iocharset=utf8,file_mode=0777,dir_mode=0777,rsize=65536,wsize=65536,cache=strict,vers=3.0,sec=ntlmssp,hard,intr,timeo=600,retrans=2
+        mount -t cifs //192.168.93.100/public "$NAS_MOUNT_PATH/public" -o username=Admin,password=<NAS_PASSWORD_PLACEHOLDER>,domain=LAKEHOUSE,uid=0,gid=0,iocharset=utf8,file_mode=0777,dir_mode=0777,rsize=65536,wsize=65536,cache=strict,vers=3.0,sec=ntlmssp,hard,intr,timeo=600,retrans=2
     fi
     
     if is_healthy "$NAS_MOUNT_PATH/public"; then

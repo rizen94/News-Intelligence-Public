@@ -11,7 +11,7 @@ import sys
 NAS_HOST = "192.168.93.100"
 TELNET_PORT = 2332
 NAS_USER = "Admin"
-NAS_PASSWORD = "Pooter@STORAGE2024"
+NAS_PASSWORD = "<NAS_PASSWORD_PLACEHOLDER>"
 
 def restore_ssh_access():
     """Connect via telnet and restore SSH access"""

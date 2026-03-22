@@ -98,7 +98,7 @@ Cross-domain and context-centric data. Entity IDs in intelligence tables refer t
 | Context sync | `intelligence.contexts`, `intelligence.article_to_context` | `{domain}.articles` |
 | Entity profile sync | `intelligence.entity_profiles`, `intelligence.old_entity_to_new` | `{domain}.entity_canonical` |
 | Claim / event extraction | `intelligence.extracted_claims`, `intelligence.tracked_events` | `intelligence.contexts` |
-| Human audit (UI) | `intelligence.context_grouping_feedback` | `intelligence.contexts`; migration **174**; see [UI_PIPELINE_AUDIT_GUIDE.md](UI_PIPELINE_AUDIT_GUIDE.md) |
+| Human audit (UI) | `intelligence.context_grouping_feedback` | `intelligence.contexts`; migration **174**; see [_archive/retired_root_docs_2026_03/UI_PIPELINE_AUDIT_GUIDE.md](_archive/retired_root_docs_2026_03/UI_PIPELINE_AUDIT_GUIDE.md) |
 | Storyline / editorial | `{domain}.storylines.editorial_document`, `intelligence.tracked_events.editorial_briefing` | `intelligence.contexts`, claims, events, entity_profiles |
 | Synthesis / verification | — | `intelligence.*`, `{domain}.storylines`, `{domain}.articles` |
 | Data cleanup | Prunes/archives old data; entity decouple splits bad merges | `intelligence.*`, `{domain}.*` |

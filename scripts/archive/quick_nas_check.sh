@@ -29,5 +29,5 @@ echo "   docker ps -a --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}'"
 echo ""
 echo "================================================"
 echo "To connect: ssh -p 9222 Admin@192.168.93.100"
-echo "Password: Pooter@STORAGE2024"
+echo "Password: <NAS_PASSWORD_PLACEHOLDER>"
 

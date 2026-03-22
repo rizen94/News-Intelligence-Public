@@ -859,7 +859,7 @@ When you change the **API** (routes, path segments, response shape) or **core be
 ### **Related Documents**
 - [DOCS_INDEX.md](./DOCS_INDEX.md) - Documentation index
 - [ARCHITECTURE_AND_OPERATIONS.md](./ARCHITECTURE_AND_OPERATIONS.md) - Architecture and ops
-- [DATABASE_SCHEMA_DOCUMENTATION.md](./DATABASE_SCHEMA_DOCUMENTATION.md) - Database schema
+- [DATABASE_SCHEMA_DOCUMENTATION.md](./_archive/retired_root_docs_2026_03/DATABASE_SCHEMA_DOCUMENTATION.md) - Legacy database schema snapshot (archived)
 - [API_REFERENCE.md](./API_REFERENCE.md) - API endpoints
 
 ### **External References**
