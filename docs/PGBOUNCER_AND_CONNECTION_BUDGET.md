@@ -66,7 +66,11 @@ DB_PORT=6432
 DB_NAME=news_intel
 DB_USER=newsapp
 DB_PASSWORD=...
+# Optional documentation-only: set to pgbouncer when DB_PORT=6432 (for runbooks / validation scripts)
+# NEWS_INTEL_PGBOUNCER_TARGET=pgbouncer
 ```
+
+There is no separate `PGBOUNCER_ENABLED` code path — routing is entirely `DB_HOST` + `DB_PORT`.
 
 ---
 

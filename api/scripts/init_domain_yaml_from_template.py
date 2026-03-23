@@ -7,6 +7,10 @@ the rest of the template body. Refuses to overwrite unless ``--force``.
 
   PYTHONPATH=api uv run python api/scripts/init_domain_yaml_from_template.py \\
     --domain-key medicine --schema-name medicine --display-name "Medicine & Health"
+
+After migration + provision_domain.py, run:
+
+  PYTHONPATH=api uv run python api/scripts/verify_domain_provision.py --domain-key medicine [--strict]
 """
 
 from __future__ import annotations
@@ -51,6 +55,11 @@ def main() -> None:
         help=f"Output path (default: {_CONFIG_DIR}/{{domain_key}}.yaml)",
     )
     parser.add_argument("--force", action="store_true", help="Overwrite existing file")
+    parser.add_argument(
+        "--inactive",
+        action="store_true",
+        help="Keep is_active: false (draft silo). Default is is_active: true after generation.",
+    )
     args = parser.parse_args()
 
     dk = args.domain_key.strip()
@@ -97,10 +106,25 @@ def main() -> None:
             "fix _template.example.yaml"
         )
 
+    if not args.inactive:
+        for i, line in enumerate(out_lines):
+            if line.strip().startswith("is_active:"):
+                out_lines[i] = "is_active: true\n"
+                break
+
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text("".join(out_lines), encoding="utf-8")
     print(f"Wrote {out_path}")
-    print("Next: edit data_sources.rss.seed_feed_urls, keep is_active: false until DB is ready.")
+    if args.inactive:
+        print(
+            "Next: edit seed_feed_urls; migration + provision_domain; "
+            "verify_domain_provision.py --domain-key …; then set is_active: true."
+        )
+    else:
+        print(
+            "Next: edit data_sources.rss.seed_feed_urls; apply migration + provision_domain; "
+            "verify_domain_provision.py --domain-key …; ensure_domain_silo_alignment.py on each host."
+        )
 
 
 if __name__ == "__main__":

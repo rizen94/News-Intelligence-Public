@@ -4020,8 +4020,16 @@ class AutomationManager:
             cursor.close()
             conn.close()
 
-        for domain_key, schema_name in domains:
-            for article_id, title, content in domain_articles.get(schema_name, []):
+        try:
+            parallel = max(1, min(8, int(os.environ.get("ENTITY_EXTRACTION_PARALLEL", "4"))))
+        except ValueError:
+            parallel = 4
+        sem = asyncio.Semaphore(parallel)
+
+        async def _extract_one(
+            domain_key: str, schema_name: str, article_id: int, title: str, content: str
+        ) -> bool:
+            async with sem:
                 try:
                     result = await extractor.extract_and_store(
                         article_id=article_id,
@@ -4029,12 +4037,20 @@ class AutomationManager:
                         content=content,
                         schema=schema_name,
                     )
-                    if result.get("success"):
-                        extracted_count += 1
+                    return bool(result.get("success"))
                 except Exception as e:
                     logger.error(
                         "Entity extraction for article %s (%s): %s", article_id, domain_key, e
                     )
+                    return False
+
+        tasks = []
+        for domain_key, schema_name in domains:
+            for article_id, title, content in domain_articles.get(schema_name, []):
+                tasks.append(_extract_one(domain_key, schema_name, article_id, title, content))
+        if tasks:
+            results = await asyncio.gather(*tasks)
+            extracted_count = sum(1 for r in results if r)
 
         logger.info(
             f"Entity extraction completed: {extracted_count} articles processed across domains"

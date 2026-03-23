@@ -153,7 +153,9 @@ const Articles: React.FC = () => {
     quality: null as 'high' | 'medium' | 'low' | null,
     sentiment: null as 'positive' | 'negative' | 'neutral' | null,
   });
-  const [showUnlinkedOnly, setShowUnlinkedOnly] = useState(true);
+  // Default false: new domains and first-time visits should see all ingested articles.
+  // Turn on when curating items to attach to storylines (excludes rows in storyline_articles).
+  const [showUnlinkedOnly, setShowUnlinkedOnly] = useState(false);
   const [filterTopic, setFilterTopic] = useState('');
   const [sourceOptions, setSourceOptions] = useState<string[]>([]);
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -549,8 +551,12 @@ const Articles: React.FC = () => {
 
   // Topic + reading-time only (quality/sentiment are server-side query params)
   const filteredArticles = articles.filter(article => {
-    if (selectedTopic && !selectedTopic.articles.includes(article)) {
-      return false;
+    if (selectedTopic) {
+      const topicIds = selectedTopic.articles.map(a => a.id);
+      // If topic has no resolved rows yet (e.g. article_ids not on this page), do not hide all rows
+      if (topicIds.length > 0 && !topicIds.includes(article.id)) {
+        return false;
+      }
     }
     if (quickFilters.readingTime) {
       const readingTime = getArticleReadingTime(article);
@@ -1400,7 +1406,9 @@ const Articles: React.FC = () => {
           <Typography variant='body2' color='text.secondary'>
             {searchQuery || filterSource
               ? 'Try adjusting your search criteria or filters'
-              : 'Articles will appear here once the system starts collecting data'}
+              : showUnlinkedOnly
+                ? 'No articles match “unlinked only” (none in this silo yet, or every article is already on a storyline). Turn off the switch below to list all articles.'
+                : 'Articles appear after RSS runs for this domain’s feeds. Ensure feeds are registered (provision_domain / rss_feeds) and automation or collect_rss_feeds has ingested at least one run.'}
           </Typography>
         </Paper>
       ) : (

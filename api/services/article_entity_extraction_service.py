@@ -10,6 +10,8 @@ import json
 import logging
 from typing import Any
 
+from config.settings import OLLAMA_HOST
+
 from shared.database.connection import get_db_connection
 from shared.services.llm_service import LLMService
 from shared.services.ollama_model_caller import get_ollama_model_caller
@@ -59,8 +61,8 @@ class ArticleEntityExtractionService:
     Uses headline + full text; writes to article_entities, article_extracted_dates/times/countries, article_keywords.
     """
 
-    def __init__(self, ollama_url: str = "http://localhost:11434"):
-        self.llm = LLMService(ollama_base_url=ollama_url)
+    def __init__(self, ollama_url: str | None = None):
+        self.llm = LLMService(ollama_base_url=ollama_url or OLLAMA_HOST)
         self._caller = get_ollama_model_caller()
 
     async def extract_and_store(
@@ -83,7 +85,13 @@ class ArticleEntityExtractionService:
 
         try:
             raw = await self._call_llm(combined, title)
-            parsed = self._parse_response(raw, title)
+            parsed, parse_ok = self._parse_response(raw, title)
+            logger.info(
+                "entity_extraction_parsed article_id=%s schema=%s parse_ok=%s",
+                article_id,
+                schema,
+                parse_ok,
+            )
             conn = get_db_connection()
             if not conn:
                 return {"success": False, "error": "db_connection_failed", "counts": {}}
@@ -146,8 +154,8 @@ Rules:
         )
         return r.text
 
-    def _parse_response(self, raw: str, headline: str) -> dict[str, list[dict]]:
-        """Parse LLM JSON response with fallbacks."""
+    def _parse_response(self, raw: str, headline: str) -> tuple[dict[str, list[dict]], bool]:
+        """Parse LLM JSON response with fallbacks. Second value is True when JSON object parsed."""
         defaults = {
             "people": [],
             "organizations": [],
@@ -166,9 +174,10 @@ Rules:
                 for k in defaults:
                     if k in data and isinstance(data[k], list):
                         defaults[k] = data[k]
+                return defaults, True
         except json.JSONDecodeError as e:
             logger.warning(f"Entity JSON parse failed: {e}")
-        return defaults
+        return defaults, False
 
     async def _store_all(
         self,

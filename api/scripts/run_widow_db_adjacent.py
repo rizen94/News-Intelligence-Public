@@ -35,6 +35,13 @@ def _load_env() -> None:
 
 def _run_rss() -> int:
     from collectors.rss_collector import collect_rss_feeds
+    from shared.domain_registry import url_schema_pairs
+
+    pairs = url_schema_pairs()
+    logging.info(
+        "RSS domain registry (deploy same api/config/domains/*.yaml as main): %s",
+        ", ".join(f"{k}→{s}" for k, s in pairs),
+    )
 
     n = collect_rss_feeds()
     logging.info("RSS: %s articles added", n)

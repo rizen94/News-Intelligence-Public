@@ -8,6 +8,9 @@ Usage (from repo root):
     --sql api/database/migrations/180_legal_domain_silo.sql \\
     --verify-cmd "PYTHONPATH=api uv run python api/scripts/verify_migrations_160_167.py"
 
+After success, run a full silo check (non-zero on errors; --strict also fails on warnings):
+  PYTHONPATH=api uv run python api/scripts/verify_domain_provision.py --domain-key legal
+
   --dry-run   Print phases only.
   --ack-backup  Required acknowledgement flag for production-style runs (no backup performed here).
   --teardown-only  Only run teardown for domain_key/schema_name from config (dangerous).
@@ -135,18 +138,23 @@ def print_post_provision_checklist(
     print(
         """
 --- Post-provision checklist ---
-[ ] public.domains: row exists with is_active = TRUE (this script does that by default; use --no-activate-in-db to skip).
-    Align YAML is_active: true so API/registry and RSS collection agree (see api/config/domains/README.md).
-[ ] Onboarding YAML: set is_active: true; API domain path pattern accepts new keys without restart;
-    is_valid_domain_key() reads YAML each call — reload workers only if they cache domain lists elsewhere.
-[ ] api/config/domain_synthesis_config.yaml: add a block for this domain if synthesis/topic bias
+[ ] public.domains: row exists (this script sets is_active = TRUE by default; use --no-activate-in-db to skip).
+    Pipeline inclusion follows YAML is_active + Postgres schema; align catalog for operator clarity (see api/config/domains/README.md).
+[ ] Final verification (YAML + registry + schema + tables + RSS + synthesis hint):
+      PYTHONPATH=api uv run python api/scripts/verify_domain_provision.py --domain-key <key>  (add --strict to fail on warnings in CI)
+[ ] Host alignment (main API, Widow RSS, workers sharing the same DB):
+      PYTHONPATH=api uv run python api/scripts/ensure_domain_silo_alignment.py
+[ ] Onboarding YAML: set is_active: true after verify passes; is_valid_domain_key() re-reads YAML each call
+    (restart API/workers only if something still caches domain lists at import).
+[ ] api/config/domain_synthesis_config.yaml → domains:<key>: add a block if synthesis/topic bias
     should differ from defaults (separate from api/config/domains/*.yaml).
 [ ] Grep for hardcoded domain lists until fully centralized, e.g.:
       rg "science.tech|science_tech|politics.*finance" api web --glob "*.py" --glob "*.ts" --glob "*.tsx"
 [ ] public.applied_migrations: register the silo migration if your ops require the ledger
     (api/scripts/register_applied_migration.py).
 [ ] RSS: data_sources.rss.seed_feed_urls applied by this script unless --skip-rss-seed; backfill:
-      PYTHONPATH=api uv run python api/scripts/seed_domain_rss_from_yaml.py --config <yaml>"""
+      PYTHONPATH=api uv run python api/scripts/seed_domain_rss_from_yaml.py --config <yaml>
+[ ] GET /api/system_monitoring/registry_domains — confirm the domain appears for the SPA."""
         + cfg
         + f"""
 

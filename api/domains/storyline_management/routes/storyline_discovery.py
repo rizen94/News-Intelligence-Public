@@ -36,7 +36,13 @@ async def discover_storylines(
     ] = None,
     save: bool = Query(True, description="Save discovered storylines to database"),
     min_similarity: float = Query(
-        0.75, ge=0.5, le=0.99, description="Minimum similarity threshold"
+        0.75, ge=0.5, le=0.99, description="Minimum similarity threshold for clustering edges"
+    ),
+    min_cluster_size: int = Query(
+        3,
+        ge=2,
+        le=100,
+        description="Minimum articles required to form a storyline cluster",
     ),
 ):
     """
@@ -50,7 +56,13 @@ async def discover_storylines(
         logger.info("Starting storyline discovery for %s (%s)", domain, win)
 
         service = get_discovery_service()
-        result = service.discover_storylines(domain=domain, hours=hours, save_to_db=save)
+        result = service.discover_storylines(
+            domain=domain,
+            hours=hours,
+            save_to_db=save,
+            min_similarity=min_similarity,
+            min_cluster_size=min_cluster_size,
+        )
 
         return result
 
@@ -337,7 +349,9 @@ async def compare_storylines_endpoint(
         articles = service._deduplicate_by_title(articles)
         articles = service.generate_embeddings_parallel(articles)
         similarity_matrix = service.calculate_hybrid_similarity_matrix(articles)
-        storylines = service.cluster_hdbscan(articles, similarity_matrix)
+        storylines = service.cluster_hdbscan(
+            articles, similarity_matrix, similarity_threshold=min_similarity
+        )
 
         if len(storylines) < 2:
             return {

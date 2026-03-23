@@ -1,6 +1,6 @@
 """
 Shared LLM service for the News Intelligence system.
-Uses Ollama-hosted Llama 3.1 8B (primary) and Mistral 7B (secondary).
+Uses Ollama-hosted primary (default Llama 3.1 8B), secondary slot (default Mistral-Nemo 12B), optional Qwen/Phi via policy.
 Global concurrency limit so async Ollama callers share one cap.
 """
 
@@ -12,7 +12,13 @@ from enum import Enum
 from typing import Any
 
 import httpx
-from config.settings import NARRATIVE_FINISHER_MODEL, OLLAMA_HOST
+from config.settings import (
+    MODELS,
+    NARRATIVE_FINISHER_MODEL,
+    OLLAMA_HOST,
+    OLLAMA_MODEL_EXTRACTION,
+    OLLAMA_MODEL_PHI,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -29,10 +35,12 @@ def _get_ollama_semaphore() -> asyncio.Semaphore:
 
 
 class ModelType(str, Enum):
-    """Ollama text models. LLAMA_70B tag comes from settings.NARRATIVE_FINISHER_MODEL."""
+    """Ollama text models. Values come from config.settings (env overrides). LLAMA_70B = NARRATIVE_FINISHER_MODEL."""
 
-    LLAMA_8B = "llama3.1:8b"
-    MISTRAL_7B = "mistral:7b"
+    LLAMA_8B = MODELS["primary"]
+    MISTRAL_7B = MODELS["secondary"]  # secondary slot (default Mistral-Nemo 12B)
+    QWEN_25_7B = OLLAMA_MODEL_EXTRACTION
+    PHI_35 = OLLAMA_MODEL_PHI
     LLAMA_70B = NARRATIVE_FINISHER_MODEL
 
 
@@ -48,7 +56,7 @@ class TaskType(Enum):
 class LLMService:
     """
     Centralized LLM service using Ollama-hosted models
-    Optimized for Llama 3.1 8B (primary) and Mistral 7B (secondary)
+    Optimized for primary + secondary (see config.settings MODELS)
     """
 
     def __init__(self, ollama_base_url: str | None = None):
@@ -64,10 +72,22 @@ class LLMService:
                 "best_for": ["comprehensive_analysis", "real_time", "quick_summary"],
             },
             ModelType.MISTRAL_7B: {
-                "speed": 4.17,  # seconds for 200 words
-                "quality": "very_good",  # competitive benchmarks
-                "memory": 4.4,  # GB VRAM
+                "speed": 4.17,  # seconds for 200 words (approximate)
+                "quality": "very_good",
+                "memory": 8.0,  # GB VRAM (12B-class secondary)
                 "best_for": ["batch_processing", "alternative_analysis"],
+            },
+            ModelType.QWEN_25_7B: {
+                "speed": 3.5,
+                "quality": "structured_extraction",
+                "memory": 4.5,
+                "best_for": ["structured_extraction"],
+            },
+            ModelType.PHI_35: {
+                "speed": 2.5,
+                "quality": "fast_simple",
+                "memory": 2.3,
+                "best_for": ["fast_simple", "readability_quality"],
             },
         }
 
@@ -79,7 +99,7 @@ class LLMService:
     ) -> ModelType:
         """
         Model selection via shared policy (ollama_model_policy).
-        approx_prompt_chars: large background prompts may route to secondary (Mistral).
+        approx_prompt_chars: large background prompts may route to secondary (see MODELS["secondary"]).
         """
         from shared.services.ollama_model_policy import resolve_model_for_llm_task
 

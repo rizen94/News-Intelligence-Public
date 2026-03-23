@@ -21,6 +21,11 @@ are idle, then exits so normal daytime automation resumes.
 Optional: ``NIGHTLY_INGEST_EXCLUSIVE_AUTOMATION`` during ``[NIGHTLY_ENRICHMENT_CONTEXT_*]`` defers other
 phases — sequential sub-runs from this module bypass that gate (they are orchestrated by
 ``nightly_enrichment_context``).
+
+Temporary catch-up: set ``NIGHTLY_PIPELINE_ALL_DAY=true`` to treat the unified pipeline as **always**
+inside the local window (24/7) until unset — same behavior as 01:00–07:00 extended all day
+(``nightly_enrichment_context`` every 60s, ``NIGHTLY_PIPELINE_EXCLUSIVE`` applies around the clock).
+Restart API after changing env.
 """
 
 from __future__ import annotations
@@ -38,6 +43,16 @@ logger = logging.getLogger(__name__)
 
 _nightly_ingest_lock = asyncio.Lock()
 _nightly_kickoff_rss_local_date: str | None = None
+_logged_nightly_all_day: bool = False
+
+
+def _nightly_pipeline_all_day_enabled() -> bool:
+    """When true, unified nightly pipeline window is treated as 24h (temporary backlog catch-up)."""
+    return os.environ.get("NIGHTLY_PIPELINE_ALL_DAY", "").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
 
 DEFAULT_NIGHTLY_SEQUENTIAL_PHASES: tuple[str, ...] = (
     "metadata_enrichment",
@@ -66,6 +81,13 @@ DEFAULT_NIGHTLY_SEQUENTIAL_PHASES: tuple[str, ...] = (
     "fact_verification",
     "event_extraction",
     "event_deduplication",
+    "event_coherence_review",
+    "cross_domain_synthesis",
+    "entity_dossier_compile",
+    "entity_organizer",
+    "storyline_synthesis",
+    "narrative_thread_build",
+    "story_enhancement",
     "story_continuation",
     "watchlist_alerts",
 )
@@ -86,6 +108,15 @@ def nightly_automation_tz() -> ZoneInfo:
 
 def in_nightly_pipeline_window_est() -> bool:
     """Unified nightly catch-up window [start, end) local time (default 01:00–07:00)."""
+    global _logged_nightly_all_day
+    if _nightly_pipeline_all_day_enabled():
+        if not _logged_nightly_all_day:
+            logger.info(
+                "NIGHTLY_PIPELINE_ALL_DAY enabled — unified nightly pipeline active 24/7 "
+                "(disable after backlog catch-up; restart API/workers after changing .env)"
+            )
+            _logged_nightly_all_day = True
+        return True
     zi = nightly_automation_tz()
     start_h = int(os.environ.get("NIGHTLY_PIPELINE_START_HOUR", "1"))
     end_h = int(os.environ.get("NIGHTLY_PIPELINE_END_HOUR", "7"))
@@ -100,6 +131,8 @@ def in_nightly_enrichment_context_window_est() -> bool:
     Sub-window for ingest-focused exclusive automation (default 01:00–07:00, aligned with pipeline).
     Does not limit when enrichment runs inside the unified pipeline — only NIGHTLY_INGEST_EXCLUSIVE.
     """
+    if _nightly_pipeline_all_day_enabled():
+        return True
     zi = nightly_automation_tz()
     start_h = int(os.environ.get("NIGHTLY_ENRICHMENT_CONTEXT_START_HOUR", "1"))
     end_h = int(os.environ.get("NIGHTLY_ENRICHMENT_CONTEXT_END_HOUR", "7"))

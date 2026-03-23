@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, Path, Query
+from config.settings import MODELS
 from shared.database.connection import get_db_connection
 from shared.domain_registry import DOMAIN_PATH_PATTERN
 from shared.services.domain_aware_service import validate_domain
@@ -41,8 +42,8 @@ async def health_check():
             "domain": "storyline_management",
             "status": "healthy",
             "llm_service": llm_status,
-            "primary_model": "llama3.1:8b",
-            "secondary_model": "mistral:7b",
+            "primary_model": MODELS["primary"],
+            "secondary_model": MODELS["secondary"],
             "timestamp": datetime.now().isoformat(),
         }
 

@@ -50,6 +50,9 @@ BATCH_SIZE_PER_TASK: Dict[str, int] = {
     "claims_to_facts": 50,  # promote batch limit aligns with promote_claims_to_versioned_facts
     "entity_profile_sync": 40,  # canonical rows mapped per domain batch (approx)
     "entity_enrichment": 20,  # run_enrichment_batch limit
+    "entity_dossier_compile": 20,  # _run_scheduled_dossier_compiles max per run
+    "story_enhancement": 50,  # fact_change_log + story_update_queue proxy per cycle
+    "storyline_synthesis": 16,  # ~4 storylines × active domains per _execute_storyline_synthesis tick
 }
 
 
@@ -885,6 +888,110 @@ def _count_event_extraction_pending() -> int:
             pass
 
 
+def _count_entity_dossier_compile_pending() -> int:
+    """entity_profiles missing dossier or dossier older than stale window (matches dossier_compiler schedule)."""
+    conn = _get_conn()
+    if not conn:
+        return 0
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SET LOCAL statement_timeout = '8s'")
+            cur.execute(
+                """
+                SELECT COUNT(*) FROM intelligence.entity_profiles ep
+                LEFT JOIN intelligence.entity_dossiers ed
+                  ON ed.domain_key = ep.domain_key AND ed.entity_id = ep.canonical_entity_id
+                WHERE ep.canonical_entity_id IS NOT NULL
+                  AND (ed.id IS NULL OR ed.compilation_date < CURRENT_DATE - INTERVAL '7 days')
+                """
+            )
+            return int(cur.fetchone()[0] or 0)
+    except Exception as e:
+        logger.debug("backlog entity_dossier_compile count: %s", e)
+        return 0
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _count_story_enhancement_pending() -> int:
+    """Unprocessed story-state queues driving run_enhancement_cycle."""
+    conn = _get_conn()
+    if not conn:
+        return 0
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SET LOCAL statement_timeout = '5s'")
+            cur.execute(
+                """
+                SELECT
+                  COALESCE((SELECT COUNT(*) FROM intelligence.fact_change_log WHERE processed = FALSE), 0)
+                + COALESCE((SELECT COUNT(*) FROM intelligence.story_update_queue WHERE processed = FALSE), 0)
+                AS n
+                """
+            )
+            return int(cur.fetchone()[0] or 0)
+    except Exception as e:
+        logger.debug("backlog story_enhancement count: %s", e)
+        return 0
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _count_storyline_synthesis_pending() -> int:
+    """Storylines with 3+ articles needing synthesized_content (aligns with storyline_synthesis task)."""
+    conn = _get_conn()
+    if not conn:
+        return 0
+    total = 0
+    try:
+        for schema in get_schema_names_active():
+            with conn.cursor() as cur:
+                cur.execute("SET LOCAL statement_timeout = '5s'")
+                try:
+                    cur.execute(
+                        f"""
+                        SELECT COUNT(*) FROM {schema}.storylines s
+                        INNER JOIN (
+                            SELECT storyline_id FROM {schema}.storyline_articles
+                            GROUP BY storyline_id HAVING COUNT(*) >= 3
+                        ) sa ON sa.storyline_id = s.id
+                        WHERE s.synthesized_content IS NULL
+                        """
+                    )
+                    total += int(cur.fetchone()[0] or 0)
+                except Exception:
+                    try:
+                        cur.execute(
+                            f"""
+                            SELECT COUNT(*) FROM {schema}.storylines s
+                            INNER JOIN (
+                                SELECT storyline_id FROM {schema}.storyline_articles
+                                GROUP BY storyline_id HAVING COUNT(*) >= 3
+                            ) sa ON sa.storyline_id = s.id
+                            """
+                        )
+                        total += int(cur.fetchone()[0] or 0)
+                    except Exception as e2:
+                        logger.debug(
+                            "backlog storyline_synthesis count schema=%s: %s", schema, e2
+                        )
+        return total
+    except Exception as e:
+        logger.debug("backlog storyline_synthesis count: %s", e)
+        return 0
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
 # Phases that should be skipped when backlog is 0 (avoid empty cycles)
 # document_processing omitted so it runs on interval even if backlog count is wrong (e.g. DB timeout)
 # content_refinement_queue omitted: must run on interval when idle so automation history updates;
@@ -914,6 +1021,9 @@ SKIP_WHEN_EMPTY = frozenset({
     "claims_to_facts",
     "entity_profile_sync",
     "entity_enrichment",
+    "entity_dossier_compile",
+    "story_enhancement",
+    "storyline_synthesis",
 })
 
 # When backlog exceeds this, use backlog-mode interval so we run more often

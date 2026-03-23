@@ -67,7 +67,7 @@ ChromaDB (evidence embeddings) needs a **Python 3.11+** venv and successful `uv 
 - **Install:** user-level Ollama; **not** required to run in Docker for typical setups.
 - **Start:** `ollama serve` (tune `OLLAMA_*` env vars per host; see [scripts/SCRIPTS_INDEX.md](../scripts/SCRIPTS_INDEX.md) and `api/scripts/refresh_ollama_models.py`):
   - `OLLAMA_NUM_PARALLEL`, `OLLAMA_MAX_LOADED_MODELS`, `OLLAMA_KEEP_ALIVE`, etc.
-- **Models:** align tags with `api/config/settings.py` `MODELS` and `ollama pull`. Refresh weights: `PYTHONPATH=api uv run python api/scripts/refresh_ollama_models.py` (see [scripts/SCRIPTS_INDEX.md](../scripts/SCRIPTS_INDEX.md)).
+- **Models:** align tags with `api/config/settings.py` `MODELS` and `ollama pull`. Defaults: primary `llama3.1:8b`, secondary `mistral-nemo:12b` (override with `OLLAMA_MODEL_SECONDARY`), optional `OLLAMA_MODEL_PHI`, `OLLAMA_MODEL_EXTRACTION` for policy flags. Refresh weights: `PYTHONPATH=api uv run python api/scripts/refresh_ollama_models.py` (see [scripts/SCRIPTS_INDEX.md](../scripts/SCRIPTS_INDEX.md)). Compare installed images to config: `PYTHONPATH=api uv run python api/scripts/verify_ollama_model_tags.py`.
 - **Optional large model:** narrative finisher (~70B) — [_archive/retired_root_docs_2026_03/STORYLINE_70B_NARRATIVE_FINISHER.md](_archive/retired_root_docs_2026_03/STORYLINE_70B_NARRATIVE_FINISHER.md).
 
 Full historical detail (storage sizes, extra commands): [_archive/consolidated/OLLAMA_SETUP.md](_archive/consolidated/OLLAMA_SETUP.md).

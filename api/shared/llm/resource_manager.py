@@ -4,7 +4,7 @@ Resource manager for GPU VRAM and system RAM allocation.
 Monitors available resources, enforces allocation limits per workload,
 and prevents out-of-memory conditions by checking before loading models.
 
-Adapted for News Intelligence: Ollama models (llama3.1:8b, mistral:7b, nomic-embed-text).
+Adapted for News Intelligence: Ollama models (primary, secondary slot, nomic-embed-text; see config.settings.MODELS).
 """
 
 import logging
@@ -12,6 +12,8 @@ import subprocess
 import time
 from dataclasses import dataclass
 from enum import Enum
+
+from config.settings import MODELS
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +66,7 @@ WORKLOAD_BUDGETS: dict[WorkloadProfile, ResourceBudget] = {
         max_ram_gb=16.0,
         models=[
             {"name": "nomic-embed-text", "vram_gb": 0.5, "ram_gb": 0.2, "role": "embedding"},
-            {"name": "mistral:7b", "vram_gb": 4.4, "ram_gb": 0.5, "role": "batch"},
+            {"name": MODELS["secondary"], "vram_gb": 8.0, "ram_gb": 0.5, "role": "batch"},
             {"name": "llama3.1:8b", "vram_gb": 5.0, "ram_gb": 0.5, "role": "alternative"},
         ],
         description="RSS processing, entity extraction, topic clustering",

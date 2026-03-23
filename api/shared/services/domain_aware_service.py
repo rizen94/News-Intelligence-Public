@@ -237,25 +237,73 @@ def validate_domain(domain: str) -> bool:
         return False
 
 
-def get_all_domains() -> list:
+def resolve_domain_token_to_schema(token: str) -> str:
     """
-    Get list of all active domains.
+    Map a URL domain key or a Postgres schema name to ``schema_name``.
 
-    Returns:
-        List of domain dictionaries
+    Used by scripts and monitoring filters so callers can pass ``science-tech`` or ``science_tech``
+    interchangeably. Unknown tokens fall back to ``resolve_domain_schema`` (hyphen → underscore).
     """
+    from shared.domain_registry import get_domain_entries, resolve_domain_schema
+
+    tok = (token or "").strip()
+    if not tok:
+        return ""
+    for e in get_domain_entries():
+        if not e.get("is_active", True):
+            continue
+        if e["domain_key"] == tok or str(e["schema_name"]) == tok:
+            return str(e["schema_name"])
+    return resolve_domain_schema(tok)
+
+
+def get_all_domains() -> list[dict[str, Any]]:
+    """
+    Domains for automation (topic clustering, batch scripts, etc.): every silo that is active in
+    the registry YAML and has a matching Postgres schema.
+
+    **Inclusion is driven by registry + ``information_schema``**, same idea as RSS
+    (``url_schema_pairs()``). ``public.domains`` is used only to enrich ``name`` /
+    ``display_order`` — not to exclude silos. To disable a silo end-to-end, set
+    ``is_active: false`` in ``api/config/domains/{key}.yaml`` (or remove the file).
+    """
+    from shared.domain_registry import get_domain_entries
+
     conn = get_ui_db_connection()
+    if not conn:
+        return []
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("""
-                SELECT domain_key, name, schema_name, display_order
-                FROM domains
-                WHERE is_active = TRUE
-                ORDER BY display_order
-            """)
-            return cur.fetchall()
+            cur.execute(
+                "SELECT domain_key, name, schema_name, display_order, is_active FROM domains"
+            )
+            db_by_key = {str(r["domain_key"]): dict(r) for r in cur.fetchall()}
+            cur.execute("SELECT schema_name FROM information_schema.schemata")
+            existing_schemas = {r[0] for r in cur.fetchall()}
     finally:
         conn.close()
+
+    out: list[dict[str, Any]] = []
+    for e in get_domain_entries():
+        if not e.get("is_active", True):
+            continue
+        dk = e["domain_key"]
+        schema = str(e["schema_name"])
+        if schema not in existing_schemas:
+            continue
+        row = db_by_key.get(dk)
+        name = (row.get("name") if row else None) or e.get("display_name") or dk
+        do = int((row.get("display_order") if row else None) or e.get("display_order", 99) or 99)
+        out.append(
+            {
+                "domain_key": dk,
+                "name": name,
+                "schema_name": schema,
+                "display_order": do,
+            }
+        )
+    out.sort(key=lambda x: (x["display_order"], x["domain_key"]))
+    return out
 
 
 def get_domain_data_schemas() -> tuple[str, ...]:

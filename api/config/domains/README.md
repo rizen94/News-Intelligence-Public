@@ -9,7 +9,7 @@ Optional domains (beyond the built-in **politics**, **finance**, **science-tech*
 | Location | What it does |
 |----------|----------------|
 | **This YAML file — `is_active`** | If `false`, the file is **not loaded**; the domain is absent from **`get_active_domain_keys()`**, **`is_valid_domain_key()`**, and **`get_schema_names_active()`** / RSS **`url_schema_pairs()`** (those re-read YAML each call). FastAPI **`DOMAIN_PATH_PATTERN`** only constrains URL shape (hyphenated slug). |
-| **`public.domains.is_active`** | Read by **`get_all_domains()`** ([`domain_aware_service`](../../shared/services/domain_aware_service.py)) for automation that iterates the DB catalog. |
+| **`public.domains.is_active`** | Catalog metadata; **`get_all_domains()`** does **not** exclude silos when this is false — registry YAML + existing schema drive pipeline inclusion (set YAML **`is_active: false`** to disable a silo). |
 
 A silo can exist in the DB with **`is_active: false`** in YAML (no registry / RSS) or appear in YAML while **`public.domains.is_active`** is false (**`DomainAwareService`** / **`validate_domain`** reject it). For a normal rollout, align **both** after verify; **`provision_domain.py`** sets **`public.domains.is_active = TRUE`** by default (use **`--no-activate-in-db`** to skip).
 
@@ -25,7 +25,7 @@ A silo can exist in the DB with **`is_active: false`** in YAML (no registry / RS
 | File | Purpose |
 |------|---------|
 | `_template.example.yaml` | **Example only** — not loaded. Copy to `{domain_key}.yaml` or run **`api/scripts/init_domain_yaml_from_template.py`**. |
-| `{domain_key}.yaml` | One optional domain per file; `is_active: false` until DB + verify complete. |
+| `{domain_key}.yaml` | One optional domain per file. **`init_domain_yaml_from_template.py`** defaults to **`is_active: true`** (use **`--inactive`** for drafts). After migration + verify, run **`api/scripts/ensure_domain_silo_alignment.py`** so **`public.domains`** matches YAML on every host. |
 
 ## Strict requirements (**DB and routing**)
 
@@ -80,6 +80,8 @@ Until every path uses **`domain_registry`** / **`get_schema_names_active()`** / 
 
 **Verification:** [`verify_migrations_160_167.py`](../../scripts/verify_migrations_160_167.py) checks **167** and **177–179** for every **`public.domains`** schema that has an **`articles`** table (not only the three built-ins).
 
+**Silo smoke check:** [`verify_domain_provision.py`](../../scripts/verify_domain_provision.py) — YAML, **`domain_registry`**, Postgres schema, **`public.domains`**, core/extended tables, active **`rss_feeds`**, optional **`domain_synthesis_config.yaml`** block. Exits non-zero on **errors** by default; **`--strict`** also fails on **warnings** (e.g. empty feeds); **`--yaml-only`** skips DB.
+
 ## How to use (ordered checklist)
 
 1. Create `{domain_key}.yaml`: copy [`_template.example.yaml`](_template.example.yaml), **or** run **`api/scripts/init_domain_yaml_from_template.py`** with `--domain-key`, `--schema-name`, `--display-name` (filename **without** leading `_`).
@@ -87,8 +89,10 @@ Until every path uses **`domain_registry`** / **`get_schema_names_active()`** / 
 3. Validate YAML (see **Validation** in [`docs/DOMAIN_EXTENSION_TEMPLATE.md`](../../../docs/DOMAIN_EXTENSION_TEMPLATE.md)).
 4. Apply SQL migration for the new silo (`public.domains`, `CREATE SCHEMA`, table parity — see template doc).
 5. Run **`api/scripts/provision_domain.py`** with your config path, SQL file, and verify command (see template doc). That run seeds **`data_sources.rss.seed_feed_urls`** into **`rss_feeds`** unless you pass **`--no-seed-rss`**.
-6. When verify exits **0**: set **`is_active: true`** in YAML. **`public.domains.is_active`** is set by **`provision_domain.py`** unless you passed **`--no-activate-in-db`**. Restart long-lived workers only if they still cache domain lists at import (see below).
-7. The web UI loads the domain list from **`GET /api/system_monitoring/registry_domains`** at startup (with a static fallback if the API is unreachable). You do not need to edit `domainHelper.ts` for each new domain.
+6. Run **`api/scripts/verify_domain_provision.py --domain-key {domain_key}`** (use **`--strict`** in CI if warnings should fail the job). Fix errors/warnings as needed.
+7. Run **`api/scripts/ensure_domain_silo_alignment.py`** on each host that shares the DB (main, Widow, workers).
+8. When satisfied: set **`is_active: true`** in YAML. **`public.domains.is_active`** is set by **`provision_domain.py`** unless you passed **`--no-activate-in-db`**. Restart long-lived workers only if they still cache domain lists at import (see below).
+9. The web UI loads the domain list from **`GET /api/system_monitoring/registry_domains`** at startup (with a static fallback if the API is unreachable). You do not need to edit `domainHelper.ts` for each new domain.
 
 ### Process restart (when still required)
 

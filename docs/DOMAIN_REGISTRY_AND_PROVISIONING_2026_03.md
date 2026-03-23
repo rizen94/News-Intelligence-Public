@@ -44,7 +44,7 @@
 
 1. Migration / **`provision_domain.py`** creates schema + **`public.domains`** row and seeds RSS when YAML lists URLs.
 2. Set onboarding YAML **`is_active: true`** when the silo should appear in **`domain_registry`** / **`url_schema_pairs()`** (not auto-edited by migration helpers).
-3. Keep **`public.domains.is_active`** aligned with automation that uses **`get_all_domains()`** (default activation from **`provision_domain.py`** / **`run_migration_180.py`** post-steps helps).
+3. Keep **`public.domains`** rows aligned with YAML for catalog metadata; **`get_all_domains()`** and RSS follow **YAML + existing schema** (default **`is_active = TRUE`** from **`provision_domain.py`** / **`run_migration_180.py`** post-steps helps operators).
 
 ---
 

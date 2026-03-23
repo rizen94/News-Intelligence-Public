@@ -12,6 +12,8 @@ from typing import Any
 
 import requests
 
+from config.settings import MODELS, OLLAMA_HOST, OLLAMA_MODEL_PHI, OLLAMA_USE_PHI_FOR_FAST_SIMPLE
+
 logger = logging.getLogger(__name__)
 
 
@@ -74,10 +76,11 @@ class LocalReadabilityAnalyzer:
     No training required - uses mathematical formulas and LLM analysis
     """
 
-    def __init__(self, ollama_url: str = "http://localhost:11434"):
-        self.ollama_url = ollama_url
-        self.available_models = ["llama3.1:8b", "llama3.1:405b"]
-        self.default_model = "llama3.1:8b"  # Fast model (405b available for higher quality)
+    def __init__(self, ollama_url: str | None = None):
+        self.ollama_url = (ollama_url or OLLAMA_HOST).rstrip("/")
+        primary = MODELS.get("primary", "llama3.1:8b")
+        self.available_models = [primary, "llama3.1:405b", OLLAMA_MODEL_PHI]
+        self.default_model = primary
         self.cache = {}  # Simple in-memory cache
         self.cache_ttl = 3600  # 1 hour cache TTL
 
@@ -100,27 +103,29 @@ class LocalReadabilityAnalyzer:
         """
         try:
             start_time = time.time()
+            selected_model = model or self.default_model
+
+            # Select model (readability tier label; quality LLM may use Phi separately)
+            if selected_model not in self.available_models:
+                logger.warning(f"Model {selected_model} not available, using {self.default_model}")
+                selected_model = self.default_model
+
+            quality_model = OLLAMA_MODEL_PHI if OLLAMA_USE_PHI_FOR_FAST_SIMPLE else selected_model
 
             # Check cache first
             if use_cache:
-                cache_key = f"{hash(text)}_{model or self.default_model}"
+                cache_key = f"{hash(text)}_{selected_model}_{quality_model}"
                 if cache_key in self.cache:
                     cached_result = self.cache[cache_key]
                     if time.time() - cached_result["timestamp"] < self.cache_ttl:
                         logger.info(f"Using cached readability analysis for text: {text[:50]}...")
                         return ContentAnalysisResult(**cached_result["data"])
 
-            # Select model
-            selected_model = model or self.default_model
-            if selected_model not in self.available_models:
-                logger.warning(f"Model {selected_model} not available, using {self.default_model}")
-                selected_model = self.default_model
-
             # Calculate readability metrics (mathematical)
             readability = self._calculate_readability_metrics(text)
 
-            # Analyze quality using LLM
-            quality = self._analyze_quality_with_llm(text, selected_model)
+            # Analyze quality using LLM (optional Phi for fast simple quality pass)
+            quality = self._analyze_quality_with_llm(text, quality_model)
 
             # Create result
             total_processing_time = time.time() - start_time
@@ -184,6 +189,7 @@ class LocalReadabilityAnalyzer:
         except Exception as e:
             logger.error(f"Error in content analysis: {e}")
             # Return basic result on error
+            fallback_model = self.default_model
             readability = self._calculate_readability_metrics(text)
             quality = QualityMetrics(
                 overall_quality_score=0.5,
@@ -199,7 +205,7 @@ class LocalReadabilityAnalyzer:
                 content_type="unknown",
                 target_audience="general",
                 recommendations=["Analysis failed"],
-                model_used=selected_model,
+                model_used=fallback_model,
                 processing_time=0.0,
             )
 
@@ -207,7 +213,7 @@ class LocalReadabilityAnalyzer:
                 readability=readability,
                 quality=quality,
                 text=text,
-                model_used=selected_model,
+                model_used=fallback_model,
                 total_processing_time=time.time() - start_time,
             )
 

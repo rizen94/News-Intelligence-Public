@@ -12,8 +12,12 @@ import os
 import re
 import sys
 from datetime import datetime, timezone
+from urllib.parse import urljoin
 
 import feedparser
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 import psycopg2
 import psycopg2.errors
 
@@ -47,6 +51,88 @@ except ImportError:
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+_rss_http_session: requests.Session | None = None
+
+
+def _rss_http_user_agent() -> str:
+    return os.environ.get(
+        "RSS_HTTP_USER_AGENT",
+        "NewsIntelligence/1.0 (+https://github.com/news-intelligence)",
+    )
+
+
+def _get_rss_http_session() -> requests.Session:
+    """Shared requests session: retries, consistent User-Agent."""
+    global _rss_http_session
+    if _rss_http_session is None:
+        s = requests.Session()
+        retries = Retry(
+            total=3,
+            connect=3,
+            read=3,
+            backoff_factor=0.5,
+            status_forcelist=[429, 500, 502, 503, 504],
+        )
+        adapter = HTTPAdapter(max_retries=retries)
+        s.mount("http://", adapter)
+        s.mount("https://", adapter)
+        s.headers.update({"User-Agent": _rss_http_user_agent()})
+        _rss_http_session = s
+    return _rss_http_session
+
+
+def _rss_fetch_timeout() -> int:
+    try:
+        return max(5, int(os.environ.get("RSS_TIMEOUT", "30").strip() or "30"))
+    except ValueError:
+        return 30
+
+
+def fetch_and_parse_rss(feed_url: str):
+    """
+    Fetch feed with retries and parse via feedparser.
+    If RSS_HTML_FEED_DISCOVERY=true and the URL returns HTML with no entries, try <link rel=alternate> RSS/Atom.
+    """
+    timeout = _rss_fetch_timeout()
+    session = _get_rss_http_session()
+    r = session.get(feed_url, timeout=timeout)
+    r.raise_for_status()
+    content = r.content
+    ct = (r.headers.get("Content-Type") or "").lower()
+    parsed = feedparser.parse(content)
+    entries = getattr(parsed, "entries", None) or []
+    if (
+        len(entries) == 0
+        and "html" in ct
+        and os.environ.get("RSS_HTML_FEED_DISCOVERY", "").lower() in ("1", "true", "yes")
+    ):
+        try:
+            text = r.text
+            m = re.search(
+                r'<link[^>]+type=["\']application/(?:rss|atom)\+xml["\'][^>]+href=["\']([^"\']+)["\']',
+                text,
+                re.I,
+            )
+            if not m:
+                m = re.search(
+                    r'<link[^>]+href=["\']([^"\']+)["\'][^>]+type=["\']application/(?:rss|atom)\+xml',
+                    text,
+                    re.I,
+                )
+            if m:
+                alt = m.group(1).strip()
+                if alt.startswith("//"):
+                    alt = "https:" + alt
+                elif alt.startswith("/"):
+                    alt = urljoin(feed_url, alt)
+                r2 = session.get(alt, timeout=timeout)
+                r2.raise_for_status()
+                parsed = feedparser.parse(r2.content)
+        except Exception as e:
+            logger.debug("RSS HTML feed discovery failed: %s", e)
+    return parsed
 
 
 def _rss_max_entries_per_feed() -> int:
@@ -1143,9 +1229,9 @@ def collect_rss_feeds() -> int:
                 filtered_impact = 0
 
                 try:
-                    # Parse RSS feed with timeout
+                    # Parse RSS feed with timeout (HTTP retries + UA in fetch_and_parse_rss)
                     def parse_feed():
-                        return feedparser.parse(feed_url)
+                        return fetch_and_parse_rss(feed_url)
 
                     with ThreadPoolExecutor(max_workers=1) as executor:
                         future = executor.submit(parse_feed)
@@ -1650,7 +1736,7 @@ def collect_rss_feed(feed_url: str, feed_name: str = "Unknown") -> int:
 
         # Parse RSS feed with thread-based timeout (works in background threads)
         def parse_feed():
-            return feedparser.parse(feed_url)
+            return fetch_and_parse_rss(feed_url)
 
         # Use ThreadPoolExecutor for timeout (works in any thread)
         with ThreadPoolExecutor(max_workers=1) as executor:
@@ -1662,30 +1748,30 @@ def collect_rss_feed(feed_url: str, feed_name: str = "Unknown") -> int:
 
         articles_added = 0
 
-        # Determine domain/schema for this feed so domain-specific exclusion and INSERT target are correct
-        schema_name = "politics"
-        domain_key_single = ""
-        cur.execute(
-            """
-            SELECT 'politics' as schema FROM politics.rss_feeds WHERE feed_url = %s
-            UNION ALL
-            SELECT 'finance' FROM finance.rss_feeds WHERE feed_url = %s
-            UNION ALL
-            SELECT 'science_tech' FROM science_tech.rss_feeds WHERE feed_url = %s
-            LIMIT 1
-        """,
-            (feed_url, feed_url, feed_url),
+        # Resolve schema from registry (all domain rss_feeds tables), not only built-in three.
+        from shared.domain_registry import (
+            rss_feed_lookup_param_count,
+            rss_feed_lookup_union_sql,
+            schema_to_primary_domain_key,
         )
+
+        schema_name = ""
+        domain_key_single = ""
+        _sql = rss_feed_lookup_union_sql()
+        _n = rss_feed_lookup_param_count()
+        cur.execute(_sql, (feed_url,) * _n)
         r = cur.fetchone()
-        if r:
-            schema_name = r[0]
-            domain_key_single = (
-                "politics"
-                if schema_name == "politics"
-                else "finance"
-                if schema_name == "finance"
-                else "science-tech"
+        if not r:
+            logger.error(
+                "collect_rss_feed: feed_url not found in any domain rss_feeds (register feed first): %s",
+                feed_url[:120],
             )
+            return 0
+        schema_name = r[0]
+        try:
+            domain_key_single = schema_to_primary_domain_key(schema_name)
+        except KeyError:
+            domain_key_single = (schema_name or "").replace("_", "-")
 
         for entry in feed.entries[: _rss_max_entries_per_feed()]:
             try:
@@ -1752,8 +1838,6 @@ def collect_rss_feed(feed_url: str, feed_name: str = "Unknown") -> int:
                     continue
 
                 # Calculate domain-specific bias score (URL domain key from registry)
-                from shared.domain_registry import schema_to_primary_domain_key
-
                 try:
                     domain_key = schema_to_primary_domain_key(schema_name)
                 except KeyError:

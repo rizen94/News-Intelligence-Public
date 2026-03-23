@@ -786,14 +786,27 @@ class AIStorylineDiscovery:
         return similarity_matrix
 
     def cluster_hdbscan(
-        self, articles: list[ArticleEmbedding], similarity_matrix: np.ndarray
+        self,
+        articles: list[ArticleEmbedding],
+        similarity_matrix: np.ndarray,
+        *,
+        similarity_threshold: float | None = None,
+        min_cluster_size: int | None = None,
     ) -> list[StorylineCluster]:
         """
         Cluster articles using improved single-linkage clustering
         with density-aware core distances
         """
+        sim_thresh = (
+            float(similarity_threshold)
+            if similarity_threshold is not None
+            else SIMILARITY_THRESHOLD
+        )
+        min_sz = min_cluster_size if min_cluster_size is not None else MIN_CLUSTER_SIZE
+        min_sz = max(2, min(100, int(min_sz)))
+
         n = len(articles)
-        if n < MIN_CLUSTER_SIZE:
+        if n < min_sz:
             return []
 
         # Union-Find for clustering
@@ -821,13 +834,13 @@ class AIStorylineDiscovery:
         for i in range(n):
             for j in range(i + 1, n):
                 sim = similarity_matrix[i][j]
-                if sim >= SIMILARITY_THRESHOLD:
+                if sim >= sim_thresh:
                     pairs.append((sim, i, j))
 
         # Sort by similarity descending
         pairs.sort(reverse=True)
 
-        logger.info(f"Found {len(pairs)} pairs above threshold {SIMILARITY_THRESHOLD}")
+        logger.info(f"Found {len(pairs)} pairs above threshold {sim_thresh}")
 
         # Build clusters greedily from highest similarity pairs
         for sim, i, j in pairs:
@@ -847,7 +860,7 @@ class AIStorylineDiscovery:
         datetime.now()
 
         for root, indices in cluster_map.items():
-            if len(indices) >= MIN_CLUSTER_SIZE:
+            if len(indices) >= min_sz:
                 cluster_articles = [articles[i] for i in indices]
 
                 # Calculate cluster metrics
@@ -1758,13 +1771,24 @@ Reply with ONLY a JSON object:
         hours: int | None = None,
         save_to_db: bool = True,
         progress_callback=None,
+        *,
+        min_similarity: float | None = None,
+        min_cluster_size: int | None = None,
     ) -> dict[str, Any]:
         """
         Main pipeline: Discover storylines from articles (default: full backlog, capped).
 
         ``hours`` if set (>0) restricts to articles with ``created_at`` in the last N hours.
         Omit or pass None/0 for all-time (subject to ``STORYLINE_DISCOVERY_ARTICLE_LIMIT``).
+        ``min_similarity`` / ``min_cluster_size`` override module defaults for clustering.
         """
+        sim_thresh = (
+            float(min_similarity) if min_similarity is not None else SIMILARITY_THRESHOLD
+        )
+        sim_thresh = max(0.35, min(0.99, sim_thresh))
+        min_sz = min_cluster_size if min_cluster_size is not None else MIN_CLUSTER_SIZE
+        min_sz = max(2, min(100, int(min_sz)))
+
         start_time = datetime.now()
         stats = {
             "domain": domain,
@@ -1790,6 +1814,10 @@ Reply with ONLY a JSON object:
                 "semantic_similarity": SEMANTIC_WEIGHT,
                 "entity_overlap": ENTITY_WEIGHT,
                 "temporal_proximity": TEMPORAL_WEIGHT,
+            },
+            "clustering_params": {
+                "similarity_threshold": sim_thresh,
+                "min_cluster_size": min_sz,
             },
         }
 
@@ -1822,10 +1850,10 @@ Reply with ONLY a JSON object:
             "article_limit_cap": STORYLINE_DISCOVERY_ARTICLE_LIMIT,
         }
 
-        if len(articles) < MIN_CLUSTER_SIZE:
+        if len(articles) < min_sz:
             return {
                 "success": True,
-                "message": f"Not enough articles for clustering (found {len(articles)}, need {MIN_CLUSTER_SIZE})",
+                "message": f"Not enough articles for clustering (found {len(articles)}, need {min_sz})",
                 "clusters": [],
                 "stats": stats,
             }
@@ -1859,11 +1887,18 @@ Reply with ONLY a JSON object:
         # Phase 4: Cluster using HDBSCAN
         phase_start = datetime.now()
         logger.info(f"[{domain}] Phase 4: Clustering with HDBSCAN...")
-        clusters = self.cluster_hdbscan(articles, similarity_matrix)
+        clusters = self.cluster_hdbscan(
+            articles,
+            similarity_matrix,
+            similarity_threshold=sim_thresh,
+            min_cluster_size=min_sz,
+        )
         stats["phases"]["clustering"] = {
             "duration_ms": (datetime.now() - phase_start).total_seconds() * 1000,
             "clusters_found": len(clusters),
             "algorithm": "HDBSCAN-inspired",
+            "similarity_threshold": sim_thresh,
+            "min_cluster_size": min_sz,
         }
 
         # Phase 5: Generate metadata - LLM for top 5, fast fallback for rest

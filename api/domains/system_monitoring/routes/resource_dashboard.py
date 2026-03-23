@@ -627,6 +627,22 @@ def get_backlog_status() -> dict[str, Any]:
 
     overall_iterations = iterations_2h(overall_h)
 
+    pipeline_alerts: list[str] = []
+    try:
+        art_alert = int(os.environ.get("NEWS_INTEL_ALERT_ARTICLE_BACKLOG", "2000"))
+    except ValueError:
+        art_alert = 2000
+    if article_backlog > art_alert:
+        pipeline_alerts.append(
+            f"article_enrichment_backlog_high:{article_backlog}>{art_alert}"
+        )
+    try:
+        ctx_alert = int(os.environ.get("NEWS_INTEL_ALERT_CONTEXT_BACKLOG", "500"))
+    except ValueError:
+        ctx_alert = 500
+    if context_backlog > ctx_alert:
+        pipeline_alerts.append(f"context_claims_backlog_high:{context_backlog}>{ctx_alert}")
+
     automation_backlog_nonzero: list[str] = []
     automation_backlog_clear = True
     try:
@@ -678,10 +694,19 @@ def get_backlog_status() -> dict[str, Any]:
             f"Overall catch-up iterations ({overall_iterations}) exceeds baseline threshold (>1)"
         )
 
+    try:
+        from config.settings import MODELS as _MODELS
+
+        ollama_models_payload = {"primary": _MODELS["primary"], "secondary": _MODELS["secondary"]}
+    except Exception:
+        ollama_models_payload = {}
+
     return {
         "success": True,
         "data": {
             "workload_window_days": BACKLOG_WORKLOAD_WINDOW_DAYS,
+            "pipeline_alerts": pipeline_alerts,
+            "ollama_models": ollama_models_payload,
             "steady_state": {
                 "ok": steady_ok,
                 "checks": {

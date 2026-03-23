@@ -10,6 +10,7 @@ from typing import Any
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from shared.database.connection import get_db_connection
 from shared.services.domain_aware_service import get_domain_data_schemas
+from config.settings import MODELS
 from shared.services.llm_service import TaskType, llm_service
 
 logger = logging.getLogger(__name__)
@@ -33,8 +34,8 @@ async def health_check():
             "domain": "intelligence_hub",
             "status": "healthy",
             "llm_service": llm_status,
-            "primary_model": "llama3.1:8b",
-            "secondary_model": "mistral:7b",
+            "primary_model": MODELS["primary"],
+            "secondary_model": MODELS["secondary"],
             "timestamp": datetime.now().isoformat(),
         }
 

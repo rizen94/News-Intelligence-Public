@@ -22,6 +22,7 @@ from shared.services.domain_aware_service import (
     resolve_article_id_to_schema,
     validate_domain,
 )
+from config.settings import MODELS
 from shared.services.llm_service import TaskType, llm_service
 
 logger = logging.getLogger(__name__)
@@ -43,8 +44,8 @@ async def health_check():
             "domain": "content_analysis",
             "status": "healthy",
             "llm_service": llm_status,
-            "primary_model": "llama3.1:8b",
-            "secondary_model": "mistral:7b",
+            "primary_model": MODELS["primary"],
+            "secondary_model": MODELS["secondary"],
             "timestamp": datetime.now().isoformat(),
         }
 

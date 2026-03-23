@@ -48,25 +48,38 @@ RAM_TOTAL_GB = 62.0
 RAM_SAFETY_MARGIN_GB = 8.0
 
 # Ollama model names — must match what's pulled via `ollama pull`
+OLLAMA_MODEL_PRIMARY = os.environ.get("OLLAMA_MODEL_PRIMARY", "llama3.1:8b")
+OLLAMA_MODEL_SECONDARY = os.environ.get("OLLAMA_MODEL_SECONDARY", "mistral-nemo:12b")
+OLLAMA_MODEL_PHI = os.environ.get("OLLAMA_MODEL_PHI", "phi3.5:latest")
+OLLAMA_MODEL_EXTRACTION = os.environ.get("OLLAMA_MODEL_EXTRACTION", "qwen2.5:7b")
+
 MODELS = {
-    "embedding": "nomic-embed-text",
-    "primary": "llama3.1:8b",
-    "secondary": "mistral:7b",
-    "summarization": "llama3.1:8b",
-    "topic_extraction": "llama3.1:8b",
+    "embedding": os.environ.get("OLLAMA_MODEL_EMBEDDING", "nomic-embed-text"),
+    "primary": OLLAMA_MODEL_PRIMARY,
+    "secondary": OLLAMA_MODEL_SECONDARY,
+    "summarization": OLLAMA_MODEL_PRIMARY,
+    "topic_extraction": OLLAMA_MODEL_PRIMARY,
 }
 
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 OLLAMA_TIMEOUT = 300
 
 # --- Ollama invocation policy (see shared/services/ollama_model_caller.py) ---
-# Background batches with prompts at least this many chars may use the secondary model (Mistral).
+# Background batches with prompts at least this many chars may use the secondary model (e.g. Mistral-Nemo 12B).
 OLLAMA_BATCH_PROMPT_CHARS_FOR_SECONDARY = int(
     os.environ.get("OLLAMA_BATCH_PROMPT_CHARS_FOR_SECONDARY", "12000")
 )
-# If true, structured extraction paths that use the caller can use Mistral (faster/cheaper VRAM).
+# If true, structured extraction paths that use the caller can use the secondary slot (not primary 8B).
 OLLAMA_USE_SECONDARY_FOR_EXTRACTION = os.environ.get(
     "OLLAMA_USE_SECONDARY_FOR_EXTRACTION", "false"
+).lower() in ("1", "true", "yes")
+# If true, STRUCTURED_EXTRACTION uses Qwen (OLLAMA_MODEL_EXTRACTION) instead of primary/secondary.
+OLLAMA_USE_QWEN_FOR_EXTRACTION = os.environ.get(
+    "OLLAMA_USE_QWEN_FOR_EXTRACTION", "false"
+).lower() in ("1", "true", "yes")
+# If true, fast simple local passes (e.g. readability quality LLM) use Phi (OLLAMA_MODEL_PHI).
+OLLAMA_USE_PHI_FOR_FAST_SIMPLE = os.environ.get(
+    "OLLAMA_USE_PHI_FOR_FAST_SIMPLE", "false"
 ).lower() in ("1", "true", "yes")
 
 # Extra tags for `refresh_ollama_models.py` only (optional large models, not in MODELS routing).
@@ -98,6 +111,10 @@ def ollama_pull_model_names() -> tuple[str, ...]:
             continue
         tags.add(v)
     tags.update(OLLAMA_EXTRA_PULL_MODELS)
+    if OLLAMA_MODEL_PHI:
+        tags.add(OLLAMA_MODEL_PHI)
+    if OLLAMA_MODEL_EXTRACTION:
+        tags.add(OLLAMA_MODEL_EXTRACTION)
     if OLLAMA_PULL_NARRATIVE_FINISHER and NARRATIVE_FINISHER_MODEL:
         tags.add(NARRATIVE_FINISHER_MODEL)
     return tuple(sorted(tags))
@@ -213,7 +230,7 @@ CHUNK_OVERLAP_TOKENS = 64
 # Finance model names (Ollama)
 FINANCE_MODELS = {
     "embedding": "BAAI/bge-large-en-v1.5",  # sentence-transformers
-    "classification": "llama3.1:8b",
-    "generation_fast": "llama3.1:8b",
-    "generation_high": "mistral:7b",
+    "classification": OLLAMA_MODEL_PRIMARY,
+    "generation_fast": OLLAMA_MODEL_PRIMARY,
+    "generation_high": os.environ.get("FINANCE_OLLAMA_GENERATION_HIGH", OLLAMA_MODEL_SECONDARY),
 }

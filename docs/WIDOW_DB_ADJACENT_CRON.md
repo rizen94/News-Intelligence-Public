@@ -28,6 +28,20 @@ Restart the API after changing env. `AUTOMATION_DISABLED_SCHEDULES` turns off th
 
 **Option B:** Stop the secondary service and run **`run_widow_db_adjacent.py --rss`** from cron instead. **Do not** run both on the same interval unless you want duplicate collection attempts (feeds should dedupe, but it wastes work).
 
+### New domain silos (medicine, artificial-intelligence, etc.)
+
+RSS and automation discover domains from **`api/config/domains/*.yaml`** at runtime (`url_schema_pairs()` / `get_active_domain_keys()`). **Widow and the main PC must deploy the same Git tree** (or at least the same `api/config/domains/` files). If Widow is behind on commits, `collect_rss_feeds` there will only query the older domain list and new silos stay empty.
+
+After each migration + `provision_domain.py`, run on any machine that can reach the DB:
+
+```bash
+PYTHONPATH=api uv run python api/scripts/ensure_domain_silo_alignment.py
+```
+
+That sets **`public.domains.is_active = TRUE`** for YAML-active keys and prints **active `rss_feeds` counts** so you can see a zero before a wasted night.
+
+**Main vs Widow:** Keep **`AUTOMATION_SKIP_RSS_IN_COLLECTION_CYCLE=true`** on the main host so only one place runs RSS (see §1). **Both** hosts still need identical YAML so the **one** RSS runner ingests **all** silos; the main PC does not need to fetch RSS twice.
+
 ---
 
 ## 3. Widow: context sync + entity profile sync + pending DB flush

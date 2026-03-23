@@ -144,13 +144,13 @@ async def process_topic_clustering():
             logger.error("❌ Database connection failed")
             return None
 
-        # Get all active domains
-        domains = []
+        # Registry + existing schemas (same as automation RSS / get_all_domains — not public.domains.is_active)
+        from shared.services.domain_aware_service import get_all_domains
+
         try:
-            with conn.cursor() as cur:
-                cur.execute("SELECT domain_key, schema_name FROM domains WHERE is_active = TRUE")
-                domains = cur.fetchall()
-                logger.info(f"Found {len(domains)} active domains for topic clustering")
+            domain_rows = get_all_domains()
+            domains = [(d["domain_key"], d["schema_name"]) for d in domain_rows]
+            logger.info(f"Found {len(domains)} registry-active silos for topic clustering")
         except Exception as e:
             logger.error(f"Error fetching domains: {e}")
             return None

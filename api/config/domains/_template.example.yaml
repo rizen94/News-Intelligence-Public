@@ -7,23 +7,45 @@
 #   Never use a leading underscore on the real file name — files matching _*.yaml
 #   are ignored by domain_registry (see api/shared/domain_registry.py).
 #
-# WORKFLOW (10 steps — keep in sync with docs/DOMAIN_EXTENSION_TEMPLATE.md)
-#   1) Create api/config/domains/<domain_key>.yaml: copy this file, OR run
-#      api/scripts/init_domain_yaml_from_template.py --domain-key … --schema-name … --display-name "…"
-#   2) Fill required fields; list seed_feed_urls under data_sources.rss; keep is_active: false.
-#   3) Validate YAML locally (UTF-8, PyYAML load) — see docs/DOMAIN_EXTENSION_TEMPLATE.md.
-#   4) Add public.domains row + schema via SQL migration (see migration 122 helpers).
-#   5) Run api/scripts/provision_domain.py with YAML + migration SQL + verify cmd (inserts
-#      seed_feed_urls into {schema}.rss_feeds unless --no-seed-rss; requires rss_feeds.category).
-#   6) Confirm verify scripts exit 0; only then set is_active: true in your YAML.
-#   7) Restart API and workers so domain_registry reloads (DOMAIN_PATH_PATTERN is import-time).
-#   8) SPA domain list comes from GET /api/system_monitoring/registry_domains (no per-key TS edits).
-#   9) Optional: workload_assumptions; backfill RSS only if you skipped seeding:
-#      api/scripts/seed_domain_rss_from_yaml.py --config api/config/domains/<domain_key>.yaml
-#  10) Commit YAML + migration + doc updates together per AGENTS.md alignment rules.
+# END-TO-END CHECKLIST (keep in sync with docs/DOMAIN_EXTENSION_TEMPLATE.md)
+#
+#   A) Author YAML (this file)
+#      1) Copy to <domain_key>.yaml OR run:
+#         PYTHONPATH=api uv run python api/scripts/init_domain_yaml_from_template.py \\
+#           --domain-key <key> --schema-name <schema> --display-name "…" [--inactive]
+#      2) Set data_sources.rss.seed_feed_urls (URLs or {feed_name, feed_url, …} objects).
+#         Optional: seed_feed_category (rss_feeds.category is NOT NULL; default General).
+#      3) Keep is_active: false until migration + DB verify pass.
+#
+#   B) Database silo (one migration per new domain, style: 180_legal_domain_silo.sql)
+#      4) INSERT public.domains + domain_metadata; CREATE SCHEMA; create_domain_table from
+#         science_tech for articles, topics, storylines, rss_feeds, assignments, clusters,
+#         entity tables; add_domain_foreign_keys / indexes / triggers; story_entity_index +
+#         manual FK fixes where LIKE omits references.
+#      5) Apply migration; register in public.applied_migrations if your ops use the ledger.
+#
+#   C) Provision + seed RSS
+#      6) PYTHONPATH=api uv run python api/scripts/provision_domain.py \\
+#           --config api/config/domains/<key>.yaml --sql api/database/migrations/NNN_….sql \\
+#           --verify-cmd "PYTHONPATH=api uv run python api/scripts/verify_migrations_160_167.py"
+#         (Omit --skip-rss-seed so seed_feed_urls are inserted into {schema}.rss_feeds.)
+#
+#   D) Final verification (run before is_active: true)
+#      7) PYTHONPATH=api uv run python api/scripts/verify_domain_provision.py --domain-key <key>
+#         [--strict]  (YAML + registry + schema + tables + RSS + synthesis hint)
+#      8) PYTHONPATH=api uv run python api/scripts/ensure_domain_silo_alignment.py
+#         (sync public.domains with YAML on each host: API, Widow RSS, workers)
+#
+#   E) Activate + optional tuning
+#      9) Set is_active: true in this YAML. domain_registry re-reads files each call — restart
+#         API/workers only if a process still caches domain lists at import (see README).
+#     10) Add api/config/domain_synthesis_config.yaml → domains:<domain_key>: … if you need
+#         topic/storyline bias (separate from this onboarding file).
+#     11) GET /api/system_monitoring/registry_domains — confirm the domain appears (SPA uses this).
+#     12) Grep for hardcoded three-domain tuples in features you care about (see domains README).
 #
 # =============================================================================
-# DATABASE RULES (public.domains — from 122_domain_silo_infrastructure.sql)
+# DATABASE RULES (public.domains — see migration 122 / 180 patterns)
 # =============================================================================
 #
 #   domain_key     REQUIRED  pattern ^[a-z0-9-]+$  (hyphens OK; NO underscores)
@@ -32,6 +54,12 @@
 #   description    TEXT — no hard DB cap; recommend ≤ ~4000 chars for readability
 #   display_order  integer — lower sorts earlier in nav when UI uses it
 #   is_active      in YAML: if false, domain_registry does NOT register this file
+#
+# PIPELINE (after go-live)
+#   • RSS: collect_rss_feeds() uses url_schema_pairs() → {schema}.rss_feeds WHERE is_active.
+#   • Automation: get_all_domains() = registry YAML + existing Postgres schema (see AGENTS.md).
+#   • Disable a silo: set is_active: false here (or remove file) — do not rely only on
+#     public.domains.is_active for pipeline off.
 #
 # VALID domain_key / schema_name EXAMPLES
 #   domain_key: science-tech     schema_name: science_tech   OK
@@ -76,28 +104,33 @@ display_order: 10
 
 # --- REQUIRED FOR SAFE ROLLOUT -------------------------------------------------
 # false = this YAML file is ignored for API registration (no extra domain_key).
-# Set true ONLY after: migration applied, verify scripts pass, schema exists.
+# Set true ONLY after: migration applied, verify_domain_provision.py passes, feeds seeded as needed.
 is_active: false
 
-# --- HUMAN-ONLY (stripped by loader — any _prefix key) -----------------------
+# --- HUMAN-ONLY (stripped by loader — any _prefix key) -------------------------
 _instructions: |
-  Use data_sources and llm_prompt_guidance to capture operator intent.
-  Core code may not read these until wired; domain_registry still merges other keys.
+  Replace example-domain / example_domain before enabling.
+  After provision: run verify_domain_provision.py --domain-key <key>, then ensure_domain_silo_alignment.py.
+  Reserve schema names: see RESERVED_SCHEMA_NAMES in api/shared/domain_registry.py (e.g. do not reuse
+  intelligence, artificial_intelligence, or core silo names for a new optional domain).
 
 # Optional human note (also stripped at load)
 _comment: |
-  Replace example-domain / example_domain before enabling anything.
+  data_sources.rss is consumed only by provision_domain.py / seed_domain_rss_from_yaml.py, not domain_registry.
 
 # --- OPTIONAL — RSS seeding (provision_domain.py + seed_domain_rss_from_yaml.py) -----
 data_sources:
   rss:
-    # inclusion_criteria: "English-language courts and regulators; primary sources."
-    # exclusion_criteria: "Gossip, non-legal celebrity, unrelated sports."
     # Default rss_feeds.category for seeded rows (NOT NULL on silo tables); max ~100 chars.
     # seed_feed_category: General
-    # URLs inserted into {schema_name}.rss_feeds when you run provision_domain.py (after SQL)
-    # or seed_domain_rss_from_yaml.py for backfill. domain_registry does not read this block.
+    # inclusion_criteria / exclusion_criteria: human notes for operators (not read by seed scripts today).
+    # URLs → {schema_name}.rss_feeds when you run provision_domain.py (after SQL) or seed_domain_rss_from_yaml.py
     seed_feed_urls: []
+    # Example object form:
+    # seed_feed_urls:
+    #   - feed_url: https://example.com/feed.xml
+    #     feed_name: Example News
+    #     fetch_interval_seconds: 3600
 
 # --- OPTIONAL — list of strings; documentation / future topic bias -------------
 focus_areas: []

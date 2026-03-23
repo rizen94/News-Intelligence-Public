@@ -4,13 +4,16 @@ Extracts factual claims (subject/predicate/object) from contexts and stores in i
 See docs/CONTEXT_CENTRIC_UPGRADE_PLAN.md.
 """
 
+import asyncio
 import json
 import logging
+import os
 import re
 
 from shared.database.connection import get_db_connection
 from shared.domain_registry import get_schema_names_active, resolve_domain_schema
-from shared.services.llm_service import LLMService, ModelType
+from shared.services.ollama_model_caller import get_ollama_model_caller
+from shared.services.ollama_model_policy import InvocationKind
 
 logger = logging.getLogger(__name__)
 
@@ -69,25 +72,27 @@ async def extract_claims_for_context(context_id: int) -> int:
                 (context_id,),
             )
             row = cur.fetchone()
+    finally:
         conn.close()
-        if not row:
-            return 0
-        title, content, ctx_meta = row
-        cred_mult = 1.0
-        if ctx_meta:
-            try:
-                md = ctx_meta if isinstance(ctx_meta, dict) else json.loads(ctx_meta)
-                if isinstance(md, dict):
-                    sc = md.get("source_credibility") or {}
-                    cred_mult = float(sc.get("multiplier", 1.0))
-                    cred_mult = max(0.0, min(1.0, cred_mult))
-            except (TypeError, ValueError, json.JSONDecodeError):
-                cred_mult = 1.0
-        text = f"{title or ''}\n\n{content or ''}"[:6000].strip()
-        if len(text) < 80:
-            return 0
 
-        prompt = f"""Extract factual claims from this text as subject-predicate-object triples. One claim per line of reasoning.
+    if not row:
+        return 0
+    title, content, ctx_meta = row
+    cred_mult = 1.0
+    if ctx_meta:
+        try:
+            md = ctx_meta if isinstance(ctx_meta, dict) else json.loads(ctx_meta)
+            if isinstance(md, dict):
+                sc = md.get("source_credibility") or {}
+                cred_mult = float(sc.get("multiplier", 1.0))
+                cred_mult = max(0.0, min(1.0, cred_mult))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            cred_mult = 1.0
+    text = f"{title or ''}\n\n{content or ''}"[:6000].strip()
+    if len(text) < 80:
+        return 0
+
+    prompt = f"""Extract factual claims from this text as subject-predicate-object triples. One claim per line of reasoning.
 
 Text:
 {text[:5000]}
@@ -101,45 +106,63 @@ Rules: subject and predicate required; object optional. confidence 0.0-1.0. Keep
 For subject, prefer a short proper noun that could match a Wikipedia-style entity name (e.g. "Japan" or "Minoru Kihara") rather than a long descriptive phrase, when the text supports it.
 Keep each subject under ~80 characters when possible."""
 
-        llm = LLMService()
-        raw = await llm._call_ollama(ModelType.LLAMA_8B, prompt)
-        claims = _parse_claims_response(raw)
-        if not claims:
-            return 0
-
-        conn = get_db_connection()
-        if not conn:
-            return 0
-        inserted = 0
-        try:
-            with conn.cursor() as cur:
-                for subject_text, predicate_text, object_text, confidence in claims:
-                    try:
-                        adj_conf = max(0.0, min(1.0, float(confidence) * cred_mult))
-                        cur.execute(
-                            """
-                            INSERT INTO intelligence.extracted_claims
-                            (context_id, subject_text, predicate_text, object_text, confidence)
-                            VALUES (%s, %s, %s, %s, %s)
-                            """,
-                            (context_id, subject_text, predicate_text, object_text, adj_conf),
-                        )
-                        inserted += 1
-                    except Exception as e:
-                        logger.debug(f"Claim insert skip: {e}")
-            conn.commit()
-        finally:
-            conn.close()
-        if inserted > 0:
-            logger.debug(f"Claims extracted for context {context_id}: {inserted}")
-        return inserted
+    try:
+        caller = get_ollama_model_caller()
+        gen = await caller.generate(
+            prompt,
+            kind=InvocationKind.STRUCTURED_EXTRACTION,
+            approx_prompt_chars=len(prompt),
+        )
+        raw = gen.text
     except Exception as e:
-        logger.warning(f"Claim extraction for context {context_id} failed: {e}")
+        logger.warning("Claim extraction LLM failed for context %s: %s", context_id, e)
+        return 0
+
+    claims = _parse_claims_response(raw)
+    parse_ok = len(claims) > 0
+    logger.info(
+        "claim_extraction_parsed context_id=%s model=%s parse_nonempty=%s",
+        context_id,
+        gen.model,
+        parse_ok,
+    )
+    if not claims:
+        return 0
+
+    conn = get_db_connection()
+    if not conn:
+        return 0
+    inserted = 0
+    try:
+        with conn.cursor() as cur:
+            for subject_text, predicate_text, object_text, confidence in claims:
+                try:
+                    adj_conf = max(0.0, min(1.0, float(confidence) * cred_mult))
+                    cur.execute(
+                        """
+                        INSERT INTO intelligence.extracted_claims
+                        (context_id, subject_text, predicate_text, object_text, confidence)
+                        VALUES (%s, %s, %s, %s, %s)
+                        """,
+                        (context_id, subject_text, predicate_text, object_text, adj_conf),
+                    )
+                    inserted += 1
+                except Exception as e:
+                    logger.debug(f"Claim insert skip: {e}")
+        conn.commit()
+    except Exception as e:
         try:
-            conn.close()
+            conn.rollback()
         except Exception:
             pass
+        logger.warning("Claim extraction insert failed for context %s: %s", context_id, e)
         return 0
+    finally:
+        conn.close()
+
+    if inserted > 0:
+        logger.debug(f"Claims extracted for context {context_id}: {inserted}")
+    return inserted
 
 
 def get_context_ids_without_claims(limit: int = 50) -> list[int]:
@@ -167,13 +190,26 @@ def get_context_ids_without_claims(limit: int = 50) -> list[int]:
 async def run_claim_extraction_batch(limit: int = 50) -> int:
     """
     Process up to `limit` contexts that have no claims yet. Returns total claims inserted.
-    Production: max 50 contexts (LLM rate limits), 2-5s per context, ~20-50s total; parallel_requests=5.
+    Uses bounded concurrency (CLAIM_EXTRACTION_PARALLEL, default 5) for throughput.
     """
     ids = get_context_ids_without_claims(limit=limit)
+    try:
+        parallel = max(1, min(12, int(os.environ.get("CLAIM_EXTRACTION_PARALLEL", "5"))))
+    except ValueError:
+        parallel = 5
+    sem = asyncio.Semaphore(parallel)
+
+    async def _one(cid: int) -> int:
+        async with sem:
+            return await extract_claims_for_context(cid)
+
+    results = await asyncio.gather(*[_one(cid) for cid in ids], return_exceptions=True)
     total = 0
-    for context_id in ids:
-        n = await extract_claims_for_context(context_id)
-        total += n
+    for r in results:
+        if isinstance(r, int):
+            total += r
+        elif isinstance(r, Exception):
+            logger.debug("claim extraction batch item failed: %s", r)
     if total > 0:
         logger.info(
             f"Claim extraction batch: {len(ids)} contexts processed, {total} claims inserted"

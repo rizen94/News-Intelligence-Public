@@ -80,6 +80,7 @@ except Exception as e:
 # Import compatibility layer
 from compatibility.v3_compatibility import compatibility_router
 from config.settings import (
+    MODELS,
     news_intel_api_docs_enabled,
     news_intel_cors_allow_origins,
     news_intel_expose_error_detail_to_client,
@@ -644,7 +645,7 @@ app = FastAPI(
     A comprehensive news aggregation and analysis platform featuring:
 
     * **Domain-Driven Architecture** - Organized into 6 business domains
-    * **AI-Powered Analysis** - Using Llama 3.1 8B (primary) and Mistral 7B (secondary)
+    * **AI-Powered Analysis** - Using configurable Ollama models (primary + secondary slot; see `config.settings.MODELS`)
     * **News Aggregation** - RSS feed processing and article ingestion
     * **Content Analysis** - Sentiment, entities, summarization, bias detection
     * **Storyline Management** - RAG-enhanced narrative creation and timeline generation
@@ -661,7 +662,7 @@ app = FastAPI(
 
     ### Model Performance
     - **Primary Model**: Llama 3.1 8B (2.93s for 200 words, 73.0 MMLU score)
-    - **Secondary Model**: Mistral 7B (4.17s for 200 words, competitive quality)
+    - **Secondary Model**: default Mistral-Nemo 12B in the secondary slot (throughput / batch; override via env)
     - **Resource Usage**: 9.3GB total storage (vs 109GB+ with previous models)
 
     ### Authentication
@@ -854,7 +855,7 @@ async def root():
             "name": "News Intelligence System v5.0",
             "version": "5.0.0",
             "architecture": "Domain-Driven Design",
-            "ai_models": {"primary": "llama3.1:8b", "secondary": "mistral:7b"},
+            "ai_models": {"primary": MODELS["primary"], "secondary": MODELS["secondary"]},
             "domains": [
                 "news_aggregation",
                 "content_analysis",

@@ -280,13 +280,18 @@ def main():
         logger.error("Failed to connect to database")
         sys.exit(1)
 
-    # Get active domain schemas
+    # Registry + existing schemas (aligned with RSS / automation, not public.domains.is_active)
+    from shared.services.domain_aware_service import get_all_domains, resolve_domain_token_to_schema
+
     cur = conn.cursor()
     if args.domains:
-        schemas = args.domains
+        schemas = [
+            s
+            for s in (resolve_domain_token_to_schema(d) for d in args.domains if d.strip())
+            if s
+        ]
     else:
-        cur.execute("SELECT schema_name FROM domains WHERE is_active = true")
-        schemas = [row[0] for row in cur.fetchall()]
+        schemas = [d["schema_name"] for d in get_all_domains()]
 
     logger.info(f"Analyzing articles from schemas: {', '.join(schemas)}")
 

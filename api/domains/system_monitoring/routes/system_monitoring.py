@@ -19,6 +19,10 @@ from shared.domain_registry import (
     iter_url_schema_pairs,
 )
 from shared.services.automation_run_history_writer import persist_automation_run_history
+from shared.services.domain_aware_service import (
+    get_all_domains,
+    resolve_domain_token_to_schema,
+)
 from shared.services.pipeline_trace_writer import log_pipeline_trace as _log_pipeline_trace
 from shared.services.response_cache import cached_response
 
@@ -56,6 +60,13 @@ router = APIRouter(
     tags=["System Monitoring"],
     responses={404: {"description": "Not found"}},
 )
+
+
+def _registry_silo_schemas() -> list[str]:
+    """Schemas for YAML-active silos that exist in Postgres (same basis as RSS / ``get_all_domains``)."""
+    rows = get_all_domains()
+    out = [str(r["schema_name"]) for r in rows]
+    return out if out else ["politics", "finance", "science_tech"]
 
 
 def _check_frontend_once() -> dict[str, Any]:
@@ -1346,30 +1357,32 @@ async def get_system_status():
                 gpu_vram_percent = gpu.get("gpu_vram_percent")
                 gpu_utilization_percent = gpu.get("gpu_utilization_percent")
 
-                # OPTIMIZED: Get all database metrics in a single query (reduces round-trips)
+                # OPTIMIZED: aggregate across every registry silo (not hardcoded to three domains)
                 week_ago = datetime.now() - timedelta(days=7)
+                sch_list = _registry_silo_schemas()
+                n = len(sch_list)
+                sub_art = " + ".join(f"(SELECT COUNT(*) FROM {s}.articles)" for s in sch_list)
+                sub_story = " + ".join(f"(SELECT COUNT(*) FROM {s}.storylines)" for s in sch_list)
+                sub_feeds = " + ".join(
+                    f"(SELECT COUNT(*) FROM {s}.rss_feeds WHERE is_active = true)" for s in sch_list
+                )
+                sub_week = " + ".join(
+                    f"(SELECT COUNT(*) FROM {s}.articles WHERE created_at >= %s)" for s in sch_list
+                )
+                sub_today = " + ".join(
+                    f"(SELECT COUNT(*) FROM {s}.articles WHERE DATE(created_at) = CURRENT_DATE)"
+                    for s in sch_list
+                )
                 cur.execute(
-                    """
+                    f"""
                     SELECT
-                        -- Total counts
-                        (SELECT COUNT(*) FROM politics.articles) +
-                        (SELECT COUNT(*) FROM finance.articles) +
-                        (SELECT COUNT(*) FROM science_tech.articles) as total_articles,
-                        (SELECT COUNT(*) FROM politics.storylines) +
-                        (SELECT COUNT(*) FROM finance.storylines) +
-                        (SELECT COUNT(*) FROM science_tech.storylines) as total_storylines,
-                        (SELECT COUNT(*) FROM politics.rss_feeds WHERE is_active = true) +
-                        (SELECT COUNT(*) FROM finance.rss_feeds WHERE is_active = true) +
-                        (SELECT COUNT(*) FROM science_tech.rss_feeds WHERE is_active = true) as active_feeds,
-                        -- Time-based counts
-                        (SELECT COUNT(*) FROM politics.articles WHERE created_at >= %s) +
-                        (SELECT COUNT(*) FROM finance.articles WHERE created_at >= %s) +
-                        (SELECT COUNT(*) FROM science_tech.articles WHERE created_at >= %s) as articles_this_week,
-                        (SELECT COUNT(*) FROM politics.articles WHERE DATE(created_at) = CURRENT_DATE) +
-                        (SELECT COUNT(*) FROM finance.articles WHERE DATE(created_at) = CURRENT_DATE) +
-                        (SELECT COUNT(*) FROM science_tech.articles WHERE DATE(created_at) = CURRENT_DATE) as articles_today
+                        {sub_art} as total_articles,
+                        {sub_story} as total_storylines,
+                        {sub_feeds} as active_feeds,
+                        {sub_week} as articles_this_week,
+                        {sub_today} as articles_today
                 """,
-                    (week_ago, week_ago, week_ago),
+                    (week_ago,) * n,
                 )
                 stats = cur.fetchone()
                 total_articles = stats[0] if stats and stats[0] else 0
@@ -1392,39 +1405,45 @@ async def get_system_status():
                 )
                 recent_errors = cur.fetchone()[0]
 
-                # Get deduplication metrics from all domains
-                cur.execute("""
-                    SELECT
-                        (SELECT COUNT(*) FROM politics.articles WHERE content_hash IS NOT NULL) +
-                        (SELECT COUNT(*) FROM finance.articles WHERE content_hash IS NOT NULL) +
-                        (SELECT COUNT(*) FROM science_tech.articles WHERE content_hash IS NOT NULL) as articles_with_hash
-                """)
+                # Get deduplication metrics from all registry silos
+                sub_hash = " + ".join(
+                    f"(SELECT COUNT(*) FROM {s}.articles WHERE content_hash IS NOT NULL)"
+                    for s in sch_list
+                )
+                cur.execute(f"SELECT {sub_hash} as articles_with_hash")
                 hash_result = cur.fetchone()
                 articles_with_hash = hash_result[0] if hash_result and hash_result[0] else 0
 
-                # URL duplicates across all domains
-                cur.execute("""
+                union_urls = " UNION ALL ".join(f"SELECT url FROM {s}.articles" for s in sch_list)
+                cur.execute(
+                    f"""
                     SELECT COUNT(*) FROM (
-                        SELECT url FROM politics.articles
-                        UNION ALL SELECT url FROM finance.articles
-                        UNION ALL SELECT url FROM science_tech.articles
-                    ) all_articles
-                    GROUP BY url
-                    HAVING COUNT(*) > 1
-                """)
+                        SELECT url FROM (
+                            {union_urls}
+                        ) u
+                        GROUP BY url
+                        HAVING COUNT(*) > 1
+                    ) dup_urls
+                """
+                )
                 url_result = cur.fetchone()
                 url_duplicates = url_result[0] if url_result and url_result[0] else 0
 
-                # Content duplicates across all domains
-                cur.execute("""
+                union_ch = " UNION ALL ".join(
+                    f"SELECT content_hash FROM {s}.articles WHERE content_hash IS NOT NULL"
+                    for s in sch_list
+                )
+                cur.execute(
+                    f"""
                     SELECT COUNT(*) FROM (
-                        SELECT content_hash FROM politics.articles WHERE content_hash IS NOT NULL
-                        UNION ALL SELECT content_hash FROM finance.articles WHERE content_hash IS NOT NULL
-                        UNION ALL SELECT content_hash FROM science_tech.articles WHERE content_hash IS NOT NULL
-                    ) all_hashes
-                    GROUP BY content_hash
-                    HAVING COUNT(*) > 1
-                """)
+                        SELECT content_hash FROM (
+                            {union_ch}
+                        ) u
+                        GROUP BY content_hash
+                        HAVING COUNT(*) > 1
+                    ) dup_hashes
+                """
+                )
                 content_result = cur.fetchone()
                 content_duplicates = (
                     content_result[0] if content_result and content_result[0] else 0
@@ -1506,31 +1525,33 @@ async def get_dashboard_metrics():
 
         try:
             with conn.cursor() as cur:
-                # Get aggregated metrics from all domain schemas
                 week_ago = datetime.now() - timedelta(days=7)
+                sch_list = _registry_silo_schemas()
+                n = len(sch_list)
+                sub_art = " + ".join(f"(SELECT COUNT(*) FROM {s}.articles)" for s in sch_list)
+                sub_story = " + ".join(f"(SELECT COUNT(*) FROM {s}.storylines)" for s in sch_list)
+                sub_feeds_all = " + ".join(f"(SELECT COUNT(*) FROM {s}.rss_feeds)" for s in sch_list)
+                sub_feeds_act = " + ".join(
+                    f"(SELECT COUNT(*) FROM {s}.rss_feeds WHERE is_active = true)" for s in sch_list
+                )
+                sub_today = " + ".join(
+                    f"(SELECT COUNT(*) FROM {s}.articles WHERE DATE(created_at) = CURRENT_DATE)"
+                    for s in sch_list
+                )
+                sub_week = " + ".join(
+                    f"(SELECT COUNT(*) FROM {s}.articles WHERE created_at >= %s)" for s in sch_list
+                )
                 cur.execute(
-                    """
+                    f"""
                     SELECT
-                        (SELECT COUNT(*) FROM politics.articles) +
-                        (SELECT COUNT(*) FROM finance.articles) +
-                        (SELECT COUNT(*) FROM science_tech.articles) as total_articles,
-                        (SELECT COUNT(*) FROM politics.storylines) +
-                        (SELECT COUNT(*) FROM finance.storylines) +
-                        (SELECT COUNT(*) FROM science_tech.storylines) as total_storylines,
-                        (SELECT COUNT(*) FROM politics.rss_feeds) +
-                        (SELECT COUNT(*) FROM finance.rss_feeds) +
-                        (SELECT COUNT(*) FROM science_tech.rss_feeds) as total_feeds,
-                        (SELECT COUNT(*) FROM politics.rss_feeds WHERE is_active = true) +
-                        (SELECT COUNT(*) FROM finance.rss_feeds WHERE is_active = true) +
-                        (SELECT COUNT(*) FROM science_tech.rss_feeds WHERE is_active = true) as active_feeds,
-                        (SELECT COUNT(*) FROM politics.articles WHERE DATE(created_at) = CURRENT_DATE) +
-                        (SELECT COUNT(*) FROM finance.articles WHERE DATE(created_at) = CURRENT_DATE) +
-                        (SELECT COUNT(*) FROM science_tech.articles WHERE DATE(created_at) = CURRENT_DATE) as articles_today,
-                        (SELECT COUNT(*) FROM politics.articles WHERE created_at >= %s) +
-                        (SELECT COUNT(*) FROM finance.articles WHERE created_at >= %s) +
-                        (SELECT COUNT(*) FROM science_tech.articles WHERE created_at >= %s) as articles_this_week
+                        {sub_art} as total_articles,
+                        {sub_story} as total_storylines,
+                        {sub_feeds_all} as total_feeds,
+                        {sub_feeds_act} as active_feeds,
+                        {sub_today} as articles_today,
+                        {sub_week} as articles_this_week
                 """,
-                    (week_ago, week_ago, week_ago),
+                    (week_ago,) * n,
                 )
 
                 stats = cur.fetchone()
@@ -2610,21 +2631,23 @@ async def analyze_existing_articles(
             raise HTTPException(status_code=500, detail="Database connection failed")
 
         try:
-            # Get active domain schemas
+            # Registry + existing silo schemas (same as RSS / automation; not public.domains.is_active)
             with conn.cursor() as cur:
-                if domains:
-                    domain_list = [d.strip() for d in domains.split(",")]
-                    placeholders = ",".join(["%s"] * len(domain_list))
-                    cur.execute(
-                        f"""
-                        SELECT schema_name FROM domains
-                        WHERE schema_name IN ({placeholders}) AND is_active = true
-                    """,
-                        domain_list,
-                    )
-                else:
-                    cur.execute("SELECT schema_name FROM domains WHERE is_active = true")
-                schemas = [row[0] for row in cur.fetchall()]
+                cur.execute("SELECT schema_name FROM information_schema.schemata")
+                existing_schemas = {r[0] for r in cur.fetchall()}
+            if domains:
+                tokens = [d.strip() for d in domains.split(",") if d.strip()]
+                schemas = []
+                for t in tokens:
+                    sch = resolve_domain_token_to_schema(t)
+                    if sch and sch in existing_schemas:
+                        schemas.append(sch)
+            else:
+                schemas = [
+                    d["schema_name"]
+                    for d in get_all_domains()
+                    if d["schema_name"] in existing_schemas
+                ]
 
             if not schemas:
                 raise HTTPException(status_code=404, detail="No active domains found")

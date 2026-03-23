@@ -15,6 +15,8 @@ dependencies = [
     # HTTP & Requests
     "requests>=2.31.0",
     "httptools>=0.6.0",
+    # Optional LLM response cache (NEWS_INTEL_LLM_CACHE_REDIS); import fails gracefully if unused
+    "redis>=5.0.0",
     # Data Processing
     "pandas>=2.0.0",
     "numpy>=1.25.0",

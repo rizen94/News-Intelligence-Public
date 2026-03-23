@@ -38,6 +38,18 @@ LOG_DIR = PROJECT_ROOT / "logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 
+def _log_registry_domains_for_rss() -> None:
+    """Same ``url_schema_pairs()`` as main API — Widow must deploy identical ``api/config/domains/*.yaml``."""
+    try:
+        from shared.domain_registry import url_schema_pairs
+
+        pairs = url_schema_pairs()
+        summary = ", ".join(f"{k}→{s}" for k, s in pairs)
+        logger.info("RSS domain registry (must match main PC): %s", summary)
+    except Exception as e:
+        logger.warning("Could not read domain registry: %s", e)
+
+
 def run_rss_collection():
     try:
         from collectors.rss_collector import collect_rss_feeds
@@ -50,6 +62,7 @@ def run_rss_collection():
 def main():
     logger.info("Starting secondary worker (RSS every %d min)", INTERVAL_SEC // 60)
     logger.info("DB: %s:%s/%s", os.getenv("DB_HOST", "127.0.0.1"), os.getenv("DB_PORT", "5432"), os.getenv("DB_NAME", "news_intel"))
+    _log_registry_domains_for_rss()
 
     cycle = 0
     while True:

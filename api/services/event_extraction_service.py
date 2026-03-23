@@ -15,6 +15,8 @@ from datetime import date, datetime
 from typing import Any
 
 from shared.services.llm_service import LLMService, ModelType
+from shared.services.ollama_model_caller import get_ollama_model_caller
+from shared.services.ollama_model_policy import InvocationKind
 
 from services.domain_synthesis_config import get_domain_synthesis_config
 from services.temporal_parser import extract_temporal_expressions, resolve_date
@@ -140,6 +142,7 @@ class EventExtractionService:
 
     def __init__(self, llm_service: LLMService | None = None):
         self.llm = llm_service or LLMService()
+        self._caller = get_ollama_model_caller()
 
     async def extract_events_from_article(
         self,
@@ -172,8 +175,20 @@ class EventExtractionService:
                 prompt += SCIENCE_TECH_EVENT_ADDENDUM
 
         try:
-            raw_response = await self.llm._call_ollama(ModelType.LLAMA_8B, prompt)
+            gen = await self._caller.generate(
+                prompt,
+                kind=InvocationKind.STRUCTURED_EXTRACTION,
+                approx_prompt_chars=len(prompt),
+            )
+            raw_response = gen.text
+            extraction_model = gen.model
             events_raw = self._parse_json_response(raw_response)
+            logger.info(
+                "event_extraction_parsed article_id=%s model=%s json_array_nonempty=%s",
+                article_id,
+                extraction_model,
+                bool(events_raw),
+            )
         except Exception as e:
             logger.error(f"Article {article_id}: LLM event extraction failed: {e}")
             return []
@@ -185,7 +200,14 @@ class EventExtractionService:
         events: list[dict[str, Any]] = []
         for idx, raw_evt in enumerate(events_raw):
             try:
-                evt = self._normalise_event(raw_evt, article_id, pub_date, storyline_id, idx)
+                evt = self._normalise_event(
+                    raw_evt,
+                    article_id,
+                    pub_date,
+                    storyline_id,
+                    idx,
+                    extraction_model=extraction_model,
+                )
                 if evt:
                     events.append(evt)
             except Exception as e:
@@ -222,6 +244,8 @@ class EventExtractionService:
         pub_date: datetime,
         storyline_id: str | None,
         sequence: int,
+        *,
+        extraction_model: str,
     ) -> dict[str, Any] | None:
         """Validate, resolve dates, compute fingerprint, return DB-ready dict."""
         title = (raw.get("event_title") or "").strip()
@@ -280,7 +304,7 @@ class EventExtractionService:
             "temporal_confidence": 0.9 if date_precision == "exact" else 0.5,
             "source_article_id": article_id,
             "extraction_method": "ml",
-            "extraction_model": ModelType.LLAMA_8B.value,
+            "extraction_model": extraction_model or ModelType.LLAMA_8B.value,
             "extraction_confidence": 0.8,
             "importance_score": 0.5,
             "location": location,

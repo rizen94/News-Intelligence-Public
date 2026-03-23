@@ -224,6 +224,8 @@ export const storylinesApi = {
       if (params.save != null) queryParams.save = params.save;
       if (params.minSimilarity != null)
         queryParams.min_similarity = params.minSimilarity;
+      if (params.minArticles != null)
+        queryParams.min_cluster_size = params.minArticles;
       const response = await getApi().post(
         `/api/${domainKey}/storylines/discover`,
         {},
