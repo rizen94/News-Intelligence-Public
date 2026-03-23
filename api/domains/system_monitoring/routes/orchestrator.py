@@ -231,7 +231,11 @@ async def orchestrator_manual_override(
                         pass
                     return {
                         "success": True,
-                        "result": {"source": "rss", "articles_collected": count},
+                        "result": {
+                            "source": "rss",
+                            "rss_activity": count,
+                            "articles_collected": count,
+                        },
                     }
             except Exception as e:
                 try:

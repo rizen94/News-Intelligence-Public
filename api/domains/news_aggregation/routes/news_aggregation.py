@@ -16,6 +16,7 @@ from shared.database.connection import get_db_connection, get_ui_db_connection
 from shared.domain_registry import DOMAIN_PATH_PATTERN, get_active_domain_keys, is_valid_domain_key
 from shared.services.domain_aware_service import (
     get_domain_data_schemas,
+    resolve_active_domain_schema,
     resolve_article_id_to_schema,
     validate_domain,
 )
@@ -69,19 +70,17 @@ async def health_check():
 async def get_domain_rss_feeds(domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN)):
     """Get all configured RSS feeds for a specific domain"""
     try:
-        # Validate domain
-        if not validate_domain(domain):
-            raise HTTPException(status_code=400, detail=f"Invalid or inactive domain: {domain}")
-
-        # Get schema name (read path — UI pool)
+        # Get schema (public.domains or registry + existing Postgres schema)
         conn = get_ui_db_connection()
+        if not conn:
+            raise HTTPException(status_code=500, detail="Database connection failed")
         try:
-            with conn.cursor() as cur:
-                cur.execute("SELECT schema_name FROM domains WHERE domain_key = %s", (domain,))
-                result = cur.fetchone()
-                if not result:
-                    raise HTTPException(status_code=400, detail=f"Domain {domain} not found")
-                schema_name = result[0]
+            schema_name, _ = resolve_active_domain_schema(domain, conn=conn)
+            if not schema_name:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid or inactive domain, or schema missing: {domain}",
+                )
 
             # Get feeds from domain schema with article counts and all metadata
             with conn.cursor() as cur:
@@ -155,14 +154,10 @@ async def get_domain_rss_feeds(domain: str = Path(..., pattern=DOMAIN_PATH_PATTE
 
 def _get_schema_for_domain(conn, domain: str):
     """Resolve schema_name from domain key. Raises HTTPException if invalid."""
-    if not validate_domain(domain):
+    schema_name, _ = resolve_active_domain_schema(domain, conn=conn)
+    if not schema_name:
         raise HTTPException(status_code=400, detail=f"Invalid or inactive domain: {domain}")
-    with conn.cursor() as cur:
-        cur.execute("SELECT schema_name FROM domains WHERE domain_key = %s", (domain,))
-        result = cur.fetchone()
-        if not result:
-            raise HTTPException(status_code=400, detail=f"Domain {domain} not found")
-        return result[0]
+    return schema_name
 
 
 @router.post("/{domain}/rss_feeds")
@@ -370,12 +365,13 @@ async def collect_rss_feeds_now(domain: str = Path(..., pattern=DOMAIN_PATH_PATT
         logger.info(f"Starting RSS feed collection via API for domain: {domain}")
 
         # Run collection synchronously (collects from all domains)
-        articles_added = collect_rss_feeds()
+        rss_activity = collect_rss_feeds()
 
         return {
             "success": True,
-            "message": "RSS feed collection completed",
-            "articles_added": articles_added,
+            "message": "RSS feed collection completed (new inserts + same-URL updates)",
+            "articles_added": rss_activity,
+            "rss_activity_total": rss_activity,
             "domain": domain,
             "timestamp": datetime.now().isoformat(),
         }

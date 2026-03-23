@@ -74,6 +74,22 @@ class BackgroundMLProcessor:
                 conn.close()
         return None
 
+    def _resolve_schema_for_task(
+        self, article_id: int, schema_hint: str | None
+    ) -> str | None:
+        """
+        Prefer queue row schema_name (disambiguates duplicate article ids across silos).
+        Fall back to first schema match (legacy rows with NULL schema_name).
+        """
+        from shared.domain_registry import get_schema_names_active
+
+        active = frozenset(get_schema_names_active())
+        if schema_hint and schema_hint in active:
+            row = self._get_article_data(article_id, schema_hint)
+            if row:
+                return schema_hint
+        return self._resolve_article_schema(article_id)
+
     def start_workers(self):
         """Start background worker threads"""
         if self.is_running:
@@ -158,7 +174,7 @@ class BackgroundMLProcessor:
         logger.info(f"Processing ML task {queue_id}: {operation_type} for article {article_id}")
 
         try:
-            schema = self._resolve_article_schema(article_id)
+            schema = self._resolve_schema_for_task(article_id, task.get("schema_name"))
             if not schema:
                 from shared.domain_registry import get_schema_names_active
 
@@ -258,6 +274,8 @@ class BackgroundMLProcessor:
         operation_type: str = "full_analysis",
         priority: int = 0,
         model_name: str = None,
+        *,
+        schema_name: str | None = None,
     ) -> int:
         """
         Queue an article for ML processing
@@ -267,12 +285,20 @@ class BackgroundMLProcessor:
             operation_type: Type of ML operation to perform
             priority: Priority level (higher = more important)
             model_name: Specific model to use (optional)
+            schema_name: Postgres silo schema (e.g. politics, science_tech). Strongly recommended;
+                article ids are not unique across domain tables.
 
         Returns:
             Queue ID of the created task
         """
         if not model_name:
             model_name = self.ml_service.model_name
+        if not schema_name:
+            logger.warning(
+                "Queued ML task article_id=%s without schema_name; id may resolve to wrong silo. "
+                "Run migration 190 and pass schema_name= from automation.",
+                article_id,
+            )
 
         conn = None
         try:
@@ -281,18 +307,22 @@ class BackgroundMLProcessor:
                 cursor.execute(
                     """
                         INSERT INTO ml_processing_queue
-                        (article_id, operation_type, model_name, priority, status)
-                        VALUES (%s, %s, %s, %s, 'queued')
+                        (article_id, operation_type, model_name, priority, status, schema_name)
+                        VALUES (%s, %s, %s, %s, 'queued', %s)
                         RETURNING queue_id
                     """,
-                    (article_id, operation_type, model_name, priority),
+                    (article_id, operation_type, model_name, priority, schema_name),
                 )
 
                 queue_id = cursor.fetchone()[0]
                 conn.commit()
 
                 logger.info(
-                    f"Queued article {article_id} for {operation_type} processing (queue_id: {queue_id})"
+                    "Queued article %s (schema=%s) for %s processing (queue_id: %s)",
+                    article_id,
+                    schema_name or "?",
+                    operation_type,
+                    queue_id,
                 )
                 return queue_id
 
@@ -445,7 +475,7 @@ class BackgroundMLProcessor:
             conn = get_db_connection()
             with conn.cursor() as cursor:
                 cursor.execute("""
-                        SELECT queue_id, article_id, operation_type, model_name, priority
+                        SELECT queue_id, article_id, operation_type, model_name, priority, schema_name
                         FROM ml_processing_queue
                         WHERE status = 'queued'
                         ORDER BY priority DESC, queued_at ASC
@@ -461,6 +491,7 @@ class BackgroundMLProcessor:
                             "operation_type": row[2],
                             "model_name": row[3],
                             "priority": row[4],
+                            "schema_name": row[5],
                         }
                     )
 

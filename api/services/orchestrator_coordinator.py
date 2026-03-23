@@ -158,8 +158,7 @@ class OrchestratorCoordinator:
                                     },
                                 )
                                 raise
-                            # Only treat RSS as "successful" if it actually adds new articles.
-                            # If dedup rejects everything (adds=0), we want adaptive backoff.
+                            # collect_rss_feeds returns new inserts + same-URL updates; zero => true empty/dedup-only.
                             success = (observations_count or 0) > 0
                             outcome = f"rss_collected_{observations_count}"
                             log_pipeline_trace(
@@ -167,6 +166,7 @@ class OrchestratorCoordinator:
                                 "orchestrator_rss_collection",
                                 "completed",
                                 {
+                                    "rss_activity": observations_count,
                                     "articles_added": observations_count,
                                     "source": source,
                                     "cycle": current_cycle,
@@ -507,7 +507,7 @@ class OrchestratorCoordinator:
                 SOURCE_RSS, success=True, observations_count=count
             )
             self._resource_governor.record_usage(RESOURCE_API_CALLS, 1.0)
-            return {"source": "rss", "articles_collected": count}
+            return {"source": "rss", "rss_activity": count, "articles_collected": count}
         handler, topic = self._collection_handler_and_topic(source)
         if handler == "finance" and self._get_finance_orchestrator:
             orch = self._get_finance_orchestrator()

@@ -21,8 +21,8 @@ async def main():
     print("=" * 60)
     print("1. RSS Feed Collection")
     print("=" * 60)
-    articles_added = collect_rss_feeds()
-    print(f"   Articles added: {articles_added}\n")
+    rss_activity = collect_rss_feeds()
+    print(f"   RSS activity (new + updated): {rss_activity}\n")
 
     print("=" * 60)
     print("2. Queue unprocessed articles & process (entity + topic extraction)")

@@ -2597,8 +2597,10 @@ def verify_single_claim(
     hours: int = Query(72, ge=1, le=720),
 ) -> dict:
     """
-    Full verification pipeline for a single claim: corroboration, contradiction check,
-    source reliability scoring. Returns verification_status and confidence.
+    Full verification for one claim: governance-weighted corroboration (excludes originating
+    article), contradictions, originating-source tier, reference signals (Wikipedia, Wikidata,
+    GDELT, finance SEC articles, internal peers), optional borderline LLM entailment.
+    Returns verification_status, confidence, reference_checks, reference_boosts.
     """
     from services.fact_verification_service import verify_claim
     return verify_claim(claim_id, domain_key, hours=hours)
@@ -2609,9 +2611,9 @@ def corroborate_claim_text(
     body: dict = Body(..., examples=[{"claim_text": "Federal Reserve raises interest rates", "domain_key": "finance"}]),
 ) -> dict:
     """
-    Check if a claim text is corroborated by multiple independent sources.
-    Returns status (corroborated/partially_corroborated/single_source/unverified),
-    source count, and confidence.
+    Corroborate claim text against domain articles (flexible full-text, YAML source_credibility
+    weights). Status may be corroborated, partially_corroborated, authoritative_single,
+    single_established, single_source, or unverified.
     """
     claim_text = body.get("claim_text", "")
     domain_key = body.get("domain_key", "politics")

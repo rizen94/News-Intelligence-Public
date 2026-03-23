@@ -38,8 +38,17 @@ import requests
 from psycopg2.extras import RealDictCursor
 
 from services.domain_synthesis_config import get_domain_synthesis_config
+from shared.domain_registry import resolve_domain_schema
 
 logger = logging.getLogger(__name__)
+
+
+def _schema_from_domain_key(domain: str) -> str:
+    """Map URL domain key to Postgres silo (YAML schema_name may differ from hyphen→underscore)."""
+    d = (domain or "").strip()
+    if not d:
+        return "politics"
+    return resolve_domain_schema(d)
 
 # Configuration
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
@@ -414,7 +423,7 @@ class AIStorylineDiscovery:
         If ``hours`` is None or <= 0, use the full backlog subject to ``limit``.
         If ``hours`` is set, only rows with ``created_at`` within the last N hours.
         """
-        schema = domain.replace("-", "_")
+        schema = _schema_from_domain_key(domain)
         self._ensure_embedding_column(schema)
         if limit is None:
             limit = STORYLINE_DISCOVERY_ARTICLE_LIMIT
@@ -606,7 +615,7 @@ class AIStorylineDiscovery:
                 # Group by schema for batch efficiency
                 by_schema = {}
                 for article in to_cache:
-                    schema = article.domain.replace("-", "_")
+                    schema = _schema_from_domain_key(article.domain)
                     if schema not in by_schema:
                         by_schema[schema] = []
                     by_schema[schema].append(article)
@@ -1050,7 +1059,7 @@ Reply with ONLY a JSON object:
         Build a StorylineCluster sufficient for generate_storyline_metadata / fast fallbacks
         without running embedding or HDBSCAN (used by proactive detection, etc.).
         """
-        domain_norm = (domain or "").replace("-", "_").strip() or "politics"
+        domain_key = (domain or "").strip() or "politics"
         ae_list: list[ArticleEmbedding] = []
         for a in articles:
             try:
@@ -1079,7 +1088,7 @@ Reply with ONLY a JSON object:
                 article_id=aid,
                 title=title,
                 content=content,
-                domain=domain_norm,
+                domain=domain_key,
                 created_at=pub,
                 embedding=np.zeros(768, dtype=np.float64),
             )
@@ -1152,7 +1161,7 @@ Reply with ONLY a JSON object:
         conn = self.get_db_connection()
         out = []
         try:
-            schema = domain.replace("-", "_")
+            schema = _schema_from_domain_key(domain)
             with conn.cursor() as cur:
                 cur.execute(f"""
                     SELECT s.id, s.title, s.description,
@@ -1187,7 +1196,7 @@ Reply with ONLY a JSON object:
             return set()
         conn = self.get_db_connection()
         try:
-            schema = domain.replace("-", "_")
+            schema = _schema_from_domain_key(domain)
             with conn.cursor() as cur:
                 cur.execute(
                     f"""
@@ -1260,7 +1269,7 @@ Reply with ONLY a JSON object:
         conn = self.get_db_connection()
         added = 0
         try:
-            schema = domain.replace("-", "_")
+            schema = _schema_from_domain_key(domain)
             with conn.cursor() as cur:
                 for article in cluster.articles:
                     if article.article_id <= 0:
@@ -1287,7 +1296,7 @@ Reply with ONLY a JSON object:
         """Save a storyline suggestion to the database"""
         conn = self.get_db_connection()
         try:
-            schema = domain.replace("-", "_")
+            schema = _schema_from_domain_key(domain)
             with conn.cursor() as cur:
                 cur.execute(
                     f"""

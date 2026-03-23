@@ -59,7 +59,7 @@ class ProactiveDetectionService(DomainAwareService):
                                a.source_domain, a.quality_score
                         FROM {self.schema}.articles a
                         LEFT JOIN {self.schema}.storyline_articles sa ON a.id = sa.article_id
-                        WHERE a.published_at >= %s
+                        WHERE COALESCE(a.published_at, a.created_at) >= %s
                           AND sa.article_id IS NULL
                         ORDER BY a.published_at DESC
                         LIMIT 1000

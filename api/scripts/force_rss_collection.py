@@ -73,7 +73,7 @@ def main() -> None:
     from collectors.rss_collector import collect_rss_feeds
 
     n = collect_rss_feeds()
-    print(f"Done. Articles added (this run): {n}")
+    print(f"Done. RSS activity this run (new inserts + same-URL updates): {n}")
 
 
 if __name__ == "__main__":

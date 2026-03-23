@@ -630,6 +630,9 @@ async def get_automation_status(request: Request) -> dict[str, Any]:
                 "active_workers": status.get("active_workers", 0),
                 "phases": phases,
                 "backlog_counts": backlog_counts,
+                "pending_counts": status.get("pending_counts") or {},
+                "document_pipeline": status.get("document_pipeline") or {},
+                "work_balancer": status.get("work_balancer") or {},
             },
         }
     except asyncio.TimeoutError:
@@ -1954,11 +1957,16 @@ def execute_pipeline_orchestration():
             sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
             from collectors.rss_collector import collect_rss_feeds
 
-            articles_added = collect_rss_feeds()
+            rss_activity = collect_rss_feeds()
             _log_pipeline_trace(
-                trace_id, "rss_collection", "completed", {"articles_added": articles_added}
+                trace_id,
+                "rss_collection",
+                "completed",
+                {"rss_activity": rss_activity, "articles_added": rss_activity},
             )
-            logger.info(f"[{trace_id}] RSS Collection completed: {articles_added} articles added")
+            logger.info(
+                f"[{trace_id}] RSS Collection completed: {rss_activity} articles touched (new + updated)"
+            )
         except Exception as e:
             _log_pipeline_trace(trace_id, "rss_collection", "error", {"error": str(e)})
             logger.error(f"[{trace_id}] RSS Collection failed: {e}")

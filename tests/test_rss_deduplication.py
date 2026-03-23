@@ -23,12 +23,12 @@ def test_rss_collection_with_deduplication():
     try:
         # Run RSS collection
         print("   📡 Starting RSS feed collection...")
-        articles_added = collect_rss_feeds()
+        rss_activity = collect_rss_feeds()
 
-        print(f"   ✓ RSS collection completed: {articles_added} articles added")
+        print(f"   ✓ RSS collection completed: {rss_activity} RSS activity (new + updated)")
 
         # Check if deduplication was active
-        if articles_added >= 0:
+        if rss_activity >= 0:
             print("   ✅ RSS collection with deduplication working correctly")
             return True
         else:

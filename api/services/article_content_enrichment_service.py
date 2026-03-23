@@ -289,6 +289,9 @@ def enrich_articles_batch(batch_size: int = 20) -> int:
     Drain enrichment backlog: select by enrichment_status/attempts, fetch with trafilatura (10s timeout),
     update status and attempts; keep RSS content on failure; prune after 3 attempts.
     Returns count of enriched articles.
+
+    Fair share: each active domain may fetch up to ceil(batch_size / n_domains) candidates per call
+    (capped by remaining success budget), so high display_order silos are not starved by earlier domains.
     """
     try:
         import trafilatura
@@ -312,9 +315,16 @@ def enrich_articles_batch(batch_size: int = 20) -> int:
             cur.execute("SET statement_timeout = '300s'")
         enriched = 0
         remaining = batch_size
-        for domain_key, schema_name in url_schema_pairs():
+        pairs = list(url_schema_pairs())
+        if not pairs:
+            return 0
+        n_domains = len(pairs)
+        share = max(1, (batch_size + n_domains - 1) // n_domains)
+
+        for domain_key, schema_name in pairs:
             if remaining <= 0:
                 break
+            fetch_limit = min(share, remaining)
             with conn.cursor() as cur:
                 cur.execute(
                     f"""
@@ -326,7 +336,7 @@ def enrich_articles_batch(batch_size: int = 20) -> int:
                     ORDER BY COALESCE(enrichment_attempts, 0) ASC, created_at DESC
                     LIMIT %s
                     """,
-                    (remaining,),
+                    (fetch_limit,),
                 )
                 rows = cur.fetchall()
 
@@ -378,9 +388,10 @@ def enrich_articles_batch(batch_size: int = 20) -> int:
 
                 time.sleep(RATE_LIMIT_SLEEP)
 
+        for _dk, sch in pairs:
             with conn.cursor() as cur:
                 cur.execute(
-                    f"""UPDATE {schema_name}.articles SET enrichment_status = 'inaccessible' WHERE enrichment_status = 'failed' AND enrichment_attempts >= 3"""
+                    f"""UPDATE {sch}.articles SET enrichment_status = 'inaccessible' WHERE enrichment_status = 'failed' AND enrichment_attempts >= 3"""
                 )
             conn.commit()
 

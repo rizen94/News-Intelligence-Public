@@ -3,14 +3,17 @@ Fact verification service — multi-source corroboration, contradiction detectio
 source reliability scoring, and completeness assessment.
 
 Operates on extracted_claims, article content, and entity data to assess factual
-confidence. Each claim gets a verification_status (corroborated, contested,
-unverified, contradicted) with supporting evidence.
+confidence. Corroboration blends orchestrator ``source_credibility`` tiers (YAML)
+with legacy source labels, supports single authoritative sources, and optional
+cross-checks: Wikipedia, Wikidata (incl. year overlap), GDELT mention density,
+finance SEC-hosted articles, internal same-subject claims, and borderline LLM entailment.
 
 T3.3 of V6_QUALITY_FIRST_TODO.md.
 """
 
 import json
 import logging
+import os
 import re
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
@@ -130,6 +133,514 @@ def score_source_reliability_batch(source_domains: list[str]) -> dict[str, dict[
     return {s: score_source_reliability(s) for s in set(source_domains)}
 
 
+def _governance_reliability_for_source(source_label: str) -> dict[str, Any]:
+    """Blend orchestrator source_credibility (YAML) with legacy string tiers."""
+    from shared.services.source_credibility_service import resolve_source_credibility
+
+    gov = resolve_source_credibility("", source_label or "")
+    legacy = score_source_reliability(source_label or "")
+    eff = min(1.0, (float(gov.multiplier) + float(legacy["score"])) / 2.0)
+    return {
+        "governance_tier": gov.tier_id,
+        "governance_multiplier": float(gov.multiplier),
+        "requires_corroboration": gov.requires_corroboration,
+        "legacy_score": legacy["score"],
+        "legacy_tier": legacy["tier"],
+        "effective_score": eff,
+    }
+
+
+def _originating_article_ids_for_claim(claim_id: int) -> set[int]:
+    """Article IDs linked to the claim's context (exclude from corroboration counts)."""
+    conn = get_db_connection()
+    if not conn:
+        return set()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT atc.article_id
+                FROM intelligence.extracted_claims ec
+                JOIN intelligence.article_to_context atc ON atc.context_id = ec.context_id
+                WHERE ec.id = %s
+                """,
+                (claim_id,),
+            )
+            return {r[0] for r in cur.fetchall() if r[0] is not None}
+    except Exception as e:
+        logger.debug("originating_article_ids_for_claim: %s", e)
+        return set()
+    finally:
+        conn.close()
+
+
+def _flexible_tsquery_search(
+    cur,
+    schema: str,
+    cutoff: datetime,
+    key_terms: list[str],
+    claim_text: str,
+) -> tuple[list[tuple], str]:
+    """Try strict AND (3,2,1 terms) then plainto_tsquery on claim prefix."""
+    tried: list[str] = []
+    for n in (3, 2, 1):
+        if len(key_terms) < n:
+            continue
+        tsq = " & ".join(f"'{t}'" for t in key_terms[:n])
+        if tsq in tried:
+            continue
+        tried.append(tsq)
+        cur.execute(
+            f"""
+            SELECT a.id, a.title, a.source_domain, a.published_at,
+                   LEFT(a.content, 500)
+            FROM {schema}.articles a
+            WHERE a.published_at >= %s
+              AND to_tsvector('english', COALESCE(a.title, '') || ' ' || COALESCE(a.content, ''))
+                  @@ to_tsquery('english', %s)
+            ORDER BY a.published_at DESC
+            LIMIT 50
+            """,
+            (cutoff, tsq),
+        )
+        rows = cur.fetchall()
+        if rows:
+            return rows, tsq
+
+    plain = re.sub(r"\s+", " ", (claim_text or "")[:140]).strip()
+    if len(plain) >= 8:
+        cur.execute(
+            f"""
+            SELECT a.id, a.title, a.source_domain, a.published_at,
+                   LEFT(a.content, 500)
+            FROM {schema}.articles a
+            WHERE a.published_at >= %s
+              AND to_tsvector('english', COALESCE(a.title, '') || ' ' || COALESCE(a.content, ''))
+                  @@ plainto_tsquery('english', %s)
+            ORDER BY a.published_at DESC
+            LIMIT 50
+            """,
+            (cutoff, plain),
+        )
+        rows = cur.fetchall()
+        if rows:
+            return rows, f"plain:{plain[:48]}"
+    return [], ""
+
+
+def _lexical_overlap(claim_text: str, reference: str) -> float:
+    terms = set(_extract_key_terms(claim_text))
+    if not terms:
+        return 0.0
+    ref_low = (reference or "").lower()
+    hits = sum(1 for t in terms if t in ref_low)
+    return hits / len(terms)
+
+
+def wikipedia_reference_check(claim_text: str, subject: str | None = None) -> dict[str, Any]:
+    """
+    Search Wikipedia by subject (or claim prefix), compare lead extract to claim terms.
+    Reference only — not ground truth.
+    """
+    out: dict[str, Any] = {
+        "status": "skipped",
+        "overlap": 0.0,
+        "title": None,
+        "url": None,
+    }
+    if os.environ.get("FACT_VERIFY_WIKIPEDIA", "true").lower() not in ("1", "true", "yes"):
+        out["status"] = "disabled"
+        return out
+    query = (subject or "").strip() or (claim_text or "")[:100]
+    if len(query) < 3:
+        out["status"] = "no_query"
+        return out
+    try:
+        from modules.ml.rag_external_services import WikipediaService
+
+        wiki = WikipediaService()
+        arts = wiki.search_articles(query, limit=3)
+        if not arts:
+            out["status"] = "no_article"
+            return out
+        title = arts[0].get("title") or ""
+        summ = wiki.get_article_summary(title)
+        if not summ:
+            out["status"] = "no_summary"
+            return out
+        extract = summ.get("extract") or ""
+        ov = _lexical_overlap(claim_text, extract)
+        out.update(
+            {
+                "overlap": round(ov, 3),
+                "title": title,
+                "url": summ.get("url"),
+                "status": (
+                    "supported"
+                    if ov >= 0.45
+                    else "weak_support"
+                    if ov >= 0.22
+                    else "low_overlap"
+                ),
+            }
+        )
+    except Exception as e:
+        logger.debug("wikipedia_reference_check: %s", e)
+        out["status"] = "error"
+        out["error"] = str(e)
+    return out
+
+
+def count_internal_similar_claims(
+    claim_id: int,
+    subject: str,
+    domain_key: str,
+    hours: int = 168,
+) -> dict[str, Any]:
+    """Other extracted_claims in the same domain with identical normalized subject."""
+    conn = get_db_connection()
+    if not conn:
+        return {"count": 0, "error": "no_db"}
+    try:
+        subj = (subject or "").strip().lower()
+        if len(subj) < 2:
+            return {"count": 0, "window_hours": hours}
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT COUNT(*) FROM intelligence.extracted_claims ec
+                JOIN intelligence.contexts c ON c.id = ec.context_id
+                WHERE c.domain_key = %s
+                  AND ec.id != %s
+                  AND ec.created_at >= NOW() - (%s * INTERVAL '1 hour')
+                  AND LOWER(TRIM(ec.subject_text)) = %s
+                """,
+                (domain_key, claim_id, hours, subj),
+            )
+            cnt = cur.fetchone()[0]
+            return {"count": int(cnt), "window_hours": hours}
+    except Exception as e:
+        logger.debug("count_internal_similar_claims: %s", e)
+        return {"count": 0, "error": str(e)}
+    finally:
+        conn.close()
+
+
+# Wikimedia-style User-Agent (required)
+_EXTERNAL_HTTP_UA = (
+    "NewsIntelligence/1.0 (fact verification; +https://github.com/news-intelligence)"
+)
+
+
+def wikidata_reference_check(claim_text: str, subject: str | None = None) -> dict[str, Any]:
+    """
+    Resolve subject via Wikidata search; compare English label + description to claim terms.
+    If the claim contains years, reward overlap with years in the reference blob (dated events).
+    """
+    out: dict[str, Any] = {
+        "status": "skipped",
+        "overlap": 0.0,
+        "id": None,
+        "label": None,
+        "dated_year_overlap": False,
+    }
+    if os.environ.get("FACT_VERIFY_WIKIDATA", "true").lower() not in ("1", "true", "yes"):
+        out["status"] = "disabled"
+        return out
+    query = (subject or "").strip() or (claim_text or "")[:80]
+    if len(query) < 2:
+        out["status"] = "no_query"
+        return out
+    try:
+        import requests
+
+        r = requests.get(
+            "https://www.wikidata.org/w/api.php",
+            params={
+                "action": "wbsearchentities",
+                "search": query[:240],
+                "language": "en",
+                "format": "json",
+                "limit": 3,
+            },
+            headers={"User-Agent": _EXTERNAL_HTTP_UA},
+            timeout=12,
+        )
+        r.raise_for_status()
+        hits = r.json().get("search") or []
+        if not hits:
+            out["status"] = "no_entity"
+            return out
+        qid = hits[0].get("id")
+        label = hits[0].get("label") or ""
+        r2 = requests.get(
+            "https://www.wikidata.org/w/api.php",
+            params={
+                "action": "wbgetentities",
+                "ids": qid,
+                "props": "descriptions|labels",
+                "languages": "en",
+                "format": "json",
+            },
+            headers={"User-Agent": _EXTERNAL_HTTP_UA},
+            timeout=12,
+        )
+        r2.raise_for_status()
+        entities = r2.json().get("entities") or {}
+        ent = entities.get(qid) or {}
+        desc = (ent.get("descriptions") or {}).get("en", {}).get("value") or ""
+        lab = (ent.get("labels") or {}).get("en", {}).get("value") or label
+        blob = f"{lab} {desc}"
+        ov = _lexical_overlap(claim_text, blob)
+        years_claim = set(re.findall(r"\b(?:19\d{2}|20\d{2})\b", claim_text or ""))
+        years_ref = set(re.findall(r"\b(?:19\d{2}|20\d{2})\b", blob))
+        dated_align = bool(years_claim & years_ref) if years_claim else False
+        if ov >= 0.4 or (dated_align and ov >= 0.18):
+            st = "supported"
+        elif ov >= 0.18 or dated_align:
+            st = "weak_support"
+        else:
+            st = "low_overlap"
+        out.update(
+            {
+                "status": st,
+                "overlap": round(ov, 3),
+                "id": qid,
+                "label": lab,
+                "dated_year_overlap": dated_align,
+                "years_in_claim": sorted(years_claim)[:6],
+            }
+        )
+    except Exception as e:
+        logger.debug("wikidata_reference_check: %s", e)
+        out["status"] = "error"
+        out["error"] = str(e)
+    return out
+
+
+def gdelt_mention_signal(
+    claim_text: str,
+    subject: str | None = None,
+    days: int = 30,
+) -> dict[str, Any]:
+    """Low-weight global mention density from GDELT DOC API (not authoritative)."""
+    out: dict[str, Any] = {"status": "skipped", "doc_count": 0, "signal_strength": 0.0}
+    if os.environ.get("FACT_VERIFY_GDELT", "true").lower() not in ("1", "true", "yes"):
+        out["status"] = "disabled"
+        return out
+    term = (subject or "").strip()
+    if len(term) < 3:
+        kt = _extract_key_terms(claim_text)
+        term = " ".join(kt[:3]) if kt else ""
+    if len(term) < 3:
+        out["status"] = "no_query"
+        return out
+    try:
+        import requests
+
+        end = datetime.now(timezone.utc)
+        start = end - timedelta(days=days)
+        params = {
+            "query": term[:120],
+            "format": "json",
+            "maxrecords": 20,
+            "startdatetime": start.strftime("%Y%m%d%H%M%S"),
+            "enddatetime": end.strftime("%Y%m%d%H%M%S"),
+        }
+        r = requests.get(
+            "https://api.gdeltproject.org/api/v2/doc/doc",
+            params=params,
+            headers={"User-Agent": _EXTERNAL_HTTP_UA},
+            timeout=15,
+        )
+        if r.status_code != 200:
+            out["status"] = "http_error"
+            out["http_status"] = r.status_code
+            return out
+        data = r.json()
+        docs = data.get("articles") or data.get("docs") or []
+        count = len(docs) if isinstance(docs, list) else 0
+        strength = min(1.0, count / 12.0)
+        out.update(
+            {
+                "status": "ok",
+                "doc_count": count,
+                "signal_strength": round(strength, 3),
+                "query_used": term[:120],
+            }
+        )
+    except Exception as e:
+        logger.debug("gdelt_mention_signal: %s", e)
+        out["status"] = "error"
+        out["error"] = str(e)
+    return out
+
+
+def finance_sec_articles_signal(
+    claim_text: str,
+    domain_key: str,
+    lookback_days: int = 120,
+) -> dict[str, Any]:
+    """Match claim terms against recent finance.articles whose URL looks SEC/EDGAR-hosted."""
+    out: dict[str, Any] = {"status": "skipped", "match_count": 0}
+    if domain_key != "finance":
+        out["status"] = "skipped_domain"
+        return out
+    if os.environ.get("FACT_VERIFY_SEC_FINANCE", "true").lower() not in ("1", "true", "yes"):
+        out["status"] = "disabled"
+        return out
+    terms = _extract_key_terms(claim_text)
+    plain = " ".join(terms[:6]) if len(terms) >= 2 else re.sub(r"[^\w\s-]", " ", (claim_text or "")[:100]).strip()
+    if len(plain) < 4:
+        out["status"] = "no_query"
+        return out
+    schema = resolve_domain_schema("finance")
+    conn = get_db_connection()
+    if not conn:
+        return {"status": "error", "match_count": 0, "error": "no_db"}
+    try:
+        with conn.cursor() as cur:
+            try:
+                cur.execute(
+                    f"""
+                    SELECT COUNT(DISTINCT a.id)
+                    FROM {schema}.articles a
+                    WHERE a.published_at >= NOW() - (%s * INTERVAL '1 day')
+                      AND (
+                          a.url ILIKE %s
+                          OR a.url ILIKE %s
+                      )
+                      AND to_tsvector('english',
+                          COALESCE(a.title, '') || ' ' || COALESCE(LEFT(a.content, 3000), ''))
+                          @@ plainto_tsquery('english', %s)
+                    """,
+                    (lookback_days, "%sec.gov%", "%sec.gov/Archives%", plain[:200]),
+                )
+                cnt = int(cur.fetchone()[0] or 0)
+            except Exception:
+                like_parts: list[str] = []
+                params2: list[Any] = [lookback_days, "%sec.gov%", "%sec.gov/Archives%"]
+                for t in terms[:5] if terms else [plain[:40]]:
+                    if not (t or "").strip():
+                        continue
+                    like_parts.append("(a.title ILIKE %s OR LEFT(a.content, 2500) ILIKE %s)")
+                    p = f"%{(t or '')[:80]}%"
+                    params2.extend([p, p])
+                if not like_parts:
+                    cnt = 0
+                else:
+                    cur.execute(
+                        f"""
+                        SELECT COUNT(DISTINCT a.id)
+                        FROM {schema}.articles a
+                        WHERE a.published_at >= NOW() - (%s * INTERVAL '1 day')
+                          AND (a.url ILIKE %s OR a.url ILIKE %s)
+                          AND ({' OR '.join(like_parts)})
+                        """,
+                        tuple(params2),
+                    )
+                    cnt = int(cur.fetchone()[0] or 0)
+        out.update({"status": "ok", "match_count": cnt, "plain_query": plain[:120]})
+    except Exception as e:
+        logger.debug("finance_sec_articles_signal: %s", e)
+        out["status"] = "error"
+        out["error"] = str(e)
+    finally:
+        conn.close()
+    return out
+
+
+def _corroboration_is_borderline(corroboration: dict[str, Any]) -> bool:
+    st = corroboration.get("status") or ""
+    cf = float(corroboration.get("confidence") or 0)
+    if st in ("partially_corroborated", "single_established") and 0.40 <= cf <= 0.74:
+        return True
+    if st == "single_source" and 0.33 <= cf <= 0.58:
+        return True
+    return False
+
+
+def entailment_llm_borderline_check(
+    claim_text: str,
+    corroboration: dict[str, Any],
+    extra_context: str = "",
+) -> dict[str, Any]:
+    """
+    Small LLM pass only when corroboration is borderline; returns verdict + confidence.
+    Skips if asyncio event loop is already running (avoid asyncio.run conflict).
+    """
+    out: dict[str, Any] = {
+        "status": "skipped",
+        "verdict": None,
+        "model_confidence": 0.0,
+    }
+    if os.environ.get("FACT_VERIFY_ENTAILMENT_LLM", "true").lower() not in ("1", "true", "yes"):
+        out["status"] = "disabled"
+        return out
+    if not _corroboration_is_borderline(corroboration):
+        out["status"] = "skipped_not_borderline"
+        return out
+    parts: list[str] = []
+    for src in (corroboration.get("sources") or [])[:4]:
+        parts.append(f"Source: {src.get('source')}")
+        for art in (src.get("articles") or [])[:2]:
+            parts.append(
+                ((art.get("title") or "") + " " + (art.get("excerpt") or ""))[:320]
+            )
+    ctx = "\n".join(parts)[:1700]
+    if extra_context:
+        ctx = (extra_context.strip()[:700] + "\n" + ctx)[:2000]
+    prompt = (
+        "You assess whether CONTEXT supports a CLAIM (verification helper).\n"
+        f"CLAIM: {claim_text[:650]}\n"
+        f"CONTEXT:\n{ctx}\n"
+        'Reply with ONLY JSON: {"verdict":"supports"|"contradicts"|"insufficient",'
+        '"confidence":0.0-1.0}\n'
+        'Use "supports" only if context clearly backs the claim; '
+        '"insufficient" if unclear; "contradicts" if it conflicts.'
+    )
+
+    async def _run_llm() -> str:
+        from shared.services.llm_service import LLMService, ModelType
+
+        llm = LLMService()
+        return await llm._call_ollama(ModelType.LLAMA_8B, prompt)
+
+    raw: str = ""
+    try:
+        import asyncio
+
+        try:
+            asyncio.get_running_loop()
+            out["status"] = "skipped_nested_event_loop"
+            return out
+        except RuntimeError:
+            pass
+
+        raw = asyncio.run(_run_llm())
+        cleaned = (raw or "").strip()
+        if cleaned.startswith("```"):
+            cleaned = cleaned.split("\n", 1)[-1].rsplit("```", 1)[0]
+        parsed = json.loads(cleaned)
+        verdict = str(parsed.get("verdict") or "insufficient").lower()
+        mc = float(parsed.get("confidence") or 0)
+        out.update(
+            {
+                "status": "ok",
+                "verdict": verdict,
+                "model_confidence": max(0.0, min(1.0, mc)),
+            }
+        )
+    except json.JSONDecodeError:
+        out["status"] = "parse_error"
+        out["raw"] = raw[:400] if raw else ""
+    except Exception as e:
+        logger.debug("entailment_llm_borderline_check: %s", e)
+        out["status"] = "error"
+        out["error"] = str(e)
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Multi-source corroboration
 # ---------------------------------------------------------------------------
@@ -142,19 +653,15 @@ def corroborate_claim(
     claim_id: int | None = None,
 ) -> dict[str, Any]:
     """
-    Check if a claim is corroborated by multiple independent sources.
+    Check if a claim is corroborated by domain articles, weighted by source_credibility.
 
-    Searches articles for similar content and counts distinct source_domain
-    values that mention key terms from the claim.
+    Excludes originating article(s) when ``claim_id`` is set. Uses flexible full-text
+    (AND 3→2→1 key terms, then plainto_tsquery). Single tier_1 (government / wires)
+    can yield ``authoritative_single``; single tier_2 → ``single_established``.
 
     Returns:
-    {
-        status: "corroborated" | "partially_corroborated" | "unverified" | "single_source",
-        source_count: int,
-        article_count: int,
-        sources: [{source, reliability_score, article_title}],
-        confidence: 0.0-1.0,
-    }
+        status: corroborated | partially_corroborated | authoritative_single |
+            single_established | single_source | unverified | error
     """
     schema = resolve_domain_schema(domain_key)
     conn = get_db_connection()
@@ -162,7 +669,6 @@ def corroborate_claim(
         return {"status": "error", "error": "Database connection failed"}
 
     try:
-        # Extract key terms from claim for search
         key_terms = _extract_key_terms(claim_text)
         if not key_terms:
             conn.close()
@@ -175,27 +681,21 @@ def corroborate_claim(
                 "reason": "Could not extract key terms from claim",
             }
 
+        exclude_ids: set[int] = set()
+        if claim_id is not None:
+            exclude_ids = _originating_article_ids_for_claim(claim_id)
+
         cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
 
         with conn.cursor() as cur:
-            # Search for articles containing key terms
-            search_query = " & ".join(f"'{t}'" for t in key_terms[:5])
-            cur.execute(
-                f"""
-                SELECT a.id, a.title, a.source_domain, a.published_at,
-                       LEFT(a.content, 500)
-                FROM {schema}.articles a
-                WHERE a.published_at >= %s
-                  AND to_tsvector('english', COALESCE(a.title, '') || ' ' || COALESCE(a.content, ''))
-                      @@ to_tsquery('english', %s)
-                ORDER BY a.published_at DESC
-                LIMIT 50
-                """,
-                (cutoff, search_query),
+            articles, query_used = _flexible_tsquery_search(
+                cur, schema, cutoff, key_terms, claim_text
             )
-            articles = cur.fetchall()
 
         conn.close()
+
+        if exclude_ids:
+            articles = [a for a in articles if a[0] not in exclude_ids]
 
         if not articles:
             return {
@@ -204,9 +704,10 @@ def corroborate_claim(
                 "article_count": 0,
                 "sources": [],
                 "confidence": 0.0,
+                "key_terms_used": key_terms[:5],
+                "search_query_used": query_used or None,
             }
 
-        # Aggregate by source
         source_articles: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for aid, title, source, pub_at, excerpt in articles:
             source_articles[source or "unknown"].append(
@@ -218,37 +719,59 @@ def corroborate_claim(
                 }
             )
 
-        sources = []
+        sources: list[dict[str, Any]] = []
         for source, arts in source_articles.items():
-            rel = score_source_reliability(source)
+            gr = _governance_reliability_for_source(source)
+            weight = float(gr["effective_score"]) * (len(arts) ** 0.5)
             sources.append(
                 {
                     "source": source,
-                    "reliability_score": rel["score"],
-                    "tier": rel["tier"],
+                    "reliability_score": gr["effective_score"],
+                    "tier": gr["legacy_tier"],
+                    "governance_tier": gr["governance_tier"],
+                    "governance_multiplier": gr["governance_multiplier"],
+                    "requires_corroboration": gr["requires_corroboration"],
                     "article_count": len(arts),
                     "articles": arts[:3],
+                    "_weight": weight,
                 }
             )
 
-        sources.sort(key=lambda s: s["reliability_score"], reverse=True)
+        sources.sort(key=lambda s: (s["_weight"], s["reliability_score"]), reverse=True)
+        for s in sources:
+            del s["_weight"]
+
         source_count = len(sources)
         article_count = len(articles)
+        top = sources[0] if sources else {}
+        top_gov_tier = str(top.get("governance_tier") or "")
+        top_mult = float(top.get("governance_multiplier") or 0)
+        top_req_coro = bool(top.get("requires_corroboration"))
 
-        # Determine status
         if (
             source_count >= MIN_CORROBORATION_SOURCES
             and article_count >= MIN_CORROBORATION_ARTICLES
         ):
             status = "corroborated"
-            avg_reliability = sum(s["reliability_score"] for s in sources) / len(sources)
-            confidence = min(1.0, avg_reliability * (0.5 + 0.5 * min(source_count / 5, 1.0)))
+            avg_rel = sum(s["reliability_score"] for s in sources) / len(sources)
+            confidence = min(1.0, avg_rel * (0.5 + 0.5 * min(source_count / 5, 1.0)))
         elif source_count >= 2:
             status = "partially_corroborated"
-            confidence = 0.5
+            confidence = min(
+                0.72,
+                sum(s["reliability_score"] for s in sources) / max(len(sources), 1),
+            )
         elif article_count >= 1:
-            status = "single_source"
-            confidence = sources[0]["reliability_score"] * 0.5 if sources else 0.3
+            eff = float(top.get("reliability_score") or 0)
+            if top_gov_tier == "tier_1" and not top_req_coro:
+                status = "authoritative_single"
+                confidence = min(1.0, max(eff, top_mult * 0.92))
+            elif top_gov_tier == "tier_2" or top_mult >= 0.85:
+                status = "single_established"
+                confidence = min(0.82, max(0.48, eff * 0.88))
+            else:
+                status = "single_source"
+                confidence = max(0.25, eff * 0.55)
         else:
             status = "unverified"
             confidence = 0.0
@@ -258,8 +781,9 @@ def corroborate_claim(
             "source_count": source_count,
             "article_count": article_count,
             "sources": sources[:10],
-            "confidence": round(confidence, 2),
+            "confidence": round(float(confidence), 2),
             "key_terms_used": key_terms[:5],
+            "search_query_used": query_used or None,
         }
     except Exception as e:
         logger.warning("corroborate_claim: %s", e)
@@ -821,12 +1345,17 @@ def verify_claim(
 ) -> dict[str, Any]:
     """
     Full verification pipeline for a single extracted claim:
-      1. Load claim from DB
-      2. Run multi-source corroboration
-      3. Check for contradictions with other claims about the same subject
-      4. Score source reliability
-      5. Return combined verification result
+      1. Load claim (+ originating article URL / feed name for credibility)
+      2. Corroboration (governance-weighted, excludes originating article)
+      3. Contradictions among recent claims
+      4. Reference signals: Wikipedia, Wikidata (incl. year overlap), GDELT mention density,
+         finance SEC-hosted articles (finance domain), internal same-subject claims
+      5. Optional LLM entailment when corroboration is borderline
+      6. Combined verification_status + confidence (caps on weak signals)
     """
+    from shared.services.source_credibility_service import resolve_source_credibility
+
+    schema = resolve_domain_schema(domain_key)
     conn = get_db_connection()
     if not conn:
         return {"success": False, "error": "Database connection failed"}
@@ -855,8 +1384,7 @@ def verify_claim(
                 "context_id": claim_row[5],
             }
 
-            # Get the article source for this claim
-            source_domain = None
+            source_type = None
             cur.execute(
                 """
                 SELECT c.source_type, c.domain_key FROM intelligence.contexts c
@@ -866,16 +1394,39 @@ def verify_claim(
             )
             ctx_row = cur.fetchone()
             if ctx_row:
-                source_domain = ctx_row[0]
+                source_type = ctx_row[0]
+
+            orig_url = ""
+            orig_feed_name = ""
+            cur.execute(
+                """
+                SELECT atc.article_id FROM intelligence.article_to_context atc
+                WHERE atc.context_id = %s
+                LIMIT 1
+                """,
+                (claim["context_id"],),
+            )
+            link = cur.fetchone()
+            if link and link[0]:
+                aid = link[0]
+                cur.execute(
+                    f"""
+                    SELECT url, source_domain FROM {schema}.articles
+                    WHERE id = %s
+                    """,
+                    (aid,),
+                )
+                arow = cur.fetchone()
+                if arow:
+                    orig_url = (arow[0] or "")[:2000]
+                    orig_feed_name = (arow[1] or "")[:500]
 
         conn.close()
 
         claim_text = f"{claim['subject']} {claim['predicate']} {claim['object']}"
 
-        # 1. Corroboration
         corroboration = corroborate_claim(claim_text, domain_key, hours=hours, claim_id=claim_id)
 
-        # 2. Contradictions
         contradictions = detect_contradictions(domain_key, hours=hours, limit=10)
         related_contradictions = [
             c
@@ -883,38 +1434,165 @@ def verify_claim(
             if c["claim_a"]["id"] == claim_id or c["claim_b"]["id"] == claim_id
         ]
 
-        # 3. Source reliability
-        source_reliability = score_source_reliability(source_domain or "")
+        gov_orig = resolve_source_credibility(orig_url, orig_feed_name)
+        legacy_orig = score_source_reliability(orig_feed_name or source_type or "")
+        source_reliability = {
+            "score": round(
+                min(1.0, (float(gov_orig.multiplier) + float(legacy_orig["score"])) / 2.0),
+                3,
+            ),
+            "tier": legacy_orig["tier"],
+            "governance_tier": gov_orig.tier_id,
+            "governance_multiplier": float(gov_orig.multiplier),
+            "source": orig_feed_name or source_type,
+        }
 
-        # Combined verification status
+        cor_status = corroboration.get("status") or "unverified"
+        cor_conf = float(corroboration.get("confidence") or 0)
+
         if related_contradictions:
             verification_status = "contested"
             verification_confidence = max(
                 0.3,
-                corroboration.get("confidence", 0)
-                - max(c["confidence"] for c in related_contradictions) * 0.3,
+                cor_conf - max(c["confidence"] for c in related_contradictions) * 0.3,
             )
-        elif corroboration.get("status") == "corroborated":
+        elif cor_status == "corroborated":
             verification_status = "corroborated"
-            verification_confidence = corroboration.get("confidence", 0.7)
-        elif corroboration.get("status") == "partially_corroborated":
+            verification_confidence = cor_conf
+        elif cor_status == "authoritative_single":
+            verification_status = "corroborated"
+            verification_confidence = cor_conf
+        elif cor_status == "partially_corroborated":
             verification_status = "partially_verified"
-            verification_confidence = corroboration.get("confidence", 0.5)
+            verification_confidence = cor_conf
+        elif cor_status == "single_established":
+            verification_status = "partially_verified"
+            verification_confidence = cor_conf
+        elif cor_status == "single_source" and cor_conf >= 0.35:
+            verification_status = "partially_verified"
+            verification_confidence = cor_conf
         else:
             verification_status = "unverified"
             verification_confidence = min(
-                source_reliability.get("score", 0.5) * 0.5,
-                claim.get("confidence", 0.5) or 0.5,
+                float(source_reliability["score"]) * 0.5,
+                float(claim.get("confidence") or 0.5),
             )
+
+        wiki_check = wikipedia_reference_check(claim_text, claim.get("subject"))
+        wikidata_check = wikidata_reference_check(claim_text, claim.get("subject"))
+        gdelt_check = gdelt_mention_signal(claim_text, claim.get("subject"))
+        sec_check = (
+            finance_sec_articles_signal(claim_text, domain_key)
+            if domain_key == "finance"
+            else {"status": "skipped_domain", "match_count": 0}
+        )
+        internal_sim = count_internal_similar_claims(
+            claim_id, claim.get("subject") or "", domain_key, hours=max(24, hours * 2)
+        )
+        reference_checks = {
+            "wikipedia": wiki_check,
+            "wikidata": wikidata_check,
+            "gdelt": gdelt_check,
+            "finance_sec_articles": sec_check,
+            "internal_similar_subject_claims": internal_sim,
+        }
+
+        boost_reason: list[str] = []
+        if verification_status == "unverified":
+            ws = wiki_check.get("status")
+            if ws == "supported":
+                verification_status = "partially_verified"
+                verification_confidence = max(verification_confidence, 0.42)
+                boost_reason.append("wikipedia_overlap_strong")
+            elif ws == "weak_support":
+                verification_status = "partially_verified"
+                verification_confidence = max(verification_confidence, 0.36)
+                boost_reason.append("wikipedia_overlap_weak")
+            wd = wikidata_check.get("status")
+            if wd == "supported":
+                verification_status = "partially_verified"
+                verification_confidence = max(verification_confidence, 0.43)
+                boost_reason.append("wikidata_overlap_strong")
+            elif wd == "weak_support":
+                verification_status = "partially_verified"
+                verification_confidence = max(verification_confidence, 0.37)
+                boost_reason.append("wikidata_overlap_weak")
+            elif wikidata_check.get("dated_year_overlap") and wd != "low_overlap":
+                verification_status = "partially_verified"
+                verification_confidence = max(verification_confidence, 0.35)
+                boost_reason.append("wikidata_year_alignment")
+            ic = int(internal_sim.get("count") or 0)
+            if ic >= 2:
+                verification_status = "partially_verified"
+                verification_confidence = max(
+                    verification_confidence,
+                    min(0.55, 0.35 + 0.04 * min(ic, 5)),
+                )
+                boost_reason.append("internal_subject_peers")
+
+        if verification_status == "partially_verified":
+            if wikidata_check.get("status") == "supported":
+                verification_confidence = min(
+                    0.78, verification_confidence + 0.03
+                )
+                boost_reason.append("wikidata_partial_boost")
+
+        if gdelt_check.get("status") == "ok" and int(gdelt_check.get("doc_count") or 0) >= 5:
+            delta = min(
+                0.04,
+                float(gdelt_check.get("signal_strength") or 0) * 0.055,
+            )
+            if delta > 0.008:
+                verification_confidence = min(0.82, verification_confidence + delta)
+                boost_reason.append("gdelt_mention_density")
+
+        if (
+            sec_check.get("status") == "ok"
+            and int(sec_check.get("match_count") or 0) >= 1
+        ):
+            verification_confidence = min(0.85, verification_confidence + 0.05)
+            boost_reason.append("finance_sec_article_match")
+
+        entailment_context_parts: list[str] = []
+        if wiki_check.get("title"):
+            entailment_context_parts.append(f"Wikipedia article: {wiki_check.get('title')}")
+        if wikidata_check.get("label"):
+            entailment_context_parts.append(
+                f"Wikidata: {wikidata_check.get('label')} ({wikidata_check.get('id')})"
+            )
+        entailment_check = entailment_llm_borderline_check(
+            claim_text,
+            corroboration,
+            extra_context="\n".join(entailment_context_parts),
+        )
+        reference_checks["entailment_llm"] = entailment_check
+
+        if entailment_check.get("status") == "ok":
+            ev = str(entailment_check.get("verdict") or "")
+            emc = float(entailment_check.get("model_confidence") or 0)
+            if ev == "supports" and emc >= 0.55:
+                if verification_status == "unverified":
+                    verification_status = "partially_verified"
+                verification_confidence = max(
+                    verification_confidence,
+                    min(0.72, 0.45 + 0.22 * emc),
+                )
+                boost_reason.append("llm_entailment_supports")
+            elif ev == "contradicts" and emc >= 0.72 and verification_status != "corroborated":
+                verification_status = "contested"
+                verification_confidence = min(verification_confidence, 0.38)
+                boost_reason.append("llm_entailment_contradicts")
 
         return {
             "success": True,
             "claim": claim,
             "verification_status": verification_status,
-            "verification_confidence": round(verification_confidence, 2),
+            "verification_confidence": round(float(verification_confidence), 2),
             "corroboration": corroboration,
             "contradictions": related_contradictions,
             "source_reliability": source_reliability,
+            "reference_checks": reference_checks,
+            "reference_boosts": boost_reason,
         }
     except Exception as e:
         logger.warning("verify_claim: %s", e)
@@ -947,7 +1625,7 @@ def verify_recent_claims(
                 FROM intelligence.extracted_claims ec
                 JOIN intelligence.contexts c ON c.id = ec.context_id
                 WHERE c.domain_key = %s
-                  AND ec.created_at >= NOW() - INTERVAL '%s hours'
+                  AND ec.created_at >= NOW() - (%s * INTERVAL '1 hour')
                   AND ec.confidence >= 0.5
                 ORDER BY ec.confidence DESC, ec.created_at DESC
                 LIMIT %s
@@ -975,6 +1653,8 @@ def verify_recent_claims(
                     "confidence": r.get("verification_confidence", 0),
                     "source_count": r.get("corroboration", {}).get("source_count", 0),
                     "contradiction_count": len(r.get("contradictions", [])),
+                    "corroboration_status": r.get("corroboration", {}).get("status"),
+                    "reference_boosts": r.get("reference_boosts") or [],
                 }
             )
 

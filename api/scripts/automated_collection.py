@@ -36,7 +36,9 @@ class AutomatedCollection:
         try:
             # Use the existing collect_rss_feeds function
             articles_collected = collect_rss_feeds()
-            logger.info(f"RSS collection completed. Total articles collected: {articles_collected}")
+            logger.info(
+                "RSS collection completed. Activity (new + updated): %s", articles_collected
+            )
             return articles_collected
 
         except Exception as e:
@@ -98,7 +100,7 @@ class AutomatedCollection:
         if articles_collected > 0:
             self.trigger_ml_processing()
         else:
-            logger.info("No new articles collected, skipping ML processing")
+            logger.info("No RSS activity (new or updated), skipping ML processing")
 
         logger.info(f"Collection cycle completed at {datetime.now()}")
         logger.info("=" * 50)

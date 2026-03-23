@@ -49,6 +49,15 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+def _rss_max_entries_per_feed() -> int:
+    """Cap items processed per feed per run (env RSS_MAX_ENTRIES_PER_FEED, default 100, clamped 1–500)."""
+    try:
+        n = int(os.environ.get("RSS_MAX_ENTRIES_PER_FEED", "100").strip() or "100")
+    except ValueError:
+        n = 100
+    return max(1, min(n, 500))
+
+
 def _apply_rss_source_credibility(
     feed_url: str, feed_name: str, quality_score: float
 ) -> tuple[float, dict | None]:
@@ -1026,8 +1035,12 @@ def is_excluded_content(
 
 def collect_rss_feeds() -> int:
     """
-    Collect articles from all active RSS feeds with deduplication
-    Returns: Number of articles added
+    Collect articles from all active RSS feeds with deduplication.
+
+    Returns:
+        Count of **new inserts plus same-URL updates** in this run. Used by automation/orchestrator
+        so refresh-only cycles still count as productive (no false empty-fetch backoff). For inserts
+        only, see logs ("Articles added" vs "Articles updated").
     """
     logger.info("Starting RSS feed collection with deduplication (v5.0 domain-aware)...")
 
@@ -1141,7 +1154,8 @@ def collect_rss_feeds() -> int:
                         except FutureTimeoutError:
                             raise TimeoutError("RSS parsing timeout")
 
-                    for entry in feed.entries[:50]:
+                    _cap = _rss_max_entries_per_feed()
+                    for entry in feed.entries[:_cap]:
                         try:
                             feed_cur.execute("SAVEPOINT sp_article")
                             title = entry.get("title", "")[:500]
@@ -1507,7 +1521,7 @@ def collect_rss_feeds() -> int:
 
                     filter_str = f" ({', '.join(filter_summary)})" if filter_summary else ""
                     logger.info(f"✅ {feed_name}: Added {articles_added} articles{filter_str}")
-                    entries_count = min(50, len(feed.entries)) if feed.entries else 0
+                    entries_count = min(_rss_max_entries_per_feed(), len(feed.entries)) if feed.entries else 0
                     _rss_log("success", fetched=entries_count, saved=articles_added)
 
                     # Note: Topic clustering will be handled by periodic background tasks
@@ -1604,7 +1618,8 @@ def collect_rss_feeds() -> int:
             if content_excluded > 0:
                 logger.info(f"     - Content exclusion (sports/entertainment): {content_excluded}")
 
-        return total_articles_added
+        activity = total_articles_added + total_articles_updated
+        return activity
 
     except Exception as e:
         logger.error(f"Error during RSS collection: {e}")
@@ -1672,7 +1687,7 @@ def collect_rss_feed(feed_url: str, feed_name: str = "Unknown") -> int:
                 else "science-tech"
             )
 
-        for entry in feed.entries:
+        for entry in feed.entries[: _rss_max_entries_per_feed()]:
             try:
                 cur.execute("SAVEPOINT sp_article")
                 title = entry.get("title", "")[:500]
@@ -1882,4 +1897,4 @@ if __name__ == "__main__":
     # Test RSS collection
     print("Testing RSS collection...")
     result = collect_rss_feeds()
-    print(f"Collection completed. Articles added: {result}")
+    print(f"Collection completed. RSS activity (new + updated): {result}")

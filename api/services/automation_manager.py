@@ -39,6 +39,7 @@ import logging
 import os
 import queue
 import time
+from uuid import uuid4
 from collections import defaultdict, deque
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -113,9 +114,11 @@ WORKLOAD_MIN_COOLDOWN = (
     10  # seconds between enqueueing the same phase when it has work (avoid flood)
 )
 # Don't run collection_cycle when downstream pending exceeds this.
-# Default sum: content_enrichment + context_sync + document_processing.
+# Default sum: content_enrichment + context_sync + document_processing (minus COLLECTION_THROTTLE_EXCLUDE_PHASES).
 # Optional: comma-separated phase names in COLLECTION_THROTTLE_EXTRA_PHASES (e.g. ml_processing,entity_extraction).
-COLLECTION_THROTTLE_PENDING_THRESHOLD = 500
+COLLECTION_THROTTLE_PENDING_THRESHOLD = int(
+    os.environ.get("COLLECTION_THROTTLE_PENDING_THRESHOLD", "1200")
+)
 _COLLECTION_THROTTLE_BASE = (
     "content_enrichment",
     "context_sync",
@@ -133,6 +136,9 @@ def _collection_throttle_pending_total(pending: dict[str, int] | None) -> tuple[
             k = part.strip()
             if k and k not in keys:
                 keys.append(k)
+    exclude_raw = os.environ.get("COLLECTION_THROTTLE_EXCLUDE_PHASES", "document_processing")
+    exclude = frozenset(x.strip() for x in exclude_raw.split(",") if x.strip())
+    keys = [k for k in keys if k not in exclude]
     breakdown = {k: int(p.get(k, 0) or 0) for k in keys}
     return sum(breakdown.values()), breakdown
 # When True, scheduler ignores analysis-window step lock; workload + pipeline order determine what runs.
@@ -341,7 +347,7 @@ PHASE_ESTIMATED_DURATION_SECONDS = {
     "proactive_detection": 300,  # v8: emerging storylines per domain
     "fact_verification": 120,  # v8: verify_recent_claims per domain
     "content_refinement_queue": 420,  # storyline RAG / timeline narrative / ~70B finisher (queued user jobs)
-    "nightly_enrichment_context": 7200,  # 02:00–05:00 local unified pipeline; exits when all idle
+    "nightly_enrichment_context": 21600,  # 01:00–07:00 local unified pipeline (NIGHTLY_PIPELINE_*); exits when idle
 }
 
 
@@ -435,7 +441,7 @@ class AutomationManager:
                 "depends_on": [],
                 "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["collection_cycle"],
             },
-            # 02:00–05:00 local (NIGHTLY_PIPELINE_*): enrichment → context_sync → ~70B; GPU when ingest idle
+            # 01:00–07:00 local (NIGHTLY_PIPELINE_*): RSS kickoff → enrichment → context_sync → sequential drain → ~70B
             "nightly_enrichment_context": {
                 "interval": 60,
                 "last_run": None,
@@ -1549,8 +1555,8 @@ class AutomationManager:
         if schedule.get("idle_only") and not self._is_system_idle():
             return False
 
-        # Nightly unified pipeline [NIGHTLY_PIPELINE_START, END): nightly_enrichment_context owns
-        # enrichment, context_sync, and refinement queue; exits when all idle.
+        # Nightly unified pipeline [NIGHTLY_PIPELINE_START, END): nightly_enrichment_context owns the long drain;
+        # NIGHTLY_PIPELINE_EXCLUSIVE (default on) blocks other scheduled phases until 07:00 local.
         try:
             from services.nightly_ingest_window_service import in_nightly_pipeline_window_est
 
@@ -1563,6 +1569,21 @@ class AutomationManager:
             return False
         if task_name == "nightly_enrichment_context" and not _nightly_pipe:
             return False
+
+        # During the unified nightly window, only run the long drain + essentials unless disabled.
+        if _nightly_pipe:
+            raw_exc = os.environ.get("NIGHTLY_PIPELINE_EXCLUSIVE", "1").lower()
+            if raw_exc in ("1", "true", "yes"):
+                allowed = frozenset(
+                    x.strip()
+                    for x in os.environ.get(
+                        "NIGHTLY_PIPELINE_ALLOWED_SCHEDULED_PHASES",
+                        "nightly_enrichment_context,health_check,pending_db_flush",
+                    ).split(",")
+                    if x.strip()
+                )
+                if task_name not in allowed:
+                    return False
 
         backlog_counts = backlog_counts or {}
         if (
@@ -1592,7 +1613,26 @@ class AutomationManager:
                 if schedule.get("last_run")
                 else 9999
             )
-            if time_since >= WORKLOAD_MIN_COOLDOWN and self._are_dependencies_satisfied(
+            cooldown_sec = WORKLOAD_MIN_COOLDOWN
+            try:
+                from services.backlog_metrics import BATCH_SIZE_PER_TASK
+                from services.workload_balancer import (
+                    effective_workload_cooldown_seconds,
+                    workload_balancer_enabled,
+                    workload_balancer_phase_names,
+                )
+
+                if workload_balancer_enabled() and task_name in workload_balancer_phase_names():
+                    _bs = BATCH_SIZE_PER_TASK.get(task_name, 30)
+                    cooldown_sec = effective_workload_cooldown_seconds(
+                        task_name,
+                        pending,
+                        base_cooldown=WORKLOAD_MIN_COOLDOWN,
+                        batch_size=int(_bs),
+                    )
+            except Exception:
+                pass
+            if time_since >= cooldown_sec and self._are_dependencies_satisfied(
                 task_name, schedule, current_time
             ):
                 return True
@@ -1893,6 +1933,7 @@ class AutomationManager:
                 nightly_ingest_exclusive_automation_enabled()
                 and in_nightly_enrichment_context_window_est()
                 and not task_allowed_during_nightly_ingest_exclusive(task.name)
+                and not (task.metadata or {}).get("nightly_sequential_drain")
             ):
                 logger.debug("Nightly ingest exclusive window — deferring %s", task.name)
                 task.status = TaskStatus.PENDING
@@ -1942,7 +1983,11 @@ class AutomationManager:
             try:
                 from shared.services.api_request_tracker import should_yield_to_api
 
-                if task.name not in _OLLAMA_YIELD_EXEMPT and should_yield_to_api():
+                if (
+                    not (task.metadata or {}).get("nightly_sequential_drain")
+                    and task.name not in _OLLAMA_YIELD_EXEMPT
+                    and should_yield_to_api()
+                ):
                     logger.debug(
                         f"Yielding to API — deferring {task.name} (web page load takes priority)"
                     )
@@ -1986,6 +2031,7 @@ class AutomationManager:
                 if (
                     nightly_gpu_refinement_exclusive_gpu_enabled()
                     and in_nightly_gpu_refinement_window_est()
+                    and not (task.metadata or {}).get("nightly_sequential_drain")
                 ):
                     _nightly_ollama_allow = frozenset(
                         x.strip()
@@ -2172,7 +2218,9 @@ class AutomationManager:
             )
 
             # Continuous iteration: when work remains, queue next run (v8: capped per analysis window)
-            if task.name in BATCH_PHASES_CONTINUOUS:
+            if task.name in BATCH_PHASES_CONTINUOUS and not (task.metadata or {}).get(
+                "nightly_sequential_drain"
+            ):
                 try:
                     current = self._requeue_counts.get(task.name, 0)
                     if current >= self._max_requeue_per_window:
@@ -2233,11 +2281,15 @@ class AutomationManager:
                     enrichment_backlog = counts.get("content_enrichment", 0) or 0
                 except Exception:
                     pass
-            for other_name, other_sched in self.schedules.items():
-                if not other_sched.get("enabled", True):
-                    continue
-                deps = other_sched.get("depends_on") or []
-                if task.name in deps:
+            if (task.metadata or {}).get("nightly_sequential_drain"):
+                pass
+            else:
+                for other_name, other_sched in self.schedules.items():
+                    if not other_sched.get("enabled", True):
+                        continue
+                    deps = other_sched.get("depends_on") or []
+                    if task.name not in deps:
+                        continue
                     if (
                         enrichment_backlog > 0
                         and other_name not in ENRICHMENT_BACKLOG_FIRST_WHITELIST
@@ -2406,9 +2458,12 @@ class AutomationManager:
 
         try:
             loop = asyncio.get_event_loop()
-            added = await loop.run_in_executor(None, collect_rss_feeds)
-            if added > 0:
-                logger.info(f"RSS processing: {added} articles collected from domain feeds")
+            activity = await loop.run_in_executor(None, collect_rss_feeds)
+            if activity > 0:
+                logger.info(
+                    "RSS processing: %s articles touched (new inserts + same-URL updates)",
+                    activity,
+                )
         except Exception as e:
             logger.warning(f"RSS processing failed: {e}")
 
@@ -2419,7 +2474,9 @@ class AutomationManager:
         try:
             from services.nightly_ingest_window_service import in_nightly_pipeline_window_est
 
-            if in_nightly_pipeline_window_est():
+            if in_nightly_pipeline_window_est() and not (task.metadata or {}).get(
+                "nightly_sequential_drain"
+            ):
                 logger.debug(
                     "Content enrichment: nightly pipeline window — handled by nightly_enrichment_context"
                 )
@@ -2671,7 +2728,9 @@ class AutomationManager:
         try:
             from services.nightly_ingest_window_service import in_nightly_pipeline_window_est
 
-            if in_nightly_pipeline_window_est():
+            if in_nightly_pipeline_window_est() and not (task.metadata or {}).get(
+                "nightly_sequential_drain"
+            ):
                 logger.debug(
                     "Context sync: nightly pipeline window — handled by nightly_enrichment_context"
                 )
@@ -2983,7 +3042,7 @@ class AutomationManager:
             logger.warning("Content refinement queue failed: %s", e)
 
     async def _execute_nightly_enrichment_context(self, task: Task):
-        """Nightly pipeline window: enrichment → context_sync → ~70B queue; exits when all idle."""
+        """Nightly window: RSS kickoff → enrichment → context_sync → sequential phase drain → GPU refinement queue."""
         from services.nightly_ingest_window_service import (
             in_nightly_pipeline_window_est,
             run_nightly_unified_pipeline_drain,
@@ -2999,6 +3058,7 @@ class AutomationManager:
 
         try:
             stats = await run_nightly_unified_pipeline_drain(
+                automation=self,
                 force_outside_window=force,
             )
             if (
@@ -3006,15 +3066,19 @@ class AutomationManager:
                 or stats.get("contexts_created", 0)
                 or stats.get("gpu_processed", 0)
                 or stats.get("gpu_failed", 0)
+                or stats.get("sequential_phase_runs", 0)
+                or stats.get("kickoff_rss_activity", 0)
             ):
                 logger.info(
                     "Nightly pipeline: cycles=%s enrich_batches=%s articles=%s sync_rounds=%s contexts=%s "
-                    "gpu_batches=%s gpu_processed=%s gpu_failed=%s stopped=%s gpu_stopped=%s",
+                    "seq_runs=%s kickoff_rss=%s gpu_batches=%s gpu_processed=%s gpu_failed=%s stopped=%s gpu_stopped=%s",
                     stats.get("outer_cycles"),
                     stats.get("enrichment_batches"),
                     stats.get("enrichment_articles"),
                     stats.get("context_sync_rounds"),
                     stats.get("contexts_created"),
+                    stats.get("sequential_phase_runs"),
+                    stats.get("kickoff_rss_activity"),
                     stats.get("gpu_batches"),
                     stats.get("gpu_processed"),
                     stats.get("gpu_failed"),
@@ -3024,12 +3088,14 @@ class AutomationManager:
             elif stats.get("outer_cycles", 0):
                 logger.info(
                     "Nightly pipeline: cycles=%s enrich_batches=%s articles=%s sync_rounds=%s contexts=%s "
-                    "gpu_batches=%s gpu_processed=%s gpu_failed=%s stopped=%s gpu_stopped=%s",
+                    "seq_runs=%s kickoff_rss=%s gpu_batches=%s gpu_processed=%s gpu_failed=%s stopped=%s gpu_stopped=%s",
                     stats.get("outer_cycles"),
                     stats.get("enrichment_batches"),
                     stats.get("enrichment_articles"),
                     stats.get("context_sync_rounds"),
                     stats.get("contexts_created"),
+                    stats.get("sequential_phase_runs"),
+                    stats.get("kickoff_rss_activity"),
                     stats.get("gpu_batches"),
                     stats.get("gpu_processed"),
                     stats.get("gpu_failed"),
@@ -3038,6 +3104,31 @@ class AutomationManager:
                 )
         except Exception as e:
             logger.warning("Nightly unified pipeline failed: %s", e)
+
+    async def run_nightly_sequential_phase(self, phase_name: str) -> dict[str, Any]:
+        """Run one scheduler phase under nightly unified drain (bypasses yield / exclusive / chain noise)."""
+        if phase_name not in self.schedules:
+            logger.warning("Nightly sequential: unknown phase %s — skipping", phase_name)
+            return {"skipped": True, "reason": "unknown_phase"}
+        sched = self.schedules[phase_name]
+        if not sched.get("enabled", True):
+            logger.debug("Nightly sequential: phase %s disabled — skipping", phase_name)
+            return {"skipped": True, "reason": "disabled"}
+        task = Task(
+            id=f"nightly_seq_{phase_name}_{uuid4().hex[:10]}",
+            name=phase_name,
+            priority=sched.get("priority", TaskPriority.NORMAL),
+            status=TaskStatus.PENDING,
+            created_at=datetime.now(timezone.utc),
+            metadata={
+                "nightly_sequential_drain": True,
+                "scheduled": True,
+                "phase": sched.get("phase", 0),
+                "estimated_duration": sched.get("estimated_duration", 60),
+            },
+        )
+        await self._execute_task(task, "nightly_sequential_drain")
+        return {"skipped": False}
 
     async def _execute_entity_enrichment(self, task: Task):
         """Phase 3 RAG: Run entity enrichment batch (Wikipedia -> entity_profiles + versioned_facts)."""
@@ -3541,7 +3632,9 @@ class AutomationManager:
 
                 for (article_id,) in articles:
                     try:
-                        ml_processor.queue_article_for_processing(article_id, "full_analysis")
+                        ml_processor.queue_article_for_processing(
+                            article_id, "full_analysis", schema_name=schema
+                        )
                         processed_count += 1
                     except Exception as e:
                         logger.error("Error processing article %s (%s): %s", article_id, schema, e)
@@ -3861,7 +3954,7 @@ class AutomationManager:
             logger.warning("Proactive detection task failed: %s", e)
 
     async def _execute_fact_verification(self, task: Task):
-        """v8: Verify recent claims per domain; write corroboration/contradiction to extracted_claims."""
+        """v8: Verify recent claims per domain (governance-weighted corroboration, Wikipedia + internal checks; results returned to logs/API, not persisted on claim rows)."""
         try:
             from services.fact_verification_service import verify_recent_claims
 
@@ -3909,7 +4002,13 @@ class AutomationManager:
                         WHERE ae.id IS NULL
                           AND a.content IS NOT NULL
                           AND LENGTH(a.content) > 100
-                          AND (LENGTH(a.content) >= 500 OR a.created_at < NOW() - INTERVAL '2 hours')
+                          AND (
+                            LENGTH(a.content) >= 500
+                            OR a.created_at < NOW() - INTERVAL '2 hours'
+                            OR COALESCE(a.enrichment_status, '') IN (
+                                'enriched', 'failed', 'inaccessible'
+                            )
+                          )
                         ORDER BY a.created_at DESC
                         LIMIT 20
                     """)
@@ -4799,6 +4898,31 @@ class AutomationManager:
                 out["pending_counts"] = get_all_pending_counts()
             except Exception:
                 pass
+        try:
+            from services.document_pipeline_metrics import get_document_pipeline_metrics
+
+            out["document_pipeline"] = get_document_pipeline_metrics()
+        except Exception:
+            out["document_pipeline"] = {"error": "unavailable"}
+        try:
+            from services.workload_balancer import (
+                sample_effective_cooldowns,
+                workload_balancer_enabled,
+                workload_balancer_phase_names,
+            )
+
+            pend = out.get("pending_counts") or {}
+            out["work_balancer"] = {
+                "enabled": workload_balancer_enabled(),
+                "phases": sorted(workload_balancer_phase_names()),
+                "base_cooldown_seconds": WORKLOAD_MIN_COOLDOWN,
+                "effective_cooldown_seconds": sample_effective_cooldowns(
+                    pend,
+                    base_cooldown=WORKLOAD_MIN_COOLDOWN,
+                ),
+            }
+        except Exception:
+            out["work_balancer"] = {"enabled": False, "error": "unavailable"}
         return out
 
     def get_metrics(self) -> dict[str, Any]:

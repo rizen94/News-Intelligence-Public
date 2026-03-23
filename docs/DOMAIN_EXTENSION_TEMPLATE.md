@@ -87,6 +87,7 @@ print('OK:', p)
 
 - **`domain_registry` (YAML + built-ins):** operational routing, RSS URLs, many iterators (`get_schema_names_active()`, `url_schema_pairs()`).
 - **`public.domains`:** canonical DB catalog; **`get_all_domains()`** for automation that uses the table.
+- **`resolve_active_domain_schema()`** in [`domain_aware_service.py`](../api/shared/services/domain_aware_service.py): **`validate_domain`**, **`ArticleService`**, and **`GET /api/{domain}/rss_feeds`** first use an active **`public.domains`** row; if missing, they accept a **registry-active** key when the **Postgres schema** already exists (so the web SPA can list the domain from **`registry_domains`** while you finish DB registration). You should still insert **`public.domains`** for full automation parity.
 - Keep **`domain_key`**, **`schema_name`**, and **active flags** aligned between them.
 
 ---
@@ -105,6 +106,43 @@ print('OK:', p)
 | Restart | Only if needed for stale import-time caches (see domains README). |
 | Audit | Grep for `science_tech`, `("politics", "finance"`, and your URL key; fix stragglers or extend shared helpers (see domains README). |
 | Reserved | After the silo exists, consider adding **`schema_name`** to **`RESERVED_SCHEMA_NAMES`** in `domain_registry.py` so a future mistaken provision cannot reuse it (optional hardening). |
+
+---
+
+## Permanent domain contract (all systems agree)
+
+Treat a **finished** optional domain like a fourth/fifth built-in silo: same code paths, isolated data. **Rules** so registry, DB, API, automation, and UI stay aligned:
+
+1. **One URL key, one schema, one row** — `domain_key` (hyphenated) and `schema_name` (underscore) are fixed after go-live; they appear identically in **onboarding YAML**, **`public.domains`**, and every `/api/{domain_key}/...` call. Renaming later is a **migration + deploy** event, not a YAML tweak alone.
+
+2. **Dual activation locked** — Before calling the silo “established”: **`is_active: true`** in `api/config/domains/{key}.yaml` **and** **`public.domains.is_active = TRUE`** for that key. **`provision_domain.py`** is the default way to set the DB side; avoid hand-editing only one side.
+
+3. **Schema parity** — The silo has the **same core table set** as other domains (articles, rss_feeds, storylines, … per your migration template). Pipeline code iterates **`url_schema_pairs()`** / **`get_schema_names_active()`**; a missing table in one schema breaks that silo only but can confuse operators.
+
+4. **RSS seed or explicit empty** — Either **`data_sources.rss.seed_feed_urls`** was applied (provision or **`seed_domain_rss_from_yaml.py`**) or you accept an empty **`{schema}.rss_feeds`** until you add feeds. “Feeds checked” in UI requires **`collect_rss_feeds`** hitting that schema via the registry.
+
+5. **Synthesis config** — If topics/narrative bias matter for this research area, add a **`domain_synthesis_config.yaml`** block for `domain_key`. Onboarding YAML does **not** replace that file.
+
+6. **Post-add grep** — Run the patterns in [`api/config/domains/README.md`](../api/config/domains/README.md) (**Known code touchpoints**) so no legacy tuple still hardcodes only three domains for **your** feature.
+
+7. **API/UI** — Domains list: **`GET /api/system_monitoring/registry_domains`**. Articles/RSS: **`resolve_active_domain_schema()`** + **`validate_domain()`** accept registry + existing schema when **`public.domains`** is temporarily missing, but for **permanent** operation you still want the DB row so **`get_all_domains()`** and automation agree.
+
+8. **Verification** — **`verify_migrations_160_167.py`** (or your environment’s equivalent) for the new schema; migration ledger if you use it.
+
+**Commit rule:** Ship **YAML + migration + provision runbook evidence** (or ops note) in the same change set when possible so the next environment can replay the same story.
+
+---
+
+## Architecture: how “modular” are domains?
+
+**What you have today (recommended to keep):** **Modular data, shared application** — one FastAPI app, one React SPA, shared services (`AutomationManager`, collectors, LLM routing), **per-domain Postgres schemas** for silo tables. Domains are **not** separate deployables or repos; they are **permanent research silos** inside one product.
+
+| Approach | Meaning |
+|----------|---------|
+| **Modular (siloed)** | Each `domain_key` owns **`{schema}.*`** data; routing is `/api/{domain_key}/...`; registry + DB catalog define who exists. Add domains by **schema + YAML + row**, not by forking the app. |
+| **Monolith (inseparable)** | Single codebase and process; all domains share upgrades, deps, and deploy. True “separate programs” per domain would be **out of scope** unless you split services later. |
+
+**Decision for permanent template domains:** Treat them as **first-class silos** in the **monolith codebase**: same rules as politics/finance/science-tech for **pipeline inclusion**, but **data and feeds stay isolated** in their schema. Do **not** rely on “merge into one mega-domain” unless you explicitly collapse schemas (major migration). Optional **feature** modules (e.g. domain-specific routes under `api/domains/finance/`) can grow beside the shared shell; the **default** path for a template domain is **shared routes + `{schema}` tables**.
 
 ---
 

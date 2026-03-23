@@ -41,6 +41,10 @@ PYTHONPATH=api uv run python scripts/verify_intelligence_phases_productivity.py 
 
 See also `docs/TROUBLESHOOTING.md` (“`claims_to_facts` runs but `versioned_facts` stays empty”).
 
+## Fact verification (separate from promotion)
+
+`verify_claim` / automation phase `fact_verification` use `api/services/fact_verification_service.py`: corroboration blends **orchestrator `source_credibility`** (YAML) with legacy source labels, uses **flexible full-text** (AND 3→2→1 terms then `plainto_tsquery`), **excludes the originating article** when `claim_id` is known, maps **tier_1 single-source** to `authoritative_single` (surfaced as corroborated), **tier_2** to `single_established`. **Reference cross-checks** (in `reference_checks` / `reference_boosts`): **Wikipedia** summary overlap; **Wikidata** label/description overlap and **year alignment** for dated claims; **GDELT** DOC mention count (capped low-weight confidence bump); **SEC** — for `finance` only, recent `finance.articles` with `sec.gov` URLs matching `plainto_tsquery` on claim terms; **internal** same-subject claim counts; **LLM entailment** (Llama 8B) only when corroboration is **borderline**, with verdict supports/contradicts/insufficient. Env toggles: **`FACT_VERIFY_WIKIPEDIA`**, **`FACT_VERIFY_WIKIDATA`**, **`FACT_VERIFY_GDELT`**, **`FACT_VERIFY_SEC_FINANCE`**, **`FACT_VERIFY_ENTAILMENT_LLM`** (all default on except where noted in `configs/env.example`). Results are returned on the API / batch summary; they are **not** written to `extracted_claims` rows yet.
+
 ## Operational levers
 
 - **Entity data:** `context_entity_mentions`, `article_to_context`, `article_entities`, `entity_canonical.aliases`, and profile metadata quality drive match rate more than fuzzy thresholds.

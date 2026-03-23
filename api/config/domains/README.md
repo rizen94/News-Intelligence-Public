@@ -109,7 +109,7 @@ Restart **API and workers** after YAML changes if you hit code that still **cach
 | Symptom | Likely cause |
 |---------|----------------|
 | **YAML parse error** | Invalid syntax, wrong encoding, unquoted `:` or `#` in a plain scalar |
-| **404** on `/api/{key}/...` | Key fails **`is_valid_domain_key`** (YAML off or missing) or **`validate_domain`** (**`public.domains`** inactive / missing) — check **`is_active: true`**, filename does not start with **`_`** |
+| **404** on `/api/{key}/...` | Key fails **`is_valid_domain_key`** (YAML off or missing), or schema missing, or (before resolution) inactive **`public.domains`** — check **`is_active: true`** in YAML, row in **`public.domains`**, and that **`information_schema.schemata`** has **`schema_name`**. **`resolve_active_domain_schema()`** can allow registry + schema when the DB row is missing; align both for permanent domains. |
 | **Duplicate `domain_key`** | Two YAML files defining the same key — keep one file per key |
 | **DB insert fails** | `domain_key` / `schema_name` violates **`^...$`** checks or **`display_name` > 100** |
 | **YAML ↔ DB mismatch** | `schema_name` in YAML must match **`public.domains.schema_name`** for that key (see **Authority** below) |

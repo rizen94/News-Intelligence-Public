@@ -142,6 +142,19 @@ export default function MonitorPage() {
       queue_size?: number;
       is_running?: boolean;
       active_workers?: number;
+      document_pipeline?: {
+        pending_extraction?: number;
+        extracted_last_24h?: number;
+        permanent_failed_total?: number;
+        error?: string | null;
+      };
+      work_balancer?: {
+        enabled?: boolean;
+        base_cooldown_seconds?: number;
+        effective_cooldown_seconds?: Record<string, number>;
+        phases?: string[];
+        error?: string;
+      };
     };
   } | null>(null);
   // Stabilize the Phase timeline list:
@@ -506,6 +519,24 @@ export default function MonitorPage() {
     : phasesLatest;
   const queueSize = automation?.data?.queue_size as number | undefined;
   const automationRunning = automation?.data?.is_running as boolean | undefined;
+  const docPipeline = automation?.data?.document_pipeline;
+  const workBalancer = automation?.data?.work_balancer;
+
+  const workBalancerSummary = (): string => {
+    const wb = workBalancer;
+    if (!wb || wb.error) return wb?.error ? `Unavailable (${wb.error})` : '—';
+    if (!wb.enabled) return `Off — workload-driven phases use fixed ${wb.base_cooldown_seconds ?? 10}s cooldown`;
+    const base = wb.base_cooldown_seconds ?? 10;
+    const eff = wb.effective_cooldown_seconds ?? {};
+    const adjusted = Object.entries(eff).filter(([, v]) => v !== base);
+    if (adjusted.length === 0)
+      return `On — pending queues shallow; effective cooldown ${base}s for balanced phases`;
+    const parts = adjusted
+      .sort((a, b) => a[1] - b[1])
+      .slice(0, 8)
+      .map(([k, v]) => `${k} ${v}s`);
+    return `On — base ${base}s · faster/slower now: ${parts.join(', ')}`;
+  };
 
   const statusChip = (status: string | undefined, label: string) => {
     const ok = status === 'ok' || status === 'healthy' || status === 'HEALTHY';
@@ -1856,6 +1887,63 @@ export default function MonitorPage() {
           </CardContent>
         </Card>
       </Box>
+
+      {/* Documents + backlog-aware scheduler (PDF path + work balancer) */}
+      <Typography variant='subtitle1' sx={{ fontWeight: 600, mb: 0.5 }}>
+        Documents &amp; backlog-aware scheduling
+      </Typography>
+      <Typography variant='caption' color='text.secondary' display='block' sx={{ mb: 1 }}>
+        PDF queue snapshot from `processed_documents`; work balancer adjusts workload-driven
+        cooldown for backfill phases when pending depth exceeds ~one batch (see{' '}
+        <code>WORKLOAD_BALANCER_*</code> env).
+      </Typography>
+      <Card variant='outlined' sx={{ mb: 2 }}>
+        <CardContent sx={{ py: 1.25 }}>
+          <Box
+            sx={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              gap: 1,
+              alignItems: 'center',
+            }}
+          >
+            <Chip
+              size='small'
+              variant='outlined'
+              color={
+                (docPipeline?.pending_extraction ?? 0) > 20
+                  ? 'warning'
+                  : 'default'
+              }
+              label={`Docs pending: ${(docPipeline?.pending_extraction ?? 0).toLocaleString()}`}
+            />
+            <Chip
+              size='small'
+              variant='outlined'
+              label={`Extracted 24h: ${(docPipeline?.extracted_last_24h ?? 0).toLocaleString()}`}
+            />
+            <Chip
+              size='small'
+              variant='outlined'
+              color={
+                (docPipeline?.permanent_failed_total ?? 0) > 0
+                  ? 'error'
+                  : 'default'
+              }
+              label={`Failed (permanent): ${(docPipeline?.permanent_failed_total ?? 0).toLocaleString()}`}
+            />
+            {docPipeline?.error && (
+              <Typography variant='caption' color='error'>
+                {docPipeline.error}
+              </Typography>
+            )}
+          </Box>
+          <Divider sx={{ my: 1.25 }} />
+          <Typography variant='body2' color='text.secondary'>
+            <strong>Work balancer:</strong> {workBalancerSummary()}
+          </Typography>
+        </CardContent>
+      </Card>
 
       {/* Phase timeline — grouped by related processes, sequential order */}
       <Typography variant='subtitle1' sx={{ fontWeight: 600, mb: 1 }}>

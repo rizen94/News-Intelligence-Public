@@ -56,7 +56,7 @@ def main():
         cycle += 1
         logger.info("=== Cycle %d ===", cycle)
         count = run_rss_collection()
-        logger.info("RSS cycle %d: %d articles added", cycle, count)
+        logger.info("RSS cycle %d: %d activity (new + updated)", cycle, count)
         logger.info("Sleeping %ds until next run", INTERVAL_SEC)
         time.sleep(INTERVAL_SEC)
 

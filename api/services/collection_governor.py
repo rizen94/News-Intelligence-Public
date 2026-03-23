@@ -257,8 +257,7 @@ class CollectionGovernor:
                     avg_interval = max(0.0, (t1 - t0).total_seconds())
                 except (ValueError, TypeError):
                     pass
-            # For RSS, a "successful" fetch that adds 0 new articles is still effectively empty
-            # and should trigger the backoff (dedup rejects the majority of items).
+            # RSS: observations_count is new inserts + same-URL updates (see collect_rss_feeds). Zero => backoff.
             is_empty_fetch = (not success) or (
                 source_id == "rss" and (observations_count or 0) <= 0
             )

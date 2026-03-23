@@ -50,17 +50,18 @@ _instructions: |
 data_sources:
   rss:
     seed_feed_urls:
-      - https://pubmed.ncbi.nlm.nih.gov/rss/search/1J7Kt9VPuLj1jzKa9JLYKXVDKw0JHqvggXUEKNwpeS8kNdHPY5/?limit=100&utm_campaign=pubmed-2&fc=20240101000000
+      # PubMed: tune query via pubmed.ncbi.nlm.nih.gov “Create RSS” if this search is too broad/narrow
+      - https://pubmed.ncbi.nlm.nih.gov/rss/create/saved_searches/?term=medicine%5BMeSH+Major+Topic%5D&limit=100
       - https://www.nejm.org/action/showFeed?jc=nejm&type=etoc&feed=rss
       - https://www.thelancet.com/rssfeed/lancet_current.xml
-      - https://jamanetwork.com/feeds/site_feeds/jama
-      - https://www.bmj.com/rss
+      - https://jamanetwork.com/feeds/journals/jama
+      - https://www.bmj.com/content/current.rss
       - https://www.nature.com/nm.rss
       - https://www.who.int/rss-feeds/news-english.xml
-      - https://www.fda.gov/about-fda/contact-fda/stay-informed/rss-feeds/fda-newsroom/rss.xml
+      - https://www.fda.gov/news-events/fda-newsroom/rss.xml
       - https://clinicaltrials.gov/ct2/results/rss.xml?rcv_d=14&lup_d=14&sel_rss=new14&count=10000
-      - https://www.medrxiv.org/rss/medrxiv
-      - https://www.biorxiv.org/rss/biorxiv_rss.xml?subject=all
+      - https://connect.medrxiv.org/medrxiv_xml.php
+      - https://connect.biorxiv.org/biorxiv_xml.php?subject=all
 
 # --- OPTIONAL ----------------------------------------------------------------
 focus_areas:

@@ -558,15 +558,16 @@ def _write_nightly_enrichment_context_section(
     lines.append("### `nightly_enrichment_context`")
     lines.append("")
     lines.append(
-        "**Role:** unified local-night drain — `content_enrichment` → `context_sync` → "
-        "`content_refinement_queue` (higher GPU caps). Daytime `content_refinement_queue` skips during this window."
+        "**Role:** unified local-night drain — kickoff RSS (once/day) → `content_enrichment` → "
+        "`context_sync` → `NIGHTLY_SEQUENTIAL_PHASES` → `content_refinement_queue` (higher GPU caps). "
+        "Daytime `content_refinement_queue` skips during this window."
     )
     lines.append("")
     zi = nightly_automation_tz()
-    start_h = int(os.environ.get("NIGHTLY_PIPELINE_START_HOUR", "2"))
-    end_h = int(os.environ.get("NIGHTLY_PIPELINE_END_HOUR", "5"))
-    sub_s = int(os.environ.get("NIGHTLY_ENRICHMENT_CONTEXT_START_HOUR", "2"))
-    sub_e = int(os.environ.get("NIGHTLY_ENRICHMENT_CONTEXT_END_HOUR", "3"))
+    start_h = int(os.environ.get("NIGHTLY_PIPELINE_START_HOUR", "1"))
+    end_h = int(os.environ.get("NIGHTLY_PIPELINE_END_HOUR", "7"))
+    sub_s = int(os.environ.get("NIGHTLY_ENRICHMENT_CONTEXT_START_HOUR", "1"))
+    sub_e = int(os.environ.get("NIGHTLY_ENRICHMENT_CONTEXT_END_HOUR", "7"))
     tz_key = getattr(zi, "key", None) or str(zi)
     lines.append(f"- **Timezone:** `{tz_key}` (env: `NIGHTLY_PIPELINE_TZ` / `NIGHTLY_INGEST_TZ`)")
     lines.append(

@@ -47,6 +47,9 @@ BATCH_SIZE_PER_TASK: Dict[str, int] = {
     "storyline_automation": 5,  # automation_manager LIMIT storylines per domain per tick
     "rag_enhancement": 9,  # few storylines enhanced per tick per domain
     "event_extraction": 90,  # 30 × 3
+    "claims_to_facts": 50,  # promote batch limit aligns with promote_claims_to_versioned_facts
+    "entity_profile_sync": 40,  # canonical rows mapped per domain batch (approx)
+    "entity_enrichment": 20,  # run_enrichment_batch limit
 }
 
 
@@ -81,6 +84,9 @@ def _get_raw_pending_counts() -> Dict[str, int]:
         raw["event_extraction"] = _count_event_extraction_pending()
         raw["proactive_detection"] = _count_proactive_detection_pending()
         raw["storyline_automation"] = _count_storyline_automation_pending()
+        raw["claims_to_facts"] = _count_claims_to_facts_pending()
+        raw["entity_profile_sync"] = _count_entity_profile_sync_pending()
+        raw["entity_enrichment"] = _count_entity_enrichment_pending()
         raw["nightly_enrichment_context"] = (
             int(raw.get("content_enrichment", 0) or 0)
             + int(raw.get("context_sync", 0) or 0)
@@ -772,6 +778,79 @@ def _count_rag_enhancement_pending() -> int:
             pass
 
 
+def _count_claims_to_facts_pending() -> int:
+    """extracted_claims eligible for promotion (same filter as promote_claims_to_versioned_facts)."""
+    conn = _get_conn()
+    if not conn:
+        return 0
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SET LOCAL statement_timeout = '5s'")
+            cur.execute(
+                """
+                SELECT COUNT(*) FROM intelligence.extracted_claims ec
+                WHERE ec.confidence >= 0.7
+                  AND NOT EXISTS (
+                      SELECT 1 FROM intelligence.versioned_facts vf
+                      WHERE vf.metadata->>'source_claim_id' = ec.id::text
+                  )
+                """
+            )
+            return int(cur.fetchone()[0] or 0)
+    except Exception as e:
+        logger.debug("backlog claims_to_facts count: %s", e)
+        return 0
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _count_entity_profile_sync_pending() -> int:
+    """entity_canonical rows without intelligence.old_entity_to_new mapping (per domain)."""
+    conn = _get_conn()
+    if not conn:
+        return 0
+    total = 0
+    try:
+        for domain_key, schema in url_schema_pairs():
+            with conn.cursor() as cur:
+                cur.execute("SET LOCAL statement_timeout = '5s'")
+                cur.execute(
+                    f"""
+                    SELECT COUNT(*) FROM {schema}.entity_canonical ec
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM intelligence.old_entity_to_new o
+                        WHERE o.domain_key = %s AND o.old_entity_id = ec.id
+                    )
+                    """,
+                    (domain_key,),
+                )
+                total += int(cur.fetchone()[0] or 0)
+        return total
+    except Exception as e:
+        logger.debug("backlog entity_profile_sync count: %s", e)
+        return 0
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _count_entity_enrichment_pending() -> int:
+    """1 if get_entity_profile_ids_to_enrich finds work, else 0 (cheap presence check)."""
+    try:
+        from services.entity_enrichment_service import get_entity_profile_ids_to_enrich
+
+        ids = get_entity_profile_ids_to_enrich(limit=1)
+        return 1 if ids else 0
+    except Exception as e:
+        logger.debug("backlog entity_enrichment count: %s", e)
+        return 0
+
+
 def _count_event_extraction_pending() -> int:
     """Articles eligible for v5 event extraction (timeline_processed)."""
     conn = _get_conn()
@@ -832,6 +911,9 @@ SKIP_WHEN_EMPTY = frozenset({
     "storyline_automation",
     "rag_enhancement",
     "event_extraction",
+    "claims_to_facts",
+    "entity_profile_sync",
+    "entity_enrichment",
 })
 
 # When backlog exceeds this, use backlog-mode interval so we run more often

@@ -15,6 +15,71 @@ from shared.database.connection import get_db_connection, get_ui_db_connection
 logger = logging.getLogger(__name__)
 
 
+def resolve_active_domain_schema(
+    domain: str,
+    conn: Any | None = None,
+) -> tuple[str | None, int | None]:
+    """
+    Resolve Postgres schema for a URL/domain key.
+
+    1. Prefer ``public.domains`` when a row exists and ``is_active``.
+    2. Else, if the key is active in ``shared.domain_registry`` (built-ins + YAML) and the
+       schema exists in ``information_schema.schemata``, use that schema.
+
+    This keeps the web SPA (``registry_domains``) and article/RSS APIs aligned when a silo
+    was provisioned but ``public.domains`` was not updated yet.
+    """
+    own = False
+    c = conn
+    if c is None:
+        c = get_ui_db_connection()
+        if not c:
+            return None, None
+        own = True
+    try:
+        with c.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, schema_name, is_active
+                FROM domains
+                WHERE domain_key = %s
+                """,
+                (domain,),
+            )
+            row = cur.fetchone()
+            if row and row[2]:
+                return str(row[1]), int(row[0])
+
+            from shared.domain_registry import is_valid_domain_key, resolve_domain_schema
+
+            if not is_valid_domain_key(domain):
+                return None, None
+            sch = resolve_domain_schema(domain)
+            cur.execute(
+                "SELECT 1 FROM information_schema.schemata WHERE schema_name = %s",
+                (sch,),
+            )
+            if not cur.fetchone():
+                logger.debug(
+                    "resolve_active_domain_schema: registry key %s maps to schema %s but schema is missing in DB",
+                    domain,
+                    sch,
+                )
+                return None, None
+            logger.info(
+                "resolve_active_domain_schema: registry fallback domain_key=%s schema=%s (no active public.domains row)",
+                domain,
+                sch,
+            )
+            return sch, None
+    except Exception as e:
+        logger.warning("resolve_active_domain_schema(%s): %s", domain, e)
+        return None, None
+    finally:
+        if own and c:
+            c.close()
+
+
 class DomainAwareService:
     """
     Base class for all domain-aware services.
@@ -49,37 +114,26 @@ class DomainAwareService:
 
     def _validate_domain(self):
         """
-        Validate that domain exists and is active.
+        Validate domain: ``public.domains`` row, or registry key with existing schema.
 
         Raises:
-            ValueError: If domain is invalid or not active
+            ValueError: If domain is invalid or schema is missing
         """
-        conn = get_db_connection()
-        try:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    SELECT id, schema_name, is_active
-                    FROM domains
-                    WHERE domain_key = %s
-                """,
-                    (self.domain,),
-                )
-                result = cur.fetchone()
-
-                if not result:
-                    raise ValueError(f"Domain '{self.domain}' not found in domains table")
-
-                if not result[2]:  # is_active
-                    raise ValueError(f"Domain '{self.domain}' is not active")
-
-                self.domain_id = result[0]
-                self.schema = result[1]  # Use schema from database
-                logger.info(
-                    f"Domain validated: {self.domain} -> {self.schema} (ID: {self.domain_id})"
-                )
-        finally:
-            conn.close()
+        sch, did = resolve_active_domain_schema(self.domain)
+        if not sch:
+            raise ValueError(
+                f"Domain '{self.domain}' is not active or has no Postgres schema. "
+                "Ensure api/config/domains/*.yaml is active, the silo schema exists, and "
+                "run provision_domain / register the row in public.domains for full metadata."
+            )
+        self.domain_id = did
+        self.schema = sch
+        logger.info(
+            "Domain validated: %s -> %s (domain_id=%s)",
+            self.domain,
+            self.schema,
+            did,
+        )
 
     def get_db_connection(self):
         """
@@ -173,35 +227,13 @@ class DomainAwareService:
 
 def validate_domain(domain: str) -> bool:
     """
-    Validate that a domain exists and is active.
-
-    Args:
-        domain: Domain key to validate
-
-    Returns:
-        True if domain is valid and active, False otherwise
+    True if the domain resolves to an active silo: ``public.domains`` row or registry + schema.
     """
     try:
-        conn = get_ui_db_connection()
-        if conn is None:
-            logger.debug("validate_domain %s: no DB connection", domain)
-            return False
-        try:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    SELECT is_active
-                    FROM domains
-                    WHERE domain_key = %s
-                    """,
-                    (domain,),
-                )
-                result = cur.fetchone()
-                return result is not None and result[0]
-        finally:
-            conn.close()
+        sch, _ = resolve_active_domain_schema(domain)
+        return sch is not None
     except Exception as e:
-        logger.error(f"Error validating domain {domain}: {e}")
+        logger.error("Error validating domain %s: %s", domain, e)
         return False
 
 
