@@ -49,6 +49,7 @@ from typing import Any
 
 from psycopg2.extras import RealDictCursor
 
+from shared.article_processing_gates import sql_ml_ready_and_content_bounds
 from shared.domain_registry import (
     get_active_domain_keys,
     get_schema_names_active,
@@ -481,7 +482,7 @@ class AutomationManager:
                 "enabled": True,
                 "priority": TaskPriority.NORMAL,
                 "phase": 1,
-                "depends_on": ["collection_cycle"],  # v8: after collection cycle
+                "depends_on": ["collection_cycle", "content_enrichment"],
                 "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["context_sync"],
             },
             # PHASE 1c: Entity profile sync (entity_canonical -> entity_profiles, old_entity_to_new)
@@ -3614,6 +3615,7 @@ class AutomationManager:
             ml_processor = BackgroundMLProcessor(self.db_config)
 
             processed_count = 0
+            ml_ready = sql_ml_ready_and_content_bounds()
             for schema in get_schema_names_active():
                 conn = await self._get_db_connection()
                 try:
@@ -3621,8 +3623,7 @@ class AutomationManager:
                         cursor.execute(f"""
                             SELECT id FROM {schema}.articles
                             WHERE ml_processed = FALSE
-                              AND content IS NOT NULL
-                              AND LENGTH(content) > 100
+                              AND ({ml_ready})
                             ORDER BY created_at DESC
                             LIMIT 50
                         """)
@@ -3655,6 +3656,7 @@ class AutomationManager:
         ai_service = get_ai_service()
         analyzed_count = 0
 
+        ml_ready = sql_ml_ready_and_content_bounds()
         for schema in get_schema_names_active():
             # Fetch candidates quickly, then close transaction before awaited LLM work.
             conn = await self._get_db_connection()
@@ -3663,8 +3665,7 @@ class AutomationManager:
                     cursor.execute(f"""
                         SELECT id, content FROM {schema}.articles
                         WHERE sentiment_score IS NULL
-                          AND content IS NOT NULL
-                          AND LENGTH(content) > 50
+                          AND ({ml_ready})
                         ORDER BY created_at DESC
                         LIMIT 100
                     """)
@@ -4234,6 +4235,7 @@ class AutomationManager:
         ai_service = get_ai_service()
         scored_count = 0
 
+        ml_ready = sql_ml_ready_and_content_bounds()
         for schema in get_schema_names_active():
             # Fetch candidates quickly, then close transaction before awaited LLM work.
             conn = await self._get_db_connection()
@@ -4242,8 +4244,7 @@ class AutomationManager:
                     cursor.execute(f"""
                         SELECT id, content, title FROM {schema}.articles
                         WHERE quality_score IS NULL
-                          AND content IS NOT NULL
-                          AND LENGTH(content) > 100
+                          AND ({ml_ready})
                         ORDER BY created_at DESC
                         LIMIT 50
                     """)

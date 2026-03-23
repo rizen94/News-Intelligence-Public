@@ -8,6 +8,10 @@ import json
 import logging
 from typing import Any
 
+from shared.article_processing_gates import (
+    article_eligible_for_context,
+    sql_context_sync_article_ready,
+)
 from shared.domain_registry import resolve_domain_schema
 
 logger = logging.getLogger(__name__)
@@ -48,7 +52,7 @@ def ensure_context_for_article(domain_key: str, article_id: int) -> int | None:
             # Fetch article
             cur.execute(
                 f"""
-                SELECT title, content, url, published_at, created_at
+                SELECT title, content, url, published_at, created_at, enrichment_status
                 FROM {schema_name}.articles
                 WHERE id = %s AND (enrichment_status IS NULL OR enrichment_status != 'removed')
                 """,
@@ -60,7 +64,11 @@ def ensure_context_for_article(domain_key: str, article_id: int) -> int | None:
                 conn.close()
                 return None
 
-            title, content, url, published_at, created_at = art
+            title, content, url, published_at, created_at, enrichment_status = art
+            if not article_eligible_for_context(content, enrichment_status):
+                conn.close()
+                return None
+
             title = (title or "")[:2000]
             content = (content or "")[:500000]
             raw_content = content
@@ -204,6 +212,15 @@ def update_context_content_for_article(domain_key: str, article_id: int) -> bool
         return False
 
 
+def sync_context_from_article_after_content_change(domain_key: str, article_id: int) -> int | None:
+    """
+    After article body or enrichment_status changes (e.g. batch enrichment): refresh linked
+    intelligence.contexts row, or create linkage when none exists but the article is eligible.
+    """
+    update_context_content_for_article(domain_key, article_id)
+    return ensure_context_for_article(domain_key, article_id)
+
+
 def link_context_to_article_entities(context_id: int, domain_key: str, article_id: int) -> int:
     """
     Link a context to entity_profiles using article_entities (canonical_entity_id) and old_entity_to_new.
@@ -297,6 +314,7 @@ def sync_domain_articles_to_contexts(domain_key: str, limit: int = 100) -> int:
     try:
         with conn.cursor() as cur:
             # Articles without a context (not in article_to_context)
+            ready = sql_context_sync_article_ready("a")
             cur.execute(
                 f"""
                 SELECT a.id, a.title, a.content, a.url, a.published_at, a.created_at
@@ -305,6 +323,7 @@ def sync_domain_articles_to_contexts(domain_key: str, limit: int = 100) -> int:
                   ON atc.domain_key = %s AND atc.article_id = a.id
                 WHERE atc.context_id IS NULL
                   AND (a.enrichment_status IS NULL OR a.enrichment_status != 'removed')
+                  AND ({ready})
                 ORDER BY a.created_at DESC
                 LIMIT %s
                 """,

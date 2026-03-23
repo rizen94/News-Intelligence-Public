@@ -36,6 +36,10 @@ from concurrent.futures import TimeoutError as FutureTimeoutError
 
 # Add parent directory to path for service imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from shared.article_processing_gates import (
+    article_eligible_for_context,
+    rss_item_passes_ingest_gates,
+)
 from services.bias_detection_service import calculate_domain_bias_score
 
 # Import deduplication system
@@ -1304,6 +1308,13 @@ def collect_rss_feeds() -> int:
                                 )
                                 continue
 
+                            ok_ingest, _ingest_reason = rss_item_passes_ingest_gates(
+                                title, content, url
+                            )
+                            if not ok_ingest:
+                                excluded_count += 1
+                                continue
+
                             # Parse published date (normalize to UTC-aware for comparison with DB timestamps)
                             published_date = None
                             if hasattr(entry, "published_parsed") and entry.published_parsed:
@@ -1319,16 +1330,20 @@ def collect_rss_feeds() -> int:
                             # Check for existing article by URL (update-aware)
                             feed_cur.execute(
                                 f"""
-                                SELECT id, content, published_at, updated_at
+                                SELECT id, content, published_at, updated_at, enrichment_status
                                 FROM {schema_name}.articles WHERE url = %s
                             """,
                                 (url,),
                             )
                             existing_by_url = feed_cur.fetchone()
                             if existing_by_url:
-                                existing_id, existing_content, existing_pub, existing_updated = (
-                                    existing_by_url
-                                )
+                                (
+                                    existing_id,
+                                    existing_content,
+                                    existing_pub,
+                                    existing_updated,
+                                    existing_enrichment,
+                                ) = existing_by_url
                                 new_content_hash = hashlib.md5((content or "").encode()).hexdigest()
                                 existing_content_hash = (
                                     hashlib.md5((existing_content or "").encode()).hexdigest()
@@ -1433,7 +1448,10 @@ def collect_rss_feeds() -> int:
                                             ensure_context_for_article,
                                         )
 
-                                        ensure_context_for_article(domain_key, existing_id)
+                                        if article_eligible_for_context(
+                                            content, existing_enrichment
+                                        ):
+                                            ensure_context_for_article(domain_key, existing_id)
                                     except Exception:
                                         pass
                                 else:
@@ -1562,7 +1580,10 @@ def collect_rss_feeds() -> int:
                                         ensure_context_for_article,
                                     )
 
-                                    ensure_context_for_article(domain_key, article_id)
+                                    if article_eligible_for_context(
+                                        insert_content, enrichment_status
+                                    ):
+                                        ensure_context_for_article(domain_key, article_id)
                                 except Exception as ctx_err:
                                     logger.debug(f"Context processor skip: {ctx_err}")
 
@@ -1815,6 +1836,10 @@ def collect_rss_feed(feed_url: str, feed_name: str = "Unknown") -> int:
                     )
                     continue
 
+                ok_ingest, _ingest_reason = rss_item_passes_ingest_gates(title, content, url)
+                if not ok_ingest:
+                    continue
+
                 published_date = None
                 if hasattr(entry, "published_parsed") and entry.published_parsed:
                     published_date = _utc_aware(datetime(*entry.published_parsed[:6]))
@@ -1945,7 +1970,8 @@ def collect_rss_feed(feed_url: str, feed_name: str = "Unknown") -> int:
                     try:
                         from services.context_processor_service import ensure_context_for_article
 
-                        ensure_context_for_article(domain_key, article_id)
+                        if article_eligible_for_context(insert_content, enrichment_status):
+                            ensure_context_for_article(domain_key, article_id)
                     except Exception as ctx_err:
                         logger.debug(f"Context processor skip: {ctx_err}")
 

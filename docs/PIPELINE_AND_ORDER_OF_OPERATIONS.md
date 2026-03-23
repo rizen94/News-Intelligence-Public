@@ -58,6 +58,7 @@ Exact **intervals** and **dependencies** change over time — always confirm in 
 
 ## Related docs
 
+- **Per-phase ingestion logic (selection rules, inputs/outputs):** [PIPELINE_INGESTION_AND_PROCESS_METHODOLOGY.md](PIPELINE_INGESTION_AND_PROCESS_METHODOLOGY.md).
 - Coordinator / health expectations (archived): [_archive/retired_root_docs_2026_03/ORCHESTRATION_REQUIREMENTS.md](_archive/retired_root_docs_2026_03/ORCHESTRATION_REQUIREMENTS.md).
 - Last-24h operator narrative (archived): [_archive/retired_root_docs_2026_03/AUTOMATION_AND_LAST_24H_ACTIVITY.md](_archive/retired_root_docs_2026_03/AUTOMATION_AND_LAST_24H_ACTIVITY.md); scripts: `scripts/run_last_24h_report.sh`, `public.automation_run_history`.
 - Timeline/event extraction gates (archived): [_archive/retired_root_docs_2026_03/EXTRACTED_EVENTS_AND_ENTITY_PIPELINE.md](_archive/retired_root_docs_2026_03/EXTRACTED_EVENTS_AND_ENTITY_PIPELINE.md).

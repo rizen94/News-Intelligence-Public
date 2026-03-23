@@ -38,7 +38,7 @@ Context for AI assistants. Use project terminology consistently.
 | DB (single source) | `api/shared/database/connection.py` |
 | Domain layout / shell | `web/src/layout/MainLayout.tsx` (routes in `App.tsx`: `/:domain` with MainLayout) |
 | Background automation | `api/services/automation_manager.py` |
-| Human reviewer navigation | `docs/CODEBASE_MAP.md`, `docs/PIPELINE_AND_ORDER_OF_OPERATIONS.md`, `docs/CODE_REVIEW_AND_RUN_CAVEATS.md` |
+| Human reviewer navigation | `docs/CODEBASE_MAP.md`, `docs/PIPELINE_AND_ORDER_OF_OPERATIONS.md`, `docs/PIPELINE_INGESTION_AND_PROCESS_METHODOLOGY.md`, `docs/CODE_REVIEW_AND_RUN_CAVEATS.md` |
 | Public HTTPS read-only demo | `docs/PUBLIC_DEPLOYMENT.md` (TLS, env, `NEWS_INTEL_DEMO_*`, `GET /api/public/demo_config`) |
 
 ---

@@ -11,6 +11,10 @@ import logging
 import time
 from typing import Dict, Optional
 
+from shared.article_processing_gates import (
+    sql_context_sync_article_ready,
+    sql_ml_ready_and_content_bounds,
+)
 from shared.domain_registry import get_schema_names_active, url_schema_pairs
 
 logger = logging.getLogger(__name__)
@@ -202,6 +206,7 @@ def _count_context_sync_backlog() -> int:
     if not conn:
         return 0
     total = 0
+    ready = sql_context_sync_article_ready("a")
     try:
         for domain_key, schema in url_schema_pairs():
             with conn.cursor() as cur:
@@ -212,6 +217,7 @@ def _count_context_sync_backlog() -> int:
                       ON atc.domain_key = %s AND atc.article_id = a.id
                     WHERE atc.context_id IS NULL
                       AND (a.enrichment_status IS NULL OR a.enrichment_status != 'removed')
+                      AND ({ready})
                     """,
                     (domain_key,),
                 )
@@ -420,6 +426,7 @@ def _count_ml_processing_pending() -> int:
     if not conn:
         return 0
     total = 0
+    ml_ready = sql_ml_ready_and_content_bounds()
     try:
         for schema in get_schema_names_active():
             with conn.cursor() as cur:
@@ -428,8 +435,7 @@ def _count_ml_processing_pending() -> int:
                     f"""
                     SELECT COUNT(*) FROM {schema}.articles
                     WHERE ml_processed = FALSE
-                      AND content IS NOT NULL
-                      AND LENGTH(content) > 100
+                      AND ({ml_ready})
                     """
                 )
                 total += int(cur.fetchone()[0] or 0)
@@ -484,6 +490,7 @@ def _count_sentiment_analysis_pending() -> int:
     if not conn:
         return 0
     total = 0
+    ml_ready = sql_ml_ready_and_content_bounds()
     try:
         for schema in get_schema_names_active():
             with conn.cursor() as cur:
@@ -492,8 +499,7 @@ def _count_sentiment_analysis_pending() -> int:
                     f"""
                     SELECT COUNT(*) FROM {schema}.articles
                     WHERE sentiment_score IS NULL
-                      AND content IS NOT NULL
-                      AND LENGTH(content) > 50
+                      AND ({ml_ready})
                     """
                 )
                 total += int(cur.fetchone()[0] or 0)
@@ -513,6 +519,7 @@ def _count_quality_scoring_pending() -> int:
     if not conn:
         return 0
     total = 0
+    ml_ready = sql_ml_ready_and_content_bounds()
     try:
         for schema in get_schema_names_active():
             with conn.cursor() as cur:
@@ -521,8 +528,7 @@ def _count_quality_scoring_pending() -> int:
                     f"""
                     SELECT COUNT(*) FROM {schema}.articles
                     WHERE quality_score IS NULL
-                      AND content IS NOT NULL
-                      AND LENGTH(content) > 100
+                      AND ({ml_ready})
                     """
                 )
                 total += int(cur.fetchone()[0] or 0)

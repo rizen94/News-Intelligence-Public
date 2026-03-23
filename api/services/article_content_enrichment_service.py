@@ -302,7 +302,9 @@ def enrich_articles_batch(batch_size: int = 20) -> int:
     from shared.database.connection import get_db_config, get_db_connection
     from shared.domain_registry import url_schema_pairs
 
-    from services.context_processor_service import update_context_content_for_article
+    from services.context_processor_service import (
+        sync_context_from_article_after_content_change,
+    )
 
     conn = get_db_connection()
     if not conn:
@@ -492,7 +494,9 @@ def fetch_full_content_for_article(domain_key: str, article_id: int) -> dict[str
 
     from shared.database.connection import get_ui_db_connection_context
 
-    from services.context_processor_service import update_context_content_for_article
+    from services.context_processor_service import (
+        sync_context_from_article_after_content_change,
+    )
 
     schema_name = domain_key.replace("-", "_")
 
@@ -552,7 +556,7 @@ def fetch_full_content_for_article(domain_key: str, article_id: int) -> dict[str
                 )
             conn.commit()
 
-        update_context_content_for_article(domain_key, article_id)
+        sync_context_from_article_after_content_change(domain_key, article_id)
         return {"success": True, "not_found": False, "message": None, "content": text}
     except Exception as e:
         logger.warning("fetch_full_content_for_article failed: %s", e, exc_info=True)
