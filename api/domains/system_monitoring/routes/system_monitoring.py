@@ -13,7 +13,11 @@ from typing import Any
 import psutil
 from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, Query, Request
 from shared.database.connection import get_ui_db_connection
-from shared.domain_registry import get_active_domain_keys, get_schema_names_active
+from shared.domain_registry import (
+    get_active_domain_keys,
+    get_schema_names_active,
+    iter_url_schema_pairs,
+)
 from shared.services.automation_run_history_writer import persist_automation_run_history
 from shared.services.pipeline_trace_writer import log_pipeline_trace as _log_pipeline_trace
 from shared.services.response_cache import cached_response
@@ -868,34 +872,48 @@ async def get_fast_stats():
             raise HTTPException(status_code=500, detail="Database connection failed")
 
         try:
-            # Use a SINGLE query to get all stats at once (minimizes SSH round-trips)
-            with conn.cursor() as cur:
-                cur.execute("""
-                    SELECT 'politics' as domain, 'articles' as type, COUNT(*) as cnt FROM politics.articles
-                    UNION ALL SELECT 'politics', 'storylines', COUNT(*) FROM politics.storylines WHERE status = 'active'
-                    UNION ALL SELECT 'politics', 'feeds', COUNT(*) FROM politics.rss_feeds WHERE is_active = true
-                    UNION ALL SELECT 'finance', 'articles', COUNT(*) FROM finance.articles
-                    UNION ALL SELECT 'finance', 'storylines', COUNT(*) FROM finance.storylines WHERE status = 'active'
-                    UNION ALL SELECT 'finance', 'feeds', COUNT(*) FROM finance.rss_feeds WHERE is_active = true
-                    UNION ALL SELECT 'science-tech', 'articles', COUNT(*) FROM science_tech.articles
-                    UNION ALL SELECT 'science-tech', 'storylines', COUNT(*) FROM science_tech.storylines WHERE status = 'active'
-                    UNION ALL SELECT 'science-tech', 'feeds', COUNT(*) FROM science_tech.rss_feeds WHERE is_active = true
-                """)
+            # Single UNION query over all active domain schemas (registry / YAML).
+            pairs = list(iter_url_schema_pairs())
+            if not pairs:
+                raise HTTPException(
+                    status_code=503,
+                    detail="No active domains in registry for fast_stats",
+                )
+            parts: list[str] = []
+            for domain_key, schema in pairs:
+                dk = domain_key.replace("'", "''")
+                # schema_name comes only from domain registry (validated identifier).
+                parts.append(
+                    f"SELECT '{dk}' AS domain, 'articles' AS type, COUNT(*)::bigint AS cnt "
+                    f"FROM {schema}.articles"
+                )
+                parts.append(
+                    f"SELECT '{dk}', 'storylines', COUNT(*)::bigint FROM {schema}.storylines "
+                    f"WHERE status = 'active'"
+                )
+                parts.append(
+                    f"SELECT '{dk}', 'feeds', COUNT(*)::bigint FROM {schema}.rss_feeds "
+                    f"WHERE is_active = true"
+                )
+            sql = " UNION ALL ".join(parts)
 
-                stats = {
+            with conn.cursor() as cur:
+                cur.execute(sql)
+
+                stats: dict[str, Any] = {
                     "domains": {
-                        "politics": {"articles": 0, "storylines": 0, "feeds": 0},
-                        "finance": {"articles": 0, "storylines": 0, "feeds": 0},
-                        "science-tech": {"articles": 0, "storylines": 0, "feeds": 0},
+                        dk: {"articles": 0, "storylines": 0, "feeds": 0}
+                        for dk, _ in pairs
                     },
                     "totals": {"articles": 0, "storylines": 0, "feeds": 0},
                     "timestamp": datetime.now().isoformat(),
                 }
 
                 for row in cur.fetchall():
-                    domain, stat_type, count = row
-                    stats["domains"][domain][stat_type] = count
-                    stats["totals"][stat_type] += count
+                    domain, stat_type, count = row[0], row[1], int(row[2])
+                    if domain in stats["domains"] and stat_type in stats["domains"][domain]:
+                        stats["domains"][domain][stat_type] = count
+                        stats["totals"][stat_type] += count
 
             return {"success": True, "data": stats}
 

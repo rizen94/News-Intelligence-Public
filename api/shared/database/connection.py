@@ -8,10 +8,17 @@ Reviewers: all application and script DB access should go through
 or duplicate env parsing. Config is **only** ``DB_*`` environment variables
 (see ``get_db_config``). Docker samples that use ``DATABASE_URL`` are not authoritative.
 
-Pool architecture (3 independent pools, same PostgreSQL instance):
-  - Worker pool (psycopg2): background processing — DB_POOL_WORKER_MIN/MAX (default 2/48; raise MIN on busy hosts)
-  - UI pool     (psycopg2): page loads & monitoring — DB_POOL_UI_MIN/MAX     (default 2/16)
-  - SA pool   (SQLAlchemy): ORM-based services      — DB_POOL_SA_SIZE/OVERFLOW (default 4/12)
+Pool architecture (3 independent pools; target **PgBouncer** or Postgres via ``DB_HOST``/``DB_PORT``):
+  - UI pool     (psycopg2): page loads & monitoring — DB_POOL_UI_MIN/MAX (default 2/16); **3 s** checkout — prioritize responsiveness
+  - Worker pool (psycopg2): automation & batch — DB_POOL_WORKER_MIN/MAX (default 2/20); raise MAX only when Postgres/PgBouncer headroom allows
+  - SA pool   (SQLAlchemy): ORM-based services — DB_POOL_SA_SIZE/OVERFLOW (default 3/8)
+
+See ``docs/PGBOUNCER_AND_CONNECTION_BUDGET.md`` for multiplexing many app connections onto fewer Postgres backends.
+
+**Ephemeral connections** (``get_ephemeral_db_connection_context``): one-off ``psycopg2.connect`` + real ``close`` on exit.
+Use for infrequent batch work (e.g. daily briefing, weekly digest, narrative finisher load/persist) so those phases do not leave
+extra sessions sitting in the shared pools between runs. High-frequency automation (RSS, enrichment, entity extraction) should
+keep using the pooled APIs.
 
 RULES (see also CODING_STYLE_GUIDE.md § Database Connection Rules):
   1. Always use get_db_connection_context() or try/finally conn.close().
@@ -176,16 +183,19 @@ def get_db_connect_kwargs() -> Dict[str, Any]:
 
 def _pool_sizes(pool_kind: str) -> tuple[int, int]:
     """Return (minconn, maxconn) for worker or ui pool."""
-    # Backward-compatible fallback for worker pool
+    # Backward-compatible: DB_POOL_MIN/DB_POOL_MAX when DB_POOL_WORKER_* unset
     legacy_min = int(os.getenv("DB_POOL_MIN", "2"))
     legacy_max = int(os.getenv("DB_POOL_MAX", "20"))
     if pool_kind == "ui":
         minconn = int(os.getenv("DB_POOL_UI_MIN", "2"))
         maxconn = int(os.getenv("DB_POOL_UI_MAX", "16"))
     else:
-        # Default min 2 (not 4) to reduce idle server sessions; set DB_POOL_WORKER_MIN higher if needed.
         minconn = int(os.getenv("DB_POOL_WORKER_MIN", str(max(legacy_min, 2))))
-        maxconn = int(os.getenv("DB_POOL_WORKER_MAX", str(max(legacy_max, 48))))
+        if os.getenv("DB_POOL_WORKER_MAX") is not None:
+            maxconn = int(os.getenv("DB_POOL_WORKER_MAX", "20"))
+        else:
+            # No implicit 48 floor: default aligns with legacy DB_POOL_MAX (20) for small max_connections / PgBouncer
+            maxconn = int(os.getenv("DB_POOL_MAX", "20"))
     maxconn = max(minconn, min(maxconn, 100))
     return minconn, maxconn
 
@@ -427,8 +437,8 @@ def _init_sqlalchemy():
         )
         from sqlalchemy import create_engine
         from sqlalchemy.orm import sessionmaker
-        sa_pool_size = int(os.getenv("DB_POOL_SA_SIZE", "4"))
-        sa_max_overflow = int(os.getenv("DB_POOL_SA_OVERFLOW", "12"))
+        sa_pool_size = int(os.getenv("DB_POOL_SA_SIZE", "3"))
+        sa_max_overflow = int(os.getenv("DB_POOL_SA_OVERFLOW", "8"))
         sa_pool_size = min(sa_pool_size, 10)
         sa_max_overflow = min(sa_max_overflow, 20)
         _sqlalchemy_engine = create_engine(
@@ -471,6 +481,32 @@ def get_db_connection_context():
         yield conn
     finally:
         conn.close()
+
+
+def get_ephemeral_db_connection():
+    """
+    Open a single PostgreSQL session not backed by the worker/UI pools.
+    Caller must ``close()`` when done (fully disconnects from the server).
+
+    Prefer ``get_ephemeral_db_connection_context()`` to avoid leaks.
+    """
+    return psycopg2.connect(**get_db_connect_kwargs())
+
+
+@contextmanager
+def get_ephemeral_db_connection_context():
+    """
+    One-off connection: opens with ``get_db_connect_kwargs()`` and **closes the TCP session** on exit
+    (does not return to ThreadedConnectionPool). For infrequent jobs; see module docstring.
+    """
+    conn = get_ephemeral_db_connection()
+    try:
+        yield conn
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 def get_ui_db_connection():

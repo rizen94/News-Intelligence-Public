@@ -9,7 +9,7 @@ import os
 from datetime import datetime, timedelta
 
 from modules.deduplication.advanced_deduplication_service import get_deduplication_service
-from shared.database.connection import get_db_connection
+from shared.database.connection import get_ephemeral_db_connection_context
 from shared.domain_registry import get_active_domain_keys
 
 from .storyline_tracker import StorylineTracker
@@ -84,14 +84,10 @@ class DailyBriefingService:
             # Resolve domain schema so we query the correct articles table
             schema = None
             if domain:
-                conn = get_db_connection()
-                if conn:
-                    try:
-                        schema = _get_schema_for_domain(conn, domain)
-                        if schema:
-                            logger.info("Briefing using domain %s (schema %s)", domain, schema)
-                    finally:
-                        conn.close()
+                with get_ephemeral_db_connection_context() as conn:
+                    schema = _get_schema_for_domain(conn, domain)
+                    if schema:
+                        logger.info("Briefing using domain %s (schema %s)", domain, schema)
 
             articles_table = f"{schema}.articles" if schema else "articles"
 
@@ -355,32 +351,30 @@ class DailyBriefingService:
     ) -> dict[str, any]:
         """Generate system overview section for the window [start_date, briefing_date]."""
         try:
-            conn = get_db_connection()
-            cursor = conn.cursor()
+            with get_ephemeral_db_connection_context() as conn:
+                cursor = conn.cursor()
 
-            # Window: articles created/updated in the last N days
-            cursor.execute(
-                f"SELECT COUNT(*) FROM {articles_table} WHERE created_at >= %s", (start_date,)
-            )
-            window_new = cursor.fetchone()[0]
+                # Window: articles created/updated in the last N days
+                cursor.execute(
+                    f"SELECT COUNT(*) FROM {articles_table} WHERE created_at >= %s", (start_date,)
+                )
+                window_new = cursor.fetchone()[0]
 
-            cursor.execute(
-                f"SELECT COUNT(*) FROM {articles_table} WHERE updated_at >= %s", (start_date,)
-            )
-            window_updated = cursor.fetchone()[0]
+                cursor.execute(
+                    f"SELECT COUNT(*) FROM {articles_table} WHERE updated_at >= %s", (start_date,)
+                )
+                window_updated = cursor.fetchone()[0]
 
-            # Total in DB (for context)
-            cursor.execute(f"SELECT COUNT(*) FROM {articles_table}")
-            total_articles = cursor.fetchone()[0]
+                # Total in DB (for context)
+                cursor.execute(f"SELECT COUNT(*) FROM {articles_table}")
+                total_articles = cursor.fetchone()[0]
 
-            # Distinct sources in window
-            cursor.execute(
-                f"SELECT COUNT(DISTINCT source) FROM {articles_table} WHERE source IS NOT NULL AND created_at >= %s",
-                (start_date,),
-            )
-            window_sources = cursor.fetchone()[0]
-
-            conn.close()
+                # Distinct sources in window
+                cursor.execute(
+                    f"SELECT COUNT(DISTINCT source) FROM {articles_table} WHERE source IS NOT NULL AND created_at >= %s",
+                    (start_date,),
+                )
+                window_sources = cursor.fetchone()[0]
 
             return {
                 "total_articles": window_new,  # briefing stats use this for "N articles"
@@ -401,45 +395,43 @@ class DailyBriefingService:
     ) -> dict[str, any]:
         """Generate content analysis section for the window [start_date, briefing_date]."""
         try:
-            conn = get_db_connection()
-            cursor = conn.cursor()
+            with get_ephemeral_db_connection_context() as conn:
+                cursor = conn.cursor()
 
-            cursor.execute(
-                f"""
-                SELECT
-                    category,
-                    COUNT(*) as count,
-                    AVG(COALESCE(quality_score, 0.5)) as avg_quality
-                FROM {articles_table}
-                WHERE created_at >= %s
-                GROUP BY category
-                ORDER BY count DESC
-            """,
-                (start_date,),
-            )
+                cursor.execute(
+                    f"""
+                    SELECT
+                        category,
+                        COUNT(*) as count,
+                        AVG(COALESCE(quality_score, 0.5)) as avg_quality
+                    FROM {articles_table}
+                    WHERE created_at >= %s
+                    GROUP BY category
+                    ORDER BY count DESC
+                """,
+                    (start_date,),
+                )
 
-            category_stats = cursor.fetchall()
+                category_stats = cursor.fetchall()
 
-            cursor.execute(
-                f"""
-                SELECT
-                    source,
-                    COUNT(*) as count
-                FROM {articles_table}
-                WHERE created_at >= %s
-                AND source IS NOT NULL
-                GROUP BY source
-                ORDER BY count DESC
-                LIMIT 10
-            """,
-                (start_date,),
-            )
+                cursor.execute(
+                    f"""
+                    SELECT
+                        source,
+                        COUNT(*) as count
+                    FROM {articles_table}
+                    WHERE created_at >= %s
+                    AND source IS NOT NULL
+                    GROUP BY source
+                    ORDER BY count DESC
+                    LIMIT 10
+                """,
+                    (start_date,),
+                )
 
-            source_stats = cursor.fetchall()
+                source_stats = cursor.fetchall()
 
-            total_analyzed = sum(row[1] for row in category_stats)
-
-            conn.close()
+                total_analyzed = sum(row[1] for row in category_stats)
 
             return {
                 "category_distribution": [
@@ -496,7 +488,9 @@ class DailyBriefingService:
     def _generate_deduplication_report(self) -> dict[str, any]:
         """Generate deduplication report section"""
         try:
-            dedup_stats = self.deduplication_service.get_deduplication_stats()
+            dedup_stats = self.deduplication_service.get_deduplication_stats(
+                use_ephemeral_connection=True
+            )
 
             if "error" in dedup_stats:
                 return {"error": dedup_stats["error"]}
@@ -524,46 +518,44 @@ class DailyBriefingService:
     ) -> dict[str, any]:
         """Generate quality metrics section for the window [start_date, briefing_date]."""
         try:
-            conn = get_db_connection()
-            cursor = conn.cursor()
+            with get_ephemeral_db_connection_context() as conn:
+                cursor = conn.cursor()
 
-            cursor.execute(
-                f"""
-                SELECT
-                    CASE
-                        WHEN COALESCE(quality_score, 0.5) >= 0.8 THEN 'high'
-                        WHEN COALESCE(quality_score, 0.5) >= 0.6 THEN 'medium'
-                        ELSE 'low'
-                    END as quality_level,
-                    COUNT(*) as count
-                FROM {articles_table}
-                WHERE created_at >= %s
-                GROUP BY quality_level
-                ORDER BY quality_level DESC
-            """,
-                (start_date,),
-            )
+                cursor.execute(
+                    f"""
+                    SELECT
+                        CASE
+                            WHEN COALESCE(quality_score, 0.5) >= 0.8 THEN 'high'
+                            WHEN COALESCE(quality_score, 0.5) >= 0.6 THEN 'medium'
+                            ELSE 'low'
+                        END as quality_level,
+                        COUNT(*) as count
+                    FROM {articles_table}
+                    WHERE created_at >= %s
+                    GROUP BY quality_level
+                    ORDER BY quality_level DESC
+                """,
+                    (start_date,),
+                )
 
-            quality_distribution = cursor.fetchall()
+                quality_distribution = cursor.fetchall()
 
-            cursor.execute(
-                f"""
-                SELECT
-                    category,
-                    AVG(COALESCE(quality_score, 0.5)) as avg_quality,
-                    COUNT(*) as count
-                FROM {articles_table}
-                WHERE created_at >= %s
-                GROUP BY category
-                HAVING COUNT(*) >= 3
-                ORDER BY avg_quality DESC
-            """,
-                (start_date,),
-            )
+                cursor.execute(
+                    f"""
+                    SELECT
+                        category,
+                        AVG(COALESCE(quality_score, 0.5)) as avg_quality,
+                        COUNT(*) as count
+                    FROM {articles_table}
+                    WHERE created_at >= %s
+                    GROUP BY category
+                    HAVING COUNT(*) >= 3
+                    ORDER BY avg_quality DESC
+                """,
+                    (start_date,),
+                )
 
-            category_quality = cursor.fetchall()
-
-            conn.close()
+                category_quality = cursor.fetchall()
 
             return {
                 "quality_distribution": [
@@ -594,139 +586,83 @@ class DailyBriefingService:
     ) -> dict[str, any]:
         """Extract editorial narratives, headlines, and storyline titles for briefings. Uses editorial_document when available. Applies user feedback and low-priority (sports/celebrity) demotion. When require_quality_tier_1_2 is True, only tier 1–2 articles are used for headlines (fewer items OK)."""
         try:
-            conn = get_db_connection()
-            if not conn:
-                return {
-                    "top_headlines": [],
-                    "top_storylines": [],
-                    "editorial_ledes": [],
-                    "event_briefings": [],
-                    "error": "No connection",
-                }
-            cursor = conn.cursor()
             top_headlines = []
             top_storylines = []
             editorial_ledes = []
             event_briefings = []
 
-            # Top headlines: prefer quality_tier 1–2 (intelligence-grade/standard), then quality_score; optionally require tier <= 2
-            headline_where = "created_at >= %s AND title IS NOT NULL AND TRIM(title) != ''"
-            headline_params: list = [start_date]
-            if require_quality_tier_1_2:
-                headline_where += " AND COALESCE(quality_tier, 4) <= 2"
-            try:
-                cursor.execute(
-                    f"""
-                    SELECT id, title, source_domain, summary
-                    FROM {articles_table}
-                    WHERE {headline_where}
-                    ORDER BY COALESCE(quality_tier, 4) ASC, COALESCE(quality_score, 0) DESC, created_at DESC
-                    LIMIT 15
-                    """,
-                    tuple(headline_params),
-                )
-                for row in cursor.fetchall():
-                    top_headlines.append(
-                        {
-                            "id": row[0],
-                            "title": (row[1] or "").strip(),
-                            "source": (row[2] or "").strip(),
-                            "summary": (row[3] or "").strip() if len(row) > 3 else "",
-                        }
-                    )
-            except Exception as e:
-                logger.debug("key_developments headlines: %s", e)
+            with get_ephemeral_db_connection_context() as conn:
+                cursor = conn.cursor()
 
-            # Storylines: prefer those with recent article activity (last article published in window)
-            # Order by last_article_at DESC so "what's happening now" appears first; fallback to updated_at
-            storylines_table = f"{schema}.storylines"
-            articles_table_schema = f"{schema}.articles"
-            sa_table = f"{schema}.storyline_articles"
-            try:
-                cursor.execute(
-                    f"""
-                    SELECT s.id, s.title,
-                           COALESCE(s.total_articles, s.article_count, 0),
-                           s.updated_at,
-                           s.editorial_document, s.document_status,
-                           (SELECT MAX(a.published_at) FROM {sa_table} sa2
-                            JOIN {articles_table_schema} a ON a.id = sa2.article_id
-                            WHERE sa2.storyline_id = s.id AND a.published_at >= %s) AS last_article_at
-                    FROM {storylines_table} s
-                    WHERE s.updated_at >= %s AND s.title IS NOT NULL AND TRIM(s.title) != ''
-                    ORDER BY last_article_at DESC NULLS LAST, s.updated_at DESC
-                    LIMIT 10
-                    """,
-                    (start_date, start_date),
-                )
-                for row in cursor.fetchall():
-                    sid = row[0]
-                    stitle = (row[1] or "").strip()
-                    ed = row[4] if len(row) > 4 else None
-                    last_article_at = row[6] if len(row) > 6 else None
-                    recency_24h = False
-                    if last_article_at:
-                        try:
-                            from datetime import timezone
-
-                            now = datetime.now(timezone.utc)
-                            dt = (
-                                last_article_at.astimezone(timezone.utc)
-                                if getattr(last_article_at, "tzinfo", None)
-                                else last_article_at
-                            )
-                            recency_24h = (now - dt).total_seconds() < 86400  # 24h
-                        except Exception:
-                            pass
-                    top_storylines.append(
-                        {
-                            "id": sid,
-                            "title": stitle,
-                            "article_count": int(row[2]) if row[2] is not None else 0,
-                            "updated_at": row[3].isoformat()
-                            if hasattr(row[3], "isoformat")
-                            else str(row[3])
-                            if row[3]
-                            else None,
-                            "document_status": row[5] if len(row) > 5 else None,
-                            "last_article_at": last_article_at.isoformat()
-                            if hasattr(last_article_at, "isoformat")
-                            else str(last_article_at)
-                            if last_article_at
-                            else None,
-                            "recent": bool(recency_24h),
-                        }
-                    )
-                    # Extract lede from editorial_document if present
-                    if ed and isinstance(ed, dict) and ed.get("lede"):
-                        editorial_ledes.append(
-                            {
-                                "storyline_id": sid,
-                                "title": stitle,
-                                "lede": ed["lede"],
-                                "recent": bool(recency_24h),
-                            }
-                        )
-            except Exception as e:
-                logger.debug("key_developments storylines: %s", e)
-                # Fallback without last_article_at
+                # Top headlines: prefer quality_tier 1–2 (intelligence-grade/standard), then quality_score; optionally require tier <= 2
+                headline_where = "created_at >= %s AND title IS NOT NULL AND TRIM(title) != ''"
+                headline_params: list = [start_date]
+                if require_quality_tier_1_2:
+                    headline_where += " AND COALESCE(quality_tier, 4) <= 2"
                 try:
                     cursor.execute(
                         f"""
-                        SELECT id, title,
-                               COALESCE(total_articles, article_count, 0),
-                               updated_at,
-                               editorial_document, document_status
-                        FROM {storylines_table}
-                        WHERE updated_at >= %s AND title IS NOT NULL AND TRIM(title) != ''
-                        ORDER BY updated_at DESC
-                        LIMIT 8
+                        SELECT id, title, source_domain, summary
+                        FROM {articles_table}
+                        WHERE {headline_where}
+                        ORDER BY COALESCE(quality_tier, 4) ASC, COALESCE(quality_score, 0) DESC, created_at DESC
+                        LIMIT 15
                         """,
-                        (start_date,),
+                        tuple(headline_params),
                     )
                     for row in cursor.fetchall():
-                        sid, stitle = row[0], (row[1] or "").strip()
+                        top_headlines.append(
+                            {
+                                "id": row[0],
+                                "title": (row[1] or "").strip(),
+                                "source": (row[2] or "").strip(),
+                                "summary": (row[3] or "").strip() if len(row) > 3 else "",
+                            }
+                        )
+                except Exception as e:
+                    logger.debug("key_developments headlines: %s", e)
+
+                # Storylines: prefer those with recent article activity (last article published in window)
+                # Order by last_article_at DESC so "what's happening now" appears first; fallback to updated_at
+                storylines_table = f"{schema}.storylines"
+                articles_table_schema = f"{schema}.articles"
+                sa_table = f"{schema}.storyline_articles"
+                try:
+                    cursor.execute(
+                        f"""
+                        SELECT s.id, s.title,
+                               COALESCE(s.total_articles, s.article_count, 0),
+                               s.updated_at,
+                               s.editorial_document, s.document_status,
+                               (SELECT MAX(a.published_at) FROM {sa_table} sa2
+                                JOIN {articles_table_schema} a ON a.id = sa2.article_id
+                                WHERE sa2.storyline_id = s.id AND a.published_at >= %s) AS last_article_at
+                        FROM {storylines_table} s
+                        WHERE s.updated_at >= %s AND s.title IS NOT NULL AND TRIM(s.title) != ''
+                        ORDER BY last_article_at DESC NULLS LAST, s.updated_at DESC
+                        LIMIT 10
+                        """,
+                        (start_date, start_date),
+                    )
+                    for row in cursor.fetchall():
+                        sid = row[0]
+                        stitle = (row[1] or "").strip()
                         ed = row[4] if len(row) > 4 else None
+                        last_article_at = row[6] if len(row) > 6 else None
+                        recency_24h = False
+                        if last_article_at:
+                            try:
+                                from datetime import timezone
+
+                                now = datetime.now(timezone.utc)
+                                dt = (
+                                    last_article_at.astimezone(timezone.utc)
+                                    if getattr(last_article_at, "tzinfo", None)
+                                    else last_article_at
+                                )
+                                recency_24h = (now - dt).total_seconds() < 86400  # 24h
+                            except Exception:
+                                pass
                         top_storylines.append(
                             {
                                 "id": sid,
@@ -738,84 +674,132 @@ class DailyBriefingService:
                                 if row[3]
                                 else None,
                                 "document_status": row[5] if len(row) > 5 else None,
-                                "last_article_at": None,
-                                "recent": False,
+                                "last_article_at": last_article_at.isoformat()
+                                if hasattr(last_article_at, "isoformat")
+                                else str(last_article_at)
+                                if last_article_at
+                                else None,
+                                "recent": bool(recency_24h),
                             }
                         )
+                        # Extract lede from editorial_document if present
                         if ed and isinstance(ed, dict) and ed.get("lede"):
                             editorial_ledes.append(
                                 {
                                     "storyline_id": sid,
                                     "title": stitle,
                                     "lede": ed["lede"],
+                                    "recent": bool(recency_24h),
+                                }
+                            )
+                except Exception as e:
+                    logger.debug("key_developments storylines: %s", e)
+                    # Fallback without last_article_at
+                    try:
+                        cursor.execute(
+                            f"""
+                            SELECT id, title,
+                                   COALESCE(total_articles, article_count, 0),
+                                   updated_at,
+                                   editorial_document, document_status
+                            FROM {storylines_table}
+                            WHERE updated_at >= %s AND title IS NOT NULL AND TRIM(title) != ''
+                            ORDER BY updated_at DESC
+                            LIMIT 8
+                            """,
+                            (start_date,),
+                        )
+                        for row in cursor.fetchall():
+                            sid, stitle = row[0], (row[1] or "").strip()
+                            ed = row[4] if len(row) > 4 else None
+                            top_storylines.append(
+                                {
+                                    "id": sid,
+                                    "title": stitle,
+                                    "article_count": int(row[2]) if row[2] is not None else 0,
+                                    "updated_at": row[3].isoformat()
+                                    if hasattr(row[3], "isoformat")
+                                    else str(row[3])
+                                    if row[3]
+                                    else None,
+                                    "document_status": row[5] if len(row) > 5 else None,
+                                    "last_article_at": None,
                                     "recent": False,
                                 }
                             )
-                except Exception as e2:
-                    logger.debug("key_developments storylines fallback: %s", e2)
+                            if ed and isinstance(ed, dict) and ed.get("lede"):
+                                editorial_ledes.append(
+                                    {
+                                        "storyline_id": sid,
+                                        "title": stitle,
+                                        "lede": ed["lede"],
+                                        "recent": False,
+                                    }
+                                )
+                    except Exception as e2:
+                        logger.debug("key_developments storylines fallback: %s", e2)
 
-            # Event briefings from tracked_events: prefer domain-scoped and recently updated
-            try:
-                event_params = [start_date]
-                domain_filter = ""
-                if domain:
-                    domain_filter = (
-                        " AND (domain_keys IS NULL OR domain_keys = '{}' OR %s = ANY(domain_keys))"
-                    )
-                    event_params.append(domain)
-                cursor.execute(
-                    """
-                    SELECT id, event_name, editorial_briefing, editorial_briefing_json, updated_at
-                    FROM intelligence.tracked_events
-                    WHERE updated_at >= %s
-                      AND editorial_briefing IS NOT NULL
-                    """
-                    + domain_filter
-                    + """
-                    ORDER BY updated_at DESC
-                    LIMIT 8
-                    """,
-                    tuple(event_params),
-                )
-                rows = cursor.fetchall()
-            except Exception as e:
-                logger.debug("key_developments events (with domain filter): %s", e)
-                rows = []
+                # Event briefings from tracked_events: prefer domain-scoped and recently updated
                 try:
+                    event_params = [start_date]
+                    domain_filter = ""
+                    if domain:
+                        domain_filter = (
+                            " AND (domain_keys IS NULL OR domain_keys = '{}' OR %s = ANY(domain_keys))"
+                        )
+                        event_params.append(domain)
                     cursor.execute(
                         """
                         SELECT id, event_name, editorial_briefing, editorial_briefing_json, updated_at
                         FROM intelligence.tracked_events
-                        WHERE updated_at >= %s AND editorial_briefing IS NOT NULL
+                        WHERE updated_at >= %s
+                          AND editorial_briefing IS NOT NULL
+                        """
+                        + domain_filter
+                        + """
                         ORDER BY updated_at DESC
                         LIMIT 8
                         """,
-                        (start_date,),
+                        tuple(event_params),
                     )
                     rows = cursor.fetchall()
-                except Exception as e2:
-                    logger.debug("key_developments events fallback: %s", e2)
-            for row in rows:
-                eid, ename, briefing_text, briefing_json = row[0], row[1], row[2], row[3]
-                ev_updated = row[4] if len(row) > 4 else None
-                headline = ""
-                if briefing_json and isinstance(briefing_json, dict):
-                    headline = briefing_json.get("headline", "")
-                event_briefings.append(
-                    {
-                        "event_id": eid,
-                        "event_name": (ename or "").strip(),
-                        "headline": headline,
-                        "briefing_excerpt": (briefing_text or "")[:200],
-                        "updated_at": ev_updated.isoformat()
-                        if hasattr(ev_updated, "isoformat")
-                        else str(ev_updated)
-                        if ev_updated
-                        else None,
-                    }
-                )
+                except Exception as e:
+                    logger.debug("key_developments events (with domain filter): %s", e)
+                    rows = []
+                    try:
+                        cursor.execute(
+                            """
+                            SELECT id, event_name, editorial_briefing, editorial_briefing_json, updated_at
+                            FROM intelligence.tracked_events
+                            WHERE updated_at >= %s AND editorial_briefing IS NOT NULL
+                            ORDER BY updated_at DESC
+                            LIMIT 8
+                            """,
+                            (start_date,),
+                        )
+                        rows = cursor.fetchall()
+                    except Exception as e2:
+                        logger.debug("key_developments events fallback: %s", e2)
+                for row in rows:
+                    eid, ename, briefing_text, briefing_json = row[0], row[1], row[2], row[3]
+                    ev_updated = row[4] if len(row) > 4 else None
+                    headline = ""
+                    if briefing_json and isinstance(briefing_json, dict):
+                        headline = briefing_json.get("headline", "")
+                    event_briefings.append(
+                        {
+                            "event_id": eid,
+                            "event_name": (ename or "").strip(),
+                            "headline": headline,
+                            "briefing_excerpt": (briefing_text or "")[:200],
+                            "updated_at": ev_updated.isoformat()
+                            if hasattr(ev_updated, "isoformat")
+                            else str(ev_updated)
+                            if ev_updated
+                            else None,
+                        }
+                    )
 
-            conn.close()
 
             # Apply user feedback (exclude not_interested) and low-priority demotion (sports/celebrity)
             if domain:

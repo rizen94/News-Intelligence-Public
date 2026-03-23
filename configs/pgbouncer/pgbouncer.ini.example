@@ -1,0 +1,31 @@
+; PgBouncer on Widow (Debian). Copy to /etc/pgbouncer/pgbouncer.ini or use scripts/install_pgbouncer_widow.sh
+; Apps use DB_PORT=6432 and DB_HOST=<this host>. PostgreSQL stays on 127.0.0.1:5432.
+
+[databases]
+news_intel = host=127.0.0.1 port=5432 dbname=news_intel
+
+[pgbouncer]
+listen_addr = 0.0.0.0
+listen_port = 6432
+unix_socket_dir = /var/run/postgresql
+
+; Must match PostgreSQL password storage (SCRAM for PG 14+).
+auth_type = scram-sha-256
+auth_file = /etc/pgbouncer/userlist.txt
+
+pool_mode = transaction
+max_client_conn = 200
+default_pool_size = 18
+reserve_pool_size = 5
+min_pool_size = 2
+
+; psycopg2 sends options=-c statement_timeout=... — ignore here; enforce via ALTER ROLE (install script).
+ignore_startup_parameters = extra_float_digits,options
+
+admin_users = postgres
+stats_users = postgres
+
+logfile = /var/log/postgresql/pgbouncer.log
+pidfile = /var/run/postgresql/pgbouncer.pid
+
+server_reset_query = DISCARD ALL

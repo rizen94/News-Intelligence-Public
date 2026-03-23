@@ -4,6 +4,7 @@
 import React from 'react';
 import { Navigate, useParams } from 'react-router-dom';
 import { usePublicDemoMode } from '../../contexts/PublicDemoContext';
+import { getDefaultDomainKey } from '../../utils/domainHelper';
 
 type Props = { children: React.ReactNode };
 
@@ -13,7 +14,9 @@ export const DemoRouteGuard: React.FC<Props> = ({ children }) => {
 
   if (loading) return null;
   if (readonly) {
-    return <Navigate to={`/${domain ?? 'politics'}/dashboard`} replace />;
+    return (
+      <Navigate to={`/${domain ?? getDefaultDomainKey()}/dashboard`} replace />
+    );
   }
   return <>{children}</>;
 };

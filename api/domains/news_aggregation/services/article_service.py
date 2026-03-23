@@ -151,7 +151,7 @@ class ArticleService(DomainAwareService):
         Returns:
             Dictionary with articles and metadata
         """
-        conn = self.get_db_connection()
+        conn = self.get_read_db_connection()
         try:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 # OPTIMIZED: Only select lightweight fields for listings
@@ -259,7 +259,7 @@ class ArticleService(DomainAwareService):
 
     def get_distinct_source_domains(self, limit: int = 400) -> list[str]:
         """Distinct non-empty source_domain values for filter dropdowns."""
-        conn = self.get_db_connection()
+        conn = self.get_read_db_connection()
         try:
             with conn.cursor() as cur:
                 cur.execute(
@@ -400,7 +400,7 @@ class ArticleService(DomainAwareService):
         Returns:
             Total number of articles
         """
-        conn = self.get_db_connection()
+        conn = self.get_read_db_connection()
         try:
             with conn.cursor() as cur:
                 cur.execute(f"SELECT COUNT(*) FROM {self.schema}.articles")

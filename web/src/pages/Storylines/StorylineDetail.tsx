@@ -69,6 +69,7 @@ import StorylineAuditCard from '../../components/StorylineAuditCard/StorylineAud
 import { Link as RouterLink } from 'react-router-dom';
 import { useDomainNavigation } from '../../hooks/useDomainNavigation';
 import { useDomainRoute } from '../../hooks/useDomainRoute';
+import { getDefaultDomainKey } from '../../utils/domainHelper';
 import { usePublicDemoMode } from '../../contexts/PublicDemoContext';
 import type { StorylineDetail as StorylineDetailType } from '../../types';
 
@@ -87,7 +88,7 @@ const StorylineDetail = () => {
   const { navigateToDomain } = useDomainNavigation();
   const { domain } = useDomainRoute();
   const { readonly: demoReadonly } = usePublicDemoMode();
-  const effectiveDomain = domain || 'politics';
+  const effectiveDomain = domain || getDefaultDomainKey();
   const [storyline, setStoryline] = useState(null);
   const [articles, setArticles] = useState([]);
   const [timelineData, setTimelineData] = useState(null); // { events, gaps, milestones, time_span, event_count, source_count }
@@ -166,7 +167,8 @@ const StorylineDetail = () => {
         ) {
           setIsProcessing(true);
           setProcessingStatus('LLM processing in progress...');
-          if (Math.random() < 0.3) await loadStoryline();
+          if (Math.random() < 0.3)
+            await loadStoryline({ background: true });
         } else if (
           storylineData.ml_processing_status === 'completed' &&
           (storylineData.analysis_summary ||
@@ -174,7 +176,7 @@ const StorylineDetail = () => {
         ) {
           setIsProcessing(false);
           setProcessingStatus(null);
-          await loadStoryline();
+          await loadStoryline({ background: true });
           clearInterval(pollInterval);
         } else if (storylineData.ml_processing_status === 'failed') {
           setIsProcessing(false);
@@ -245,10 +247,13 @@ const StorylineDetail = () => {
     }
   }, [id]);
 
-  const loadStoryline = async () => {
+  const loadStoryline = async (opts?: { background?: boolean }) => {
+    const background = Boolean(opts?.background);
     try {
-      setLoading(true);
-      setError(null);
+      if (!background) {
+        setLoading(true);
+        setError(null);
+      }
 
       // Load storyline and timeline in parallel for coordinated data
       const [storylineResponse, timelineResponse] = await Promise.all([
@@ -272,27 +277,31 @@ const StorylineDetail = () => {
 
       // Check for error in storyline response
       if (sr.error) {
-        const errorMsg = sr.error;
-        if (errorMsg.includes('404') || errorMsg.includes('not found')) {
-          setError(
-            `Storyline #${id} not found in ${domain} domain. It may have been deleted or moved.`
-          );
-        } else if (
-          errorMsg.includes('500') ||
-          errorMsg.includes('Internal Server')
-        ) {
-          setError(
-            'Server error loading storyline. Please try again or contact support if the issue persists.'
-          );
-        } else if (
-          errorMsg.includes('connection') ||
-          errorMsg.includes('ECONNREFUSED')
-        ) {
-          setError(
-            'Cannot connect to server. Please check your connection and try again.'
-          );
+        if (!background) {
+          const errorMsg = sr.error;
+          if (errorMsg.includes('404') || errorMsg.includes('not found')) {
+            setError(
+              `Storyline #${id} not found in ${domain} domain. It may have been deleted or moved.`
+            );
+          } else if (
+            errorMsg.includes('500') ||
+            errorMsg.includes('Internal Server')
+          ) {
+            setError(
+              'Server error loading storyline. Please try again or contact support if the issue persists.'
+            );
+          } else if (
+            errorMsg.includes('connection') ||
+            errorMsg.includes('ECONNREFUSED')
+          ) {
+            setError(
+              'Cannot connect to server. Please check your connection and try again.'
+            );
+          } else {
+            setError(`Failed to load storyline: ${errorMsg}`);
+          }
         } else {
-          setError(`Failed to load storyline: ${errorMsg}`);
+          console.warn('Background storyline refresh: sr.error', sr.error);
         }
         return;
       }
@@ -315,25 +324,33 @@ const StorylineDetail = () => {
       } else if (sr.detail) {
         // FastAPI error format: {detail: "error message"}
         const detail = sr.detail as string;
-        if (detail.includes('not found') || detail.includes('404')) {
-          setError(`Storyline #${id} not found in ${domain} domain.`);
+        if (!background) {
+          if (detail.includes('not found') || detail.includes('404')) {
+            setError(`Storyline #${id} not found in ${domain} domain.`);
+          } else {
+            setError(`Error: ${detail}`);
+          }
         } else {
-          setError(`Error: ${detail}`);
+          console.warn('Background storyline refresh: detail', detail);
         }
         return;
       } else {
         console.error('Storyline response format not recognized:', sr);
-        setError(
-          'Unable to parse storyline data. Please refresh the page or contact support.'
-        );
+        if (!background) {
+          setError(
+            'Unable to parse storyline data. Please refresh the page or contact support.'
+          );
+        }
         return;
       }
 
       // Validate we got storyline data
       if (!storylineData || !storylineData.id) {
-        setError(
-          `Storyline #${id} data is incomplete. Please try refreshing the page.`
-        );
+        if (!background) {
+          setError(
+            `Storyline #${id} data is incomplete. Please try refreshing the page.`
+          );
+        }
         return;
       }
 
@@ -356,6 +373,7 @@ const StorylineDetail = () => {
       }
 
       if (!mountedRef.current) return;
+      setError(null);
       setStoryline(storylineData);
       setArticles(articlesData);
 
@@ -416,9 +434,15 @@ const StorylineDetail = () => {
         }
       }
 
-      setError(errorMessage);
+      if (!background) {
+        setError(errorMessage);
+      } else {
+        console.error('Background storyline refresh failed:', errorMessage);
+      }
     } finally {
-      setLoading(false);
+      if (!background) {
+        setLoading(false);
+      }
     }
   };
 
@@ -470,7 +494,7 @@ const StorylineDetail = () => {
       );
       if (response.success) {
         // Reload storyline to get updated article count and list
-        await loadStoryline();
+        await loadStoryline({ background: true });
         setError(null);
       } else {
         setError(response.message || 'Failed to remove article');
@@ -496,7 +520,7 @@ const StorylineDetail = () => {
       setShowAddArticles(false);
 
       // Reload storyline to get updated articles
-      await loadStoryline();
+      await loadStoryline({ background: true });
     } catch (err) {
       console.error('Error adding articles:', err);
       setError('Failed to add articles');
@@ -532,7 +556,7 @@ const StorylineDetail = () => {
         effectiveDomain
       );
       if (res && (res as { success?: boolean }).success !== false) {
-        await loadStoryline();
+        await loadStoryline({ background: true });
         setProcessingStatus(
           'Headline refinement queued (~70B). Refresh later for an updated title.'
         );
@@ -586,7 +610,7 @@ const StorylineDetail = () => {
               clearInterval(pollInterval);
               setIsProcessing(false);
               setProcessingStatus('');
-              await loadStoryline();
+              await loadStoryline({ background: true });
             } else if (attempts >= maxAttempts) {
               clearInterval(pollInterval);
               setIsProcessing(false);
@@ -620,7 +644,7 @@ const StorylineDetail = () => {
   };
 
   const handleStorylineUpdated = () => {
-    loadStoryline();
+    loadStoryline({ background: true });
   };
 
   // Check for cached synthesis on load
@@ -680,6 +704,50 @@ const StorylineDetail = () => {
       cancelled = true;
     };
   }, [id, effectiveDomain]);
+
+  /** Rows for the synthesis dialog Timeline box: LLM synthesis.timeline, else API timeline events. */
+  const synthesisDialogTimelineRows = useMemo(() => {
+    const fmt = (d: unknown) => {
+      if (!d) return 'No date';
+      try {
+        return new Date(d as string).toLocaleDateString('en-US', {
+          year: 'numeric',
+          month: 'short',
+          day: 'numeric',
+        });
+      } catch {
+        return 'Invalid date';
+      }
+    };
+    const tl = synthesis?.timeline;
+    if (Array.isArray(tl) && tl.length > 0) {
+      return tl
+        .map((e: { date?: string; event?: string }) => ({
+          date: e?.date || 'N/A',
+          event: (e?.event || '').trim(),
+          fromSynthesis: true as const,
+        }))
+        .filter(r => r.event);
+    }
+    const evs = timelineData?.events;
+    if (Array.isArray(evs) && evs.length > 0) {
+      return evs.map(
+        (evt: {
+          event_date?: string;
+          title?: string;
+          description?: string;
+        }) => ({
+          date: fmt(evt.event_date),
+          event:
+            (evt.title && String(evt.title).trim()) ||
+            (evt.description && String(evt.description).slice(0, 280)) ||
+            'Event',
+          fromSynthesis: false as const,
+        })
+      );
+    }
+    return [];
+  }, [synthesis?.timeline, timelineData?.events]);
 
   const checkCachedSynthesis = async () => {
     try {
@@ -1789,8 +1857,11 @@ const StorylineDetail = () => {
                 </Timeline>
               ) : (
                 <Typography variant='body2' color='text.secondary'>
-                  No timeline events yet. Run &quot;Analyze Storyline&quot; to
-                  extract events from articles.
+                  No structured timeline events yet. If the summary above
+                  mentions a timeline, that text is narrative-only until events
+                  are extracted (queue deep analysis / timeline generation).
+                  Open &quot;Interactive Timeline&quot; for the full view when
+                  data exists.
                 </Typography>
               )}
             </CardContent>
@@ -2022,7 +2093,7 @@ const StorylineDetail = () => {
         onClose={() => setShowAutomationDialog(false)}
         storylineId={id}
         onSettingsUpdated={() => {
-          loadStoryline();
+          loadStoryline({ background: true });
           setShowAutomationDialog(false);
         }}
       />
@@ -2033,7 +2104,7 @@ const StorylineDetail = () => {
         onClose={() => setShowSuggestionsDialog(false)}
         storylineId={id}
         onArticleAdded={() => {
-          loadStoryline();
+          loadStoryline({ background: true });
         }}
       />
 
@@ -2222,13 +2293,40 @@ const StorylineDetail = () => {
                 </Box>
               )}
 
-            {/* Timeline Section */}
-            {synthesis?.timeline && synthesis.timeline.length > 0 && (
+            {/* Timeline: synthesis JSON if present; else same structured events as main Timeline card */}
+            {synthesisDialogTimelineRows.length > 0 && (
               <Box sx={{ mt: 4, p: 2, bgcolor: 'grey.50', borderRadius: 1 }}>
-                <Typography variant='h6' gutterBottom>
-                  Timeline
-                </Typography>
-                {synthesis.timeline.map((event, idx) => (
+                <Box
+                  sx={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 1,
+                    flexWrap: 'wrap',
+                    mb: 1,
+                  }}
+                >
+                  <Typography variant='h6'>Timeline</Typography>
+                  {synthesisDialogTimelineRows.some(r => !r.fromSynthesis) && (
+                    <Chip
+                      size='small'
+                      variant='outlined'
+                      color='info'
+                      label='From storyline timeline API'
+                    />
+                  )}
+                </Box>
+                {synthesisDialogTimelineRows.some(r => !r.fromSynthesis) && (
+                  <Typography
+                    variant='caption'
+                    color='text.secondary'
+                    sx={{ display: 'block', mb: 1.5 }}
+                  >
+                    Cached synthesis often omits a separate timeline list; these
+                    rows match the interactive timeline on the storyline page.
+                  </Typography>
+                )}
+                {synthesisDialogTimelineRows.map((event, idx) => (
                   <Box key={idx} sx={{ mb: 1, display: 'flex', gap: 2 }}>
                     <Typography
                       variant='body2'

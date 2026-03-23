@@ -12,7 +12,7 @@ from typing import Any
 
 from domains.news_aggregation.services.article_service import ArticleService
 from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, Path, Query
-from shared.database.connection import get_db_connection
+from shared.database.connection import get_db_connection, get_ui_db_connection
 from shared.domain_registry import DOMAIN_PATH_PATTERN, get_active_domain_keys, is_valid_domain_key
 from shared.services.domain_aware_service import (
     get_domain_data_schemas,
@@ -32,8 +32,8 @@ router = APIRouter(
 async def health_check():
     """Health check for News Aggregation domain"""
     try:
-        # Check database connection
-        conn = get_db_connection()
+        # Check database connection (UI pool — same lane as page loads)
+        conn = get_ui_db_connection()
         if not conn:
             return {
                 "success": False,
@@ -73,8 +73,8 @@ async def get_domain_rss_feeds(domain: str = Path(..., pattern=DOMAIN_PATH_PATTE
         if not validate_domain(domain):
             raise HTTPException(status_code=400, detail=f"Invalid or inactive domain: {domain}")
 
-        # Get schema name
-        conn = get_db_connection()
+        # Get schema name (read path — UI pool)
+        conn = get_ui_db_connection()
         try:
             with conn.cursor() as cur:
                 cur.execute("SELECT schema_name FROM domains WHERE domain_key = %s", (domain,))
@@ -765,7 +765,7 @@ async def analyze_article_quality(article_id: int, background_tasks: BackgroundT
 async def get_aggregation_statistics():
     """Get news aggregation statistics"""
     try:
-        conn = get_db_connection()
+        conn = get_ui_db_connection()
         if not conn:
             raise HTTPException(status_code=500, detail="Database connection failed")
 

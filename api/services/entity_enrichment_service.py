@@ -192,7 +192,7 @@ def enrich_entity_profile(entity_profile_id: int) -> bool:
 
 
 def get_entity_profile_ids_to_enrich(limit: int = 20) -> list[int]:
-    """Return entity_profile IDs that have no Wikipedia-derived section or no versioned_facts yet."""
+    """Return entity_profile IDs missing Wikipedia section and/or wiki versioned_facts."""
     conn = get_db_connection()
     if not conn:
         return []
@@ -201,11 +201,18 @@ def get_entity_profile_ids_to_enrich(limit: int = 20) -> list[int]:
             cur.execute(
                 """
                 SELECT ep.id FROM intelligence.entity_profiles ep
-                WHERE (
-                    ep.sections IS NULL OR ep.sections::text NOT LIKE '%%Background (Wikipedia)%%'
-                )
-                AND ep.metadata->>'canonical_name' IS NOT NULL
-                AND ep.metadata->>'canonical_name' != ''
+                WHERE ep.metadata->>'canonical_name' IS NOT NULL
+                  AND ep.metadata->>'canonical_name' != ''
+                  AND (
+                    ep.sections IS NULL
+                    OR ep.sections::text NOT ILIKE '%%Background (Wikipedia)%%'
+                    OR NOT EXISTS (
+                      SELECT 1 FROM intelligence.versioned_facts vf
+                      WHERE vf.entity_profile_id = ep.id
+                        AND vf.extraction_method = 'wikipedia'
+                      LIMIT 1
+                    )
+                  )
                 ORDER BY ep.updated_at ASC NULLS FIRST
                 LIMIT %s
                 """,
@@ -244,8 +251,18 @@ def run_enrichment_batch(limit: int = 20) -> int:
                 cur.execute(
                     """
                     SELECT COUNT(*) FROM intelligence.entity_profiles ep
-                    WHERE (ep.sections IS NULL OR ep.sections::text NOT LIKE '%%Background (Wikipedia)%%')
-                    AND ep.metadata->>'canonical_name' IS NOT NULL AND ep.metadata->>'canonical_name' != ''
+                    WHERE ep.metadata->>'canonical_name' IS NOT NULL
+                      AND ep.metadata->>'canonical_name' != ''
+                      AND (
+                        ep.sections IS NULL
+                        OR ep.sections::text NOT ILIKE '%%Background (Wikipedia)%%'
+                        OR NOT EXISTS (
+                          SELECT 1 FROM intelligence.versioned_facts vf
+                          WHERE vf.entity_profile_id = ep.id
+                            AND vf.extraction_method = 'wikipedia'
+                          LIMIT 1
+                        )
+                      )
                     """
                 )
                 (queue_depth,) = cur.fetchone()

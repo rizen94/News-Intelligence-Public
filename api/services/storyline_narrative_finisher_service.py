@@ -15,7 +15,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
-from shared.database.connection import get_db_connection
+from shared.database.connection import get_ephemeral_db_connection_context
 from shared.domain_registry import domain_key_to_schema, is_valid_domain_key
 from shared.services.ollama_model_caller import get_ollama_model_caller
 from shared.services.ollama_model_policy import InvocationKind
@@ -101,173 +101,167 @@ def load_finisher_bundle_from_db(
         logger.warning("load_finisher_bundle_from_db: invalid domain_key=%s", domain_key)
         return None
 
-    conn = get_db_connection()
-    if not conn:
-        logger.error("load_finisher_bundle_from_db: no DB connection")
-        return None
-
     try:
-        with conn.cursor() as cur:
-            cur.execute(
-                f"""
-                SELECT id, title, description, status, analysis_summary,
-                       background_information, editorial_document, key_entities
-                FROM {schema}.storylines
-                WHERE id = %s
-                """,
-                (storyline_id,),
-            )
-            row = cur.fetchone()
-            if not row:
-                return None
-
-            title = row[1] or ""
-            description = row[2] or ""
-            status = row[3] or ""
-            analysis_summary = row[4] or ""
-            background_information = row[5]
-            editorial_document = row[6] or ""
-            key_entities_raw = row[7]
-
-            parts = [description, analysis_summary, editorial_document]
-            existing_narrative = "\n\n".join(p.strip() for p in parts if p and str(p).strip())
-
-            context_labels: list[str] = []
-            if background_information:
-                try:
-                    bg = (
-                        json.loads(background_information)
-                        if isinstance(background_information, str)
-                        else background_information
-                    )
-                    if isinstance(bg, dict):
-                        for k in ("contexts", "context_labels", "themes", "tags"):
-                            v = bg.get(k)
-                            if isinstance(v, list):
-                                context_labels.extend(str(x) for x in v if x)
-                            elif isinstance(v, str) and v.strip():
-                                context_labels.append(v.strip())
-                    elif isinstance(bg, list):
-                        context_labels.extend(str(x) for x in bg if x)
-                except (json.JSONDecodeError, TypeError):
-                    pass
-
-            if key_entities_raw is not None:
-                try:
-                    ke = (
-                        json.loads(key_entities_raw)
-                        if isinstance(key_entities_raw, str)
-                        else key_entities_raw
-                    )
-                    if isinstance(ke, list):
-                        context_labels.extend(str(x) for x in ke if x)
-                    elif isinstance(ke, dict):
-                        for k, v in ke.items():
-                            context_labels.append(f"{k}: {v}" if v is not None else str(k))
-                except (json.JSONDecodeError, TypeError):
-                    pass
-
-            cur.execute(
-                f"""
-                SELECT a.id, a.title, a.url, a.source_domain, a.published_at, a.summary
-                FROM {schema}.articles a
-                JOIN {schema}.storyline_articles sa ON a.id = sa.article_id
-                WHERE sa.storyline_id = %s
-                  AND (a.enrichment_status IS NULL OR a.enrichment_status != 'removed')
-                ORDER BY a.published_at DESC NULLS LAST
-                LIMIT %s
-                """,
-                (storyline_id, max_articles),
-            )
-            article_rows = list(cur.fetchall())
-            article_rows.reverse()
-
-            article_summaries: list[dict[str, Any]] = []
-            article_ids: list[int] = []
-            for r in article_rows:
-                aid, atitle, url, source_domain, published_at, summary = r
-                article_ids.append(int(aid))
-                article_summaries.append(
-                    {
-                        "id": aid,
-                        "title": atitle,
-                        "url": url,
-                        "source_domain": source_domain,
-                        "published_at": published_at.isoformat() if published_at else None,
-                        "summary": (summary or "")[:4000],
-                    }
-                )
-
-            entity_highlights: list[str] = []
-            if article_ids:
+        with get_ephemeral_db_connection_context() as conn:
+            with conn.cursor() as cur:
                 cur.execute(
                     f"""
-                    SELECT ec.canonical_name, ec.entity_type, COUNT(ae.article_id) AS mention_count
-                    FROM {schema}.article_entities ae
-                    JOIN {schema}.entity_canonical ec ON ec.id = ae.canonical_entity_id
-                    WHERE ae.article_id = ANY(%s)
-                    GROUP BY ec.id, ec.canonical_name, ec.entity_type
-                    ORDER BY mention_count DESC
-                    LIMIT %s
+                    SELECT id, title, description, status, analysis_summary,
+                           background_information, editorial_document, key_entities
+                    FROM {schema}.storylines
+                    WHERE id = %s
                     """,
-                    (article_ids, max_entities),
+                    (storyline_id,),
                 )
-                for name, etype, cnt in cur.fetchall():
-                    label = (name or "").strip()
-                    if not label:
-                        continue
-                    entity_highlights.append(f"{label} ({etype or 'subject'}), mentions={cnt}")
+                row = cur.fetchone()
+                if not row:
+                    return None
 
-            timeline_bullets: list[str] = []
-            try:
+                title = row[1] or ""
+                description = row[2] or ""
+                status = row[3] or ""
+                analysis_summary = row[4] or ""
+                background_information = row[5]
+                editorial_document = row[6] or ""
+                key_entities_raw = row[7]
+
+                parts = [description, analysis_summary, editorial_document]
+                existing_narrative = "\n\n".join(p.strip() for p in parts if p and str(p).strip())
+
+                context_labels: list[str] = []
+                if background_information:
+                    try:
+                        bg = (
+                            json.loads(background_information)
+                            if isinstance(background_information, str)
+                            else background_information
+                        )
+                        if isinstance(bg, dict):
+                            for k in ("contexts", "context_labels", "themes", "tags"):
+                                v = bg.get(k)
+                                if isinstance(v, list):
+                                    context_labels.extend(str(x) for x in v if x)
+                                elif isinstance(v, str) and v.strip():
+                                    context_labels.append(v.strip())
+                        elif isinstance(bg, list):
+                            context_labels.extend(str(x) for x in bg if x)
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+
+                if key_entities_raw is not None:
+                    try:
+                        ke = (
+                            json.loads(key_entities_raw)
+                            if isinstance(key_entities_raw, str)
+                            else key_entities_raw
+                        )
+                        if isinstance(ke, list):
+                            context_labels.extend(str(x) for x in ke if x)
+                        elif isinstance(ke, dict):
+                            for k, v in ke.items():
+                                context_labels.append(f"{k}: {v}" if v is not None else str(k))
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+
                 cur.execute(
-                    """
-                    SELECT title, description, actual_event_date, importance_score
-                    FROM public.chronological_events
-                    WHERE storyline_id = %s
-                    ORDER BY actual_event_date NULLS LAST, id ASC
+                    f"""
+                    SELECT a.id, a.title, a.url, a.source_domain, a.published_at, a.summary
+                    FROM {schema}.articles a
+                    JOIN {schema}.storyline_articles sa ON a.id = sa.article_id
+                    WHERE sa.storyline_id = %s
+                      AND (a.enrichment_status IS NULL OR a.enrichment_status != 'removed')
+                    ORDER BY a.published_at DESC NULLS LAST
                     LIMIT %s
                     """,
-                    (str(storyline_id), max_timeline),
+                    (storyline_id, max_articles),
                 )
-                for t, desc, adate, imp in cur.fetchall():
-                    line = (t or "").strip()
-                    if adate:
-                        line = f"{adate.isoformat()}: {line}"
-                    if desc and str(desc).strip():
-                        line += f" — {(desc or '')[:240]}"
-                    if imp is not None:
-                        line += f" [importance={imp}]"
-                    if line:
-                        timeline_bullets.append(line)
-            except Exception as te:
-                logger.debug("chronological_events optional load skipped: %s", te)
+                article_rows = list(cur.fetchall())
+                article_rows.reverse()
 
-            seen_ctx = set()
-            uniq_contexts = []
-            for c in context_labels:
-                c = str(c).strip()
-                if c and c not in seen_ctx:
-                    seen_ctx.add(c)
-                    uniq_contexts.append(c)
+                article_summaries: list[dict[str, Any]] = []
+                article_ids: list[int] = []
+                for r in article_rows:
+                    aid, atitle, url, source_domain, published_at, summary = r
+                    article_ids.append(int(aid))
+                    article_summaries.append(
+                        {
+                            "id": aid,
+                            "title": atitle,
+                            "url": url,
+                            "source_domain": source_domain,
+                            "published_at": published_at.isoformat() if published_at else None,
+                            "summary": (summary or "")[:4000],
+                        }
+                    )
 
-            return StorylineFinisherBundle(
-                domain_key=domain_key,
-                schema_name=schema,
-                storyline_id=storyline_id,
-                storyline_title=title,
-                storyline_status=status,
-                existing_narrative=existing_narrative,
-                article_summaries=article_summaries,
-                entity_highlights=entity_highlights,
-                context_labels=uniq_contexts,
-                timeline_bullets=timeline_bullets,
-            )
+                entity_highlights: list[str] = []
+                if article_ids:
+                    cur.execute(
+                        f"""
+                        SELECT ec.canonical_name, ec.entity_type, COUNT(ae.article_id) AS mention_count
+                        FROM {schema}.article_entities ae
+                        JOIN {schema}.entity_canonical ec ON ec.id = ae.canonical_entity_id
+                        WHERE ae.article_id = ANY(%s)
+                        GROUP BY ec.id, ec.canonical_name, ec.entity_type
+                        ORDER BY mention_count DESC
+                        LIMIT %s
+                        """,
+                        (article_ids, max_entities),
+                    )
+                    for name, etype, cnt in cur.fetchall():
+                        label = (name or "").strip()
+                        if not label:
+                            continue
+                        entity_highlights.append(f"{label} ({etype or 'subject'}), mentions={cnt}")
+
+                timeline_bullets: list[str] = []
+                try:
+                    cur.execute(
+                        """
+                        SELECT title, description, actual_event_date, importance_score
+                        FROM public.chronological_events
+                        WHERE storyline_id = %s
+                        ORDER BY actual_event_date NULLS LAST, id ASC
+                        LIMIT %s
+                        """,
+                        (str(storyline_id), max_timeline),
+                    )
+                    for t, desc, adate, imp in cur.fetchall():
+                        line = (t or "").strip()
+                        if adate:
+                            line = f"{adate.isoformat()}: {line}"
+                        if desc and str(desc).strip():
+                            line += f" — {(desc or '')[:240]}"
+                        if imp is not None:
+                            line += f" [importance={imp}]"
+                        if line:
+                            timeline_bullets.append(line)
+                except Exception as te:
+                    logger.debug("chronological_events optional load skipped: %s", te)
+
+                seen_ctx = set()
+                uniq_contexts = []
+                for c in context_labels:
+                    c = str(c).strip()
+                    if c and c not in seen_ctx:
+                        seen_ctx.add(c)
+                        uniq_contexts.append(c)
+
+                return StorylineFinisherBundle(
+                    domain_key=domain_key,
+                    schema_name=schema,
+                    storyline_id=storyline_id,
+                    storyline_title=title,
+                    storyline_status=status,
+                    existing_narrative=existing_narrative,
+                    article_summaries=article_summaries,
+                    entity_highlights=entity_highlights,
+                    context_labels=uniq_contexts,
+                    timeline_bullets=timeline_bullets,
+                )
     except Exception as e:
         logger.exception("load_finisher_bundle_from_db failed: %s", e)
         return None
-    finally:
-        conn.close()
 
 
 def build_finisher_prompt(bundle: StorylineFinisherBundle) -> str:
@@ -493,32 +487,27 @@ def persist_narrative_finish_to_db(
     if raw:
         meta["raw_excerpt"] = raw[:4000]
 
-    conn = get_db_connection()
-    if not conn:
-        return False
     try:
-        with conn.cursor() as cur:
-            cur.execute(
-                f"""
-                UPDATE {schema}.storylines
-                SET
-                    canonical_narrative = COALESCE(NULLIF(%s, ''), canonical_narrative),
-                    narrative_finisher_meta = %s::jsonb,
-                    narrative_finisher_model = %s,
-                    narrative_finisher_at = NOW(),
-                    updated_at = NOW()
-                WHERE id = %s
-                """,
-                (canonical, json.dumps(meta), run_result.get("model"), storyline_id),
-            )
-        conn.commit()
+        with get_ephemeral_db_connection_context() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    UPDATE {schema}.storylines
+                    SET
+                        canonical_narrative = COALESCE(NULLIF(%s, ''), canonical_narrative),
+                        narrative_finisher_meta = %s::jsonb,
+                        narrative_finisher_model = %s,
+                        narrative_finisher_at = NOW(),
+                        updated_at = NOW()
+                    WHERE id = %s
+                    """,
+                    (canonical, json.dumps(meta), run_result.get("model"), storyline_id),
+                )
+            conn.commit()
         return True
     except Exception as e:
         logger.exception("persist_narrative_finish_to_db: %s", e)
-        conn.rollback()
         return False
-    finally:
-        conn.close()
 
 
 async def run_narrative_finish_placeholder_from_db(

@@ -16,7 +16,7 @@ For full-stack DB alignment (schema, API, web, automation persistence), baseline
 
 Automation can report success while **zero rows** are inserted if claim subjects cannot be resolved to `intelligence.entity_profiles.id`. A resolver bug (invalid `display_name` column + wrong `old_entity_to_new` join) caused **all** resolutions to fail until fixed.
 
-- Doc (archived): [_archive/retired_root_docs_2026_03/CLAIMS_TO_FACTS_ENTITY_RESOLUTION.md](_archive/retired_root_docs_2026_03/CLAIMS_TO_FACTS_ENTITY_RESOLUTION.md)  
+- Doc: [CLAIMS_TO_FACTS_ENTITY_RESOLUTION.md](CLAIMS_TO_FACTS_ENTITY_RESOLUTION.md)  
 - Diagnose: `PYTHONPATH=api uv run python scripts/diagnose_claims_to_facts.py`
 
 ### **Entity enrichment never updates `entity_profiles`**
@@ -115,6 +115,8 @@ After fixing code, restart the API so the connection pool is fresh and automatio
 **Symptoms**: Migrations or batch jobs fail with `canceling statement due to statement timeout`; ALTER TABLE or long UPDATE never finishes.
 
 **Policy**: The DB connection pool uses a **statement timeout** so one stuck query doesn’t hang the app. Default is **2 minutes** (`DB_STATEMENT_TIMEOUT_MS=120000`). That’s fine for normal API and automation. **Planned long-running work** (migrations, backfills, big reports) must run with no timeout so they aren’t cut off early.
+
+For many clients or a low PostgreSQL `max_connections`, use **PgBouncer** in front of Postgres and size app pools per **`docs/PGBOUNCER_AND_CONNECTION_BUDGET.md`**.
 
 | Context | Timeout | Notes |
 |--------|---------|--------|

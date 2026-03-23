@@ -42,7 +42,9 @@ BATCH_SIZE_PER_TASK: Dict[str, int] = {
     "storyline_processing": 24,  # ~8 storylines worth of summary work per full pass
     "topic_clustering": 60,  # ~20 × 3 standard domains (approximates automation)
     "timeline_generation": 36,  # 12 × 3
-    "storyline_discovery": 1,  # one heavy phase run; any extra eligible articles → boost priority
+    "storyline_discovery": 50,  # unlinked-in-newest-N proxy (see _count_storyline_discovery_pending)
+    "proactive_detection": 1000,  # proactive candidate pool cap per domain
+    "storyline_automation": 5,  # automation_manager LIMIT storylines per domain per tick
     "rag_enhancement": 9,  # few storylines enhanced per tick per domain
     "event_extraction": 90,  # 30 × 3
 }
@@ -77,6 +79,8 @@ def _get_raw_pending_counts() -> Dict[str, int]:
         raw["storyline_discovery"] = _count_storyline_discovery_pending()
         raw["rag_enhancement"] = _count_rag_enhancement_pending()
         raw["event_extraction"] = _count_event_extraction_pending()
+        raw["proactive_detection"] = _count_proactive_detection_pending()
+        raw["storyline_automation"] = _count_storyline_automation_pending()
         raw["nightly_enrichment_context"] = (
             int(raw.get("content_enrichment", 0) or 0)
             + int(raw.get("context_sync", 0) or 0)
@@ -154,7 +158,7 @@ def _get_conn():
 
 
 def _count_content_enrichment_backlog() -> int:
-    """Articles (across politics, finance, science_tech) pending full-text enrichment.
+    """Articles (across active domain schemas) pending full-text enrichment.
     Matches content_enrichment batch query: enrichment_status NULL/pending/failed, attempts < 3, has URL."""
     conn = _get_conn()
     if not conn:
@@ -184,7 +188,7 @@ def _count_content_enrichment_backlog() -> int:
 
 
 def _count_context_sync_backlog() -> int:
-    """Articles (across politics, finance, science_tech) not yet in article_to_context."""
+    """Articles not yet in article_to_context — matches ``sync_domain_articles_to_contexts`` (excludes removed)."""
     conn = _get_conn()
     if not conn:
         return 0
@@ -198,6 +202,7 @@ def _count_context_sync_backlog() -> int:
                     LEFT JOIN intelligence.article_to_context atc
                       ON atc.domain_key = %s AND atc.article_id = a.id
                     WHERE atc.context_id IS NULL
+                      AND (a.enrichment_status IS NULL OR a.enrichment_status != 'removed')
                     """,
                     (domain_key,),
                 )
@@ -633,7 +638,7 @@ def _count_timeline_generation_pending() -> int:
 
 
 def _count_storyline_discovery_pending() -> int:
-    """Per-domain count of newest articles eligible for discovery cap (proxy for clustering load)."""
+    """Newest-N articles per schema (same cap as discovery fetch) that are not on any storyline — linkage backlog."""
     try:
         from services.ai_storyline_discovery import STORYLINE_DISCOVERY_ARTICLE_LIMIT as cap
     except Exception:
@@ -645,15 +650,19 @@ def _count_storyline_discovery_pending() -> int:
     try:
         for schema in get_schema_names_active():
             with conn.cursor() as cur:
-                cur.execute("SET LOCAL statement_timeout = '3s'")
+                cur.execute("SET LOCAL statement_timeout = '5s'")
                 cur.execute(
                     f"""
-                    SELECT COUNT(*) FROM (
-                        SELECT 1 FROM {schema}.articles
-                        WHERE content IS NOT NULL AND LENGTH(content) > 100
+                    WITH cand AS (
+                        SELECT id FROM {schema}.articles
                         ORDER BY created_at DESC
                         LIMIT %s
-                    ) sub
+                    )
+                    SELECT COUNT(*) FROM cand c
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM {schema}.storyline_articles sa
+                        WHERE sa.article_id = c.id
+                    )
                     """,
                     (cap,),
                 )
@@ -661,6 +670,64 @@ def _count_storyline_discovery_pending() -> int:
         return total
     except Exception as e:
         logger.debug("backlog storyline_discovery count: %s", e)
+        return 0
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _count_proactive_detection_pending() -> int:
+    """Recent articles (72h) with no storyline_articles row — matches proactive_detection candidate query."""
+    conn = _get_conn()
+    if not conn:
+        return 0
+    total = 0
+    try:
+        for schema in get_schema_names_active():
+            with conn.cursor() as cur:
+                cur.execute("SET LOCAL statement_timeout = '5s'")
+                cur.execute(
+                    f"""
+                    SELECT COUNT(*) FROM {schema}.articles a
+                    LEFT JOIN {schema}.storyline_articles sa ON sa.article_id = a.id
+                    WHERE a.published_at >= NOW() - INTERVAL '72 hours'
+                      AND sa.article_id IS NULL
+                    """
+                )
+                total += int(cur.fetchone()[0] or 0)
+        return total
+    except Exception as e:
+        logger.debug("backlog proactive_detection count: %s", e)
+        return 0
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _count_storyline_automation_pending() -> int:
+    """Storylines with automation_enabled — matches batch selection pool (LIMIT 5 per domain per run)."""
+    conn = _get_conn()
+    if not conn:
+        return 0
+    total = 0
+    try:
+        for schema in get_schema_names_active():
+            with conn.cursor() as cur:
+                cur.execute("SET LOCAL statement_timeout = '3s'")
+                cur.execute(
+                    f"""
+                    SELECT COUNT(*) FROM {schema}.storylines
+                    WHERE automation_enabled = true
+                    """
+                )
+                total += int(cur.fetchone()[0] or 0)
+        return total
+    except Exception as e:
+        logger.debug("backlog storyline_automation count: %s", e)
         return 0
     finally:
         try:
@@ -744,6 +811,7 @@ def _count_event_extraction_pending() -> int:
 # content_refinement_queue omitted: must run on interval when idle so automation history updates;
 # empty queue completes in milliseconds.
 SKIP_WHEN_EMPTY = frozenset({
+    "content_enrichment",
     "context_sync",
     "event_tracking",
     "claim_extraction",
@@ -760,6 +828,8 @@ SKIP_WHEN_EMPTY = frozenset({
     "topic_clustering",
     "timeline_generation",
     "storyline_discovery",
+    "proactive_detection",
+    "storyline_automation",
     "rag_enhancement",
     "event_extraction",
 })

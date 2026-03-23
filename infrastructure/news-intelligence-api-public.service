@@ -12,6 +12,7 @@
 #   sudo systemctl enable --now news-intelligence-api-public
 #
 # Requires: /opt/news-intelligence/.env with DB_* and /opt/news-intelligence/.env.public_demo (optional overlay).
+# When PgBouncer runs on Widow: DB_HOST=127.0.0.1 DB_PORT=6432 (see docs/PGBOUNCER_AND_CONNECTION_BUDGET.md, scripts/install_pgbouncer_widow.sh).
 
 [Unit]
 Description=News Intelligence API (localhost, behind nginx)

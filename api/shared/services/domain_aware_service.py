@@ -10,7 +10,7 @@ import re
 from typing import Any
 
 from psycopg2.extras import RealDictCursor
-from shared.database.connection import get_db_connection
+from shared.database.connection import get_db_connection, get_ui_db_connection
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +95,16 @@ class DomainAwareService:
             cur.execute(f"SET search_path TO {self.schema}, public")
         return conn
 
+    def get_read_db_connection(self):
+        """
+        Worker pool is shared with automation; UI pool is reserved for interactive traffic.
+        Use for read-only page-load queries so listings stay fast when the pipeline is busy.
+        """
+        conn = get_ui_db_connection()
+        with conn.cursor() as cur:
+            cur.execute(f"SET search_path TO {self.schema}, public")
+        return conn
+
     def execute_in_domain_schema(self, query: str, params: tuple = None):
         """
         Execute query in domain schema context.
@@ -172,7 +182,7 @@ def validate_domain(domain: str) -> bool:
         True if domain is valid and active, False otherwise
     """
     try:
-        conn = get_db_connection()
+        conn = get_ui_db_connection()
         if conn is None:
             logger.debug("validate_domain %s: no DB connection", domain)
             return False
@@ -183,7 +193,7 @@ def validate_domain(domain: str) -> bool:
                     SELECT is_active
                     FROM domains
                     WHERE domain_key = %s
-                """,
+                    """,
                     (domain,),
                 )
                 result = cur.fetchone()
@@ -202,7 +212,7 @@ def get_all_domains() -> list:
     Returns:
         List of domain dictionaries
     """
-    conn = get_db_connection()
+    conn = get_ui_db_connection()
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute("""
@@ -230,7 +240,7 @@ def normalize_domain_to_schema(domain_key: str) -> str:
 
 def resolve_article_id_to_schema(article_id: int) -> str | None:
     """Return which domain schema contains this article id, or None."""
-    conn = get_db_connection()
+    conn = get_ui_db_connection()
     if not conn:
         return None
     try:
@@ -252,7 +262,7 @@ def resolve_article_id_to_schema(article_id: int) -> str | None:
 
 def resolve_storyline_id_to_schema(storyline_id: int) -> str | None:
     """Return which domain schema contains this storyline id, or None."""
-    conn = get_db_connection()
+    conn = get_ui_db_connection()
     if not conn:
         return None
     try:

@@ -10,7 +10,7 @@ import logging
 from datetime import date, datetime, timedelta
 from typing import Any
 
-from shared.database.connection import get_db_connection
+from shared.database.connection import get_ephemeral_db_connection_context
 
 logger = logging.getLogger(__name__)
 
@@ -38,21 +38,17 @@ def _last_completed_week() -> tuple[date, date]:
 
 def _weekly_digest_exists(week_start: date) -> bool:
     """Return True if weekly_digests already has a row for this week_start."""
-    conn = get_db_connection()
-    if not conn:
-        return False
     try:
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT 1 FROM weekly_digests WHERE week_start = %s LIMIT 1",
-                (week_start,),
-            )
-            return cur.fetchone() is not None
+        with get_ephemeral_db_connection_context() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT 1 FROM weekly_digests WHERE week_start = %s LIMIT 1",
+                    (week_start,),
+                )
+                return cur.fetchone() is not None
     except Exception as e:
         logger.debug("weekly_digests check failed (table may not exist): %s", e)
         return False
-    finally:
-        conn.close()
 
 
 def _run_weekly_briefing_sync(week_start: date) -> dict[str, Any] | None:
@@ -80,69 +76,64 @@ def _insert_weekly_digest(
     top_categories = summary.get("top_categories") or {}
     top_trending = [{"topic": k, "count": v} for k, v in list(top_categories.items())[:20]]
     quality_metrics = trend if isinstance(trend, dict) else {}
-    conn = get_db_connection()
-    if not conn:
-        return None
     try:
-        with conn.cursor() as cur:
-            # Pull editorial ledes from storylines updated this week
-            editorial_suggestions = []
-            from shared.domain_registry import get_schema_names_active
+        with get_ephemeral_db_connection_context() as conn:
+            with conn.cursor() as cur:
+                # Pull editorial ledes from storylines updated this week
+                editorial_suggestions = []
+                from shared.domain_registry import get_schema_names_active
 
-            for schema in get_schema_names_active():
-                try:
-                    cur.execute(
-                        f"""
-                        SELECT id, title, editorial_document->>'lede' as lede
-                        FROM {schema}.storylines
-                        WHERE updated_at >= %s
-                          AND editorial_document IS NOT NULL
-                          AND editorial_document->>'lede' IS NOT NULL
-                          AND editorial_document->>'lede' != ''
-                        ORDER BY updated_at DESC
-                        LIMIT 5
-                    """,
-                        (week_start,),
-                    )
-                    for row in cur.fetchall():
-                        editorial_suggestions.append(
-                            {
-                                "domain": schema.replace("_", "-"),
-                                "storyline_id": row[0],
-                                "title": row[1],
-                                "lede": row[2],
-                            }
+                for schema in get_schema_names_active():
+                    try:
+                        cur.execute(
+                            f"""
+                            SELECT id, title, editorial_document->>'lede' as lede
+                            FROM {schema}.storylines
+                            WHERE updated_at >= %s
+                              AND editorial_document IS NOT NULL
+                              AND editorial_document->>'lede' IS NOT NULL
+                              AND editorial_document->>'lede' != ''
+                            ORDER BY updated_at DESC
+                            LIMIT 5
+                        """,
+                            (week_start,),
                         )
-                except Exception:
-                    pass
+                        for row in cur.fetchall():
+                            editorial_suggestions.append(
+                                {
+                                    "domain": schema.replace("_", "-"),
+                                    "storyline_id": row[0],
+                                    "title": row[1],
+                                    "lede": row[2],
+                                }
+                            )
+                    except Exception:
+                        pass
 
-            cur.execute(
-                """
-                INSERT INTO weekly_digests
-                (week_start, week_end, total_articles_analyzed, new_stories_suggested,
-                 existing_stories_updated, top_trending_topics, story_suggestions, quality_metrics)
-                VALUES (%s, %s, %s, 0, 0, %s, %s, %s)
-                RETURNING digest_id
-                """,
-                (
-                    week_start,
-                    week_end,
-                    total_articles,
-                    json.dumps(top_trending),
-                    json.dumps(editorial_suggestions),
-                    json.dumps(quality_metrics),
-                ),
-            )
-            row = cur.fetchone()
-            digest_id = str(row[0]) if row else None
-        conn.commit()
+                cur.execute(
+                    """
+                    INSERT INTO weekly_digests
+                    (week_start, week_end, total_articles_analyzed, new_stories_suggested,
+                     existing_stories_updated, top_trending_topics, story_suggestions, quality_metrics)
+                    VALUES (%s, %s, %s, 0, 0, %s, %s, %s)
+                    RETURNING digest_id
+                    """,
+                    (
+                        week_start,
+                        week_end,
+                        total_articles,
+                        json.dumps(top_trending),
+                        json.dumps(editorial_suggestions),
+                        json.dumps(quality_metrics),
+                    ),
+                )
+                row = cur.fetchone()
+                digest_id = str(row[0]) if row else None
+            conn.commit()
         return digest_id
     except Exception as e:
         logger.warning("Insert weekly_digest failed: %s", e)
-        conn.rollback()
         return None
-    finally:
-        conn.close()
 
 
 class DigestService:
@@ -179,23 +170,21 @@ class DigestService:
 
     def get_latest_weekly_digests(self, limit: int = 10) -> list[dict[str, Any]]:
         """Return latest weekly_digests rows for GET /api/products/weekly_digest."""
-        conn = get_db_connection()
-        if not conn:
-            return []
         try:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    SELECT digest_id, week_start, week_end, total_articles_analyzed,
-                           new_stories_suggested, existing_stories_updated,
-                           top_trending_topics, story_suggestions, quality_metrics, created_at
-                    FROM weekly_digests
-                    ORDER BY week_start DESC
-                    LIMIT %s
-                    """,
-                    (limit,),
-                )
-                rows = cur.fetchall()
+            with get_ephemeral_db_connection_context() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT digest_id, week_start, week_end, total_articles_analyzed,
+                               new_stories_suggested, existing_stories_updated,
+                               top_trending_topics, story_suggestions, quality_metrics, created_at
+                        FROM weekly_digests
+                        ORDER BY week_start DESC
+                        LIMIT %s
+                        """,
+                        (limit,),
+                    )
+                    rows = cur.fetchall()
 
             def _norm_json(val, default):
                 if val is None:
@@ -222,8 +211,6 @@ class DigestService:
         except Exception as e:
             logger.debug("get_latest_weekly_digests failed: %s", e)
             return []
-        finally:
-            conn.close()
 
 
 def get_digest_service() -> DigestService:

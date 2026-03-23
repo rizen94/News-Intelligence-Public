@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Box,
@@ -60,6 +60,8 @@ import apiServiceDefault from '../../services/apiService';
 import { getApiService } from '../../services/apiService';
 import TopicManagement from './TopicManagement';
 import { useDomainRoute } from '../../hooks/useDomainRoute';
+import { useDomain } from '../../contexts/DomainContext';
+import { domainSearchHintTokensFrom } from '../../utils/domainHelper';
 import { useNotification } from '../../hooks/useNotification';
 import { getUserFriendlyError } from '../../utils/errorHandler';
 import LoadingState from '../../components/shared/LoadingState';
@@ -225,6 +227,11 @@ interface TrendingTopic {
 const Topics: React.FC = () => {
   const navigate = useNavigate();
   const { domain } = useDomainRoute();
+  const { availableDomains } = useDomain();
+  const domainHintTokens = useMemo(
+    () => domainSearchHintTokensFrom(availableDomains),
+    [availableDomains]
+  );
   const { showSuccess, showError, showInfo, NotificationComponent } =
     useNotification();
   const [topics, setTopics] = useState<Topic[]>([]);
@@ -352,13 +359,6 @@ const Topics: React.FC = () => {
                 );
               } else {
                 // Check if the search term is a domain name or category
-                const domainNames = [
-                  'politics',
-                  'finance',
-                  'science-tech',
-                  'science_tech',
-                  'science & technology',
-                ];
                 const categoryNames = [
                   'technology',
                   'tech',
@@ -375,7 +375,7 @@ const Topics: React.FC = () => {
 
                 const searchTermLower = topicName.toLowerCase();
 
-                if (domainNames.includes(searchTermLower)) {
+                if (domainHintTokens.has(searchTermLower)) {
                   setError(
                     `"${topicName}" is a domain, not a topic. Topics are specific subjects extracted from articles (like "China", "Ukraine", "Donald Trump", "2026 elections"). To view all articles in the ${topicName} domain, go to the Articles page.`
                   );
@@ -432,14 +432,7 @@ const Topics: React.FC = () => {
                 `Found ${searchArticles.length} articles matching "${topicName}" but they're not yet assigned to this topic. Click "Run Topic Clustering" to assign articles to topics.`
               );
             } else {
-              // Check if the search term is a domain name
-              const domainNames = [
-                'politics',
-                'finance',
-                'science-tech',
-                'science_tech',
-              ];
-              if (domainNames.includes(topicName.toLowerCase())) {
+              if (domainHintTokens.has(topicName.toLowerCase())) {
                 setError(
                   `"${topicName}" is a domain, not a topic. Topics are specific subjects extracted from articles (like "China", "Ukraine", "President Donald Trump"). To view all articles in the ${topicName} domain, go to the Articles page.`
                 );

@@ -321,9 +321,9 @@ def enrich_articles_batch(batch_size: int = 20) -> int:
                     SELECT id, url, content
                     FROM {schema_name}.articles
                     WHERE (enrichment_status IS NULL OR enrichment_status IN ('pending', 'failed'))
-                      AND enrichment_attempts < 3
+                      AND COALESCE(enrichment_attempts, 0) < 3
                       AND url IS NOT NULL AND url != ''
-                    ORDER BY enrichment_attempts ASC, created_at DESC
+                    ORDER BY COALESCE(enrichment_attempts, 0) ASC, created_at DESC
                     LIMIT %s
                     """,
                     (remaining,),

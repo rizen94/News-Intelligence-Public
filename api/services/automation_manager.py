@@ -16,6 +16,9 @@ except phases in AUTOMATION_QUEUE_PAUSE_ALLOW (default: collection_cycle, health
 **Offload to Widow (DB host):** set ``AUTOMATION_SKIP_RSS_IN_COLLECTION_CYCLE=true`` on the GPU/main API host when
 RSS runs on Widow; set ``AUTOMATION_DISABLED_SCHEDULES=context_sync,entity_profile_sync,pending_db_flush`` (comma-separated)
 for phases moved to ``api/scripts/run_widow_db_adjacent.py`` cron — dependents' ``depends_on`` lists are adjusted automatically.
+Widow only writes ``{domain}.articles``; there is no message queue. The **content_enrichment** scheduled task (plus the
+enrichment loop inside ``collection_cycle``) drains pending rows from the DB so ingestion is not blocked when
+``collection_cycle`` is throttled or skips RSS on the main host.
 Dependency settle time after a phase completes is capped by AUTOMATION_DEPENDENCY_SETTLE_CAP_SEC (default 180s)
 so long estimated_duration values (e.g. collection_cycle) do not block dependents such as storyline_discovery.
 
@@ -45,7 +48,13 @@ from typing import Any
 
 from psycopg2.extras import RealDictCursor
 
-from shared.domain_registry import get_active_domain_keys, get_schema_names_active, url_schema_pairs
+from shared.domain_registry import (
+    get_active_domain_keys,
+    get_schema_names_active,
+    resolve_domain_schema,
+    schema_to_primary_domain_key,
+    url_schema_pairs,
+)
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -82,6 +91,7 @@ ENRICHMENT_BACKLOG_FIRST_WHITELIST = frozenset()
 
 # Phases that process batches; re-enqueue when pending work remains (v8: capped per analysis window)
 BATCH_PHASES_CONTINUOUS = {
+    "content_enrichment",
     "ml_processing",
     "entity_extraction",
     "sentiment_analysis",
@@ -102,9 +112,29 @@ MAX_REQUEUE_PER_WINDOW = 3  # v8: cap re-enqueues per analysis window so one tas
 WORKLOAD_MIN_COOLDOWN = (
     10  # seconds between enqueueing the same phase when it has work (avoid flood)
 )
-# Don't run collection_cycle when downstream (enrichment + context_sync + document_processing) pending exceeds this.
-# Ensures collection → processing → synthesis sequence completes before adding more RSS.
+# Don't run collection_cycle when downstream pending exceeds this.
+# Default sum: content_enrichment + context_sync + document_processing.
+# Optional: comma-separated phase names in COLLECTION_THROTTLE_EXTRA_PHASES (e.g. ml_processing,entity_extraction).
 COLLECTION_THROTTLE_PENDING_THRESHOLD = 500
+_COLLECTION_THROTTLE_BASE = (
+    "content_enrichment",
+    "context_sync",
+    "document_processing",
+)
+
+
+def _collection_throttle_pending_total(pending: dict[str, int] | None) -> tuple[int, dict[str, int]]:
+    """Return (total, per-phase counts) used to gate collection_cycle when workload-driven."""
+    p = pending or {}
+    keys = list(_COLLECTION_THROTTLE_BASE)
+    extra = os.environ.get("COLLECTION_THROTTLE_EXTRA_PHASES", "").strip()
+    if extra:
+        for part in extra.split(","):
+            k = part.strip()
+            if k and k not in keys:
+                keys.append(k)
+    breakdown = {k: int(p.get(k, 0) or 0) for k in keys}
+    return sum(breakdown.values()), breakdown
 # When True, scheduler ignores analysis-window step lock; workload + pipeline order determine what runs.
 USE_WORKLOAD_DRIVEN_ORDER = True
 
@@ -115,7 +145,7 @@ QUEUE_PAUSE_ALLOW_SCHEDULED = frozenset(
     x.strip()
     for x in os.environ.get(
         "AUTOMATION_QUEUE_PAUSE_ALLOW",
-        "collection_cycle,health_check,pending_db_flush,content_refinement_queue,nightly_enrichment_context",
+        "collection_cycle,content_enrichment,health_check,pending_db_flush,content_refinement_queue,nightly_enrichment_context",
     ).split(",")
     if x.strip()
 )
@@ -141,8 +171,9 @@ AUTOMATION_DEPENDENCY_SETTLE_CAP_SEC = int(
 # Phases that constitute "data load"; when none have run recently, downtime loop runs entity organizer
 DATA_LOAD_PHASES = (
     "collection_cycle",
+    "content_enrichment",
     "entity_extraction",
-)  # v8: collection_cycle is the data load
+)  # v8: collection_cycle + standalone enrichment (Widow RSS) feed the pipeline
 DOWNTIME_IDLE_SECONDS = 300  # Consider "downtime" if no data-load phase ran in last 5 min
 DOWNTIME_ORGANIZER_SLEEP = 45  # Seconds between organizer cycles during downtime
 DOWNTIME_POLL_SLEEP = 30  # Seconds to sleep when data load is active (before rechecking)
@@ -331,6 +362,8 @@ class AutomationManager:
         # User/governor-requested tasks run before scheduled tasks so "Request phase" is not starved
         self._requested_task_queue: asyncio.Queue = asyncio.Queue()
         self.ollama_semaphore = asyncio.Semaphore(MAX_CONCURRENT_OLLAMA_TASKS)
+        # One enrichment batch at a time (collection_cycle loop + standalone content_enrichment share DB rows).
+        self._content_enrichment_lock = asyncio.Lock()
         self.workers = []
         # Thread-safe queue for coordinator-driven phase requests (run_phase from another thread)
         self._phase_request_queue = queue.Queue()
@@ -423,6 +456,17 @@ class AutomationManager:
                 "phase": 0,
                 "depends_on": [],
                 "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["document_processing"],
+            },
+            # Trafilatura full-text for RSS-short articles (all active domain schemas). Runs on its own schedule
+            # so Widow/cron RSS rows are drained even when collection_cycle skips RSS or is throttled on backlog.
+            "content_enrichment": {
+                "interval": 300,  # 5 minutes when idle; workload-driven runs sooner when pending > 0
+                "last_run": None,
+                "enabled": True,
+                "priority": TaskPriority.HIGH,
+                "phase": 0,
+                "depends_on": [],
+                "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["content_enrichment"],
             },
             # PHASE 1b: Context-centric sync (incremental: articles -> intelligence.contexts)
             "context_sync": {
@@ -1443,7 +1487,7 @@ class AutomationManager:
         pipeline step are allowed; step advances when time budget expires.
         """
         # v8: Pipeline-agnostic tasks always use normal logic (e.g. document_processing drains PDF backlog)
-        if task_name in ("collection_cycle", "health_check", "document_processing"):
+        if task_name in ("collection_cycle", "health_check", "document_processing", "content_enrichment"):
             pass
         elif not USE_WORKLOAD_DRIVEN_ORDER and self._analysis_window_start is not None:
             # Legacy: only run tasks in current pipeline step when step budget is enforced
@@ -1491,24 +1535,15 @@ class AutomationManager:
         # Workload-driven: don't run collection_cycle when downstream backlog is high — complete
         # collection → processing → synthesis sequence before adding more RSS.
         if USE_WORKLOAD_DRIVEN_ORDER and task_name == "collection_cycle":
-            downstream = (
-                (
-                    self._pending_counts.get("content_enrichment", 0)
-                    if hasattr(self, "_pending_counts")
-                    else 0
-                )
-                + (
-                    self._pending_counts.get("context_sync", 0)
-                    if hasattr(self, "_pending_counts")
-                    else 0
-                )
-                + (
-                    self._pending_counts.get("document_processing", 0)
-                    if hasattr(self, "_pending_counts")
-                    else 0
-                )
-            )
+            pc = self._pending_counts if hasattr(self, "_pending_counts") else {}
+            downstream, throttle_br = _collection_throttle_pending_total(pc)
             if downstream > COLLECTION_THROTTLE_PENDING_THRESHOLD:
+                logger.debug(
+                    "collection_cycle throttled: pending_total=%s threshold=%s breakdown=%s",
+                    downstream,
+                    COLLECTION_THROTTLE_PENDING_THRESHOLD,
+                    throttle_br,
+                )
                 return False
 
         if schedule.get("idle_only") and not self._is_system_idle():
@@ -2007,6 +2042,8 @@ class AutomationManager:
                 await self._execute_daily_briefing_synthesis(task)
             elif task.name == "nightly_enrichment_context":
                 await self._execute_nightly_enrichment_context(task)
+            elif task.name == "content_enrichment":
+                await self._execute_content_enrichment(task)
             elif task.name == "context_sync":
                 await self._execute_context_sync(task)
             elif task.name == "entity_profile_sync":
@@ -2393,9 +2430,10 @@ class AutomationManager:
         from services.article_content_enrichment_service import enrich_articles_batch
 
         try:
-            loop = asyncio.get_event_loop()
-            # Burst (48h catch-up): batch 60; revert to 40 after
-            await loop.run_in_executor(None, lambda: enrich_articles_batch(batch_size=60))
+            async with self._content_enrichment_lock:
+                loop = asyncio.get_event_loop()
+                # Burst (48h catch-up): batch 60; revert to 40 after
+                await loop.run_in_executor(None, lambda: enrich_articles_batch(batch_size=60))
         except Exception as e:
             logger.warning(f"Content enrichment failed: {e}")
 
@@ -2709,9 +2747,11 @@ class AutomationManager:
         from services.claim_extraction_service import promote_claims_to_versioned_facts
 
         try:
-            promoted = await asyncio.to_thread(promote_claims_to_versioned_facts, 0.7, 100)
-            if promoted > 0:
-                logger.info(f"Claims to facts: {promoted} claims promoted to versioned_facts")
+            stats = await asyncio.to_thread(promote_claims_to_versioned_facts, 0.7, 100)
+            if not isinstance(stats, dict):
+                return
+            if stats.get("candidates", 0) == 0:
+                logger.debug("Claims to facts: no promotable claims in batch")
         except Exception as e:
             logger.warning(f"Claims to facts failed: {e}")
 
@@ -2931,13 +2971,14 @@ class AutomationManager:
         try:
             auto_enqueue_comprehensive_rag_for_automation()
             stats = await process_content_refinement_queue_batch()
-            if stats.get("processed", 0) > 0 or stats.get("failed", 0) > 0:
-                logger.info(
-                    "Content refinement queue: processed=%s failed=%s by_type=%s",
-                    stats.get("processed"),
-                    stats.get("failed"),
-                    stats.get("by_type"),
-                )
+            logger.info(
+                "Content refinement queue: pending_before=%s processed=%s failed=%s by_type=%s pending_after=%s",
+                stats.get("pending_before"),
+                stats.get("processed"),
+                stats.get("failed"),
+                stats.get("by_type"),
+                stats.get("pending_after"),
+            )
         except Exception as e:
             logger.warning("Content refinement queue failed: %s", e)
 
@@ -2981,10 +3022,19 @@ class AutomationManager:
                     stats.get("gpu_stopped_reason"),
                 )
             elif stats.get("outer_cycles", 0):
-                logger.debug(
-                    "Nightly pipeline: cycles=%s stopped=%s",
+                logger.info(
+                    "Nightly pipeline: cycles=%s enrich_batches=%s articles=%s sync_rounds=%s contexts=%s "
+                    "gpu_batches=%s gpu_processed=%s gpu_failed=%s stopped=%s gpu_stopped=%s",
                     stats.get("outer_cycles"),
+                    stats.get("enrichment_batches"),
+                    stats.get("enrichment_articles"),
+                    stats.get("context_sync_rounds"),
+                    stats.get("contexts_created"),
+                    stats.get("gpu_batches"),
+                    stats.get("gpu_processed"),
+                    stats.get("gpu_failed"),
                     stats.get("stopped_reason"),
+                    stats.get("gpu_stopped_reason"),
                 )
         except Exception as e:
             logger.warning("Nightly unified pipeline failed: %s", e)
@@ -3010,11 +3060,14 @@ class AutomationManager:
             result = await loop.run_in_executor(
                 None, lambda: run_pattern_matching_all_domains(limit_per_domain=30)
             )
-            if result.get("matches_stored", 0) > 0 or result.get("alerts_created", 0) > 0:
+            if result.get("matches_stored", 0) > 0:
                 logger.info(
-                    "Pattern matching: matches_stored=%s alerts_created=%s",
+                    "Pattern matching: matches_stored=%s alerts_created=%s "
+                    "skipped_no_storyline=%s skipped_not_on_watchlist=%s",
                     result.get("matches_stored", 0),
                     result.get("alerts_created", 0),
+                    result.get("alerts_skipped_no_storyline", 0),
+                    result.get("alerts_skipped_not_on_watchlist", 0),
                 )
         except Exception as e:
             logger.warning("Pattern matching failed: %s", e)
@@ -3394,7 +3447,7 @@ class AutomationManager:
         rag_service = get_rag_service()
         enhanced_count = 0
         for domain in get_active_domain_keys():
-            schema = domain.replace("-", "_")
+            schema = resolve_domain_schema(domain)
             try:
                 conn = get_db_connection()
                 if not conn:
@@ -3675,7 +3728,7 @@ class AutomationManager:
                 try:
                     svc = StorylineAutomationService(domain=d)
                     conn = await self._get_db_connection()
-                    schema = d.replace("-", "_")
+                    schema = resolve_domain_schema(d)
                     try:
                         with conn.cursor() as cur:
                             cur.execute(f"""
@@ -3722,7 +3775,7 @@ class AutomationManager:
                 try:
                     svc = StorylineAutomationService(domain=d)
                     conn = await self._get_db_connection()
-                    schema = d.replace("-", "_")
+                    schema = resolve_domain_schema(d)
                     try:
                         with conn.cursor() as cur:
                             cur.execute(f"""
@@ -3902,6 +3955,10 @@ class AutomationManager:
                 total_articles = 0
 
                 for schema in get_schema_names_active():
+                    try:
+                        domain_for_events = schema_to_primary_domain_key(schema)
+                    except KeyError:
+                        domain_for_events = schema.replace("_", "-")
                     cursor.execute(f"""
                         SELECT a.id, a.content, a.published_at,
                                (
@@ -3934,7 +3991,7 @@ class AutomationManager:
                                 content=content,
                                 pub_date=pub_date,
                                 storyline_id=storyline_id,
-                                domain=schema.replace("_", "-"),
+                                domain=domain_for_events,
                             )
                             saved = await svc.save_events(events, conn)
                             total_events += saved
@@ -4455,6 +4512,8 @@ class AutomationManager:
             phases.extend(step)
         if "document_processing" not in phases:
             phases.append("document_processing")
+        if "content_enrichment" not in phases:
+            phases.append("content_enrichment")
         return phases
 
     async def _run_collection_watchdog(self, collection_started_at: datetime) -> None:

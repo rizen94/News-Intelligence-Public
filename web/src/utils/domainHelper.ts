@@ -193,6 +193,45 @@ export const getDomain = (key: DomainKey): Domain | undefined => {
 };
 
 /**
+ * Lowercase tokens for domain keys, schema names, and display names (Topics: "that's a domain, not a topic").
+ */
+export function domainSearchHintTokensFrom(domains: Domain[]): Set<string> {
+  const set = new Set<string>();
+  const add = (s: string) => {
+    const t = s.toLowerCase().trim();
+    if (t) set.add(t);
+  };
+  for (const d of domains) {
+    add(d.key);
+    add(d.schema);
+    add(d.schema.replace(/_/g, '-'));
+    add(d.schema.replace(/_/g, ' '));
+    add(d.name);
+    add(d.name.replace(/\s*&\s*/g, ' and '));
+    add(
+      d.name
+        .replace(/\s*&\s*/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+    );
+  }
+  return set;
+}
+
+/** Registry display name for a domain segment, else a readable title-case fallback. */
+export function formatDomainLabel(
+  domainKey: string | undefined | null
+): string {
+  if (!domainKey) return 'Domain';
+  const d = getDomain(domainKey);
+  if (d?.name) return d.name;
+  return (
+    domainKey.charAt(0).toUpperCase() +
+    domainKey.slice(1).replace(/-/g, ' ')
+  );
+}
+
+/**
  * Get domain schema name from domain key
  */
 export const getDomainSchema = (domain: DomainKey): string => {

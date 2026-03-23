@@ -53,7 +53,7 @@ const DomainIndicator: React.FC<DomainIndicatorProps> = ({
           color: '#616161',
           bg: '#f5f5f5',
           icon: '📰',
-          name: 'News',
+          name: domainName,
         };
     }
   };

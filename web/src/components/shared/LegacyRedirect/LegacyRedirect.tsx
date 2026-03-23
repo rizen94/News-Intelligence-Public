@@ -5,6 +5,7 @@
 
 import React from 'react';
 import { Navigate, useParams } from 'react-router-dom';
+import { getDefaultDomainKey } from '../../../utils/domainHelper';
 
 interface LegacyRedirectProps {
   to: string;
@@ -17,9 +18,11 @@ const LegacyRedirect: React.FC<LegacyRedirectProps> = ({
 }) => {
   const params = useParams();
 
+  const prefix = `/${getDefaultDomainKey()}`;
+
   if (preserveParams) {
     // Build path with preserved parameters
-    let path = `/politics${to}`;
+    let path = `${prefix}${to}`;
 
     // Replace parameter placeholders with actual values
     Object.keys(params).forEach(key => {
@@ -32,7 +35,7 @@ const LegacyRedirect: React.FC<LegacyRedirectProps> = ({
     return <Navigate to={path} replace />;
   }
 
-  return <Navigate to={`/politics${to}`} replace />;
+  return <Navigate to={`${prefix}${to}`} replace />;
 };
 
 export default LegacyRedirect;

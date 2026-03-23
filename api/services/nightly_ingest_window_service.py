@@ -78,7 +78,7 @@ def nightly_ingest_exclusive_automation_enabled() -> bool:
 def _ingest_allowlist() -> frozenset[str]:
     raw = os.environ.get(
         "NIGHTLY_INGEST_ALLOW",
-        "nightly_enrichment_context,health_check,pending_db_flush,collection_cycle",
+        "nightly_enrichment_context,content_enrichment,health_check,pending_db_flush,collection_cycle",
     )
     return frozenset(x.strip() for x in raw.split(",") if x.strip())
 

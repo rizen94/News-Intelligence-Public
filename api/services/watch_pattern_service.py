@@ -181,7 +181,10 @@ def run_pattern_matching(
                             )
                             mid = cur.fetchone()[0]
                         result["matches_stored"] += 1
-                        if score >= significance_threshold and sid is not None:
+                        if score >= significance_threshold:
+                            if sid is None:
+                                result["alerts_skipped_no_storyline"] += 1
+                                continue
                             created = _create_watchlist_alert_for_storyline(
                                 conn, domain_key, sid, matched_text, score
                             )
@@ -192,6 +195,8 @@ def run_pattern_matching(
                                         "UPDATE intelligence.pattern_matches SET alert_created = TRUE WHERE id = %s",
                                         (mid,),
                                     )
+                            else:
+                                result["alerts_skipped_not_on_watchlist"] += 1
                     except Exception as e:
                         result["errors"].append(str(e))
                         logger.debug("pattern match insert: %s", e)
@@ -211,26 +216,49 @@ def run_pattern_matching(
 
 def _resolve_context_to_storylines(
     conn, schema: str, domain_key: str, context_id: int
-) -> list[int | None]:
-    """Resolve context_id -> article_id -> storyline_ids via article_to_context and schema.storyline_articles."""
-    out: list[int | None] = []
+) -> list[int]:
+    """
+    Resolve context_id -> storyline_ids via article_to_context (all domain rows)
+    and per-domain storyline_articles. Improves alert eligibility when the primary
+    domain_key row is missing but another silo links the same context.
+    """
+    seen: set[int] = set()
+    out: list[int] = []
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT article_id FROM intelligence.article_to_context WHERE context_id = %s AND domain_key = %s",
+                """
+                SELECT domain_key, article_id
+                FROM intelligence.article_to_context
+                WHERE context_id = %s
+                ORDER BY CASE WHEN domain_key = %s THEN 0 ELSE 1 END
+                """,
                 (context_id, domain_key),
             )
-            row = cur.fetchone()
-        if not row:
-            return out
-        article_id = row[0]
-        with conn.cursor() as cur:
-            cur.execute(
-                f"SELECT storyline_id FROM {schema}.storyline_articles WHERE article_id = %s",
-                (article_id,),
-            )
-            for r in cur.fetchall():
-                out.append(r[0])
+            rows = cur.fetchall()
+        for dk, article_id in rows:
+            if article_id is None or dk is None:
+                continue
+            try:
+                sch = resolve_domain_schema(str(dk))
+            except Exception:
+                sch = str(dk).replace("-", "_")
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        f"""
+                        SELECT DISTINCT storyline_id
+                        FROM {sch}.storyline_articles
+                        WHERE article_id = %s AND storyline_id IS NOT NULL
+                        """,
+                        (article_id,),
+                    )
+                    for (sid,) in cur.fetchall():
+                        if sid is not None and sid not in seen:
+                            seen.add(int(sid))
+                            out.append(int(sid))
+            except Exception as e:
+                logger.debug("resolve context storylines schema=%s: %s", sch, e)
     except Exception as e:
         logger.debug("resolve context to storylines: %s", e)
     return out
@@ -269,11 +297,33 @@ def _create_watchlist_alert_for_storyline(
 
 def run_pattern_matching_all_domains(limit_per_domain: int = 30) -> dict[str, Any]:
     """Run pattern matching for each domain. Returns combined counts and per-domain results."""
-    combined = {"contexts_checked": 0, "matches_stored": 0, "alerts_created": 0, "by_domain": {}}
+    combined: dict[str, Any] = {
+        "contexts_checked": 0,
+        "matches_stored": 0,
+        "alerts_created": 0,
+        "alerts_skipped_no_storyline": 0,
+        "alerts_skipped_not_on_watchlist": 0,
+        "by_domain": {},
+    }
     for domain in get_active_domain_keys():
         r = run_pattern_matching(domain_key=domain, limit=limit_per_domain)
         combined["contexts_checked"] += r.get("contexts_checked", 0)
         combined["matches_stored"] += r.get("matches_stored", 0)
         combined["alerts_created"] += r.get("alerts_created", 0)
+        combined["alerts_skipped_no_storyline"] += r.get(
+            "alerts_skipped_no_storyline", 0
+        )
+        combined["alerts_skipped_not_on_watchlist"] += r.get(
+            "alerts_skipped_not_on_watchlist", 0
+        )
         combined["by_domain"][domain] = r
+    if combined.get("matches_stored", 0) > 0 and combined.get("alerts_created", 0) == 0:
+        logger.info(
+            "Pattern matching: %s matches stored, 0 alerts — "
+            "skipped_no_storyline=%s skipped_not_on_watchlist=%s "
+            "(alerts need linked storyline + watchlist row)",
+            combined["matches_stored"],
+            combined.get("alerts_skipped_no_storyline", 0),
+            combined.get("alerts_skipped_not_on_watchlist", 0),
+        )
     return combined

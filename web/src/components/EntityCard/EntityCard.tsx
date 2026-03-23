@@ -19,6 +19,7 @@ import Business from '@mui/icons-material/Business';
 import Place from '@mui/icons-material/Place';
 import Event from '@mui/icons-material/Event';
 import Category from '@mui/icons-material/Category';
+import { getDefaultDomainKey } from '../../utils/domainHelper';
 
 export interface EntityCardEntity {
   canonical_entity_id: number;
@@ -64,7 +65,7 @@ export default function EntityCard({
 }: EntityCardProps) {
   const navigate = useNavigate();
   const { domain: routeDomain } = useParams<{ domain: string }>();
-  const domain = domainProp ?? routeDomain ?? 'politics';
+  const domain = domainProp ?? routeDomain ?? getDefaultDomainKey();
 
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
   const openPopover = Boolean(anchorEl);

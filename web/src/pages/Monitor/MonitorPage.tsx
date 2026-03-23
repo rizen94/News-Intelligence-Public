@@ -44,6 +44,7 @@ import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import apiService from '@/services/apiService';
 import { contextCentricApi } from '@/services/api/contextCentric';
 import { safeServiceCall } from '@/utils/safeServiceCall';
+import { getDefaultDomainKey, getDomainKeysList } from '@/utils/domainHelper';
 
 const POLL_INTERVAL_MS = 4500;
 
@@ -115,7 +116,7 @@ function throughputSourceLabel(src?: BacklogPerHourSource): string {
 
 export default function MonitorPage() {
   const { domain: routeDomain } = useParams<{ domain: string }>();
-  const navDomain = routeDomain ?? 'politics';
+  const navDomain = routeDomain ?? getDefaultDomainKey();
   const [overview, setOverview] = useState<{
     success?: boolean;
     connections?: Record<string, unknown>;
@@ -1831,7 +1832,8 @@ export default function MonitorPage() {
           <CardContent>
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
               <Typography variant='body2'>
-                <strong>Domain configs:</strong> politics, finance, science-tech
+                <strong>Domain configs:</strong>{' '}
+                {getDomainKeysList().join(', ') || '—'}
               </Typography>
               <Typography variant='body2'>
                 <strong>GDELT enrichment:</strong>{' '}

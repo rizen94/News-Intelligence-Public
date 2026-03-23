@@ -475,6 +475,30 @@ def _refinement_queue_sort_key(
     return (pr, tier, ts, job_id)
 
 
+def count_content_refinement_pending() -> int:
+    """Rows waiting in the DB queue (``status = pending``)."""
+    conn = get_db_connection()
+    if not conn:
+        return 0
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT COUNT(*) FROM intelligence.content_refinement_queue
+                WHERE status = 'pending'
+                """
+            )
+            return int(cur.fetchone()[0] or 0)
+    except Exception as e:
+        logger.debug("count_content_refinement_pending: %s", e)
+        return 0
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
 def _claim_pending_batch(conn, limit: int) -> list[tuple[Any, ...]]:
     with conn.cursor() as cur:
         cur.execute(
@@ -711,14 +735,37 @@ async def process_content_refinement_queue_batch(
     if not conn:
         return {"processed": 0, "error": "no_db_connection"}
 
-    stats = {"processed": 0, "failed": 0, "by_type": {}}
+    stats: dict[str, Any] = {
+        "processed": 0,
+        "failed": 0,
+        "by_type": {},
+        "pending_before": 0,
+        "pending_after": 0,
+    }
     finisher_run = 0
     to_process: list[tuple[Any, ...]] = []
 
     try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT COUNT(*) FROM intelligence.content_refinement_queue
+                WHERE status = 'pending'
+                """
+            )
+            stats["pending_before"] = int(cur.fetchone()[0] or 0)
+
         rows = _claim_pending_batch(conn, max(cap_claim, cap_jobs * 2))
         if not rows:
             conn.commit()
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT COUNT(*) FROM intelligence.content_refinement_queue
+                    WHERE status = 'pending'
+                    """
+                )
+                stats["pending_after"] = int(cur.fetchone()[0] or 0)
             return stats
 
         initial_nf = _need_initial_narrative_map_for_batch(conn, rows)
@@ -762,6 +809,7 @@ async def process_content_refinement_queue_batch(
         conn.rollback()
         logger.exception("process_content_refinement_queue_batch claim: %s", e)
         stats["error"] = str(e)
+        stats["pending_after"] = stats.get("pending_before", 0)
         return stats
     finally:
         try:
@@ -792,6 +840,23 @@ async def process_content_refinement_queue_batch(
             logger.exception("content_refinement job %s failed: %s", job_id, e)
             _complete_job(job_id, False, str(e))
             stats["failed"] += 1
+
+    try:
+        tail = get_db_connection()
+        if tail:
+            try:
+                with tail.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT COUNT(*) FROM intelligence.content_refinement_queue
+                        WHERE status = 'pending'
+                        """
+                    )
+                    stats["pending_after"] = int(cur.fetchone()[0] or 0)
+            finally:
+                tail.close()
+    except Exception as e:
+        logger.debug("pending_after count: %s", e)
 
     return stats
 

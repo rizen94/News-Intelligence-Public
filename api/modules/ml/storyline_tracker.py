@@ -8,7 +8,7 @@ import logging
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 
-from shared.database.connection import get_db_connection
+from shared.database.connection import get_ephemeral_db_connection_context
 
 logger = logging.getLogger(__name__)
 
@@ -40,26 +40,25 @@ class StorylineTracker:
             Dictionary containing topic cloud and breaking news summary
         """
         try:
-            conn = get_db_connection()
-            cursor = conn.cursor()
+            with get_ephemeral_db_connection_context() as conn:
+                cursor = conn.cursor()
 
-            articles_from = f"{schema}.articles" if schema else "articles"
-            cutoff_date = datetime.now() - timedelta(days=days)
-            cursor.execute(
-                f"""
-                SELECT id, title, content, summary, category, source, published_at,
-                       metadata AS ml_data, quality_score, created_at
-                FROM {articles_from}
-                WHERE created_at >= %s
-                AND metadata->>'summary' IS NOT NULL AND metadata->>'summary' <> ''
-                AND quality_score >= 0.3
-                ORDER BY published_at DESC, quality_score DESC
-            """,
-                (cutoff_date,),
-            )
+                articles_from = f"{schema}.articles" if schema else "articles"
+                cutoff_date = datetime.now() - timedelta(days=days)
+                cursor.execute(
+                    f"""
+                    SELECT id, title, content, summary, category, source, published_at,
+                           metadata AS ml_data, quality_score, created_at
+                    FROM {articles_from}
+                    WHERE created_at >= %s
+                    AND metadata->>'summary' IS NOT NULL AND metadata->>'summary' <> ''
+                    AND quality_score >= 0.3
+                    ORDER BY published_at DESC, quality_score DESC
+                """,
+                    (cutoff_date,),
+                )
 
-            articles = cursor.fetchall()
-            conn.close()
+                articles = cursor.fetchall()
 
             if not articles:
                 return {
@@ -100,30 +99,29 @@ class StorylineTracker:
             Dictionary containing comprehensive story dossier
         """
         try:
-            conn = get_db_connection()
-            cursor = conn.cursor()
+            with get_ephemeral_db_connection_context() as conn:
+                cursor = conn.cursor()
 
-            # Get all articles related to this story
-            cursor.execute(
-                """
-                SELECT id, title, content, summary, category, source, published_at,
-                       metadata AS ml_data, quality_score, created_at
-                FROM articles
-                WHERE (
-                    LOWER(title) LIKE LOWER(%s) OR
-                    LOWER(content) LIKE LOWER(%s) OR
-                    LOWER(summary) LIKE LOWER(%s) OR
-                    category = %s
+                # Get all articles related to this story
+                cursor.execute(
+                    """
+                    SELECT id, title, content, summary, category, source, published_at,
+                           metadata AS ml_data, quality_score, created_at
+                    FROM articles
+                    WHERE (
+                        LOWER(title) LIKE LOWER(%s) OR
+                        LOWER(content) LIKE LOWER(%s) OR
+                        LOWER(summary) LIKE LOWER(%s) OR
+                        category = %s
+                    )
+                    AND metadata->>'summary' IS NOT NULL AND metadata->>'summary' <> ''
+                    AND quality_score >= 0.4
+                    ORDER BY published_at DESC, quality_score DESC
+                """,
+                    (f"%{story_id}%", f"%{story_id}%", f"%{story_id}%", story_id),
                 )
-                AND metadata->>'summary' IS NOT NULL AND metadata->>'summary' <> ''
-                AND quality_score >= 0.4
-                ORDER BY published_at DESC, quality_score DESC
-            """,
-                (f"%{story_id}%", f"%{story_id}%", f"%{story_id}%", story_id),
-            )
 
-            articles = cursor.fetchall()
-            conn.close()
+                articles = cursor.fetchall()
 
             if not articles:
                 return {
@@ -161,29 +159,28 @@ class StorylineTracker:
             Dictionary containing story evolution timeline
         """
         try:
-            conn = get_db_connection()
-            cursor = conn.cursor()
+            with get_ephemeral_db_connection_context() as conn:
+                cursor = conn.cursor()
 
-            cutoff_date = datetime.now() - timedelta(days=days)
-            cursor.execute(
-                """
-                SELECT id, title, content, summary, source, published_at,
-                       metadata AS ml_data, quality_score
-                FROM articles
-                WHERE (
-                    LOWER(title) LIKE LOWER(%s) OR
-                    LOWER(content) LIKE LOWER(%s) OR
-                    LOWER(summary) LIKE LOWER(%s)
+                cutoff_date = datetime.now() - timedelta(days=days)
+                cursor.execute(
+                    """
+                    SELECT id, title, content, summary, source, published_at,
+                           metadata AS ml_data, quality_score
+                    FROM articles
+                    WHERE (
+                        LOWER(title) LIKE LOWER(%s) OR
+                        LOWER(content) LIKE LOWER(%s) OR
+                        LOWER(summary) LIKE LOWER(%s)
+                    )
+                    AND published_at >= %s
+                    AND metadata->>'summary' IS NOT NULL AND metadata->>'summary' <> ''
+                    ORDER BY published_at ASC
+                """,
+                    (f"%{story_id}%", f"%{story_id}%", f"%{story_id}%", cutoff_date),
                 )
-                AND published_at >= %s
-                AND metadata->>'summary' IS NOT NULL AND metadata->>'summary' <> ''
-                ORDER BY published_at ASC
-            """,
-                (f"%{story_id}%", f"%{story_id}%", f"%{story_id}%", cutoff_date),
-            )
 
-            articles = cursor.fetchall()
-            conn.close()
+                articles = cursor.fetchall()
 
             if not articles:
                 return {

@@ -17,7 +17,11 @@ from nltk.corpus import stopwords
 from nltk.stem import PorterStemmer
 from nltk.tokenize import word_tokenize
 from psycopg2.extras import RealDictCursor
-from shared.database.connection import get_db_connection
+from shared.database.connection import (
+    get_db_connection,
+    get_db_connection_context,
+    get_ephemeral_db_connection_context,
+)
 from sklearn.cluster import DBSCAN
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
@@ -874,41 +878,48 @@ class AdvancedDeduplicationService:
                 conn.rollback()
                 conn.close()
 
-    def get_deduplication_stats(self) -> dict[str, Any]:
-        """Get deduplication statistics"""
+    def get_deduplication_stats(self, *, use_ephemeral_connection: bool = False) -> dict[str, Any]:
+        """Get deduplication statistics.
+
+        When ``use_ephemeral_connection`` is True (e.g. daily briefing), use a one-off connection
+        that fully disconnects on exit instead of returning a session to the shared pool.
+        """
+        ctx = (
+            get_ephemeral_db_connection_context
+            if use_ephemeral_connection
+            else get_db_connection_context
+        )
         try:
-            conn = get_db_connection()
-            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            with ctx() as conn:
+                cursor = conn.cursor(cursor_factory=RealDictCursor)
 
-            # Total articles
-            cursor.execute("SELECT COUNT(*) FROM articles")
-            total_articles = cursor.fetchone()[0]
+                # Total articles
+                cursor.execute("SELECT COUNT(*) FROM articles")
+                total_articles = cursor.fetchone()[0]
 
-            # Duplicate articles
-            cursor.execute("SELECT COUNT(*) FROM articles WHERE is_duplicate = true")
-            duplicate_articles = cursor.fetchone()[0]
+                # Duplicate articles
+                cursor.execute("SELECT COUNT(*) FROM articles WHERE is_duplicate = true")
+                duplicate_articles = cursor.fetchone()[0]
 
-            # Clusters
-            cursor.execute(
-                "SELECT COUNT(DISTINCT cluster_id) FROM articles WHERE cluster_id IS NOT NULL"
-            )
-            clusters = cursor.fetchone()[0]
+                # Clusters
+                cursor.execute(
+                    "SELECT COUNT(DISTINCT cluster_id) FROM articles WHERE cluster_id IS NOT NULL"
+                )
+                clusters = cursor.fetchone()[0]
 
-            # Duplicate pairs
-            cursor.execute("SELECT COUNT(*) FROM duplicate_pairs WHERE status = 'active'")
-            duplicate_pairs = cursor.fetchone()[0]
+                # Duplicate pairs
+                cursor.execute("SELECT COUNT(*) FROM duplicate_pairs WHERE status = 'active'")
+                duplicate_pairs = cursor.fetchone()[0]
 
-            # Recent duplicates (last 24 hours)
-            cursor.execute(
-                """
-                SELECT COUNT(*) FROM duplicate_pairs
-                WHERE detected_at >= %s
-            """,
-                (datetime.now() - timedelta(hours=24),),
-            )
-            recent_duplicates = cursor.fetchone()[0]
-
-            conn.close()
+                # Recent duplicates (last 24 hours)
+                cursor.execute(
+                    """
+                    SELECT COUNT(*) FROM duplicate_pairs
+                    WHERE detected_at >= %s
+                """,
+                    (datetime.now() - timedelta(hours=24),),
+                )
+                recent_duplicates = cursor.fetchone()[0]
 
             return {
                 "total_articles": total_articles,

@@ -28,6 +28,7 @@ import EventNoteIcon from '@mui/icons-material/EventNote';
 import ChecklistIcon from '@mui/icons-material/Checklist';
 import TableChartIcon from '@mui/icons-material/TableChart';
 import { usePublicDemoMode } from '../contexts/PublicDemoContext';
+import { getDefaultDomainKey } from '../utils/domainHelper';
 
 export const APP_NAV_WIDTH = 220;
 
@@ -124,7 +125,7 @@ export function AppNav() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const { readonly: demoReadonly } = usePublicDemoMode();
 
-  const base = `/${domain ?? 'politics'}`;
+  const base = `/${domain ?? getDefaultDomainKey()}`;
 
   const sections = NAV_SECTIONS.map(section => ({
     ...section,

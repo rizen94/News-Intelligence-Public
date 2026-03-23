@@ -71,6 +71,7 @@ import { useDomainNavigation } from '../../hooks/useDomainNavigation';
 import { useDomainRoute } from '../../hooks/useDomainRoute';
 import { useNotification } from '../../hooks/useNotification';
 import { getUserFriendlyError } from '../../utils/errorHandler';
+import { formatDomainLabel } from '../../utils/domainHelper';
 import LoadingState from '../../components/shared/LoadingState';
 import EmptyState from '../../components/shared/EmptyState';
 
@@ -753,11 +754,7 @@ const Storylines: React.FC = () => {
             Storylines
           </Typography>
           <Chip
-            label={
-              domain === 'science-tech'
-                ? 'Science & Tech'
-                : domain?.charAt(0).toUpperCase() + domain?.slice(1) || 'Domain'
-            }
+            label={formatDomainLabel(domain)}
             size='small'
             variant='outlined'
             color='primary'

@@ -2,7 +2,7 @@
 
 **Goal:** Keep **AutomationManager only on the main GPU machine** (single scheduler). Run **RSS** and **light, SQL-heavy sync** next to PostgreSQL on **Widow** so the main host spends less time on collection and context bookkeeping.
 
-**How processing flows:** `collect_rss_feeds` inserts rows into domain **`articles`** tables. Downstream work (enrichment, entity extraction, LLM, topic clustering) is still driven by **AutomationManager on the main PC**, which reads **database state** — there is no separate “RSS queue” into AutomationManager. Skipping RSS on the main host only removes duplicate fetching; new rows are still picked up by existing phases.
+**How processing flows:** `collect_rss_feeds` inserts rows into domain **`articles`** tables. Downstream work (enrichment, entity extraction, LLM, topic clustering) is still driven by **AutomationManager on the main PC**, which reads **database state** — there is no separate “RSS queue” into AutomationManager. Skipping RSS on the main host only removes duplicate fetching; new rows are still picked up by existing phases. The **`content_enrichment`** scheduled task (plus the enrichment loop inside **`collection_cycle`**) drains pending full-text fetches on a **5-minute** cadence so Widow-ingested articles are not stuck waiting only for **`collection_cycle`** (which can be throttled when downstream backlog is high).
 
 ---
 

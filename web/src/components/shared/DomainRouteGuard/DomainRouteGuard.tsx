@@ -7,7 +7,10 @@
 import React, { useEffect, ReactNode } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Box, CircularProgress, Typography } from '@mui/material';
-import { isValidDomain } from '../../../utils/domainHelper';
+import {
+  getDefaultDomainKey,
+  isValidDomain,
+} from '../../../utils/domainHelper';
 
 interface DomainRouteGuardProps {
   children: ReactNode;
@@ -19,7 +22,7 @@ const DomainRouteGuard: React.FC<DomainRouteGuardProps> = ({ children }) => {
 
   useEffect(() => {
     if (!domain || !isValidDomain(domain)) {
-      navigate('/politics/dashboard', { replace: true });
+      navigate(`/${getDefaultDomainKey()}/dashboard`, { replace: true });
     }
   }, [domain, navigate]);
 
