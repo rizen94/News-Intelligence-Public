@@ -8,11 +8,13 @@ Stores: people, orgs, subjects, recurring events (article_entities)
 
 import json
 import logging
+import os
 from typing import Any
 
 from config.settings import OLLAMA_HOST
 
 from shared.database.connection import get_db_connection
+from shared.domain_registry import schema_to_primary_domain_key
 from shared.services.llm_service import LLMService
 from shared.services.ollama_model_caller import get_ollama_model_caller
 from shared.services.ollama_model_policy import InvocationKind
@@ -22,6 +24,25 @@ from services.entity_resolution_service import _add_alias, resolve_to_canonical
 from services.wikipedia_knowledge_service import lookup_entity
 
 logger = logging.getLogger(__name__)
+
+
+def _max_entities_per_llm_type() -> int:
+    try:
+        return max(5, min(80, int(os.environ.get("ENTITY_EXTRACTION_MAX_PER_TYPE", "50"))))
+    except ValueError:
+        return 50
+
+
+def _entity_extraction_strict_resolve_domain_keys() -> frozenset[str]:
+    """
+    For these URL domain keys, resolve mentions only to existing ``entity_canonical`` rows (no new rows).
+    Unmatched extractions are skipped — use with seeded catalogs (``seed_world_entities_from_yaml``).
+    """
+    raw = os.environ.get("ENTITY_EXTRACTION_RESOLVE_STRICT_DOMAIN_KEYS", "").strip()
+    if not raw:
+        return frozenset()
+    return frozenset(x.strip().lower().replace("_", "-") for x in raw.split(",") if x.strip())
+
 
 # ISO country names to codes (common subset for normalization)
 COUNTRY_ALIASES = {
@@ -143,7 +164,7 @@ Rules:
             kind=InvocationKind.STRUCTURED_EXTRACTION,
             approx_prompt_chars=len(prompt),
         )
-        return result.text
+        return (result.text or "") if result is not None else ""
 
     async def _relational_llm_invoke(self, prompt: str) -> str:
         """Small LLM pass for relational person phrases (policy: STRUCTURED_EXTRACTION)."""
@@ -154,7 +175,7 @@ Rules:
         )
         return r.text
 
-    def _parse_response(self, raw: str, headline: str) -> tuple[dict[str, list[dict]], bool]:
+    def _parse_response(self, raw: str | None, headline: str) -> tuple[dict[str, list[dict]], bool]:
         """Parse LLM JSON response with fallbacks. Second value is True when JSON object parsed."""
         defaults = {
             "people": [],
@@ -166,6 +187,8 @@ Rules:
             "countries": [],
             "keywords": [],
         }
+        if raw is None or not isinstance(raw, str):
+            return defaults, False
         try:
             start = raw.find("{")
             end = raw.rfind("}") + 1
@@ -192,6 +215,14 @@ Rules:
 
         with conn.cursor() as cur:
             cur.execute(f"SET search_path TO {schema}, public")
+            try:
+                domain_key_resolve = schema_to_primary_domain_key(schema)
+            except KeyError:
+                domain_key_resolve = schema.replace("_", "-") if "_" in str(schema) else schema
+
+            strict_dk = _entity_extraction_strict_resolve_domain_keys()
+            dk_for_strict = str(domain_key_resolve).strip().lower().replace("_", "-")
+            create_missing = dk_for_strict not in strict_dk if strict_dk else True
 
             def _item_name(item: Any) -> str:
                 if isinstance(item, str):
@@ -216,13 +247,14 @@ Rules:
 
             # 1. article_entities (people, orgs, subjects, recurring_events) with canonical resolution
             canonical_ids_used = set()
+            cap = _max_entities_per_llm_type()
             for entity_type, key in [
                 ("person", "people"),
                 ("organization", "organizations"),
                 ("subject", "subjects"),
                 ("recurring_event", "recurring_events"),
             ]:
-                for item in parsed.get(key, [])[:30]:
+                for item in parsed.get(key, [])[:cap]:
                     name = _item_name(item)
                     if not name or len(name) < 2:
                         continue
@@ -239,9 +271,22 @@ Rules:
                     mention = "headline" if _item_in_headline(item) else "body"
                     conf = _item_conf(item)
                     canonical_id = resolve_to_canonical(
-                        schema, name_to_use, entity_type, create_if_missing=True
+                        domain_key_resolve,
+                        name_to_use,
+                        entity_type,
+                        create_if_missing=create_missing,
                     )
+                    if not canonical_id and strict_dk and dk_for_strict in strict_dk:
+                        continue
+                    row_entity_type = entity_type
                     if canonical_id:
+                        cur.execute(
+                            f"SELECT entity_type FROM {schema}.entity_canonical WHERE id = %s",
+                            (canonical_id,),
+                        )
+                        rt = cur.fetchone()
+                        if rt and rt[0] == "family":
+                            row_entity_type = "family"
                         canonical_ids_used.add(canonical_id)
                         if original_phrase and original_phrase != name_to_use:
                             _add_alias(cur, schema, canonical_id, original_phrase)
@@ -259,7 +304,7 @@ Rules:
                             (
                                 article_id,
                                 name[:255],
-                                entity_type,
+                                row_entity_type,
                                 mention,
                                 conf,
                                 name[:200],

@@ -79,9 +79,9 @@ def _domain_key_to_schema(domain_key: str) -> str:
 
 
 def _active_schema_set() -> frozenset[str]:
-    from shared.domain_registry import get_schema_names_active
+    from shared.domain_registry import get_pipeline_schema_names_active
 
-    return frozenset(get_schema_names_active())
+    return frozenset(get_pipeline_schema_names_active())
 
 
 def _resolve_context_ids_to_entity_profile_ids(conn, context_ids: list[int]) -> list[int]:
@@ -293,9 +293,32 @@ async def discover_events_from_contexts(
                 cur.execute(
                     """
                     SELECT id FROM intelligence.tracked_events
-                    WHERE (event_name = %s OR event_name ILIKE %s) AND event_type = %s
+                    WHERE event_type = %s
+                      AND (
+                        lower(trim(event_name)) = lower(trim(%s))
+                        OR (
+                          length(trim(%s)) >= 8
+                          AND (
+                            lower(trim(event_name)) LIKE %s
+                            OR lower(trim(%s)) LIKE '%%' || lower(trim(event_name)) || '%%'
+                          )
+                        )
+                      )
+                      AND (
+                        start_date IS NULL
+                        OR start_date BETWEEN (%s::date - INTERVAL '7 days') AND (%s::date + INTERVAL '7 days')
+                      )
+                    LIMIT 1
                 """,
-                    (event_name, f"%{event_name[:40]}%", event_type),
+                    (
+                        event_type,
+                        event_name,
+                        event_name,
+                        f"%{event_name[:80].strip().lower()}%",
+                        event_name[:80],
+                        start,
+                        start,
+                    ),
                 )
                 if cur.fetchone():
                     continue
@@ -773,6 +796,23 @@ async def _update_existing_event_chronicles(limit: int = 20) -> int:
                         ),
                     )
                 updates += 1
+                try:
+                    from services.tracked_event_narrative_service import (
+                        refresh_domain_keys_for_tracked_event,
+                    )
+
+                    refresh_domain_keys_for_tracked_event(conn, event_id)
+                    with conn.cursor() as ucur:
+                        ucur.execute(
+                            """
+                            UPDATE intelligence.tracked_events
+                            SET updated_at = NOW()
+                            WHERE id = %s
+                            """,
+                            (event_id,),
+                        )
+                except Exception as ex:
+                    logger.debug("refresh_domain_keys after chronicle: %s", ex)
 
         conn.commit()
         conn.close()

@@ -119,6 +119,16 @@ class StorylineResponse(BaseModel):
         from_attributes = True
 
 
+class StorylineSourceCoverageRow(BaseModel):
+    """Per-domain source counts for articles linked to a storyline (RSS/outlet diversity)."""
+
+    source_domain: str = Field(
+        ...,
+        description="Normalized outlet key (articles.source_domain), or '(unknown)' when missing",
+    )
+    article_count: int = Field(..., ge=0, description="Articles from this domain in the storyline")
+
+
 class StorylineEntitySummary(BaseModel):
     """Entity attached to a storyline (from article_entities + entity_canonical)"""
 
@@ -135,6 +145,10 @@ class StorylineEntitySummary(BaseModel):
 class StorylineDetailResponse(StorylineResponse):
     """Detailed storyline response with articles and entities"""
 
+    source_coverage: list[StorylineSourceCoverageRow] = Field(
+        default_factory=list,
+        description="Article counts by source_domain (multi-source vs single-source coverage)",
+    )
     master_summary: str | None = Field(
         None,
         description="ML pipeline narrative (often populated before analysis_summary / deep analysis)",

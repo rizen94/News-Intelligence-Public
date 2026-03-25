@@ -260,8 +260,11 @@ async def generate_event_editorial(limit: int = 10) -> dict[str, Any]:
                    e.geographic_scope, e.editorial_briefing, e.briefing_version,
                    e.last_briefing_update, e.domain_keys
             FROM intelligence.tracked_events e
-            WHERE e.editorial_briefing IS NULL
-               OR e.updated_at > COALESCE(e.last_briefing_update, '1970-01-01'::timestamptz)
+            WHERE (e.global_narrative IS NULL OR e.global_narrative = '')
+              AND (
+                e.editorial_briefing IS NULL
+                OR e.updated_at > COALESCE(e.last_briefing_update, '1970-01-01'::timestamptz)
+              )
             ORDER BY e.updated_at DESC
             LIMIT %s
         """,

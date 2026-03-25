@@ -84,7 +84,8 @@ class RSSFeedService:
             ),
             RSSFeed(
                 "Associated Press",
-                "https://feeds.apnews.com/apnews/topnews",
+                # feeds.apnews.com DNS failure; Yahoo RSS is a working substitute for wire-style headlines.
+                "https://news.yahoo.com/rss/",
                 "General",
                 "US",
                 "en",

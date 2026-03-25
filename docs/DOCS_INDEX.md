@@ -30,7 +30,7 @@ Use this index for **current** documentation: architecture, how the API and data
 
 | Doc | Purpose |
 |-----|---------|
-| [DOMAIN_EXTENSION_TEMPLATE.md](DOMAIN_EXTENSION_TEMPLATE.md) | Adding an optional domain — YAML, registry, validation (`api/config/domains/README.md`). |
+| [DOMAIN_EXTENSION_TEMPLATE.md](DOMAIN_EXTENSION_TEMPLATE.md) | Adding a YAML-onboarded silo (full parity with built-ins) — YAML, registry, validation (`api/config/domains/README.md`). |
 | [PDF_INGESTION_PIPELINE.md](PDF_INGESTION_PIPELINE.md) | PDF ingestion — collectors, download, extraction (see code: `document_download_service.py`). |
 | [WEB_API_CONNECTIONS.md](WEB_API_CONNECTIONS.md) | Web → API — base URL, proxy, checklist. |
 | [DATABASE_CONNECTION_AUDIT.md](DATABASE_CONNECTION_AUDIT.md) | DB connection single source of truth. |

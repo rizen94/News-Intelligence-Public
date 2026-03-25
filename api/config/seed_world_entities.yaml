@@ -1,0 +1,231 @@
+# Curated entities for faster claim / resolution matching (not exhaustive — extend freely).
+# Keys = domain_key (politics, finance, science-tech, …). Each entry:
+#   name: canonical display string (required)
+#   type: person | organization | subject | recurring_event  (or ORG / PERSON / GPE legacy)
+#   aliases: optional list of alternate strings seen in news text
+#
+# Run: PYTHONPATH=api uv run python api/scripts/seed_world_entities_from_yaml.py
+# Re-run is safe (idempotent inserts; merges new aliases onto existing rows).
+
+politics:
+  - name: "United Nations"
+    type: organization
+    aliases: ["UN", "U.N."]
+  - name: "NATO"
+    type: organization
+    aliases: ["North Atlantic Treaty Organization"]
+  - name: "European Union"
+    type: organization
+    aliases: ["EU", "E.U."]
+  - name: "World Health Organization"
+    type: organization
+    aliases: ["WHO", "W.H.O."]
+  - name: "International Monetary Fund"
+    type: organization
+    aliases: ["IMF"]
+  - name: "World Bank"
+    type: organization
+  - name: "United States"
+    type: subject
+    aliases: ["U.S.", "US", "USA", "America"]
+  - name: "China"
+    type: subject
+    aliases: ["PRC", "People's Republic of China"]
+  - name: "Russia"
+    type: subject
+    aliases: ["Russian Federation"]
+  - name: "Ukraine"
+    type: subject
+  - name: "Israel"
+    type: subject
+  - name: "Iran"
+    type: subject
+  - name: "United Kingdom"
+    type: subject
+    aliases: ["UK", "U.K.", "Britain", "Great Britain"]
+  - name: "France"
+    type: subject
+  - name: "Germany"
+    type: subject
+  - name: "Japan"
+    type: subject
+  - name: "India"
+    type: subject
+  - name: "Donald Trump"
+    type: person
+    aliases: ["Trump", "President Trump"]
+  - name: "Joe Biden"
+    type: person
+    aliases: ["Biden", "President Biden"]
+  - name: "Kamala Harris"
+    type: person
+    aliases: ["Harris", "Vice President Harris"]
+  - name: "Volodymyr Zelenskyy"
+    type: person
+    aliases: ["Zelensky", "Zelenskyy"]
+  - name: "Benjamin Netanyahu"
+    type: person
+    aliases: ["Netanyahu"]
+  - name: "Xi Jinping"
+    type: person
+    aliases: ["Xi"]
+  - name: "Vladimir Putin"
+    type: person
+    aliases: ["Putin"]
+  - name: "J.D. Vance"
+    type: person
+    aliases: ["JD Vance", "J. D. Vance"]
+  - name: "Marco Rubio"
+    type: person
+  - name: "Antony Blinken"
+    type: person
+    aliases: ["Blinken"]
+  - name: "Congress"
+    type: organization
+    aliases: ["U.S. Congress", "US Congress"]
+  - name: "Senate"
+    type: organization
+    aliases: ["U.S. Senate", "US Senate"]
+  - name: "House of Representatives"
+    type: organization
+    aliases: ["House", "U.S. House"]
+  - name: "Supreme Court of the United States"
+    type: organization
+    aliases: ["Supreme Court", "SCOTUS"]
+  - name: "Federal Bureau of Investigation"
+    type: organization
+    aliases: ["FBI"]
+  - name: "Central Intelligence Agency"
+    type: organization
+    aliases: ["CIA"]
+  - name: "Pentagon"
+    type: organization
+    aliases: ["U.S. Department of Defense", "Department of Defense"]
+  - name: "OPEC"
+    type: organization
+  - name: "G7"
+    type: organization
+  - name: "G20"
+    type: organization
+
+finance:
+  - name: "Federal Reserve"
+    type: organization
+    aliases: ["Fed", "Federal Reserve System", "the Fed"]
+  - name: "European Central Bank"
+    type: organization
+    aliases: ["ECB"]
+  - name: "Bank of England"
+    type: organization
+    aliases: ["BoE"]
+  - name: "Bank of Japan"
+    type: organization
+    aliases: ["BoJ"]
+  - name: "U.S. Securities and Exchange Commission"
+    type: organization
+    aliases: ["SEC", "Securities and Exchange Commission"]
+  - name: "U.S. Department of the Treasury"
+    type: organization
+    aliases: ["Treasury", "US Treasury"]
+  - name: "International Monetary Fund"
+    type: organization
+    aliases: ["IMF"]
+  - name: "World Bank"
+    type: organization
+  - name: "Goldman Sachs"
+    type: organization
+  - name: "JPMorgan Chase"
+    type: organization
+    aliases: ["JPMorgan", "JP Morgan"]
+  - name: "Bank of America"
+    type: organization
+  - name: "Morgan Stanley"
+    type: organization
+  - name: "Citigroup"
+    type: organization
+    aliases: ["Citi"]
+  - name: "Wells Fargo"
+    type: organization
+  - name: "BlackRock"
+    type: organization
+  - name: "Berkshire Hathaway"
+    type: organization
+  - name: "Jerome Powell"
+    type: person
+    aliases: ["Powell"]
+  - name: "Christine Lagarde"
+    type: person
+  - name: "Jamie Dimon"
+    type: person
+  - name: "Warren Buffett"
+    type: person
+  - name: "Bloomberg"
+    type: organization
+  - name: "Reuters"
+    type: organization
+  - name: "S&P 500"
+    type: subject
+    aliases: ["S&P", "SP500"]
+  - name: "Nasdaq"
+    type: organization
+  - name: "New York Stock Exchange"
+    type: organization
+    aliases: ["NYSE"]
+
+science-tech:
+  - name: "OpenAI"
+    type: organization
+  - name: "Google"
+    type: organization
+    aliases: ["Alphabet", "Google LLC"]
+  - name: "Microsoft"
+    type: organization
+  - name: "Apple"
+    type: organization
+    aliases: ["Apple Inc."]
+  - name: "Amazon"
+    type: organization
+    aliases: ["Amazon.com"]
+  - name: "Meta"
+    type: organization
+    aliases: ["Facebook", "Meta Platforms"]
+  - name: "NVIDIA"
+    type: organization
+  - name: "Intel"
+    type: organization
+  - name: "AMD"
+    type: organization
+  - name: "TSMC"
+    type: organization
+    aliases: ["Taiwan Semiconductor"]
+  - name: "Samsung"
+    type: organization
+  - name: "SpaceX"
+    type: organization
+  - name: "Tesla"
+    type: organization
+    aliases: ["Tesla Inc."]
+  - name: "IBM"
+    type: organization
+  - name: "Oracle"
+    type: organization
+  - name: "Salesforce"
+    type: organization
+  - name: "Palantir"
+    type: organization
+  - name: "Sam Altman"
+    type: person
+  - name: "Sundar Pichai"
+    type: person
+  - name: "Satya Nadella"
+    type: person
+  - name: "Tim Cook"
+    type: person
+  - name: "Jensen Huang"
+    type: person
+  - name: "Elon Musk"
+    type: person
+  - name: "European Commission"
+    type: organization
+  - name: "CERN"
+    type: organization

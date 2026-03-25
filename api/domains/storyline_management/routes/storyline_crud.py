@@ -22,6 +22,7 @@ from ..schemas.storyline_schemas import (
     StorylineListItem,
     StorylineListResponse,
     StorylineResponse,
+    StorylineSourceCoverageRow,
     StorylineUpdateRequest,
 )
 from ..services.storyline_service import StorylineService
@@ -309,6 +310,24 @@ async def get_domain_storyline(
                         )
                     )
 
+                cur.execute(
+                    f"""
+                    SELECT COALESCE(NULLIF(TRIM(a.source_domain), ''), '(unknown)') AS src,
+                           COUNT(*)::int
+                    FROM {schema}.articles a
+                    JOIN {schema}.storyline_articles sa ON a.id = sa.article_id
+                    WHERE sa.storyline_id = %s
+                      AND (a.enrichment_status IS NULL OR a.enrichment_status != 'removed')
+                    GROUP BY 1
+                    ORDER BY COUNT(*) DESC, src ASC
+                """,
+                    (storyline_id,),
+                )
+                source_coverage = [
+                    StorylineSourceCoverageRow(source_domain=r[0], article_count=r[1])
+                    for r in cur.fetchall()
+                ]
+
                 # Entities: article_entities + entity_canonical for this storyline's articles
                 entity_list = []
                 if article_ids:
@@ -410,6 +429,7 @@ async def get_domain_storyline(
                     updated_at=storyline[4],
                     last_evolution_at=storyline[10],
                     evolution_count=storyline[11],
+                    source_coverage=source_coverage,
                     articles=articles,
                     background_information=background_info,
                     context_last_updated=storyline[13],

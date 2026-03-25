@@ -30,6 +30,11 @@ import {
   Alert,
   CircularProgress,
   Paper,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableRow,
   Dialog,
   DialogTitle,
   DialogContent,
@@ -141,6 +146,25 @@ const StorylineDetail = () => {
     () => pickStorylineAnalysisDisplay(storyline as StorylineDetailType | null),
     [storyline]
   );
+
+  const sourceCoverageRows = useMemo(() => {
+    const sl = storyline as StorylineDetailType | null;
+    const fromApi = sl?.source_coverage;
+    if (fromApi && fromApi.length > 0) return fromApi;
+    const list = Array.isArray(articles) ? articles : [];
+    const map = new Map<string, number>();
+    for (const a of list) {
+      const raw = (a as { source_domain?: string | null }).source_domain;
+      const key = (raw && String(raw).trim()) || '(unknown)';
+      map.set(key, (map.get(key) || 0) + 1);
+    }
+    return Array.from(map.entries())
+      .map(([source_domain, article_count]) => ({ source_domain, article_count }))
+      .sort((x, y) => y.article_count - x.article_count || x.source_domain.localeCompare(y.source_domain));
+  }, [storyline, articles]);
+
+  const distinctSourceCount = sourceCoverageRows.length;
+  const singleSourceOnly = distinctSourceCount === 1 && sourceCoverageRows[0]?.article_count > 0;
 
   const startProcessingPoll = () => {
     if (!id) return null;
@@ -1150,6 +1174,47 @@ const StorylineDetail = () => {
                 >
                   {storyline.description}
                 </Typography>
+              )}
+
+              {articles.length > 0 && sourceCoverageRows.length > 0 && (
+                <Paper variant='outlined' sx={{ p: 2, mb: 2, bgcolor: 'grey.50' }}>
+                  <Typography variant='subtitle2' fontWeight={600} sx={{ mb: 1 }}>
+                    Coverage balance
+                  </Typography>
+                  <Typography variant='body2' color='text.secondary' sx={{ mb: 1.5 }}>
+                    Linked articles by outlet (source domain). Multiple domains usually mean broader
+                    press coverage; a single domain can still be informative but is easier to skew.
+                  </Typography>
+                  {singleSourceOnly && (
+                    <Alert severity='info' sx={{ mb: 1.5 }}>
+                      All linked articles share one source domain (
+                      {sourceCoverageRows[0].source_domain}).
+                    </Alert>
+                  )}
+                  <Table size='small' sx={{ maxWidth: 480 }}>
+                    <TableHead>
+                      <TableRow>
+                        <TableCell sx={{ fontWeight: 600 }}>Source</TableCell>
+                        <TableCell align='right' sx={{ fontWeight: 600 }}>
+                          Articles
+                        </TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {sourceCoverageRows.map(row => (
+                        <TableRow key={row.source_domain}>
+                          <TableCell>{row.source_domain}</TableCell>
+                          <TableCell align='right'>{row.article_count}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                  {!singleSourceOnly && distinctSourceCount > 1 && (
+                    <Typography variant='caption' color='text.secondary' sx={{ mt: 1, display: 'block' }}>
+                      {distinctSourceCount} distinct sources
+                    </Typography>
+                  )}
+                </Paper>
               )}
 
               {crossRelatedStorylines.length > 0 && (

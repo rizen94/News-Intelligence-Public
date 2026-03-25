@@ -8,9 +8,10 @@ Reviewers: all application and script DB access should go through
 or duplicate env parsing. Config is **only** ``DB_*`` environment variables
 (see ``get_db_config``). Docker samples that use ``DATABASE_URL`` are not authoritative.
 
-Pool architecture (3 independent pools; target **PgBouncer** or Postgres via ``DB_HOST``/``DB_PORT``):
+Pool architecture (4 independent psycopg2 pools + SA; target **PgBouncer** or Postgres via ``DB_HOST``/``DB_PORT``):
   - UI pool     (psycopg2): page loads & monitoring — DB_POOL_UI_MIN/MAX (default 2/16); **3 s** checkout — prioritize responsiveness
   - Worker pool (psycopg2): automation & batch — DB_POOL_WORKER_MIN/MAX (default 2/20); raise MAX only when Postgres/PgBouncer headroom allows
+  - Health pool (psycopg2): automation ``health_check`` probes + ``automation_run_history`` rows for that phase — DB_POOL_HEALTH_MIN/MAX (default 1/2); short checkout (``DB_HEALTH_GETCONN_TIMEOUT_SECONDS``, default **2 s**) so liveness is tracked even when the worker pool is saturated
   - SA pool   (SQLAlchemy): ORM-based services — DB_POOL_SA_SIZE/OVERFLOW (default 3/8)
 
 See ``docs/PGBOUNCER_AND_CONNECTION_BUDGET.md`` for multiplexing many app connections onto fewer Postgres backends.
@@ -25,6 +26,7 @@ RULES (see also CODING_STYLE_GUIDE.md § Database Connection Rules):
   2. Never hold a connection across an LLM call, HTTP request, or sleep.
   3. Worker pool has a default checkout timeout (30 s) to surface leaks early.
   4. UI pool has a 3 s checkout timeout so page loads fail fast.
+  5. Health pool is reserved for ``health_check`` — do not use it for pipeline work.
 """
 
 import os
@@ -47,9 +49,11 @@ _sqlalchemy_lock = threading.Lock()
 # Global connection pools (thread-safe)
 _connection_pool: Optional[pool.ThreadedConnectionPool] = None           # Worker/data-processing pool
 _ui_connection_pool: Optional[pool.ThreadedConnectionPool] = None        # UI/monitoring reserved pool
+_health_connection_pool: Optional[pool.ThreadedConnectionPool] = None      # Automation health_check only
 _pool_lock = threading.Lock()
 _pool_initialized = False
 _ui_pool_initialized = False
+_health_pool_initialized = False
 
 
 class PooledConnection:
@@ -182,13 +186,16 @@ def get_db_connect_kwargs() -> Dict[str, Any]:
 
 
 def _pool_sizes(pool_kind: str) -> tuple[int, int]:
-    """Return (minconn, maxconn) for worker or ui pool."""
+    """Return (minconn, maxconn) for worker, ui, or health pool."""
     # Backward-compatible: DB_POOL_MIN/DB_POOL_MAX when DB_POOL_WORKER_* unset
     legacy_min = int(os.getenv("DB_POOL_MIN", "2"))
     legacy_max = int(os.getenv("DB_POOL_MAX", "20"))
     if pool_kind == "ui":
         minconn = int(os.getenv("DB_POOL_UI_MIN", "2"))
         maxconn = int(os.getenv("DB_POOL_UI_MAX", "16"))
+    elif pool_kind == "health":
+        minconn = max(1, int(os.getenv("DB_POOL_HEALTH_MIN", "1")))
+        maxconn = int(os.getenv("DB_POOL_HEALTH_MAX", "2"))
     else:
         minconn = int(os.getenv("DB_POOL_WORKER_MIN", str(max(legacy_min, 2))))
         if os.getenv("DB_POOL_WORKER_MAX") is not None:
@@ -201,25 +208,38 @@ def _pool_sizes(pool_kind: str) -> tuple[int, int]:
 
 
 def _init_pool(pool_kind: str = "worker") -> pool.ThreadedConnectionPool:
-    """Initialize worker/ui connection pools."""
-    global _connection_pool, _ui_connection_pool, _pool_initialized, _ui_pool_initialized
+    """Initialize worker/ui/health connection pools."""
+    global _connection_pool, _ui_connection_pool, _health_connection_pool
+    global _pool_initialized, _ui_pool_initialized, _health_pool_initialized
 
     with _pool_lock:
         if pool_kind == "ui":
             if _ui_connection_pool is not None:
                 return _ui_connection_pool
+        elif pool_kind == "health":
+            if _health_connection_pool is not None:
+                return _health_connection_pool
         else:
             if _connection_pool is not None:
                 return _connection_pool
 
         config = get_db_config()
         minconn, maxconn = _pool_sizes(pool_kind)
-        timeout_ms = config.get("statement_timeout_ms", 120000)
-        options = f"-c statement_timeout={timeout_ms}"
+        if pool_kind == "health":
+            try:
+                health_ms = int(os.getenv("DB_HEALTH_STATEMENT_TIMEOUT_MS", "5000"))
+            except ValueError:
+                health_ms = 5000
+            options = f"-c statement_timeout={health_ms}"
+            timeout_log_ms = health_ms
+        else:
+            timeout_ms = config.get("statement_timeout_ms", 120000)
+            options = f"-c statement_timeout={timeout_ms}"
+            timeout_log_ms = timeout_ms
 
         logger.info(
             "Initializing %s DB pool: %s:%s/%s (pool %s-%s, statement_timeout=%sms)",
-            pool_kind, config["host"], config["port"], config["database"], minconn, maxconn, timeout_ms,
+            pool_kind, config["host"], config["port"], config["database"], minconn, maxconn, timeout_log_ms,
         )
 
         created_pool = pool.ThreadedConnectionPool(
@@ -236,6 +256,9 @@ def _init_pool(pool_kind: str = "worker") -> pool.ThreadedConnectionPool:
         if pool_kind == "ui":
             _ui_connection_pool = created_pool
             _ui_pool_initialized = True
+        elif pool_kind == "health":
+            _health_connection_pool = created_pool
+            _health_pool_initialized = True
         else:
             _connection_pool = created_pool
             _pool_initialized = True
@@ -335,6 +358,58 @@ def get_db_connection(use_reserved: bool = False):
     )
 
 
+def get_health_db_connection():
+    """
+    Reserved pool for automation ``health_check`` (SELECT 1) and ``automation_run_history`` inserts
+    for that phase. Small and isolated from worker/UI pools so liveness is observable under load.
+    Default checkout timeout 2 s (``DB_HEALTH_GETCONN_TIMEOUT_SECONDS``).
+    """
+    pool_kind = "health"
+    timeout_raw = os.getenv("DB_HEALTH_GETCONN_TIMEOUT_SECONDS", "2")
+    try:
+        timeout_sec = int(timeout_raw)
+    except ValueError:
+        timeout_sec = 2
+    if timeout_sec <= 0:
+        timeout_sec = 2
+
+    import concurrent.futures
+
+    pool_ref = _init_pool(pool_kind=pool_kind)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+        fut = ex.submit(_getconn_from_pool, pool_ref)
+        try:
+            conn = fut.result(timeout=timeout_sec)
+        except concurrent.futures.TimeoutError:
+            raise ConnectionError(
+                f"Database {pool_kind} pool timeout after {timeout_sec}s (health pool exhausted). "
+                "Raise DB_POOL_HEALTH_MAX if appropriate."
+            ) from None
+    if conn is not None:
+        return conn
+    logger.warning("%s pool returned stale connections; trying direct connect", pool_kind)
+    try:
+        kwargs = get_db_connect_kwargs()
+        try:
+            health_ms = int(os.getenv("DB_HEALTH_STATEMENT_TIMEOUT_MS", "5000"))
+        except ValueError:
+            health_ms = 5000
+        kwargs["options"] = f"-c statement_timeout={health_ms}"
+        raw = psycopg2.connect(**kwargs)
+        if _validate_connection(raw):
+            return PooledConnection(raw, None)
+        try:
+            raw.close()
+        except Exception:
+            pass
+    except Exception as e2:
+        logger.error(f"Direct connect (health fallback) failed: {e2}")
+    raise ConnectionError(
+        "Database health pool connection failed (pool and direct). "
+        "Check DB_HOST, DB_PORT, DB_PASSWORD in .env and that the database is running."
+    )
+
+
 def close_pool() -> None:
     """Close all worker/UI psycopg2 pools and dispose the SQLAlchemy engine (call on shutdown).
 
@@ -342,7 +417,8 @@ def close_pool() -> None:
     Operators can also call this from a one-off script to drop client-side sockets after draining traffic,
     then let the next request recreate pools — use only when no other thread is using the DB.
     """
-    global _connection_pool, _ui_connection_pool, _sqlalchemy_engine, _sqlalchemy_session_factory
+    global _connection_pool, _ui_connection_pool, _health_connection_pool
+    global _sqlalchemy_engine, _sqlalchemy_session_factory
     if _connection_pool is not None:
         _connection_pool.closeall()
         _connection_pool = None
@@ -351,6 +427,10 @@ def close_pool() -> None:
         _ui_connection_pool.closeall()
         _ui_connection_pool = None
         logger.info("UI connection pool closed")
+    if _health_connection_pool is not None:
+        _health_connection_pool.closeall()
+        _health_connection_pool = None
+        logger.info("Health connection pool closed")
     with _sqlalchemy_lock:
         if _sqlalchemy_engine is not None:
             try:
@@ -504,6 +584,10 @@ def get_ephemeral_db_connection_context():
         yield conn
     finally:
         try:
+            conn.rollback()
+        except Exception:
+            pass
+        try:
             conn.close()
         except Exception:
             pass
@@ -518,6 +602,16 @@ def get_ui_db_connection():
 def get_ui_db_connection_context():
     """Context manager for reserved UI/monitoring pool connections."""
     conn = get_ui_db_connection()
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+
+@contextmanager
+def get_health_db_connection_context():
+    """Context manager for automation health_check pool connections."""
+    conn = get_health_db_connection()
     try:
         yield conn
     finally:

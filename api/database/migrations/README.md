@@ -35,7 +35,7 @@ Schema checks (objects, not ledger rows): `api/scripts/verify_migrations_160_167
 2. Add or extend **`api/scripts/run_migration_NNN.py`** using `resolve_migration_sql_file("NNN_....sql")`.
 3. Apply on target DB, then **`register_applied_migration.py`** with the same id / file path.
 
-### Optional domain silo: RSS seed + `public.domains` after SQL
+### YAML-onboarded silo: RSS seed + `public.domains` after SQL
 
 SQL alone cannot insert **`{schema}.rss_feeds`** from YAML URLs or flip **`public.domains.is_active`**. After **`execute(sql)`** in **`run_migration_NNN.py`**, call **`shared.services.domain_silo_post_migration.apply_domain_silo_post_sql`** with the onboarding YAML dict (see **`run_migration_180.py`**: default post-steps from **`api/config/domains/legal.yaml`**, flags **`--sql-only`**, **`--skip-rss-seed`**, **`--no-activate-in-db`**, **`--domain-config`**). Full ordering with verify/teardown remains **`api/scripts/provision_domain.py`**.
 

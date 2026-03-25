@@ -148,9 +148,9 @@ class ProcessingGovernor:
             interval = int(phase_spec.get("interval_seconds") or 1200)
             scope = phase_spec.get("scope")
             if scope == "domain":
-                from shared.domain_registry import get_schema_names_active
+                from shared.domain_registry import get_pipeline_schema_names_active
 
-                for domain in get_schema_names_active():
+                for domain in get_pipeline_schema_names_active():
                     key = _processing_state_key(phase_name, domain=domain)
                     last = last_times.get(key)
                     if last:

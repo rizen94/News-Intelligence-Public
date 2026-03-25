@@ -56,10 +56,10 @@ class BackgroundMLProcessor:
             conn = get_db_connection()
             if not conn:
                 return None
-            from shared.domain_registry import get_schema_names_active
+            from shared.domain_registry import get_pipeline_schema_names_active
 
             with conn.cursor() as cursor:
-                for schema in get_schema_names_active():
+                for schema in get_pipeline_schema_names_active():
                     cursor.execute(
                         f"SELECT 1 FROM {schema}.articles WHERE id = %s LIMIT 1",
                         (article_id,),
@@ -81,9 +81,9 @@ class BackgroundMLProcessor:
         Prefer queue row schema_name (disambiguates duplicate article ids across silos).
         Fall back to first schema match (legacy rows with NULL schema_name).
         """
-        from shared.domain_registry import get_schema_names_active
+        from shared.domain_registry import get_pipeline_schema_names_active
 
-        active = frozenset(get_schema_names_active())
+        active = frozenset(get_pipeline_schema_names_active())
         if schema_hint and schema_hint in active:
             row = self._get_article_data(article_id, schema_hint)
             if row:
@@ -176,10 +176,10 @@ class BackgroundMLProcessor:
         try:
             schema = self._resolve_schema_for_task(article_id, task.get("schema_name"))
             if not schema:
-                from shared.domain_registry import get_schema_names_active
+                from shared.domain_registry import get_pipeline_schema_names_active
 
                 raise Exception(
-                    f"Article {article_id} not found in domain schemas {get_schema_names_active()}"
+                    f"Article {article_id} not found in pipeline domain schemas {get_pipeline_schema_names_active()}"
                 )
 
             # Get article data
@@ -370,10 +370,10 @@ class BackgroundMLProcessor:
                         "model_used": row[7],
                     }
 
-                from shared.domain_registry import get_schema_names_active
+                from shared.domain_registry import get_pipeline_schema_names_active
 
                 subqueries = []
-                for sch in get_schema_names_active():
+                for sch in get_pipeline_schema_names_active():
                     subqueries.append(f"""
                             SELECT
                                 a.id, a.title, a.ml_processing_status,

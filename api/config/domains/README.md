@@ -1,6 +1,6 @@
 # Domain onboarding YAML (`api/config/domains/`)
 
-Optional domains (beyond the built-in **politics**, **finance**, **science-tech**) are declared here. The Python loader is [`api/shared/domain_registry.py`](../../shared/domain_registry.py).
+**Additional silos** (beyond the built-in **politics**, **finance**, **science-tech**) are declared here — same routing, pipeline, and schema parity once migrated and provisioned. The Python loader is [`api/shared/domain_registry.py`](../../shared/domain_registry.py).
 
 **Canonical procedure:** [`docs/DOMAIN_EXTENSION_TEMPLATE.md`](../../../docs/DOMAIN_EXTENSION_TEMPLATE.md) (order of operations, migration, installer, dual activation, synthesis YAML).
 
@@ -25,7 +25,7 @@ A silo can exist in the DB with **`is_active: false`** in YAML (no registry / RS
 | File | Purpose |
 |------|---------|
 | `_template.example.yaml` | **Example only** — not loaded. Copy to `{domain_key}.yaml` or run **`api/scripts/init_domain_yaml_from_template.py`**. |
-| `{domain_key}.yaml` | One optional domain per file. **`init_domain_yaml_from_template.py`** defaults to **`is_active: true`** (use **`--inactive`** for drafts). After migration + verify, run **`api/scripts/ensure_domain_silo_alignment.py`** so **`public.domains`** matches YAML on every host. |
+| `{domain_key}.yaml` | One onboarded silo per file (full parity with built-ins once live). **`init_domain_yaml_from_template.py`** defaults to **`is_active: true`** (use **`--inactive`** for drafts). After migration + verify, run **`api/scripts/ensure_domain_silo_alignment.py`** so **`public.domains`** matches YAML on every host. |
 
 ## Strict requirements (**DB and routing**)
 
@@ -71,10 +71,10 @@ Until every path uses **`domain_registry`** / **`get_schema_names_active()`** / 
 
 | Pattern / area | Why |
 |----------------|-----|
-| `("politics", "finance"` or `science_tech` in tuples | Legacy multi-domain loops may omit optional silos. |
+| `("politics", "finance"` or `science_tech` in tuples | Legacy multi-domain loops may omit YAML-onboarded silos. |
 | `{"politics": "politics", "finance": "finance", "science-tech": "science_tech"}` | Prefer **`resolve_domain_schema(domain_key)`** for URL key → schema. |
 | `DOMAIN_SCHEMA =` | Same — replace with registry helper where found. |
-| Migrations that name one optional schema (e.g. `legal.storylines`) | Prefer **`FOR schema IN SELECT … FROM public.domains`** when the change applies to all domain silos. |
+| Migrations that name one onboarded schema only (e.g. `legal.storylines`) | Prefer **`FOR schema IN SELECT … FROM public.domains`** when the change applies to all domain silos. |
 
 **Already centralized (examples):** [`backlog_metrics.py`](../../services/backlog_metrics.py) uses **`get_schema_names_active()`** / **`url_schema_pairs()`**; [`domain_aware_service.get_domain_data_schemas()`](../../shared/services/domain_aware_service.py) delegates to **`get_schema_names_active()`**; RSS collection uses **`url_schema_pairs()`** for feed discovery.
 
@@ -96,7 +96,7 @@ Until every path uses **`domain_registry`** / **`get_schema_names_active()`** / 
 
 ### Process restart (when still required)
 
-**`get_domain_entries()`** / **`get_active_domain_keys()`** / **`url_schema_pairs()`** and **`is_valid_domain_key()`** re-read YAML on **each call** — RSS collection and most iterators pick up a new optional domain **without** restarting the API.
+**`get_domain_entries()`** / **`get_active_domain_keys()`** / **`url_schema_pairs()`** and **`is_valid_domain_key()`** re-read YAML on **each call** — RSS collection and most iterators pick up a new onboarded silo **without** restarting the API.
 
 **Import-time snapshot** [`ACTIVE_DOMAIN_KEYS`](../../shared/domain_registry.py) / [`ACTIVE_DOMAIN_KEYS_SET`](../../shared/domain_registry.py) is **stale** after YAML edits; prefer **`get_active_domain_keys()`** in new code. **`DOMAIN_PATH_PATTERN`** is a **shape-only** regex (not the allowlist).
 

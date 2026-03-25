@@ -928,9 +928,9 @@ async def run_metadata_enrichment_batch_for_domains(limit_per_domain: int = 5) -
     if not conn:
         return 0
     total = 0
-    from shared.domain_registry import get_schema_names_active
+    from shared.domain_registry import get_pipeline_schema_names_active
 
-    schemas = get_schema_names_active()
+    schemas = get_pipeline_schema_names_active()
     try:
         for schema in schemas:
             try:

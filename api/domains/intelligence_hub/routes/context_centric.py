@@ -166,6 +166,94 @@ def sync_entity_profiles(domain_key: str | None = Query(None, description="Sync 
     return {"success": True, "created_by_domain": result, "canonical_backfilled": backfill_counts}
 
 
+@router.get("/context_centric/claim_subject_gaps", response_model=dict)
+def get_claim_subject_gaps(
+    limit: int = Query(200, ge=1, le=2000),
+    status: str | None = Query(None, description="open | seeded | ignored"),
+    domain_key: str | None = Query(None, description="Filter by domain_key"),
+) -> dict:
+    """
+    Research list: unpromoted high-confidence claim subjects that still lack a matching
+    ``entity_profiles`` canonical_name and ``entity_canonical`` row in that domain.
+    Call POST .../claim_subject_gaps/refresh to rebuild the snapshot.
+    """
+    if domain_key and not is_valid_domain_key(domain_key):
+        raise HTTPException(status_code=400, detail="invalid domain_key")
+    if status and status not in ("open", "seeded", "ignored"):
+        raise HTTPException(status_code=400, detail="status must be open, seeded, or ignored")
+    from services.claim_subject_gap_service import list_claim_subject_gaps
+
+    rows = list_claim_subject_gaps(limit=limit, status=status, domain_key=domain_key)
+    return {"success": True, "count": len(rows), "gaps": rows}
+
+
+@router.post("/context_centric/claim_subject_gaps/refresh", response_model=dict)
+def post_refresh_claim_subject_gaps(
+    min_confidence: float | None = Query(None, ge=0.0, le=1.0),
+    max_per_domain: int = Query(2000, ge=100, le=10000),
+) -> dict:
+    """Rebuild ``intelligence.claim_subject_gap_catalog`` from unpromoted claims (per active domain)."""
+    from services.claim_subject_gap_service import refresh_claim_subject_gap_catalog
+
+    return refresh_claim_subject_gap_catalog(
+        min_confidence=min_confidence,
+        max_per_domain=max_per_domain,
+    )
+
+
+@router.post("/context_centric/claim_subject_gaps/seed", response_model=dict)
+def post_seed_claim_subject_gap(
+    payload: dict = Body(
+        ...,
+        example={
+            "domain_key": "politics",
+            "canonical_name": "Example Organization",
+            "entity_type": "ORG",
+            "gap_id": 1,
+        },
+    ),
+) -> dict:
+    """
+    Add a placeholder ``entity_canonical`` row (if missing) and run ``sync_domain_entity_profiles``.
+    Use ``gap_id`` from GET claim_subject_gaps to mark the catalog row ``seeded``.
+    """
+    domain_key = (payload or {}).get("domain_key")
+    canonical_name = (payload or {}).get("canonical_name") or (payload or {}).get("sample_subject")
+    entity_type = (payload or {}).get("entity_type") or "ORG"
+    gap_id = (payload or {}).get("gap_id")
+    subject_norm = (payload or {}).get("subject_norm")
+    if not domain_key or not canonical_name:
+        raise HTTPException(status_code=400, detail="domain_key and canonical_name (or sample_subject) required")
+    if not is_valid_domain_key(str(domain_key)):
+        raise HTTPException(status_code=400, detail="invalid domain_key")
+    from services.claim_subject_gap_service import seed_canonical_from_gap
+
+    gid = int(gap_id) if gap_id is not None else None
+    out = seed_canonical_from_gap(
+        str(domain_key),
+        str(canonical_name),
+        str(entity_type),
+        gap_id=gid,
+        subject_norm=str(subject_norm).lower().strip() if subject_norm else None,
+    )
+    if not out.get("success"):
+        raise HTTPException(status_code=400, detail=out.get("error", "seed failed"))
+    return out
+
+
+@router.post("/context_centric/claim_subject_gaps/{gap_id}/ignore", response_model=dict)
+def post_ignore_claim_subject_gap(
+    gap_id: int,
+    notes: str | None = Body(None),
+) -> dict:
+    from services.claim_subject_gap_service import set_gap_status
+
+    ok = set_gap_status(gap_id, "ignored", notes=notes)
+    if not ok:
+        raise HTTPException(status_code=404, detail="gap not found or update failed")
+    return {"success": True, "id": gap_id, "status": "ignored"}
+
+
 @router.post("/context_centric/run_story_state_triggers", response_model=dict)
 def run_story_state_triggers(
     step: str = Query("both", description="fact_log (process fact_change_log) | queue (process story_update_queue) | both"),
@@ -1207,12 +1295,13 @@ def get_context_grouping_feedback(
 
 _EVENT_COLS = """id, event_type, event_name, start_date, end_date, geographic_scope,
                    key_participant_entity_ids, milestones, sub_event_ids, created_at, updated_at, domain_keys,
-                   editorial_briefing, editorial_briefing_json, briefing_version, briefing_status"""
+                   editorial_briefing, editorial_briefing_json, briefing_version, briefing_status,
+                   global_narrative, narrative_lenses, global_narrative_version, global_narrative_updated_at, narrative_lenses_updated_at"""
 
 
 def _row_to_event(row: tuple) -> dict:
     """Map tracked_events row to dict, including editorial briefing fields."""
-    return {
+    out = {
         "id": row[0],
         "event_type": row[1],
         "event_name": row[2],
@@ -1230,6 +1319,19 @@ def _row_to_event(row: tuple) -> dict:
         "briefing_version": row[14] if len(row) > 14 else None,
         "briefing_status": row[15] if len(row) > 15 else None,
     }
+    if len(row) > 16:
+        out["global_narrative"] = row[16]
+    if len(row) > 17 and row[17] is not None:
+        out["narrative_lenses"] = row[17] if isinstance(row[17], dict) else {}
+    else:
+        out["narrative_lenses"] = {}
+    if len(row) > 18:
+        out["global_narrative_version"] = row[18]
+    if len(row) > 19 and row[19]:
+        out["global_narrative_updated_at"] = row[19].isoformat()
+    if len(row) > 20 and row[20]:
+        out["narrative_lenses_updated_at"] = row[20].isoformat()
+    return out
 
 
 @router.get("/tracked_events", response_model=dict)
@@ -1502,6 +1604,24 @@ def get_tracked_event(event_id: int) -> dict:
         except Exception:
             pass
         raise HTTPException(status_code=500, detail="Failed to get tracked event")
+
+
+@router.post("/tracked_events/{event_id}/narrative_stack", response_model=dict)
+async def post_tracked_event_narrative_stack(event_id: int) -> dict:
+    """
+    Build domain-neutral ``global_narrative`` and per-domain ``narrative_lenses`` for this event.
+    Lenses are generated only from the global narrative (plus metadata), not raw chronicles.
+    Requires DB migration ``196_tracked_event_narrative_lenses.sql``.
+    """
+    from services.tracked_event_narrative_service import generate_narrative_stack_for_event
+
+    result = await generate_narrative_stack_for_event(event_id)
+    if not result.get("success"):
+        raise HTTPException(
+            status_code=400,
+            detail=result.get("error", "narrative_stack_failed"),
+        )
+    return {"success": True, "data": result, "message": None}
 
 
 @router.get("/tracked_events/{event_id}/linked_events", response_model=dict)

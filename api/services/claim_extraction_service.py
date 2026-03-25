@@ -11,11 +11,84 @@ import os
 import re
 
 from shared.database.connection import get_db_connection
-from shared.domain_registry import get_schema_names_active, resolve_domain_schema
+from shared.domain_registry import get_pipeline_schema_names_active, resolve_domain_schema
 from shared.services.ollama_model_caller import get_ollama_model_caller
 from shared.services.ollama_model_policy import InvocationKind
 
 logger = logging.getLogger(__name__)
+
+
+def claim_pipeline_max_fetch() -> int:
+    """
+    When CLAIM_EXTRACTION_BATCH_LIMIT or CLAIMS_TO_FACTS_BATCH_LIMIT is <= 0 (meaning "no explicit cap"),
+    use this as the single SELECT LIMIT. Raise CLAIM_PIPELINE_MAX_FETCH if you need larger slices
+    (memory and lock duration grow with batch size).
+    """
+    try:
+        n = int(os.environ.get("CLAIM_PIPELINE_MAX_FETCH", "500000"))
+    except ValueError:
+        n = 500_000
+    return max(1, n)
+
+
+def get_claim_extraction_batch_limit() -> int:
+    """Contexts per claim_extraction invocation. <=0 means use claim_pipeline_max_fetch()."""
+    try:
+        n = int(os.environ.get("CLAIM_EXTRACTION_BATCH_LIMIT", "2000"))
+    except ValueError:
+        n = 2000
+    if n <= 0:
+        return claim_pipeline_max_fetch()
+    return n
+
+
+def get_claim_extraction_parallel() -> int:
+    """
+    Concurrent LLM extractions per batch. No hard upper bound (tune to GPU / Ollama capacity).
+    If CLAIM_EXTRACTION_PARALLEL <= 0, concurrency equals min(batch, claim_pipeline_max_fetch())
+    so fanout tracks batch without spawning more coroutines than contexts selected.
+    """
+    batch = get_claim_extraction_batch_limit()
+    try:
+        n = int(os.environ.get("CLAIM_EXTRACTION_PARALLEL", "32"))
+    except ValueError:
+        n = 32
+    if n <= 0:
+        return max(1, min(batch, claim_pipeline_max_fetch()))
+    return max(1, n)
+
+
+def get_claims_to_facts_batch_limit() -> int:
+    """Max extracted_claims rows attempted per promote_claims_to_versioned_facts call. <=0 → claim_pipeline_max_fetch()."""
+    try:
+        n = int(os.environ.get("CLAIMS_TO_FACTS_BATCH_LIMIT", "10000"))
+    except ValueError:
+        n = 10_000
+    if n <= 0:
+        return claim_pipeline_max_fetch()
+    return n
+
+
+def get_claims_to_facts_min_confidence() -> float:
+    try:
+        return float(os.environ.get("CLAIMS_TO_FACTS_MIN_CONFIDENCE", "0.75"))
+    except ValueError:
+        return 0.75
+
+
+# Exclude from promotion/backlog counts when operators mark a (domain, subject_norm) as ignored
+# in intelligence.claim_subject_gap_catalog (vague subjects not worth a synthetic entity).
+CLAIM_PROMOTION_GAP_IGNORED_EXCLUDE_SQL = """
+  AND NOT EXISTS (
+    SELECT 1
+    FROM intelligence.article_to_context atc
+    INNER JOIN intelligence.claim_subject_gap_catalog g
+      ON g.domain_key = atc.domain_key
+     AND g.subject_norm = lower(trim(COALESCE(ec.subject_text, '')))
+     AND g.status = 'ignored'
+    WHERE atc.context_id = ec.context_id
+  )"""
+
 
 def _claim_domain_key_to_schema(dk: str) -> str:
     from shared.domain_registry import domain_key_to_schema
@@ -187,16 +260,16 @@ def get_context_ids_without_claims(limit: int = 50) -> list[int]:
         conn.close()
 
 
-async def run_claim_extraction_batch(limit: int = 50) -> int:
+async def run_claim_extraction_batch(limit: int | None = None) -> int:
     """
     Process up to `limit` contexts that have no claims yet. Returns total claims inserted.
-    Uses bounded concurrency (CLAIM_EXTRACTION_PARALLEL, default 5) for throughput.
+    If ``limit`` is None, uses get_claim_extraction_batch_limit().
+    Concurrency: get_claim_extraction_parallel() (env CLAIM_EXTRACTION_PARALLEL; no fixed code cap).
     """
+    if limit is None:
+        limit = get_claim_extraction_batch_limit()
     ids = get_context_ids_without_claims(limit=limit)
-    try:
-        parallel = max(1, min(12, int(os.environ.get("CLAIM_EXTRACTION_PARALLEL", "5"))))
-    except ValueError:
-        parallel = 5
+    parallel = get_claim_extraction_parallel()
     sem = asyncio.Semaphore(parallel)
 
     async def _one(cid: int) -> int:
@@ -257,8 +330,8 @@ def _map_predicate_to_fact_type(predicate: str) -> str:
 
 
 def promote_claims_to_versioned_facts(
-    min_confidence: float = 0.7,
-    limit: int = 100,
+    min_confidence: float | None = None,
+    limit: int | None = None,
 ) -> dict[str, int]:
     """
     Promote high-confidence extracted_claims to intelligence.versioned_facts.
@@ -271,8 +344,18 @@ def promote_claims_to_versioned_facts(
     fact_change_log, which story_state_trigger_service reads to update
     storyline_states.
 
+    Uses ``FOR UPDATE OF ec SKIP LOCKED`` so multiple processes can promote in parallel without
+    duplicating work on the same claim rows (each worker takes disjoint locks).
+
+    ``min_confidence`` / ``limit`` default from ``CLAIMS_TO_FACTS_MIN_CONFIDENCE`` /
+    ``CLAIMS_TO_FACTS_BATCH_LIMIT`` (and claim_pipeline_max_fetch when limit <= 0).
+
     Returns counts: ``promoted``, ``candidates``, ``unresolved_subject``, ``insert_failed``.
     """
+    if min_confidence is None:
+        min_confidence = get_claims_to_facts_min_confidence()
+    if limit is None:
+        limit = get_claims_to_facts_batch_limit()
     empty = {"promoted": 0, "candidates": 0, "unresolved_subject": 0, "insert_failed": 0}
     conn = get_db_connection()
     if not conn:
@@ -290,17 +373,20 @@ def promote_claims_to_versioned_facts(
                       SELECT 1 FROM intelligence.versioned_facts vf
                       WHERE vf.metadata->>'source_claim_id' = ec.id::text
                   )
+                """ + CLAIM_PROMOTION_GAP_IGNORED_EXCLUDE_SQL + """
                 ORDER BY ec.confidence DESC
                 LIMIT %s
+                FOR UPDATE OF ec SKIP LOCKED
                 """,
                 (min_confidence, limit),
             )
             claims = cur.fetchall()
             stats["candidates"] = len(claims)
             if not claims:
+                conn.commit()
                 return stats
 
-            active_schemas = frozenset(get_schema_names_active())
+            active_schemas = frozenset(get_pipeline_schema_names_active())
             for (
                 claim_id,
                 context_id,
@@ -366,6 +452,85 @@ def promote_claims_to_versioned_facts(
     return stats
 
 
+def sample_unpromoted_claim_resolution_stats(
+    *,
+    limit: int = 500,
+    min_confidence: float | None = None,
+) -> dict[str, int | float]:
+    """
+    Dry-run the same subject resolution as ``promote_claims_to_versioned_facts`` on up to ``limit``
+    highest-confidence unpromoted rows. Does **not** insert into ``versioned_facts``.
+
+    Use this to compare **resolved** vs **unresolved** before tuning confidence or seeding entities.
+    """
+    if min_confidence is None:
+        min_confidence = get_claims_to_facts_min_confidence()
+    try:
+        lim = int(limit)
+    except (TypeError, ValueError):
+        lim = 500
+    lim = max(0, min(5000, lim))
+    out: dict[str, int | float] = {
+        "candidates": 0,
+        "resolved": 0,
+        "unresolved": 0,
+        "min_confidence": float(min_confidence),
+        "sample_limit": lim,
+    }
+    if lim <= 0:
+        return out
+
+    conn = get_db_connection()
+    if not conn:
+        return out
+    active_schemas = frozenset(get_pipeline_schema_names_active())
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT ec.id, ec.context_id, ec.subject_text
+                FROM intelligence.extracted_claims ec
+                WHERE ec.confidence >= %s
+                  AND NOT EXISTS (
+                      SELECT 1 FROM intelligence.versioned_facts vf
+                      WHERE vf.metadata->>'source_claim_id' = ec.id::text
+                  )
+                """ + CLAIM_PROMOTION_GAP_IGNORED_EXCLUDE_SQL + """
+                ORDER BY ec.confidence DESC
+                LIMIT %s
+                """,
+                (min_confidence, lim),
+            )
+            rows = cur.fetchall()
+        out["candidates"] = len(rows)
+        resolved = 0
+        for claim_id, context_id, subject in rows:
+            with conn.cursor() as cur2:
+                pid = _resolve_claim_to_entity_profile(
+                    cur2,
+                    subject or "",
+                    context_id,
+                    active_schema_set=active_schemas,
+                )
+                if pid:
+                    resolved += 1
+        out["resolved"] = resolved
+        out["unresolved"] = out["candidates"] - resolved
+        if out["candidates"]:
+            out["resolve_rate"] = round(float(resolved) / float(out["candidates"]), 4)
+        else:
+            out["resolve_rate"] = 0.0
+    except Exception as e:
+        logger.warning("sample_unpromoted_claim_resolution_stats: %s", e)
+        out["error"] = str(e)
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    return out
+
+
 def _normalize_claim_subject(subject_text: str) -> str:
     """Strip noise so quoted names and honorifics match catalogued entities."""
     s = (subject_text or "").strip()
@@ -379,7 +544,11 @@ _LEADING_ROLE_PREFIXES = re.compile(
     r"chief\s+cabinet\s+secretary|"
     r"prime\s+minister|foreign\s+minister|defense\s+minister|defence\s+minister|"
     r"attorney\s+general|secretary\s+of\s+state|"
-    r"white\s+house\s+press\s+secretary|press\s+secretary"
+    r"secretary\s+of\s+defense|secretary\s+of\s+the\s+treasury|"
+    r"white\s+house\s+press\s+secretary|press\s+secretary|"
+    r"president|vice\s+president|u\.s\.\s+senator|u\.s\.\s+representative|"
+    r"senator|representative|congressman|congresswoman|governor|mayor|"
+    r"ceo|chief\s+executive"
     r")\s+",
     re.I | re.X,
 )
@@ -406,6 +575,44 @@ _CLAIM_SUBJECT_DEMONYMS: dict[str, str] = {
     "iraqi": "iraq",
     "turkish": "turkey",
     "polish": "poland",
+    "pakistani": "pakistan",
+    "bangladeshi": "bangladesh",
+    "egyptian": "egypt",
+    "vietnamese": "vietnam",
+    "thai": "thailand",
+    "indonesian": "indonesia",
+    "malaysian": "malaysia",
+    "singaporean": "singapore",
+    "filipino": "philippines",
+    "taiwanese": "taiwan",
+    "swedish": "sweden",
+    "norwegian": "norway",
+    "finnish": "finland",
+    "danish": "denmark",
+    "dutch": "netherlands",
+    "spanish": "spain",
+    "italian": "italy",
+    "portuguese": "portugal",
+    "greek": "greece",
+    "belgian": "belgium",
+    "swiss": "switzerland",
+    "austrian": "austria",
+    "irish": "ireland",
+    "hungarian": "hungary",
+    "czech": "czech republic",
+    "romanian": "romania",
+    "colombian": "colombia",
+    "argentinian": "argentina",
+    "argentine": "argentina",
+    "chilean": "chile",
+    "peruvian": "peru",
+    "venezuelan": "venezuela",
+    "cuban": "cuba",
+    "nigerian": "nigeria",
+    "kenyan": "kenya",
+    "south african": "south africa",
+    "ethiopian": "ethiopia",
+    "new zealander": "new zealand",
 }
 
 # Longest phrase first so "south korean" wins over a hypothetical single-token prefix.
@@ -419,6 +626,7 @@ _LEADING_DEMONYM_SKIP_FIRST_TOKEN: dict[str, frozenset[str]] = {
     "british": frozenset({"columbia", "virgin"}),
     "french": frozenset({"guiana", "polynesia", "polynesian"}),
     "american": frozenset({"samoa", "football"}),
+    "dutch": frozenset({"oven"}),
 }
 
 
@@ -526,7 +734,9 @@ def _pg_trgm_available(cur) -> bool:
 
 
 def _trgm_subject_threshold(norm_lower: str) -> float:
-    return 0.52 if len(norm_lower) <= 6 else 0.40
+    short = float(os.environ.get("CLAIM_RESOLVE_TRGM_THRESHOLD_SHORT", "0.52"))
+    long_t = float(os.environ.get("CLAIM_RESOLVE_TRGM_THRESHOLD_LONG", "0.40"))
+    return short if len(norm_lower) <= 6 else long_t
 
 
 def _resolve_claim_to_entity_profile(
@@ -544,7 +754,7 @@ def _resolve_claim_to_entity_profile(
     schemas = (
         active_schema_set
         if active_schema_set is not None
-        else frozenset(get_schema_names_active())
+        else frozenset(get_pipeline_schema_names_active())
     )
     variants = _claim_subject_variant_norms(subject_text)
     if not variants:
@@ -742,7 +952,77 @@ def _resolve_claim_to_entity_profile(
                 )
             if pid:
                 return pid
-    
+
+            if slen >= 4:
+                max_meta = min(160, slen + 48)
+                if triple:
+                    d1, d2, d3 = triple
+                    pid = _one_int(
+                        """
+                        SELECT ep.id FROM intelligence.entity_profiles ep
+                        WHERE (
+                          (COALESCE(metadata->>'canonical_name', '') <> ''
+                            AND char_length(trim(metadata->>'canonical_name')) BETWEEN 2 AND %s
+                            AND (
+                              lower(trim(metadata->>'canonical_name')) LIKE '%%' || %s || '%%'
+                              OR %s LIKE '%%' || lower(trim(metadata->>'canonical_name')) || '%%'
+                            ))
+                          OR
+                          (COALESCE(metadata->>'display_name', '') <> ''
+                            AND char_length(trim(metadata->>'display_name')) BETWEEN 2 AND %s
+                            AND (
+                              lower(trim(metadata->>'display_name')) LIKE '%%' || %s || '%%'
+                              OR %s LIKE '%%' || lower(trim(metadata->>'display_name')) || '%%'
+                            ))
+                        )
+                        ORDER BY CASE WHEN ep.domain_key IN (%s, %s, %s) THEN 0 ELSE 1 END
+                        LIMIT 1
+                        """,
+                        (
+                            max_meta,
+                            norm_lower,
+                            norm_lower,
+                            max_meta,
+                            norm_lower,
+                            norm_lower,
+                            d1,
+                            d2,
+                            d3,
+                        ),
+                    )
+                else:
+                    pid = _one_int(
+                        """
+                        SELECT ep.id FROM intelligence.entity_profiles ep
+                        WHERE (
+                          (COALESCE(metadata->>'canonical_name', '') <> ''
+                            AND char_length(trim(metadata->>'canonical_name')) BETWEEN 2 AND %s
+                            AND (
+                              lower(trim(metadata->>'canonical_name')) LIKE '%%' || %s || '%%'
+                              OR %s LIKE '%%' || lower(trim(metadata->>'canonical_name')) || '%%'
+                            ))
+                          OR
+                          (COALESCE(metadata->>'display_name', '') <> ''
+                            AND char_length(trim(metadata->>'display_name')) BETWEEN 2 AND %s
+                            AND (
+                              lower(trim(metadata->>'display_name')) LIKE '%%' || %s || '%%'
+                              OR %s LIKE '%%' || lower(trim(metadata->>'display_name')) || '%%'
+                            ))
+                        )
+                        LIMIT 1
+                        """,
+                        (
+                            max_meta,
+                            norm_lower,
+                            norm_lower,
+                            max_meta,
+                            norm_lower,
+                            norm_lower,
+                        ),
+                    )
+                if pid:
+                    return pid
+
             for schema in schemas:
                 dk_guess = schema.replace("_", "-")
                 if triple:
@@ -785,7 +1065,56 @@ def _resolve_claim_to_entity_profile(
                     )
                 if pid:
                     return pid
-    
+
+            if slen >= 3:
+                try:
+                    cap = int(os.environ.get("CLAIM_RESOLVE_SUBSTRING_MAX_CANON_LEN", "120"))
+                except ValueError:
+                    cap = 120
+                max_canon = min(cap, max(48, slen + 36))
+                for schema in schemas:
+                    dk_guess = schema.replace("_", "-")
+                    if triple:
+                        d1, d2, d3 = triple
+                        pid = _one_int(
+                            f"""
+                            SELECT ep.id
+                            FROM intelligence.entity_profiles ep
+                            JOIN {schema}.entity_canonical ec ON ec.id = ep.canonical_entity_id
+                            WHERE ep.domain_key IN ('{schema}', '{dk_guess}')
+                              AND char_length(trim(ec.canonical_name)) >= 3
+                              AND char_length(trim(ec.canonical_name)) <= %s
+                              AND (
+                                lower(trim(ec.canonical_name)) LIKE '%%' || %s || '%%'
+                                OR %s LIKE '%%' || lower(trim(ec.canonical_name)) || '%%'
+                              )
+                            ORDER BY CASE WHEN ep.domain_key IN (%s, %s, %s) THEN 0 ELSE 1 END,
+                              char_length(trim(ec.canonical_name)) ASC
+                            LIMIT 1
+                            """,
+                            (max_canon, norm_lower, norm_lower, d1, d2, d3),
+                        )
+                    else:
+                        pid = _one_int(
+                            f"""
+                            SELECT ep.id
+                            FROM intelligence.entity_profiles ep
+                            JOIN {schema}.entity_canonical ec ON ec.id = ep.canonical_entity_id
+                            WHERE ep.domain_key IN ('{schema}', '{dk_guess}')
+                              AND char_length(trim(ec.canonical_name)) >= 3
+                              AND char_length(trim(ec.canonical_name)) <= %s
+                              AND (
+                                lower(trim(ec.canonical_name)) LIKE '%%' || %s || '%%'
+                                OR %s LIKE '%%' || lower(trim(ec.canonical_name)) || '%%'
+                              )
+                            ORDER BY char_length(trim(ec.canonical_name)) ASC
+                            LIMIT 1
+                            """,
+                            (max_canon, norm_lower, norm_lower),
+                        )
+                    if pid:
+                        return pid
+
             if triple:
                 d1, d2, d3 = triple
                 pid = _one_int(
@@ -811,7 +1140,7 @@ def _resolve_claim_to_entity_profile(
                 )
             if pid:
                 return pid
-    
+
             if _pg_trgm_available(cur) and slen >= 3:
                 thr = _trgm_subject_threshold(norm_lower)
                 best_key: tuple[int, float] | None = None

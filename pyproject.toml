@@ -12,8 +12,10 @@ dependencies = [
     # Database
     "sqlalchemy>=2.0.0",
     "psycopg2-binary>=2.9.0",
-    # HTTP & Requests
+    # HTTP & Requests (pin urllib3/charset per requests compatibility; quiets RequestsDependencyWarning)
     "requests>=2.31.0",
+    "urllib3>=2.0.0,<3",
+    "charset-normalizer>=3.0.0",
     "httptools>=0.6.0",
     # Optional LLM response cache (NEWS_INTEL_LLM_CACHE_REDIS); import fails gracefully if unused
     "redis>=5.0.0",

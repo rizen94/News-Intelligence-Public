@@ -15,6 +15,7 @@ from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, Query, Requ
 from shared.database.connection import get_ui_db_connection
 from shared.domain_registry import (
     get_active_domain_keys,
+    get_pipeline_schema_names_active,
     get_schema_names_active,
     iter_url_schema_pairs,
 )
@@ -1341,173 +1342,191 @@ async def investigate_anomaly(
 async def get_system_status():
     """Get comprehensive system status"""
     try:
+        # Always return core system metrics even when DB is unavailable.
+        cpu_percent = psutil.cpu_percent(interval=0.2)
+        memory = psutil.virtual_memory()
+        disk = psutil.disk_usage("/")
+        gpu = _get_gpu_metrics()
+
+        total_articles = 0
+        total_storylines = 0
+        active_feeds = 0
+        articles_this_week = 0
+        articles_today = 0
+        active_alerts = 0
+        recent_errors = 0
+        articles_with_hash = 0
+        url_duplicates = 0
+        content_duplicates = 0
+        recent_deduplication_runs = 0
+        db_status = "healthy"
+        overall_status = "healthy"
+
         conn = get_monitoring_db_connection()
         if not conn:
-            raise HTTPException(status_code=500, detail="Database connection failed")
+            db_status = "degraded: connection unavailable"
+            overall_status = "degraded"
+        else:
+            try:
+                with conn.cursor() as cur:
+                    # OPTIMIZED: aggregate across every registry silo (not hardcoded to three domains)
+                    week_ago = datetime.now() - timedelta(days=7)
+                    sch_list = _registry_silo_schemas()
+                    n = len(sch_list)
+                    sub_art = " + ".join(f"(SELECT COUNT(*) FROM {s}.articles)" for s in sch_list)
+                    sub_story = " + ".join(f"(SELECT COUNT(*) FROM {s}.storylines)" for s in sch_list)
+                    sub_feeds = " + ".join(
+                        f"(SELECT COUNT(*) FROM {s}.rss_feeds WHERE is_active = true)"
+                        for s in sch_list
+                    )
+                    sub_week = " + ".join(
+                        f"(SELECT COUNT(*) FROM {s}.articles WHERE created_at >= %s)"
+                        for s in sch_list
+                    )
+                    sub_today = " + ".join(
+                        f"(SELECT COUNT(*) FROM {s}.articles WHERE DATE(created_at) = CURRENT_DATE)"
+                        for s in sch_list
+                    )
+                    cur.execute(
+                        f"""
+                        SELECT
+                            {sub_art} as total_articles,
+                            {sub_story} as total_storylines,
+                            {sub_feeds} as active_feeds,
+                            {sub_week} as articles_this_week,
+                            {sub_today} as articles_today
+                    """,
+                        (week_ago,) * n,
+                    )
+                    stats = cur.fetchone()
+                    total_articles = stats[0] if stats and stats[0] else 0
+                    total_storylines = stats[1] if stats and stats[1] else 0
+                    active_feeds = stats[2] if stats and stats[2] else 0
+                    articles_this_week = stats[3] if stats and stats[3] else 0
+                    articles_today = stats[4] if stats and stats[4] else 0
 
-        try:
-            with conn.cursor() as cur:
-                # Get system metrics
-                cpu_percent = psutil.cpu_percent(interval=1)
-                memory = psutil.virtual_memory()
-                disk = psutil.disk_usage("/")
+                    # Get active alerts
+                    cur.execute("SELECT COUNT(*) FROM system_alerts WHERE is_active = true")
+                    active_alerts = cur.fetchone()[0]
 
-                # Get GPU info if available (nvidia-smi or GPUtil)
-                gpu = _get_gpu_metrics()
-                gpu_vram_percent = gpu.get("gpu_vram_percent")
-                gpu_utilization_percent = gpu.get("gpu_utilization_percent")
+                    # Get recent errors
+                    cur.execute(
+                        """
+                        SELECT COUNT(*) FROM system_alerts
+                        WHERE severity = 'error' AND created_at >= %s
+                    """,
+                        (datetime.now() - timedelta(hours=24),),
+                    )
+                    recent_errors = cur.fetchone()[0]
 
-                # OPTIMIZED: aggregate across every registry silo (not hardcoded to three domains)
-                week_ago = datetime.now() - timedelta(days=7)
-                sch_list = _registry_silo_schemas()
-                n = len(sch_list)
-                sub_art = " + ".join(f"(SELECT COUNT(*) FROM {s}.articles)" for s in sch_list)
-                sub_story = " + ".join(f"(SELECT COUNT(*) FROM {s}.storylines)" for s in sch_list)
-                sub_feeds = " + ".join(
-                    f"(SELECT COUNT(*) FROM {s}.rss_feeds WHERE is_active = true)" for s in sch_list
-                )
-                sub_week = " + ".join(
-                    f"(SELECT COUNT(*) FROM {s}.articles WHERE created_at >= %s)" for s in sch_list
-                )
-                sub_today = " + ".join(
-                    f"(SELECT COUNT(*) FROM {s}.articles WHERE DATE(created_at) = CURRENT_DATE)"
-                    for s in sch_list
-                )
-                cur.execute(
-                    f"""
-                    SELECT
-                        {sub_art} as total_articles,
-                        {sub_story} as total_storylines,
-                        {sub_feeds} as active_feeds,
-                        {sub_week} as articles_this_week,
-                        {sub_today} as articles_today
-                """,
-                    (week_ago,) * n,
-                )
-                stats = cur.fetchone()
-                total_articles = stats[0] if stats and stats[0] else 0
-                total_storylines = stats[1] if stats and stats[1] else 0
-                active_feeds = stats[2] if stats and stats[2] else 0
-                articles_this_week = stats[3] if stats and stats[3] else 0
-                articles_today = stats[4] if stats and stats[4] else 0
+                    # Get deduplication metrics from all registry silos
+                    sub_hash = " + ".join(
+                        f"(SELECT COUNT(*) FROM {s}.articles WHERE content_hash IS NOT NULL)"
+                        for s in sch_list
+                    )
+                    cur.execute(f"SELECT {sub_hash} as articles_with_hash")
+                    hash_result = cur.fetchone()
+                    articles_with_hash = hash_result[0] if hash_result and hash_result[0] else 0
 
-                # Get active alerts
-                cur.execute("SELECT COUNT(*) FROM system_alerts WHERE is_active = true")
-                active_alerts = cur.fetchone()[0]
-
-                # Get recent errors
-                cur.execute(
+                    union_urls = " UNION ALL ".join(
+                        f"SELECT url FROM {s}.articles" for s in sch_list
+                    )
+                    cur.execute(
+                        f"""
+                        SELECT COUNT(*) FROM (
+                            SELECT url FROM (
+                                {union_urls}
+                            ) u
+                            GROUP BY url
+                            HAVING COUNT(*) > 1
+                        ) dup_urls
                     """
-                    SELECT COUNT(*) FROM system_alerts
-                    WHERE severity = 'error' AND created_at >= %s
-                """,
-                    (datetime.now() - timedelta(hours=24),),
-                )
-                recent_errors = cur.fetchone()[0]
+                    )
+                    url_result = cur.fetchone()
+                    url_duplicates = url_result[0] if url_result and url_result[0] else 0
 
-                # Get deduplication metrics from all registry silos
-                sub_hash = " + ".join(
-                    f"(SELECT COUNT(*) FROM {s}.articles WHERE content_hash IS NOT NULL)"
-                    for s in sch_list
-                )
-                cur.execute(f"SELECT {sub_hash} as articles_with_hash")
-                hash_result = cur.fetchone()
-                articles_with_hash = hash_result[0] if hash_result and hash_result[0] else 0
+                    union_ch = " UNION ALL ".join(
+                        f"SELECT content_hash FROM {s}.articles WHERE content_hash IS NOT NULL"
+                        for s in sch_list
+                    )
+                    cur.execute(
+                        f"""
+                        SELECT COUNT(*) FROM (
+                            SELECT content_hash FROM (
+                                {union_ch}
+                            ) u
+                            GROUP BY content_hash
+                            HAVING COUNT(*) > 1
+                        ) dup_hashes
+                    """
+                    )
+                    content_result = cur.fetchone()
+                    content_duplicates = (
+                        content_result[0] if content_result and content_result[0] else 0
+                    )
 
-                union_urls = " UNION ALL ".join(f"SELECT url FROM {s}.articles" for s in sch_list)
-                cur.execute(
-                    f"""
-                    SELECT COUNT(*) FROM (
-                        SELECT url FROM (
-                            {union_urls}
-                        ) u
-                        GROUP BY url
-                        HAVING COUNT(*) > 1
-                    ) dup_urls
-                """
-                )
-                url_result = cur.fetchone()
-                url_duplicates = url_result[0] if url_result and url_result[0] else 0
+                    cur.execute(
+                        """
+                        SELECT COUNT(*) FROM pipeline_traces
+                        WHERE error_stage LIKE '%deduplication%'
+                        AND (end_time >= NOW() - INTERVAL '24 hours' OR start_time >= NOW() - INTERVAL '24 hours')
+                    """
+                    )
+                    recent_deduplication_runs = cur.fetchone()[0]
+            except Exception as db_err:
+                db_status = f"degraded: {str(db_err)[:80]}"
+                overall_status = "degraded"
+                logger.warning("system_status database subsection degraded: %s", db_err)
+            finally:
+                conn.close()
 
-                union_ch = " UNION ALL ".join(
-                    f"SELECT content_hash FROM {s}.articles WHERE content_hash IS NOT NULL"
-                    for s in sch_list
-                )
-                cur.execute(
-                    f"""
-                    SELECT COUNT(*) FROM (
-                        SELECT content_hash FROM (
-                            {union_ch}
-                        ) u
-                        GROUP BY content_hash
-                        HAVING COUNT(*) > 1
-                    ) dup_hashes
-                """
-                )
-                content_result = cur.fetchone()
-                content_duplicates = (
-                    content_result[0] if content_result and content_result[0] else 0
-                )
-
-                cur.execute("""
-                    SELECT COUNT(*) FROM pipeline_traces
-                    WHERE error_stage LIKE '%deduplication%'
-                    AND (end_time >= NOW() - INTERVAL '24 hours' OR start_time >= NOW() - INTERVAL '24 hours')
-                """)
-                recent_deduplication_runs = cur.fetchone()[0]
-
-                # Redis removed from architecture
-                return {
-                    "success": True,
-                    "data": {
-                        "system": {
-                            "cpu_percent": cpu_percent,
-                            "memory_percent": memory.percent,
-                            "disk_percent": disk.percent,
-                            "gpu_vram_percent": gpu_vram_percent,
-                            "gpu_utilization_percent": gpu_utilization_percent,
-                            "gpu_temperature_c": gpu.get("gpu_temperature_c"),
-                            "gpu_memory_used_mb": gpu.get("gpu_memory_used_mb"),
-                            "gpu_memory_total_mb": gpu.get("gpu_memory_total_mb"),
-                            "status": "healthy"
-                            if cpu_percent < 80 and memory.percent < 80 and disk.percent < 90
-                            else "warning",
-                        },
-                        "database": {
-                            "total_articles": total_articles,
-                            "total_storylines": total_storylines,
-                            "active_feeds": active_feeds,
-                            "articles_this_week": articles_this_week,
-                            "articles_today": articles_today,
-                            "status": "healthy",
-                        },
-                        "redis": {"status": "not_used", "host": "", "port": 0},
-                        "alerts": {
-                            "active_alerts": active_alerts,
-                            "recent_errors": recent_errors,
-                            "status": "healthy"
-                            if active_alerts == 0 and recent_errors == 0
-                            else "warning",
-                        },
-                        "deduplication": {
-                            "articles_with_hash": articles_with_hash,
-                            "hash_coverage_percentage": (articles_with_hash / total_articles * 100)
-                            if total_articles > 0
-                            else 0,
-                            "url_duplicates": url_duplicates,
-                            "content_duplicates": content_duplicates,
-                            "recent_deduplication_runs": recent_deduplication_runs,
-                            "status": "healthy"
-                            if url_duplicates == 0 and content_duplicates == 0
-                            else "warning",
-                        },
-                        "overall_status": "healthy",
-                    },
-                    "timestamp": datetime.now().isoformat(),
-                }
-
-        finally:
-            conn.close()
+        # Redis removed from architecture
+        return {
+            "success": True,
+            "data": {
+                "system": {
+                    "cpu_percent": cpu_percent,
+                    "memory_percent": memory.percent,
+                    "disk_percent": disk.percent,
+                    "gpu_vram_percent": gpu.get("gpu_vram_percent"),
+                    "gpu_utilization_percent": gpu.get("gpu_utilization_percent"),
+                    "gpu_temperature_c": gpu.get("gpu_temperature_c"),
+                    "gpu_memory_used_mb": gpu.get("gpu_memory_used_mb"),
+                    "gpu_memory_total_mb": gpu.get("gpu_memory_total_mb"),
+                    "status": "healthy"
+                    if cpu_percent < 80 and memory.percent < 80 and disk.percent < 90
+                    else "warning",
+                },
+                "database": {
+                    "total_articles": total_articles,
+                    "total_storylines": total_storylines,
+                    "active_feeds": active_feeds,
+                    "articles_this_week": articles_this_week,
+                    "articles_today": articles_today,
+                    "status": db_status,
+                },
+                "redis": {"status": "not_used", "host": "", "port": 0},
+                "alerts": {
+                    "active_alerts": active_alerts,
+                    "recent_errors": recent_errors,
+                    "status": "healthy" if active_alerts == 0 and recent_errors == 0 else "warning",
+                },
+                "deduplication": {
+                    "articles_with_hash": articles_with_hash,
+                    "hash_coverage_percentage": (articles_with_hash / total_articles * 100)
+                    if total_articles > 0
+                    else 0,
+                    "url_duplicates": url_duplicates,
+                    "content_duplicates": content_duplicates,
+                    "recent_deduplication_runs": recent_deduplication_runs,
+                    "status": "healthy"
+                    if url_duplicates == 0 and content_duplicates == 0
+                    else "warning",
+                },
+                "overall_status": overall_status,
+            },
+            "timestamp": datetime.now().isoformat(),
+        }
 
     except Exception as e:
         logger.error(f"Error getting system status: {e}")
@@ -2042,7 +2061,7 @@ def execute_pipeline_orchestration():
                 try:
                     analyzed_count = 0
                     with conn.cursor() as cur:
-                        for schema in get_schema_names_active():
+                        for schema in get_pipeline_schema_names_active():
                             # Get recent domain articles without sentiment.
                             cur.execute(f"""
                                 SELECT id, title, content
@@ -2714,7 +2733,9 @@ async def analyze_existing_articles(
                     clickbait = is_clickbait_title(title)
                     advertisement = is_advertisement(title, content, url)
 
-                    quality_score = calculate_article_quality_score(title, content, source_name)
+                    quality_score = calculate_article_quality_score(
+                        title, content, source_name, url
+                    )
                     impact_score = calculate_article_impact_score(title, content)
 
                     low_quality = quality_score < 0.4

@@ -1,0 +1,47 @@
+# Official U.S. government data sources — politics & legal (reference for operators).
+# Keys are listed in configs/env.example; wire each in shared services as needed.
+
+congress_gov:
+  name: Congress.gov API v3
+  purpose: Federal bill metadata, CRS summaries, text version URLs, member/committee data
+  base_url: https://api.congress.gov/v3
+  env_key: CONGRESS_GOV_API_KEY
+  signup_url: https://api.congress.gov/sign-up/
+  notes: >-
+    Primary anchor for “what the bill says” vs media claims. Fetch bill + summaries + text,
+    store snippets or hashes, then align extracted_claims (intelligence.extracted_claims)
+    using retrieval + entailment.
+
+fec_open_data:
+  name: FEC Open Data API
+  purpose: Committees, candidates, filings (campaign finance ground truth)
+  base_url: https://api.open.fec.gov/v1/
+  env_key: FEC_API_KEY
+  notes: Optional; register at fec.gov for key.
+
+usaspending:
+  name: USAspending.gov API
+  purpose: Federal awards, sub-awards, agency obligations
+  base_url: https://api.usaspending.gov/api/v2/
+  env_key: null
+  notes: Many endpoints require no key; rate-limit friendly batching recommended.
+
+regulations_gov:
+  name: Regulations.gov API v4
+  purpose: Federal rulemaking dockets, comments (compare to press on “EPA rule”, etc.)
+  env_key: REGULATIONS_GOV_API_KEY
+  notes: Key required for higher quotas.
+
+courtlistener:
+  name: CourtListener / Free Law Project
+  purpose: Federal and state court opinions search (legal domain corroboration)
+  base_url: https://www.courtlistener.com/api/rest/v4/
+  env_key: COURTLISTENER_API_TOKEN
+  notes: Useful for legal silo; cite opinions vs news characterization of holdings.
+
+federal_register:
+  name: Federal Register API
+  purpose: Published rules, notices, presidential documents
+  base_url: https://www.federalregister.gov/api/v1/
+  env_key: null
+  notes: RSS already used in legal domain seed_feed_urls; API for structured fetch.

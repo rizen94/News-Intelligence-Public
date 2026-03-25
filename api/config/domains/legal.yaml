@@ -22,6 +22,11 @@ data_sources:
       - "https://www.federalregister.gov/documents/search.rss"
       - "https://www.scotusblog.com/feed/"
       - "https://www.universalhub.com/rss.xml"
+      - "https://www.abajournal.com/rss/news.rss"
+      - "https://www.courthousenews.com/feed/"
+      - "https://www.jurist.org/feed/"
+      - "https://www.lexblog.com/feed/"
+      - "https://feeds.feedburner.com/AboveTheLaw"
 
 focus_areas:
   - Newton, West Newton, and Greater Boston municipal and metro legal news

@@ -1,6 +1,6 @@
 # Domain registry and provisioning — March 2026 updates
 
-**Purpose:** Record changes that make optional domains show up in routing and the pipeline without a full-process restart for every touch, and align migration runners with RSS / `public.domains` activation.
+**Purpose:** Record changes that make YAML-onboarded silos show up in routing and the pipeline without a full-process restart for every touch, and align migration runners with RSS / `public.domains` activation.
 
 **Related:** [`api/config/domains/README.md`](../api/config/domains/README.md), [`docs/DOMAIN_EXTENSION_TEMPLATE.md`](DOMAIN_EXTENSION_TEMPLATE.md), [`AGENTS.md`](../AGENTS.md).
 

@@ -76,7 +76,7 @@ Shared cross-domain schema lives in PostgreSQL **`intelligence`**; per-domain co
 |------|---------|
 | `api/config/orchestrator_governance.yaml` | Collection interval, analysis pipeline budgets, feature flags consumed by automation. |
 | `api/config/sources.yaml` | External source hints (finance, etc.). |
-| `api/config/domains/*.yaml` | Optional domain onboarding (see [DOMAIN_EXTENSION_TEMPLATE.md](DOMAIN_EXTENSION_TEMPLATE.md)). |
+| `api/config/domains/*.yaml` | YAML onboarding for additional silos — full parity with built-ins once provisioned (see [DOMAIN_EXTENSION_TEMPLATE.md](DOMAIN_EXTENSION_TEMPLATE.md)). |
 | `api/scripts/provision_domain.py` | New silo: preflight, SQL, optional **`seed_feed_urls`** → `{schema}.rss_feeds`. |
 | `api/scripts/seed_domain_rss_from_yaml.py` | Backfill **`rss_feeds`** from YAML **`seed_feed_urls`**. |
 | `api/scripts/init_domain_yaml_from_template.py` | Create **`{domain_key}.yaml`** from **`_template.example.yaml`**. |

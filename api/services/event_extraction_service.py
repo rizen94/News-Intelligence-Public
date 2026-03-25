@@ -199,6 +199,9 @@ class EventExtractionService:
 
         events: list[dict[str, Any]] = []
         for idx, raw_evt in enumerate(events_raw):
+            if not isinstance(raw_evt, dict):
+                logger.debug("Article %s skip non-dict event %s", article_id, idx)
+                continue
             try:
                 evt = self._normalise_event(
                     raw_evt,
@@ -232,10 +235,20 @@ class EventExtractionService:
             return []
 
         try:
-            return json.loads(text[start : end + 1])
+            parsed = json.loads(text[start : end + 1])
         except json.JSONDecodeError as e:
             logger.warning(f"JSON parse error: {e}")
             return []
+
+        if isinstance(parsed, list):
+            return [x for x in parsed if isinstance(x, dict)]
+        if isinstance(parsed, dict):
+            for k in ("events", "items", "data", "results"):
+                v = parsed.get(k)
+                if isinstance(v, list):
+                    return [x for x in v if isinstance(x, dict)]
+            return []
+        return []
 
     def _normalise_event(
         self,
@@ -248,6 +261,8 @@ class EventExtractionService:
         extraction_model: str,
     ) -> dict[str, Any] | None:
         """Validate, resolve dates, compute fingerprint, return DB-ready dict."""
+        if not isinstance(raw, dict):
+            return None
         title = (raw.get("event_title") or "").strip()
         if not title:
             return None

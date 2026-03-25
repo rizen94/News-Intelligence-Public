@@ -300,9 +300,15 @@ def enrich_articles_batch(batch_size: int = 20) -> int:
         return 0
 
     from shared.database.connection import get_db_config, get_db_connection
-    from shared.domain_registry import url_schema_pairs
+    from shared.domain_registry import pipeline_url_schema_pairs
+
+    from shared.article_processing_gates import (
+        strict_enrichment_applies,
+        strict_enrichment_cutoff_utc,
+    )
 
     from services.context_processor_service import (
+        ensure_context_for_article,
         sync_context_from_article_after_content_change,
     )
 
@@ -317,7 +323,7 @@ def enrich_articles_batch(batch_size: int = 20) -> int:
             cur.execute("SET statement_timeout = '300s'")
         enriched = 0
         remaining = batch_size
-        pairs = list(url_schema_pairs())
+        pairs = list(pipeline_url_schema_pairs())
         if not pairs:
             return 0
         n_domains = len(pairs)
@@ -330,7 +336,7 @@ def enrich_articles_batch(batch_size: int = 20) -> int:
             with conn.cursor() as cur:
                 cur.execute(
                     f"""
-                    SELECT id, url, content
+                    SELECT id, url, content, created_at, enrichment_status
                     FROM {schema_name}.articles
                     WHERE (enrichment_status IS NULL OR enrichment_status IN ('pending', 'failed'))
                       AND COALESCE(enrichment_attempts, 0) < 3
@@ -342,10 +348,45 @@ def enrich_articles_batch(batch_size: int = 20) -> int:
                 )
                 rows = cur.fetchall()
 
-            for article_id, url, existing_content in rows:
+            for article_id, url, existing_content, created_at, row_status in rows:
                 if remaining <= 0:
                     break
                 if not url or not url.strip():
+                    continue
+                # Strict-ingest long RSS: pending without a second trafilatura pass
+                if (
+                    strict_enrichment_cutoff_utc() is not None
+                    and strict_enrichment_applies(created_at)
+                    and existing_content
+                    and len((existing_content or "").strip()) >= MIN_CONTENT_TO_ENRICH
+                    and (row_status is None or (row_status or "").strip() == "pending")
+                ):
+                    fast_rows = 0
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            f"""
+                            UPDATE {schema_name}.articles
+                            SET enrichment_status = 'enriched', updated_at = NOW()
+                            WHERE id = %s
+                              AND (enrichment_status IS NULL OR enrichment_status = 'pending')
+                            """,
+                            (article_id,),
+                        )
+                        fast_rows = cur.rowcount or 0
+                    if fast_rows:
+                        conn.commit()
+                        enriched += 1
+                        remaining -= 1
+                        try:
+                            ensure_context_for_article(domain_key, article_id)
+                        except Exception as ctx_e:
+                            logger.debug(
+                                "enrichment fast-path context %s/%s: %s",
+                                domain_key,
+                                article_id,
+                                ctx_e,
+                            )
+                        time.sleep(RATE_LIMIT_SLEEP)
                     continue
                 with conn.cursor() as cur:
                     cur.execute(

@@ -56,12 +56,16 @@ def _parse_timeframe(timeframe: str) -> timedelta:
     return timedelta(days=days)
 
 
-def _get_recent_finance_articles(days: int, limit: int = 200) -> list[dict[str, Any]]:
-    """Fetch recent finance-domain articles. Returns list of dicts with id, title, summary, url, published_at, category."""
+def _get_recent_finance_articles(
+    domain_key: str,
+    days: int,
+    limit: int = 200,
+) -> list[dict[str, Any]]:
+    """Fetch recent articles for the URL domain (e.g. ``finance`` or ``finance-2``)."""
     try:
         from domains.news_aggregation.services.article_service import ArticleService
 
-        svc = ArticleService(domain="finance")
+        svc = ArticleService(domain=domain_key)
         published_after = datetime.now(timezone.utc) - timedelta(days=days)
         res = svc.get_articles(
             limit=limit,
@@ -73,7 +77,7 @@ def _get_recent_finance_articles(days: int, limit: int = 200) -> list[dict[str, 
         articles = data.get("articles") or []
         return [dict(a) for a in articles]
     except Exception as e:
-        logger.warning("_get_recent_finance_articles failed: %s", e)
+        logger.warning("_get_recent_finance_articles failed domain=%s: %s", domain_key, e)
         return []
 
 
@@ -1958,7 +1962,7 @@ async def get_market_trends(
 
         delta = _parse_timeframe(timeframe or "7d")
         days = max(1, delta.days)
-        articles = _get_recent_finance_articles(days=days, limit=500)
+        articles = _get_recent_finance_articles(domain, days=days, limit=500)
 
         # Article count by date (date string key)
         by_date = Counter()
@@ -2036,7 +2040,7 @@ async def get_market_patterns(
         if not validate_domain(domain):
             raise HTTPException(status_code=400, detail=f"Invalid domain: {domain}")
 
-        articles = _get_recent_finance_articles(days=30, limit=300)
+        articles = _get_recent_finance_articles(domain, days=30, limit=300)
 
         # Category counts if present
         by_category = Counter()
@@ -2123,7 +2127,7 @@ async def get_corporate_announcements(
         if not validate_domain(domain):
             raise HTTPException(status_code=400, detail=f"Invalid domain: {domain}")
 
-        articles = _get_recent_finance_articles(days=30, limit=300)
+        articles = _get_recent_finance_articles(domain, days=30, limit=300)
         combined = _ANNOUNCEMENT_KEYWORDS
 
         announcements = []

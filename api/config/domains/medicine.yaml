@@ -1,5 +1,5 @@
 # =============================================================================
-# DOMAIN ONBOARDING (fill in for a NEW optional domain — not politics/finance/science-tech)
+# DOMAIN ONBOARDING (fill in for a NEW additional silo — not politics/finance/science-tech)
 # =============================================================================
 #
 # Save as: api/config/domains/<domain_key>.yaml  (filename must NOT start with _)

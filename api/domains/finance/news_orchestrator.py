@@ -239,11 +239,13 @@ def get_shortlist(
     except Exception:
         is_registry_commodity = False
 
-    # 1) Finance-domain articles (RSS-derived)
+    # 1) Finance-domain articles (RSS-derived) — FINANCE_PG_CONTENT_DOMAIN_KEY selects silo (finance vs finance-2)
     try:
+        from config.settings import finance_postgres_content_domain_key
         from domains.news_aggregation.services.article_service import ArticleService
 
-        article_svc = ArticleService(domain="finance")
+        fin_dk = finance_postgres_content_domain_key()
+        article_svc = ArticleService(domain=fin_dk)
         published_after = datetime.now(timezone.utc) - timedelta(hours=hours)
         res = article_svc.get_articles(
             limit=150,
@@ -278,7 +280,7 @@ def get_shortlist(
                         "title": title,
                         "snippet": snippet,
                         "url": a.get("url") or "",
-                        "source": a.get("source_domain") or a.get("source") or "finance",
+                        "source": a.get("source_domain") or a.get("source") or fin_dk,
                         "published_at": published_at,
                     },
                 )
@@ -382,8 +384,10 @@ def get_supply_chain_items(
         is_registry_commodity = False
     shortlist: list[tuple[float, dict[str, Any]]] = []
     try:
+        from config.settings import finance_intelligence_context_domain_key
         from shared.database.connection import get_db_connection
 
+        ctx_dk = finance_intelligence_context_domain_key()
         conn = get_db_connection()
         if not conn:
             return []
@@ -392,12 +396,12 @@ def get_supply_chain_items(
                 """
                 SELECT id, title, content, created_at
                 FROM intelligence.contexts
-                WHERE domain_key = 'finance'
+                WHERE domain_key = %s
                   AND created_at >= NOW() - make_interval(hours => %s)
                 ORDER BY created_at DESC
                 LIMIT 100
                 """,
-                (max(hours, 24),),
+                (ctx_dk, max(hours, 24)),
             )
             rows = cur.fetchall()
         conn.close()

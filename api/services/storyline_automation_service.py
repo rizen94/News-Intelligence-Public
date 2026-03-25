@@ -1253,6 +1253,7 @@ class StorylineAutomationService(DomainAwareService):
             "organization": "organization",
             "subject": "other",
             "recurring_event": "event",
+            "family": "family",
         }
         for sei_schema in [self.schema, "public"]:
             try:

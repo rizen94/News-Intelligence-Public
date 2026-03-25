@@ -29,10 +29,10 @@ def get_user_guidance(get_db_connection) -> dict[str, Any]:
     if not conn:
         return out
     try:
-        from shared.domain_registry import url_schema_pairs
+        from shared.domain_registry import pipeline_url_schema_pairs
 
         cur = conn.cursor()
-        for domain, schema in url_schema_pairs():
+        for domain, schema in pipeline_url_schema_pairs():
             # Watchlist: storyline_id per domain (watchlist lives in same schema as storylines)
             try:
                 cur.execute(f"""

@@ -58,7 +58,7 @@ def analyze_article(article: dict, schema_name: str) -> dict:
     advertisement = is_advertisement(title, content, url)
 
     # Calculate scores
-    quality_score = calculate_article_quality_score(title, content, source)
+    quality_score = calculate_article_quality_score(title, content, source, url)
     impact_score = calculate_article_impact_score(title, content)
 
     # Check score thresholds

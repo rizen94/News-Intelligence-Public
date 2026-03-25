@@ -8,7 +8,11 @@ from typing import Any
 
 from fastapi import APIRouter, Path, Query
 from shared.database.connection import get_db_connection
-from shared.domain_registry import domain_key_to_schema, schema_to_domain_key, url_schema_pairs
+from shared.domain_registry import (
+    domain_key_to_schema,
+    pipeline_url_schema_pairs,
+    schema_to_domain_key,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -428,7 +432,7 @@ def _fetch_related_cross_domain(
 
         if lead_canonical_ids:
             canon_list = list(lead_canonical_ids)[:40]
-            for dom_seg, schema_name in url_schema_pairs():
+            for dom_seg, schema_name in pipeline_url_schema_pairs():
                 if schema_name == current_schema or len(storylines_out) >= max_storylines:
                     continue
                 try:

@@ -161,6 +161,8 @@ def main() -> None:
         "politics",
         "finance",
         "science-tech",
+        "politics-2",
+        "finance-2",
     ):
         errors.append(
             f"schema_name {schema_name!r} is in RESERVED_SCHEMA_NAMES — pick a different schema for a new silo"

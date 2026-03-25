@@ -836,7 +836,8 @@ def synthesize_event_context(
                 SELECT id, event_type, event_name, start_date, end_date,
                        geographic_scope, key_participant_entity_ids, milestones,
                        editorial_briefing, editorial_briefing_json,
-                       briefing_status, domain_keys
+                       briefing_status, domain_keys,
+                       global_narrative, narrative_lenses
                 FROM intelligence.tracked_events
                 WHERE id = %s
                 """,
@@ -860,6 +861,8 @@ def synthesize_event_context(
                 "editorial_briefing_json": erow[9] or {},
                 "briefing_status": erow[10],
                 "domain_keys": erow[11] or [],
+                "global_narrative": erow[12] or "",
+                "narrative_lenses": erow[13] if isinstance(erow[13], dict) else {},
             }
 
             # Chronicles

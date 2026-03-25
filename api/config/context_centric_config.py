@@ -12,6 +12,7 @@ DEFAULT_TASKS = {
     "context_sync": True,
     "entity_profile_sync": True,
     "claim_extraction": True,
+    "legislative_references": True,
     "event_tracking": True,
     "event_coherence_review": True,
     "investigation_report_refresh": True,

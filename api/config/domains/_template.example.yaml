@@ -112,7 +112,7 @@ _instructions: |
   Replace example-domain / example_domain before enabling.
   After provision: run verify_domain_provision.py --domain-key <key>, then ensure_domain_silo_alignment.py.
   Reserve schema names: see RESERVED_SCHEMA_NAMES in api/shared/domain_registry.py (e.g. do not reuse
-  intelligence, artificial_intelligence, or core silo names for a new optional domain).
+  intelligence, artificial_intelligence, or core silo names for a new onboarded silo).
 
 # Optional human note (also stripped at load)
 _comment: |

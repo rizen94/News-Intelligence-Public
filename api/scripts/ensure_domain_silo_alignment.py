@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Align optional domain silos across YAML registry and ``public.domains``.
+Align YAML-onboarded silos across registry and ``public.domains``.
 
 Use after migrations + ``provision_domain`` so automation (``get_all_domains()``) and RSS
 (``url_schema_pairs()``) see the same silos on **every host** (main GPU, dev PC, Widow worker)

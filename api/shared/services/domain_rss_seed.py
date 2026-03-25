@@ -1,5 +1,5 @@
 """
-Insert RSS feeds from optional domain YAML ``data_sources.rss.seed_feed_urls``.
+Insert RSS feeds from onboarded-domain YAML ``data_sources.rss.seed_feed_urls``.
 
 Used by ``provision_domain.py`` after the silo exists, and by ``seed_domain_rss_from_yaml.py``
 for one-off backfill (e.g. medicine already provisioned before seeding existed).

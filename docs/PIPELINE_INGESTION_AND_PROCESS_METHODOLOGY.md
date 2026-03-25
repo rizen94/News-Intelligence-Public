@@ -8,9 +8,11 @@
 |---------|----------|
 | Task names, `depends_on`, phase numbers, default intervals | `api/services/automation_manager.py` → `self.schedules` |
 | Per-task implementation | Same file → `async def _execute_<task_name>` (grep `_execute_`) |
-| Pending / backlog counts (what “has work” means) | `api/services/backlog_metrics.py` → `_count_*` helpers, `BATCH_SIZE_PER_TASK` |
+| Pending / backlog counts (what “has work” means) | `api/services/backlog_metrics.py` → `_count_*` helpers, `BATCH_SIZE_PER_TASK`, `SKIP_WHEN_EMPTY` |
 | Orchestrator budgets / collection interval overrides | `api/config/orchestrator_governance.yaml` |
-| Domain silos RSS + iterators | `shared.domain_registry` → `url_schema_pairs()`, `get_schema_names_active()` |
+| Domain silos — **processing / backlog** | `shared.domain_registry` → `pipeline_url_schema_pairs()`, `get_pipeline_schema_names_active()`, `get_pipeline_active_domain_keys()` (`PIPELINE_INCLUDE` / `PIPELINE_EXCLUDE`) |
+| Domain silos — **RSS** (default full registry) | `collect_rss_feeds` → `url_schema_pairs()` unless `RSS_INGEST_MIRROR_PIPELINE=true` (then pipeline pairs); minus `RSS_INGEST_EXCLUDE_DOMAIN_KEYS` |
+| Shared article readiness (ML vs context) | `api/shared/article_processing_gates.py` |
 
 ---
 
@@ -18,8 +20,68 @@
 
 - **Workload-driven scheduling** (default path): phases with pending work (per `backlog_metrics`) are eligible every tick (subject to cooldown), not only on wall-clock intervals. Idle phases use their `interval` from `schedules`.
 - **Collection throttle:** When downstream pending (enrichment + `context_sync` + `document_processing`) exceeds `COLLECTION_THROTTLE_PENDING_THRESHOLD`, `collection_cycle` can defer RSS so **collect → process → sync** can catch up.
-- **Queue soft cap:** When `AUTOMATION_QUEUE_SOFT_CAP` is exceeded, new enqueues are skipped except phases in `AUTOMATION_QUEUE_PAUSE_ALLOW` (typically `collection_cycle`, `health_check`) so backlogs drain.
+- **Queue soft cap:** When `AUTOMATION_QUEUE_SOFT_CAP` is exceeded (default 100), new enqueues are skipped except phases in `AUTOMATION_QUEUE_PAUSE_ALLOW`. **`nightly_enrichment_context` is not allowlisted** (it would stack redundant drains). **`AUTOMATION_NIGHTLY_ENRICHMENT_MAX_QUEUED`** caps running+queued nightly tasks (default 5).
 - **Widow / split hosts:** `AUTOMATION_SKIP_RSS_IN_COLLECTION_CYCLE` on the main host when RSS runs elsewhere; `content_enrichment` still drains `{domain}.articles` rows that need full text. See `AGENTS.md` and `docs/WIDOW_DB_ADJACENT_CRON.md`.
+
+---
+
+## Quality-first phase contracts (success, skip, handoff)
+
+This section states **what “good” means per layer**, **what we deliberately ignore**, and **how work flows forward** — aligned with code, not aspiration.
+
+### Cross-cutting rules
+
+| Mechanism | Role |
+|-----------|------|
+| **`SKIP_WHEN_EMPTY`** (`backlog_metrics.py`) | Phases in this set **do not enqueue** when pending count is 0 — avoids empty LLM/DB cycles. Omitted phases (e.g. `document_processing`, `content_refinement_queue`) still tick on interval so stuck work or “idle completion” is visible. |
+| **Workload-driven scheduling** (`automation_manager`) | If a phase has pending work (`get_all_pending_counts`), it becomes eligible every tick (subject to cooldown + `depends_on`), not only on its idle interval. |
+| **`depends_on`** | **Scheduling order only**: a task is not eligible until dependencies have run at least once in the manager’s history window; it does *not* mean “upstream must be empty.” Downstream backlog counts are the real “is there work?” signal. |
+| **Collection throttle** | When enrichment + `context_sync` + `document_processing` pending exceeds `COLLECTION_THROTTLE_PENDING_THRESHOLD`, **`collection_cycle` defers RSS** so quality-sensitive steps can drain — **quality before volume**. |
+| **Pipeline domain scope** | Per-domain automation loops use **`get_pipeline_active_domain_keys()`** / **`pipeline_url_schema_pairs()`** so paused legacy silos are not enriched, synced, or story-processed. |
+| **`BATCH_SIZE_PER_TASK`** | Defines “normal” batch per run; pending **above** this is treated as backlog (shorter effective interval in backlog mode). |
+| **`BATCH_PHASES_CONTINUOUS` + `MAX_REQUEUE_PER_WINDOW`** | After `collection_cycle`, some phases may re-enqueue in the same analysis window up to a cap so one pass does not starve others. |
+| **Nightly unified window** | When `in_nightly_pipeline_window_est()` is true, `content_enrichment` / `context_sync` standalone tasks defer to **`nightly_enrichment_context`** (single orchestrated drain). When `NIGHTLY_UNIFIED_PIPELINE_ENABLED=false`, the normal `collection_cycle` + interval phases own enrichment again. |
+
+### Tier A — Ingestion (reject early)
+
+| Step | Success / “counts as done” | Skipped or ignored (low quality / irrelevant) | Feeds next phase |
+|------|----------------------------|-----------------------------------------------|------------------|
+| **RSS** (`collect_rss_feeds`) | Items persisted or dedup-updated; activity count reflects touches. | Empty title/URL, ingest gates (`rss_item_passes_ingest_gates`), dedup, clickbait/ads/financial promo filters where configured, domains in **`RSS_INGEST_EXCLUDE_*`**, domains outside RSS list when **`RSS_INGEST_MIRROR_PIPELINE`**. | Rows in `{schema}.articles`; optional inline body fetch sets `enrichment_status` / length. |
+| **Content enrichment** | Batch promotes `enrichment_status` toward terminal states (`enriched` / `failed` / `inaccessible`) where URL fetch applies. | Rows over attempt cap, no URL, or not selected by enrichment query; **skipped inside nightly window** except via nightly drain. | Longer `content` → ML gate + `context_sync` candidates. |
+| **`collection_cycle` overall** | RSS (if not skipped) + bounded enrichment iterations + document drain + queue drain. | RSS skipped when `AUTOMATION_SKIP_RSS_IN_COLLECTION_CYCLE` or throttle; enrichment loop capped. | Downstream phases see new/updated articles and lower enrichment backlog. |
+
+**Source credibility** (`orchestrator_governance.yaml` → `source_credibility`) scales **`quality_score`** and metadata at RSS ingest — upstream **quality signal** for later scoring and claims weighting.
+
+### Tier B — Shared article readiness (single source of truth)
+
+All of the following use **`api/shared/article_processing_gates.py`** so **backlog counts match `_execute_*` SQL**.
+
+| Gate | Purpose | Rough rule |
+|------|---------|------------|
+| **ML / sentiment / quality** (`sql_ml_ready_and_content_bounds`) | Do not run expensive passes on stub text. | `LENGTH(content) > 100` and (`enrichment_status = 'enriched'` **or** legacy `NULL` + long body ≥ 500). **Strict mode** (`STRICT_ARTICLE_ENRICHMENT_GATES_SINCE`): requires **`enriched`** for new rows. |
+| **Context sync** (`sql_context_sync_article_ready`) | Do not create `intelligence.contexts` for thin or not-yet-enriched bodies. | `LENGTH(content) > 100` and (long body **or** terminal enrichment status). Stricter under strict cutoff. |
+
+### Tier C — Automation phases (success = “processed batch or correctly no-op”)
+
+For each run, **success** means: *the phase consumed a bounded batch of eligible rows, or had zero eligible rows and exited quickly* (if in `SKIP_WHEN_EMPTY`, it was not scheduled when pending was 0).
+
+| Phase group | What “has work” means (backlog) | Ignored / not selected | Typical handoff |
+|-------------|----------------------------------|------------------------|-----------------|
+| **`context_sync`** | Articles in pipeline silos passing **context SQL** not yet linked to contexts. | Short content, pending enrichment (under strict rules), wrong domain. | **`intelligence.contexts`**, `article_to_context` → claim/event/pattern phases. |
+| **`entity_profile_sync`** | Canonical / profile drift per pipeline domain. | Inactive domains (not in pipeline). | Profiles for resolver, RAG, claims. |
+| **`metadata_enrichment`** | Articles with content length &gt; 50 and metadata not marked done. | Below threshold; domain not in pipeline counts. | `quality_score`, categories, `metadata.enrichment_done`. |
+| **`ml_processing`** | Same readiness as ML gate; `ml_processed` false. | Fails gate; missing columns handled gracefully. | Summaries / features for storylines and UI. |
+| **`entity_extraction`** | Articles without `article_entities` rows, with sufficient content and enrichment timing rules (`automation_manager` SQL). | **Strict domains** (`ENTITY_EXTRACTION_RESOLVE_STRICT_DOMAIN_KEYS`): mentions that do not resolve to existing `entity_canonical` are skipped (no new canonical from extraction). | `article_entities` → context mentions / entity graph. |
+| **`claim_extraction` / `claims_to_facts`** | Contexts without claims; high-confidence claims for promotion. | Low confidence, missing subjects; batch limits. | `versioned_facts` after resolution. |
+| **`event_tracking` / v5 event stack** | Unlinked contexts or articles for event pipeline; schema from pipeline list. | Domains outside pipeline; rows failing extraction heuristics. | Tracked events → briefings, cross-domain, watchlist. |
+| **Storyline family** (`discovery`, `proactive_detection`, `processing`, `automation`, `enrichment`, `rag_enhancement`) | Per-phase SQL/backlog (see `_count_*`); **only pipeline domains** in batch loops. | Inactive storylines, automation off, cooldowns, caps per domain. | Richer storylines → editorial, digest, refinement queue. |
+| **`legislative_references`** | Unscanned articles in configured **legislative** domain keys; Congress.gov configured. | No bill mentions; API key missing; rate limits (`SLEEP_BETWEEN_*`). | `legislative_references` snapshots. |
+
+### Operator validation
+
+- **Config vs DB:** `PYTHONPATH=api uv run python api/scripts/validate_pipeline_rss_alignment.py` — pipeline vs RSS vs active feeds.
+- **Metadata coverage:** `api/scripts/report_metadata_enrichment_status.py`.
+- **Phase completions:** `public.automation_run_history`; Monitor backlog — compare pending to `BATCH_SIZE_PER_TASK` for “healthy throughput vs backlog.”
 
 ---
 
@@ -27,7 +89,7 @@
 
 Implemented in `_execute_collection_cycle`. Typical **ordered** sub-steps (exact branches depend on env and nightly window):
 
-1. **RSS** — `_execute_rss_processing` → `collectors.rss_collector.collect_rss_feeds()` unless `AUTOMATION_SKIP_RSS_IN_COLLECTION_CYCLE`. Reads all active `{schema}.rss_feeds` (via `url_schema_pairs()`), inserts/updates `{schema}.articles` with deduplication, filtering (quality, clickbait, ads, etc.), and optional inline body fetch for short items.
+1. **RSS** — `_execute_rss_processing` → `collectors.rss_collector.collect_rss_feeds()` unless `AUTOMATION_SKIP_RSS_IN_COLLECTION_CYCLE`. Reads all active `{schema}.rss_feeds` (via `url_schema_pairs()`), inserts/updates `{schema}.articles` with deduplication, filtering (quality, clickbait, ads, etc.). **Body text:** `_extract_rss_entry_body` picks the **longest plaintext** among `entry.content` blocks (content:encoded) and summary/description so snippets do not win over full feed HTML when both exist. **Inline full-text fetch:** if visible text is shorter than **`RSS_FULLTEXT_FETCH_THRESHOLD_CHARS`** (default 900), trafilatura fetches the article URL at ingest (and on same-URL updates when content changes); set **`RSS_ALWAYS_FETCH_FULLTEXT=true`** to always fetch. Secondary helper **`collect_rss_feed`** uses the same extraction path as the main collector.
 2. **Content enrichment drain** — Loops `content_enrichment` batches until cap or empty (skipped in nightly window when `nightly_enrichment_context` owns the drain). Uses `article_content_enrichment_service` / trafilatura-style fetch for URLs with thin RSS body (`enrichment_status` pending/failed, attempts &lt; cap).
 3. **Document collection / processing** — PDFs and `intelligence.processed_documents` pipeline as configured.
 4. **Pending collection queue** — Any URL queue drained after RSS.
@@ -38,10 +100,11 @@ Implemented in `_execute_collection_cycle`. Typical **ordered** sub-steps (exact
 
 Single source of truth: `api/shared/article_processing_gates.py`.
 
+- **Optional strict enrichment (new articles):** Set **`STRICT_ARTICLE_ENRICHMENT_GATES_SINCE`** to an ISO-8601 UTC instant (e.g. `2026-03-24T00:00:00+00:00`). Rows with **`created_at` ≥ that time** use stricter rules; older rows keep legacy behavior (no backfill required). When strict: **ML** requires **`enrichment_status = 'enriched'`** (no `NULL` + 500-char RSS shortcut). **Context backfill** requires **`LENGTH(content) > 100`** and a **terminal** enrichment status (`enriched` / `failed` / `inaccessible`), not `NULL` + long body alone. **RSS** inserts long feed-only bodies as **`pending`**; **`content_enrichment`** fast-path promotes them to **`enriched`** without a second fetch so the pipeline is not penalized.
 - **`ml_processing`, `quality_scoring`, `sentiment_analysis`:** Only articles with **`enrichment_status = 'enriched'`**, or **legacy** rows with `enrichment_status IS NULL` and **`LENGTH(content) >= 500`** (same bar as RSS “substantial body” / pre-tracking data). **Minimum** `LENGTH(content) > 100` is still part of the SQL fragment.
 - **`context_sync` / `ensure_context_for_article`:** Create `intelligence.contexts` only when **`LENGTH(content) > 100`** and either **`LENGTH(content) >= 500`** or **`enrichment_status IN ('enriched', 'failed', 'inaccessible')`** (terminal or substantial body), so thin rows are not linked until enrichment catches up. After enrichment succeeds, batch enrichment calls **`sync_context_from_article_after_content_change`** (update existing context or create if missing).
 - **`context_sync` scheduling:** `depends_on` includes **`content_enrichment`** as well as **`collection_cycle`** so a drain pass can settle before backfill (when `content_enrichment` is disabled via `AUTOMATION_DISABLED_SCHEDULES`, `depends_on` is stripped as today).
-- **RSS ingest:** `rss_item_passes_ingest_gates` rejects empty titles, missing URLs, or extremely thin items before insert.
+- **RSS ingest:** `rss_item_passes_ingest_gates` rejects empty titles, missing URLs, or extremely thin items before insert. Full-body behavior: see **`RSS_FULLTEXT_FETCH_THRESHOLD_CHARS`**, **`RSS_ALWAYS_FETCH_FULLTEXT`** in `configs/env.example` and `_extract_rss_entry_body` / `_maybe_inline_fetch_article_body` in `api/collectors/rss_collector.py`.
 
 ---
 
@@ -145,7 +208,7 @@ Below: **Task** = scheduler key in `schedules`. **Backlog key** = name in `backl
 
 **Entry:** `api/collectors/rss_collector.py` → `collect_rss_feeds()`.
 
-**Feed discovery:** `url_schema_pairs()` → for each `(domain_key, schema_name)` query `{schema}.rss_feeds WHERE is_active = true`.
+**Feed discovery:** Default **`url_schema_pairs()`** minus **`RSS_INGEST_EXCLUDE_DOMAIN_KEYS`**. If **`RSS_INGEST_MIRROR_PIPELINE=true`**, use **`pipeline_url_schema_pairs()`** instead (same silos as processing), then apply RSS exclude. For each pair, query `{schema}.rss_feeds WHERE is_active = true`.
 
 **Per-item logic (conceptual):** fetch feed → parse entries → deduplicate (URL / content hash per project rules) → exclude low-quality / clickbait / ads where configured → insert or update `{schema}.articles` with `feed_name`, `published_at`, `content` (inline enrichment if body short), `enrichment_status`, `metadata` (e.g. source tier from governance).
 
@@ -155,7 +218,7 @@ Below: **Task** = scheduler key in `schedules`. **Backlog key** = name in `backl
 
 ## Methodology notes for improvement analysis
 
-1. **Define “success” per phase** using the same predicates as `backlog_metrics` (e.g. metadata enrichment = `metadata.enrichment_done`; content enrichment = `enrichment_status` and attempts). Use **`api/scripts/report_metadata_enrichment_status.py`** for metadata coverage.
+1. **Define “success” per phase** using the [Quality-first phase contracts](#quality-first-phase-contracts-success-skip-handoff) section and the same predicates as `backlog_metrics` (pending counts must match `_execute_*` selection SQL). Use **`api/scripts/report_metadata_enrichment_status.py`** for metadata coverage.
 2. **Batch sizes** in `BATCH_SIZE_PER_TASK` define “normal throughput” vs “backlog” — tuning analysis should compare pending counts to these floors.
 3. **Dependencies** prevent upstream starvation (e.g. `claim_extraction` after `context_sync`); removing a dependency in code without shifting data flow can cause empty extracts.
 4. **Cross-domain vs silo:** Domain tables hold raw + ML; **`intelligence.*`** holds cross-cutting claims/events/contexts — improvement work should state which layer is targeted.

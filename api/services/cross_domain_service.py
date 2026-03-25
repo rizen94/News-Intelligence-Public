@@ -109,9 +109,9 @@ def run_cross_domain_synthesis(
     conn = get_db_connection()
     if not conn:
         return {"success": False, "error": "Database connection failed", "correlations": []}
-    from shared.domain_registry import get_schema_names_active
+    from shared.domain_registry import get_pipeline_active_domain_keys
 
-    allowed = frozenset(get_schema_names_active())
+    allowed = frozenset(get_pipeline_active_domain_keys())
     target_domains = [d for d in (domains or list(allowed)) if d in allowed]
     if len(target_domains) < 2:
         return {

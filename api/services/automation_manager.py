@@ -11,7 +11,10 @@ adding more RSS. No process is left behind because of fast RSS; phases with no w
 
 When AUTOMATION_QUEUE_SOFT_CAP > 0 and combined queue depth (task_queue + requested queue) reaches the cap,
 new scheduled enqueues, continuous batch re-queues, and dependency-chain request_phase calls are skipped
-except phases in AUTOMATION_QUEUE_PAUSE_ALLOW (default: collection_cycle, health_check) so the backlog can drain.
+except phases in AUTOMATION_QUEUE_PAUSE_ALLOW (default: collection_cycle, health_check, pending_db_flush, …)
+so the backlog can drain. **nightly_enrichment_context** is not allowlisted: one drain run is enough; it was
+previously allowlisted and could stack hundreds of redundant queued sweeps while workers were busy.
+**AUTOMATION_NIGHTLY_ENRICHMENT_MAX_QUEUED** caps scheduled+requested+running nightly tasks (default 5; 0=unlimited).
 
 **Offload to Widow (DB host):** set ``AUTOMATION_SKIP_RSS_IN_COLLECTION_CYCLE=true`` on the GPU/main API host when
 RSS runs on Widow; set ``AUTOMATION_DISABLED_SCHEDULES=context_sync,entity_profile_sync,pending_db_flush`` (comma-separated)
@@ -51,11 +54,11 @@ from psycopg2.extras import RealDictCursor
 
 from shared.article_processing_gates import sql_ml_ready_and_content_bounds
 from shared.domain_registry import (
-    get_active_domain_keys,
-    get_schema_names_active,
+    get_pipeline_active_domain_keys,
+    get_pipeline_schema_names_active,
+    pipeline_url_schema_pairs,
     resolve_domain_schema,
     schema_to_primary_domain_key,
-    url_schema_pairs,
 )
 
 # Configure logging
@@ -146,15 +149,20 @@ def _collection_throttle_pending_total(pending: dict[str, int] | None) -> tuple[
 USE_WORKLOAD_DRIVEN_ORDER = True
 
 # When combined queue depth (main + requested) >= this, stop enqueueing scheduled work except allowlist
-# so the backlog can drain. 0 = disabled. Tuned for ~12–16 workers × ~12 tasks ahead each.
-AUTOMATION_QUEUE_SOFT_CAP = int(os.environ.get("AUTOMATION_QUEUE_SOFT_CAP", "200"))
+# so the backlog can drain. 0 = disabled.
+AUTOMATION_QUEUE_SOFT_CAP = int(os.environ.get("AUTOMATION_QUEUE_SOFT_CAP", "100"))
 QUEUE_PAUSE_ALLOW_SCHEDULED = frozenset(
     x.strip()
     for x in os.environ.get(
         "AUTOMATION_QUEUE_PAUSE_ALLOW",
-        "collection_cycle,content_enrichment,health_check,pending_db_flush,content_refinement_queue,nightly_enrichment_context",
+        "collection_cycle,content_enrichment,health_check,pending_db_flush,content_refinement_queue",
     ).split(",")
     if x.strip()
+)
+# Max concurrent nightly_enrichment_context tasks: running + in scheduled queue + in requested queue.
+# Each run performs a full unified drain; stacking dozens is redundant. 0 = no cap (not recommended).
+AUTOMATION_NIGHTLY_ENRICHMENT_MAX_QUEUED = int(
+    os.environ.get("AUTOMATION_NIGHTLY_ENRICHMENT_MAX_QUEUED", "5")
 )
 
 # Ollama tasks normally yield when a non-polling browser request hit the API recently; storyline
@@ -199,6 +207,7 @@ ANALYSIS_PIPELINE_STEPS: tuple[tuple[str, ...], ...] = (
     # Step 1: Extraction
     (
         "claim_extraction",
+        "legislative_references",
         "claims_to_facts",
         "event_tracking",
         "topic_clustering",
@@ -317,8 +326,9 @@ PHASE_ESTIMATED_DURATION_SECONDS = {
     "pending_db_flush": 30,
     "context_sync": 60,  # ~5-10s per 100 contexts (production batch)
     "entity_profile_sync": 225,  # observed ~223s avg; was 120
-    "claim_extraction": 60,  # 50 contexts @ 2-5s each, parallel 5 → ~20-50s
-    "claims_to_facts": 30,  # promote high-confidence claims to versioned_facts (DB only)
+    "claim_extraction": 600,  # env CLAIM_EXTRACTION_BATCH_LIMIT × CLAIM_EXTRACTION_PARALLEL (LLM-bound)
+    "legislative_references": 120,  # Congress.gov HTTP + rate-limit sleep per bill mention
+    "claims_to_facts": 180,  # env CLAIMS_TO_FACTS_BATCH_LIMIT; resolver + INSERTs (DB-bound)
     "event_tracking": 200,  # observed ~196s avg; was 120
     "event_coherence_review": 180,
     "investigation_report_refresh": 300,
@@ -398,6 +408,9 @@ class AutomationManager:
         # - running_tasks_by_phase: tracked while tasks are executing
         # - runs_last_60m_by_phase: recorded from completion timestamps
         self._running_tasks_by_phase: dict[str, int] = defaultdict(int)
+        # Track nightly (and similar) depth: PriorityQueue has no per-phase qsize; we maintain counts.
+        self._scheduled_queue_depth_by_phase: dict[str, int] = defaultdict(int)
+        self._requested_queue_depth_by_phase: dict[str, int] = defaultdict(int)
         self._phase_run_times_last_60m: dict[str, deque[datetime]] = defaultdict(deque)
 
         # Collection-cycle watchdog: when current cycle started; per-phase last completion (for "has it run since start?")
@@ -504,6 +517,16 @@ class AutomationManager:
                 "phase": 2,
                 "depends_on": ["context_sync"],
                 "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["claim_extraction"],
+            },
+            # PHASE 2a.0: Federal bill citations → Congress.gov metadata/summaries/text pointers (politics/legal)
+            "legislative_references": {
+                "interval": 3600,  # 1 hour — rate limits; skips when backlog 0
+                "last_run": None,
+                "enabled": True,
+                "priority": TaskPriority.NORMAL,
+                "phase": 2,
+                "depends_on": ["context_sync"],
+                "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["legislative_references"],
             },
             # PHASE 2a.1: Promote high-confidence claims to versioned_facts (activates story state chain)
             "claims_to_facts": {
@@ -995,6 +1018,20 @@ class AutomationManager:
         except Exception:
             return 0
 
+    def _nightly_enrichment_in_flight_count(self) -> int:
+        """Running + scheduled-queue + requested-queue nightly_enrichment_context tasks."""
+        n = "nightly_enrichment_context"
+        return (
+            int(self._running_tasks_by_phase.get(n, 0) or 0)
+            + int(self._scheduled_queue_depth_by_phase.get(n, 0) or 0)
+            + int(self._requested_queue_depth_by_phase.get(n, 0) or 0)
+        )
+
+    def _can_enqueue_nightly_enrichment(self) -> bool:
+        if AUTOMATION_NIGHTLY_ENRICHMENT_MAX_QUEUED <= 0:
+            return True
+        return self._nightly_enrichment_in_flight_count() < AUTOMATION_NIGHTLY_ENRICHMENT_MAX_QUEUED
+
     def _scheduled_queue_tuple(self, task: Task) -> tuple[int, int, Task]:
         """PriorityQueue entry: lower ``TaskPriority.value`` first, then FIFO."""
         p = (
@@ -1004,11 +1041,45 @@ class AutomationManager:
         )
         return (p, next(self._scheduled_task_queue_seq), task)
 
-    async def _enqueue_scheduled_task(self, task: Task) -> None:
+    async def _enqueue_scheduled_task(
+        self, task: Task, *, bypass_nightly_cap: bool = False
+    ) -> bool:
+        """
+        Enqueue a scheduled task. Returns False if skipped (e.g. nightly cap).
+        bypass_nightly_cap: set True for defer/retry re-enqueue of an in-flight task so work is not dropped.
+        """
+        if (
+            task.name == "nightly_enrichment_context"
+            and not bypass_nightly_cap
+            and not self._can_enqueue_nightly_enrichment()
+        ):
+            logger.debug(
+                "Skip nightly_enrichment_context scheduled enqueue (in_flight=%s cap=%s)",
+                self._nightly_enrichment_in_flight_count(),
+                AUTOMATION_NIGHTLY_ENRICHMENT_MAX_QUEUED,
+            )
+            return False
         await self.task_queue.put(self._scheduled_queue_tuple(task))
+        if task.name == "nightly_enrichment_context":
+            self._scheduled_queue_depth_by_phase[task.name] += 1
+        return True
 
-    def _enqueue_scheduled_task_nowait(self, task: Task) -> None:
+    def _enqueue_scheduled_task_nowait(self, task: Task, *, bypass_nightly_cap: bool = False) -> bool:
+        if (
+            task.name == "nightly_enrichment_context"
+            and not bypass_nightly_cap
+            and not self._can_enqueue_nightly_enrichment()
+        ):
+            logger.debug(
+                "Skip nightly_enrichment_context nowait enqueue (in_flight=%s cap=%s)",
+                self._nightly_enrichment_in_flight_count(),
+                AUTOMATION_NIGHTLY_ENRICHMENT_MAX_QUEUED,
+            )
+            return False
         self.task_queue.put_nowait(self._scheduled_queue_tuple(task))
+        if task.name == "nightly_enrichment_context":
+            self._scheduled_queue_depth_by_phase[task.name] += 1
+        return True
 
     def _scheduled_enqueue_paused(self) -> bool:
         """When True, skip adding new scheduled / chained / continuous tasks (allowlist still runs)."""
@@ -1097,9 +1168,71 @@ class AutomationManager:
         except Exception as e:
             logger.debug("Persist pending_collection_queue: %s", e)
 
+    async def _preflight_startup_health_check(self) -> None:
+        """
+        Before workers: confirm PostgreSQL is reachable via the **worker** pool (phases use it)
+        and the **health** pool (standalone health_check). Retries a few times for transient startup.
+        """
+        if os.getenv("AUTOMATION_SKIP_STARTUP_PREFLIGHT", "").lower() in ("1", "true", "yes"):
+            logger.warning(
+                "AUTOMATION_SKIP_STARTUP_PREFLIGHT set — skipping startup DB preflight"
+            )
+            return
+
+        from shared.database.connection import (
+            get_db_connection_context,
+            get_health_db_connection_context,
+        )
+
+        loop = asyncio.get_event_loop()
+        try:
+            attempts = max(1, int(os.getenv("AUTOMATION_STARTUP_HEALTH_CHECK_ATTEMPTS", "3")))
+        except ValueError:
+            attempts = 3
+        try:
+            delay_sec = float(os.getenv("AUTOMATION_STARTUP_HEALTH_CHECK_DELAY_SEC", "2"))
+        except ValueError:
+            delay_sec = 2.0
+
+        def _probe_both_pools() -> None:
+            with get_db_connection_context() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT 1")
+                    cur.fetchone()
+            with get_health_db_connection_context() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT 1")
+                    cur.fetchone()
+
+        last_err: Exception | None = None
+        for attempt in range(attempts):
+            try:
+                await loop.run_in_executor(None, _probe_both_pools)
+                logger.info(
+                    "Automation startup preflight: database OK (worker + health pools, attempt %s/%s)",
+                    attempt + 1,
+                    attempts,
+                )
+                return
+            except Exception as e:
+                last_err = e
+                logger.warning(
+                    "Automation startup preflight attempt %s/%s failed: %s",
+                    attempt + 1,
+                    attempts,
+                    e,
+                )
+                if attempt + 1 < attempts:
+                    await asyncio.sleep(delay_sec)
+
+        raise RuntimeError(
+            f"Automation startup preflight failed after {attempts} attempt(s): {last_err}"
+        ) from last_err
+
     async def start(self):
         """Start the automation manager"""
         logger.info("Starting Enterprise Automation Manager...")
+        await self._preflight_startup_health_check()
         self._load_pending_collection_queue()
         self.is_running = True
 
@@ -1111,6 +1244,10 @@ class AutomationManager:
         # Start scheduler
         scheduler = asyncio.create_task(self._scheduler())
         self.workers.append(scheduler)
+
+        # DB liveness on dedicated pool (independent of phase workers and worker pool)
+        standalone_health = asyncio.create_task(self._standalone_health_check_loop())
+        self.workers.append(standalone_health)
 
         # Start health monitor
         health_monitor = asyncio.create_task(self._health_monitor())
@@ -1231,6 +1368,17 @@ class AutomationManager:
                     task = _pq_item[2]
 
                 if task:
+                    if task.name == "nightly_enrichment_context":
+                        if from_requested:
+                            self._requested_queue_depth_by_phase[task.name] = max(
+                                0,
+                                int(self._requested_queue_depth_by_phase[task.name]) - 1,
+                            )
+                        else:
+                            self._scheduled_queue_depth_by_phase[task.name] = max(
+                                0,
+                                int(self._scheduled_queue_depth_by_phase[task.name]) - 1,
+                            )
                     await self._execute_task(task, worker_id)
                     if from_requested:
                         self._requested_task_queue.task_done()
@@ -1249,7 +1397,7 @@ class AutomationManager:
         """Queue key phases immediately on startup so work starts without waiting for first interval."""
         now = datetime.now(timezone.utc)
         # Phases that should run once as soon as we start (no deps, or bootstrap allows)
-        for task_name in ("collection_cycle", "health_check"):
+        for task_name in ("collection_cycle",):
             schedule = self.schedules.get(task_name)
             if not schedule or not schedule.get("enabled", True):
                 continue
@@ -1264,9 +1412,9 @@ class AutomationManager:
                 metadata={"scheduled": True, "phase": schedule.get("phase", 0), "bootstrap": True},
             )
             try:
-                self._enqueue_scheduled_task_nowait(task)
-                schedule["last_run"] = now
-                logger.info("Startup: queued %s so processing begins immediately", task_name)
+                if self._enqueue_scheduled_task_nowait(task):
+                    schedule["last_run"] = now
+                    logger.info("Startup: queued %s so processing begins immediately", task_name)
             except asyncio.QueueFull:
                 logger.warning("Startup: task queue full, skipped bootstrap %s", task_name)
 
@@ -1339,6 +1487,16 @@ class AutomationManager:
                                 backlog_counts.get("content_enrichment", 0),
                             )
                             continue
+                        if (
+                            phase_name == "nightly_enrichment_context"
+                            and not self._can_enqueue_nightly_enrichment()
+                        ):
+                            logger.info(
+                                "request_phase: skipping nightly_enrichment_context (in_flight=%s cap=%s)",
+                                self._nightly_enrichment_in_flight_count(),
+                                AUTOMATION_NIGHTLY_ENRICHMENT_MAX_QUEUED,
+                            )
+                            continue
                         task = Task(
                             id=f"{phase_name}_{int(datetime.now(timezone.utc).timestamp())}",
                             name=phase_name,
@@ -1353,6 +1511,8 @@ class AutomationManager:
                             },
                         )
                         await self._requested_task_queue.put(task)
+                        if phase_name == "nightly_enrichment_context":
+                            self._requested_queue_depth_by_phase[phase_name] += 1
                         logger.info(
                             "Governor requested phase: %s (domain=%s, storyline_id=%s)",
                             phase_name,
@@ -1661,6 +1821,8 @@ class AutomationManager:
         self, task_name: str, schedule: dict[str, Any], current_time: datetime
     ):
         """Create and queue a task"""
+        if task_name == "health_check":
+            return
         if self._scheduled_enqueue_paused() and task_name not in QUEUE_PAUSE_ALLOW_SCHEDULED:
             logger.info(
                 "Queue soft cap: skipping scheduled enqueue for %s (depth=%s cap=%s)",
@@ -1683,10 +1845,10 @@ class AutomationManager:
             },
         )
 
-        # Add to queue
-        await self._enqueue_scheduled_task(task)
-        schedule["last_run"] = current_time
-        logger.info(f"Scheduled task: {task_name} (Phase {schedule.get('phase', 0)})")
+        # Add to queue (do not advance last_run if nightly cap or queue cap skipped enqueue)
+        if await self._enqueue_scheduled_task(task):
+            schedule["last_run"] = current_time
+            logger.info(f"Scheduled task: {task_name} (Phase {schedule.get('phase', 0)})")
 
     def _check_dependencies(self, task_name: str, schedule: dict[str, Any]) -> bool:
         """Check if task has dependencies"""
@@ -1899,7 +2061,7 @@ class AutomationManager:
             try:
                 with conn.cursor() as cursor:
                     recent_count = 0
-                    for schema in get_schema_names_active():
+                    for schema in get_pipeline_schema_names_active():
                         cursor.execute(f"""
                             SELECT COUNT(*) FROM {schema}.articles
                             WHERE created_at > NOW() - INTERVAL '1 hour'
@@ -1938,7 +2100,7 @@ class AutomationManager:
             ):
                 logger.debug("Nightly ingest exclusive window — deferring %s", task.name)
                 task.status = TaskStatus.PENDING
-                await self._enqueue_scheduled_task(task)
+                await self._enqueue_scheduled_task(task, bypass_nightly_cap=True)
                 await asyncio.sleep(3)
                 return
         except Exception as e:
@@ -1958,8 +2120,9 @@ class AutomationManager:
             "watchlist_alerts",
             "quality_scoring",
             "timeline_generation",
-            "claim_extraction",
-            "event_tracking",
+        "claim_extraction",
+        "legislative_references",
+        "event_tracking",
             "entity_profile_build",
             "entity_position_tracker",
             "editorial_document_generation",
@@ -1993,7 +2156,7 @@ class AutomationManager:
                         f"Yielding to API — deferring {task.name} (web page load takes priority)"
                     )
                     task.status = TaskStatus.PENDING
-                    await self._enqueue_scheduled_task(task)
+                    await self._enqueue_scheduled_task(task, bypass_nightly_cap=True)
                     await asyncio.sleep(5)  # Avoid tight loop — wait before worker picks next task
                     return
             except ImportError:
@@ -2019,7 +2182,7 @@ class AutomationManager:
                     if should_throttle_ollama():
                         logger.warning("GPU still hot after pause — deferring %s", task.name)
                         task.status = TaskStatus.PENDING
-                        await self._enqueue_scheduled_task(task)
+                        await self._enqueue_scheduled_task(task, bypass_nightly_cap=True)
                         return
             except ImportError:
                 pass
@@ -2048,7 +2211,7 @@ class AutomationManager:
                             task.name,
                         )
                         task.status = TaskStatus.PENDING
-                        await self._enqueue_scheduled_task(task)
+                        await self._enqueue_scheduled_task(task, bypass_nightly_cap=True)
                         await asyncio.sleep(5)
                         return
             except Exception as e:
@@ -2097,6 +2260,8 @@ class AutomationManager:
                 await self._execute_entity_profile_sync(task)
             elif task.name == "claim_extraction":
                 await self._execute_claim_extraction(task)
+            elif task.name == "legislative_references":
+                await self._execute_legislative_references(task)
             elif task.name == "claims_to_facts":
                 await self._execute_claims_to_facts(task)
             elif task.name == "event_tracking":
@@ -2258,14 +2423,14 @@ class AutomationManager:
                                     "continuous": True,
                                 },
                             )
-                            await self._enqueue_scheduled_task(next_task)
-                            self._requeue_counts[task.name] = current + 1
-                            logger.debug(
-                                "Queued next %s immediately (pending work remains, requeue %s/%s)",
-                                task.name,
-                                current + 1,
-                                self._max_requeue_per_window,
-                            )
+                            if await self._enqueue_scheduled_task(next_task):
+                                self._requeue_counts[task.name] = current + 1
+                                logger.debug(
+                                    "Queued next %s immediately (pending work remains, requeue %s/%s)",
+                                    task.name,
+                                    current + 1,
+                                    self._max_requeue_per_window,
+                                )
                 except Exception as e:
                     logger.debug("Re-enqueue check for %s: %s", task.name, e)
 
@@ -2343,7 +2508,7 @@ class AutomationManager:
             if task.retry_count < task.max_retries:
                 task.status = TaskStatus.RETRYING
                 await asyncio.sleep(min(60 * task.retry_count, 300))  # Exponential backoff
-                await self._enqueue_scheduled_task(task)
+                await self._enqueue_scheduled_task(task, bypass_nightly_cap=True)
                 logger.info(f"Retrying task {task.name} (attempt {task.retry_count + 1})")
 
         finally:
@@ -2410,6 +2575,8 @@ class AutomationManager:
             return "Metadata enrichment (language, categories, quality)"
         if name == "claim_extraction":
             return "Extracting claims from contexts"
+        if name == "legislative_references":
+            return "Congress.gov bill snapshots (citations in articles)"
         if name == "event_tracking":
             return f"Tracking events ({domain or 'all'})"
         if name == "cross_domain_synthesis":
@@ -2637,7 +2804,7 @@ class AutomationManager:
             svc = DeepContentSynthesisService()
             loop = asyncio.get_event_loop()
 
-            for domain_key, schema in url_schema_pairs():
+            for domain_key, schema in pipeline_url_schema_pairs():
                 conn = await self._get_db_connection()
                 if not conn:
                     continue
@@ -2710,7 +2877,7 @@ class AutomationManager:
 
             svc = DeepContentSynthesisService()
             loop = asyncio.get_event_loop()
-            for domain_key in get_active_domain_keys():
+            for domain_key in get_pipeline_active_domain_keys():
                 try:
                     await loop.run_in_executor(
                         None,
@@ -2749,7 +2916,7 @@ class AutomationManager:
 
         from services.context_processor_service import sync_domain_articles_to_contexts
 
-        for domain_key in get_active_domain_keys():
+        for domain_key in get_pipeline_active_domain_keys():
             try:
                 # Production: 100 contexts/batch, ~5-10s per batch, prevents backlog
                 total = await asyncio.get_event_loop().run_in_executor(
@@ -2773,7 +2940,7 @@ class AutomationManager:
 
         from services.entity_profile_sync_service import sync_domain_entity_profiles
 
-        for domain_key in get_active_domain_keys():
+        for domain_key in get_pipeline_active_domain_keys():
             try:
                 total = await asyncio.get_event_loop().run_in_executor(
                     None, lambda d=domain_key: sync_domain_entity_profiles(d)
@@ -2795,19 +2962,41 @@ class AutomationManager:
         from services.claim_extraction_service import run_claim_extraction_batch
 
         try:
-            # Production: max 50 contexts (LLM rate limits), ~20-50s, parallel_requests in service
-            total = await run_claim_extraction_batch(limit=50)
+            # Batch size + concurrency: CLAIM_EXTRACTION_BATCH_LIMIT, CLAIM_EXTRACTION_PARALLEL
+            total = await run_claim_extraction_batch()
             if total > 0:
                 logger.info(f"Claim extraction: {total} claims inserted")
         except Exception as e:
             logger.warning(f"Claim extraction failed: {e}")
+
+    async def _execute_legislative_references(self, task: Task):
+        """Detect bill citations in politics/legal articles; fetch Congress.gov bill/summary/text pointers."""
+        try:
+            from config.context_centric_config import is_context_centric_task_enabled
+
+            if not is_context_centric_task_enabled("legislative_references"):
+                return
+        except Exception:
+            pass
+        try:
+            from services.legislative_reference_service import run_legislative_reference_batch
+
+            stats = await asyncio.to_thread(run_legislative_reference_batch)
+            if stats and not stats.get("skipped") and int(stats.get("articles_scanned") or 0) > 0:
+                logger.info(
+                    "Legislative references: scanned %s articles, %s snapshots",
+                    stats.get("articles_scanned"),
+                    stats.get("references_upserted"),
+                )
+        except Exception as e:
+            logger.warning("Legislative references failed: %s", e)
 
     async def _execute_claims_to_facts(self, task: Task):
         """Promote high-confidence extracted_claims to versioned_facts (activates story state chain)."""
         from services.claim_extraction_service import promote_claims_to_versioned_facts
 
         try:
-            stats = await asyncio.to_thread(promote_claims_to_versioned_facts, 0.7, 100)
+            stats = await asyncio.to_thread(promote_claims_to_versioned_facts)
             if not isinstance(stats, dict):
                 return
             if stats.get("candidates", 0) == 0:
@@ -3179,11 +3368,26 @@ class AutomationManager:
             logger.warning("Research topic refinement: no DB connection")
             return
         try:
+            from config.settings import finance_postgres_content_domain_key
+
+            fin_schema = resolve_domain_schema(finance_postgres_content_domain_key())
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute(
                     """
+                    SELECT EXISTS (
+                      SELECT 1 FROM information_schema.tables
+                      WHERE table_schema = %s AND table_name = 'research_topics'
+                    )
+                    """,
+                    (fin_schema,),
+                )
+                if not cur.fetchone()[0]:
+                    logger.debug("Research topic refinement: no research_topics in %s", fin_schema)
+                    return
+                cur.execute(
+                    f"""
                     SELECT id, query, topic, date_range_start, date_range_end
-                    FROM finance.research_topics
+                    FROM {fin_schema}.research_topics
                     ORDER BY last_refined_at NULLS FIRST, updated_at ASC
                     LIMIT 1
                     """
@@ -3213,8 +3417,8 @@ class AutomationManager:
             )
             with conn.cursor() as cur:
                 cur.execute(
-                    """
-                    UPDATE finance.research_topics
+                    f"""
+                    UPDATE {fin_schema}.research_topics
                     SET last_refined_task_id = %s, updated_at = CURRENT_TIMESTAMP
                     WHERE id = %s
                     """,
@@ -3362,7 +3566,7 @@ class AutomationManager:
         """Generate/refine editorial_document for active storylines across all domains."""
         from services.editorial_document_service import generate_storyline_editorial
 
-        for domain in get_active_domain_keys():
+        for domain in get_pipeline_active_domain_keys():
             try:
                 result = await generate_storyline_editorial(domain, limit=5)
                 logger.info("Editorial doc generation (%s): %s", domain, result)
@@ -3370,9 +3574,15 @@ class AutomationManager:
                 logger.warning("editorial_document_generation (%s): %s", domain, e)
 
     async def _execute_editorial_briefing_generation(self, task: Task):
-        """Generate/refine editorial_briefing for tracked events."""
+        """Global narrative + domain lenses first, then legacy briefing for events without a spine."""
         from services.editorial_document_service import generate_event_editorial
+        from services.tracked_event_narrative_service import run_tracked_event_narrative_stack
 
+        try:
+            stack = await run_tracked_event_narrative_stack(limit=5)
+            logger.info("Tracked event narrative stack: %s", stack)
+        except Exception as e:
+            logger.warning("tracked_event_narrative_stack: %s", e)
         try:
             result = await generate_event_editorial(limit=5)
             logger.info("Editorial briefing generation: %s", result)
@@ -3386,7 +3596,7 @@ class AutomationManager:
         from services.narrative_thread_service import build_threads_for_domain
 
         loop = asyncio.get_event_loop()
-        for domain in get_active_domain_keys():
+        for domain in get_pipeline_active_domain_keys():
             try:
                 result = await loop.run_in_executor(
                     None, lambda d=domain: build_threads_for_domain(d, limit=30)
@@ -3413,7 +3623,7 @@ class AutomationManager:
             conn = await self._get_db_connection()
             try:
                 with conn.cursor() as cursor:
-                    for schema in get_schema_names_active():
+                    for schema in get_pipeline_schema_names_active():
                         cursor.execute(
                             f"""
                             DELETE FROM {schema}.articles
@@ -3448,21 +3658,80 @@ class AutomationManager:
             logger.warning("pending_db_flush failed: %s", e)
 
     async def _execute_health_check(self, task: Task):
-        """Execute health check task"""
-        # Check database connectivity
-        try:
-            conn = await self._get_db_connection()
-            cursor = conn.cursor()
-            cursor.execute("SELECT 1")
-            cursor.close()
-            conn.close()
+        """Execute health check task (manual ``request_phase`` only; scheduled runs use ``_standalone_health_check_loop``)."""
+        from shared.database.connection import get_health_db_connection_context
 
-            self.metrics["last_health_check"] = datetime.now(timezone.utc)
-            logger.debug("Health check passed")
+        loop = asyncio.get_event_loop()
 
-        except Exception as e:
-            logger.error(f"Health check failed: {e}")
-            raise
+        def _probe_sync():
+            with get_health_db_connection_context() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT 1")
+                    cur.fetchone()
+
+        await loop.run_in_executor(None, _probe_sync)
+        self.metrics["last_health_check"] = datetime.now(timezone.utc)
+        logger.debug("Health check passed")
+
+    async def _standalone_health_check_loop(self):
+        """Periodic SELECT 1 on the **health** DB pool — not queued with other phases, does not use the worker pool."""
+        from shared.database.connection import get_health_db_connection_context
+
+        loop = asyncio.get_event_loop()
+
+        def _probe_sync():
+            with get_health_db_connection_context() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT 1")
+                    cur.fetchone()
+
+        logger.info("Standalone health_check loop started (dedicated DB pool)")
+        while self.is_running:
+            sched = self.schedules.get("health_check") or {}
+            if not sched.get("enabled", True):
+                await asyncio.sleep(60)
+                continue
+            interval = max(15, int(sched.get("interval", 120)))
+            started_at = datetime.now(timezone.utc)
+            try:
+                await loop.run_in_executor(None, _probe_sync)
+                finished_at = datetime.now(timezone.utc)
+                self.metrics["last_health_check"] = finished_at
+                sched["last_run"] = finished_at
+                self._last_completed_at_by_phase["health_check"] = finished_at
+                _persist_automation_run(
+                    "health_check", started_at, finished_at, True, None
+                )
+                try:
+                    cutoff = datetime.now(timezone.utc) - timedelta(minutes=60)
+                    dq = self._phase_run_times_last_60m["health_check"]
+                    dq.append(finished_at)
+                    while dq and dq[0] < cutoff:
+                        dq.popleft()
+                except Exception:
+                    pass
+                logger.debug("health_check (standalone): ok")
+            except Exception as e:
+                finished_at = datetime.now(timezone.utc)
+                sched["last_run"] = finished_at
+                _persist_automation_run(
+                    "health_check", started_at, finished_at, False, str(e)
+                )
+                try:
+                    cutoff = datetime.now(timezone.utc) - timedelta(minutes=60)
+                    dq = self._phase_run_times_last_60m["health_check"]
+                    dq.append(finished_at)
+                    while dq and dq[0] < cutoff:
+                        dq.popleft()
+                except Exception:
+                    pass
+                logger.error("health_check (standalone): %s", e)
+            remaining = float(interval)
+            while remaining > 0 and self.is_running:
+                chunk = min(remaining, 5.0)
+                await asyncio.sleep(chunk)
+                remaining -= chunk
+        logger.info("Standalone health_check loop stopped")
 
     async def _health_monitor(self):
         """Monitor system health"""
@@ -3538,7 +3807,7 @@ class AutomationManager:
 
         rag_service = get_rag_service()
         enhanced_count = 0
-        for domain in get_active_domain_keys():
+        for domain in get_pipeline_active_domain_keys():
             schema = resolve_domain_schema(domain)
             try:
                 conn = get_db_connection()
@@ -3616,7 +3885,7 @@ class AutomationManager:
 
             processed_count = 0
             ml_ready = sql_ml_ready_and_content_bounds()
-            for schema in get_schema_names_active():
+            for schema in get_pipeline_schema_names_active():
                 conn = await self._get_db_connection()
                 try:
                     with conn.cursor() as cursor:
@@ -3657,7 +3926,7 @@ class AutomationManager:
         analyzed_count = 0
 
         ml_ready = sql_ml_ready_and_content_bounds()
-        for schema in get_schema_names_active():
+        for schema in get_pipeline_schema_names_active():
             # Fetch candidates quickly, then close transaction before awaited LLM work.
             conn = await self._get_db_connection()
             try:
@@ -3676,6 +3945,8 @@ class AutomationManager:
             for article_id, content in articles:
                 try:
                     sentiment = await ai_service.analyze_sentiment(content)
+                    if not isinstance(sentiment, dict):
+                        continue
                     score = sentiment.get("score", 0)
                     label = sentiment.get("label", "")
 
@@ -3713,7 +3984,7 @@ class AutomationManager:
         from shared.database.connection import get_db_connection
 
         processed_count = 0
-        for domain, schema in url_schema_pairs():
+        for domain, schema in pipeline_url_schema_pairs():
             try:
                 conn = get_db_connection()
                 if not conn:
@@ -3818,7 +4089,7 @@ class AutomationManager:
                 )
         else:
             # Run for all automation-enabled storylines (each domain)
-            for d in get_active_domain_keys():
+            for d in get_pipeline_active_domain_keys():
                 try:
                     svc = StorylineAutomationService(domain=d)
                     conn = await self._get_db_connection()
@@ -3865,7 +4136,7 @@ class AutomationManager:
                     "Storyline enrichment failed for storyline_id=%s: %s", storyline_id, e
                 )
         else:
-            for d in get_active_domain_keys():
+            for d in get_pipeline_active_domain_keys():
                 try:
                     svc = StorylineAutomationService(domain=d)
                     conn = await self._get_db_connection()
@@ -3901,7 +4172,7 @@ class AutomationManager:
 
             service = get_discovery_service()
             total_created = 0
-            for domain in get_active_domain_keys():
+            for domain in get_pipeline_active_domain_keys():
                 try:
                     loop = asyncio.get_event_loop()
                     result = await loop.run_in_executor(
@@ -3933,7 +4204,7 @@ class AutomationManager:
                 ProactiveDetectionService,
             )
 
-            for domain in get_active_domain_keys():
+            for domain in get_pipeline_active_domain_keys():
                 try:
                     svc = ProactiveDetectionService(domain=domain)
                     result = await svc.detect_emerging_storylines(hours=72, min_articles=3)
@@ -3960,7 +4231,7 @@ class AutomationManager:
             from services.fact_verification_service import verify_recent_claims
 
             loop = asyncio.get_event_loop()
-            for domain in get_active_domain_keys():
+            for domain in get_pipeline_active_domain_keys():
                 try:
                     result = await loop.run_in_executor(
                         self._executor,
@@ -3987,8 +4258,14 @@ class AutomationManager:
         from services.article_entity_extraction_service import ArticleEntityExtractionService
 
         extractor = ArticleEntityExtractionService()
-        domains = list(url_schema_pairs())
+        domains = list(pipeline_url_schema_pairs())
         extracted_count = 0
+
+        try:
+            articles_per_domain = int(os.environ.get("ENTITY_EXTRACTION_ARTICLES_PER_DOMAIN", "20"))
+        except ValueError:
+            articles_per_domain = 20
+        articles_per_domain = max(5, min(120, articles_per_domain))
 
         conn = await self._get_db_connection()
         try:
@@ -4011,7 +4288,7 @@ class AutomationManager:
                             )
                           )
                         ORDER BY a.created_at DESC
-                        LIMIT 20
+                        LIMIT {articles_per_domain}
                     """)
                     domain_articles[schema_name] = cursor.fetchall()
                 except Exception as e:
@@ -4022,7 +4299,7 @@ class AutomationManager:
             conn.close()
 
         try:
-            parallel = max(1, min(8, int(os.environ.get("ENTITY_EXTRACTION_PARALLEL", "4"))))
+            parallel = max(1, min(16, int(os.environ.get("ENTITY_EXTRACTION_PARALLEL", "4"))))
         except ValueError:
             parallel = 4
         sem = asyncio.Semaphore(parallel)
@@ -4057,6 +4334,28 @@ class AutomationManager:
             f"Entity extraction completed: {extracted_count} articles processed across domains"
         )
 
+        if extracted_count > 0 and os.environ.get("ENTITY_EXTRACTION_POST_SYNC", "").lower() in (
+            "1",
+            "true",
+            "yes",
+        ):
+            try:
+                post_lim = int(os.environ.get("ENTITY_EXTRACTION_POST_MENTION_LIMIT", "1500"))
+            except ValueError:
+                post_lim = 1500
+            from services.context_processor_service import backfill_context_entity_mentions_for_domain
+            from services.entity_profile_sync_service import sync_domain_entity_profiles
+
+            for domain_key, _schema_name in domains:
+                try:
+                    sync_domain_entity_profiles(domain_key)
+                except Exception as e:
+                    logger.debug("entity_extraction post-sync profiles %s: %s", domain_key, e)
+                try:
+                    backfill_context_entity_mentions_for_domain(domain_key, limit=max(50, post_lim))
+                except Exception as e:
+                    logger.debug("entity_extraction post-sync mentions %s: %s", domain_key, e)
+
     async def _execute_event_extraction_v5(self, task: Task):
         """v5.0 -- Extract structured events with temporal grounding from domain articles."""
         try:
@@ -4070,7 +4369,7 @@ class AutomationManager:
                 total_events = 0
                 total_articles = 0
 
-                for schema in get_schema_names_active():
+                for schema in get_pipeline_schema_names_active():
                     try:
                         domain_for_events = schema_to_primary_domain_key(schema)
                     except KeyError:
@@ -4136,7 +4435,7 @@ class AutomationManager:
                     "v5 event extraction completed: %s events from %s articles across %s schemas",
                     total_events,
                     total_articles,
-                    len(get_schema_names_active()),
+                    len(get_pipeline_schema_names_active()),
                 )
             finally:
                 cursor.close()
@@ -4183,7 +4482,7 @@ class AutomationManager:
             return
         try:
             total = {"checked": 0, "linked": 0, "flagged": 0}
-            for schema in get_schema_names_active():
+            for schema in get_pipeline_schema_names_active():
                 try:
                     svc = StoryContinuationService(conn, schema=schema)
                     stats = await svc.process_recent_events(limit=30)
@@ -4236,7 +4535,7 @@ class AutomationManager:
         scored_count = 0
 
         ml_ready = sql_ml_ready_and_content_bounds()
-        for schema in get_schema_names_active():
+        for schema in get_pipeline_schema_names_active():
             # Fetch candidates quickly, then close transaction before awaited LLM work.
             conn = await self._get_db_connection()
             try:
@@ -4255,6 +4554,8 @@ class AutomationManager:
             for article_id, content, title in articles:
                 try:
                     quality = await ai_service.score_article_quality(content, title)
+                    if not isinstance(quality, dict):
+                        continue
                     write_conn = await self._get_db_connection()
                     try:
                         with write_conn.cursor() as write_cur:
@@ -4283,7 +4584,7 @@ class AutomationManager:
 
         generated_count = 0
 
-        for schema in get_schema_names_active():
+        for schema in get_pipeline_schema_names_active():
             conn_sel = await self._get_db_connection()
             storyline_ids: list[int] = []
             try:
@@ -4707,7 +5008,7 @@ class AutomationManager:
             cur = conn.cursor()
             try:
                 if phase_name == "content_enrichment":
-                    for schema in get_schema_names_active():
+                    for schema in get_pipeline_schema_names_active():
                         cur.execute(
                             f"""SELECT 1 FROM {schema}.articles
                                 WHERE (enrichment_status IS NULL OR enrichment_status IN ('pending', 'failed'))
@@ -4718,7 +5019,7 @@ class AutomationManager:
                         if cur.fetchone():
                             return True
                 elif phase_name == "ml_processing":
-                    for schema in get_schema_names_active():
+                    for schema in get_pipeline_schema_names_active():
                         cur.execute(
                             f"""SELECT 1 FROM {schema}.articles
                                 WHERE ml_processed = FALSE AND content IS NOT NULL AND LENGTH(content) > 100
@@ -4727,7 +5028,7 @@ class AutomationManager:
                         if cur.fetchone():
                             return True
                 elif phase_name == "entity_extraction":
-                    for schema in get_schema_names_active():
+                    for schema in get_pipeline_schema_names_active():
                         cur.execute(
                             f"""SELECT 1 FROM {schema}.articles
                                 WHERE (entities IS NULL OR entities = '{{}}') AND content IS NOT NULL AND LENGTH(content) > 100
@@ -4736,7 +5037,7 @@ class AutomationManager:
                         if cur.fetchone():
                             return True
                 elif phase_name == "sentiment_analysis":
-                    for schema in get_schema_names_active():
+                    for schema in get_pipeline_schema_names_active():
                         cur.execute(
                             f"""SELECT 1 FROM {schema}.articles
                                 WHERE sentiment_score IS NULL AND content IS NOT NULL AND LENGTH(content) > 50
@@ -4745,7 +5046,7 @@ class AutomationManager:
                         if cur.fetchone():
                             return True
                 elif phase_name == "storyline_processing":
-                    for schema in get_schema_names_active():
+                    for schema in get_pipeline_schema_names_active():
                         cur.execute(
                             f"""SELECT 1 FROM {schema}.storylines s
                                 WHERE s.status = 'active'
@@ -4764,7 +5065,7 @@ class AutomationManager:
                         if cur.fetchone():
                             return True
                 elif phase_name == "rag_enhancement":
-                    for schema in get_schema_names_active():
+                    for schema in get_pipeline_schema_names_active():
                         cur.execute(
                             f"""SELECT 1 FROM {schema}.storylines
                                 WHERE rag_enhanced_at IS NULL
@@ -4774,7 +5075,7 @@ class AutomationManager:
                         if cur.fetchone():
                             return True
                 elif phase_name == "storyline_automation":
-                    for schema in get_schema_names_active():
+                    for schema in get_pipeline_schema_names_active():
                         cur.execute(
                             f"""SELECT 1 FROM {schema}.storylines
                                 WHERE automation_enabled = true
@@ -4797,7 +5098,7 @@ class AutomationManager:
                     if cur.fetchone():
                         return True
                 elif phase_name == "quality_scoring":
-                    for schema in get_schema_names_active():
+                    for schema in get_pipeline_schema_names_active():
                         cur.execute(
                             f"""SELECT 1 FROM {schema}.articles
                                 WHERE quality_score IS NULL AND content IS NOT NULL AND LENGTH(content) > 100
@@ -4806,7 +5107,7 @@ class AutomationManager:
                         if cur.fetchone():
                             return True
                 elif phase_name == "timeline_generation":
-                    for schema in get_schema_names_active():
+                    for schema in get_pipeline_schema_names_active():
                         cur.execute(
                             f"""SELECT 1 FROM {schema}.storylines
                                 WHERE timeline_summary IS NULL OR LENGTH(timeline_summary) < 100
@@ -4815,7 +5116,7 @@ class AutomationManager:
                         if cur.fetchone():
                             return True
                 elif phase_name == "topic_clustering":
-                    for schema in get_schema_names_active():
+                    for schema in get_pipeline_schema_names_active():
                         cur.execute(
                             f"""SELECT 1 FROM {schema}.articles a
                                 WHERE a.content IS NOT NULL AND LENGTH(a.content) > 100
@@ -4828,7 +5129,7 @@ class AutomationManager:
                         if cur.fetchone():
                             return True
                 elif phase_name == "event_extraction":
-                    for schema in get_schema_names_active():
+                    for schema in get_pipeline_schema_names_active():
                         cur.execute(
                             f"""SELECT 1 FROM {schema}.articles
                                 WHERE processing_status = 'completed' AND timeline_processed = false
@@ -4868,6 +5169,8 @@ class AutomationManager:
             "combined_queue_depth": self._automation_queue_depth(),
             "queue_soft_cap": AUTOMATION_QUEUE_SOFT_CAP,
             "scheduled_enqueue_paused": self._scheduled_enqueue_paused(),
+            "nightly_enrichment_in_flight": self._nightly_enrichment_in_flight_count(),
+            "nightly_enrichment_max_queued": AUTOMATION_NIGHTLY_ENRICHMENT_MAX_QUEUED,
             "metrics": self.metrics,
             "schedules": self.schedules,
             "recent_tasks": list(self.tasks.values())[-10:],  # Last 10 tasks

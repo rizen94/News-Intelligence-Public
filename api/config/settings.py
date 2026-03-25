@@ -203,6 +203,43 @@ def news_intel_rate_limit_per_minute() -> int:
         return 120
 
 
+def get_rss_ingest_excluded_domain_keys() -> frozenset[str]:
+    """Domain keys skipped by ``collect_rss_feeds`` (comma-separated env). Use with template silos ``politics-2`` / ``finance-2``."""
+    raw = os.environ.get("RSS_INGEST_EXCLUDE_DOMAIN_KEYS", "").strip()
+    if not raw:
+        return frozenset()
+    return frozenset(x.strip().lower() for x in raw.split(",") if x.strip())
+
+
+def rss_ingest_mirror_pipeline_enabled() -> bool:
+    """
+    When true, RSS collection iterates ``pipeline_url_schema_pairs()`` (same silos as automation backlog),
+    then still subtracts ``RSS_INGEST_EXCLUDE_DOMAIN_KEYS``. Avoids ingesting into legacy silos you excluded
+    from processing without duplicating allowlists.
+    """
+    return os.environ.get("RSS_INGEST_MIRROR_PIPELINE", "").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+
+
+def finance_postgres_content_domain_key() -> str:
+    """ArticleService / finance helpers: which ``domain_key`` owns finance RSS articles (``finance`` or ``finance-2``)."""
+    return (os.environ.get("FINANCE_PG_CONTENT_DOMAIN_KEY", "finance") or "finance").strip()
+
+
+def finance_intelligence_context_domain_key() -> str:
+    """``intelligence.contexts.domain_key`` filter for finance-side orchestration (defaults to finance_postgres_content_domain_key)."""
+    raw = os.environ.get("FINANCE_CONTEXT_DOMAIN_KEY", "").strip()
+    return raw if raw else finance_postgres_content_domain_key()
+
+
+def politics_postgres_content_domain_key() -> str:
+    """Background jobs that read politics articles by silo (``politics`` or ``politics-2``)."""
+    return (os.environ.get("POLITICS_PG_CONTENT_DOMAIN_KEY", "politics") or "politics").strip()
+
+
 # ============================================================
 # Finance domain — external data sources
 # ============================================================
@@ -221,6 +258,8 @@ EDGAR_USER_AGENT = os.environ.get("EDGAR_USER_AGENT", "NewsIntelligence research
 METALS_DEV_API_KEY = os.environ.get("METALS_DEV_API_KEY", "")
 # Historic context orchestrator — external APIs (optional)
 NEWS_API_KEY = os.environ.get("NEWS_API_KEY", "")
+# Politics — Congress.gov API v3 (bill metadata, summaries, text versions; see api/config/government_sources.yaml)
+CONGRESS_GOV_API_KEY = os.environ.get("CONGRESS_GOV_API_KEY", "")
 
 # Finance vector store (collection name = finance_evidence_{model_suffix} — see vector_store.py)
 EMBEDDING_DIMENSION = 1024  # bge-large-en-v1.5

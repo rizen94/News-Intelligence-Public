@@ -2,7 +2,7 @@
 Single source of truth for URL domain keys and Postgres schema names.
 
 Core domains (politics, finance, science-tech) are always registered.
-Additional domains are loaded from api/config/domains/*.yaml when is_active is true.
+Additional silos use the same pipeline once onboarded: load ``api/config/domains/*.yaml`` when ``is_active`` is true.
 
 Loader rules (keep in sync with api/config/domains/README.md):
 - Skip any ``*.yaml`` file whose name starts with ``_`` (e.g. ``_template.example.yaml``).
@@ -15,7 +15,7 @@ They are inserted into ``{schema_name}.rss_feeds`` by ``api/scripts/provision_do
 and ``api/scripts/seed_domain_rss_from_yaml.py`` (backfill).
 
 ``DOMAIN_PATH_PATTERN`` only constrains URL shape; ``is_valid_domain_key()`` re-reads YAML each call
-so optional domains work without restarting the API. ``ACTIVE_DOMAIN_KEYS*`` at import is a snapshot only.
+so newly onboarded silos work without restarting the API. ``ACTIVE_DOMAIN_KEYS*`` at import is a snapshot only.
 
 See docs/DOMAIN_EXTENSION_TEMPLATE.md and api/config/domains/README.md.
 """
@@ -69,6 +69,8 @@ RESERVED_SCHEMA_NAMES: frozenset[str] = frozenset(
         "politics",
         "finance",
         "science_tech",
+        "politics_2",
+        "finance_2",
         "intelligence",
         "artificial_intelligence",
     }
@@ -165,7 +167,61 @@ def url_schema_pairs() -> tuple[tuple[str, str], ...]:
     return tuple(iter_url_schema_pairs())
 
 
-# FastAPI Path: shape-only so new optional domains work without restarting the API process.
+def get_pipeline_excluded_domain_keys() -> frozenset[str]:
+    """
+    Domain keys excluded from **automation / enrichment / backlog processing** (comma-separated env).
+
+    Set ``PIPELINE_EXCLUDE_DOMAIN_KEYS=politics,finance`` when ingest and work have moved to
+    ``politics-2`` / ``finance-2``. RSS collection uses ``RSS_INGEST_EXCLUDE_DOMAIN_KEYS`` separately.
+    Comparison is case-insensitive.
+    """
+    import os
+
+    raw = os.environ.get("PIPELINE_EXCLUDE_DOMAIN_KEYS", "").strip()
+    if not raw:
+        return frozenset()
+    return frozenset(x.strip().lower() for x in raw.split(",") if x.strip())
+
+
+def get_pipeline_included_domain_keys() -> frozenset[str] | None:
+    """
+    Optional allowlist: when ``PIPELINE_INCLUDE_DOMAIN_KEYS`` is non-empty, only those URL keys
+    (must also be active in the registry) participate in pipeline iteration. Exclusions still apply after.
+    """
+    import os
+
+    raw = os.environ.get("PIPELINE_INCLUDE_DOMAIN_KEYS", "").strip()
+    if not raw:
+        return None
+    return frozenset(x.strip().lower().replace("_", "-") for x in raw.split(",") if x.strip())
+
+
+def iter_pipeline_url_schema_pairs() -> Iterator[tuple[str, str]]:
+    skip = get_pipeline_excluded_domain_keys()
+    include = get_pipeline_included_domain_keys()
+    for dk, sch in iter_url_schema_pairs():
+        k = str(dk).strip().lower()
+        if include is not None and k not in include:
+            continue
+        if k in skip:
+            continue
+        yield dk, sch
+
+
+def pipeline_url_schema_pairs() -> tuple[tuple[str, str], ...]:
+    return tuple(iter_pipeline_url_schema_pairs())
+
+
+def get_pipeline_schema_names_active() -> tuple[str, ...]:
+    return tuple(sch for _dk, sch in iter_pipeline_url_schema_pairs())
+
+
+def get_pipeline_active_domain_keys() -> tuple[str, ...]:
+    """URL/route domain keys included in pipeline processing (``PIPELINE_INCLUDE_*`` then ``PIPELINE_EXCLUDE_*``)."""
+    return tuple(dk for dk, _sch in iter_pipeline_url_schema_pairs())
+
+
+# FastAPI Path: shape-only so new YAML-onboarded silos work without restarting the API process.
 # Authoritative allowlist is ``get_active_domain_keys()`` / ``is_valid_domain_key`` (YAML + builtins).
 DOMAIN_PATH_PATTERN = r"^[a-z0-9]+(?:-[a-z0-9]+)*$"
 

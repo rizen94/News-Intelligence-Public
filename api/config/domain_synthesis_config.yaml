@@ -10,7 +10,7 @@ defaults:
   clustering_similarity_threshold: 0.65
 
 domains:
-  politics:
+  politics: &politics_v1
     focus_areas:
       - campaigns and elections
       - regimes and leadership changes
@@ -90,7 +90,7 @@ domains:
       Prioritize elections, legislation, conflicts, protests, and leadership
       changes. Identify who benefits, who opposes, and what precedents exist.
 
-  finance:
+  finance: &finance_v1
     focus_areas:
       - commodities and price movements driven by events
       - supply chains and disruptions
@@ -161,6 +161,12 @@ domains:
       where possible. Identify causal chains between events and market movements.
       Prioritize commodities, tariffs, sanctions, central bank actions, and
       resource demand shifts. Track how geopolitical events shape prices.
+
+  politics-2:
+    <<: *politics_v1
+
+  finance-2:
+    <<: *finance_v1
 
   science-tech:
     focus_areas:

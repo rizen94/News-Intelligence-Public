@@ -3,8 +3,9 @@ Lightweight DB reachability for automation scheduling.
 
 When PostgreSQL is unreachable and ``AUTOMATION_PAUSE_WHEN_DB_DOWN`` is enabled, the
 automation manager's **scheduler** stops enqueueing **all** phases (including
-``health_check`` and ``pending_db_flush``): there is nothing useful to flush until the
-server is reachable again, and the automation ``health_check`` task only runs ``SELECT 1``.
+``pending_db_flush``): there is nothing useful to flush until the server is reachable again.
+The **standalone** ``health_check`` loop (dedicated DB pool) still runs ``SELECT 1`` on its
+own interval so pool exhaustion on the worker pool does not block liveness probes.
 
 Workers already queued may still run until the queue drains.
 

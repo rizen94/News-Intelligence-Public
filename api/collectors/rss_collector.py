@@ -38,9 +38,63 @@ from concurrent.futures import TimeoutError as FutureTimeoutError
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from shared.article_processing_gates import (
     article_eligible_for_context,
+    finalize_rss_enrichment_after_inline,
     rss_item_passes_ingest_gates,
 )
 from services.bias_detection_service import calculate_domain_bias_score
+
+# Credit-card / banking product native ads and CNN commerce verticals (Underscored, etc.).
+# Used by is_advertisement and quality scoring — not hard news.
+_FINANCIAL_NATIVE_AD_PHRASES: tuple[str, ...] = (
+    "subject to credit approval",
+    "member fdic",
+    "member fdic.",
+    "0% intro apr",
+    "introductory apr",
+    "intro apr",
+    "see issuer",
+    "see rates and fees",
+    "rates & fees",
+    "rates and fees",
+    "variable apr",
+    "credit card offer",
+    "credit card offers",
+    "best credit cards",
+    "cash back rewards",
+    "earn unlimited",
+    "points per dollar",
+    "terms apply",
+    "cnn underscored",
+    "partner offer",
+    "paid partner",
+)
+
+
+def _url_looks_like_commerce_native(url: str) -> bool:
+    """CNN Underscored and similar paths are commerce, not politics news."""
+    u = (url or "").lower()
+    return any(
+        p in u
+        for p in (
+            "/cnn-underscored",
+            "/underscored/",
+            "/cnn/cnn-underscored",
+            "/videos/cnn-underscored",
+        )
+    )
+
+
+def _post_credibility_quality_cap_native_ads(
+    quality_score: float, title: str, content: str, url: str
+) -> float:
+    """Source-credibility tier multipliers can push a capped score back above 0.3."""
+    combined = f"{title} {content} {url}".lower()
+    if _url_looks_like_commerce_native(url) or any(
+        p in combined for p in _FINANCIAL_NATIVE_AD_PHRASES
+    ):
+        return min(float(quality_score), 0.28)
+    return float(quality_score)
+
 
 # Import deduplication system
 try:
@@ -92,6 +146,109 @@ def _rss_fetch_timeout() -> int:
         return max(5, int(os.environ.get("RSS_TIMEOUT", "30").strip() or "30"))
     except ValueError:
         return 30
+
+
+def _rss_plain_text_len(html_or_text: str | None) -> int:
+    """Approximate visible text length (strip tags) for deciding snippet vs full body."""
+    if not html_or_text:
+        return 0
+    t = re.sub(r"<[^>]+>", " ", html_or_text)
+    t = re.sub(r"\s+", " ", t).strip()
+    return len(t)
+
+
+def _rss_fulltext_fetch_threshold() -> int:
+    """
+    If RSS body plaintext is shorter than this, try trafilatura on the article URL at ingest.
+    Default 900 — catches most headline+teaser feeds while avoiding redundant fetches when
+    the feed already carries content:encoded. Override: RSS_FULLTEXT_FETCH_THRESHOLD_CHARS.
+    """
+    try:
+        return max(200, int(os.environ.get("RSS_FULLTEXT_FETCH_THRESHOLD_CHARS", "900")))
+    except ValueError:
+        return 900
+
+
+def _rss_should_fetch_fulltext(body: str | None, url: str | None) -> bool:
+    if not url or not str(url).strip():
+        return False
+    if os.environ.get("RSS_ALWAYS_FETCH_FULLTEXT", "").strip().lower() in ("1", "true", "yes"):
+        return True
+    return _rss_plain_text_len(body) < _rss_fulltext_fetch_threshold()
+
+
+def _rss_entry_savepoint_release(feed_cur) -> None:
+    """End per-entry subtransaction after a skip or merge path (keeps outer xact healthy)."""
+    try:
+        feed_cur.execute("RELEASE SAVEPOINT sp_article")
+    except Exception:
+        try:
+            feed_cur.execute("ROLLBACK TO SAVEPOINT sp_article")
+        except Exception:
+            pass
+
+
+def _rss_entry_savepoint_rollback(feed_cur, feed_conn) -> None:
+    """Undo failed entry so the connection is not left in aborted state."""
+    try:
+        feed_cur.execute("ROLLBACK TO SAVEPOINT sp_article")
+    except Exception:
+        try:
+            feed_conn.rollback()
+        except Exception:
+            pass
+
+
+def _extract_rss_entry_body(entry) -> str:
+    """
+    Best-effort article HTML/text from a feedparser entry.
+    Prefer the longest plaintext among content:encoded blocks; otherwise summary/description.
+    """
+    candidates: list[tuple[str, str, int]] = []
+    if isinstance(entry, dict):
+        raw_content = entry.get("content")
+    else:
+        raw_content = getattr(entry, "content", None)
+    if raw_content:
+        for block in raw_content:
+            if not isinstance(block, dict):
+                continue
+            val = (block.get("value") or "").strip()
+            if not val:
+                continue
+            candidates.append(("content", val, _rss_plain_text_len(val)))
+    for key in ("summary", "description"):
+        try:
+            raw = entry.get(key, "") if hasattr(entry, "get") else getattr(entry, key, "") or ""
+        except (AttributeError, TypeError):
+            raw = getattr(entry, key, "") or ""
+        val = (raw or "").strip() if isinstance(raw, str) else str(raw or "").strip()
+        if val:
+            candidates.append((key, val, _rss_plain_text_len(val)))
+    if not candidates:
+        return ""
+    # Longest plaintext first; tie-break: prefer content blocks over summary/description
+    pref = {"content": 0, "summary": 1, "description": 2}
+    candidates.sort(key=lambda x: (-x[2], pref.get(x[0], 9)))
+    return candidates[0][1]
+
+
+def _maybe_inline_fetch_article_body(rss_body: str, url: str | None) -> tuple[str, bool, bool]:
+    """
+    Optionally fetch full article text from URL when the feed body looks like a snippet.
+    Returns (body_for_store, trafilatura_attempted, trafilatura_ok).
+    """
+    if not _rss_should_fetch_fulltext(rss_body, url):
+        return rss_body, False, False
+    try:
+        from services.article_content_enrichment_service import enrich_article_content
+
+        full_text, ok = enrich_article_content(url)
+        if ok and full_text:
+            return full_text, True, True
+        return rss_body, True, False
+    except Exception:
+        return rss_body, True, False
 
 
 def fetch_and_parse_rss(feed_url: str):
@@ -567,7 +724,9 @@ def calculate_article_impact_score(title: str, content: str) -> float:
     return max(0.0, min(1.0, score))
 
 
-def calculate_article_quality_score(title: str, content: str, source: str = "") -> float:
+def calculate_article_quality_score(
+    title: str, content: str, source: str = "", url: str = ""
+) -> float:
     """
     Calculate a simple quality score (0.0-1.0) for an article.
 
@@ -577,6 +736,7 @@ def calculate_article_quality_score(title: str, content: str, source: str = "") 
         title: Article title
         content: Article content/summary
         source: Source name/domain
+        url: Article URL (used to skip CNN commerce boost and cap native-ad quality)
 
     Returns:
         Quality score between 0.0 and 1.0
@@ -655,11 +815,13 @@ def calculate_article_quality_score(title: str, content: str, source: str = "") 
         "sloan review",
     ]
     source_lower = source.lower()
-    if any(reputable in source_lower for reputable in reputable_sources):
+    commerce_url = _url_looks_like_commerce_native(url)
+    # Do not boost "CNN" in source name for CNN Underscored / commerce URLs — those are ads.
+    if any(reputable in source_lower for reputable in reputable_sources) and not commerce_url:
         score += 0.15
 
     # Content structure indicators (journalistic quality markers)
-    text_to_check = (title + " " + content).lower()
+    text_to_check = (title + " " + content + " " + (url or "")).lower()
     quality_indicators = [
         # Attribution & sources
         "according to",
@@ -720,7 +882,11 @@ def calculate_article_quality_score(title: str, content: str, source: str = "") 
     score += min(0.2, indicator_count * 0.025)  # Max +0.2 boost for quality indicators
 
     # Clamp to 0.0-1.0 range
-    return max(0.0, min(1.0, score))
+    score = max(0.0, min(1.0, score))
+    # Financial product native ads often still reach ~0.4–0.5 from length + "CNN" source; force below ingest cutoff.
+    if commerce_url or any(p in text_to_check for p in _FINANCIAL_NATIVE_AD_PHRASES):
+        score = min(score, 0.22)
+    return score
 
 
 def is_clickbait_title(title: str) -> bool:
@@ -856,6 +1022,13 @@ def is_advertisement(title: str, content: str, url: str = "") -> bool:
     for indicator in ad_indicators:
         if indicator in text_to_check:
             return True
+
+    for phrase in _FINANCIAL_NATIVE_AD_PHRASES:
+        if phrase in text_to_check:
+            return True
+
+    if _url_looks_like_commerce_native(url):
+        return True
 
     # URL patterns that indicate ads
     ad_url_patterns = [
@@ -1150,11 +1323,31 @@ def collect_rss_feeds() -> int:
     try:
         cur = conn.cursor()
 
-        # Get all active RSS feeds from every active domain (registry: built-in + YAML).
-        from shared.domain_registry import url_schema_pairs
+        # Domains: full registry minus RSS_INGEST_EXCLUDE_* unless RSS_INGEST_MIRROR_PIPELINE matches pipeline silos.
+        from config.settings import (
+            get_rss_ingest_excluded_domain_keys,
+            rss_ingest_mirror_pipeline_enabled,
+        )
+        from shared.domain_registry import pipeline_url_schema_pairs, url_schema_pairs
 
         feeds = []
-        domains = list(url_schema_pairs())
+        skip_dk = get_rss_ingest_excluded_domain_keys()
+        base_pairs = (
+            list(pipeline_url_schema_pairs())
+            if rss_ingest_mirror_pipeline_enabled()
+            else list(url_schema_pairs())
+        )
+        if rss_ingest_mirror_pipeline_enabled():
+            logger.info(
+                "RSS ingest domain list = pipeline_url_schema_pairs() (RSS_INGEST_MIRROR_PIPELINE)"
+            )
+        domains = [
+            (dk, sch)
+            for dk, sch in base_pairs
+            if str(dk).strip().lower() not in skip_dk
+        ]
+        if skip_dk:
+            logger.info("RSS ingest skipping domain_key(s) per RSS_INGEST_EXCLUDE_DOMAIN_KEYS: %s", sorted(skip_dk))
 
         for domain_key, schema_name in domains:
             try:
@@ -1250,21 +1443,14 @@ def collect_rss_feeds() -> int:
                             feed_cur.execute("SAVEPOINT sp_article")
                             title = entry.get("title", "")[:500]
                             url = entry.get("link", "")[:500]
-                            # Prefer full article body (content:encoded) over excerpt
-                            content = ""
-                            if hasattr(entry, "content") and entry.content:
-                                try:
-                                    content = entry.content[0].get("value", "")
-                                except (IndexError, AttributeError):
-                                    pass
-                            if not content:
-                                content = entry.get("summary", "") or entry.get("description", "")
+                            content = _extract_rss_entry_body(entry)
 
                             # Filter excluded content (sports/entertainment/pop culture + domain-specific)
                             if is_excluded_content(
                                 title, content, feed_name, feed_url, domain=domain_key
                             ):
                                 excluded_count += 1
+                                _rss_entry_savepoint_release(feed_cur)
                                 continue
 
                             # Filter clickbait titles (but allow press releases/official filings)
@@ -1272,6 +1458,7 @@ def collect_rss_feeds() -> int:
                                 filtered_clickbait += 1
                                 excluded_count += 1
                                 logger.debug(f"Article excluded (clickbait): {title[:60]}...")
+                                _rss_entry_savepoint_release(feed_cur)
                                 continue
 
                             # Filter advertisements (but allow press releases/official filings)
@@ -1279,15 +1466,19 @@ def collect_rss_feeds() -> int:
                                 filtered_ads += 1
                                 excluded_count += 1
                                 logger.debug(f"Article excluded (advertisement): {title[:60]}...")
+                                _rss_entry_savepoint_release(feed_cur)
                                 continue
 
                             # Calculate scores BEFORE filtering (need scores for threshold check)
                             impact_score = calculate_article_impact_score(title, content)
                             quality_score = calculate_article_quality_score(
-                                title, content, feed_name
+                                title, content, feed_name, url
                             )
                             quality_score, cred_meta = _apply_rss_source_credibility(
                                 feed_url, feed_name, quality_score
+                            )
+                            quality_score = _post_credibility_quality_cap_native_ads(
+                                quality_score, title, content, url
                             )
 
                             # Filter by minimum quality score
@@ -1297,6 +1488,7 @@ def collect_rss_feeds() -> int:
                                 logger.debug(
                                     f"Article excluded (quality score {quality_score:.2f} < 0.3): {title[:60]}..."
                                 )
+                                _rss_entry_savepoint_release(feed_cur)
                                 continue
 
                             # Filter by minimum impact score
@@ -1306,6 +1498,7 @@ def collect_rss_feeds() -> int:
                                 logger.debug(
                                     f"Article excluded (impact score {impact_score:.2f} < 0.25): {title[:60]}..."
                                 )
+                                _rss_entry_savepoint_release(feed_cur)
                                 continue
 
                             ok_ingest, _ingest_reason = rss_item_passes_ingest_gates(
@@ -1313,6 +1506,7 @@ def collect_rss_feeds() -> int:
                             )
                             if not ok_ingest:
                                 excluded_count += 1
+                                _rss_entry_savepoint_release(feed_cur)
                                 continue
 
                             # Parse published date (normalize to UTC-aware for comparison with DB timestamps)
@@ -1330,7 +1524,7 @@ def collect_rss_feeds() -> int:
                             # Check for existing article by URL (update-aware)
                             feed_cur.execute(
                                 f"""
-                                SELECT id, content, published_at, updated_at, enrichment_status
+                                SELECT id, content, published_at, updated_at, enrichment_status, created_at
                                 FROM {schema_name}.articles WHERE url = %s
                             """,
                                 (url,),
@@ -1343,6 +1537,7 @@ def collect_rss_feeds() -> int:
                                     existing_pub,
                                     existing_updated,
                                     existing_enrichment,
+                                    existing_created_at,
                                 ) = existing_by_url
                                 new_content_hash = hashlib.md5((content or "").encode()).hexdigest()
                                 existing_content_hash = (
@@ -1363,8 +1558,11 @@ def collect_rss_feeds() -> int:
                                     or not (existing_content or "").strip()
                                 )
                                 if should_update:
+                                    store_content, _, _ = _maybe_inline_fetch_article_body(
+                                        content, url
+                                    )
                                     raw_bias = calculate_domain_bias_score(
-                                        domain_key, title, content, feed_name
+                                        domain_key, title, store_content, feed_name
                                     )
                                     bias_score = (raw_bias + 1) / 2 if raw_bias is not None else 0.5
                                     bias_score = max(0.0, min(1.0, bias_score))
@@ -1382,7 +1580,7 @@ def collect_rss_feeds() -> int:
                                                 """,
                                                 (
                                                     title,
-                                                    content,
+                                                    store_content,
                                                     None,
                                                     published_date,
                                                     feed_name,
@@ -1402,7 +1600,7 @@ def collect_rss_feeds() -> int:
                                                 """,
                                                 (
                                                     title,
-                                                    content,
+                                                    store_content,
                                                     None,
                                                     published_date,
                                                     feed_name,
@@ -1421,7 +1619,7 @@ def collect_rss_feeds() -> int:
                                             """,
                                             (
                                                 title,
-                                                content,
+                                                store_content,
                                                 None,
                                                 published_date,
                                                 feed_name,
@@ -1431,6 +1629,8 @@ def collect_rss_feeds() -> int:
                                             ),
                                         )
                                     articles_updated += 1
+                                    # Nested savepoint: queue + context must not abort the UPDATE in sp_article.
+                                    feed_cur.execute("SAVEPOINT sp_aux")
                                     try:
                                         feed_cur.execute(
                                             f"""
@@ -1441,21 +1641,30 @@ def collect_rss_feeds() -> int:
                                         """,
                                             (existing_id,),
                                         )
-                                    except Exception:
-                                        pass
-                                    try:
                                         from services.context_processor_service import (
                                             ensure_context_for_article,
                                         )
 
                                         if article_eligible_for_context(
-                                            content, existing_enrichment
+                                            store_content,
+                                            existing_enrichment,
+                                            existing_created_at,
                                         ):
                                             ensure_context_for_article(domain_key, existing_id)
-                                    except Exception:
-                                        pass
+                                        feed_cur.execute("RELEASE SAVEPOINT sp_aux")
+                                    except Exception as aux_err:
+                                        logger.debug(
+                                            "Queue/context skip (updated article %s): %s",
+                                            existing_id,
+                                            aux_err,
+                                        )
+                                        try:
+                                            feed_cur.execute("ROLLBACK TO SAVEPOINT sp_aux")
+                                        except Exception:
+                                            pass
                                 else:
                                     duplicates_rejected += 1
+                                _rss_entry_savepoint_release(feed_cur)
                                 continue
                             # Check for duplicate by title + source (different URL = different article, skip)
                             feed_cur.execute(
@@ -1467,6 +1676,7 @@ def collect_rss_feeds() -> int:
                             )
                             if feed_cur.fetchone():
                                 duplicates_rejected += 1
+                                _rss_entry_savepoint_release(feed_cur)
                                 continue
 
                             # Calculate domain-specific bias score
@@ -1478,35 +1688,29 @@ def collect_rss_feeds() -> int:
                             bias_score = max(0.0, min(1.0, bias_score))
                             quality_score = max(0.0, min(1.0, quality_score))
 
-                            # Inline enrichment: if RSS content >= 500 chars treat as enriched; else try trafilatura once
-                            insert_content = content or ""
-                            enrichment_status = "enriched"
-                            enrichment_attempts = 0
-                            if len(insert_content) < 500 and url and url.strip():
-                                try:
-                                    from services.article_content_enrichment_service import (
-                                        enrich_article_content,
-                                    )
-
-                                    full_text, ok = enrich_article_content(url)
-                                    if ok and full_text:
-                                        insert_content = full_text
-                                    else:
-                                        enrichment_status = "failed"
-                                        enrichment_attempts = 1
-                                except Exception:
-                                    enrichment_status = "failed"
-                                    enrichment_attempts = 1
+                            # Inline full-text fetch when feed body is snippet-sized (plaintext heuristic)
+                            created_at_ins = datetime.now(timezone.utc)
+                            insert_content, trafilatura_attempted, trafilatura_ok = (
+                                _maybe_inline_fetch_article_body(content or "", url)
+                            )
+                            enrichment_status, enrichment_attempts = (
+                                finalize_rss_enrichment_after_inline(
+                                    insert_content,
+                                    created_at=created_at_ins,
+                                    url=url,
+                                    trafilatura_attempted=trafilatura_attempted,
+                                    trafilatura_ok=trafilatura_ok,
+                                )
+                            )
 
                             # Insert article (scores already calculated above); optional metadata for source_credibility
-                            feed_cur.execute("SAVEPOINT sp_article")
                             insert_vals = (
                                 title,
                                 url,
                                 insert_content,
                                 None,
                                 published_date,
-                                datetime.now(timezone.utc),
+                                created_at_ins,
                                 feed_name,
                                 quality_score,
                                 bias_score,
@@ -1556,7 +1760,8 @@ def collect_rss_feeds() -> int:
                                 article_id = result[0]
                                 articles_added += 1
 
-                                # Auto-queue article for LLM topic extraction
+                                # Nested savepoint: queue/context failures must not poison sp_article.
+                                feed_cur.execute("SAVEPOINT sp_aux")
                                 try:
                                     feed_cur.execute(
                                         f"""
@@ -1567,36 +1772,35 @@ def collect_rss_feeds() -> int:
                                     """,
                                         (article_id,),
                                     )
-                                    feed_conn.commit()
-                                except Exception as queue_error:
-                                    logger.debug(
-                                        f"Could not queue article {article_id} for topic extraction: {queue_error}"
-                                    )
-                                    # Non-critical, continue processing
-
-                                # Context-centric: ensure intelligence.contexts + article_to_context (Phase 1.2)
-                                try:
                                     from services.context_processor_service import (
                                         ensure_context_for_article,
                                     )
 
                                     if article_eligible_for_context(
-                                        insert_content, enrichment_status
+                                        insert_content,
+                                        enrichment_status,
+                                        created_at_ins,
                                     ):
                                         ensure_context_for_article(domain_key, article_id)
-                                except Exception as ctx_err:
-                                    logger.debug(f"Context processor skip: {ctx_err}")
+                                    feed_cur.execute("RELEASE SAVEPOINT sp_aux")
+                                except Exception as aux_err:
+                                    logger.debug(
+                                        "Queue/context skip (new article %s): %s",
+                                        article_id,
+                                        aux_err,
+                                    )
+                                    try:
+                                        feed_cur.execute("ROLLBACK TO SAVEPOINT sp_aux")
+                                    except Exception:
+                                        pass
+                                feed_conn.commit()
+                            else:
+                                # INSERT returned no row (unexpected); clear savepoint for next entry
+                                _rss_entry_savepoint_release(feed_cur)
 
                         except Exception as e:
                             logger.warning(f"Error processing article from {feed_name}: {e}")
-                            try:
-                                feed_cur.execute("ROLLBACK TO SAVEPOINT sp_article")
-                            except Exception:
-                                try:
-                                    feed_conn.rollback()
-                                except Exception:
-                                    pass
-                                break
+                            _rss_entry_savepoint_rollback(feed_cur, feed_conn)
                             continue
 
                     # Update feed timestamp
@@ -1799,45 +2003,54 @@ def collect_rss_feed(feed_url: str, feed_name: str = "Unknown") -> int:
                 cur.execute("SAVEPOINT sp_article")
                 title = entry.get("title", "")[:500]
                 url = entry.get("link", "")[:500]
-                content = entry.get("summary", "") or entry.get("description", "")
+                content = _extract_rss_entry_body(entry)
 
                 # Filter out sports, entertainment, and pop culture content (domain-specific for science-tech)
                 if is_excluded_content(
                     title, content, feed_name, feed_url, domain=domain_key_single
                 ):
                     logger.debug(f"Skipping excluded article: {title[:60]}...")
+                    _rss_entry_savepoint_release(cur)
                     continue
 
                 # Filter clickbait titles (but allow press releases/official filings)
                 if is_clickbait_title(title):
                     logger.debug(f"Skipping clickbait article: {title[:60]}...")
+                    _rss_entry_savepoint_release(cur)
                     continue
 
                 # Filter advertisements (but allow press releases/official filings)
                 if is_advertisement(title, content, url):
                     logger.debug(f"Skipping advertisement: {title[:60]}...")
+                    _rss_entry_savepoint_release(cur)
                     continue
 
                 impact_score = calculate_article_impact_score(title, content)
-                quality_score = calculate_article_quality_score(title, content, feed_name)
+                quality_score = calculate_article_quality_score(title, content, feed_name, url)
                 quality_score, cred_meta = _apply_rss_source_credibility(
                     feed_url, feed_name, quality_score
+                )
+                quality_score = _post_credibility_quality_cap_native_ads(
+                    quality_score, title, content, url
                 )
 
                 if quality_score < 0.3:
                     logger.debug(
                         f"Skipping article (quality score {quality_score:.2f} < 0.3): {title[:60]}..."
                     )
+                    _rss_entry_savepoint_release(cur)
                     continue
 
                 if impact_score < 0.25:
                     logger.debug(
                         f"Skipping article (impact score {impact_score:.2f} < 0.25): {title[:60]}..."
                     )
+                    _rss_entry_savepoint_release(cur)
                     continue
 
                 ok_ingest, _ingest_reason = rss_item_passes_ingest_gates(title, content, url)
                 if not ok_ingest:
+                    _rss_entry_savepoint_release(cur)
                     continue
 
                 published_date = None
@@ -1860,6 +2073,7 @@ def collect_rss_feed(feed_url: str, feed_name: str = "Unknown") -> int:
                 if cur.fetchone():
                     # Article already exists, skip it
                     logger.debug(f"Skipping duplicate article: {title[:60]}...")
+                    _rss_entry_savepoint_release(cur)
                     continue
 
                 # Calculate domain-specific bias score (URL domain key from registry)
@@ -1874,25 +2088,17 @@ def collect_rss_feed(feed_url: str, feed_name: str = "Unknown") -> int:
                 # Ensure quality_score stays in [0, 1] (impact_score already clamped)
                 quality_score = max(0.0, min(1.0, quality_score))
 
-                # Inline enrichment: if RSS content >= 500 chars treat as enriched; else try trafilatura once
-                insert_content = content or ""
-                enrichment_status = "enriched"
-                enrichment_attempts = 0
-                if len(insert_content) < 500 and url and url.strip():
-                    try:
-                        from services.article_content_enrichment_service import (
-                            enrich_article_content,
-                        )
-
-                        full_text, ok = enrich_article_content(url)
-                        if ok and full_text:
-                            insert_content = full_text
-                        else:
-                            enrichment_status = "failed"
-                            enrichment_attempts = 1
-                    except Exception:
-                        enrichment_status = "failed"
-                        enrichment_attempts = 1
+                created_at_ins = datetime.now(timezone.utc)
+                insert_content, trafilatura_attempted, trafilatura_ok = (
+                    _maybe_inline_fetch_article_body(content or "", url)
+                )
+                enrichment_status, enrichment_attempts = finalize_rss_enrichment_after_inline(
+                    insert_content,
+                    created_at=created_at_ins,
+                    url=url,
+                    trafilatura_attempted=trafilatura_attempted,
+                    trafilatura_ok=trafilatura_ok,
+                )
 
                 # Insert article into domain schema (v5.0) with quality score and bias score
                 insert_vals = (
@@ -1901,7 +2107,7 @@ def collect_rss_feed(feed_url: str, feed_name: str = "Unknown") -> int:
                     insert_content,
                     None,
                     published_date,
-                    datetime.now(timezone.utc),
+                    created_at_ins,
                     feed_name,
                     quality_score,
                     bias_score,
@@ -1948,7 +2154,7 @@ def collect_rss_feed(feed_url: str, feed_name: str = "Unknown") -> int:
                     article_id = result[0]
                     articles_added += 1
 
-                    # Auto-queue article for LLM topic extraction
+                    cur.execute("SAVEPOINT sp_aux")
                     try:
                         cur.execute(
                             f"""
@@ -1959,32 +2165,30 @@ def collect_rss_feed(feed_url: str, feed_name: str = "Unknown") -> int:
                         """,
                             (article_id,),
                         )
-                        conn.commit()
-                    except Exception as queue_error:
-                        logger.debug(
-                            f"Could not queue article {article_id} for topic extraction: {queue_error}"
-                        )
-                        # Non-critical, continue processing
-
-                    # Context-centric: ensure intelligence.contexts + article_to_context (Phase 1.2)
-                    try:
                         from services.context_processor_service import ensure_context_for_article
 
-                        if article_eligible_for_context(insert_content, enrichment_status):
+                        if article_eligible_for_context(
+                            insert_content, enrichment_status, created_at_ins
+                        ):
                             ensure_context_for_article(domain_key, article_id)
-                    except Exception as ctx_err:
-                        logger.debug(f"Context processor skip: {ctx_err}")
+                        cur.execute("RELEASE SAVEPOINT sp_aux")
+                    except Exception as aux_err:
+                        logger.debug(
+                            "Queue/context skip (single-feed article %s): %s",
+                            article_id,
+                            aux_err,
+                        )
+                        try:
+                            cur.execute("ROLLBACK TO SAVEPOINT sp_aux")
+                        except Exception:
+                            pass
+                    conn.commit()
+                else:
+                    _rss_entry_savepoint_release(cur)
 
             except Exception as e:
                 logger.warning(f"Error processing article: {e}")
-                try:
-                    cur.execute("ROLLBACK TO SAVEPOINT sp_article")
-                except Exception:
-                    try:
-                        conn.rollback()
-                    except Exception:
-                        pass
-                    break
+                _rss_entry_savepoint_rollback(cur, conn)
                 continue
 
         conn.commit()

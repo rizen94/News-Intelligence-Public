@@ -96,6 +96,7 @@ from domains.intelligence_hub.routes.context_centric import router as context_ce
 
 # Import domain routers (consolidated — one per domain)
 from domains.news_aggregation.routes import router as news_aggregation_router
+from domains.politics.routes import router as politics_router
 from domains.storyline_management.routes import router as storyline_management_router
 from domains.system_monitoring.routes import router as system_monitoring_router
 from domains.user_management.routes.user_management import router as user_management_router
@@ -159,6 +160,23 @@ async def lifespan(app: FastAPI):
                 cur.execute("SELECT 1")
             conn.close()
             logger.info("✅ Database connection test successful")
+            try:
+                from shared.domain_registry import pipeline_url_schema_pairs, url_schema_pairs
+
+                _all = url_schema_pairs()
+                _pipe = pipeline_url_schema_pairs()
+                if len(_all) > 0 and len(_pipe) == 0:
+                    logger.error(
+                        "Pipeline config: zero domains in pipeline_url_schema_pairs() but registry has silos — "
+                        "check PIPELINE_INCLUDE_DOMAIN_KEYS / PIPELINE_EXCLUDE_DOMAIN_KEYS (automation would idle)."
+                    )
+                else:
+                    logger.info(
+                        "Pipeline domains (processing/backlog): %s",
+                        [p[0] for p in _pipe],
+                    )
+            except Exception as _pe:
+                logger.debug("Pipeline domain startup log skipped: %s", _pe)
         except ConnectionError as e:
             logger.error("❌ Database connection failed: %s", e)
             logger.error(
@@ -304,7 +322,14 @@ async def lifespan(app: FastAPI):
             loop = asyncio.new_event_loop()
             loop.set_default_executor(ThreadPoolExecutor(max_workers=2))
             asyncio.set_event_loop(loop)
-            loop.run_until_complete(automation.start())
+            try:
+                loop.run_until_complete(automation.start())
+            except Exception as exc:
+                logger.error(
+                    "Automation manager background thread exited: %s",
+                    exc,
+                    exc_info=True,
+                )
 
         automation_thread = threading.Thread(target=start_automation, daemon=True)
         automation_thread.start()
@@ -344,10 +369,10 @@ async def lifespan(app: FastAPI):
 
                 async def start_workers():
                     """Start queue workers for all active domains"""
-                    from shared.domain_registry import url_schema_pairs
+                    from shared.domain_registry import pipeline_url_schema_pairs
 
                     workers = []
-                    for _domain_key, schema in url_schema_pairs():
+                    for _domain_key, schema in pipeline_url_schema_pairs():
                         try:
                             worker = TopicExtractionQueueWorker(get_db_connection, schema=schema)
                             workers.append(worker)
@@ -815,6 +840,7 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 # Include domain routers
 app.include_router(news_aggregation_router)
+app.include_router(politics_router)
 app.include_router(content_analysis_router)
 app.include_router(storyline_management_router)
 app.include_router(intelligence_hub_router)

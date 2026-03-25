@@ -308,7 +308,7 @@ CREATE TABLE articles (
 
 ### **Connection Pool Architecture**
 
-The system uses three independent client-side pools. In production, point **`DB_HOST` / `DB_PORT`** at **PgBouncer** so many app slots multiplex onto fewer PostgreSQL backends; see **`docs/PGBOUNCER_AND_CONNECTION_BUDGET.md`**.
+The system uses four independent psycopg2 pools plus SQLAlchemy. In production, point **`DB_HOST` / `DB_PORT`** at **PgBouncer** so many app slots multiplex onto fewer PostgreSQL backends; see **`docs/PGBOUNCER_AND_CONNECTION_BUDGET.md`**.
 
 All pool sizes are configurable via environment variables. Defaults favor **UI responsiveness** (reserved pool, short checkout timeout) and a **moderate worker cap** so automation does not crowd out small `max_connections` budgets; raise worker limits when metrics show headroom.
 
@@ -316,19 +316,22 @@ All pool sizes are configurable via environment variables. Defaults favor **UI r
 |------|---------|----------|----------|---------|
 | **UI** | psycopg2 `ThreadedConnectionPool` | `DB_POOL_UI_MIN/MAX` | 2 / 16 | Page loads, monitoring, hot read paths (3 s checkout) |
 | **Worker** | psycopg2 `ThreadedConnectionPool` | `DB_POOL_WORKER_MIN/MAX` | 2 / 20 | Automation, enrichment, collection; `DB_POOL_MAX` legacy if `DB_POOL_WORKER_MAX` unset |
+| **Health** | psycopg2 `ThreadedConnectionPool` | `DB_POOL_HEALTH_MIN/MAX` | 1 / 2 | Automation `health_check` probes + `automation_run_history` for that phase only (2 s checkout; `DB_HEALTH_GETCONN_TIMEOUT_SECONDS`) |
 | **SQLAlchemy** | SQLAlchemy `QueuePool` | `DB_POOL_SA_SIZE/OVERFLOW` | 3 / 8 | ORM-based services (storylines, RSS, timelines) |
 
-**Maximum client connections per process (worst case):** UI max + worker max + SA size + SA overflow = **16 + 20 + 3 + 8 = 47** by default (not 1:1 with Postgres sessions when PgBouncer is used).
+**Maximum client connections per process (worst case):** UI max + worker max + health max + SA size + SA overflow = **16 + 20 + 2 + 3 + 8 = 49** by default (not 1:1 with Postgres sessions when PgBouncer is used).
 Ensure PostgreSQL **`max_connections`** (and PgBouncer **`default_pool_size`**) accommodate **every** process that connects (API workers, Widow cron, dev hosts), plus admin headroom.
 
 **Checkout timeouts** (how long to wait for a free connection before raising):
 - Worker pool: 30 s (env `DB_WORKER_GETCONN_TIMEOUT_SECONDS`)
 - UI pool: 3 s (env `DB_UI_GETCONN_TIMEOUT_SECONDS`)
+- Health pool: 2 s (env `DB_HEALTH_GETCONN_TIMEOUT_SECONDS`)
 - SQLAlchemy pool: 30 s (built-in `pool_timeout`)
 
 **When to use which pool:**
 - `get_db_connection()` / `get_db_connection_context()` → Worker pool (automation, writes, heavy batch)
 - `get_ui_db_connection()` / `get_ui_db_connection_context()` → UI pool (monitoring, page-load routes)
+- `get_health_db_connection()` / `get_health_db_connection_context()` → Health pool only (automation `health_check`; do not use for pipeline work)
 - `DomainAwareService.get_read_db_connection()` → UI pool with `search_path` set (domain-scoped **reads** only; listings / detail views)
 - `get_db()` / `next(get_db())` → SQLAlchemy pool (ORM-based services only)
 - Never mix: don't use SQLAlchemy sessions for heavy background batch work unless

@@ -1461,6 +1461,7 @@ dependencies = [
     { name = "bcrypt" },
     { name = "beautifulsoup4" },
     { name = "chardet" },
+    { name = "charset-normalizer" },
     { name = "chromadb" },
     { name = "click" },
     { name = "cryptography" },
@@ -1496,6 +1497,7 @@ dependencies = [
     { name = "sentence-transformers" },
     { name = "sqlalchemy" },
     { name = "trafilatura" },
+    { name = "urllib3" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
@@ -1515,6 +1517,7 @@ requires-dist = [
     { name = "bcrypt", specifier = ">=4.1.0" },
     { name = "beautifulsoup4", specifier = ">=4.12.0" },
     { name = "chardet", specifier = ">=5.0.0" },
+    { name = "charset-normalizer", specifier = ">=3.0.0" },
     { name = "chromadb", specifier = ">=0.4.0" },
     { name = "chromadb", marker = "extra == 'finance'" },
     { name = "click", specifier = ">=8.1.0" },
@@ -1551,6 +1554,7 @@ requires-dist = [
     { name = "sentence-transformers", marker = "extra == 'finance'" },
     { name = "sqlalchemy", specifier = ">=2.0.0" },
     { name = "trafilatura", specifier = ">=1.6.0" },
+    { name = "urllib3", specifier = ">=2.0.0,<3" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.24.0" },
 ]
 provides-extras = ["finance", "dev"]

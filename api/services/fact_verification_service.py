@@ -483,7 +483,7 @@ def finance_sec_articles_signal(
 ) -> dict[str, Any]:
     """Match claim terms against recent finance.articles whose URL looks SEC/EDGAR-hosted."""
     out: dict[str, Any] = {"status": "skipped", "match_count": 0}
-    if domain_key != "finance":
+    if domain_key not in ("finance", "finance-2"):
         out["status"] = "skipped_domain"
         return out
     if os.environ.get("FACT_VERIFY_SEC_FINANCE", "true").lower() not in ("1", "true", "yes"):
@@ -494,7 +494,7 @@ def finance_sec_articles_signal(
     if len(plain) < 4:
         out["status"] = "no_query"
         return out
-    schema = resolve_domain_schema("finance")
+    schema = resolve_domain_schema(domain_key)
     conn = get_db_connection()
     if not conn:
         return {"status": "error", "match_count": 0, "error": "no_db"}
@@ -1483,7 +1483,7 @@ def verify_claim(
         gdelt_check = gdelt_mention_signal(claim_text, claim.get("subject"))
         sec_check = (
             finance_sec_articles_signal(claim_text, domain_key)
-            if domain_key == "finance"
+            if domain_key in ("finance", "finance-2")
             else {"status": "skipped_domain", "match_count": 0}
         )
         internal_sim = count_internal_similar_claims(

@@ -16,9 +16,11 @@ from enum import Enum
 
 from shared.database.connection import get_db_connection
 from shared.domain_registry import get_active_domain_keys
+from config.logging_config import get_component_logger
 from shared.services.domain_aware_service import validate_domain
 
 logger = logging.getLogger(__name__)
+ops_logger = get_component_logger("ops")
 
 
 class RouteStatus(Enum):
@@ -336,6 +338,18 @@ class RouteSupervisor:
 
         # Log to logger
         logger.warning(f"[Route Supervisor] {message}: {details}")
+        try:
+            # Durable operations stream for post-mortem analysis across restarts.
+            ops_logger.warning(
+                "route_supervisor_issue",
+                extra={
+                    "issue_type": issue_type,
+                    "issue_message": message,
+                    "issue_details": details,
+                },
+            )
+        except Exception:
+            pass
 
     async def check_all_database_connections(self) -> list[DatabaseConnectionHealth]:
         """Check database connections for all domains"""

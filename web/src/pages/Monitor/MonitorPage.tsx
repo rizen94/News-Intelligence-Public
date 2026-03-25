@@ -40,6 +40,7 @@ import ApiIcon from '@mui/icons-material/Api';
 import StorageIcon from '@mui/icons-material/Storage';
 import PublicIcon from '@mui/icons-material/Public';
 import ScheduleIcon from '@mui/icons-material/Schedule';
+import NightsStayIcon from '@mui/icons-material/NightsStay';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import apiService from '@/services/apiService';
 import { contextCentricApi } from '@/services/api/contextCentric';
@@ -280,6 +281,35 @@ export default function MonitorPage() {
       overall_eta_hours?: number;
       overall_eta_utc?: string | null;
       overall_iterations_to_baseline?: number;
+      nightly_catchup?: {
+        error?: string;
+        window?: {
+          timezone?: string;
+          window_label?: string;
+          all_day_catchup?: boolean;
+          exclusive_other_phases?: boolean;
+          nightly_ingest_exclusive_automation?: boolean;
+          enrichment_context_subwindow_local?: string;
+          in_unified_window?: boolean;
+          window_ends_local?: string | null;
+          next_window_starts_local?: string | null;
+        };
+        drain_phases_backlog?: Record<string, number>;
+        sequential_phases_with_backlog?: Array<{ phase: string; count: number }>;
+        nightly_drain_idle?: boolean;
+        recent_unified_runs?: Array<{
+          phase_name?: string;
+          started_at?: string | null;
+          finished_at?: string | null;
+          success?: boolean | null;
+          error_snippet?: string | null;
+        }>;
+        recent_run_summary?: {
+          listed?: number;
+          success?: number;
+          failure?: number;
+        };
+      };
     };
     error?: string;
   } | null>(null);
@@ -1102,6 +1132,209 @@ export default function MonitorPage() {
                           .join(' · ')}
                       </Typography>
                     )}
+                </Alert>
+              )}
+              {backlogStatus.data.nightly_catchup && (
+                <Alert
+                  severity={
+                    backlogStatus.data.nightly_catchup.error
+                      ? 'warning'
+                      : backlogStatus.data.nightly_catchup.nightly_drain_idle
+                        ? 'success'
+                        : 'info'
+                  }
+                  icon={<NightsStayIcon fontSize='inherit' />}
+                >
+                  <Typography variant='subtitle2' fontWeight={600} gutterBottom>
+                    Nightly catch-up (unified pipeline)
+                  </Typography>
+                  {backlogStatus.data.nightly_catchup.error ? (
+                    <Typography variant='body2' color='text.secondary'>
+                      {backlogStatus.data.nightly_catchup.error}
+                    </Typography>
+                  ) : (
+                    <>
+                      <Typography variant='body2' color='text.secondary'>
+                        {backlogStatus.data.nightly_catchup.window
+                          ?.in_unified_window
+                          ? 'Inside nightly window'
+                          : 'Outside nightly window'}
+                        {backlogStatus.data.nightly_catchup.window
+                          ?.all_day_catchup
+                          ? ' · 24/7 catch-up (NIGHTLY_PIPELINE_ALL_DAY)'
+                          : ''}
+                        {backlogStatus.data.nightly_catchup.window?.window_label
+                          ? ` · ${backlogStatus.data.nightly_catchup.window.window_label}`
+                          : ''}
+                        {backlogStatus.data.nightly_catchup.window?.timezone
+                          ? ` · ${backlogStatus.data.nightly_catchup.window.timezone}`
+                          : ''}
+                      </Typography>
+                      {!backlogStatus.data.nightly_catchup.window
+                        ?.all_day_catchup && (
+                        <Typography
+                          variant='caption'
+                          color='text.secondary'
+                          display='block'
+                          sx={{ mt: 0.5 }}
+                        >
+                          {backlogStatus.data.nightly_catchup.window
+                            ?.in_unified_window &&
+                          backlogStatus.data.nightly_catchup.window
+                            ?.window_ends_local
+                            ? `Window ends (local): ${backlogStatus.data.nightly_catchup.window.window_ends_local}`
+                            : null}
+                          {!backlogStatus.data.nightly_catchup.window
+                            ?.in_unified_window &&
+                          backlogStatus.data.nightly_catchup.window
+                            ?.next_window_starts_local
+                            ? `Next window starts (local): ${backlogStatus.data.nightly_catchup.window.next_window_starts_local}`
+                            : null}
+                        </Typography>
+                      )}
+                      <Typography
+                        variant='body2'
+                        color='text.secondary'
+                        sx={{ mt: 0.75 }}
+                      >
+                        Nightly drain idle (enrichment + context + refinement +
+                        sequential phases):{' '}
+                        <strong>
+                          {backlogStatus.data.nightly_catchup.nightly_drain_idle
+                            ? 'yes'
+                            : 'no'}
+                        </strong>
+                        {backlogStatus.data.nightly_catchup
+                          .drain_phases_backlog && (
+                          <span>
+                            {' '}
+                            · CE{' '}
+                            {(
+                              backlogStatus.data.nightly_catchup
+                                .drain_phases_backlog.content_enrichment ?? 0
+                            ).toLocaleString()}
+                            , ctx{' '}
+                            {(
+                              backlogStatus.data.nightly_catchup
+                                .drain_phases_backlog.context_sync ?? 0
+                            ).toLocaleString()}
+                            , refinement{' '}
+                            {(
+                              backlogStatus.data.nightly_catchup
+                                .drain_phases_backlog
+                                .content_refinement_queue ?? 0
+                            ).toLocaleString()}
+                          </span>
+                        )}
+                      </Typography>
+                      {(backlogStatus.data.nightly_catchup
+                        .sequential_phases_with_backlog?.length ?? 0) > 0 && (
+                        <Typography
+                          variant='caption'
+                          color='text.secondary'
+                          display='block'
+                          sx={{ mt: 0.5 }}
+                        >
+                          Sequential phases with backlog:{' '}
+                          {backlogStatus.data.nightly_catchup.sequential_phases_with_backlog
+                            ?.map(p => `${p.phase} (${p.count})`)
+                            .join(', ')}
+                        </Typography>
+                      )}
+                      {(backlogStatus.data.nightly_catchup.recent_unified_runs
+                        ?.length ?? 0) > 0 && (
+                        <Box sx={{ mt: 1 }}>
+                          <Typography variant='caption' fontWeight={600}>
+                            Recent{' '}
+                            <code>nightly_enrichment_context</code> runs (newest
+                            first)
+                            {backlogStatus.data.nightly_catchup
+                              .recent_run_summary && (
+                              <span>
+                                {' '}
+                                — ok{' '}
+                                {
+                                  backlogStatus.data.nightly_catchup
+                                    .recent_run_summary.success ?? 0
+                                }
+                                , fail{' '}
+                                {
+                                  backlogStatus.data.nightly_catchup
+                                    .recent_run_summary.failure ?? 0
+                                }{' '}
+                                of{' '}
+                                {
+                                  backlogStatus.data.nightly_catchup
+                                    .recent_run_summary.listed ?? 0
+                                }{' '}
+                                listed
+                              </span>
+                            )}
+                          </Typography>
+                          <List dense disablePadding sx={{ mt: 0.5 }}>
+                            {backlogStatus.data.nightly_catchup.recent_unified_runs?.map(
+                              (r, i) => (
+                                <ListItem key={i} disableGutters sx={{ py: 0 }}>
+                                  <ListItemText
+                                    primary={
+                                      <Box
+                                        component='span'
+                                        sx={{
+                                          display: 'flex',
+                                          alignItems: 'center',
+                                          gap: 0.5,
+                                          flexWrap: 'wrap',
+                                        }}
+                                      >
+                                        <Chip
+                                          size='small'
+                                          label={
+                                            r.success === true
+                                              ? 'ok'
+                                              : r.success === false
+                                                ? 'fail'
+                                                : '—'
+                                          }
+                                          color={
+                                            r.success === true
+                                              ? 'success'
+                                              : r.success === false
+                                                ? 'error'
+                                                : 'default'
+                                          }
+                                          variant='outlined'
+                                          sx={{ height: 20 }}
+                                        />
+                                        <Typography
+                                          component='span'
+                                          variant='caption'
+                                        >
+                                          {r.finished_at
+                                            ? timeAgo(r.finished_at)
+                                            : r.started_at
+                                              ? `started ${timeAgo(r.started_at)}`
+                                              : '—'}
+                                        </Typography>
+                                      </Box>
+                                    }
+                                    secondary={
+                                      r.error_snippet || undefined
+                                    }
+                                    primaryTypographyProps={{
+                                      variant: 'caption',
+                                    }}
+                                    secondaryTypographyProps={{
+                                      variant: 'caption',
+                                    }}
+                                  />
+                                </ListItem>
+                              )
+                            )}
+                          </List>
+                        </Box>
+                      )}
+                    </>
+                  )}
                 </Alert>
               )}
               <Table size='small'>

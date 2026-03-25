@@ -7,10 +7,26 @@ See docs/CONTEXT_CENTRIC_UPGRADE_PLAN.md.
 
 import json
 import logging
+import os
 
 from shared.domain_registry import resolve_domain_schema
 
 logger = logging.getLogger(__name__)
+
+
+def _mention_backfill_limit() -> int:
+    """Contexts per domain to refresh per round (link_context_to_article_entities)."""
+    try:
+        return max(50, int(os.environ.get("ENTITY_PROFILE_SYNC_MENTION_BACKFILL_LIMIT", "10000")))
+    except ValueError:
+        return 10_000
+
+
+def _mention_backfill_rounds() -> int:
+    try:
+        return max(1, min(50, int(os.environ.get("ENTITY_PROFILE_SYNC_MENTION_BACKFILL_ROUNDS", "3"))))
+    except ValueError:
+        return 3
 
 
 def _schema_for_domain(domain_key: str) -> str:
@@ -40,22 +56,21 @@ def backfill_entity_canonical(domain_key: str) -> int:
                 FROM {schema}.article_entities ae
                 WHERE NOT EXISTS (
                     SELECT 1 FROM {schema}.entity_canonical ec
-                    WHERE ec.canonical_name = ae.entity_name
-                      AND ec.entity_type = ae.entity_type
+                    WHERE lower(trim(ec.canonical_name)) = lower(trim(ae.entity_name))
+                      AND ec.entity_type IS NOT DISTINCT FROM ae.entity_type
                 )
                 ORDER BY ae.entity_name
             """)
             created = cur.rowcount
 
-            if created > 0:
-                cur.execute(f"""
-                    UPDATE {schema}.article_entities ae
-                    SET canonical_entity_id = ec.id
-                    FROM {schema}.entity_canonical ec
-                    WHERE ae.entity_name = ec.canonical_name
-                      AND ae.entity_type = ec.entity_type
-                      AND ae.canonical_entity_id IS NULL
-                """)
+            cur.execute(f"""
+                UPDATE {schema}.article_entities ae
+                SET canonical_entity_id = ec.id
+                FROM {schema}.entity_canonical ec
+                WHERE lower(trim(ae.entity_name)) = lower(trim(ec.canonical_name))
+                  AND ae.entity_type IS NOT DISTINCT FROM ec.entity_type
+                  AND ae.canonical_entity_id IS NULL
+            """)
 
             conn.commit()
         conn.close()
@@ -79,10 +94,12 @@ def backfill_entity_canonical(domain_key: str) -> int:
 
 def sync_domain_entity_profiles(domain_key: str) -> int:
     """
-    For each row in {schema}.entity_canonical, ensure:
-    - intelligence.entity_profiles (domain_key, canonical_entity_id, compilation_date, sections default)
+    For each row in {schema}.entity_canonical lacking ``old_entity_to_new``, ensure:
+    - intelligence.entity_profiles (domain_key, canonical_entity_id, …)
     - intelligence.old_entity_to_new (domain_key, old_entity_id, entity_profile_id)
-    Returns number of new profiles created.
+
+    Uses two bulk SQL statements (no per-row round trips). Returns the number of **new**
+    ``old_entity_to_new`` rows inserted.
     """
     from shared.database.connection import get_db_connection
 
@@ -97,79 +114,67 @@ def sync_domain_entity_profiles(domain_key: str) -> int:
         with conn.cursor() as cur:
             cur.execute(
                 f"""
-                SELECT id, canonical_name, entity_type
-                FROM {schema_name}.entity_canonical
-                ORDER BY id
-                """
-            )
-            canonicals = cur.fetchall()
-            if not canonicals:
-                conn.close()
-                return 0
-
-            for old_entity_id, canonical_name, entity_type in canonicals:
-                # Already mapped?
-                cur.execute(
-                    """
-                    SELECT entity_profile_id FROM intelligence.old_entity_to_new
-                    WHERE domain_key = %s AND old_entity_id = %s
-                    """,
-                    (domain_key, old_entity_id),
-                )
-                if cur.fetchone():
-                    continue
-
-                # Insert entity_profiles row
-                metadata = json.dumps(
-                    {"canonical_name": canonical_name, "entity_type": entity_type}
-                )
-                cur.execute(
-                    """
-                    INSERT INTO intelligence.entity_profiles
+                INSERT INTO intelligence.entity_profiles
                     (domain_key, canonical_entity_id, compilation_date, sections, relationships_summary, metadata)
-                    VALUES (%s, %s, CURRENT_DATE, '[]', '[]', %s)
-                    ON CONFLICT (domain_key, canonical_entity_id) DO UPDATE SET updated_at = NOW()
-                    RETURNING id
-                    """,
-                    (domain_key, old_entity_id, metadata),
+                SELECT %s, ec.id, CURRENT_DATE, '[]', '[]',
+                    to_jsonb(json_build_object(
+                        'canonical_name', ec.canonical_name,
+                        'entity_type', ec.entity_type
+                    ))
+                FROM {schema_name}.entity_canonical ec
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM intelligence.old_entity_to_new o
+                    WHERE o.domain_key = %s AND o.old_entity_id = ec.id
                 )
-                row = cur.fetchone()
-                profile_id = row[0] if row else None
-                if not profile_id:
-                    cur.execute(
-                        """
-                        SELECT id FROM intelligence.entity_profiles
-                        WHERE domain_key = %s AND canonical_entity_id = %s
-                        """,
-                        (domain_key, old_entity_id),
-                    )
-                    profile_id = cur.fetchone()[0]
+                ON CONFLICT (domain_key, canonical_entity_id)
+                DO UPDATE SET updated_at = NOW()
+                """,
+                (domain_key, domain_key),
+            )
 
-                # Insert old_entity_to_new
-                cur.execute(
-                    """
-                    INSERT INTO intelligence.old_entity_to_new (domain_key, old_entity_id, entity_profile_id)
-                    VALUES (%s, %s, %s)
-                    ON CONFLICT (domain_key, old_entity_id) DO NOTHING
-                    """,
-                    (domain_key, old_entity_id, profile_id),
+            cur.execute(
+                f"""
+                INSERT INTO intelligence.old_entity_to_new (domain_key, old_entity_id, entity_profile_id)
+                SELECT %s, ec.id, ep.id
+                FROM {schema_name}.entity_canonical ec
+                INNER JOIN intelligence.entity_profiles ep
+                  ON ep.domain_key = %s AND ep.canonical_entity_id = ec.id
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM intelligence.old_entity_to_new o
+                    WHERE o.domain_key = %s AND o.old_entity_id = ec.id
                 )
-                if cur.rowcount:
-                    created += 1
+                """,
+                (domain_key, domain_key, domain_key),
+            )
+            created = cur.rowcount or 0
 
             conn.commit()
         conn.close()
         if created > 0:
             logger.info(f"Entity profile sync {domain_key}: {created} new mappings created")
-        # Backfill context_entity_mentions for existing contexts (article_entities now map to profiles)
         try:
             from services.context_processor_service import (
                 backfill_context_entity_mentions_for_domain,
             )
 
-            backfill_context_entity_mentions_for_domain(domain_key, limit=1000)
+            lim = _mention_backfill_limit()
+            rounds = _mention_backfill_rounds()
+            total_bf = 0
+            for _ in range(rounds):
+                n = backfill_context_entity_mentions_for_domain(domain_key, limit=lim)
+                total_bf += n
+                if n <= 0:
+                    break
+            if total_bf > 0:
+                logger.info(
+                    "Entity profile sync %s: context_entity_mentions rounds=%s updated_contexts≈%s (limit/round=%s)",
+                    domain_key,
+                    rounds,
+                    total_bf,
+                    lim,
+                )
         except Exception as e:
-            logger.debug(f"Entity profile sync backfill mentions: {e}")
+            logger.debug("Entity profile sync backfill mentions: %s", e)
         return created
     except Exception as e:
         logger.warning(f"Entity profile sync {domain_key} failed: {e}")

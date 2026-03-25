@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run migration 193: article_topic_clusters for optional domain silos.
+"""Run migration 193: article_topic_clusters for YAML-onboarded domain silos.
 
 From project root:
   PYTHONPATH=api uv run python api/scripts/run_migration_193.py

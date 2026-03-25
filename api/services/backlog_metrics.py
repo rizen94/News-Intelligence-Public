@@ -15,7 +15,7 @@ from shared.article_processing_gates import (
     sql_context_sync_article_ready,
     sql_ml_ready_and_content_bounds,
 )
-from shared.domain_registry import get_schema_names_active, url_schema_pairs
+from shared.domain_registry import get_pipeline_schema_names_active, pipeline_url_schema_pairs
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +51,8 @@ BATCH_SIZE_PER_TASK: Dict[str, int] = {
     "storyline_automation": 5,  # automation_manager LIMIT storylines per domain per tick
     "rag_enhancement": 9,  # few storylines enhanced per tick per domain
     "event_extraction": 90,  # 30 × 3
-    "claims_to_facts": 50,  # promote batch limit aligns with promote_claims_to_versioned_facts
+    "claims_to_facts": 10_000,  # overridden by get_claims_to_facts_batch_limit() when available
+    "legislative_references": 8,  # articles scanned per domain per run (Congress.gov rate limits)
     "entity_profile_sync": 40,  # canonical rows mapped per domain batch (approx)
     "entity_enrichment": 20,  # run_enrichment_batch limit
     "entity_dossier_compile": 20,  # _run_scheduled_dossier_compiles max per run
@@ -92,6 +93,7 @@ def _get_raw_pending_counts() -> Dict[str, int]:
         raw["proactive_detection"] = _count_proactive_detection_pending()
         raw["storyline_automation"] = _count_storyline_automation_pending()
         raw["claims_to_facts"] = _count_claims_to_facts_pending()
+        raw["legislative_references"] = _count_legislative_references_backlog()
         raw["entity_profile_sync"] = _count_entity_profile_sync_pending()
         raw["entity_enrichment"] = _count_entity_enrichment_pending()
         raw["nightly_enrichment_context"] = (
@@ -115,6 +117,35 @@ def invalidate_backlog_metrics_cache() -> None:
     _backlog_cache_time = 0.0
 
 
+def _per_run_batch_size(task: str) -> int:
+    """Align backlog subtraction with actual automation batch sizes (env-tunable for claim phases)."""
+    if task == "entity_extraction":
+        try:
+            import os
+
+            n = int(os.environ.get("ENTITY_EXTRACTION_ARTICLES_PER_DOMAIN", "20"))
+            n = max(5, min(120, n))
+            doms = len(get_pipeline_schema_names_active()) or 1
+            return n * doms
+        except Exception:
+            pass
+    if task == "claim_extraction":
+        try:
+            from services.claim_extraction_service import get_claim_extraction_batch_limit
+
+            return int(get_claim_extraction_batch_limit())
+        except Exception:
+            pass
+    if task == "claims_to_facts":
+        try:
+            from services.claim_extraction_service import get_claims_to_facts_batch_limit
+
+            return int(get_claims_to_facts_batch_limit())
+        except Exception:
+            pass
+    return int(BATCH_SIZE_PER_TASK.get(task, 0) or 0)
+
+
 def _refresh_cache() -> None:
     """Refresh both pending and backlog caches."""
     global _backlog_cache, _backlog_cache_time, _pending_cache, _pending_cache_time
@@ -128,7 +159,7 @@ def _refresh_cache() -> None:
 
     out: Dict[str, int] = {}
     for task, pending in raw.items():
-        batch = BATCH_SIZE_PER_TASK.get(task, 0)
+        batch = _per_run_batch_size(task)
         out[task] = max(pending - batch, 0)
     _backlog_cache = out
     _backlog_cache_time = now
@@ -178,7 +209,7 @@ def _count_content_enrichment_backlog() -> int:
         return 0
     total = 0
     try:
-        for schema in get_schema_names_active():
+        for schema in get_pipeline_schema_names_active():
             with conn.cursor() as cur:
                 cur.execute(
                     f"""
@@ -208,7 +239,7 @@ def _count_context_sync_backlog() -> int:
     total = 0
     ready = sql_context_sync_article_ready("a")
     try:
-        for domain_key, schema in url_schema_pairs():
+        for domain_key, schema in pipeline_url_schema_pairs():
             with conn.cursor() as cur:
                 cur.execute(
                     f"""
@@ -398,7 +429,7 @@ def _count_metadata_enrichment_pending() -> int:
         return 0
     total = 0
     try:
-        for schema in get_schema_names_active():
+        for schema in get_pipeline_schema_names_active():
             with conn.cursor() as cur:
                 cur.execute("SET LOCAL statement_timeout = '3s'")
                 cur.execute(
@@ -428,7 +459,7 @@ def _count_ml_processing_pending() -> int:
     total = 0
     ml_ready = sql_ml_ready_and_content_bounds()
     try:
-        for schema in get_schema_names_active():
+        for schema in get_pipeline_schema_names_active():
             with conn.cursor() as cur:
                 cur.execute("SET LOCAL statement_timeout = '3s'")
                 cur.execute(
@@ -457,7 +488,7 @@ def _count_entity_extraction_pending() -> int:
         return 0
     total = 0
     try:
-        for schema in get_schema_names_active():
+        for schema in get_pipeline_schema_names_active():
             with conn.cursor() as cur:
                 cur.execute("SET LOCAL statement_timeout = '3s'")
                 cur.execute(
@@ -492,7 +523,7 @@ def _count_sentiment_analysis_pending() -> int:
     total = 0
     ml_ready = sql_ml_ready_and_content_bounds()
     try:
-        for schema in get_schema_names_active():
+        for schema in get_pipeline_schema_names_active():
             with conn.cursor() as cur:
                 cur.execute("SET LOCAL statement_timeout = '3s'")
                 cur.execute(
@@ -521,7 +552,7 @@ def _count_quality_scoring_pending() -> int:
     total = 0
     ml_ready = sql_ml_ready_and_content_bounds()
     try:
-        for schema in get_schema_names_active():
+        for schema in get_pipeline_schema_names_active():
             with conn.cursor() as cur:
                 cur.execute("SET LOCAL statement_timeout = '3s'")
                 cur.execute(
@@ -550,7 +581,7 @@ def _count_storyline_processing_pending() -> int:
         return 0
     total = 0
     try:
-        for schema in get_schema_names_active():
+        for schema in get_pipeline_schema_names_active():
             with conn.cursor() as cur:
                 cur.execute("SET LOCAL statement_timeout = '3s'")
                 cur.execute(
@@ -586,7 +617,7 @@ def _count_topic_clustering_pending() -> int:
     total = 0
     conf = 0.93
     try:
-        for schema in get_schema_names_active():
+        for schema in get_pipeline_schema_names_active():
             with conn.cursor() as cur:
                 cur.execute("SET LOCAL statement_timeout = '3s'")
                 cur.execute(
@@ -623,7 +654,7 @@ def _count_timeline_generation_pending() -> int:
         return 0
     total = 0
     try:
-        for schema in get_schema_names_active():
+        for schema in get_pipeline_schema_names_active():
             with conn.cursor() as cur:
                 cur.execute("SET LOCAL statement_timeout = '3s'")
                 cur.execute(
@@ -663,7 +694,7 @@ def _count_storyline_discovery_pending() -> int:
         return 0
     total = 0
     try:
-        for schema in get_schema_names_active():
+        for schema in get_pipeline_schema_names_active():
             with conn.cursor() as cur:
                 cur.execute("SET LOCAL statement_timeout = '5s'")
                 cur.execute(
@@ -700,7 +731,7 @@ def _count_proactive_detection_pending() -> int:
         return 0
     total = 0
     try:
-        for schema in get_schema_names_active():
+        for schema in get_pipeline_schema_names_active():
             with conn.cursor() as cur:
                 cur.execute("SET LOCAL statement_timeout = '5s'")
                 cur.execute(
@@ -730,7 +761,7 @@ def _count_storyline_automation_pending() -> int:
         return 0
     total = 0
     try:
-        for schema in get_schema_names_active():
+        for schema in get_pipeline_schema_names_active():
             with conn.cursor() as cur:
                 cur.execute("SET LOCAL statement_timeout = '3s'")
                 cur.execute(
@@ -758,7 +789,7 @@ def _count_rag_enhancement_pending() -> int:
         return 0
     total = 0
     try:
-        for schema in get_schema_names_active():
+        for schema in get_pipeline_schema_names_active():
             with conn.cursor() as cur:
                 cur.execute("SET LOCAL statement_timeout = '3s'")
                 cur.execute(
@@ -789,6 +820,17 @@ def _count_rag_enhancement_pending() -> int:
 
 def _count_claims_to_facts_pending() -> int:
     """extracted_claims eligible for promotion (same filter as promote_claims_to_versioned_facts)."""
+    extra_ign = ""
+    try:
+        from services.claim_extraction_service import (
+            CLAIM_PROMOTION_GAP_IGNORED_EXCLUDE_SQL,
+            get_claims_to_facts_min_confidence,
+        )
+
+        min_conf = float(get_claims_to_facts_min_confidence())
+        extra_ign = CLAIM_PROMOTION_GAP_IGNORED_EXCLUDE_SQL
+    except Exception:
+        min_conf = 0.75
     conn = _get_conn()
     if not conn:
         return 0
@@ -798,12 +840,14 @@ def _count_claims_to_facts_pending() -> int:
             cur.execute(
                 """
                 SELECT COUNT(*) FROM intelligence.extracted_claims ec
-                WHERE ec.confidence >= 0.7
+                WHERE ec.confidence >= %s
                   AND NOT EXISTS (
                       SELECT 1 FROM intelligence.versioned_facts vf
                       WHERE vf.metadata->>'source_claim_id' = ec.id::text
                   )
                 """
+                + extra_ign,
+                (min_conf,),
             )
             return int(cur.fetchone()[0] or 0)
     except Exception as e:
@@ -823,7 +867,7 @@ def _count_entity_profile_sync_pending() -> int:
         return 0
     total = 0
     try:
-        for domain_key, schema in url_schema_pairs():
+        for domain_key, schema in pipeline_url_schema_pairs():
             with conn.cursor() as cur:
                 cur.execute("SET LOCAL statement_timeout = '5s'")
                 cur.execute(
@@ -867,7 +911,7 @@ def _count_event_extraction_pending() -> int:
         return 0
     total = 0
     try:
-        for schema in get_schema_names_active():
+        for schema in get_pipeline_schema_names_active():
             with conn.cursor() as cur:
                 cur.execute("SET LOCAL statement_timeout = '3s'")
                 cur.execute(
@@ -956,7 +1000,7 @@ def _count_storyline_synthesis_pending() -> int:
         return 0
     total = 0
     try:
-        for schema in get_schema_names_active():
+        for schema in get_pipeline_schema_names_active():
             with conn.cursor() as cur:
                 cur.execute("SET LOCAL statement_timeout = '5s'")
                 try:
@@ -998,6 +1042,45 @@ def _count_storyline_synthesis_pending() -> int:
             pass
 
 
+def _count_legislative_references_backlog() -> int:
+    """Politics/legal articles without a legislative_article_scans row (bill-citation pass)."""
+    try:
+        from shared.database.connection import get_db_connection_context
+        from shared.domain_registry import is_valid_domain_key, resolve_domain_schema
+        from services.legislative_reference_service import (
+            LEGISLATIVE_SCAN_DOMAIN_KEYS,
+            SCAN_ARTICLE_DAYS,
+        )
+    except Exception as e:
+        logger.debug("legislative_references backlog import: %s", e)
+        return 0
+    total = 0
+    try:
+        with get_db_connection_context() as conn:
+            with conn.cursor() as cur:
+                for dk in LEGISLATIVE_SCAN_DOMAIN_KEYS:
+                    if not is_valid_domain_key(dk):
+                        continue
+                    schema = resolve_domain_schema(dk)
+                    cur.execute(
+                        f"""
+                        SELECT COUNT(*) FROM {schema}.articles a
+                        WHERE (a.enrichment_status IS NULL OR a.enrichment_status != 'removed')
+                          AND a.created_at > NOW() - INTERVAL '{int(SCAN_ARTICLE_DAYS)} days'
+                          AND NOT EXISTS (
+                              SELECT 1 FROM intelligence.legislative_article_scans s
+                              WHERE s.domain_key = %s AND s.article_id = a.id
+                          )
+                        """,
+                        (dk,),
+                    )
+                    total += int(cur.fetchone()[0] or 0)
+    except Exception as e:
+        logger.debug("legislative_references backlog query: %s", e)
+        return 0
+    return total
+
+
 # Phases that should be skipped when backlog is 0 (avoid empty cycles)
 # document_processing omitted so it runs on interval even if backlog count is wrong (e.g. DB timeout)
 # content_refinement_queue omitted: must run on interval when idle so automation history updates;
@@ -1025,6 +1108,7 @@ SKIP_WHEN_EMPTY = frozenset({
     "rag_enhancement",
     "event_extraction",
     "claims_to_facts",
+    "legislative_references",
     "entity_profile_sync",
     "entity_enrichment",
     "entity_dossier_compile",

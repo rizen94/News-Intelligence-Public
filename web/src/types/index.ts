@@ -188,6 +188,11 @@ export interface StorylineDetail extends Storyline {
     published_at?: string | null;
     summary?: string | null;
   }>;
+  /** Article counts by source_domain (multi-source vs single-source) */
+  source_coverage?: Array<{
+    source_domain: string;
+    article_count: number;
+  }>;
   background_information?: Record<string, unknown> | null;
   context_last_updated?: string | null;
   last_refinement?: string | null;

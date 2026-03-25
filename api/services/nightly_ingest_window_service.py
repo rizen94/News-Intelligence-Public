@@ -25,7 +25,10 @@ phases — sequential sub-runs from this module bypass that gate (they are orche
 Temporary catch-up: set ``NIGHTLY_PIPELINE_ALL_DAY=true`` to treat the unified pipeline as **always**
 inside the local window (24/7) until unset — same behavior as 01:00–07:00 extended all day
 (``nightly_enrichment_context`` every 60s, ``NIGHTLY_PIPELINE_EXCLUSIVE`` applies around the clock).
-Restart API after changing env.
+
+**Disable unified nightly:** set ``NIGHTLY_UNIFIED_PIPELINE_ENABLED=false`` — the local time window is
+never active, ``nightly_enrichment_context`` does not schedule, and the main AutomationManager interval
+schedule runs all phases (no exclusive overnight backlog drain). Restart API after changing env.
 """
 
 from __future__ import annotations
@@ -33,7 +36,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -44,6 +47,16 @@ logger = logging.getLogger(__name__)
 _nightly_ingest_lock = asyncio.Lock()
 _nightly_kickoff_rss_local_date: str | None = None
 _logged_nightly_all_day: bool = False
+
+
+def nightly_unified_pipeline_enabled() -> bool:
+    """When false, the 01:00–07:00 (or ALL_DAY) unified drain never runs; daytime automation handles work."""
+    return os.environ.get("NIGHTLY_UNIFIED_PIPELINE_ENABLED", "true").lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
+    )
 
 
 def _nightly_pipeline_all_day_enabled() -> bool:
@@ -106,9 +119,70 @@ def nightly_automation_tz() -> ZoneInfo:
         return ZoneInfo("America/New_York")
 
 
+def nightly_sequential_phases() -> list[str]:
+    """Phases drained in order during the unified nightly pipeline (env ``NIGHTLY_SEQUENTIAL_PHASES``)."""
+    return list(_nightly_sequential_phase_list())
+
+
+def nightly_pipeline_window_info() -> dict[str, Any]:
+    """
+    Snapshot for monitoring: schedule, env flags, and next window boundary in nightly automation TZ.
+    Assumes ``NIGHTLY_PIPELINE_START_HOUR`` < ``NIGHTLY_PIPELINE_END_HOUR`` (same calendar day).
+    """
+    zi = nightly_automation_tz()
+    start_h = int(os.environ.get("NIGHTLY_PIPELINE_START_HOUR", "1"))
+    end_h = int(os.environ.get("NIGHTLY_PIPELINE_END_HOUR", "7"))
+    all_day = _nightly_pipeline_all_day_enabled()
+    exclusive = os.environ.get("NIGHTLY_PIPELINE_EXCLUSIVE", "true").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    ingest_exclusive = nightly_ingest_exclusive_automation_enabled()
+    enrich_start = int(os.environ.get("NIGHTLY_ENRICHMENT_CONTEXT_START_HOUR", "1"))
+    enrich_end = int(os.environ.get("NIGHTLY_ENRICHMENT_CONTEXT_END_HOUR", "7"))
+    now_local = datetime.now(zi)
+    in_window = in_nightly_pipeline_window_est()
+    window_label = f"{start_h:02d}:00–{end_h:02d}:00 ({zi})"
+
+    start_dt = now_local.replace(hour=start_h, minute=0, second=0, microsecond=0)
+    end_dt = now_local.replace(hour=end_h, minute=0, second=0, microsecond=0)
+
+    window_ends_local: str | None = None
+    next_window_starts_local: str | None = None
+    if not all_day:
+        if in_window:
+            window_ends_local = end_dt.isoformat()
+        elif now_local < start_dt:
+            next_window_starts_local = start_dt.isoformat()
+        else:
+            next_window_starts_local = (
+                (now_local + timedelta(days=1))
+                .replace(hour=start_h, minute=0, second=0, microsecond=0)
+                .isoformat()
+            )
+
+    return {
+        "timezone": str(zi),
+        "unified_pipeline_enabled": nightly_unified_pipeline_enabled(),
+        "pipeline_start_hour_local": start_h,
+        "pipeline_end_hour_local": end_h,
+        "window_label": window_label,
+        "all_day_catchup": all_day,
+        "exclusive_other_phases": exclusive,
+        "nightly_ingest_exclusive_automation": ingest_exclusive,
+        "enrichment_context_subwindow_local": f"{enrich_start:02d}:00–{enrich_end:02d}:00",
+        "in_unified_window": in_window,
+        "window_ends_local": window_ends_local,
+        "next_window_starts_local": next_window_starts_local,
+    }
+
+
 def in_nightly_pipeline_window_est() -> bool:
     """Unified nightly catch-up window [start, end) local time (default 01:00–07:00)."""
     global _logged_nightly_all_day
+    if not nightly_unified_pipeline_enabled():
+        return False
     if _nightly_pipeline_all_day_enabled():
         if not _logged_nightly_all_day:
             logger.info(
@@ -131,6 +205,8 @@ def in_nightly_enrichment_context_window_est() -> bool:
     Sub-window for ingest-focused exclusive automation (default 01:00–07:00, aligned with pipeline).
     Does not limit when enrichment runs inside the unified pipeline — only NIGHTLY_INGEST_EXCLUSIVE.
     """
+    if not nightly_unified_pipeline_enabled():
+        return False
     if _nightly_pipeline_all_day_enabled():
         return True
     zi = nightly_automation_tz()

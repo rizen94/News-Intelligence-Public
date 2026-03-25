@@ -1,0 +1,38 @@
+# Template-style finance silo (parallel to built-in ``finance``). Requires migration 201.
+# Commodity / gold / FRED routes stay under ``/api/{domain}/finance/...`` — use domain path
+# ``finance-2`` so ``validate_domain`` resolves to schema ``finance_2``.
+#
+# Background jobs (orchestrator, evidence) read articles via FINANCE_PG_CONTENT_DOMAIN_KEY (default ``finance``).
+# Set FINANCE_PG_CONTENT_DOMAIN_KEY=finance-2 and FINANCE_CONTEXT_DOMAIN_KEY when cutting over.
+#
+# RSS: seed finance_2.rss_feeds then RSS_INGEST_EXCLUDE_DOMAIN_KEYS=finance
+
+domain_key: finance-2
+schema_name: finance_2
+display_name: Finance (template)
+description: >-
+  YAML-onboarded finance silo for gradual migration off legacy ``finance`` schema.
+  Specialized finance API paths work with ``domain=finance-2`` in the URL.
+display_order: 26
+is_active: true
+
+_instructions: |
+  1. Apply migration 201 (run_migration_201.py).
+  2. Copy feeds from finance.rss_feeds → finance_2.rss_feeds or seed_feed_urls + seed_domain_rss_from_yaml.py.
+  3. RSS_INGEST_EXCLUDE_DOMAIN_KEYS=finance when -2 feeds are ready.
+  4. FINANCE_PG_CONTENT_DOMAIN_KEY=finance-2 (+ FINANCE_CONTEXT_DOMAIN_KEY=finance-2) for orchestrator/evidence/SEC signal.
+
+data_sources:
+  rss:
+    seed_feed_urls: []
+
+focus_areas:
+  - Commodities, markets, macro — same as legacy finance during migration
+
+llm_prompt_guidance: |
+  Same as production finance silo until data migration completes.
+
+workload_assumptions:
+  expected_active_feeds: 0
+  rough_new_articles_per_day: 0
+  llm_heavy_phases_enabled: true

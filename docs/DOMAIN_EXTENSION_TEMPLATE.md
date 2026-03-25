@@ -1,6 +1,6 @@
 # Domain extension template
 
-**Concept:** One **onboarding YAML** per optional domain (`api/config/domains/{domain_key}.yaml`) plus a **mechanical path**: SQL migration, [`api/scripts/provision_domain.py`](../api/scripts/provision_domain.py), and verification. The web app discovers domains from **`GET /api/system_monitoring/registry_domains`** (backed by [`domain_registry`](../api/shared/domain_registry.py)); built-ins **politics**, **finance**, **science-tech** are always present.
+**Concept:** One **onboarding YAML** per additional silo (`api/config/domains/{domain_key}.yaml`) plus a **mechanical path**: SQL migration, [`api/scripts/provision_domain.py`](../api/scripts/provision_domain.py), and verification. Once live, that silo is **first-class** — same routes and pipeline as the three built-ins. The web app discovers domains from **`GET /api/system_monitoring/registry_domains`** (backed by [`domain_registry`](../api/shared/domain_registry.py)); built-ins **politics**, **finance**, **science-tech** are always present and cannot be overridden by YAML.
 
 **Onboarding YAML is not Docker or Kubernetes.** These files are **application configuration** read by Python (**`get_domain_entries()`** re-reads YAML on each call). They do not start containers or sidecars. Think of a domain as an **isolated silo** (Postgres schema + declared metadata), not a separate runtime unit.
 
@@ -91,7 +91,7 @@ print('OK:', p)
 
 ---
 
-## Operator checklist (new optional domain)
+## Operator checklist (new YAML-onboarded silo)
 
 | Step | Action |
 |------|--------|
@@ -112,7 +112,7 @@ print('OK:', p)
 
 ## Permanent domain contract (all systems agree)
 
-Treat a **finished** optional domain like a fourth/fifth built-in silo: same code paths, isolated data. **Rules** so registry, DB, API, automation, and UI stay aligned:
+Treat a **finished** onboarded silo like another built-in: same code paths, isolated data. **Rules** so registry, DB, API, automation, and UI stay aligned:
 
 1. **One URL key, one schema, one row** — `domain_key` (hyphenated) and `schema_name` (underscore) are fixed after go-live; they appear identically in **onboarding YAML**, **`public.domains`**, and every `/api/{domain_key}/...` call. Renaming later is a **migration + deploy** event, not a YAML tweak alone.
 

@@ -182,7 +182,9 @@ def get_backlog_status() -> dict[str, Any]:
     with throughput and catch-up ETA. Throughput prefers a rolling average over the last
     four days when enough samples exist, then 1h/24h measurements, then static estimates.
     Includes steady_state (automation backlog clear + pipeline queues clear + non-growing
-    article trend + overall iterations at baseline). Used by the Monitor page.
+    article trend + overall iterations at baseline). Adds nightly_catchup: unified nightly
+    window schedule, drain-phase automation backlogs, sequential phases still holding work,
+    and recent nightly_enrichment_context runs from automation_run_history. Used by the Monitor page.
     """
     # get_db_connection() raises ConnectionError when UI pool is exhausted or DB is down (no longer returns None).
     try:
@@ -193,6 +195,7 @@ def get_backlog_status() -> dict[str, Any]:
 
     try:
         cur = conn.cursor()
+        nightly_recent_runs: list[dict[str, Any]] = []
         try:
             # Keep monitor responsive under DB load: each statement fails fast.
             cur.execute("SET LOCAL statement_timeout = '3s'")
@@ -465,7 +468,7 @@ def get_backlog_status() -> dict[str, Any]:
                 {"reason": row[0], "count": row[1] or 0} for row in (cur.fetchall() or [])
             ]
         except Exception:
-            pass
+            _rollback_db_connection(conn)
 
         # Synthesis results per domain (storylines synthesized in last 1h, 2h, 4d)
         synthesis_last_1h: dict[str, int] = {}
@@ -497,6 +500,30 @@ def get_backlog_status() -> dict[str, Any]:
                 synthesis_last_1h[domain_key] = 0
                 synthesis_last_2h[domain_key] = 0
                 synthesis_last_4d[domain_key] = 0
+
+        try:
+            cur.execute(
+                """
+                SELECT phase_name, started_at, finished_at, success,
+                       LEFT(COALESCE(error_message, ''), 200)
+                FROM automation_run_history
+                WHERE phase_name = 'nightly_enrichment_context'
+                ORDER BY COALESCE(finished_at, started_at) DESC NULLS LAST
+                LIMIT 14
+                """
+            )
+            for row in cur.fetchall() or []:
+                nightly_recent_runs.append(
+                    {
+                        "phase_name": row[0],
+                        "started_at": row[1].isoformat() if row[1] else None,
+                        "finished_at": row[2].isoformat() if row[2] else None,
+                        "success": bool(row[3]) if row[3] is not None else None,
+                        "error_snippet": row[4] or None,
+                    }
+                )
+        except Exception:
+            _rollback_db_connection(conn)
 
         cur.close()
         conn.close()
@@ -645,6 +672,7 @@ def get_backlog_status() -> dict[str, Any]:
 
     automation_backlog_nonzero: list[str] = []
     automation_backlog_clear = True
+    _bc: dict[str, int] = {}
     try:
         from services.backlog_metrics import get_all_backlog_counts
 
@@ -656,6 +684,50 @@ def get_backlog_status() -> dict[str, Any]:
     except Exception as ex:
         automation_backlog_clear = False
         automation_backlog_nonzero.append(f"backlog_metrics_unavailable:{str(ex)[:120]}")
+
+    nightly_catchup: dict[str, Any] = {}
+    try:
+        from services.nightly_ingest_window_service import (
+            nightly_pipeline_window_info,
+            nightly_sequential_phases,
+        )
+
+        seq_phases = nightly_sequential_phases()
+        window_info = nightly_pipeline_window_info()
+        drain_keys = ("content_enrichment", "context_sync", "content_refinement_queue")
+        drain_phases_backlog = {k: int(_bc.get(k, 0) or 0) for k in drain_keys}
+        sequential_with_backlog: list[dict[str, Any]] = []
+        for p in seq_phases:
+            c = int(_bc.get(p, 0) or 0)
+            if c > 0:
+                sequential_with_backlog.append({"phase": p, "count": c})
+        nightly_drain_idle = (
+            drain_phases_backlog["content_enrichment"] == 0
+            and drain_phases_backlog["context_sync"] == 0
+            and drain_phases_backlog["content_refinement_queue"] == 0
+            and not sequential_with_backlog
+        )
+        recent_ok = sum(
+            1 for r in nightly_recent_runs if r.get("success") is True
+        )
+        recent_fail = sum(
+            1 for r in nightly_recent_runs if r.get("success") is False
+        )
+        nightly_catchup = {
+            "window": window_info,
+            "sequential_phase_order": seq_phases,
+            "drain_phases_backlog": drain_phases_backlog,
+            "sequential_phases_with_backlog": sequential_with_backlog[:40],
+            "nightly_drain_idle": nightly_drain_idle,
+            "recent_unified_runs": nightly_recent_runs,
+            "recent_run_summary": {
+                "listed": len(nightly_recent_runs),
+                "success": recent_ok,
+                "failure": recent_fail,
+            },
+        }
+    except Exception as ex:
+        nightly_catchup = {"error": str(ex)[:200]}
 
     pipeline_queues_clear = (
         article_backlog == 0
@@ -717,6 +789,7 @@ def get_backlog_status() -> dict[str, Any]:
                 },
                 "reasons": steady_reasons,
             },
+            "nightly_catchup": nightly_catchup,
             "articles": {
                 "backlog": article_backlog,
                 "per_hour": round(articles_per_hour, 2),

@@ -36,7 +36,10 @@ async def _get_embedding(text: str) -> list[float] | None:
                 json={"model": EMBED_MODEL, "prompt": text},
             )
             if resp.status_code == 200:
-                return resp.json().get("embedding")
+                data = resp.json()
+                if not isinstance(data, dict):
+                    return None
+                return data.get("embedding")
         except Exception as e:
             logger.error(f"Embedding request failed: {e}")
     return None

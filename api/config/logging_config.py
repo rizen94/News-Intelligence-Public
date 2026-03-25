@@ -96,6 +96,13 @@ class NewsIntelligenceLogger:
             json_file="performance_structured.json",
         )
 
+        # Operations / incidents logger (DB reachability, route supervisor alerts, etc.)
+        self.ops_logger = self._create_logger(
+            name="news_intelligence.ops",
+            log_file="ops.log",
+            json_file="ops_structured.json",
+        )
+
     def _create_specialized_loggers(self):
         """Create specialized loggers for different components"""
         if self.enable_ml_logging:
@@ -188,6 +195,7 @@ class NewsIntelligenceLogger:
             "database": self.db_logger,
             "error": self.error_logger,
             "performance": self.perf_logger,
+            "ops": self.ops_logger,
             "ml": getattr(self, "ml_logger", None),
             "deduplication": getattr(self, "dedup_logger", None),
             "rss": self.rss_logger,

@@ -278,7 +278,7 @@ def main() -> None:
                 if schema_name in RESERVED_SCHEMA_NAMES:
                     raise SystemExit(
                         "Refusing: schema_name is reserved (system/core). "
-                        "Use a different schema_name for a new optional domain."
+                        "Use a different schema_name for a new YAML-onboarded silo."
                     )
                 ok, msg = _preflight_schema_empty(cur, schema_name)
                 if not ok:

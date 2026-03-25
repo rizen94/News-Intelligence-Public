@@ -9,6 +9,7 @@ See docs/RAG_ENHANCEMENT_ROADMAP.md, docs/V6_QUALITY_FIRST_TODO.md T1.2.
 """
 
 import logging
+import os
 import re
 from typing import Any
 
@@ -98,6 +99,90 @@ def _name_ends_with_role_word(name: str) -> bool:
     return last in LAST_WORD_ROLE_BLOCKLIST
 
 
+ENTITY_TYPES = ("person", "organization", "subject", "recurring_event", "family")
+REL_MEMBER_OF_FAMILY = "member_of_family"
+
+
+def _person_matches_first_name(canonical_name: str, aliases: list[str] | None, first_tok: str) -> bool:
+    """True if canonical (or alias) is clearly this given-first-name + rest."""
+    if not first_tok or len(first_tok) < 2:
+        return False
+    ft = first_tok.lower()
+    for raw in [canonical_name, *(aliases or [])]:
+        s = (raw or "").strip().lower()
+        if not s:
+            continue
+        if s == ft or s.startswith(ft + " "):
+            return True
+    return False
+
+
+def _get_or_create_family_canonical(cur, schema: str, surname_token: str) -> int | None:
+    """Surname umbrella row, e.g. 'Trump' -> canonical 'Trump family', entity_type family."""
+    sur = surname_token.strip()
+    if len(sur) < 2:
+        return None
+    family_label = f"{sur.title()} family"
+    cur.execute(
+        f"""
+        INSERT INTO {schema}.entity_canonical (canonical_name, entity_type, aliases)
+        VALUES (%s, 'family', ARRAY[%s, %s]::TEXT[])
+        ON CONFLICT (canonical_name, entity_type) DO UPDATE SET updated_at = NOW()
+        RETURNING id
+        """,
+        (family_label, sur.title(), family_label),
+    )
+    row = cur.fetchone()
+    if row and row[0] is not None:
+        return int(row[0])
+    cur.execute(
+        f"""
+        SELECT id FROM {schema}.entity_canonical
+        WHERE entity_type = 'family' AND LOWER(canonical_name) = LOWER(%s)
+        LIMIT 1
+        """,
+        (family_label,),
+    )
+    row2 = cur.fetchone()
+    return int(row2[0]) if row2 and row2[0] is not None else None
+
+
+def _ensure_member_of_family_edge(cur, domain_key: str, person_canonical_id: int, family_canonical_id: int) -> None:
+    cur.execute(
+        """
+        SELECT 1 FROM intelligence.entity_relationships
+        WHERE source_domain = %s AND source_entity_id = %s
+          AND target_domain = %s AND target_entity_id = %s
+          AND relationship_type = %s
+        LIMIT 1
+        """,
+        (domain_key, person_canonical_id, domain_key, family_canonical_id, REL_MEMBER_OF_FAMILY),
+    )
+    if cur.fetchone():
+        return
+    cur.execute(
+        """
+        INSERT INTO intelligence.entity_relationships
+        (source_domain, source_entity_id, target_domain, target_entity_id, relationship_type, confidence)
+        VALUES (%s, %s, %s, %s, %s, 0.99)
+        """,
+        (domain_key, person_canonical_id, domain_key, family_canonical_id, REL_MEMBER_OF_FAMILY),
+    )
+
+
+def _link_surname_cluster_to_family(
+    cur, schema: str, domain_key: str, surname_display: str, candidate_rows: list[tuple[int, str, list[str]]]
+) -> int | None:
+    """Create/get family canonical and member_of_family edges for all persons in cluster."""
+    fam_id = _get_or_create_family_canonical(cur, schema, surname_display)
+    if not fam_id:
+        return None
+    for pid, _cname, _aliases in candidate_rows:
+        if pid != fam_id:
+            _ensure_member_of_family_edge(cur, domain_key, pid, fam_id)
+    return fam_id
+
+
 # ---------------------------------------------------------------------------
 # Core resolution (enhanced with title stripping + last-name fallback)
 # ---------------------------------------------------------------------------
@@ -115,7 +200,10 @@ def resolve_to_canonical(
     Matching cascade:
       1. Exact canonical_name or alias (case-insensitive)
       2. Title-stripped name match (e.g., "President Biden" → "Joe Biden")
-      3. If person and multi-word, last-name match against single-match canonicals
+      3. Person surname cluster: unique last-name hit → that person; multiple hits →
+         first-name disambiguation; still ambiguous or surname-only mention →
+         ``{Surname} family`` umbrella (``entity_type=family``) with ``member_of_family``
+         edges to each distinct person (see ``reconcile_surname_family_clusters``).
 
     On match at step 2/3, the mention name is added to aliases.
     If create_if_missing and no match, inserts a new canonical.
@@ -124,7 +212,7 @@ def resolve_to_canonical(
     if not name or len(name) < 2:
         return None
     etype = (entity_type or "person").strip().lower()
-    if etype not in ("person", "organization", "subject", "recurring_event"):
+    if etype not in ENTITY_TYPES:
         etype = "person"
     schema = _schema_for_domain(domain_key)
 
@@ -183,13 +271,22 @@ def resolve_to_canonical(
                     conn.close()
                     return row[0]
 
-            # --- Step 3: last-name fallback for persons ---
+            # --- Step 3: last-name fallback for persons (single match, first-name tie-break, or family umbrella)
             if etype == "person":
                 last_name = _extract_last_name(stripped)
+                if (
+                    not last_name
+                    and len(stripped.split()) == 1
+                    and len(stripped.strip()) >= 3
+                    and not _name_ends_with_role_word(stripped)
+                ):
+                    last_name = stripped.strip()
                 if last_name and len(last_name) >= 3:
+                    ln_pat = f" {last_name.lower()}"
                     cur.execute(
                         f"""
-                        SELECT id, canonical_name FROM {schema}.entity_canonical
+                        SELECT id, canonical_name, COALESCE(aliases, '{{}}')
+                        FROM {schema}.entity_canonical
                         WHERE entity_type = 'person'
                           AND (
                             LOWER(canonical_name) LIKE '%%' || LOWER(%s)
@@ -199,7 +296,7 @@ def resolve_to_canonical(
                             )
                           )
                         """,
-                        (f" {last_name}", f" {last_name}"),
+                        (ln_pat, ln_pat),
                     )
                     candidates = cur.fetchall()
                     if len(candidates) == 1:
@@ -207,6 +304,31 @@ def resolve_to_canonical(
                         conn.commit()
                         conn.close()
                         return candidates[0][0]
+                    if len(candidates) > 1:
+                        parts_s = stripped.split()
+                        first_tok = parts_s[0] if parts_s else ""
+                        matched = [
+                            row
+                            for row in candidates
+                            if _person_matches_first_name(row[1], row[2], first_tok)
+                        ]
+                        if len(matched) == 1:
+                            cid = matched[0][0]
+                            _add_alias(cur, schema, cid, name)
+                            conn.commit()
+                            conn.close()
+                            return cid
+                        fam_id = _link_surname_cluster_to_family(
+                            cur, schema, domain_key, last_name, list(candidates)
+                        )
+                        single_token_surname = len(parts_s) == 1 and parts_s[0].lower().rstrip(
+                            "'s"
+                        ) == last_name.lower()
+                        ambiguous_multi = len(matched) != 1
+                        if fam_id and (single_token_surname or ambiguous_multi):
+                            conn.commit()
+                            conn.close()
+                            return fam_id
 
             if not create_if_missing:
                 conn.close()
@@ -274,7 +396,7 @@ def resolve_with_candidates(
     if not name or len(name) < 2:
         return {"match": None, "candidates": []}
     etype = (entity_type or "person").strip().lower()
-    if etype not in ("person", "organization", "subject", "recurring_event"):
+    if etype not in ENTITY_TYPES:
         etype = "person"
     schema = _schema_for_domain(domain_key)
     stripped = _normalize_name(name, etype)
@@ -1194,6 +1316,99 @@ def link_cross_domain_entities(
 
 
 # ---------------------------------------------------------------------------
+# Surname → family umbrella (batch + inline in resolve_to_canonical step 3)
+# ---------------------------------------------------------------------------
+
+
+def reconcile_surname_family_clusters(domain_key: str) -> dict[str, Any]:
+    """
+    Find person canonicals that share the same trailing surname token (e.g. Donald Trump,
+    Melania Trump → surname ``trump``). Ensure a ``{Surname} family`` canonical and
+    ``member_of_family`` edges in ``intelligence.entity_relationships`` for each person.
+
+    Bounded by ``SURNAME_FAMILY_MIN_MEMBERS`` (default 2), ``SURNAME_FAMILY_MAX_MEMBERS`` (24),
+    ``SURNAME_FAMILY_MIN_SURNAME_LEN`` (4).
+    """
+    if not is_valid_domain_key(domain_key):
+        return {"success": False, "error": "invalid_domain", "clusters": 0}
+    schema = _schema_for_domain(domain_key)
+    try:
+        min_m = max(2, int(os.environ.get("SURNAME_FAMILY_MIN_MEMBERS", "2")))
+        max_m = max(min_m, int(os.environ.get("SURNAME_FAMILY_MAX_MEMBERS", "24")))
+        min_sur = max(2, int(os.environ.get("SURNAME_FAMILY_MIN_SURNAME_LEN", "4")))
+    except ValueError:
+        min_m, max_m, min_sur = 2, 24, 4
+
+    conn = get_db_connection()
+    if not conn:
+        return {"success": False, "error": "no_db", "clusters": 0}
+    clusters = 0
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                WITH persons AS (
+                    SELECT id, canonical_name,
+                      lower((string_to_array(trim(canonical_name), ' '))[
+                        cardinality(string_to_array(trim(canonical_name), ' '))
+                      ]) AS surname
+                    FROM {schema}.entity_canonical
+                    WHERE entity_type = 'person'
+                      AND trim(canonical_name) <> ''
+                      AND cardinality(string_to_array(trim(canonical_name), ' ')) >= 1
+                )
+                SELECT surname, array_agg(id ORDER BY id) AS ids
+                FROM persons
+                WHERE char_length(surname) >= %s
+                GROUP BY surname
+                HAVING count(*) >= %s AND count(*) <= %s
+                """,
+                (min_sur, min_m, max_m),
+            )
+            groups = cur.fetchall()
+            for _surname, idlist in groups:
+                if not idlist or len(idlist) < min_m:
+                    continue
+                cur.execute(
+                    f"""
+                    SELECT id, canonical_name, COALESCE(aliases, '{{}}')
+                    FROM {schema}.entity_canonical
+                    WHERE id = ANY(%s) AND entity_type = 'person'
+                    ORDER BY id
+                    """,
+                    (list(idlist),),
+                )
+                rows = cur.fetchall()
+                if len(rows) < min_m:
+                    continue
+                fam_id = _get_or_create_family_canonical(cur, schema, _surname)
+                if not fam_id:
+                    continue
+                clusters += 1
+                for pid, _cn, _al in rows:
+                    if int(pid) != fam_id:
+                        _ensure_member_of_family_edge(cur, domain_key, int(pid), fam_id)
+        conn.commit()
+        return {
+            "success": True,
+            "clusters": clusters,
+            "domain_key": domain_key,
+        }
+    except Exception as e:
+        logger.warning("reconcile_surname_family_clusters %s: %s", domain_key, e)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return {"success": False, "error": str(e)[:500], "clusters": 0}
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+# ---------------------------------------------------------------------------
 # Batch run — combine alias population + auto-merge + cross-domain linking
 # ---------------------------------------------------------------------------
 
@@ -1206,7 +1421,8 @@ def run_resolution_batch(
     Run a full resolution cycle across all domains:
       1. Populate aliases from article mentions
       2. Auto-merge high-confidence duplicates
-      3. Link cross-domain entities
+      3. Reconcile surname family umbrellas (member_of_family edges)
+      4. Link cross-domain entities
 
     Suitable for orchestrator or cron scheduling.
     """
@@ -1220,6 +1436,8 @@ def run_resolution_batch(
 
         merge_result = auto_merge_high_confidence(domain_key, min_confidence=auto_merge_confidence)
         domain_result["merges"] = merge_result
+
+        domain_result["surname_families"] = reconcile_surname_family_clusters(domain_key)
 
         results["domains"][domain_key] = domain_result
 

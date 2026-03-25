@@ -31,6 +31,9 @@ class AIProcessingAdapter:
     async def analyze_sentiment(self, content: str) -> dict[str, Any]:
         """Return dict with 'score' (0–1) and 'label' (positive/negative/neutral)."""
         out = await self._llm.analyze_sentiment(content)
+        if not isinstance(out, dict):
+            logger.warning("analyze_sentiment: expected dict from LLM, got %s", type(out))
+            return {"score": 0.5, "label": "neutral"}
         if not out.get("success"):
             return {"score": 0.5, "label": "neutral"}
         sentiment = out.get("sentiment") or {}
@@ -50,9 +53,14 @@ class AIProcessingAdapter:
     async def extract_entities(self, content: str) -> list[dict[str, Any]]:
         """Return list of entities for JSON storage in articles.entities."""
         out = await self._llm.extract_entities(content)
+        if not isinstance(out, dict):
+            logger.warning("extract_entities: expected dict from LLM, got %s", type(out))
+            return []
         if not out.get("success"):
             return []
         data = out.get("entities") or {}
+        if not isinstance(data, dict):
+            return []
         entities: list[dict[str, Any]] = []
         for key in ("people", "organizations", "locations", "events", "dates"):
             for name in data.get(key) or []:

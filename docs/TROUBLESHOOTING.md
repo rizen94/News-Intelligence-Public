@@ -204,7 +204,7 @@ If this is 0, no storylines have been created for finance yet; run discovery or 
 
 **Symptoms:** Monitor shows a very large pending task count vs. worker count; backlog never shrinks.
 
-**Behavior (v8+):** When `AUTOMATION_QUEUE_SOFT_CAP` is set (default **200**, `0` disables), the scheduler stops enqueueing most scheduled phases, stops continuous batch re-queues, and skips dependency-chain `request_phase` bursts while combined depth (`task_queue` + requested queue) is at or above the cap. **`collection_cycle`** and **`health_check`** remain allowlisted so ingestion and liveness continue. Tune with `AUTOMATION_QUEUE_SOFT_CAP`, `AUTOMATION_QUEUE_PAUSE_ALLOW` (comma-separated phase names), and inspect `get_status()` fields `combined_queue_depth`, `queue_soft_cap`, `scheduled_enqueue_paused`.
+**Behavior (v8+):** When `AUTOMATION_QUEUE_SOFT_CAP` is set (default **100**, `0` disables), the scheduler stops enqueueing most scheduled phases, stops continuous batch re-queues, and skips dependency-chain `request_phase` bursts while combined depth (`task_queue` + requested queue) is at or above the cap. Allowlisted phases default to essentials (e.g. **`collection_cycle`**, **`health_check`**, **`pending_db_flush`**, **`content_refinement_queue`**, **`content_enrichment`**) — **`nightly_enrichment_context` is not allowlisted** so it cannot stack hundreds of redundant queued drains. Additionally **`AUTOMATION_NIGHTLY_ENRICHMENT_MAX_QUEUED`** (default **5**, `0` = unlimited) caps running + queued nightly tasks. Tune with `AUTOMATION_QUEUE_SOFT_CAP`, `AUTOMATION_QUEUE_PAUSE_ALLOW`, and inspect `get_status()` fields `combined_queue_depth`, `queue_soft_cap`, `scheduled_enqueue_paused`, `nightly_enrichment_in_flight`, `nightly_enrichment_max_queued`.
 
 ---
 

@@ -65,7 +65,7 @@ def ensure_context_for_article(domain_key: str, article_id: int) -> int | None:
                 return None
 
             title, content, url, published_at, created_at, enrichment_status = art
-            if not article_eligible_for_context(content, enrichment_status):
+            if not article_eligible_for_context(content, enrichment_status, created_at):
                 conn.close()
                 return None
 
