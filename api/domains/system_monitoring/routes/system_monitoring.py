@@ -17,6 +17,7 @@ from shared.domain_registry import (
     get_active_domain_keys,
     get_pipeline_schema_names_active,
     get_schema_names_active,
+    iter_pipeline_url_schema_pairs,
     iter_url_schema_pairs,
 )
 from shared.services.automation_run_history_writer import persist_automation_run_history
@@ -497,6 +498,9 @@ def _get_last_run_from_db(phase_name: str) -> datetime | None:
 
 # Max time to wait for automation status; keeps web/monitoring responsive (pipeline never blocks UI).
 AUTOMATION_STATUS_TIMEOUT_SECONDS = 2.0
+# process_run_summary joins automation.get_status() in a thread; allow slightly longer so schedules
+# populate (2s often times out under load → empty phase lists while DB backlogs are non-zero).
+PROCESS_RUN_SUMMARY_AUTOMATION_STATUS_TIMEOUT_SECONDS = 8.0
 
 
 @router.get("/automation/status")
@@ -645,6 +649,10 @@ async def get_automation_status(request: Request) -> dict[str, Any]:
                 "pending_counts": status.get("pending_counts") or {},
                 "document_pipeline": status.get("document_pipeline") or {},
                 "work_balancer": status.get("work_balancer") or {},
+                "resource_router": status.get("resource_router") or {},
+                "queued_tasks_by_lane": status.get("queued_tasks_by_lane") or {},
+                "active_tasks_by_lane": status.get("active_tasks_by_lane") or {},
+                "runs_last_60m_by_lane": status.get("runs_last_60m_by_lane") or {},
             },
         }
     except asyncio.TimeoutError:
@@ -692,11 +700,7 @@ async def get_sources_collected(
     conn = get_monitoring_db_connection()
     if conn:
         try:
-            for schema, domain_key in [
-                ("politics", "politics"),
-                ("finance", "finance"),
-                ("science_tech", "science-tech"),
-            ]:
+            for domain_key, schema in iter_pipeline_url_schema_pairs():
                 try:
                     with conn.cursor() as cur:
                         cur.execute(
@@ -872,6 +876,178 @@ async def trigger_phase(request: Request, body: dict[str, Any] = Body(..., embed
     if warning:
         msg += f" {warning}"
     return {"success": True, "message": msg, "warning": warning}
+
+
+@router.get("/duplicate_source_support")
+@cached_response(ttl=60)
+async def get_duplicate_source_support(
+    top_n: int = Query(25, ge=1, le=200),
+    per_domain_scan_limit: int = Query(100, ge=10, le=1000),
+) -> dict[str, Any]:
+    """
+    Duplicate-source corroboration report:
+    - top canonical articles by duplicate support
+    - per-domain corroboration-strength distributions
+    """
+    conn = get_monitoring_db_connection()
+    if not conn:
+        raise HTTPException(status_code=500, detail="Database connection failed")
+
+    try:
+        top_rows: list[dict[str, Any]] = []
+        with conn.cursor() as cur:
+            domain_schema_pairs = list(iter_pipeline_url_schema_pairs())
+
+            for domain_key, schema_name in domain_schema_pairs:
+                try:
+                    cur.execute(
+                        f"""
+                        WITH support AS (
+                            SELECT
+                                canonical_article_id,
+                                COUNT(*)::bigint AS duplicate_link_rows,
+                                COALESCE(SUM(seen_count), 0)::bigint AS duplicate_seen_total,
+                                MAX(last_seen_at) AS last_duplicate_seen_at
+                            FROM intelligence.article_duplicate_sources
+                            WHERE domain_key = %s
+                              AND schema_name = %s
+                            GROUP BY canonical_article_id
+                        )
+                        SELECT
+                            %s AS domain_key,
+                            %s AS schema_name,
+                            a.id AS canonical_article_id,
+                            COALESCE(a.title, '') AS canonical_title,
+                            COALESCE(a.url, '') AS canonical_url,
+                            COALESCE(a.source_domain, '') AS canonical_source_domain,
+                            a.published_at AS canonical_published_at,
+                            s.duplicate_link_rows,
+                            s.duplicate_seen_total,
+                            s.last_duplicate_seen_at
+                        FROM support s
+                        JOIN {schema_name}.articles a ON a.id = s.canonical_article_id
+                        ORDER BY s.duplicate_seen_total DESC, s.duplicate_link_rows DESC, a.id DESC
+                        LIMIT %s
+                        """,
+                        (
+                            domain_key,
+                            schema_name,
+                            domain_key,
+                            schema_name,
+                            int(per_domain_scan_limit),
+                        ),
+                    )
+                    for row in cur.fetchall():
+                        top_rows.append(
+                            {
+                                "domain_key": row[0],
+                                "schema_name": row[1],
+                                "canonical_article_id": int(row[2]),
+                                "canonical_title": row[3],
+                                "canonical_url": row[4],
+                                "canonical_source_domain": row[5],
+                                "canonical_published_at": (
+                                    row[6].isoformat() if hasattr(row[6], "isoformat") else row[6]
+                                ),
+                                "duplicate_link_rows": int(row[7] or 0),
+                                "duplicate_seen_total": int(row[8] or 0),
+                                "last_duplicate_seen_at": (
+                                    row[9].isoformat() if hasattr(row[9], "isoformat") else row[9]
+                                ),
+                            }
+                        )
+                except Exception as e:
+                    logger.debug(
+                        "duplicate_source_support top query failed for %s/%s: %s",
+                        domain_key,
+                        schema_name,
+                        e,
+                    )
+
+            top_rows.sort(
+                key=lambda r: (
+                    int(r.get("duplicate_seen_total", 0)),
+                    int(r.get("duplicate_link_rows", 0)),
+                    int(r.get("canonical_article_id", 0)),
+                ),
+                reverse=True,
+            )
+            top_rows = top_rows[: int(top_n)]
+
+            cur.execute(
+                """
+                WITH support AS (
+                    SELECT
+                        domain_key,
+                        canonical_article_id,
+                        COALESCE(SUM(seen_count), 0)::bigint AS duplicate_seen_total
+                    FROM intelligence.article_duplicate_sources
+                    GROUP BY domain_key, canonical_article_id
+                )
+                SELECT
+                    domain_key,
+                    COUNT(*)::bigint AS canonical_articles_with_duplicates,
+                    COUNT(*) FILTER (WHERE duplicate_seen_total = 1)::bigint AS strength_1,
+                    COUNT(*) FILTER (WHERE duplicate_seen_total BETWEEN 2 AND 3)::bigint AS strength_2_3,
+                    COUNT(*) FILTER (WHERE duplicate_seen_total BETWEEN 4 AND 9)::bigint AS strength_4_9,
+                    COUNT(*) FILTER (WHERE duplicate_seen_total >= 10)::bigint AS strength_10_plus
+                FROM support
+                GROUP BY domain_key
+                ORDER BY canonical_articles_with_duplicates DESC, domain_key
+                """
+            )
+            distribution = []
+            for row in cur.fetchall():
+                total = int(row[1] or 0)
+                s1 = int(row[2] or 0)
+                s23 = int(row[3] or 0)
+                s49 = int(row[4] or 0)
+                s10 = int(row[5] or 0)
+                distribution.append(
+                    {
+                        "domain_key": row[0],
+                        "canonical_articles_with_duplicates": total,
+                        "buckets": {
+                            "strength_1": s1,
+                            "strength_2_3": s23,
+                            "strength_4_9": s49,
+                            "strength_10_plus": s10,
+                        },
+                        "high_strength_share": (
+                            round(((s49 + s10) / total), 4) if total > 0 else 0.0
+                        ),
+                    }
+                )
+
+            cur.execute(
+                "SELECT COALESCE(SUM(seen_count), 0)::bigint FROM intelligence.article_duplicate_sources"
+            )
+            total_seen = int((cur.fetchone() or [0])[0] or 0)
+            cur.execute(
+                "SELECT COUNT(DISTINCT (domain_key, canonical_article_id))::bigint FROM intelligence.article_duplicate_sources"
+            )
+            total_canonicals = int((cur.fetchone() or [0])[0] or 0)
+
+        return {
+            "success": True,
+            "data": {
+                "top_canonical_articles": top_rows,
+                "corroboration_strength_distribution": distribution,
+                "summary": {
+                    "total_duplicate_seen_count": total_seen,
+                    "total_canonical_articles_with_duplicates": total_canonicals,
+                    "domains_in_pipeline": [dk for dk, _ in domain_schema_pairs],
+                },
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+            },
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("duplicate_source_support failed: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to build duplicate source report")
+    finally:
+        conn.close()
 
 
 @router.get("/fast_stats")
@@ -1638,16 +1814,47 @@ VALUES
 ON CONFLICT (feed_url) DO NOTHING;
 """
 
+        finance_2_official_feeds_sql = """
+INSERT INTO finance_2.rss_feeds (feed_name, feed_url, is_active, fetch_interval_seconds, created_at)
+VALUES
+    ('SEC Press Releases', 'https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=&company=&dateb=&owner=include&start=0&count=100&output=atom', true, 3600, NOW()),
+    ('Federal Reserve Press Releases', 'https://www.federalreserve.gov/feeds/press_all.xml', true, 3600, NOW()),
+    ('Treasury Direct Announcements', 'https://www.treasurydirect.gov/rss/announcements.xml', true, 3600, NOW()),
+    ('FDIC News Releases', 'https://www.fdic.gov/news/news/press/feed.xml', true, 3600, NOW())
+ON CONFLICT (feed_url) DO NOTHING;
+"""
+
         try:
             cur = conn.cursor()
             cur.execute(migration_sql)
+            cur.execute(
+                """
+                SELECT EXISTS (
+                  SELECT 1 FROM information_schema.schemata WHERE schema_name = 'finance_2'
+                )
+                """
+            )
+            if cur.fetchone()[0]:
+                cur.execute(finance_2_official_feeds_sql)
             conn.commit()
 
             # Verify feeds were added
             cur.execute(
                 "SELECT COUNT(*) FROM finance.rss_feeds WHERE feed_name LIKE 'SEC%' OR feed_name LIKE 'Federal Reserve%' OR feed_name LIKE 'Treasury%' OR feed_name LIKE 'FDIC%'"
             )
-            finance_count = cur.fetchone()[0]
+            finance_count = int(cur.fetchone()[0] or 0)
+            cur.execute(
+                """
+                SELECT EXISTS (
+                  SELECT 1 FROM information_schema.schemata WHERE schema_name = 'finance_2'
+                )
+                """
+            )
+            if cur.fetchone()[0]:
+                cur.execute(
+                    "SELECT COUNT(*) FROM finance_2.rss_feeds WHERE feed_name LIKE 'SEC%' OR feed_name LIKE 'Federal Reserve%' OR feed_name LIKE 'Treasury%' OR feed_name LIKE 'FDIC%'"
+                )
+                finance_count += int(cur.fetchone()[0] or 0)
 
             cur.execute(
                 "SELECT COUNT(*) FROM politics.rss_feeds WHERE feed_name LIKE 'White House%' OR feed_name LIKE 'Department%' OR feed_name LIKE 'Congressional%' OR feed_name LIKE 'GAO%' OR feed_name LIKE 'CBO%'"
@@ -1874,19 +2081,29 @@ async def get_pipeline_status():
                         }
                     )
 
-                # Get processing statistics (sum across all domain schemas)
-                cur.execute("""
+                # Sum article stats across pipeline silos (includes template silos when in pipeline)
+                _schemas = get_pipeline_schema_names_active() or (
+                    "politics",
+                    "finance",
+                    "science_tech",
+                )
+                _sum_total = " + ".join(f"(SELECT COUNT(*) FROM {s}.articles)" for s in _schemas)
+                _sum_sent = " + ".join(
+                    f"(SELECT COUNT(*) FROM {s}.articles WHERE sentiment_score IS NOT NULL)"
+                    for s in _schemas
+                )
+                _sum_recent = " + ".join(
+                    f"(SELECT COUNT(*) FROM {s}.articles WHERE created_at >= NOW() - INTERVAL '1 hour')"
+                    for s in _schemas
+                )
+                cur.execute(
+                    f"""
                     SELECT
-                        (SELECT COUNT(*) FROM politics.articles) +
-                        (SELECT COUNT(*) FROM finance.articles) +
-                        (SELECT COUNT(*) FROM science_tech.articles) as total_articles,
-                        (SELECT COUNT(*) FROM politics.articles WHERE sentiment_score IS NOT NULL) +
-                        (SELECT COUNT(*) FROM finance.articles WHERE sentiment_score IS NOT NULL) +
-                        (SELECT COUNT(*) FROM science_tech.articles WHERE sentiment_score IS NOT NULL) as articles_analyzed,
-                        (SELECT COUNT(*) FROM politics.articles WHERE created_at >= NOW() - INTERVAL '1 hour') +
-                        (SELECT COUNT(*) FROM finance.articles WHERE created_at >= NOW() - INTERVAL '1 hour') +
-                        (SELECT COUNT(*) FROM science_tech.articles WHERE created_at >= NOW() - INTERVAL '1 hour') as recent_articles
-                """)
+                        {_sum_total} as total_articles,
+                        {_sum_sent} as articles_analyzed,
+                        {_sum_recent} as recent_articles
+                    """
+                )
 
                 processing_stats = cur.fetchone()
                 articles_processed = processing_stats[0] if processing_stats[0] else 0
@@ -2411,7 +2628,7 @@ def get_process_run_summary(
 
         t = threading.Thread(target=_get_status, daemon=True)
         t.start()
-        t.join(timeout=AUTOMATION_STATUS_TIMEOUT_SECONDS)
+        t.join(timeout=PROCESS_RUN_SUMMARY_AUTOMATION_STATUS_TIMEOUT_SECONDS)
         if not result_queue.empty():
             try:
                 status = result_queue.get_nowait()
@@ -2425,8 +2642,23 @@ def get_process_run_summary(
                         }
             except Exception as e:
                 logger.debug("process_run_summary schedules: %s", e)
+    phase_catalog_source = "schedules" if schedule_names else None
     if not schedule_names and last_run_ever:
         schedule_names = set(last_run_ever.keys())
+        phase_catalog_source = phase_catalog_source or "automation_run_history"
+    if not schedule_names:
+        try:
+            from services.automation_manager import PHASE_ESTIMATED_DURATION_SECONDS
+
+            schedule_names = set(PHASE_ESTIMATED_DURATION_SECONDS.keys())
+            phase_catalog_source = "phase_defaults"
+        except Exception as e:
+            logger.debug("process_run_summary phase name fallback: %s", e)
+            phase_catalog_source = phase_catalog_source or "none"
+    else:
+        if phase_catalog_source is None:
+            phase_catalog_source = "schedules"
+    out["phase_catalog_source"] = phase_catalog_source
 
     for name in sorted(schedule_names):
         info = schedule_info.get(name, {})

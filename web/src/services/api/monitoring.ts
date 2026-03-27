@@ -20,7 +20,8 @@ export const monitoringApi = {
   async getMonitoringOverview() {
     try {
       const response = await getApi().get(
-        '/api/system_monitoring/monitoring/overview'
+        '/api/system_monitoring/monitoring/overview',
+        { timeout: 60000 }
       );
       return response.data;
     } catch (error) {
@@ -81,7 +82,8 @@ export const monitoringApi = {
   async getPipelineStatus() {
     try {
       const response = await getApi().get(
-        '/api/system_monitoring/pipeline_status'
+        '/api/system_monitoring/pipeline_status',
+        { timeout: 60000 }
       );
       return response.data;
     } catch (error) {
@@ -94,6 +96,7 @@ export const monitoringApi = {
     try {
       const response = await getApi().get('/api/orchestrator/dashboard', {
         params,
+        timeout: 60000,
       });
       return response.data;
     } catch (error) {
@@ -109,6 +112,7 @@ export const monitoringApi = {
         '/api/system_monitoring/sources_collected',
         {
           params: { minutes },
+          timeout: 60000,
         }
       );
       return response.data;
@@ -125,6 +129,7 @@ export const monitoringApi = {
         '/api/system_monitoring/process_run_summary',
         {
           params: { hours, activity_lines: activityLines },
+          timeout: 60000,
         }
       );
       return response.data;
@@ -138,7 +143,8 @@ export const monitoringApi = {
   async getAutomationStatus() {
     try {
       const response = await getApi().get(
-        '/api/system_monitoring/automation/status'
+        '/api/system_monitoring/automation/status',
+        { timeout: 60000 }
       );
       return response.data;
     } catch (error) {
@@ -156,7 +162,8 @@ export const monitoringApi = {
     try {
       const response = await getApi().get(
         '/api/system_monitoring/backlog_status',
-        { timeout: 12000 }
+        // Many cross-schema + intelligence.* queries; 12s was too tight under DB load.
+        { timeout: 60000 }
       );
       return response.data;
     } catch (error) {
@@ -190,7 +197,8 @@ export const monitoringApi = {
     try {
       const response = await getApi().get(
         '/api/system_monitoring/database/connections',
-        { params, timeout: 20000 }
+        // pg_stat_activity under load can exceed 20s; align with heavy Monitor calls.
+        { params, timeout: 60000 }
       );
       return response.data;
     } catch (error) {

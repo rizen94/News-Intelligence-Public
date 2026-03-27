@@ -290,7 +290,10 @@ export const contextCentricApi = {
 
   async getQuality(): Promise<ContextCentricQuality> {
     try {
-      const response = await getApi().get<ContextCentricQuality>(apiPath('/api/context_centric/quality'), contextCentricConfig());
+      const response = await getApi().get<ContextCentricQuality>(
+        apiPath('/api/context_centric/quality'),
+        { ...contextCentricConfig(), timeout: 60000 }
+      );
       return response.data;
     } catch (error) {
       return handleError('Failed to fetch context-centric quality', error);

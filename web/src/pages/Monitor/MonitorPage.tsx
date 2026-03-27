@@ -60,6 +60,20 @@ function timeAgo(iso: string): string {
   return `${Math.floor(h / 24)}d ago`;
 }
 
+/** Wall-clock label so multiple runs are not all identical when timeAgo buckets to \"3d ago\". */
+function shortLocalDateTime(iso: string): string {
+  try {
+    return new Date(iso).toLocaleString(undefined, {
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    });
+  } catch {
+    return iso;
+  }
+}
+
 type PhaseRow = {
   name: string;
   last_run: string | null;
@@ -156,6 +170,19 @@ export default function MonitorPage() {
         phases?: string[];
         error?: string;
       };
+      resource_router?: {
+        enabled?: boolean;
+        headroom?: {
+          cpu_percent?: number | null;
+          gpu_percent?: number | null;
+          cpu_headroom?: number;
+          gpu_headroom?: number;
+          db_headroom?: number;
+        };
+      };
+      queued_tasks_by_lane?: Record<string, number>;
+      active_tasks_by_lane?: Record<string, number>;
+      runs_last_60m_by_lane?: Record<string, number>;
     };
   } | null>(null);
   // Stabilize the Phase timeline list:
@@ -263,7 +290,13 @@ export default function MonitorPage() {
         backlog: number;
         per_hour?: number;
         per_hour_source?: BacklogPerHourSource;
+        /** Backlog /hr uses rows updated with non-empty `sections` only (LLM materialization), not catalog sync touches. */
+        throughput_scope?: string;
+        any_updated_last_1h?: number;
+        any_updated_last_24h?: number;
+        any_updated_last_4d?: number;
         processed_last_4d?: number;
+        processed_last_24h?: number;
         processed_last_1h?: number;
         total?: number;
         eta_hours?: number;
@@ -325,6 +358,8 @@ export default function MonitorPage() {
     error?: string;
   } | null>(null);
   const [loading, setLoading] = useState(true);
+  /** True while backlog / process_run_summary / DB sessions are loading after the first parallel batch. */
+  const [heavyMonitorPending, setHeavyMonitorPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [triggerPhaseName, setTriggerPhaseName] = useState<string>('');
   const [forceNightlyUnifiedPipeline, setForceNightlyUnifiedPipeline] =
@@ -351,55 +386,67 @@ export default function MonitorPage() {
     const svc = apiService as unknown as Record<string, unknown>;
     const load = async () => {
       setLoading(true);
+      setHeavyMonitorPending(false);
       setError(null);
       try {
-        await loadOverview();
+        // Run overview in parallel with the rest (was sequential: overview + max(batch) latency).
+        // Split fast vs heavy so the page leaves the global loading state before backlog / DB /
+        // process_run_summary finish — those sections keep their own skeletons until data arrives.
+        const [ov, o, q, pipe, auto, sources] = await Promise.all([
+          apiService.getMonitoringOverview(),
+          safeServiceCall<{
+            status?: Record<string, unknown>;
+            decision_log?: { entries?: DecisionEntry[] };
+          }>(svc, 'getOrchestratorDashboard', [{ decision_log_limit: 25 }]),
+          contextCentricApi.getQuality().catch(() => null),
+          safeServiceCall<{
+            success?: boolean;
+            data?: Record<string, unknown>;
+          }>(svc, 'getPipelineStatus'),
+          safeServiceCall<{
+            success?: boolean;
+            data?: { phases?: PhaseRow[] };
+          }>(svc, 'getAutomationStatus'),
+          safeServiceCall<typeof sourcesCollected>(
+            svc,
+            'getSourcesCollected',
+            [30]
+          ),
+        ]);
         if (cancelled) return;
-        const [o, q, pipe, auto, sources, summary, backlog, dbConns] =
-          await Promise.all([
-            safeServiceCall<{
-              status?: Record<string, unknown>;
-              decision_log?: { entries?: DecisionEntry[] };
-            }>(svc, 'getOrchestratorDashboard', [{ decision_log_limit: 25 }]),
-            contextCentricApi.getQuality().catch(() => null),
-            safeServiceCall<{
-              success?: boolean;
-              data?: Record<string, unknown>;
-            }>(svc, 'getPipelineStatus'),
-            safeServiceCall<{
-              success?: boolean;
-              data?: { phases?: PhaseRow[] };
-            }>(svc, 'getAutomationStatus'),
-            safeServiceCall<typeof sourcesCollected>(
-              svc,
-              'getSourcesCollected',
-              [30]
-            ),
-            safeServiceCall<typeof runSummary>(
-              svc,
-              'getProcessRunSummary',
-              [24, 60]
-            ),
-            safeServiceCall<typeof backlogStatus>(svc, 'getBacklogStatus'),
-            safeServiceCall<typeof dbConnections>(
-              svc,
-              'getDatabaseConnections',
-              [{ limit: 80, long_running_seconds: 60 }]
-            ),
-          ]);
-        if (cancelled) return;
+        setOverview(ov ?? null);
         setOrchDashboard(o ?? null);
         setQuality(q ?? null);
         setPipeline(pipe ?? null);
         setAutomation(auto ?? null);
         setSourcesCollected(sources ?? null);
+        if (!cancelled) setLoading(false);
+        if (!cancelled) setHeavyMonitorPending(true);
+
+        const [summary, backlog, dbConns] = await Promise.all([
+          safeServiceCall<typeof runSummary>(
+            svc,
+            'getProcessRunSummary',
+            [24, 60]
+          ),
+          safeServiceCall<typeof backlogStatus>(svc, 'getBacklogStatus'),
+          safeServiceCall<typeof dbConnections>(
+            svc,
+            'getDatabaseConnections',
+            [{ limit: 80, long_running_seconds: 60 }]
+          ),
+        ]);
+        if (cancelled) return;
         setRunSummary(summary ?? null);
         setBacklogStatus(backlog ?? null);
         setDbConnections(dbConns ?? null);
       } catch (e) {
         if (!cancelled) setError((e as Error).message);
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+          setHeavyMonitorPending(false);
+        }
       }
     };
     load();
@@ -551,6 +598,7 @@ export default function MonitorPage() {
   const automationRunning = automation?.data?.is_running as boolean | undefined;
   const docPipeline = automation?.data?.document_pipeline;
   const workBalancer = automation?.data?.work_balancer;
+  const resourceRouter = automation?.data?.resource_router;
 
   const workBalancerSummary = (): string => {
     const wb = workBalancer;
@@ -566,6 +614,23 @@ export default function MonitorPage() {
       .slice(0, 8)
       .map(([k, v]) => `${k} ${v}s`);
     return `On — base ${base}s · faster/slower now: ${parts.join(', ')}`;
+  };
+
+  const resourceRouterSummary = (): string => {
+    const rr = resourceRouter;
+    if (!rr || !rr.enabled) return 'Off';
+    const h = rr.headroom ?? {};
+    const cpu = h.cpu_percent;
+    const gpu = h.gpu_percent;
+    const db = h.db_headroom;
+    const q = automation?.data?.queued_tasks_by_lane ?? {};
+    const a = automation?.data?.active_tasks_by_lane ?? {};
+    const runs = automation?.data?.runs_last_60m_by_lane ?? {};
+    const dbPct =
+      typeof db === 'number' && Number.isFinite(db)
+        ? `${Math.round(db * 100)}%`
+        : 'n/a';
+    return `CPU ${cpu ?? 'n/a'}% · GPU ${gpu ?? 'n/a'}% · DB headroom ${dbPct} · queued cpu/gpu ${q.cpu ?? 0}/${q.gpu ?? 0} · running ${a.cpu ?? 0}/${a.gpu ?? 0} · runs60m ${runs.cpu ?? 0}/${runs.gpu ?? 0}`;
   };
 
   const statusChip = (status: string | undefined, label: string) => {
@@ -1063,6 +1128,8 @@ export default function MonitorPage() {
                   </Box>
                 )}
             </Box>
+          ) : (loading || heavyMonitorPending) && runSummary == null ? (
+            <Skeleton variant='rectangular' height={72} sx={{ borderRadius: 1 }} />
           ) : (
             <Typography color='text.secondary' variant='body2'>
               Run summary not available. Check automation is running and logs
@@ -1308,11 +1375,14 @@ export default function MonitorPage() {
                                         <Typography
                                           component='span'
                                           variant='caption'
+                                          title={
+                                            r.finished_at ?? r.started_at ?? ''
+                                          }
                                         >
                                           {r.finished_at
-                                            ? timeAgo(r.finished_at)
+                                            ? `${timeAgo(r.finished_at)} · ${shortLocalDateTime(r.finished_at)}`
                                             : r.started_at
-                                              ? `started ${timeAgo(r.started_at)}`
+                                              ? `started ${timeAgo(r.started_at)} · ${shortLocalDateTime(r.started_at)}`
                                               : '—'}
                                         </Typography>
                                       </Box>
@@ -1600,8 +1670,23 @@ export default function MonitorPage() {
                               backlogStatus.data.entity_profiles
                                 .processed_last_4d ?? 0
                             ).toLocaleString()}{' '}
-                            profiles w/ sections in last{' '}
+                            sections filled in last{' '}
                             {backlogStatus.data.workload_window_days ?? 4}d
+                          </Typography>
+                        )}
+                        {(backlogStatus.data.entity_profiles
+                          .any_updated_last_24h ?? 0) > 0 && (
+                          <Typography
+                            component='span'
+                            variant='caption'
+                            color='text.secondary'
+                            sx={{ display: 'block' }}
+                          >
+                            {(
+                              backlogStatus.data.entity_profiles
+                                .any_updated_last_24h ?? 0
+                            ).toLocaleString()}{' '}
+                            row updates (incl. sync) in 24h
                           </Typography>
                         )}
                         {(backlogStatus.data.entity_profiles
@@ -1615,7 +1700,7 @@ export default function MonitorPage() {
                             (
                             {backlogStatus.data.entity_profiles
                               .processed_last_1h ?? 0}{' '}
-                            last 1h)
+                            sections filled last 1h)
                           </Typography>
                         )}
                       </TableCell>
@@ -1843,34 +1928,35 @@ export default function MonitorPage() {
                       color='text.secondary'
                       display='block'
                     >
-                      Inflow vs outflow (articles)
+                      Inflow vs outflow (articles, same 24h window)
                     </Typography>
                     <Typography variant='body2'>
                       In last 24h:{' '}
                       {backlogStatus.data.articles.created_last_24h?.toLocaleString() ??
                         '—'}{' '}
-                      total,{' '}
+                      created,{' '}
                       {(
                         backlogStatus.data.articles.short_created_last_24h ?? 0
                       ).toLocaleString()}{' '}
-                      need enrichment · Outflow: ~
-                      {(
-                        backlogStatus.data.articles.per_day ?? 12000
-                      ).toLocaleString()}
-                      /day
+                      of those still need enrichment · Enriched (completed):{' '}
+                      {backlogStatus.data.articles.enriched_last_24h ?? 0} /
+                      24h
                       {(backlogStatus.data.articles.enriched_last_1h != null ||
                         backlogStatus.data.articles.enriched_last_24h !=
                           null) && (
                         <>
                           {' '}
-                          (enriched:{' '}
-                          {backlogStatus.data.articles.enriched_last_1h ??
-                            0}{' '}
-                          last 1h,{' '}
-                          {backlogStatus.data.articles.enriched_last_24h ?? 0}{' '}
-                          last 24h)
+                          ({backlogStatus.data.articles.enriched_last_1h ?? 0}{' '}
+                          last 1h)
                         </>
                       )}
+                      {' '}
+                      · ETA model ~{' '}
+                      {Math.round(
+                        backlogStatus.data.articles.per_day ?? 0
+                      ).toLocaleString()}
+                      /day (
+                      {backlogStatus.data.articles.per_hour_source ?? '—'})
                       {' · '}
                       <Typography
                         component='span'
@@ -1895,9 +1981,11 @@ export default function MonitorPage() {
             </Box>
           ) : backlogStatus?.error ? (
             <Typography color='text.secondary' variant='body2'>
-              Backlog status unavailable: {backlogStatus.error}
+              {String(backlogStatus.error).toLowerCase().includes('timeout')
+                ? 'Backlog status unavailable: the request timed out (database may be busy). Retry in a moment.'
+                : `Backlog status unavailable: ${backlogStatus.error}`}
             </Typography>
-          ) : loading && backlogStatus === null ? (
+          ) : (loading || heavyMonitorPending) && backlogStatus === null ? (
             <Skeleton
               variant='rectangular'
               height={100}
@@ -1916,7 +2004,7 @@ export default function MonitorPage() {
       </Typography>
       <Card variant='outlined' sx={{ mb: 3 }}>
         <CardContent sx={{ py: 1.5, overflowX: 'auto' }}>
-          {loading && dbConnections === null ? (
+          {(loading || heavyMonitorPending) && dbConnections === null ? (
             <Skeleton variant='rectangular' height={120} />
           ) : dbConnections?.success === false ? (
             <Typography color='text.secondary' variant='body2'>
@@ -2076,7 +2164,7 @@ export default function MonitorPage() {
                     label={automationRunning ? 'Running' : 'Stopped'}
                   />
                   <Typography variant='body2'>
-                    Queue: {queueSize ?? 0}
+                    In-memory queue: {queueSize ?? 0}
                   </Typography>
                   {automation?.data?.active_workers != null && (
                     <Typography variant='caption' color='text.secondary'>
@@ -2084,6 +2172,22 @@ export default function MonitorPage() {
                     </Typography>
                   )}
                 </Box>
+                {typeof automation?.data?.message === 'string' &&
+                  automation.data.message.length > 0 && (
+                    <Typography variant='caption' color='warning.main'>
+                      {automation.data.message}
+                    </Typography>
+                  )}
+                {!automationRunning && (
+                  <Typography variant='caption' color='text.secondary' display='block'>
+                    &quot;Stopped&quot; means the automation scheduler loop is not
+                    running on this API worker. Backlog status above counts{' '}
+                    <strong>database</strong> pending rows (e.g. ml queue) — those
+                    can stay high while this shows 0. If phases completed 0 in 24h,
+                    restart the API host process and check logs for automation startup
+                    errors.
+                  </Typography>
+                )}
               </Box>
             )}
           </CardContent>
@@ -2174,6 +2278,9 @@ export default function MonitorPage() {
           <Divider sx={{ my: 1.25 }} />
           <Typography variant='body2' color='text.secondary'>
             <strong>Work balancer:</strong> {workBalancerSummary()}
+          </Typography>
+          <Typography variant='body2' color='text.secondary'>
+            <strong>Resource router:</strong> {resourceRouterSummary()}
           </Typography>
         </CardContent>
       </Card>
