@@ -496,6 +496,7 @@ def _count_entity_extraction_pending() -> int:
                     SELECT COUNT(*) FROM {schema}.articles a
                     LEFT JOIN {schema}.article_entities ae ON ae.article_id = a.id
                     WHERE ae.id IS NULL
+                      AND COALESCE((a.metadata #>> '{{pipeline_skip,entity_extraction_skip}}')::boolean, false) = false
                       AND a.content IS NOT NULL
                       AND LENGTH(a.content) > 100
                       AND (
@@ -530,6 +531,7 @@ def _count_sentiment_analysis_pending() -> int:
                     f"""
                     SELECT COUNT(*) FROM {schema}.articles
                     WHERE sentiment_score IS NULL
+                      AND COALESCE((metadata #>> '{{pipeline_skip,sentiment_analysis_skip}}')::boolean, false) = false
                       AND ({ml_ready})
                     """
                 )
@@ -559,6 +561,7 @@ def _count_quality_scoring_pending() -> int:
                     f"""
                     SELECT COUNT(*) FROM {schema}.articles
                     WHERE quality_score IS NULL
+                      AND COALESCE((metadata #>> '{{pipeline_skip,quality_scoring_skip}}')::boolean, false) = false
                       AND ({ml_ready})
                     """
                 )
@@ -615,7 +618,12 @@ def _count_topic_clustering_pending() -> int:
     if not conn:
         return 0
     total = 0
-    conf = 0.93
+    try:
+        from config.settings import topic_clustering_graduation_confidence
+
+        conf = float(topic_clustering_graduation_confidence())
+    except Exception:
+        conf = 0.88
     try:
         for schema in get_pipeline_schema_names_active():
             with conn.cursor() as cur:
@@ -918,6 +926,7 @@ def _count_event_extraction_pending() -> int:
                     f"""
                     SELECT COUNT(*) FROM {schema}.articles a
                     WHERE a.timeline_processed = false
+                      AND COALESCE((a.metadata #>> '{{pipeline_skip,event_extraction_skip}}')::boolean, false) = false
                       AND a.content IS NOT NULL
                       AND LENGTH(a.content) > 100
                       AND (

@@ -15,7 +15,7 @@ deep analysis (`comprehensive_rag`) is queued without using the UI (disable via
 when the refinement phase is starved (`AUTO_ENQUEUE_RAG_SCHEDULER_SECONDS`).
 
 Nightly pipeline (America/New_York by default): automation phase `nightly_enrichment_context` runs
-01:00–07:00 (`NIGHTLY_PIPELINE_*`): kickoff RSS once per local day, drain enrichment and context_sync,
+02:00–07:00 (`NIGHTLY_PIPELINE_*`): kickoff RSS once per local day, drain enrichment and context_sync,
 run configured sequential automation phases (see `nightly_ingest_window_service`), then this queue with
 higher per-batch caps. When enrichment, context, sequential metrics, and this queue are all idle, the
 phase exits and normal automation resumes (`NIGHTLY_PIPELINE_EXCLUSIVE` off-hours scheduling).

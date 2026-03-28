@@ -1,4 +1,5 @@
 # Template-style finance silo (parallel to built-in ``finance``). Requires migration 201.
+# For parity with legacy ``finance`` tables (research_topics, topic queue, market_patterns, …), apply migration 206 (run_migration_206.py) before copying rows from ``finance``.
 # Commodity / gold / FRED routes stay under ``/api/{domain}/finance/...`` — use domain path
 # ``finance-2`` so ``validate_domain`` resolves to schema ``finance_2``.
 #
@@ -17,7 +18,7 @@ display_order: 26
 is_active: true
 
 _instructions: |
-  1. Apply migration 201 (run_migration_201.py).
+  1. Apply migration 201 (run_migration_201.py); then 206 for finance-only tables on finance_2.
   2. Copy feeds from finance.rss_feeds → finance_2.rss_feeds or seed_feed_urls + seed_domain_rss_from_yaml.py.
   3. RSS_INGEST_EXCLUDE_DOMAIN_KEYS=finance when -2 feeds are ready.
   4. FINANCE_PG_CONTENT_DOMAIN_KEY=finance-2 (+ FINANCE_CONTEXT_DOMAIN_KEY=finance-2) for orchestrator/evidence/SEC signal.

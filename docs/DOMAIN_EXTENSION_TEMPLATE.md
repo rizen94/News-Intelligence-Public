@@ -134,6 +134,22 @@ Treat a **finished** onboarded silo like another built-in: same code paths, isol
 
 ---
 
+## Per-silo DDL extensions (keep the shared template thin)
+
+**Problem:** A “template” silo (e.g. migration **201** — **`create_domain_table(..., 'science_tech')`**) should stay **minimal** so every new parallel domain does not inherit another team’s finance- or politics-only tables.
+
+**Pattern:**
+
+1. **Core onboarding** — One migration creates the schema + shared core (articles, rss_feeds, storylines, …) exactly like other silos.
+2. **Extensions** — For tables that exist only on a **legacy** or **specialized** silo, add a **separate numbered migration** that targets **only** that schema (e.g. **`206_finance_2_legacy_silo_extensions.sql`** for **`finance_2`** only). Do **not** edit the original template migration after it has shipped.
+3. **Application code** — Resolve the Postgres schema from the **URL `domain_key`** (`resolve_domain_schema(domain)`) or from env keys such as **`FINANCE_PG_CONTENT_DOMAIN_KEY`** / **`FINANCE_CONTEXT_DOMAIN_KEY`** for background jobs — avoid hardcoding **`finance.*`** when the route or job is meant to follow the active silo.
+4. **Data copy** — **`api/scripts/copy_domain_silo_table_data.py`** only copies the **intersection** of table names; extend its **preferred table order** when new FKs require a stable copy sequence. Apply extension DDL **before** expecting those tables to copy.
+5. **Future domains** — Repeat: **NNN\_`{schema}`\_…sql** or **NNN\_`{domain_key}`\_feature.sql** in **`api/database/migrations/`**, register in **`applied_migrations`**, document in **`AGENTS.md`** if operators must run it.
+
+**Example:** **`finance_2`** after **201** matches **science_tech** core only; **206** adds **`research_topics`**, **`topic_extraction_queue`**, and finance analytics tables so **`finance-2`** can reach parity with legacy **`finance`** without changing **201**. Migration **208** adds **`article_topic_clusters`** to **`politics_2`** and **`finance_2`** (also omitted from **201**; mirrors **193** for optional silos) so **`content_analysis/topics`** routes work.
+
+---
+
 ## Architecture: how “modular” are domains?
 
 **What you have today (recommended to keep):** **Modular data, shared application** — one FastAPI app, one React SPA, shared services (`AutomationManager`, collectors, LLM routing), **per-domain Postgres schemas** for silo tables. Domains are **not** separate deployables or repos; they are **permanent research silos** inside one product.

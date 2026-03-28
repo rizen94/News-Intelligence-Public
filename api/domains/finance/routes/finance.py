@@ -20,7 +20,7 @@ from fastapi import APIRouter, Body, HTTPException, Path, Query, Request
 from fastapi.responses import JSONResponse
 from psycopg2.extras import RealDictCursor
 from shared.database.connection import get_db_connection
-from shared.domain_registry import DOMAIN_PATH_PATTERN, is_valid_domain_key
+from shared.domain_registry import DOMAIN_PATH_PATTERN, is_valid_domain_key, resolve_domain_schema
 from shared.services.domain_aware_service import validate_domain
 
 from domains.finance.orchestrator_types import TaskPriority, TaskType
@@ -1572,6 +1572,7 @@ async def list_research_topics(
 ):
     """List saved research topics (analyses that can be refined over time)."""
     validate_domain(domain)
+    schema = resolve_domain_schema(domain)
     conn = get_db_connection()
     if not conn:
         raise HTTPException(status_code=503, detail="Database unavailable")
@@ -1579,10 +1580,10 @@ async def list_research_topics(
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             if last_refined_task_id:
                 cur.execute(
-                    """
+                    f"""
                     SELECT id, name, query, topic, date_range_start, date_range_end, summary,
                            source_task_id, last_refined_task_id, last_refined_at, created_at, updated_at
-                    FROM finance.research_topics
+                    FROM {schema}.research_topics
                     WHERE last_refined_task_id = %s
                     LIMIT 1
                     """,
@@ -1590,10 +1591,10 @@ async def list_research_topics(
                 )
             else:
                 cur.execute(
-                    """
+                    f"""
                     SELECT id, name, query, topic, date_range_start, date_range_end, summary,
                            source_task_id, last_refined_task_id, last_refined_at, created_at, updated_at
-                    FROM finance.research_topics
+                    FROM {schema}.research_topics
                     ORDER BY updated_at DESC NULLS LAST, id DESC
                     LIMIT %s OFFSET %s
                     """,
@@ -1619,16 +1620,17 @@ async def get_research_topic(
 ):
     """Get a single research topic by id."""
     validate_domain(domain)
+    schema = resolve_domain_schema(domain)
     conn = get_db_connection()
     if not conn:
         raise HTTPException(status_code=503, detail="Database unavailable")
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
-                """
+                f"""
                 SELECT id, name, query, topic, date_range_start, date_range_end, summary,
                        source_task_id, last_refined_task_id, last_refined_at, created_at, updated_at
-                FROM finance.research_topics WHERE id = %s
+                FROM {schema}.research_topics WHERE id = %s
                 """,
                 (topic_id,),
             )
@@ -1665,6 +1667,7 @@ async def create_research_topic(
         len((body.get("query") or "").strip()) if isinstance(body, dict) else 0,
     )
     validate_domain(domain)
+    schema = resolve_domain_schema(domain)
     task_id = body.get("task_id")
     name = (body.get("name") or "").strip()
     query = (body.get("query") or "").strip()
@@ -1714,8 +1717,8 @@ async def create_research_topic(
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
-                """
-                INSERT INTO finance.research_topics
+                f"""
+                INSERT INTO {schema}.research_topics
                 (name, query, topic, date_range_start, date_range_end, summary, source_task_id, last_refined_at)
                 VALUES (%s, %s, %s, %s::date, %s::date, %s, %s, NULL)
                 RETURNING id, name, query, topic, date_range_start, date_range_end, summary,
@@ -1753,14 +1756,15 @@ async def refine_research_topic(
     User can poll the task and then update the topic from the result (PATCH with task_id).
     """
     validate_domain(domain)
+    schema = resolve_domain_schema(domain)
     conn = get_db_connection()
     if not conn:
         raise HTTPException(status_code=503, detail="Database unavailable")
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
-                """SELECT id, query, topic, date_range_start, date_range_end, last_refined_task_id
-                   FROM finance.research_topics WHERE id = %s""",
+                f"""SELECT id, query, topic, date_range_start, date_range_end, last_refined_task_id
+                   FROM {schema}.research_topics WHERE id = %s""",
                 (topic_id,),
             )
             row = cur.fetchone()
@@ -1813,8 +1817,8 @@ async def refine_research_topic(
         try:
             with conn.cursor() as cur:
                 cur.execute(
-                    """
-                    UPDATE finance.research_topics
+                    f"""
+                    UPDATE {schema}.research_topics
                     SET last_refined_task_id = %s, updated_at = CURRENT_TIMESTAMP
                     WHERE id = %s
                     """,
@@ -1851,6 +1855,7 @@ async def update_research_topic_from_task(
     Body: task_id (required). Optionally name to rename the topic.
     """
     validate_domain(domain)
+    schema = resolve_domain_schema(domain)
     task_id = body.get("task_id")
     name = body.get("name")
     if not task_id:
@@ -1868,7 +1873,7 @@ async def update_research_topic_from_task(
         raise HTTPException(status_code=503, detail="Database unavailable")
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT id FROM finance.research_topics WHERE id = %s", (topic_id,))
+            cur.execute(f"SELECT id FROM {schema}.research_topics WHERE id = %s", (topic_id,))
             if not cur.fetchone():
                 raise HTTPException(status_code=404, detail="Research topic not found")
             updates = [
@@ -1885,12 +1890,12 @@ async def update_research_topic_from_task(
                 args.insert(0, str(name).strip())
             args.append(topic_id)
             cur.execute(
-                "UPDATE finance.research_topics SET " + ", ".join(updates) + " WHERE id = %s",
+                f"UPDATE {schema}.research_topics SET " + ", ".join(updates) + " WHERE id = %s",
                 args,
             )
             conn.commit()
             cur.execute(
-                "SELECT id, name, query, topic, summary, last_refined_task_id, last_refined_at, updated_at FROM finance.research_topics WHERE id = %s",
+                f"SELECT id, name, query, topic, summary, last_refined_task_id, last_refined_at, updated_at FROM {schema}.research_topics WHERE id = %s",
                 (topic_id,),
             )
             row = cur.fetchone()

@@ -1674,7 +1674,26 @@ def collect_rss_feeds() -> int:
                             """,
                                 (title, feed_name),
                             )
-                            if feed_cur.fetchone():
+                            existing_title_source = feed_cur.fetchone()
+                            if existing_title_source:
+                                existing_id = int(existing_title_source[0])
+                                try:
+                                    from services.article_duplicate_source_service import (
+                                        record_duplicate_source_link,
+                                    )
+
+                                    record_duplicate_source_link(
+                                        domain_key=domain_key,
+                                        schema_name=schema_name,
+                                        canonical_article_id=existing_id,
+                                        duplicate_url=url,
+                                        duplicate_source_domain=feed_name,
+                                        duplicate_title=title,
+                                        duplicate_published_at=published_date,
+                                        match_method="title_source",
+                                    )
+                                except Exception:
+                                    pass
                                 duplicates_rejected += 1
                                 _rss_entry_savepoint_release(feed_cur)
                                 continue
@@ -2061,6 +2080,12 @@ def collect_rss_feed(feed_url: str, feed_name: str = "Unknown") -> int:
                 else:
                     published_date = datetime.now(timezone.utc)
 
+                # URL domain key from registry (used for duplicate-link tracking + bias)
+                try:
+                    domain_key = schema_to_primary_domain_key(schema_name)
+                except KeyError:
+                    domain_key = (schema_name or "").replace("_", "-")
+
                 # Check for duplicates before inserting (in domain schema; schema_name set before loop)
                 cur.execute(
                     f"""
@@ -2069,18 +2094,32 @@ def collect_rss_feed(feed_url: str, feed_name: str = "Unknown") -> int:
                 """,
                     (url, title, feed_name),
                 )
+                existing_duplicate = cur.fetchone()
+                if existing_duplicate:
+                    existing_id = int(existing_duplicate[0])
+                    try:
+                        from services.article_duplicate_source_service import (
+                            record_duplicate_source_link,
+                        )
 
-                if cur.fetchone():
+                        record_duplicate_source_link(
+                            domain_key=domain_key,
+                            schema_name=schema_name,
+                            canonical_article_id=existing_id,
+                            duplicate_url=url,
+                            duplicate_source_domain=feed_name,
+                            duplicate_title=title,
+                            duplicate_published_at=published_date,
+                            match_method="url_or_title_source",
+                        )
+                    except Exception:
+                        pass
                     # Article already exists, skip it
                     logger.debug(f"Skipping duplicate article: {title[:60]}...")
                     _rss_entry_savepoint_release(cur)
                     continue
 
-                # Calculate domain-specific bias score (URL domain key from registry)
-                try:
-                    domain_key = schema_to_primary_domain_key(schema_name)
-                except KeyError:
-                    domain_key = (schema_name or "").replace("_", "-")
+                # Calculate domain-specific bias score
                 raw_bias = calculate_domain_bias_score(domain_key, title, content, feed_name)
                 # chk_quality_scores requires bias_score in [0, 1]; raw bias is [-1, 1] -> normalize
                 bias_score = (raw_bias + 1) / 2 if raw_bias is not None else 0.5

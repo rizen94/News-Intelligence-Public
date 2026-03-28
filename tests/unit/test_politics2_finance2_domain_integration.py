@@ -198,6 +198,46 @@ def test_db_schemas_politics2_finance2_exist():
 
 
 @pytest.mark.requires_db
+def test_finance_2_extension_tables_after_migration_206():
+    """Requires DB + migrations 201 and 206 (finance_2 legacy parity)."""
+    conn = _db_conn_or_skip()
+    expected = frozenset(
+        {
+            "research_topics",
+            "topic_extraction_queue",
+            "market_patterns",
+            "corporate_announcements",
+            "financial_indicators",
+        }
+    )
+    try:
+        names = sorted(expected)
+        placeholders = ",".join(["%s"] * len(names))
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT table_name FROM information_schema.tables
+                WHERE table_schema = 'finance_2' AND table_name IN ({placeholders})
+                """,
+                names,
+            )
+            found = {r[0] for r in cur.fetchall()}
+        if not found:
+            pytest.skip(
+                "finance_2 has no extension tables yet; apply migration 206 "
+                "(PYTHONPATH=api uv run python api/scripts/run_migration_206.py)"
+            )
+        missing = expected - found
+        if missing:
+            pytest.fail(
+                "finance_2 extension incomplete (partial 206?): missing "
+                f"{sorted(missing)} (found {sorted(found)})"
+            )
+    finally:
+        conn.close()
+
+
+@pytest.mark.requires_db
 def test_public_domains_rows_for_minus_two():
     conn = _db_conn_or_skip()
     try:

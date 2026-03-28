@@ -5,6 +5,7 @@ Populates intelligence.tracked_events and intelligence.event_chronicles.
 
 import json
 import logging
+import os
 import re
 from datetime import date
 from typing import Any, TypedDict
@@ -165,6 +166,15 @@ async def discover_events_from_contexts(
         return {"error": "no_db_connection"}
 
     try:
+        from config.settings import event_tracking_max_age_days, event_tracking_min_content_len
+
+        max_age_days = event_tracking_max_age_days()
+        min_len = event_tracking_min_content_len()
+    except Exception:
+        max_age_days = int(os.environ.get("EVENT_TRACKING_MAX_AGE_DAYS", "14") or 14)
+        min_len = int(os.environ.get("EVENT_TRACKING_MIN_CONTENT_LEN", "180") or 180)
+
+    try:
         with conn.cursor() as cur:
             # Fetch existing event names so we can tell the LLM to find NEW events only
             cur.execute("SELECT event_name FROM intelligence.tracked_events")
@@ -177,6 +187,8 @@ async def discover_events_from_contexts(
                     SELECT c.id, c.title, c.content, c.domain_key, c.metadata, c.created_at
                     FROM intelligence.contexts c
                     WHERE c.domain_key = %s
+                      AND c.created_at >= NOW() - (%s * INTERVAL '1 day')
+                      AND LENGTH(COALESCE(c.content, '')) >= %s
                       AND NOT EXISTS (
                           SELECT 1 FROM intelligence.event_chronicles ec
                           WHERE ec.developments::text LIKE '%%"context_id": ' || c.id || '%%'
@@ -184,21 +196,23 @@ async def discover_events_from_contexts(
                     ORDER BY c.created_at DESC
                     LIMIT %s
                 """,
-                    (domain_key, limit),
+                    (domain_key, max_age_days, min_len, limit),
                 )
             else:
                 cur.execute(
                     """
                     SELECT c.id, c.title, c.content, c.domain_key, c.metadata, c.created_at
                     FROM intelligence.contexts c
-                    WHERE NOT EXISTS (
+                    WHERE c.created_at >= NOW() - (%s * INTERVAL '1 day')
+                      AND LENGTH(COALESCE(c.content, '')) >= %s
+                      AND NOT EXISTS (
                           SELECT 1 FROM intelligence.event_chronicles ec
                           WHERE ec.developments::text LIKE '%%"context_id": ' || c.id || '%%'
                     )
                     ORDER BY c.created_at DESC
                     LIMIT %s
                 """,
-                    (limit,),
+                    (max_age_days, min_len, limit),
                 )
             rows = cur.fetchall()
         conn.close()
@@ -631,9 +645,9 @@ async def run_event_tracking_batch(limit: int = 300) -> int:
     """
     batch_size = 30  # small enough for 8B model to return valid JSON
     created_total = 0
-    from shared.domain_registry import get_active_domain_keys
+    from shared.domain_registry import get_pipeline_active_domain_keys
 
-    for domain in get_active_domain_keys():
+    for domain in get_pipeline_active_domain_keys():
         for offset in range(0, limit, batch_size):
             result = await discover_events_from_contexts(domain_key=domain, limit=batch_size)
             created_total += result.get("events_created", 0)

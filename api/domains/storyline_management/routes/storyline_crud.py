@@ -10,7 +10,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from shared.database.connection import get_db_connection
-from shared.domain_registry import DOMAIN_PATH_PATTERN
+from shared.domain_registry import DOMAIN_PATH_PATTERN, pipeline_url_schema_pairs, resolve_domain_schema
 from shared.services.domain_aware_service import validate_domain
 
 from ..schemas.storyline_schemas import (
@@ -577,7 +577,7 @@ async def get_storyline_related_cross_domain(
     limit: int = Query(8, ge=1, le=20),
 ):
     """Storylines in other domains that share canonical entities with this storyline."""
-    schema = domain.replace("-", "_")
+    schema = resolve_domain_schema(domain)
     conn = get_db_connection()
     if not conn:
         raise HTTPException(status_code=500, detail="Database connection failed")
@@ -599,11 +599,7 @@ async def get_storyline_related_cross_domain(
             return {"success": True, "data": {"storylines": []}, "message": None}
 
         prof_domains = _entity_profile_domain_keys_for_path(domain)
-        for other_schema, origin in (
-            ("politics", "politics"),
-            ("finance", "finance"),
-            ("science_tech", "science-tech"),
-        ):
+        for origin, other_schema in pipeline_url_schema_pairs():
             if other_schema == schema or len(out) >= limit:
                 continue
             try:

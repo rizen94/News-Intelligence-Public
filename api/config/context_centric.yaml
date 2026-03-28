@@ -6,6 +6,8 @@ tasks:
   context_sync: true
   entity_profile_sync: true
   claim_extraction: true
+  claim_subject_gap_refresh: true
+  extracted_claims_dedupe: true
   legislative_references: true
   event_tracking: true
   event_coherence_review: true

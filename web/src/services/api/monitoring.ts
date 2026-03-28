@@ -139,7 +139,7 @@ export const monitoringApi = {
     }
   },
 
-  /** Automation manager: phases with last_run, queue_size, active_workers (for phase timeline). */
+  /** Automation manager: phases with last_run, queue_size, active_workers (phase workers), phase_workers_configured, max_concurrent_tasks. */
   async getAutomationStatus() {
     try {
       const response = await getApi().get(

@@ -32,20 +32,25 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 def main():
+    from config.settings import finance_postgres_content_domain_key
     from shared.database.connection import get_db_connection
+    from shared.domain_registry import resolve_domain_schema
 
+    schema = resolve_domain_schema(finance_postgres_content_domain_key())
     conn = get_db_connection()
     if not conn:
         print("Database unavailable. Set DB_PASSWORD and ensure DB is reachable.")
         sys.exit(1)
 
+    print(f"Using {schema}.research_topics (FINANCE_PG_CONTENT_DOMAIN_KEY={finance_postgres_content_domain_key()!r})")
+
     try:
         with conn.cursor() as cur:
             # Select platinum-related topics that were incorrectly stored as topic='gold'
             cur.execute(
-                """
+                f"""
                 SELECT id, name, query, topic, created_at
-                FROM finance.research_topics
+                FROM {schema}.research_topics
                 WHERE topic = 'gold'
                   AND (name ILIKE '%platinum%' OR query ILIKE '%platinum%')
                 ORDER BY id
@@ -63,8 +68,8 @@ def main():
 
         with conn.cursor() as cur:
             cur.execute(
-                """
-                DELETE FROM finance.research_topics
+                f"""
+                DELETE FROM {schema}.research_topics
                 WHERE topic = 'gold'
                   AND (name ILIKE '%platinum%' OR query ILIKE '%platinum%')
                 """

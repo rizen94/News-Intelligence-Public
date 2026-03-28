@@ -9,6 +9,8 @@ import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from config.settings import finance_intelligence_context_domain_key
+
 try:
     from config.logging_config import get_component_logger
 
@@ -296,16 +298,17 @@ def get_shortlist(
             conn = get_db_connection()
             if conn:
                 with conn.cursor() as cur:
+                    ctx_dk = finance_intelligence_context_domain_key()
                     cur.execute(
                         """
                         SELECT id, title, content, created_at
                         FROM intelligence.contexts
-                        WHERE domain_key = 'finance'
+                        WHERE domain_key = %s
                           AND created_at >= NOW() - make_interval(hours => %s)
                         ORDER BY created_at DESC
                         LIMIT 100
                         """,
-                        (max(hours, 24),),
+                        (ctx_dk, max(hours, 24)),
                     )
                     rows = cur.fetchall()
                 conn.close()

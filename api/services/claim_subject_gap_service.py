@@ -98,6 +98,12 @@ def refresh_claim_subject_gap_catalog(
                               SELECT 1 FROM {schema}.entity_canonical ecn
                               WHERE lower(trim(ecn.canonical_name)) = lower(trim(ec.subject_text))
                           )
+                          AND NOT EXISTS (
+                              SELECT 1 FROM intelligence.claim_subject_gap_catalog g
+                              WHERE g.subject_norm = lower(trim(ec.subject_text))
+                                AND g.domain_key = %s
+                                AND g.status = 'ignored'
+                          )
                         GROUP BY 1
                         ORDER BY ccount DESC
                         LIMIT %s
@@ -108,7 +114,7 @@ def refresh_claim_subject_gap_catalog(
                         last_refreshed_at = EXCLUDED.last_refreshed_at
                     WHERE intelligence.claim_subject_gap_catalog.status <> 'ignored'
                     """,
-                    (ts, domain_key, conf, cap),
+                    (ts, domain_key, conf, domain_key, cap),
                 )
                 upserted_total += cur.rowcount or 0
 
@@ -196,6 +202,72 @@ def list_claim_subject_gaps(
                 }
             )
         return out
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def bulk_ignore_subjects(
+    domain_key: str,
+    subject_norms: list[str],
+    *,
+    notes: str | None = None,
+) -> dict[str, Any]:
+    """
+    Upsert ``ignored`` rows so ``promote_claims_to_versioned_facts`` skips those subjects
+    (same predicate as ``CLAIM_PROMOTION_GAP_IGNORED_EXCLUDE_SQL``).
+
+    ``subject_norms`` are lowercased/stripped; entries shorter than 2 chars are dropped.
+    """
+    if not is_valid_domain_key(domain_key):
+        return {"success": False, "error": "invalid_domain", "upserted": 0}
+    norms: list[str] = []
+    seen: set[str] = set()
+    for raw in subject_norms or []:
+        n = (raw or "").strip().lower()
+        if len(n) < 2 or n in seen:
+            continue
+        seen.add(n)
+        norms.append(n)
+    if not norms:
+        return {"success": False, "error": "no_valid_subjects", "upserted": 0}
+
+    note_val = (notes or "").strip() or None
+    conn = get_db_connection()
+    if not conn:
+        return {"success": False, "error": "no_db", "upserted": 0}
+    total = 0
+    try:
+        with conn.cursor() as cur:
+            for i in range(0, len(norms), 500):
+                chunk = norms[i : i + 500]
+                for sub in chunk:
+                    cur.execute(
+                        """
+                        INSERT INTO intelligence.claim_subject_gap_catalog (
+                            subject_norm, sample_subject, domain_key, unpromoted_claim_count,
+                            last_refreshed_at, status, notes
+                        )
+                        VALUES (%s, %s, %s, 0, NOW(), 'ignored', %s)
+                        ON CONFLICT (subject_norm, domain_key) DO UPDATE SET
+                            status = 'ignored',
+                            notes = COALESCE(EXCLUDED.notes, intelligence.claim_subject_gap_catalog.notes),
+                            last_refreshed_at = NOW()
+                        """,
+                        (sub, sub, domain_key, note_val),
+                    )
+                    total += 1
+            conn.commit()
+        return {"success": True, "domain_key": domain_key, "upserted": total, "notes": note_val}
+    except Exception as e:
+        logger.warning("bulk_ignore_subjects: %s", e)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return {"success": False, "error": str(e)[:500], "upserted": 0}
     finally:
         try:
             conn.close()

@@ -240,6 +240,42 @@ def politics_postgres_content_domain_key() -> str:
     return (os.environ.get("POLITICS_PG_CONTENT_DOMAIN_KEY", "politics") or "politics").strip()
 
 
+def event_tracking_max_age_days() -> int:
+    """
+    Context age window for event discovery candidates.
+    Older contexts are skipped to keep event_tracking focused on current developments.
+    """
+    try:
+        n = int(os.environ.get("EVENT_TRACKING_MAX_AGE_DAYS", "14"))
+    except ValueError:
+        n = 14
+    return max(1, min(180, n))
+
+
+def event_tracking_min_content_len() -> int:
+    """
+    Minimum context content length for event discovery candidates.
+    Very short contexts are typically too low-signal for reliable event grouping.
+    """
+    try:
+        n = int(os.environ.get("EVENT_TRACKING_MIN_CONTENT_LEN", "180"))
+    except ValueError:
+        n = 180
+    return max(0, min(5000, n))
+
+
+def topic_clustering_graduation_confidence() -> float:
+    """
+    Average article-topic confidence at/above which an article is considered clustered.
+    Lowering this can reduce topic_clustering churn and backlog.
+    """
+    try:
+        n = float(os.environ.get("TOPIC_CLUSTERING_GRADUATION_CONFIDENCE", "0.88"))
+    except ValueError:
+        n = 0.88
+    return min(0.99, max(0.50, n))
+
+
 # ============================================================
 # Finance domain — external data sources
 # ============================================================

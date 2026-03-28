@@ -507,7 +507,7 @@ PROCESS_RUN_SUMMARY_AUTOMATION_STATUS_TIMEOUT_SECONDS = 8.0
 async def get_automation_status(request: Request) -> dict[str, Any]:
     """
     AutomationManager status for monitoring:
-    is_running, queue_size, active_workers, and per-phase last_run plus workload metrics
+    is_running, queue_size, active_workers (phase dequeue workers only), optional phase_workers_configured / max_concurrent_tasks, and per-phase last_run plus workload metrics
     (queued/running counts and how many times it ran in the last 60 minutes).
     last_run is augmented from automation_run_history when in-memory is missing (survives API restart).
     Never blocks on pipeline: uses a short timeout so the web UI always loads with current data.
@@ -644,6 +644,11 @@ async def get_automation_status(request: Request) -> dict[str, Any]:
                 "is_running": status.get("is_running", False),
                 "queue_size": status.get("queue_size", 0),
                 "active_workers": status.get("active_workers", 0),
+                "phase_workers_configured": status.get("phase_workers_configured"),
+                "max_concurrent_tasks": status.get("max_concurrent_tasks"),
+                "automation_background_tasks_active": status.get(
+                    "automation_background_tasks_active"
+                ),
                 "phases": phases,
                 "backlog_counts": backlog_counts,
                 "pending_counts": status.get("pending_counts") or {},

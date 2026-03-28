@@ -36,9 +36,12 @@ RSS: if the same ``feed_url`` exists in both schemas and neither domain is exclu
 ``RSS_INGEST_EXCLUDE_DOMAIN_KEYS``, collection may write duplicates — exclude one domain or
 deactivate overlapping feeds in one silo.
 
-Tables that exist only on the source (e.g. ``topic_extraction_queue``, ``timeline_events``,
-``article_keywords``) are **not** copied — ``politics_2`` stays schema-parity with migration 201
-only. Re-run domain-specific workers or migrations if those tables are added to the target later.
+Tables that exist only on the source are **not** copied until the target has matching DDL.
+For **finance → finance_2**, run migration **206** so ``topic_extraction_queue``,
+``research_topics``, ``market_patterns``, ``corporate_announcements``, and
+``financial_indicators`` exist on ``finance_2``, then re-run this script for those tables.
+Template silos (201) stay minimal; per-silo extensions use follow-on migrations (see
+``docs/DOMAIN_EXTENSION_TEMPLATE.md`` § Per-silo DDL extensions).
 """
 
 from __future__ import annotations
@@ -111,6 +114,12 @@ def _shared_tables(source: str, target: str, cur) -> list[str]:
         "storyline_articles",
         "article_entities",
         "story_entity_index",
+        # finance (and finance_2 post-206): after articles for FKs / queue
+        "research_topics",
+        "market_patterns",
+        "financial_indicators",
+        "corporate_announcements",
+        "topic_extraction_queue",
     ]
     shared = a & b
     out = [t for t in preferred if t in shared]

@@ -4,16 +4,27 @@ Used by system_monitoring health and by automation_manager for temperature-based
 """
 
 import logging
+import os
 import subprocess
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
+def _env_int(name: str, default: int, minimum: int = 1) -> int:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        return max(minimum, int(raw))
+    except (TypeError, ValueError):
+        return default
+
+
 # Above this temp (C), automation will pause Ollama work briefly to let GPU cool
-GPU_TEMP_THROTTLE_C = 82
+GPU_TEMP_THROTTLE_C = _env_int("GPU_TEMP_THROTTLE_C", 82, minimum=60)
 
 # Max seconds to wait when throttling before skipping this cycle
-GPU_THROTTLE_SLEEP_SECONDS = 60
+GPU_THROTTLE_SLEEP_SECONDS = _env_int("GPU_THROTTLE_SLEEP_SECONDS", 60, minimum=5)
 
 
 def get_gpu_metrics() -> dict[str, Any]:

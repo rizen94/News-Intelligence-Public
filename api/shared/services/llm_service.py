@@ -5,8 +5,11 @@ Global concurrency limit so async Ollama callers share one cap.
 """
 
 import asyncio
+import os
 import json
 import logging
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime
 from enum import Enum
 from typing import Any
@@ -25,6 +28,9 @@ logger = logging.getLogger(__name__)
 # Global cap. Burst (48h catch-up): 6; revert to 5 after
 OLLAMA_CONCURRENCY = 6
 _ollama_semaphore: asyncio.Semaphore | None = None
+_ollama_cpu_semaphore: asyncio.Semaphore | None = None
+_ollama_gpu_semaphore: asyncio.Semaphore | None = None
+_llm_execution_lane: ContextVar[str | None] = ContextVar("llm_execution_lane", default=None)
 
 
 def _get_ollama_semaphore() -> asyncio.Semaphore:
@@ -32,6 +38,54 @@ def _get_ollama_semaphore() -> asyncio.Semaphore:
     if _ollama_semaphore is None:
         _ollama_semaphore = asyncio.Semaphore(OLLAMA_CONCURRENCY)
     return _ollama_semaphore
+
+
+def _get_lane_semaphore(execution_lane: str | None, dual_enabled: bool) -> asyncio.Semaphore:
+    if not dual_enabled:
+        return _get_ollama_semaphore()
+
+    lane = (execution_lane or "gpu").strip().lower()
+    if lane == "cpu":
+        global _ollama_cpu_semaphore
+        if _ollama_cpu_semaphore is None:
+            cpu_cap = max(1, int(os.environ.get("OLLAMA_CPU_CONCURRENCY", "6")))
+            _ollama_cpu_semaphore = asyncio.Semaphore(cpu_cap)
+        return _ollama_cpu_semaphore
+
+    global _ollama_gpu_semaphore
+    if _ollama_gpu_semaphore is None:
+        gpu_cap = max(1, int(os.environ.get("OLLAMA_GPU_CONCURRENCY", "6")))
+        _ollama_gpu_semaphore = asyncio.Semaphore(gpu_cap)
+    return _ollama_gpu_semaphore
+
+
+@contextmanager
+def set_llm_execution_lane(execution_lane: str | None):
+    """Context helper so automation can steer LLM calls to cpu/gpu lanes."""
+    normalized = None
+    if execution_lane:
+        lane = execution_lane.strip().lower()
+        if lane in ("cpu", "gpu"):
+            normalized = lane
+    token = _llm_execution_lane.set(normalized)
+    try:
+        yield
+    finally:
+        _llm_execution_lane.reset(token)
+
+
+def push_llm_execution_lane(execution_lane: str | None):
+    """Set lane in current context and return token for manual reset."""
+    normalized = None
+    if execution_lane:
+        lane = execution_lane.strip().lower()
+        if lane in ("cpu", "gpu"):
+            normalized = lane
+    return _llm_execution_lane.set(normalized)
+
+
+def pop_llm_execution_lane(token) -> None:
+    _llm_execution_lane.reset(token)
 
 
 class ModelType(str, Enum):
@@ -61,9 +115,28 @@ class LLMService:
 
     def __init__(self, ollama_base_url: str | None = None):
         self.ollama_base_url = (ollama_base_url or OLLAMA_HOST).rstrip("/")
+        self.ollama_cpu_host = (
+            os.environ.get("OLLAMA_CPU_HOST", self.ollama_base_url).rstrip("/")
+        )
+        self.ollama_gpu_host = (
+            os.environ.get("OLLAMA_GPU_HOST", self.ollama_base_url).rstrip("/")
+        )
+        self.dual_host_enabled = os.environ.get(
+            "OLLAMA_DUAL_HOST_ROUTING_ENABLED", "false"
+        ).lower() in ("1", "true", "yes")
         self.client = httpx.AsyncClient(
             timeout=180.0
         )  # Increased timeout to 180s for comprehensive analysis
+        self.cpu_client = (
+            self.client
+            if self.ollama_cpu_host == self.ollama_base_url
+            else httpx.AsyncClient(timeout=180.0)
+        )
+        self.gpu_client = (
+            self.client
+            if self.ollama_gpu_host == self.ollama_base_url
+            else httpx.AsyncClient(timeout=180.0)
+        )
         self.model_performance = {
             ModelType.LLAMA_8B: {
                 "speed": 2.93,  # seconds for 200 words
@@ -337,18 +410,31 @@ class LLMService:
             logger.debug("generate_briefing_lead failed: %s", e)
             return {"success": False, "error": str(e)}
 
-    async def _call_ollama(self, model: ModelType, prompt: str) -> str:
-        """Make API call to Ollama with circuit breaker protection; acquires global semaphore."""
-        sem = _get_ollama_semaphore()
-        async with sem:
-            return await self._call_ollama_impl(model, prompt)
+    def _resolve_execution_target(self, execution_lane: str | None) -> tuple[str, httpx.AsyncClient, str]:
+        lane = (execution_lane or _llm_execution_lane.get() or "gpu").strip().lower()
+        if not self.dual_host_enabled:
+            return self.ollama_base_url, self.client, "ollama"
+        if lane == "cpu":
+            return self.ollama_cpu_host, self.cpu_client, "ollama_cpu"
+        return self.ollama_gpu_host, self.gpu_client, "ollama_gpu"
 
-    async def _call_ollama_impl(self, model: ModelType, prompt: str) -> str:
+    async def _call_ollama(
+        self, model: ModelType, prompt: str, execution_lane: str | None = None
+    ) -> str:
+        """Make API call to Ollama with circuit breaker protection and lane-aware semaphores."""
+        sem = _get_lane_semaphore(execution_lane or _llm_execution_lane.get(), self.dual_host_enabled)
+        async with sem:
+            return await self._call_ollama_impl(model, prompt, execution_lane=execution_lane)
+
+    async def _call_ollama_impl(
+        self, model: ModelType, prompt: str, execution_lane: str | None = None
+    ) -> str:
         """Inner Ollama call (no semaphore)."""
         from services.circuit_breaker_service import get_circuit_breaker_service
 
         cb_service = get_circuit_breaker_service()
-        cb = cb_service.get_circuit_breaker("ollama")
+        base_url, client, cb_key = self._resolve_execution_target(execution_lane)
+        cb = cb_service.get_circuit_breaker(cb_key)
 
         if cb.state.value == "open":
             raise Exception(
@@ -356,8 +442,8 @@ class LLMService:
             )
 
         try:
-            response = await self.client.post(
-                f"{self.ollama_base_url}/api/generate",
+            response = await client.post(
+                f"{base_url}/api/generate",
                 json={
                     "model": model.value,
                     "prompt": prompt,
@@ -435,6 +521,10 @@ class LLMService:
     async def close(self):
         """Close HTTP client"""
         await self.client.aclose()
+        if self.cpu_client is not self.client:
+            await self.cpu_client.aclose()
+        if self.gpu_client is not self.client and self.gpu_client is not self.cpu_client:
+            await self.gpu_client.aclose()
 
 
 # Global LLM service instance

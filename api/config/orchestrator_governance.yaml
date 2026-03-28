@@ -223,7 +223,8 @@ resources:
 # Env override: COLLECTION_CYCLE_INTERVAL_SECONDS
 analysis_pipeline:
   step_budgets_seconds: [1800, 1200, 1200, null]  # Foundation, Extraction, Intelligence, Output (null = no limit)
-  max_requeue_per_window: 3
+  # 0 = unlimited batch re-enqueues per analysis window (workers + Ollama semaphores bound throughput). Env: AUTOMATION_MAX_REQUEUE_PER_WINDOW
+  max_requeue_per_window: 0
 
 # Workload-driven scheduling: automation_manager checks every process every tick; run order and eligibility
 # are determined by current workload (backlog/pending), not fixed intervals. Collection is throttled when

@@ -17,6 +17,133 @@ from shared.services.ollama_model_policy import InvocationKind
 
 logger = logging.getLogger(__name__)
 
+_GENERIC_SUBJECTS = frozenset(
+    {
+        "company",
+        "companies",
+        "administration",
+        "government",
+        "public",
+        "people",
+        "person",
+        "official",
+        "officials",
+        "officer",
+        "officers",
+        "investigator",
+        "investigators",
+        "source",
+        "sources",
+        "analyst",
+        "analysts",
+        "method",
+        "methods",
+        "approach",
+        "approaches",
+        "model",
+        "models",
+        "system",
+        "systems",
+        "report",
+        "reports",
+        "study",
+        "studies",
+        "paper",
+        "papers",
+        "price target",
+        "target price",
+        "consumer",
+        "consumers",
+        "customer",
+        "customers",
+        "parent",
+        "parents",
+        "women",
+        "men",
+        "i",
+        "we",
+        "they",
+        "it",
+        "this",
+        "that",
+    }
+)
+
+
+def _subject_norm(text: str | None) -> str:
+    return re.sub(r"\s+", " ", (text or "").strip().lower())
+
+
+def _claim_text_norm(text: str | None) -> str:
+    return re.sub(r"\s+", " ", (text or "").strip().lower())
+
+
+def _claims_to_facts_check_merged_source_ids() -> bool:
+    """
+    Optional extra dedupe gate for merged source_claim_ids in versioned_facts metadata.
+    Disabled by default for throughput; this JSONB membership check can be expensive at scale.
+    """
+    return os.environ.get("CLAIMS_TO_FACTS_CHECK_MERGED_SOURCE_IDS", "").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+
+
+def _is_overly_generic_subject(subject_text: str | None) -> bool:
+    s = _subject_norm(subject_text)
+    if not s:
+        return True
+    if s in _GENERIC_SUBJECTS:
+        return True
+    if len(s) <= 1:
+        return True
+    if re.fullmatch(r"[a-z]", s):
+        return True
+    if re.fullmatch(r"(the\s+)?(company|government|administration|public|people|officials?)", s):
+        return True
+    return False
+
+
+def _claim_extraction_strict_seeded_domain_keys() -> frozenset[str]:
+    """
+    Optional allowlist of domains where claim subjects must match existing canonical/profile names
+    before insertion into extracted_claims.
+    """
+    raw = os.environ.get("CLAIM_EXTRACTION_REQUIRE_SEEDED_DOMAIN_KEYS", "").strip()
+    if not raw:
+        return frozenset()
+    return frozenset(x.strip().lower() for x in raw.split(",") if x.strip())
+
+
+def _subject_matches_seeded_pool(cur, domain_key: str, subject_text: str) -> bool:
+    """Fast exact normalized match against entity_profiles canonical_name or domain entity_canonical."""
+    norm = _subject_norm(subject_text)
+    if not norm:
+        return False
+    schema = _claim_domain_key_to_schema(domain_key)
+    cur.execute(
+        """
+        SELECT 1
+        FROM intelligence.entity_profiles ep
+        WHERE lower(trim(COALESCE(ep.metadata->>'canonical_name', ''))) = %s
+        LIMIT 1
+        """,
+        (norm,),
+    )
+    if cur.fetchone():
+        return True
+    cur.execute(
+        f"""
+        SELECT 1
+        FROM {schema}.entity_canonical ec
+        WHERE lower(trim(ec.canonical_name)) = %s
+        LIMIT 1
+        """,
+        (norm,),
+    )
+    return bool(cur.fetchone())
+
 
 def claim_pipeline_max_fetch() -> int:
     """
@@ -34,9 +161,9 @@ def claim_pipeline_max_fetch() -> int:
 def get_claim_extraction_batch_limit() -> int:
     """Contexts per claim_extraction invocation. <=0 means use claim_pipeline_max_fetch()."""
     try:
-        n = int(os.environ.get("CLAIM_EXTRACTION_BATCH_LIMIT", "2000"))
+        n = int(os.environ.get("CLAIM_EXTRACTION_BATCH_LIMIT", "4000"))
     except ValueError:
-        n = 2000
+        n = 4000
     if n <= 0:
         return claim_pipeline_max_fetch()
     return n
@@ -47,15 +174,30 @@ def get_claim_extraction_parallel() -> int:
     Concurrent LLM extractions per batch. No hard upper bound (tune to GPU / Ollama capacity).
     If CLAIM_EXTRACTION_PARALLEL <= 0, concurrency equals min(batch, claim_pipeline_max_fetch())
     so fanout tracks batch without spawning more coroutines than contexts selected.
+
+    Optional CLAIM_EXTRACTION_PARALLEL_DAYTIME_MAX: when >0 and outside the unified nightly
+    pipeline window, parallel is min(env_parallel, daytime_max) so one batch does not saturate
+    the GPU while other phases could use the cluster.
     """
     batch = get_claim_extraction_batch_limit()
     try:
-        n = int(os.environ.get("CLAIM_EXTRACTION_PARALLEL", "32"))
+        n = int(os.environ.get("CLAIM_EXTRACTION_PARALLEL", "48"))
     except ValueError:
-        n = 32
+        n = 48
     if n <= 0:
-        return max(1, min(batch, claim_pipeline_max_fetch()))
-    return max(1, n)
+        n = max(1, min(batch, claim_pipeline_max_fetch()))
+    else:
+        n = max(1, n)
+    try:
+        daytime_max = int(os.environ.get("CLAIM_EXTRACTION_PARALLEL_DAYTIME_MAX", "0") or 0)
+        if daytime_max > 0:
+            from services.nightly_ingest_window_service import in_nightly_pipeline_window_est
+
+            if not in_nightly_pipeline_window_est():
+                n = min(n, daytime_max)
+    except Exception:
+        pass
+    return n
 
 
 def get_claims_to_facts_batch_limit() -> int:
@@ -140,7 +282,7 @@ async def extract_claims_for_context(context_id: int) -> int:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT title, content, metadata FROM intelligence.contexts WHERE id = %s
+                SELECT title, content, metadata, domain_key FROM intelligence.contexts WHERE id = %s
                 """,
                 (context_id,),
             )
@@ -150,7 +292,7 @@ async def extract_claims_for_context(context_id: int) -> int:
 
     if not row:
         return 0
-    title, content, ctx_meta = row
+    title, content, ctx_meta, context_domain_key = row
     cred_mult = 1.0
     if ctx_meta:
         try:
@@ -206,10 +348,22 @@ Keep each subject under ~80 characters when possible."""
     if not conn:
         return 0
     inserted = 0
+    skipped_generic = 0
+    skipped_unseeded = 0
+    strict_domains = _claim_extraction_strict_seeded_domain_keys()
+    strict_seeded = bool(context_domain_key and context_domain_key in strict_domains)
     try:
         with conn.cursor() as cur:
             for subject_text, predicate_text, object_text, confidence in claims:
                 try:
+                    if _is_overly_generic_subject(subject_text):
+                        skipped_generic += 1
+                        continue
+                    if strict_seeded and not _subject_matches_seeded_pool(
+                        cur, str(context_domain_key), subject_text
+                    ):
+                        skipped_unseeded += 1
+                        continue
                     adj_conf = max(0.0, min(1.0, float(confidence) * cred_mult))
                     cur.execute(
                         """
@@ -235,6 +389,15 @@ Keep each subject under ~80 characters when possible."""
 
     if inserted > 0:
         logger.debug(f"Claims extracted for context {context_id}: {inserted}")
+    if skipped_generic > 0 or skipped_unseeded > 0:
+        logger.info(
+            "claim_extraction_filters context_id=%s domain=%s skipped_generic=%s skipped_unseeded=%s strict_seeded=%s",
+            context_id,
+            context_domain_key,
+            skipped_generic,
+            skipped_unseeded,
+            strict_seeded,
+        )
     return inserted
 
 
@@ -350,18 +513,32 @@ def promote_claims_to_versioned_facts(
     ``min_confidence`` / ``limit`` default from ``CLAIMS_TO_FACTS_MIN_CONFIDENCE`` /
     ``CLAIMS_TO_FACTS_BATCH_LIMIT`` (and claim_pipeline_max_fetch when limit <= 0).
 
-    Returns counts: ``promoted``, ``candidates``, ``unresolved_subject``, ``insert_failed``.
+    Returns counts: ``promoted``, ``candidates``, ``unresolved_subject``, ``insert_failed``,
+    plus batch-local merge telemetry.
     """
     if min_confidence is None:
         min_confidence = get_claims_to_facts_min_confidence()
     if limit is None:
         limit = get_claims_to_facts_batch_limit()
-    empty = {"promoted": 0, "candidates": 0, "unresolved_subject": 0, "insert_failed": 0}
+    empty = {
+        "promoted": 0,
+        "candidates": 0,
+        "unresolved_subject": 0,
+        "insert_failed": 0,
+        "generic_subject_skipped": 0,
+        "merged_groups": 0,
+        "merged_claims_collapsed": 0,
+    }
     conn = get_db_connection()
     if not conn:
         return dict(empty)
     stats = dict(empty)
     try:
+        merged_guard_sql = ""
+        if _claims_to_facts_check_merged_source_ids():
+            merged_guard_sql = (
+                " OR COALESCE(vf.metadata->'source_claim_ids', '[]'::jsonb) ? ec.id::text"
+            )
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -372,6 +549,7 @@ def promote_claims_to_versioned_facts(
                   AND NOT EXISTS (
                       SELECT 1 FROM intelligence.versioned_facts vf
                       WHERE vf.metadata->>'source_claim_id' = ec.id::text
+                      """ + merged_guard_sql + """
                   )
                 """ + CLAIM_PROMOTION_GAP_IGNORED_EXCLUDE_SQL + """
                 ORDER BY ec.confidence DESC
@@ -387,6 +565,7 @@ def promote_claims_to_versioned_facts(
                 return stats
 
             active_schemas = frozenset(get_pipeline_schema_names_active())
+            grouped: dict[tuple, dict[str, object]] = {}
             for (
                 claim_id,
                 context_id,
@@ -397,6 +576,9 @@ def promote_claims_to_versioned_facts(
                 valid_from,
                 valid_to,
             ) in claims:
+                if _is_overly_generic_subject(subject):
+                    stats["generic_subject_skipped"] += 1
+                    continue
                 entity_profile_id = _resolve_claim_to_entity_profile(
                     cur,
                     subject,
@@ -408,10 +590,52 @@ def promote_claims_to_versioned_facts(
                     continue
 
                 fact_type = _map_predicate_to_fact_type(predicate or "")
-                fact_text = f"{subject} {predicate}"
-                if obj:
-                    fact_text += f" {obj}"
+                key = (
+                    int(entity_profile_id),
+                    fact_type,
+                    _claim_text_norm(subject),
+                    _claim_text_norm(predicate),
+                    _claim_text_norm(obj),
+                    valid_from.isoformat() if hasattr(valid_from, "isoformat") else str(valid_from),
+                    valid_to.isoformat() if hasattr(valid_to, "isoformat") else str(valid_to),
+                )
+                group = grouped.get(key)
+                if not group:
+                    grouped[key] = {
+                        "claim_ids": [int(claim_id)],
+                        "entity_profile_id": int(entity_profile_id),
+                        "fact_type": fact_type,
+                        "subject": subject or "",
+                        "predicate": predicate or "",
+                        "obj": obj or "",
+                        "confidence": float(confidence or 0.0),
+                        "valid_from": valid_from,
+                        "valid_to": valid_to,
+                    }
+                else:
+                    group["claim_ids"].append(int(claim_id))
+                    group["confidence"] = max(
+                        float(group.get("confidence") or 0.0),
+                        float(confidence or 0.0),
+                    )
 
+            stats["merged_groups"] = len(grouped)
+            for group in grouped.values():
+                claim_ids = list(group.get("claim_ids") or [])
+                if len(claim_ids) > 1:
+                    stats["merged_claims_collapsed"] += len(claim_ids) - 1
+                subject_text = str(group.get("subject") or "")
+                predicate_text = str(group.get("predicate") or "")
+                object_text = str(group.get("obj") or "")
+                fact_text = f"{subject_text} {predicate_text}"
+                if object_text:
+                    fact_text += f" {object_text}"
+                rep_claim_id = claim_ids[0] if claim_ids else None
+                metadata = {
+                    "source_claim_id": str(rep_claim_id) if rep_claim_id is not None else "",
+                    "source_claim_ids": [str(cid) for cid in claim_ids],
+                    "merged_count": len(claim_ids),
+                }
                 try:
                     cur.execute(
                         """
@@ -421,33 +645,44 @@ def promote_claims_to_versioned_facts(
                         VALUES (%s, %s, %s, %s, %s, %s, 'claim_extraction', %s)
                         """,
                         (
-                            entity_profile_id,
-                            fact_type,
+                            int(group["entity_profile_id"]),
+                            str(group["fact_type"]),
                             fact_text[:2000],
-                            confidence,
-                            valid_from,
-                            valid_to,
-                            json.dumps({"source_claim_id": str(claim_id)}),
+                            float(group.get("confidence") or 0.0),
+                            group.get("valid_from"),
+                            group.get("valid_to"),
+                            json.dumps(metadata),
                         ),
                     )
                     stats["promoted"] += 1
                 except Exception as e:
                     stats["insert_failed"] += 1
-                    logger.debug("promote claim %s to versioned_facts: %s", claim_id, e)
+                    logger.debug(
+                        "promote merged claim group rep=%s size=%s: %s",
+                        rep_claim_id,
+                        len(claim_ids),
+                        e,
+                    )
 
         conn.commit()
     except Exception as e:
         logger.warning("promote_claims_to_versioned_facts failed: %s", e)
         conn.rollback()
     finally:
-        conn.close()
+        try:
+            conn.close()
+        except Exception:
+            pass
     if stats["candidates"] > 0:
         logger.info(
-            "claims_to_facts batch: promoted=%s candidates=%s unresolved_subject=%s insert_failed=%s",
+            "claims_to_facts batch: promoted=%s candidates=%s unresolved_subject=%s insert_failed=%s merged_groups=%s collapsed=%s merged_id_check=%s",
             stats["promoted"],
             stats["candidates"],
             stats["unresolved_subject"],
             stats["insert_failed"],
+            stats["merged_groups"],
+            stats["merged_claims_collapsed"],
+            _claims_to_facts_check_merged_source_ids(),
         )
     return stats
 
@@ -485,6 +720,12 @@ def sample_unpromoted_claim_resolution_stats(
         return out
     active_schemas = frozenset(get_pipeline_schema_names_active())
     try:
+        merged_source_id_check = _claims_to_facts_check_merged_source_ids()
+        merged_guard_sql = ""
+        if merged_source_id_check:
+            merged_guard_sql = (
+                " OR COALESCE(vf.metadata->'source_claim_ids', '[]'::jsonb) ? ec.id::text"
+            )
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -494,6 +735,7 @@ def sample_unpromoted_claim_resolution_stats(
                   AND NOT EXISTS (
                       SELECT 1 FROM intelligence.versioned_facts vf
                       WHERE vf.metadata->>'source_claim_id' = ec.id::text
+                      """ + merged_guard_sql + """
                   )
                 """ + CLAIM_PROMOTION_GAP_IGNORED_EXCLUDE_SQL + """
                 ORDER BY ec.confidence DESC

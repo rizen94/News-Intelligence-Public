@@ -10,7 +10,7 @@ or duplicate env parsing. Config is **only** ``DB_*`` environment variables
 
 Pool architecture (4 independent psycopg2 pools + SA; target **PgBouncer** or Postgres via ``DB_HOST``/``DB_PORT``):
   - UI pool     (psycopg2): page loads & monitoring — DB_POOL_UI_MIN/MAX (default 2/16); **3 s** checkout — prioritize responsiveness
-  - Worker pool (psycopg2): automation & batch — DB_POOL_WORKER_MIN/MAX (default 2/20); raise MAX only when Postgres/PgBouncer headroom allows
+  - Worker pool (psycopg2): automation & batch — DB_POOL_WORKER_MIN/MAX (default 2/28); raise MAX only when Postgres/PgBouncer headroom allows
   - Health pool (psycopg2): automation ``health_check`` probes + ``automation_run_history`` rows for that phase — DB_POOL_HEALTH_MIN/MAX (default 1/2); short checkout (``DB_HEALTH_GETCONN_TIMEOUT_SECONDS``, default **2 s**) so liveness is tracked even when the worker pool is saturated
   - SA pool   (SQLAlchemy): ORM-based services — DB_POOL_SA_SIZE/OVERFLOW (default 3/8)
 
@@ -199,10 +199,10 @@ def _pool_sizes(pool_kind: str) -> tuple[int, int]:
     else:
         minconn = int(os.getenv("DB_POOL_WORKER_MIN", str(max(legacy_min, 2))))
         if os.getenv("DB_POOL_WORKER_MAX") is not None:
-            maxconn = int(os.getenv("DB_POOL_WORKER_MAX", "20"))
+            maxconn = int(os.getenv("DB_POOL_WORKER_MAX", "28"))
         else:
-            # No implicit 48 floor: default aligns with legacy DB_POOL_MAX (20) for small max_connections / PgBouncer
-            maxconn = int(os.getenv("DB_POOL_MAX", "20"))
+            # Default worker max when DB_POOL_WORKER_MAX unset: higher for parallel automation (tune vs Postgres max_connections).
+            maxconn = int(os.getenv("DB_POOL_MAX", "28"))
     maxconn = max(minconn, min(maxconn, 100))
     return minconn, maxconn
 
@@ -408,6 +408,49 @@ def get_health_db_connection():
         "Database health pool connection failed (pool and direct). "
         "Check DB_HOST, DB_PORT, DB_PASSWORD in .env and that the database is running."
     )
+
+
+def get_db_pool_snapshot() -> Dict[str, Any]:
+    """
+    Lightweight pool usage snapshot for scheduler/monitoring decisions.
+
+    Returns per-pool in_use/max/utilization. If a pool is not initialized yet,
+    in_use is reported as 0 with max from current env config.
+    """
+
+    def _pool_stats(
+        pool_ref: Optional[pool.ThreadedConnectionPool], pool_kind: str
+    ) -> Dict[str, Any]:
+        _, maxconn = _pool_sizes(pool_kind)
+        if pool_ref is None:
+            return {
+                "initialized": False,
+                "in_use": 0,
+                "max": maxconn,
+                "utilization": 0.0,
+            }
+        try:
+            used = len(getattr(pool_ref, "_used", {}) or {})
+            util = round((float(used) / float(maxconn)) if maxconn > 0 else 0.0, 3)
+            return {
+                "initialized": True,
+                "in_use": used,
+                "max": maxconn,
+                "utilization": util,
+            }
+        except Exception:
+            return {
+                "initialized": True,
+                "in_use": 0,
+                "max": maxconn,
+                "utilization": 0.0,
+            }
+
+    return {
+        "worker": _pool_stats(_connection_pool, "worker"),
+        "ui": _pool_stats(_ui_connection_pool, "ui"),
+        "health": _pool_stats(_health_connection_pool, "health"),
+    }
 
 
 def close_pool() -> None:

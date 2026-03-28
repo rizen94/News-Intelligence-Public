@@ -1,12 +1,12 @@
 """
 Backlog-aware cooldown for workload-driven automation phases.
 
-When enabled (default), selected phases enqueue more often when pending work is large
+When enabled, selected phases enqueue more often when pending work is large
 relative to one batch, and less often when the queue is shallow — targeting backfill-style
-work (timelines, events, discovery, PDFs) without always-on churn.
+work (timelines, events, discovery, PDFs, claim extraction) without always-on churn.
 
 Env:
-  WORKLOAD_BALANCER_ENABLED — default true (set false to restore fixed cooldown).
+  WORKLOAD_BALANCER_ENABLED — default **false** in code (set true for backlog-aware cooldowns).
   WORKLOAD_BALANCER_PHASES — optional comma-separated phase names overriding the default set.
 """
 
@@ -27,12 +27,14 @@ _DEFAULT_BALANCER_PHASES: frozenset[str] = frozenset(
         "narrative_thread_build",
         "storyline_processing",
         "proactive_detection",
+        "claim_extraction",
     }
 )
 
 
 def workload_balancer_enabled() -> bool:
-    return os.environ.get("WORKLOAD_BALANCER_ENABLED", "true").lower() in (
+    # Default off: base WORKLOAD_MIN_COOLDOWN + router already throttle; set true for gentler churn.
+    return os.environ.get("WORKLOAD_BALANCER_ENABLED", "false").lower() in (
         "1",
         "true",
         "yes",

@@ -101,10 +101,19 @@ def main() -> int:
             conn.commit()
             print(f"Updated: deactivated {off} feed(s) on {src_sch}, activated {on} feed(s) on {tgt_sch}")
 
+        env_hint = ""
+        src = args.deactivate.strip().lower()
+        if src.startswith("politics"):
+            env_hint = f"  POLITICS_PG_CONTENT_DOMAIN_KEY={args.activate}\n"
+        elif src.startswith("finance"):
+            env_hint = (
+                f"  FINANCE_PG_CONTENT_DOMAIN_KEY={args.activate}\n"
+                f"  FINANCE_CONTEXT_DOMAIN_KEY={args.activate}\n"
+            )
         print(
             "\nRecommended .env (restart API/workers after edit):\n"
             f"  RSS_INGEST_EXCLUDE_DOMAIN_KEYS={args.deactivate}\n"
-            f"  POLITICS_PG_CONTENT_DOMAIN_KEY={args.activate}\n"
+            f"{env_hint}"
         )
     except Exception as e:
         conn.rollback()

@@ -14,13 +14,26 @@ import yaml
 logger = logging.getLogger(__name__)
 
 
+def _is_finance_silo_domain_key(dk: str) -> bool:
+    """True for built-in finance, template finance-2, and FINANCE_PG_CONTENT_DOMAIN_KEY."""
+    key = (dk or "").strip().lower()
+    if key in ("finance", "finance-2"):
+        return True
+    try:
+        from config.settings import finance_postgres_content_domain_key
+
+        return key == finance_postgres_content_domain_key().strip().lower()
+    except Exception:
+        return False
+
+
 def _non_finance_domain_tokens() -> frozenset[str]:
     """Lowercased URL keys and schema names for active silos except finance (cross-domain map provenance)."""
     from shared.domain_registry import domain_key_to_schema, get_active_domain_keys
 
     out: set[str] = set()
     for dk in get_active_domain_keys():
-        if dk == "finance":
+        if _is_finance_silo_domain_key(dk):
             continue
         out.add(dk.lower())
         try:
@@ -109,7 +122,7 @@ def cross_domain_sql_domains_array() -> list[str]:
     ordered: list[str] = []
     seen: set[str] = set()
     for dk in get_active_domain_keys():
-        if dk == "finance":
+        if _is_finance_silo_domain_key(dk):
             continue
         for token in (dk, dk.replace("-", "_"), domain_key_to_schema(dk)):
             if token and token not in seen:
@@ -130,12 +143,18 @@ def maybe_append_finance_domain_key(
     if not conn:
         return
     lowered = [str(k).lower() for k in (current_keys or [])]
-    if "finance" in lowered:
+    try:
+        from config.settings import finance_postgres_content_domain_key
+
+        fin_dk = finance_postgres_content_domain_key().strip()
+    except Exception:
+        fin_dk = "finance"
+    if fin_dk.lower() in lowered or "finance" in lowered or "finance-2" in lowered:
         return
     blob = f"{event_name or ''} {geographic_scope or ''} {summary or ''}"
     if not text_suggests_macro_commodity_link(blob):
         return
-    new_keys = list(dict.fromkeys(list(current_keys or []) + ["finance"]))
+    new_keys = list(dict.fromkeys(list(current_keys or []) + [fin_dk]))
     try:
         with conn.cursor() as cur:
             cur.execute(

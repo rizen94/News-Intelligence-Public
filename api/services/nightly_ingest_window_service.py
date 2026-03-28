@@ -1,7 +1,7 @@
 """
 Nightly off-hours pipeline (America/New_York by default).
 
-**Unified window** ``[NIGHTLY_PIPELINE_START_HOUR, NIGHTLY_PIPELINE_END_HOUR)`` — default **01:00–07:00** local:
+**Unified window** ``[NIGHTLY_PIPELINE_START_HOUR, NIGHTLY_PIPELINE_END_HOUR)`` — default **02:00–07:00** local:
 
 1. **Once per local calendar day** while the window is active: optional kickoff ``collect_rss_feeds`` (see
    ``NIGHTLY_PIPELINE_KICKOFF_RSS``; respects ``AUTOMATION_SKIP_RSS_IN_COLLECTION_CYCLE``).
@@ -18,12 +18,13 @@ are idle, then exits so normal daytime automation resumes.
 **Daytime:** ``AutomationManager`` uses ``NIGHTLY_PIPELINE_EXCLUSIVE`` (default on): only
 ``nightly_enrichment_context``, ``health_check``, and ``pending_db_flush`` are scheduled during the window.
 
-Optional: ``NIGHTLY_INGEST_EXCLUSIVE_AUTOMATION`` during ``[NIGHTLY_ENRICHMENT_CONTEXT_*]`` defers other
-phases — sequential sub-runs from this module bypass that gate (they are orchestrated by
-``nightly_enrichment_context``).
+Optional: ``NIGHTLY_INGEST_EXCLUSIVE_AUTOMATION`` during ``[NIGHTLY_ENRICHMENT_CONTEXT_*]`` defers phases
+not listed in ``NIGHTLY_INGEST_ALLOW`` (default includes core ingest plus extraction pipeline phases such as
+``claim_extraction``, ``entity_extraction``, ``event_extraction``). Sequential sub-runs from this module
+bypass that gate (``nightly_sequential_drain`` metadata).
 
 Temporary catch-up: set ``NIGHTLY_PIPELINE_ALL_DAY=true`` to treat the unified pipeline as **always**
-inside the local window (24/7) until unset — same behavior as 01:00–07:00 extended all day
+inside the local window (24/7) until unset — same behavior as 02:00–07:00 extended all day
 (``nightly_enrichment_context`` every 60s, ``NIGHTLY_PIPELINE_EXCLUSIVE`` applies around the clock).
 
 **Disable unified nightly:** set ``NIGHTLY_UNIFIED_PIPELINE_ENABLED=false`` — the local time window is
@@ -48,9 +49,18 @@ _nightly_ingest_lock = asyncio.Lock()
 _nightly_kickoff_rss_local_date: str | None = None
 _logged_nightly_all_day: bool = False
 
+# Default allowlist when ``NIGHTLY_INGEST_ALLOW`` is unset: ingest + extraction + ML/entity paths that feed them.
+_DEFAULT_NIGHTLY_INGEST_ALLOW = (
+    "nightly_enrichment_context,content_enrichment,health_check,pending_db_flush,collection_cycle,"
+    "claim_extraction,legislative_references,claims_to_facts,claim_subject_gap_refresh,extracted_claims_dedupe,"
+    "event_tracking,topic_clustering,quality_scoring,sentiment_analysis,"
+    "entity_profile_sync,entity_extraction,ml_processing,metadata_enrichment,"
+    "event_extraction,event_deduplication"
+)
+
 
 def nightly_unified_pipeline_enabled() -> bool:
-    """When false, the 01:00–07:00 (or ALL_DAY) unified drain never runs; daytime automation handles work."""
+    """When false, the 02:00–07:00 (or ALL_DAY) unified drain never runs; daytime automation handles work."""
     return os.environ.get("NIGHTLY_UNIFIED_PIPELINE_ENABLED", "true").lower() not in (
         "0",
         "false",
@@ -68,22 +78,25 @@ def _nightly_pipeline_all_day_enabled() -> bool:
     )
 
 DEFAULT_NIGHTLY_SEQUENTIAL_PHASES: tuple[str, ...] = (
-    "metadata_enrichment",
+    # Backlog-first ordering: prioritize claims pipeline throughput before broad metadata passes.
+    "claim_extraction",
+    "claims_to_facts",
+    "extracted_claims_dedupe",
+    "claim_subject_gap_refresh",
     "entity_profile_sync",
-    "ml_processing",
     "entity_extraction",
+    "event_tracking",
+    "topic_clustering",
+    "metadata_enrichment",
+    "ml_processing",
     "document_processing",
     "sentiment_analysis",
     "quality_scoring",
-    "claim_extraction",
-    "claims_to_facts",
-    "event_tracking",
     "investigation_report_refresh",
     "entity_profile_build",
     "pattern_recognition",
     "pattern_matching",
     "entity_enrichment",
-    "topic_clustering",
     "proactive_detection",
     "storyline_discovery",
     "storyline_automation",
@@ -130,7 +143,7 @@ def nightly_pipeline_window_info() -> dict[str, Any]:
     Assumes ``NIGHTLY_PIPELINE_START_HOUR`` < ``NIGHTLY_PIPELINE_END_HOUR`` (same calendar day).
     """
     zi = nightly_automation_tz()
-    start_h = int(os.environ.get("NIGHTLY_PIPELINE_START_HOUR", "1"))
+    start_h = int(os.environ.get("NIGHTLY_PIPELINE_START_HOUR", "2"))
     end_h = int(os.environ.get("NIGHTLY_PIPELINE_END_HOUR", "7"))
     all_day = _nightly_pipeline_all_day_enabled()
     exclusive = os.environ.get("NIGHTLY_PIPELINE_EXCLUSIVE", "true").lower() in (
@@ -139,7 +152,7 @@ def nightly_pipeline_window_info() -> dict[str, Any]:
         "yes",
     )
     ingest_exclusive = nightly_ingest_exclusive_automation_enabled()
-    enrich_start = int(os.environ.get("NIGHTLY_ENRICHMENT_CONTEXT_START_HOUR", "1"))
+    enrich_start = int(os.environ.get("NIGHTLY_ENRICHMENT_CONTEXT_START_HOUR", "2"))
     enrich_end = int(os.environ.get("NIGHTLY_ENRICHMENT_CONTEXT_END_HOUR", "7"))
     now_local = datetime.now(zi)
     in_window = in_nightly_pipeline_window_est()
@@ -179,7 +192,7 @@ def nightly_pipeline_window_info() -> dict[str, Any]:
 
 
 def in_nightly_pipeline_window_est() -> bool:
-    """Unified nightly catch-up window [start, end) local time (default 01:00–07:00)."""
+    """Unified nightly catch-up window [start, end) local time (default 02:00–07:00)."""
     global _logged_nightly_all_day
     if not nightly_unified_pipeline_enabled():
         return False
@@ -192,7 +205,7 @@ def in_nightly_pipeline_window_est() -> bool:
             _logged_nightly_all_day = True
         return True
     zi = nightly_automation_tz()
-    start_h = int(os.environ.get("NIGHTLY_PIPELINE_START_HOUR", "1"))
+    start_h = int(os.environ.get("NIGHTLY_PIPELINE_START_HOUR", "2"))
     end_h = int(os.environ.get("NIGHTLY_PIPELINE_END_HOUR", "7"))
     now_local = datetime.now(zi)
     start = now_local.replace(hour=start_h, minute=0, second=0, microsecond=0)
@@ -202,7 +215,7 @@ def in_nightly_pipeline_window_est() -> bool:
 
 def in_nightly_enrichment_context_window_est() -> bool:
     """
-    Sub-window for ingest-focused exclusive automation (default 01:00–07:00, aligned with pipeline).
+    Sub-window for ingest-focused exclusive automation (default 02:00–07:00, aligned with pipeline).
     Does not limit when enrichment runs inside the unified pipeline — only NIGHTLY_INGEST_EXCLUSIVE.
     """
     if not nightly_unified_pipeline_enabled():
@@ -210,7 +223,7 @@ def in_nightly_enrichment_context_window_est() -> bool:
     if _nightly_pipeline_all_day_enabled():
         return True
     zi = nightly_automation_tz()
-    start_h = int(os.environ.get("NIGHTLY_ENRICHMENT_CONTEXT_START_HOUR", "1"))
+    start_h = int(os.environ.get("NIGHTLY_ENRICHMENT_CONTEXT_START_HOUR", "2"))
     end_h = int(os.environ.get("NIGHTLY_ENRICHMENT_CONTEXT_END_HOUR", "7"))
     now_local = datetime.now(zi)
     start = now_local.replace(hour=start_h, minute=0, second=0, microsecond=0)
@@ -227,15 +240,49 @@ def nightly_ingest_exclusive_automation_enabled() -> bool:
 
 
 def _ingest_allowlist() -> frozenset[str]:
-    raw = os.environ.get(
-        "NIGHTLY_INGEST_ALLOW",
-        "nightly_enrichment_context,content_enrichment,health_check,pending_db_flush,collection_cycle",
-    )
+    raw = os.environ.get("NIGHTLY_INGEST_ALLOW", _DEFAULT_NIGHTLY_INGEST_ALLOW)
     return frozenset(x.strip() for x in raw.split(",") if x.strip())
 
 
 def task_allowed_during_nightly_ingest_exclusive(task_name: str) -> bool:
     return task_name in _ingest_allowlist()
+
+
+def _phase_loop_cap(phase_name: str, default_max_loops: int) -> int:
+    """
+    Per-phase loop cap for nightly sequential drain.
+    Env format:
+    NIGHTLY_SEQUENTIAL_PHASE_LOOP_CAPS="claim_extraction:12,claims_to_facts:10,event_tracking:4"
+    """
+    raw = os.environ.get(
+        "NIGHTLY_SEQUENTIAL_PHASE_LOOP_CAPS",
+        (
+            "claim_extraction:18,claims_to_facts:24,"
+            "extracted_claims_dedupe:8,claim_subject_gap_refresh:6,"
+            "entity_extraction:8,event_tracking:10,topic_clustering:10,"
+            "entity_profile_sync:6,entity_profile_build:6,"
+            "event_extraction:6,proactive_detection:4,storyline_discovery:4"
+        ),
+    ).strip()
+    if not raw:
+        return max(1, int(default_max_loops))
+    parsed: dict[str, int] = {}
+    for piece in raw.split(","):
+        token = piece.strip()
+        if not token or ":" not in token:
+            continue
+        name, val = token.split(":", 1)
+        name = name.strip()
+        if not name:
+            continue
+        try:
+            parsed[name] = int(val.strip())
+        except ValueError:
+            continue
+    cap = parsed.get(phase_name)
+    if cap is None:
+        return max(1, int(default_max_loops))
+    return max(1, min(int(default_max_loops), int(cap)))
 
 
 def _nightly_sequential_phase_list() -> list[str]:
@@ -317,8 +364,9 @@ async def _drain_sequential_phase(
                 )
         return
 
+    phase_max_loops = _phase_loop_cap(phase_name, max_backlog_loops)
     i = 0
-    while i < max_backlog_loops and window_active():
+    while i < phase_max_loops and window_active():
         invalidate_backlog_metrics_cache()
         if not phase_has_pending_work(phase_name):
             logger.debug("Nightly sequential %s: no backlog — advancing to next phase", phase_name)

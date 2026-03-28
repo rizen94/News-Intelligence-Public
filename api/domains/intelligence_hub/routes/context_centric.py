@@ -254,6 +254,35 @@ def post_ignore_claim_subject_gap(
     return {"success": True, "id": gap_id, "status": "ignored"}
 
 
+@router.post("/context_centric/claim_subject_gaps/bulk_ignore", response_model=dict)
+def post_bulk_ignore_claim_subject_gaps(
+    payload: dict = Body(
+        ...,
+        example={
+            "domain_key": "politics",
+            "subject_norms": ["generic source", "unnamed official"],
+            "notes": "Too vague to resolve",
+        },
+    ),
+) -> dict:
+    """
+    Upsert many ``ignored`` catalog rows for one domain (CLI: ``claim_subject_gap_bulk_ignore.py``).
+    """
+    domain_key = (payload or {}).get("domain_key")
+    norms = (payload or {}).get("subject_norms") or []
+    notes = (payload or {}).get("notes")
+    if not domain_key or not isinstance(norms, list):
+        raise HTTPException(status_code=400, detail="domain_key and subject_norms (list) required")
+    if not is_valid_domain_key(str(domain_key)):
+        raise HTTPException(status_code=400, detail="invalid domain_key")
+    from services.claim_subject_gap_service import bulk_ignore_subjects
+
+    out = bulk_ignore_subjects(str(domain_key), [str(x) for x in norms], notes=str(notes) if notes else None)
+    if not out.get("success"):
+        raise HTTPException(status_code=400, detail=out.get("error", "bulk_ignore failed"))
+    return out
+
+
 @router.post("/context_centric/run_story_state_triggers", response_model=dict)
 def run_story_state_triggers(
     step: str = Query("both", description="fact_log (process fact_change_log) | queue (process story_update_queue) | both"),

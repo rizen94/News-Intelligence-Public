@@ -48,6 +48,23 @@ import { safeServiceCall } from '@/utils/safeServiceCall';
 import { getDefaultDomainKey, getDomainKeysList } from '@/utils/domainHelper';
 
 const POLL_INTERVAL_MS = 4500;
+/** Max parallel Monitor API calls per wave (browser + reverse-proxy friendly; avoids stampedes). */
+const MONITOR_FETCH_CONCURRENCY = 2;
+
+/** Run async tasks in waves of `concurrency` to avoid piling simultaneous connections. */
+async function runPoolLimit(
+  tasks: Array<() => Promise<unknown>>,
+  concurrency: number
+): Promise<unknown[]> {
+  const results: unknown[] = [];
+  for (let i = 0; i < tasks.length; i += concurrency) {
+    const chunk = await Promise.all(
+      tasks.slice(i, i + concurrency).map(fn => fn())
+    );
+    results.push(...chunk);
+  }
+  return results;
+}
 
 function timeAgo(iso: string): string {
   const d = new Date(iso);
@@ -157,6 +174,9 @@ export default function MonitorPage() {
       queue_size?: number;
       is_running?: boolean;
       active_workers?: number;
+      phase_workers_configured?: number;
+      max_concurrent_tasks?: number;
+      automation_background_tasks_active?: number;
       document_pipeline?: {
         pending_extraction?: number;
         extracted_last_24h?: number;
@@ -383,36 +403,45 @@ export default function MonitorPage() {
   useEffect(() => {
     let cancelled = false;
     let pollTick = 0;
+    let pollTimeoutId: ReturnType<typeof setTimeout> | null = null;
     const svc = apiService as unknown as Record<string, unknown>;
+
     const load = async () => {
       setLoading(true);
       setHeavyMonitorPending(false);
       setError(null);
       try {
-        // Run overview in parallel with the rest (was sequential: overview + max(batch) latency).
-        // Split fast vs heavy so the page leaves the global loading state before backlog / DB /
-        // process_run_summary finish — those sections keep their own skeletons until data arrives.
-        const [ov, o, q, pipe, auto, sources] = await Promise.all([
-          apiService.getMonitoringOverview(),
-          safeServiceCall<{
-            status?: Record<string, unknown>;
-            decision_log?: { entries?: DecisionEntry[] };
-          }>(svc, 'getOrchestratorDashboard', [{ decision_log_limit: 25 }]),
-          contextCentricApi.getQuality().catch(() => null),
-          safeServiceCall<{
-            success?: boolean;
-            data?: Record<string, unknown>;
-          }>(svc, 'getPipelineStatus'),
-          safeServiceCall<{
-            success?: boolean;
-            data?: { phases?: PhaseRow[] };
-          }>(svc, 'getAutomationStatus'),
-          safeServiceCall<typeof sourcesCollected>(
-            svc,
-            'getSourcesCollected',
-            [30]
-          ),
-        ]);
+        // Capped concurrency: avoids stampedes (browser connection limits, nginx limit_req,
+        // API/DB pool contention) especially right after restart when many routes are cold.
+        const w1 = await runPoolLimit(
+          [
+            () => apiService.getMonitoringOverview(),
+            () =>
+              safeServiceCall<{
+                status?: Record<string, unknown>;
+                decision_log?: { entries?: DecisionEntry[] };
+              }>(svc, 'getOrchestratorDashboard', [{ decision_log_limit: 25 }]),
+            () => contextCentricApi.getQuality().catch(() => null),
+            () =>
+              safeServiceCall<{
+                success?: boolean;
+                data?: Record<string, unknown>;
+              }>(svc, 'getPipelineStatus'),
+            () =>
+              safeServiceCall<{
+                success?: boolean;
+                data?: { phases?: PhaseRow[] };
+              }>(svc, 'getAutomationStatus'),
+            () =>
+              safeServiceCall<typeof sourcesCollected>(
+                svc,
+                'getSourcesCollected',
+                [30]
+              ),
+          ],
+          MONITOR_FETCH_CONCURRENCY
+        );
+        const [ov, o, q, pipe, auto, sources] = w1;
         if (cancelled) return;
         setOverview(ov ?? null);
         setOrchDashboard(o ?? null);
@@ -423,19 +452,26 @@ export default function MonitorPage() {
         if (!cancelled) setLoading(false);
         if (!cancelled) setHeavyMonitorPending(true);
 
-        const [summary, backlog, dbConns] = await Promise.all([
-          safeServiceCall<typeof runSummary>(
-            svc,
-            'getProcessRunSummary',
-            [24, 60]
-          ),
-          safeServiceCall<typeof backlogStatus>(svc, 'getBacklogStatus'),
-          safeServiceCall<typeof dbConnections>(
-            svc,
-            'getDatabaseConnections',
-            [{ limit: 80, long_running_seconds: 60 }]
-          ),
-        ]);
+        // Heavy DB-backed endpoints: one at a time to reduce pool / lock contention.
+        const w2 = await runPoolLimit(
+          [
+            () =>
+              safeServiceCall<typeof runSummary>(
+                svc,
+                'getProcessRunSummary',
+                [24, 60]
+              ),
+            () => safeServiceCall<typeof backlogStatus>(svc, 'getBacklogStatus'),
+            () =>
+              safeServiceCall<typeof dbConnections>(
+                svc,
+                'getDatabaseConnections',
+                [{ limit: 80, long_running_seconds: 60 }]
+              ),
+          ],
+          1
+        );
+        const [summary, backlog, dbConns] = w2;
         if (cancelled) return;
         setRunSummary(summary ?? null);
         setBacklogStatus(backlog ?? null);
@@ -449,38 +485,90 @@ export default function MonitorPage() {
         }
       }
     };
-    load();
-    const t = setInterval(() => {
+
+    /**
+     * Poll must not overlap: setInterval + slow API used to stack 6+ concurrent requests
+     * every 4.5s, colliding with proxies (limit_req) and DB UI pool checkouts.
+     */
+    const runPollTick = async () => {
+      if (cancelled) return;
       pollTick += 1;
-      const heavyPoll = pollTick % 3 === 0; // ~13.5s at 4.5s base interval
-      loadOverview();
-      void safeServiceCall(svc, 'getAutomationStatus').then(
-        r => r && setAutomation(r as typeof automation)
-      );
-      void safeServiceCall(svc, 'getPipelineStatus').then(
-        r => r && setPipeline(r as typeof pipeline)
-      );
-      void safeServiceCall(svc, 'getOrchestratorDashboard', [
-        { decision_log_limit: 25 },
-      ]).then(d => d && setOrchDashboard(d as typeof orchDashboard));
-      void safeServiceCall(svc, 'getSourcesCollected', [30]).then(
-        r => r && setSourcesCollected(r as typeof sourcesCollected)
-      );
-      void safeServiceCall(svc, 'getProcessRunSummary', [24, 60]).then(
-        r => r && setRunSummary(r as typeof runSummary)
-      );
-      if (heavyPoll) {
-        void safeServiceCall(svc, 'getBacklogStatus').then(
-          r => r && setBacklogStatus(r as typeof backlogStatus)
+      const heavyPoll = pollTick % 3 === 0;
+      try {
+        await loadOverview();
+        if (cancelled) return;
+        const [autoR, pipeR] = await runPoolLimit(
+          [
+            () => safeServiceCall(svc, 'getAutomationStatus'),
+            () => safeServiceCall(svc, 'getPipelineStatus'),
+          ],
+          MONITOR_FETCH_CONCURRENCY
         );
-        void safeServiceCall(svc, 'getDatabaseConnections', [
-          { limit: 80, long_running_seconds: 60 },
-        ]).then(r => r && setDbConnections(r as typeof dbConnections));
+        if (!cancelled && autoR)
+          setAutomation(autoR as typeof automation);
+        if (!cancelled && pipeR) setPipeline(pipeR as typeof pipeline);
+        const [orchR, srcR] = await runPoolLimit(
+          [
+            () =>
+              safeServiceCall(svc, 'getOrchestratorDashboard', [
+                { decision_log_limit: 25 },
+              ]),
+            () => safeServiceCall(svc, 'getSourcesCollected', [30]),
+          ],
+          MONITOR_FETCH_CONCURRENCY
+        );
+        if (!cancelled && orchR)
+          setOrchDashboard(orchR as typeof orchDashboard);
+        if (!cancelled && srcR)
+          setSourcesCollected(srcR as typeof sourcesCollected);
+        const sumR = await safeServiceCall(
+          svc,
+          'getProcessRunSummary',
+          [24, 60]
+        );
+        if (!cancelled && sumR) setRunSummary(sumR as typeof runSummary);
+        if (heavyPoll) {
+          const [blR, dbR] = await runPoolLimit(
+            [
+              () => safeServiceCall(svc, 'getBacklogStatus'),
+              () =>
+                safeServiceCall(svc, 'getDatabaseConnections', [
+                  { limit: 80, long_running_seconds: 60 },
+                ]),
+            ],
+            1
+          );
+          if (!cancelled && blR)
+            setBacklogStatus(blR as typeof backlogStatus);
+          if (!cancelled && dbR)
+            setDbConnections(dbR as typeof dbConnections);
+        }
+      } catch {
+        /* individual safeServiceCall already swallows; loadOverview too */
       }
-    }, POLL_INTERVAL_MS);
+    };
+
+    const scheduleNextPoll = () => {
+      if (cancelled) return;
+      pollTimeoutId = setTimeout(() => {
+        void (async () => {
+          try {
+            await runPollTick();
+          } finally {
+            if (!cancelled) scheduleNextPoll();
+          }
+        })();
+      }, POLL_INTERVAL_MS);
+    };
+
+    void (async () => {
+      await load();
+      if (!cancelled) scheduleNextPoll();
+    })();
+
     return () => {
       cancelled = true;
-      clearInterval(t);
+      if (pollTimeoutId !== null) clearTimeout(pollTimeoutId);
     };
   }, [loadOverview]);
 
@@ -2168,7 +2256,10 @@ export default function MonitorPage() {
                   </Typography>
                   {automation?.data?.active_workers != null && (
                     <Typography variant='caption' color='text.secondary'>
-                      Workers: {automation.data.active_workers}
+                      Phase workers: {automation.data.active_workers}
+                      {typeof automation.data.phase_workers_configured === 'number'
+                        ? ` / ${automation.data.phase_workers_configured} configured`
+                        : ''}
                     </Typography>
                   )}
                 </Box>

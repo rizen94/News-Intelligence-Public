@@ -37,30 +37,6 @@ if not os.environ.get("DB_PASSWORD") and os.path.exists(os.path.join(ROOT, ".db_
     except OSError:
         pass
 
-_DELETE_SQL = """
-WITH ranked AS (
-  SELECT ec.id,
-    ROW_NUMBER() OVER (
-      PARTITION BY ec.context_id,
-        lower(trim(COALESCE(ec.subject_text, ''))),
-        lower(trim(COALESCE(ec.predicate_text, ''))),
-        lower(trim(COALESCE(ec.object_text, '')))
-      ORDER BY ec.confidence DESC, ec.id ASC
-    ) AS rn
-  FROM intelligence.extracted_claims ec
-  WHERE NOT EXISTS (
-    SELECT 1 FROM intelligence.versioned_facts vf
-    WHERE vf.metadata->>'source_claim_id' = ec.id::text
-  )
-),
-to_remove AS (
-  SELECT id FROM ranked WHERE rn > 1 LIMIT %s
-)
-DELETE FROM intelligence.extracted_claims ec
-WHERE ec.id IN (SELECT id FROM to_remove)
-"""
-
-
 def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument(
@@ -72,37 +48,12 @@ def main() -> int:
     p.add_argument("--max-batches", type=int, default=0, help="Stop after N batches (0 = unlimited)")
     args = p.parse_args()
 
-    from shared.database.connection import get_db_connection
-
-    conn = get_db_connection()
-    if not conn:
-        print("ERROR: no DB connection")
-        return 1
-
-    cur = conn.cursor()
-    cur.execute(
-        """
-        WITH ranked AS (
-          SELECT ec.id,
-            ROW_NUMBER() OVER (
-              PARTITION BY ec.context_id,
-                lower(trim(COALESCE(ec.subject_text, ''))),
-                lower(trim(COALESCE(ec.predicate_text, ''))),
-                lower(trim(COALESCE(ec.object_text, '')))
-              ORDER BY ec.confidence DESC, ec.id ASC
-            ) AS rn
-          FROM intelligence.extracted_claims ec
-          WHERE NOT EXISTS (
-            SELECT 1 FROM intelligence.versioned_facts vf
-            WHERE vf.metadata->>'source_claim_id' = ec.id::text
-          )
-        )
-        SELECT COUNT(*) FROM ranked WHERE rn > 1
-        """
+    from services.extracted_claims_dedupe_service import (
+        count_duplicate_extracted_claim_rows,
+        delete_duplicate_extracted_claims_batch,
     )
-    total_dup = int(cur.fetchone()[0] or 0)
-    cur.close()
-    conn.close()
+
+    total_dup = count_duplicate_extracted_claim_rows()
 
     print(f"Duplicate rows (safe to remove, no versioned_fact): {total_dup:,}")
     if not args.apply or total_dup == 0:
@@ -115,22 +66,7 @@ def main() -> int:
     batches = 0
 
     while True:
-        conn = get_db_connection()
-        if not conn:
-            print("ERROR: lost DB connection")
-            return 1
-        try:
-            with conn.cursor() as cur:
-                cur.execute(_DELETE_SQL, (batch,))
-                n = cur.rowcount or 0
-            conn.commit()
-        except Exception as e:
-            conn.rollback()
-            print(f"ERROR: {e}")
-            return 1
-        finally:
-            conn.close()
-
+        n = delete_duplicate_extracted_claims_batch(batch)
         deleted_total += n
         batches += 1
         print(f"batch {batches}: deleted {n:,} (total {deleted_total:,})")

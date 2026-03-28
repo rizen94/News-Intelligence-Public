@@ -481,7 +481,7 @@ def finance_sec_articles_signal(
     domain_key: str,
     lookback_days: int = 120,
 ) -> dict[str, Any]:
-    """Match claim terms against recent finance.articles whose URL looks SEC/EDGAR-hosted."""
+    """Match claim terms against recent articles in the finance silo schema (``resolve_domain_schema(domain_key)``) whose URL looks SEC/EDGAR-hosted."""
     out: dict[str, Any] = {"status": "skipped", "match_count": 0}
     if domain_key not in ("finance", "finance-2"):
         out["status"] = "skipped_domain"

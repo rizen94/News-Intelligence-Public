@@ -6,7 +6,8 @@ Coding standards, naming conventions, and architectural patterns for the News In
 
 **Last updated:** 2026-03  
 **Status:** Active  
-**API:** Flat `/api` (no version in path). See "Router Prefix Convention" below.
+**API:** Flat `/api` (no version in path). See "Router Prefix Convention" below.  
+**Resource discipline:** Core principle 5 and § Database standards → **Resource discipline and lean pipeline**; see also `docs/RESOURCE_BUDGETS_AND_LEAN_PIPELINE.md`.
 
 ---
 
@@ -107,6 +108,18 @@ class RSSService:
 2. Can I use composition to add this feature?
 3. Is there duplicate functionality I should consolidate first?
 4. Can I refactor existing code to support this feature?
+
+### **5. Resource Budgets and Bounded Work**
+Treat **RAM**, **DB connections**, and **async/LLM concurrency** as explicit **budgets** per process—not unlimited resources.
+
+- **Footprint math:** Sum each pool’s **max** × every process that imports `shared.database.connection` (API workers, automation host, scripts). Stay under PostgreSQL `max_connections` and PgBouncer limits. See **`docs/PGBOUNCER_AND_CONNECTION_BUDGET.md`**.
+- **Connection lifetime:** Never hold a pooled connection across LLM calls, HTTP, or `sleep`; close and reopen (see `AGENTS.md` database rules).
+- **Large text:** Prefer **chunks** and **truncated prompts**; avoid keeping multiple full copies of the same document in memory.
+- **Expensive-once work:** Embeddings, parsed HTML, normalized body—store **one canonical** result or use a **bounded** cache with stable keys and TTLs; do not recompute the same row from two unrelated phases.
+- **Scheduling:** Bounded scheduler tick + cooldown + optional backpressure are **features**; unbounded in-memory queues are **debt**. Tune `AUTOMATION_*` and `OLLAMA_*_CONCURRENCY` together with DB pools.
+- **Audits:** Periodically review phases with **highest wall time** and **largest backlog** (`scripts/automation_run_analysis.py`, backlog status endpoints).
+
+Full checklist and env reference: **`docs/RESOURCE_BUDGETS_AND_LEAN_PIPELINE.md`**.
 
 ---
 
@@ -315,11 +328,11 @@ All pool sizes are configurable via environment variables. Defaults favor **UI r
 | Pool | Library | Env Vars | Defaults | Purpose |
 |------|---------|----------|----------|---------|
 | **UI** | psycopg2 `ThreadedConnectionPool` | `DB_POOL_UI_MIN/MAX` | 2 / 16 | Page loads, monitoring, hot read paths (3 s checkout) |
-| **Worker** | psycopg2 `ThreadedConnectionPool` | `DB_POOL_WORKER_MIN/MAX` | 2 / 20 | Automation, enrichment, collection; `DB_POOL_MAX` legacy if `DB_POOL_WORKER_MAX` unset |
+| **Worker** | psycopg2 `ThreadedConnectionPool` | `DB_POOL_WORKER_MIN/MAX` | 2 / 28 | Automation, enrichment, collection; `DB_POOL_MAX` legacy if `DB_POOL_WORKER_MAX` unset |
 | **Health** | psycopg2 `ThreadedConnectionPool` | `DB_POOL_HEALTH_MIN/MAX` | 1 / 2 | Automation `health_check` probes + `automation_run_history` for that phase only (2 s checkout; `DB_HEALTH_GETCONN_TIMEOUT_SECONDS`) |
 | **SQLAlchemy** | SQLAlchemy `QueuePool` | `DB_POOL_SA_SIZE/OVERFLOW` | 3 / 8 | ORM-based services (storylines, RSS, timelines) |
 
-**Maximum client connections per process (worst case):** UI max + worker max + health max + SA size + SA overflow = **16 + 20 + 2 + 3 + 8 = 49** by default (not 1:1 with Postgres sessions when PgBouncer is used).
+**Maximum client connections per process (worst case):** UI max + worker max + health max + SA size + SA overflow = **16 + 28 + 2 + 3 + 8 = 57** by default (not 1:1 with Postgres sessions when PgBouncer is used).
 Ensure PostgreSQL **`max_connections`** (and PgBouncer **`default_pool_size`**) accommodate **every** process that connects (API workers, Widow cron, dev hosts), plus admin headroom.
 
 **Checkout timeouts** (how long to wait for a free connection before raising):
@@ -336,6 +349,20 @@ Ensure PostgreSQL **`max_connections`** (and PgBouncer **`default_pool_size`**) 
 - `get_db()` / `next(get_db())` → SQLAlchemy pool (ORM-based services only)
 - Never mix: don't use SQLAlchemy sessions for heavy background batch work unless
   `DB_POOL_SA_SIZE` is sized for it.
+
+### **Resource discipline and lean pipeline (mandatory mindset)**
+
+Align with **Core principle 5** (above). When adding or changing background work:
+
+| Concern | What to do |
+|--------|------------|
+| **Budgets** | Treat `DB_POOL_*`, `AUTOMATION_MAX_CONCURRENT_TASKS`, `MAX_CONCURRENT_OLLAMA_TASKS`, `OLLAMA_CPU_CONCURRENCY` / `OLLAMA_GPU_CONCURRENCY`, and `AUTOMATION_EXECUTOR_MAX_WORKERS` as a **single system**. Raising automation concurrency without DB or Ollama headroom moves waits, not magic throughput. |
+| **Chunking** | Read and process **large text in slices**; truncate prompts consistently; avoid loading full corpora into Python lists for routine paths. |
+| **No duplicate expensive work** | One canonical place for embeddings, parsed HTML, or normalized content where feasible; if two phases need the same artifact, **read from storage** or a shared service—do not re-embed the same row twice. |
+| **Scheduling** | Bounded tick (`AUTOMATION_SCHEDULER_TICK_SECONDS`), cooldown (`AUTOMATION_WORKLOAD_MIN_COOLDOWN_SECONDS`), collection throttle, optional `AUTOMATION_QUEUE_SOFT_CAP` (prefer `0` = off). Unbounded queue growth is a bug. |
+| **Proof** | Before micro-optimizing, **measure**: phase duration from `automation_run_history` (`scripts/automation_run_analysis.py`), backlog counts, pool utilization. |
+
+**Reference:** `docs/RESOURCE_BUDGETS_AND_LEAN_PIPELINE.md` (checklist, env names, audit commands).
 
 ### **Index Naming Convention**
 ```sql
@@ -790,6 +817,8 @@ python3 api/scripts/test_database_connection.py
 ---
 
 ## **Automation and tooling**
+
+**AutomationManager** scheduling semantics (`last_run`, CPU/GPU lanes vs Ollama, parallel groups, worker counts): [`AUTOMATION_MANAGER_SCHEDULING.md`](AUTOMATION_MANAGER_SCHEDULING.md).
 
 These commands align the repo with this guide. **CI** (`.github/workflows/ci.yml`) runs Ruff + a small pytest smoke suite + frontend lint/format/tsc.
 

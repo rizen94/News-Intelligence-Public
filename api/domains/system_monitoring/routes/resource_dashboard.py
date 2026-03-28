@@ -36,6 +36,34 @@ def _rollback_db_connection(conn) -> None:
         pass
 
 
+def _blend_throughput_per_hour(
+    *,
+    per_4d: float,
+    per_1h: float,
+    per_mid: float,
+    cap: float,
+    fallback: float,
+    mid_is_24h: bool,
+) -> tuple[float, str]:
+    """
+    ETA throughput: use max(4d avg, 1h, mid window) capped.
+
+    A sluggish 4-day average must not hide a healthy last-hour rate (otherwise
+    entity profile ETAs show multi-year drains while 1h work is ~30+/hr).
+    """
+    raw = max(per_4d, per_1h, per_mid)
+    if raw <= 0:
+        return fallback, "estimated"
+    rate = min(raw, cap)
+    if per_1h > 0 and abs(raw - per_1h) < 1e-6:
+        return rate, "measured_1h"
+    if per_mid > 0 and abs(raw - per_mid) < 1e-6:
+        return rate, "measured_24h" if mid_is_24h else "measured_2h"
+    if per_4d > 0:
+        return rate, "avg_4d"
+    return rate, "measured_24h" if mid_is_24h else "measured_2h"
+
+
 # Default SSH user for remote monitoring (env MONITORING_SSH_USER or per-device ssh_user in config)
 DEFAULT_SSH_TIMEOUT_SECONDS = 12
 
@@ -185,6 +213,10 @@ def get_backlog_status() -> dict[str, Any]:
     article trend + overall iterations at baseline). Adds nightly_catchup: unified nightly
     window schedule, drain-phase automation backlogs, sequential phases still holding work,
     and recent nightly_enrichment_context runs from automation_run_history. Used by the Monitor page.
+
+    **Latency:** Runs many sequential queries (per active domain + intelligence.*). Under load,
+    total time can exceed tens of seconds; the Monitor client uses a 60s timeout. Responses are
+    cached briefly (`cached_response` ttl) to avoid hammering the DB on every poll.
     """
     # get_db_connection() raises ConnectionError when UI pool is exhausted or DB is down (no longer returns None).
     try:
@@ -353,6 +385,9 @@ def get_backlog_status() -> dict[str, Any]:
         entity_profiles_updated_last_1h = 0
         entity_profiles_updated_last_24h = 0
         entity_profiles_updated_4d = 0
+        entity_profiles_any_updated_last_1h = 0
+        entity_profiles_any_updated_last_24h = 0
+        entity_profiles_any_updated_4d = 0
         try:
             cur.execute("SELECT COUNT(*) FROM intelligence.entity_profiles")
             entity_profile_total = cur.fetchone()[0] or 0
@@ -368,7 +403,9 @@ def get_backlog_status() -> dict[str, Any]:
                 """
                 SELECT
                     COUNT(*) FILTER (WHERE updated_at >= NOW() - INTERVAL '1 hour' AND sections IS NOT NULL AND sections != '[]'::jsonb),
-                    COUNT(*) FILTER (WHERE updated_at >= NOW() - INTERVAL '24 hours' AND sections IS NOT NULL AND sections != '[]'::jsonb)
+                    COUNT(*) FILTER (WHERE updated_at >= NOW() - INTERVAL '24 hours' AND sections IS NOT NULL AND sections != '[]'::jsonb),
+                    COUNT(*) FILTER (WHERE updated_at >= NOW() - INTERVAL '1 hour'),
+                    COUNT(*) FILTER (WHERE updated_at >= NOW() - INTERVAL '24 hours')
                 FROM intelligence.entity_profiles
                 """
             )
@@ -376,15 +413,25 @@ def get_backlog_status() -> dict[str, Any]:
             if r:
                 entity_profiles_updated_last_1h = r[0] or 0
                 entity_profiles_updated_last_24h = r[1] or 0
+                entity_profiles_any_updated_last_1h = r[2] or 0
+                entity_profiles_any_updated_last_24h = r[3] or 0
             cur.execute(
                 f"""
-                SELECT COUNT(*)
+                SELECT
+                    COUNT(*) FILTER (
+                        WHERE updated_at >= NOW() - INTERVAL '{BACKLOG_WORKLOAD_WINDOW_DAYS} days'
+                          AND sections IS NOT NULL AND sections != '[]'::jsonb
+                    ),
+                    COUNT(*) FILTER (
+                        WHERE updated_at >= NOW() - INTERVAL '{BACKLOG_WORKLOAD_WINDOW_DAYS} days'
+                    )
                 FROM intelligence.entity_profiles
-                WHERE updated_at >= NOW() - INTERVAL '{BACKLOG_WORKLOAD_WINDOW_DAYS} days'
-                  AND sections IS NOT NULL AND sections != '[]'::jsonb
                 """
             )
-            entity_profiles_updated_4d = cur.fetchone()[0] or 0
+            r4 = cur.fetchone()
+            if r4:
+                entity_profiles_updated_4d = r4[0] or 0
+                entity_profiles_any_updated_4d = r4[1] or 0
         except Exception:
             _rollback_db_connection(conn)
 
@@ -579,34 +626,50 @@ def get_backlog_status() -> dict[str, Any]:
         context_claims_per_hour = 100
         context_claims_per_hour_source = "estimated"
 
-    if entity_profiles_updated_4d >= BACKLOG_AVG_4D_MIN_SAMPLES:
-        entity_per_hour = min(entity_profiles_updated_4d / hours_4d, 50)
-        entity_per_hour_source = "avg_4d"
-    elif entity_profiles_updated_last_1h >= 1:
-        entity_per_hour = min(entity_profiles_updated_last_1h, 50)
-        entity_per_hour_source = "measured_1h"
-    elif entity_profiles_updated_last_24h > 0:
-        entity_per_hour = min(round(entity_profiles_updated_last_24h / 24.0), 50)
-        entity_per_hour_source = "measured_24h"
-    else:
-        entity_per_hour = 15
-        entity_per_hour_source = "estimated"
+    entity_per_4d = (
+        entity_profiles_updated_4d / hours_4d
+        if entity_profiles_updated_4d >= BACKLOG_AVG_4D_MIN_SAMPLES
+        else 0.0
+    )
+    entity_per_1h = (
+        float(entity_profiles_updated_last_1h)
+        if entity_profiles_updated_last_1h >= 1
+        else 0.0
+    )
+    entity_per_24h = (
+        entity_profiles_updated_last_24h / 24.0
+        if entity_profiles_updated_last_24h > 0
+        else 0.0
+    )
+    entity_per_hour, entity_per_hour_source = _blend_throughput_per_hour(
+        per_4d=entity_per_4d,
+        per_1h=entity_per_1h,
+        per_mid=entity_per_24h,
+        cap=50.0,
+        fallback=15.0,
+        mid_is_24h=True,
+    )
 
     storylines_synthesized_last_1h = sum(synthesis_last_1h.values())
     storylines_synthesized_last_2h = sum(synthesis_last_2h.values())
     storylines_synthesized_last_4d = sum(synthesis_last_4d.values())
-    if storylines_synthesized_last_4d >= BACKLOG_AVG_4D_MIN_SAMPLES:
-        storylines_per_hour = min(storylines_synthesized_last_4d / hours_4d, 50)
-        storylines_per_hour_source = "avg_4d"
-    elif storylines_synthesized_last_1h >= 1:
-        storylines_per_hour = min(storylines_synthesized_last_1h, 50)
-        storylines_per_hour_source = "measured_1h"
-    elif storylines_synthesized_last_2h > 0:
-        storylines_per_hour = min(round(storylines_synthesized_last_2h / 2.0), 50)
-        storylines_per_hour_source = "measured_2h"
-    else:
-        storylines_per_hour = 12
-        storylines_per_hour_source = "estimated"
+    st_per_4d = (
+        storylines_synthesized_last_4d / hours_4d
+        if storylines_synthesized_last_4d >= BACKLOG_AVG_4D_MIN_SAMPLES
+        else 0.0
+    )
+    st_per_1h = float(storylines_synthesized_last_1h) if storylines_synthesized_last_1h >= 1 else 0.0
+    st_per_2h = (
+        storylines_synthesized_last_2h / 2.0 if storylines_synthesized_last_2h > 0 else 0.0
+    )
+    storylines_per_hour, storylines_per_hour_source = _blend_throughput_per_hour(
+        per_4d=st_per_4d,
+        per_1h=st_per_1h,
+        per_mid=st_per_2h,
+        cap=50.0,
+        fallback=12.0,
+        mid_is_24h=False,
+    )
 
     def eta_hours(backlog: int, per_hour: float) -> float:
         if per_hour <= 0:
@@ -644,13 +707,20 @@ def get_backlog_status() -> dict[str, Any]:
             return 0
         return max(1, int((hours + 1.99) // 2))
 
-    # Net rate: inflow (short created 24h) minus outflow (enriched per day); positive = backlog growing
-    net_articles_per_day = articles_short_created_24h - articles_per_day
-    backlog_trend = (
-        "growing"
-        if net_articles_per_day > 0
-        else ("shrinking" if net_articles_per_day < 0 else "stable")
-    )
+    # Article trend: compare **measured** 24h gross ingest vs **measured** enrichments in the same window.
+    # (Older logic used modeled `articles_per_day`, which falls back to 300/h → 7200/day when samples are
+    # thin — that made "shrinking" almost always true and was not trustworthy.)
+    # Positive net = more articles created than enriched in 24h → backlog tends to grow from ingest.
+    # Negative net = more enrichments than new rows → drain (often clearing older backlog too).
+    net_articles_per_day = articles_created_24h - enriched_last_24h
+    if articles_created_24h == 0 and enriched_last_24h == 0:
+        backlog_trend = "stable"
+    elif net_articles_per_day > 0:
+        backlog_trend = "growing"
+    elif net_articles_per_day < 0:
+        backlog_trend = "shrinking"
+    else:
+        backlog_trend = "stable"
 
     overall_iterations = iterations_2h(overall_h)
 
@@ -843,6 +913,10 @@ def get_backlog_status() -> dict[str, Any]:
                 "backlog": entity_profile_backlog,
                 "per_hour": round(entity_per_hour, 2),
                 "per_hour_source": entity_per_hour_source,
+                "throughput_scope": "nonempty_sections",
+                "any_updated_last_1h": entity_profiles_any_updated_last_1h,
+                "any_updated_last_24h": entity_profiles_any_updated_last_24h,
+                "any_updated_last_4d": entity_profiles_any_updated_4d,
                 "processed_last_1h": entity_profiles_updated_last_1h,
                 "processed_last_24h": entity_profiles_updated_last_24h,
                 "processed_last_4d": entity_profiles_updated_4d,
