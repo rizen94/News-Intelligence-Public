@@ -333,7 +333,7 @@ def _count_event_tracking_backlog() -> int:
         return 0
     try:
         with conn.cursor() as cur:
-            cur.execute("SET LOCAL statement_timeout = '12s'")
+            cur.execute("SET LOCAL statement_timeout = '30s'")
             cur.execute(
                 """
                 SELECT COUNT(*) FROM intelligence.contexts c
