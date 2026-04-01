@@ -905,34 +905,42 @@ def _count_rag_enhancement_pending() -> int:
 
 
 def _count_claims_to_facts_pending() -> int:
-    """extracted_claims eligible for promotion (same filter as promote_claims_to_versioned_facts)."""
-    extra_ign = ""
+    """Unpromoted high-confidence claims for Monitor (see ``build_claims_to_facts_backlog_where_suffix``).
+
+    Default ``CLAIMS_TO_FACTS_BACKLOG_COUNT_MODE=promotable_hint``: excludes generic subjects and requires
+    an exact-resolution signal (context mention, profile canonical/display, or article_entities name),
+    so the number tracks work closer to what can promote without fuzzy/trgm. Use ``batch_candidate``
+    for the larger SQL-candidate pool (pre-resolution, still excludes generic subjects and uses merged-id
+    guard when ``CLAIMS_TO_FACTS_CHECK_MERGED_SOURCE_IDS`` is on).
+    """
     try:
         from services.claim_extraction_service import (
-            CLAIM_PROMOTION_GAP_IGNORED_EXCLUDE_SQL,
+            build_claims_to_facts_backlog_where_suffix,
             get_claims_to_facts_min_confidence,
         )
 
         min_conf = float(get_claims_to_facts_min_confidence())
-        extra_ign = CLAIM_PROMOTION_GAP_IGNORED_EXCLUDE_SQL
+        suffix = build_claims_to_facts_backlog_where_suffix()
     except Exception:
         min_conf = 0.75
+        suffix = """
+  AND NOT EXISTS (
+    SELECT 1 FROM intelligence.versioned_facts vf
+    WHERE vf.metadata->>'source_claim_id' = ec.id::text
+  )
+"""
     conn = _get_conn()
     if not conn:
         return 0
     try:
         with conn.cursor() as cur:
-            cur.execute("SET LOCAL statement_timeout = '5s'")
+            cur.execute("SET LOCAL statement_timeout = '30s'")
             cur.execute(
                 """
                 SELECT COUNT(*) FROM intelligence.extracted_claims ec
                 WHERE ec.confidence >= %s
-                  AND NOT EXISTS (
-                      SELECT 1 FROM intelligence.versioned_facts vf
-                      WHERE vf.metadata->>'source_claim_id' = ec.id::text
-                  )
                 """
-                + extra_ign,
+                + suffix,
                 (min_conf,),
             )
             return int(cur.fetchone()[0] or 0)

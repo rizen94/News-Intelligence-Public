@@ -14,7 +14,11 @@ from datetime import datetime, timezone
 from typing import NamedTuple
 
 from shared.database.connection import get_db_connection
-from shared.domain_registry import get_pipeline_schema_names_active, resolve_domain_schema
+from shared.domain_registry import (
+    get_pipeline_schema_names_active,
+    pipeline_url_schema_pairs,
+    resolve_domain_schema,
+)
 from shared.services.ollama_model_caller import get_ollama_model_caller
 from shared.services.ollama_model_policy import InvocationKind
 
@@ -376,6 +380,99 @@ CLAIM_PROMOTION_GAP_IGNORED_EXCLUDE_SQL = """
      AND g.status = 'ignored'
     WHERE atc.context_id = ec.context_id
   )"""
+
+
+def claim_promotion_generic_subject_exclude_sql() -> str:
+    """SQL AND-clauses for subjects ``promote_claims_to_versioned_facts`` skips via ``_is_overly_generic_subject`` (exact-set + length)."""
+    parts = sorted(_GENERIC_SUBJECTS)
+    inner = ", ".join("'" + p.replace("'", "''") + "'" for p in parts)
+    return f"""
+  AND char_length(trim(COALESCE(ec.subject_text, ''))) > 1
+  AND lower(trim(COALESCE(ec.subject_text, ''))) NOT IN ({inner})
+  AND NOT (lower(trim(COALESCE(ec.subject_text, ''))) ~ '^[a-z]$')
+""".rstrip()
+
+
+def claims_to_facts_versioned_fact_absent_sql() -> str:
+    """Same NOT EXISTS as ``promote_claims_to_versioned_facts`` (optional merged source_claim_ids guard)."""
+    merged = ""
+    if _claims_to_facts_check_merged_source_ids():
+        merged = " OR COALESCE(vf.metadata->'source_claim_ids', '[]'::jsonb) ? ec.id::text"
+    return f"""
+  AND NOT EXISTS (
+    SELECT 1 FROM intelligence.versioned_facts vf
+    WHERE vf.metadata->>'source_claim_id' = ec.id::text{merged}
+  )"""
+
+
+def _claims_to_facts_article_entity_exact_subject_sql() -> str:
+    """EXISTS clauses: article_entities.entity_name equals claim subject (per pipeline domain)."""
+    clauses: list[str] = []
+    for dk, schema in pipeline_url_schema_pairs():
+        if not re.fullmatch(r"[a-z0-9-]+", dk or ""):
+            continue
+        if not re.fullmatch(r"[a-z0-9_]+", schema or ""):
+            continue
+        clauses.append(
+            f"""EXISTS (
+    SELECT 1 FROM intelligence.article_to_context atc
+    INNER JOIN {schema}.article_entities ae ON ae.article_id = atc.article_id
+    WHERE atc.context_id = ec.context_id AND atc.domain_key = '{dk}'
+      AND ae.canonical_entity_id IS NOT NULL
+      AND lower(trim(ae.entity_name)) = lower(trim(COALESCE(ec.subject_text, '')))
+  )"""
+        )
+    if not clauses:
+        return "FALSE"
+    if len(clauses) == 1:
+        return clauses[0]
+    return "(" + " OR ".join(clauses) + ")"
+
+
+def claims_to_facts_resolvable_hint_predicate_sql() -> str:
+    """
+    Approximation of claims likely to resolve without fuzzy/trgm passes (context mention exact,
+    global profile canonical/display exact, or article_entities exact name on linked article).
+    Used for Monitor ``pending_records`` so the number is closer to promotable work than raw SQL candidates.
+    """
+    ae = _claims_to_facts_article_entity_exact_subject_sql()
+    return f"""(
+  EXISTS (
+    SELECT 1 FROM intelligence.context_entity_mentions cem
+    WHERE cem.context_id = ec.context_id
+      AND lower(trim(cem.mention_text)) = lower(trim(COALESCE(ec.subject_text, '')))
+  )
+  OR EXISTS (
+    SELECT 1 FROM intelligence.entity_profiles ep
+    WHERE lower(trim(COALESCE(ep.metadata->>'canonical_name', ''))) = lower(trim(COALESCE(ec.subject_text, '')))
+       OR lower(trim(COALESCE(ep.metadata->>'display_name', ''))) = lower(trim(COALESCE(ec.subject_text, '')))
+  )
+  OR {ae}
+)"""
+
+
+def get_claims_to_facts_backlog_count_mode() -> str:
+    """
+    ``promotable_hint`` (default): backlog count uses generic-subject exclusion + resolvable-hint predicate.
+    ``batch_candidate``: count all SQL batch candidates (confidence + not in versioned_facts + gap ignore + generic),
+    matching promote's row set before per-row resolution (can be very large).
+    """
+    raw = os.environ.get("CLAIMS_TO_FACTS_BACKLOG_COUNT_MODE", "promotable_hint").strip().lower()
+    if raw in ("batch_candidate", "candidate", "candidates", "all", "all_candidates"):
+        return "batch_candidate"
+    return "promotable_hint"
+
+
+def build_claims_to_facts_backlog_where_suffix() -> str:
+    """Fragment appended after ``WHERE ec.confidence >= %s`` for ``_count_claims_to_facts_pending``."""
+    base = (
+        claims_to_facts_versioned_fact_absent_sql()
+        + CLAIM_PROMOTION_GAP_IGNORED_EXCLUDE_SQL
+        + claim_promotion_generic_subject_exclude_sql()
+    )
+    if get_claims_to_facts_backlog_count_mode() == "batch_candidate":
+        return base
+    return base + " AND " + claims_to_facts_resolvable_hint_predicate_sql()
 
 
 def _claim_domain_key_to_schema(dk: str) -> str:
@@ -824,11 +921,6 @@ def promote_claims_to_versioned_facts(
         return dict(empty)
     stats = dict(empty)
     try:
-        merged_guard_sql = ""
-        if _claims_to_facts_check_merged_source_ids():
-            merged_guard_sql = (
-                " OR COALESCE(vf.metadata->'source_claim_ids', '[]'::jsonb) ? ec.id::text"
-            )
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -836,12 +928,11 @@ def promote_claims_to_versioned_facts(
                        ec.confidence, ec.valid_from, ec.valid_to
                 FROM intelligence.extracted_claims ec
                 WHERE ec.confidence >= %s
-                  AND NOT EXISTS (
-                      SELECT 1 FROM intelligence.versioned_facts vf
-                      WHERE vf.metadata->>'source_claim_id' = ec.id::text
-                      """ + merged_guard_sql + """
-                  )
-                """ + CLAIM_PROMOTION_GAP_IGNORED_EXCLUDE_SQL + """
+                """
+                + claims_to_facts_versioned_fact_absent_sql()
+                + CLAIM_PROMOTION_GAP_IGNORED_EXCLUDE_SQL
+                + claim_promotion_generic_subject_exclude_sql()
+                + """
                 ORDER BY ec.confidence DESC
                 LIMIT %s
                 FOR UPDATE OF ec SKIP LOCKED
@@ -1010,24 +1101,17 @@ def sample_unpromoted_claim_resolution_stats(
         return out
     active_schemas = frozenset(get_pipeline_schema_names_active())
     try:
-        merged_source_id_check = _claims_to_facts_check_merged_source_ids()
-        merged_guard_sql = ""
-        if merged_source_id_check:
-            merged_guard_sql = (
-                " OR COALESCE(vf.metadata->'source_claim_ids', '[]'::jsonb) ? ec.id::text"
-            )
         with conn.cursor() as cur:
             cur.execute(
                 """
                 SELECT ec.id, ec.context_id, ec.subject_text
                 FROM intelligence.extracted_claims ec
                 WHERE ec.confidence >= %s
-                  AND NOT EXISTS (
-                      SELECT 1 FROM intelligence.versioned_facts vf
-                      WHERE vf.metadata->>'source_claim_id' = ec.id::text
-                      """ + merged_guard_sql + """
-                  )
-                """ + CLAIM_PROMOTION_GAP_IGNORED_EXCLUDE_SQL + """
+                """
+                + claims_to_facts_versioned_fact_absent_sql()
+                + CLAIM_PROMOTION_GAP_IGNORED_EXCLUDE_SQL
+                + claim_promotion_generic_subject_exclude_sql()
+                + """
                 ORDER BY ec.confidence DESC
                 LIMIT %s
                 """,
