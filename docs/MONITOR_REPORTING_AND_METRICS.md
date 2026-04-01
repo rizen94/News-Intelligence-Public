@@ -39,7 +39,7 @@ Single map of **where** the platform records “how well we are processing,” *
 | `GET /api/system_monitoring/monitoring/overview` | API/DB/webserver + in-memory activity feed. |
 | `GET /api/system_monitoring/automation/status` | Live queues, `pending_counts`, phase table, resource router. |
 | `GET /api/system_monitoring/backlog_status` | ETAs, steady_state, nightly_catchup, dimension throughputs (cached ~15s). |
-| `GET /api/system_monitoring/processing_progress` | **Processing pulse:** `routes/processing_progress.py`, mounted on `resource_dashboard` router. **phase_dashboard** fields: `pending_records` (unprocessed DB rows), `estimated_batch_per_run` (modeled rows per run), `batches_to_drain` (ceil divide = runs to clear queue, or `null`). Plus dimension throughputs, pass rates, 72h hourly buckets (cached ~45s). |
+| `GET /api/system_monitoring/processing_progress` | **Processing pulse:** `routes/processing_progress.py`, mounted on `resource_dashboard` router. **phase_dashboard** fields: `pending_records` (unprocessed DB rows), `estimated_batch_per_run` (modeled rows per run), `batches_to_drain` (ceil divide = runs to clear queue, or `null`). Plus dimension throughputs, pass rates, 72h hourly buckets (cached **~90s** per worker). |
 | `GET /api/system_monitoring/process_run_summary` | Phases run vs not in N hours, pipeline checkpoints, optional `activity.jsonl` tail. |
 | `GET /api/system_monitoring/pipeline_status` | Pipeline coordinator snapshot. |
 | `GET /api/system_monitoring/database/connections` | `pg_stat_activity` style sessions. |

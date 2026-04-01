@@ -267,23 +267,29 @@ export default function MonitorPage() {
         if (cancelled) return;
         setOverview(ov ?? null);
         setPipeline(pipe ?? null);
+      } catch (e) {
+        if (!cancelled) setError((e as Error).message);
+      } finally {
         if (!cancelled) setLoading(false);
-        if (!cancelled) setHeavyMonitorPending(true);
+      }
 
+      if (cancelled) return;
+
+      // Processing pulse hits a cold HTTP cache + many SQL counts (backlog_metrics) after API
+      // restart; do not block initial paint or the scheduler tick that starts polling.
+      setHeavyMonitorPending(true);
+      void (async () => {
+        await new Promise<void>(resolve => {
+          requestAnimationFrame(() => resolve());
+        });
+        if (cancelled) return;
         const pulse = await safeServiceCall<typeof processingPulse>(
           svc,
           'getProcessingProgress'
         );
-        if (cancelled) return;
-        setProcessingPulse(pulse ?? null);
-      } catch (e) {
-        if (!cancelled) setError((e as Error).message);
-      } finally {
-        if (!cancelled) {
-          setLoading(false);
-          setHeavyMonitorPending(false);
-        }
-      }
+        if (!cancelled) setProcessingPulse(pulse ?? null);
+        if (!cancelled) setHeavyMonitorPending(false);
+      })();
     };
 
     /**

@@ -1500,7 +1500,7 @@ async def get_devices():
 
 
 @router.get("/processing_progress")
-@cached_response(ttl=45)
+@cached_response(ttl=90)
 def get_processing_progress() -> dict[str, Any]:
     """
     Pipeline dimension throughput, per-phase pending/backlog row counts, pass/fail rates from
