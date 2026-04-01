@@ -22,6 +22,7 @@ SIMILARITY WEIGHTS:
 - Temporal proximity: 5% - same-day articles more likely related
 """
 
+import hashlib
 import json
 import logging
 import math
@@ -255,31 +256,27 @@ class AIStorylineDiscovery:
 
     def _text_to_embedding(self, text: str, dim: int = 768) -> np.ndarray:
         """
-        Create embedding from text using TF-IDF style hashing
-        Enhanced fallback with better dimension handling
+        Deterministic feature-hash fallback when Ollama embeddings are unavailable.
+        Uses SHA-256 (not Python hash()) so vectors are stable across processes.
         """
         text = text.lower()
         embedding = np.zeros(dim)
+        words = re.findall(r"\b\w+\b", text)[:200]
 
-        # Word-level hashing with position weighting
-        words = re.findall(r"\b\w+\b", text)
         for i, word in enumerate(words):
-            # Position decay - earlier words are more important
-            position_weight = 1.0 / (1 + i * 0.01)
-
-            # Word hashing
-            hash_val = hash(word) % dim
+            position_weight = float(np.exp(-i * 0.01))
+            digest = hashlib.sha256(word.encode("utf-8")).digest()
+            hash_val = int.from_bytes(digest[:8], "big") % dim
             embedding[hash_val] += position_weight
 
-            # Bigram hashing
-            if i < len(words) - 1:
-                bigram = f"{word}_{words[i + 1]}"
-                hash_val = hash(bigram) % dim
-                embedding[hash_val] += position_weight * 0.5
+            if i > 0:
+                bigram = f"{words[i - 1]}_{word}"
+                bg = hashlib.sha256(bigram.encode("utf-8")).digest()
+                bigram_val = int.from_bytes(bg[:8], "big") % dim
+                embedding[bigram_val] += position_weight * 0.5
 
-        # Normalize
         norm = np.linalg.norm(embedding)
-        if norm > 0:
+        if norm > 1e-6:
             embedding = embedding / norm
 
         return embedding
@@ -715,9 +712,10 @@ class AIStorylineDiscovery:
         norms[norms == 0] = 1  # Avoid division by zero
         normalized = embedding_matrix / norms
 
-        # Cosine similarity = dot product of normalized vectors
-        # This single matrix multiplication replaces n² individual calculations!
+        # Cosine similarity in [-1, 1]; map to [0, 1] so the weighted sum is a proper convex mix
+        # with entity (Jaccard) and temporal scores (already in [0, 1]).
         semantic_matrix = np.dot(normalized, normalized.T)
+        semantic_matrix = (semantic_matrix + 1.0) / 2.0
 
         # ===== 2. ENTITY OVERLAP (still requires pairwise but optimized) =====
         entity_matrix = np.zeros((n, n))
@@ -779,7 +777,6 @@ class AIStorylineDiscovery:
             + TEMPORAL_WEIGHT * temporal_matrix
         )
 
-        # Set diagonal to 1.0 and cap at 1.0
         np.fill_diagonal(similarity_matrix, 1.0)
         np.clip(similarity_matrix, 0.0, 1.0, out=similarity_matrix)
 
@@ -1408,6 +1405,7 @@ Reply with ONLY a JSON object:
         else:
             semantic_sim = 0.0
         result["semantic_similarity"] = round(semantic_sim, 3)
+        semantic_for_mix = (semantic_sim + 1.0) / 2.0
 
         # 2. ENTITY OVERLAP (Jaccard similarity)
         entities1 = set(storyline1.common_entities)
@@ -1456,12 +1454,12 @@ Reply with ONLY a JSON object:
             temporal_overlap = 0.0
         result["temporal_overlap"] = round(temporal_overlap, 3)
 
-        # 5. OVERALL SIMILARITY (weighted combination)
+        # 5. OVERALL SIMILARITY (convex mix; semantic_for_mix in [0,1] from cosine)
         overall = (
-            0.50 * semantic_sim  # Content is most important
-            + 0.25 * entity_overlap  # Shared entities matter
-            + 0.15 * article_overlap  # Shared articles indicate same story
-            + 0.10 * temporal_overlap  # Same time period
+            0.50 * semantic_for_mix
+            + 0.25 * entity_overlap
+            + 0.15 * article_overlap
+            + 0.10 * temporal_overlap
         )
         result["overall_similarity"] = round(overall, 3)
 
@@ -1543,8 +1541,8 @@ Reply with ONLY a JSON object:
         norms[norms == 0] = 1
         normalized = centroid_matrix / norms
 
-        # Semantic similarity matrix
         semantic_matrix = np.dot(normalized, normalized.T)
+        semantic_matrix = (semantic_matrix + 1.0) / 2.0
 
         # Entity overlap matrix
         entity_matrix = np.zeros((n, n))
@@ -1558,9 +1556,9 @@ Reply with ONLY a JSON object:
                     entity_matrix[i][j] = overlap
                     entity_matrix[j][i] = overlap
 
-        # Combined similarity
         similarity_matrix = 0.7 * semantic_matrix + 0.3 * entity_matrix
         np.fill_diagonal(similarity_matrix, 1.0)
+        np.clip(similarity_matrix, 0.0, 1.0, out=similarity_matrix)
 
         # Find related storyline groups
         related_groups = []

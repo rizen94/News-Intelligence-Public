@@ -19,7 +19,9 @@ from services.automation_manager import (
 def test_phase_default_lane_policy():
     mgr = AutomationManager(get_db_config())
     assert mgr._phase_default_lane("content_refinement_queue") == "gpu"
-    assert mgr._phase_default_lane("claim_extraction") == "gpu"
+    assert mgr._phase_default_lane("claim_extraction") == "cpu"
+    assert mgr._phase_default_lane("entity_extraction") == "cpu"
+    assert mgr._phase_default_lane("event_tracking") == "gpu"
     assert mgr._phase_default_lane("context_sync") == "cpu"
 
 
@@ -128,3 +130,56 @@ def test_per_phase_execute_cap_zero_for_nightly_sequential(monkeypatch):
         metadata={"nightly_sequential_drain": True},
     )
     assert mgr._per_phase_execute_concurrent_cap(t) == 0
+
+
+def test_skip_redundant_claim_extraction_when_drain_pipeline_saturated(monkeypatch):
+    monkeypatch.setenv("CLAIM_EXTRACTION_DRAIN", "true")
+    monkeypatch.setattr(am, "AUTOMATION_PER_PHASE_CONCURRENT_CAP", 2)
+    mgr = AutomationManager(get_db_config())
+    mgr._running_tasks_by_phase["claim_extraction"] = 2
+    assert mgr._should_skip_redundant_phase_request("claim_extraction") is True
+    assert (
+        mgr._should_skip_redundant_phase_request(
+            "claim_extraction", allow_operator_bypass=True
+        )
+        is False
+    )
+    mgr._running_tasks_by_phase["claim_extraction"] = 1
+    assert mgr._should_skip_redundant_phase_request("claim_extraction") is False
+
+
+def test_skip_redundant_claim_extraction_off_when_drain_disabled(monkeypatch):
+    monkeypatch.setenv("CLAIM_EXTRACTION_DRAIN", "false")
+    monkeypatch.setattr(am, "AUTOMATION_PER_PHASE_CONCURRENT_CAP", 2)
+    mgr = AutomationManager(get_db_config())
+    mgr._running_tasks_by_phase["claim_extraction"] = 5
+    assert mgr._should_skip_redundant_phase_request("claim_extraction") is False
+
+
+def test_discard_redundant_claim_extraction_at_cap(monkeypatch):
+    monkeypatch.setenv("CLAIM_EXTRACTION_DRAIN", "true")
+    monkeypatch.setattr(am, "AUTOMATION_PER_PHASE_CONCURRENT_CAP", 2)
+    mgr = AutomationManager(get_db_config())
+    now = datetime.now(timezone.utc)
+    t = Task(
+        id="ce1",
+        name="claim_extraction",
+        priority=TaskPriority.NORMAL,
+        status=TaskStatus.PENDING,
+        created_at=now,
+        metadata={"scheduled": True, "phase": 2, "estimated_duration": 60},
+    )
+    mgr._running_tasks_by_phase["claim_extraction"] = 2
+    assert mgr._discard_redundant_claim_extraction_when_at_cap(t, 2) is True
+    mgr._running_tasks_by_phase["claim_extraction"] = 1
+    assert mgr._discard_redundant_claim_extraction_when_at_cap(t, 2) is False
+    t2 = Task(
+        id="ce2",
+        name="claim_extraction",
+        priority=TaskPriority.NORMAL,
+        status=TaskStatus.PENDING,
+        created_at=now,
+        metadata={"requested_activity_id": "mon_1"},
+    )
+    mgr._running_tasks_by_phase["claim_extraction"] = 2
+    assert mgr._discard_redundant_claim_extraction_when_at_cap(t2, 2) is False

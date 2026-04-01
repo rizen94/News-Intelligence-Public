@@ -18,6 +18,8 @@ cooldowns). Set a positive value only as a safety valve if the asyncio queue gro
 could stack hundreds of redundant queued sweeps while workers were busy.
 **AUTOMATION_NIGHTLY_ENRICHMENT_MAX_QUEUED** caps scheduled+requested+running nightly tasks (default 1; 0=unlimited).
 **AUTOMATION_MAX_SCHEDULED_DEPTH_PER_PHASE** caps scheduled asyncio-queue depth per phase (default 1; 0=unlimited) so workload-driven ticks cannot stack thousands of duplicate tasks; defer/retry bypass the cap.
+With **CLAIM_EXTRACTION_DRAIN** (default on), **claim_extraction** also skips new scheduler/chain enqueues when running+queued depth already reaches the per-phase concurrent cap (``_should_skip_redundant_phase_request``), so context_sync completion cannot pile hundreds of duplicate tasks on ``_requested_task_queue``.
+If a duplicate still reaches a worker under the cap, ``_discard_redundant_claim_extraction_when_at_cap`` completes it without re-queueing (per-phase defer used ``bypass_schedule_depth_cap`` and recycled the same backlog forever).
 **AUTOMATION_PER_PHASE_CONCURRENT_CAP** caps how many workers may execute the same phase at once (default 2; 0=unlimited); **nightly_sequential_drain** bypasses; nightly window multiplies cap via **AUTOMATION_PER_PHASE_CONCURRENT_NIGHTLY_MULT** for catch-up when those phases are scheduled.
 
 **Offload to Widow (DB host):** set ``AUTOMATION_SKIP_RSS_IN_COLLECTION_CYCLE=true`` on the GPU/main API host when
@@ -119,8 +121,6 @@ BATCH_PHASES_CONTINUOUS = {
 MAX_REQUEUE_PER_WINDOW = 0
 
 # Phases that enter the Ollama yield / GPU throttle / semaphore path in ``_execute_task``.
-# Kept in sync with that gate; ``GPU_LANE_PHASES`` matches this set so resource-router lane defaults
-# align with actual LLM usage (see ``docs/AUTOMATION_MANAGER_SCHEDULING.md``).
 OLLAMA_AUTOMATION_PHASES = frozenset(
     {
         "topic_clustering",
@@ -159,8 +159,18 @@ OLLAMA_AUTOMATION_PHASES = frozenset(
         "storyline_enrichment",
     }
 )
-# Default execution lane for resource router / dynamic cooldowns (same as Ollama-calling phases).
-GPU_LANE_PHASES = OLLAMA_AUTOMATION_PHASES
+# Phases whose main LLM path uses ``OllamaModelCaller`` with ``STRUCTURED_EXTRACTION`` → ``_call_ollama(..., execution_lane="cpu")``.
+# They are excluded from ``GPU_LANE_PHASES`` so automation ``ContextVar`` lane, dynamic router defaults, and Monitor
+# match the CPU host + CPU semaphore (see ``shared/services/ollama_model_caller.py``).
+STRUCTURED_LLM_CPU_LANE_PHASES = frozenset(
+    {
+        "claim_extraction",
+        "entity_extraction",
+        "event_extraction",
+    }
+)
+# Default execution lane "gpu" for Ollama phases that are not structured-extraction-on-CPU above.
+GPU_LANE_PHASES = frozenset(x for x in OLLAMA_AUTOMATION_PHASES if x not in STRUCTURED_LLM_CPU_LANE_PHASES)
 DB_HEAVY_PHASES = frozenset(
     {
         "context_sync",
@@ -297,6 +307,44 @@ def _per_phase_concurrent_cap_phase_names() -> frozenset[str]:
     if raw:
         return frozenset(x.strip() for x in raw.split(",") if x.strip())
     return DEFAULT_AUTOMATION_PER_PHASE_CONCURRENT_CAP_PHASES
+
+
+def _per_phase_concurrent_cap_overrides() -> dict[str, int]:
+    """
+    Optional per-phase caps: AUTOMATION_PER_PHASE_CONCURRENT_CAP_OVERRIDES=claim_extraction:1,claims_to_facts:2
+    Values are max concurrent workers for that phase (clamped to max_concurrent_tasks at use site). 0 = unlimited.
+    """
+    raw = os.environ.get("AUTOMATION_PER_PHASE_CONCURRENT_CAP_OVERRIDES", "").strip()
+    if not raw:
+        return {}
+    out: dict[str, int] = {}
+    for part in raw.split(","):
+        part = part.strip()
+        if ":" not in part:
+            continue
+        name, val = part.split(":", 1)
+        name = name.strip()
+        if not name:
+            continue
+        try:
+            out[name] = int(val.strip())
+        except ValueError:
+            continue
+    return out
+
+
+def _per_phase_nightly_cap_mult_exclude() -> frozenset[str]:
+    """
+    Phases that do not multiply AUTOMATION_PER_PHASE_CONCURRENT_CAP by
+    AUTOMATION_PER_PHASE_CONCURRENT_NIGHTLY_MULT during the unified nightly window.
+
+    Default excludes claim_extraction so nightly catch-up does not spawn e.g. 8× huge LLM batches
+    that stall for hours and stack the asyncio queue.
+    """
+    raw = os.environ.get("AUTOMATION_PER_PHASE_NIGHTLY_MULT_EXCLUDE", "").strip()
+    if raw:
+        return frozenset(x.strip() for x in raw.split(",") if x.strip())
+    return frozenset({"claim_extraction"})
 
 
 # Ollama tasks normally yield when a non-polling browser request hit the API recently; storyline
@@ -1228,6 +1276,62 @@ class AutomationManager:
             + int(self._requested_queue_depth_by_phase.get(n, 0) or 0)
         )
 
+    def _phase_pipeline_inflight(self, phase_name: str) -> int:
+        """Workers running this phase + tasks waiting in scheduled queue + governor-requested queue."""
+        return (
+            int(self._running_tasks_by_phase.get(phase_name, 0) or 0)
+            + int(self._scheduled_queue_depth_by_phase.get(phase_name, 0) or 0)
+            + int(self._requested_queue_depth_by_phase.get(phase_name, 0) or 0)
+        )
+
+    def _should_skip_redundant_phase_request(
+        self, phase_name: str, *, allow_operator_bypass: bool = False
+    ) -> bool:
+        """
+        Drop duplicate governor/chain requests when long-running drains already fill the pipeline.
+
+        Without this, every context_sync completion chains request_phase(claim_extraction); each
+        enqueue stacks on _requested_task_queue (832+) while a few workers hold long drains.
+        Monitor/API triggers pass allow_operator_bypass when requested_activity_id is set.
+        """
+        if allow_operator_bypass:
+            return False
+        if phase_name != "claim_extraction":
+            return False
+        try:
+            from services.claim_extraction_service import claim_extraction_drain_enabled
+
+            if not claim_extraction_drain_enabled():
+                return False
+        except Exception:
+            return False
+        cap = self._per_phase_scheduler_concurrent_cap(phase_name)
+        if cap <= 0:
+            cap = min(int(self.max_concurrent_tasks), 6)
+        return self._phase_pipeline_inflight(phase_name) >= cap
+
+    def _discard_redundant_claim_extraction_when_at_cap(self, task: Task, exec_cap: int) -> bool:
+        """
+        When the concurrent cap is already satisfied by other workers, a duplicate claim_extraction
+        task must not re-enter the asyncio queue (bypass_schedule_depth_cap). Otherwise thousands of
+        copies accumulate while a few long drain runs hold the slots.
+        """
+        if task.name != "claim_extraction" or exec_cap <= 0:
+            return False
+        if (task.metadata or {}).get("nightly_sequential_drain"):
+            return False
+        if (task.metadata or {}).get("requested_activity_id"):
+            return False
+        try:
+            from services.claim_extraction_service import claim_extraction_drain_enabled
+
+            if not claim_extraction_drain_enabled():
+                return False
+        except Exception:
+            return False
+        # After the failed slot attempt we reverted our +1; count is workers already executing.
+        return int(self._running_tasks_by_phase.get(task.name, 0) or 0) >= exec_cap
+
     def _can_enqueue_nightly_enrichment(self) -> bool:
         if AUTOMATION_NIGHTLY_ENRICHMENT_MAX_QUEUED <= 0:
             return True
@@ -1631,7 +1735,7 @@ class AutomationManager:
                     task = _pq_item[2]
 
                 if task:
-                    if from_requested and task.name == "nightly_enrichment_context":
+                    if from_requested:
                         self._requested_queue_depth_by_phase[task.name] = max(
                             0,
                             int(self._requested_queue_depth_by_phase[task.name]) - 1,
@@ -1887,6 +1991,16 @@ class AutomationManager:
                                 AUTOMATION_NIGHTLY_ENRICHMENT_MAX_QUEUED,
                             )
                             continue
+                        if self._should_skip_redundant_phase_request(
+                            phase_name,
+                            allow_operator_bypass=bool(requested_activity_id),
+                        ):
+                            logger.debug(
+                                "request_phase: skipping %s (drain pipeline saturated, inflight=%s)",
+                                phase_name,
+                                self._phase_pipeline_inflight(phase_name),
+                            )
+                            continue
                         task = Task(
                             id=f"{phase_name}_{int(datetime.now(timezone.utc).timestamp())}",
                             name=phase_name,
@@ -1903,8 +2017,7 @@ class AutomationManager:
                             },
                         )
                         await self._requested_task_queue.put(task)
-                        if phase_name == "nightly_enrichment_context":
-                            self._requested_queue_depth_by_phase[phase_name] += 1
+                        self._requested_queue_depth_by_phase[phase_name] += 1
                         logger.info(
                             "Governor requested phase: %s (domain=%s, storyline_id=%s)",
                             phase_name,
@@ -2034,6 +2147,13 @@ class AutomationManager:
 
     def _per_phase_scheduler_concurrent_cap(self, task_name: str) -> int:
         """Max workers that may run this phase at once (scheduler gate). 0 = unlimited."""
+        overrides = _per_phase_concurrent_cap_overrides()
+        if task_name in overrides:
+            o = overrides[task_name]
+            if o <= 0:
+                return 0
+            return min(self.max_concurrent_tasks, o)
+
         base = AUTOMATION_PER_PHASE_CONCURRENT_CAP
         if base <= 0:
             return 0
@@ -2043,6 +2163,8 @@ class AutomationManager:
             from services.nightly_ingest_window_service import in_nightly_pipeline_window_est
 
             if in_nightly_pipeline_window_est():
+                if task_name in _per_phase_nightly_cap_mult_exclude():
+                    return min(self.max_concurrent_tasks, base)
                 mult = int(os.environ.get("AUTOMATION_PER_PHASE_CONCURRENT_NIGHTLY_MULT", "4"))
                 return min(self.max_concurrent_tasks, base * max(1, mult))
         except Exception:
@@ -2269,6 +2391,8 @@ class AutomationManager:
     ):
         """Create and queue a task"""
         if task_name == "health_check":
+            return
+        if self._should_skip_redundant_phase_request(task_name):
             return
         if self._scheduled_enqueue_paused() and task_name not in QUEUE_PAUSE_ALLOW_SCHEDULED:
             logger.info(
@@ -2526,6 +2650,15 @@ class AutomationManager:
                 )
                 task.status = TaskStatus.PENDING
                 task.started_at = None
+                if self._discard_redundant_claim_extraction_when_at_cap(task, exec_cap):
+                    task.status = TaskStatus.COMPLETED
+                    task.completed_at = datetime.now(timezone.utc)
+                    logger.info(
+                        "Discarded redundant %s (drain mode, cap=%s already satisfied; not re-queued)",
+                        task.name,
+                        exec_cap,
+                    )
+                    return
                 await self._enqueue_scheduled_task(
                     task,
                     bypass_nightly_cap=True,
@@ -2782,7 +2915,14 @@ class AutomationManager:
             if task.name in self.schedules:
                 self.schedules[task.name]["last_run"] = task.completed_at
             self._last_completed_at_by_phase[task.name] = task.completed_at
-            _persist_automation_run(task.name, task.started_at, task.completed_at, True, None)
+            if not (task.metadata or {}).get("skip_automation_run_history"):
+                _persist_automation_run(
+                    task.name,
+                    task.started_at,
+                    task.completed_at,
+                    True,
+                    None,
+                )
             # Record completion for last-60m run counts (used by monitoring timeline).
             try:
                 cutoff = datetime.now(timezone.utc) - timedelta(minutes=60)
@@ -2928,7 +3068,13 @@ class AutomationManager:
             finished_at = datetime.now(timezone.utc)
             if task.name in self.schedules:
                 self.schedules[task.name]["last_run"] = finished_at
-            _persist_automation_run(task.name, task.started_at, finished_at, False, str(e))
+            _persist_automation_run(
+                task.name,
+                task.started_at,
+                finished_at,
+                False,
+                str(e),
+            )
             # Record failure for last-60m run counts (used by monitoring timeline).
             try:
                 cutoff = datetime.now(timezone.utc) - timedelta(minutes=60)
@@ -3425,15 +3571,38 @@ class AutomationManager:
                 return
         except Exception:
             pass
-        from services.claim_extraction_service import run_claim_extraction_batch
+        from services.claim_extraction_service import (
+            claim_extraction_drain_enabled,
+            drain_claim_extraction_for_automation_task,
+            run_claim_extraction_batch,
+        )
 
+        task.metadata = task.metadata or {}
         try:
-            # Batch size + concurrency: CLAIM_EXTRACTION_BATCH_LIMIT, CLAIM_EXTRACTION_PARALLEL.
-            # Nightly sequential drain can override with a smaller chunk to avoid phase starvation.
+            # Default: one automation task drains all pending contexts in a loop (CLAIM_EXTRACTION_DRAIN=true).
+            # Keeps a single claim_extraction slot busy until idle so we do not stack many queued copies; other
+            # workers and LLM lane semaphores handle sharing the GPU with other phases.
+            # Drain writes one automation_run_history row per batch; skip the task-level history row.
             run_limit = (task.metadata or {}).get("nightly_limit")
-            total = await run_claim_extraction_batch(limit=int(run_limit) if run_limit else None)
-            if total > 0:
-                logger.info(f"Claim extraction: {total} claims inserted")
+            nlim = int(run_limit) if run_limit else None
+            if claim_extraction_drain_enabled():
+                task.metadata["skip_automation_run_history"] = True
+                total, batches = await drain_claim_extraction_for_automation_task(
+                    nightly_limit=nlim,
+                )
+                if total > 0:
+                    logger.info(
+                        "Claim extraction: %s claims inserted (%s batch(es) in one task)",
+                        total,
+                        batches,
+                    )
+            else:
+                res = await run_claim_extraction_batch(limit=nlim)
+                if res.claims_inserted > 0:
+                    logger.info(
+                        "Claim extraction: %s claims inserted",
+                        res.claims_inserted,
+                    )
         except Exception as e:
             logger.warning(f"Claim extraction failed: {e}")
 
@@ -3461,22 +3630,44 @@ class AutomationManager:
 
     async def _execute_claims_to_facts(self, task: Task):
         """Promote high-confidence extracted_claims to versioned_facts (activates story state chain)."""
-        from services.claim_extraction_service import promote_claims_to_versioned_facts
+        from services.claim_extraction_service import (
+            claims_to_facts_drain_enabled,
+            drain_claims_to_facts_for_automation_task,
+            promote_claims_to_versioned_facts,
+        )
 
+        task.metadata = task.metadata or {}
         try:
-            run_limit = (task.metadata or {}).get("nightly_limit")
-            if run_limit:
-                stats = await asyncio.to_thread(
-                    promote_claims_to_versioned_facts,
-                    None,
-                    int(run_limit),
+            run_limit = task.metadata.get("nightly_limit")
+            per_batch = int(run_limit) if run_limit else None
+            is_nightly_seq = bool(task.metadata.get("nightly_sequential_drain"))
+
+            # Daytime scheduled: optional multi-batch drain in one task (like claim_extraction).
+            # Nightly sequential: one promote per run — outer NIGHTLY_SEQUENTIAL_PHASE_LOOP_CAPS repeats.
+            if claims_to_facts_drain_enabled() and not is_nightly_seq:
+                task.metadata["skip_automation_run_history"] = True
+                total, batches = await drain_claims_to_facts_for_automation_task(
+                    per_batch_limit=per_batch,
                 )
+                if total > 0:
+                    logger.info(
+                        "Claims to facts: %s rows promoted (%s batch(es) in one task)",
+                        total,
+                        batches,
+                    )
             else:
-                stats = await asyncio.to_thread(promote_claims_to_versioned_facts)
-            if not isinstance(stats, dict):
-                return
-            if stats.get("candidates", 0) == 0:
-                logger.debug("Claims to facts: no promotable claims in batch")
+                if per_batch is not None:
+                    stats = await asyncio.to_thread(
+                        promote_claims_to_versioned_facts,
+                        None,
+                        per_batch,
+                    )
+                else:
+                    stats = await asyncio.to_thread(promote_claims_to_versioned_facts)
+                if not isinstance(stats, dict):
+                    return
+                if stats.get("candidates", 0) == 0:
+                    logger.debug("Claims to facts: no promotable claims in batch")
         except Exception as e:
             logger.warning(f"Claims to facts failed: {e}")
 
@@ -3841,12 +4032,11 @@ class AutomationManager:
                 nightly_meta["nightly_limit"] = 250
         elif phase_name == "claims_to_facts":
             try:
-                nightly_meta["nightly_limit"] = max(
-                    200,
-                    int(os.environ.get("NIGHTLY_CLAIMS_TO_FACTS_BATCH_LIMIT", "500")),
-                )
-            except ValueError:
-                nightly_meta["nightly_limit"] = 500
+                from services.claim_extraction_service import get_nightly_claims_to_facts_batch_limit
+
+                nightly_meta["nightly_limit"] = int(get_nightly_claims_to_facts_batch_limit())
+            except Exception:
+                nightly_meta["nightly_limit"] = 10_000
 
         task = Task(
             id=f"nightly_seq_{phase_name}_{uuid4().hex[:10]}",
@@ -5989,7 +6179,7 @@ class AutomationManager:
             }
         except Exception:
             out["work_balancer"] = {"enabled": False, "error": "unavailable"}
-        out["resource_router"] = {
+        rr: dict[str, Any] = {
             "enabled": AUTOMATION_DYNAMIC_RESOURCE_ROUTING_ENABLED,
             "headroom": self._resource_headroom or {},
             "thresholds": {
@@ -6004,10 +6194,29 @@ class AutomationManager:
                 "gpu": sorted(GPU_LANE_PHASES),
                 "cpu": sorted([k for k in self.schedules.keys() if k not in GPU_LANE_PHASES]),
             },
+            "structured_llm_cpu_phases": sorted(STRUCTURED_LLM_CPU_LANE_PHASES),
             "resource_classes": {
                 "db_heavy": sorted(DB_HEAVY_PHASES),
             },
         }
+        try:
+            from shared.services.llm_service import llm_service as _ls
+
+            rr["llm_endpoints"] = {
+                "dual_host_enabled": bool(_ls.dual_host_enabled),
+                "default_base_url": _ls.ollama_base_url,
+                "cpu_base_url": _ls.ollama_cpu_host,
+                "gpu_base_url": _ls.ollama_gpu_host,
+                "cpu_concurrency_cap": max(
+                    1, int(os.environ.get("OLLAMA_CPU_CONCURRENCY", "6"))
+                ),
+                "gpu_concurrency_cap": max(
+                    1, int(os.environ.get("OLLAMA_GPU_CONCURRENCY", "6"))
+                ),
+            }
+        except Exception as e:
+            rr["llm_endpoints"] = {"error": str(e)}
+        out["resource_router"] = rr
         return out
 
     def get_metrics(self) -> dict[str, Any]:

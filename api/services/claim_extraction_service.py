@@ -9,6 +9,9 @@ import json
 import logging
 import os
 import re
+import time
+from datetime import datetime, timezone
+from typing import NamedTuple
 
 from shared.database.connection import get_db_connection
 from shared.domain_registry import get_pipeline_schema_names_active, resolve_domain_schema
@@ -218,6 +221,149 @@ def get_claims_to_facts_min_confidence() -> float:
         return 0.75
 
 
+def get_nightly_claims_to_facts_batch_limit() -> int:
+    """
+    Slice size for each ``promote_claims_to_versioned_facts`` call during **nightly sequential** drain.
+
+    When ``NIGHTLY_CLAIMS_TO_FACTS_BATCH_LIMIT`` is unset, use the same value as
+    ``CLAIMS_TO_FACTS_BATCH_LIMIT`` (via ``get_claims_to_facts_batch_limit()``) so night matches day.
+    Set explicitly to cap a single nightly batch smaller than daytime if needed.
+    """
+    raw = os.environ.get("NIGHTLY_CLAIMS_TO_FACTS_BATCH_LIMIT", "").strip()
+    if not raw:
+        return get_claims_to_facts_batch_limit()
+    try:
+        n = int(raw)
+    except ValueError:
+        return get_claims_to_facts_batch_limit()
+    return max(1, n)
+
+
+def claims_to_facts_drain_enabled() -> bool:
+    """Daytime automation: loop promote batches until idle or a guard trips (default on). Nightly sequential uses one batch per outer loop."""
+    return os.environ.get("CLAIMS_TO_FACTS_DRAIN", "true").lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
+    )
+
+
+def _claims_to_facts_drain_max_batches() -> int:
+    try:
+        n = int(os.environ.get("CLAIMS_TO_FACTS_DRAIN_MAX_BATCHES", "0"))
+    except ValueError:
+        n = 0
+    return max(0, n)
+
+
+def _claims_to_facts_drain_max_seconds() -> float:
+    try:
+        x = float(os.environ.get("CLAIMS_TO_FACTS_DRAIN_MAX_SECONDS", "0") or 0)
+    except ValueError:
+        x = 0.0
+    return max(0.0, x)
+
+
+def _claims_to_facts_drain_max_zero_promote_batches() -> int:
+    """Stop after N consecutive batches with candidates but zero promotions (unresolved / stuck)."""
+    try:
+        n = int(os.environ.get("CLAIMS_TO_FACTS_DRAIN_MAX_ZERO_PROMOTE_BATCHES", "5"))
+    except ValueError:
+        n = 5
+    return max(1, n)
+
+
+def _persist_claims_to_facts_batch_run(started: datetime, finished: datetime) -> None:
+    try:
+        from shared.services.automation_run_history_writer import persist_automation_run_history
+
+        persist_automation_run_history("claims_to_facts", started, finished, True, None)
+    except Exception as e:
+        logger.debug("claims_to_facts batch history persist failed: %s", e)
+
+
+async def drain_claims_to_facts_for_automation_task(
+    *,
+    per_batch_limit: int | None = None,
+) -> tuple[int, int]:
+    """
+    Run claim promotion in a loop until no candidates remain or a guard trips.
+
+    Used for **scheduled** (non-nightly-sequential) automation so one worker can burn backlog
+    without waiting for the next scheduler tick. Nightly unified drain keeps one promote per
+    ``run_nightly_sequential_phase`` call; outer ``NIGHTLY_SEQUENTIAL_PHASE_LOOP_CAPS`` repeats that.
+
+    Returns (total_promoted, batch_count).
+    """
+    max_batches = _claims_to_facts_drain_max_batches()
+    max_sec = _claims_to_facts_drain_max_seconds()
+    max_zero = _claims_to_facts_drain_max_zero_promote_batches()
+    t0 = time.monotonic()
+    total_promoted = 0
+    batches = 0
+    zero_streak = 0
+
+    while True:
+        if max_batches > 0 and batches >= max_batches:
+            logger.info(
+                "claims_to_facts drain stopping: CLAIMS_TO_FACTS_DRAIN_MAX_BATCHES=%s",
+                max_batches,
+            )
+            break
+        if max_sec > 0 and (time.monotonic() - t0) >= max_sec:
+            logger.info(
+                "claims_to_facts drain stopping: CLAIMS_TO_FACTS_DRAIN_MAX_SECONDS=%s",
+                max_sec,
+            )
+            break
+
+        batch_started = datetime.now(timezone.utc)
+        if per_batch_limit is not None:
+            stats = await asyncio.to_thread(
+                promote_claims_to_versioned_facts,
+                None,
+                int(per_batch_limit),
+            )
+        else:
+            stats = await asyncio.to_thread(promote_claims_to_versioned_facts)
+        batch_finished = datetime.now(timezone.utc)
+        await asyncio.to_thread(_persist_claims_to_facts_batch_run, batch_started, batch_finished)
+        batches += 1
+
+        if not isinstance(stats, dict):
+            break
+        promoted = int(stats.get("promoted") or 0)
+        candidates = int(stats.get("candidates") or 0)
+        total_promoted += promoted
+
+        if candidates == 0:
+            break
+
+        if promoted == 0:
+            zero_streak += 1
+            if zero_streak >= max_zero:
+                logger.warning(
+                    "claims_to_facts drain stopping: %s consecutive batches with 0 promotions "
+                    "(candidates=%s — check entity resolution / gap ignore / seeding)",
+                    max_zero,
+                    candidates,
+                )
+                break
+        else:
+            zero_streak = 0
+
+        await asyncio.sleep(0)
+
+    if batches > 1 or total_promoted > 0:
+        logger.info(
+            "claims_to_facts drain finished: %s batches, %s rows promoted",
+            batches,
+            total_promoted,
+        )
+    return total_promoted, batches
+
+
 # Exclude from promotion/backlog counts when operators mark a (domain, subject_norm) as ignored
 # in intelligence.claim_subject_gap_catalog (vague subjects not worth a synthetic entity).
 CLAIM_PROMOTION_GAP_IGNORED_EXCLUDE_SQL = """
@@ -401,6 +547,13 @@ Keep each subject under ~80 characters when possible."""
     return inserted
 
 
+class ClaimExtractionBatchResult(NamedTuple):
+    """One claim_extraction batch: claims inserted and contexts attempted (including 0-claim outcomes)."""
+
+    claims_inserted: int
+    contexts_processed: int
+
+
 def get_context_ids_without_claims(limit: int = 50) -> list[int]:
     """Return context IDs that have no rows in extracted_claims, for batch processing."""
     conn = get_db_connection()
@@ -423,34 +576,171 @@ def get_context_ids_without_claims(limit: int = 50) -> list[int]:
         conn.close()
 
 
-async def run_claim_extraction_batch(limit: int | None = None) -> int:
+async def run_claim_extraction_batch(limit: int | None = None) -> ClaimExtractionBatchResult:
     """
-    Process up to `limit` contexts that have no claims yet. Returns total claims inserted.
+    Process up to `limit` contexts that have no claims yet.
     If ``limit`` is None, uses get_claim_extraction_batch_limit().
     Concurrency: get_claim_extraction_parallel() (env CLAIM_EXTRACTION_PARALLEL; no fixed code cap).
     """
     if limit is None:
         limit = get_claim_extraction_batch_limit()
     ids = get_context_ids_without_claims(limit=limit)
+    if not ids:
+        return ClaimExtractionBatchResult(0, 0)
     parallel = get_claim_extraction_parallel()
-    sem = asyncio.Semaphore(parallel)
+    try:
+        chunk_sz = int(os.environ.get("CLAIM_EXTRACTION_INTERNAL_CHUNK", "0"))
+    except ValueError:
+        chunk_sz = 0
+    if chunk_sz <= 0:
+        chunk_sz = max(parallel * 10, 96)
+    chunk_sz = max(chunk_sz, parallel)
 
-    async def _one(cid: int) -> int:
-        async with sem:
-            return await extract_claims_for_context(cid)
-
-    results = await asyncio.gather(*[_one(cid) for cid in ids], return_exceptions=True)
     total = 0
-    for r in results:
-        if isinstance(r, int):
-            total += r
-        elif isinstance(r, Exception):
-            logger.debug("claim extraction batch item failed: %s", r)
+    for off in range(0, len(ids), chunk_sz):
+        chunk = ids[off : off + chunk_sz]
+        sem = asyncio.Semaphore(parallel)
+
+        async def _one(cid: int) -> int:
+            async with sem:
+                return await extract_claims_for_context(cid)
+
+        results = await asyncio.gather(*[_one(cid) for cid in chunk], return_exceptions=True)
+        for r in results:
+            if isinstance(r, int):
+                total += r
+            elif isinstance(r, Exception):
+                logger.debug("claim extraction batch item failed: %s", r)
+        if len(ids) > chunk_sz:
+            logger.info(
+                "claim_extraction progress %s/%s contexts (chunk size %s)",
+                min(off + len(chunk), len(ids)),
+                len(ids),
+                len(chunk),
+            )
+        await asyncio.sleep(0)
+
     if total > 0:
         logger.info(
-            f"Claim extraction batch: {len(ids)} contexts processed, {total} claims inserted"
+            "Claim extraction batch: %s contexts processed, %s claims inserted",
+            len(ids),
+            total,
         )
-    return total
+    return ClaimExtractionBatchResult(total, len(ids))
+
+
+def _claim_extraction_drain_max_batches() -> int:
+    try:
+        n = int(os.environ.get("CLAIM_EXTRACTION_DRAIN_MAX_BATCHES", "0"))
+    except ValueError:
+        n = 0
+    return max(0, n)
+
+
+def _claim_extraction_drain_max_seconds() -> float:
+    try:
+        x = float(os.environ.get("CLAIM_EXTRACTION_DRAIN_MAX_SECONDS", "0") or 0)
+    except ValueError:
+        x = 0.0
+    return max(0.0, x)
+
+
+def _claim_extraction_drain_max_zero_claim_batches() -> int:
+    """Stop drain after this many consecutive batches with contexts but 0 claims inserted (stuck / all filtered)."""
+    try:
+        n = int(os.environ.get("CLAIM_EXTRACTION_DRAIN_MAX_ZERO_CLAIM_BATCHES", "3"))
+    except ValueError:
+        n = 3
+    return max(1, n)
+
+
+def claim_extraction_drain_enabled() -> bool:
+    """Single automation task loops batches until idle (default). Set CLAIM_EXTRACTION_DRAIN=false for one batch only."""
+    return os.environ.get("CLAIM_EXTRACTION_DRAIN", "true").lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
+    )
+
+
+def _persist_claim_extraction_batch_run(started: datetime, finished: datetime) -> None:
+    """One automation_run_history row per completed batch (drain keeps work in one scheduler task)."""
+    try:
+        from shared.services.automation_run_history_writer import persist_automation_run_history
+
+        persist_automation_run_history("claim_extraction", started, finished, True, None)
+    except Exception as e:
+        logger.debug("claim_extraction batch history persist failed: %s", e)
+
+
+async def drain_claim_extraction_for_automation_task(
+    *,
+    nightly_limit: int | None = None,
+) -> tuple[int, int]:
+    """
+    Run claim extraction until no contexts remain without extracted_claims rows, or a guard trips.
+
+    Uses one automation worker for the whole drain (pair with AUTOMATION_PER_PHASE_CONCURRENT_CAP_OVERRIDES=claim_extraction:1).
+    Other automation workers stay free for other phases; GPU/CPU sharing with those phases is handled by LLM lane
+    semaphores and the resource router — not by slicing claim work into many queued tasks.
+
+    Returns (total_claims_inserted, batch_count).
+    """
+    lim = int(nightly_limit) if nightly_limit is not None else None
+    max_batches = _claim_extraction_drain_max_batches()
+    max_sec = _claim_extraction_drain_max_seconds()
+    max_zero = _claim_extraction_drain_max_zero_claim_batches()
+    t0 = time.monotonic()
+    total_claims = 0
+    batches = 0
+    zero_streak = 0
+
+    while True:
+        if max_batches > 0 and batches >= max_batches:
+            logger.info(
+                "claim_extraction drain stopping: CLAIM_EXTRACTION_DRAIN_MAX_BATCHES=%s",
+                max_batches,
+            )
+            break
+        if max_sec > 0 and (time.monotonic() - t0) >= max_sec:
+            logger.info(
+                "claim_extraction drain stopping: CLAIM_EXTRACTION_DRAIN_MAX_SECONDS=%s",
+                max_sec,
+            )
+            break
+
+        batch_started = datetime.now(timezone.utc)
+        res = await run_claim_extraction_batch(limit=lim)
+        batch_finished = datetime.now(timezone.utc)
+        await asyncio.to_thread(_persist_claim_extraction_batch_run, batch_started, batch_finished)
+        batches += 1
+        total_claims += res.claims_inserted
+
+        if res.contexts_processed == 0:
+            break
+
+        if res.claims_inserted == 0:
+            zero_streak += 1
+            if zero_streak >= max_zero:
+                logger.warning(
+                    "claim_extraction drain stopping: %s consecutive batches with 0 claims "
+                    "(contexts still lack rows — check strict_seeded filters / LLM parse)",
+                    max_zero,
+                )
+                break
+        else:
+            zero_streak = 0
+
+        await asyncio.sleep(0)
+
+    if batches > 1 or total_claims > 0:
+        logger.info(
+            "claim_extraction drain finished: %s batches, %s claims inserted",
+            batches,
+            total_claims,
+        )
+    return total_claims, batches
 
 
 # ---------------------------------------------------------------------------

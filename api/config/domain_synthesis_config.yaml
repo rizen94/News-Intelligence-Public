@@ -344,6 +344,15 @@ domains:
         - fantasy football
         - unboxing
         - phone case
+        # Legal-tech / vendor promos (RSS also filters via is_advertisement)
+        - product spotlight
+        - lexis create
+        - lexis® create
+        - westlaw edge free trial
+        - legal practice management software
+        - case management software for lawyers
+        - seo for law firms
+        - lawyer marketing tips
       exclude_categories:
         - entertainment
         - sports
@@ -360,3 +369,122 @@ domains:
       legal advice or invent citations, docket numbers, or statutory sections not
       present in the text. Distinguish holdings from commentary when the source does.
       Prefer neutral, factual reporting; flag uncertainty when sources conflict.
+
+  medicine:
+    focus_areas:
+      - randomized trials, effect sizes, and pre-specified endpoints
+      - regulatory decisions (FDA, EMA) and label changes grounded in evidence
+      - epidemiology, public health interventions, and real-world outcomes
+      - mechanism of action and translational research when tied to data
+      - health system access, pricing debates, and equity — as reported news, not product pitches
+
+    event_type_priorities:
+      - clinical_trial
+      - regulatory_approval
+      - public_statement
+      - report_release
+      - appointment
+      - agreement
+      - investigation
+      - policy_change
+
+    entity_type_weights:
+      organization: 1.0
+      person: 0.75
+      location: 0.5
+
+    storyline_patterns:
+      - trial readouts and regulatory paths (data → decision → access)
+      - outbreak and public health response arcs
+      - drug safety and label updates when sourced to regulators or studies
+
+    editorial_sections:
+      - Evidence and endpoints
+      - Regulatory or clinical context
+      - Limitations and uncertainties
+      - Patient and system implications
+
+    topic_filter:
+      exclude_keywords:
+        - savings card
+        - copay card
+        - instant savings offer
+        - pay as little as $
+        - not actual patients
+        - actor portrayal
+        - paid spokesperson
+        - miracle supplement
+        - this statement has not been evaluated by the fda
+        - get your prescription online
+        - same-day prescription delivery
+        - weight loss prescription online
+        - order medication online
+      exclude_categories:
+        - entertainment
+        - sports
+
+    llm_context: >
+      You are analyzing medicine and health research news. Prioritize empirical results,
+      regulatory primary sources, and study design (population, control, endpoints). Treat
+      direct-to-consumer drug copy and supplement marketing as non-informative. Distinguish
+      peer-reviewed or regulator-issued information from vendor claims. Do not give personal
+      medical advice.
+
+  artificial-intelligence:
+    focus_areas:
+      - reproducible benchmarks, evaluations, and failure modes
+      - Research publications and verifiable deployments (what was demonstrated)
+      - Governance, safety, labor, and market structure as reported analysis
+      - Open weights, licensing, and infrastructure when tied to capabilities or risk
+
+    event_type_priorities:
+      - research_publication
+      - product_launch
+      - regulatory_approval
+      - public_statement
+      - report_release
+      - agreement
+      - appointment
+      - investigation
+
+    entity_type_weights:
+      organization: 1.0
+      person: 0.7
+      technology: 1.0
+      location: 0.35
+
+    storyline_patterns:
+      - capability claims vs independent verification
+      - Policy and safety responses to new model classes
+      - Enterprise adoption when tied to documented outcomes, not vendor slogans
+
+    editorial_sections:
+      - What was shown or shipped
+      - Limits and evaluation gaps
+      - Governance and externalities
+      - What to verify next
+
+    topic_filter:
+      exclude_keywords:
+        - ai chatbot free trial
+        - no-code ai chatbot
+        - white-label ai chatbot
+        - enterprise ai chatbot
+        - gpt for your business
+        - custom gpt for your
+        - deploy your llm in minutes
+        - hire an ai employee
+        - replace your support team with ai
+        - automate customer service with ai
+        - start your free ai trial
+        - get more leads with ai bots
+      exclude_categories:
+        - consumer_electronics
+        - gaming
+
+    llm_context: >
+      You are analyzing AI and machine learning news for readers who care about real
+      capabilities, evidence, and consequences. Prefer benchmark numbers, independent
+      audits, and regulator or court actions over marketing language. Treat chatbot SaaS
+      promos and “replace your team with AI” pitches as low-signal. Separate research
+      advances from product roadmaps when sources allow.

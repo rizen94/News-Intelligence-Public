@@ -239,7 +239,7 @@ def get_backlog_status() -> dict[str, Any]:
         enriched_last_1h = 0
         enriched_last_24h = 0
         enriched_last_4d = 0
-        from shared.domain_registry import get_schema_names_active, url_schema_pairs
+        from shared.domain_registry import get_schema_names_active, pipeline_url_schema_pairs
 
         for schema in get_schema_names_active():
             try:
@@ -517,11 +517,13 @@ def get_backlog_status() -> dict[str, Any]:
         except Exception:
             _rollback_db_connection(conn)
 
-        # Synthesis results per domain (storylines synthesized in last 1h, 2h, 4d)
+        # Synthesis per domain: align with automation ``_execute_storyline_synthesis`` (pipeline scope only).
+        # Legacy builtins (politics/finance) still appear in ``url_schema_pairs()``; use ``PIPELINE_EXCLUDE_DOMAIN_KEYS``
+        # to stop processing them — this block then omits them from the breakdown so Monitor matches actual work.
         synthesis_last_1h: dict[str, int] = {}
         synthesis_last_2h: dict[str, int] = {}
         synthesis_last_4d: dict[str, int] = {}
-        for domain_key, schema in url_schema_pairs():
+        for domain_key, schema in pipeline_url_schema_pairs():
             try:
                 cur.execute(
                     f"""
@@ -1490,6 +1492,27 @@ async def get_devices():
             "total_project_usage_bytes": total_project_bytes,
         },
     }
+
+
+# ---------------------------------------------------------------------------
+# Processing progress (Monitor pulse — same router as backlog_status)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/processing_progress")
+@cached_response(ttl=45)
+def get_processing_progress() -> dict[str, Any]:
+    """
+    Pipeline dimension throughput, per-phase pending/backlog row counts, pass/fail rates from
+    ``automation_run_history``, and 72h hourly buckets. Implemented in ``processing_progress.py``
+    and mounted here so the path is always ``/api/system_monitoring/processing_progress``.
+    """
+    from .processing_progress import compute_processing_progress_response
+
+    out = compute_processing_progress_response()
+    if out.get("success") and isinstance(out.get("data"), dict):
+        out["data"]["workload_window_days_note"] = BACKLOG_WORKLOAD_WINDOW_DAYS
+    return out
 
 
 # ---------------------------------------------------------------------------

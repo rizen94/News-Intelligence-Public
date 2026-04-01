@@ -102,3 +102,19 @@ When several **person** rows share a surname, **`entity_resolution_service`** ca
 - **Entity profile sync:** `sync_domain_entity_profiles` upserts **`entity_profiles`** and **`old_entity_to_new`** in **bulk** (two SQL statements per domain), then runs several rounds of **`backfill_context_entity_mentions_for_domain`**. Tune with **`ENTITY_PROFILE_SYNC_MENTION_BACKFILL_LIMIT`** (contexts per round per domain, default 10000) and **`ENTITY_PROFILE_SYNC_MENTION_BACKFILL_ROUNDS`** (default 3). **`backfill_entity_canonical`** treats names **case-insensitively** when deduping and when linking **`article_entities.canonical_entity_id`**.
 - **Entity data:** `context_entity_mentions`, `article_to_context`, `article_entities`, `entity_canonical.aliases`, and profile metadata quality drive match rate more than fuzzy thresholds.
 - **New claims:** The claim-extraction prompt asks for short, Wikipedia-style subjects (under ~80 characters when possible).
+
+## Throughput (scheduling, night vs day, drain)
+
+- **Nightly batch size:** If **`NIGHTLY_CLAIMS_TO_FACTS_BATCH_LIMIT`** is unset, it matches **`CLAIMS_TO_FACTS_BATCH_LIMIT`** (`get_nightly_claims_to_facts_batch_limit()` in `claim_extraction_service.py`) so each nightly sequential promote uses the same slice size as daytime unless you override.
+- **Daytime drain:** With **`CLAIMS_TO_FACTS_DRAIN=true`** (default), scheduled automation runs **`drain_claims_to_facts_for_automation_task`**: multiple promote batches in one task until no candidates, a time/batch cap, or consecutive batches with zero promotions (unresolved subjects). Nightly sequential runs **one** promote per `run_nightly_sequential_phase` call; **`NIGHTLY_SEQUENTIAL_PHASE_LOOP_CAPS`** repeats that while backlog remains.
+- **Workload balancer:** With **`WORKLOAD_BALANCER_ENABLED=true`**, **`claims_to_facts`** is included in the default phase set so effective cooldown shrinks when pending is large relative to batch size. Tune **`AUTOMATION_WORKLOAD_MIN_COOLDOWN_SECONDS`** and **`AUTOMATION_SCHEDULER_TICK_SECONDS`** for how often the scheduler re-checks eligibility.
+- **Parallel workers:** **`AUTOMATION_PER_PHASE_CONCURRENT_CAP_OVERRIDES=…,claims_to_facts:2`** — selection uses **`SKIP LOCKED`**; watch DB pool usage.
+
+## DB tuning (indexes and plans)
+
+Promotion selects unpromoted high-confidence rows with **`ORDER BY confidence DESC`** and **`NOT EXISTS`** against **`versioned_facts`** on `metadata->>'source_claim_id'`. If plans show sequential scans or high cost on large tables, use **`EXPLAIN (ANALYZE, BUFFERS)`** on that query and consider:
+
+- A **partial or expression index** supporting the anti-join on **`versioned_facts`** (e.g. btree on `(metadata->>'source_claim_id')` where that key is present), if not already present.
+- An index on **`extracted_claims`** that helps **confidence-ordered** scans for unpromoted rows (exact definition depends on existing indexes and statistics).
+
+Ensure **`pg_trgm`** is installed if fuzzy resolution is enabled (**migration `189`**). After adding indexes on large tables in production, prefer **`CREATE INDEX CONCURRENTLY`** outside a transaction when appropriate.

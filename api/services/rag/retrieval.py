@@ -6,6 +6,7 @@ Extracted from enhanced_rag_retrieval.py
 
 import json
 import logging
+import os
 import re
 from datetime import datetime
 from typing import Any
@@ -58,13 +59,33 @@ class RAGRetrievalModule:
         self.embedding_model = None
         self._load_embedding_model()
 
+        def _fenv(key: str, default: str) -> float:
+            try:
+                return float(os.environ.get(key, default))
+            except (TypeError, ValueError):
+                return float(default)
+
+        def _int_env(key: str, default: int) -> int:
+            raw = os.environ.get(key)
+            if raw is None or str(raw).strip() == "":
+                return default
+            try:
+                return int(raw)
+            except (TypeError, ValueError):
+                return default
+
         # Configuration
         self.config = {
             "embedding_model": "all-MiniLM-L6-v2",  # Lightweight, fast model
             "max_results_initial": 100,  # Initial retrieval before re-ranking
             "max_results_final": 25,  # Final results after re-ranking
             "hybrid_search_alpha": 0.7,  # Weight for semantic (0.7) vs keyword (0.3)
-            "similarity_threshold": 0.3,  # Minimum semantic similarity
+            "similarity_threshold": _fenv("RAG_SEMANTIC_SIMILARITY_THRESHOLD", "0.3"),
+            # Pool-relative floor: keep docs with sim >= max(absolute_floor, relative_to_best * best_in_pool).
+            "similarity_relative_to_best": _fenv("RAG_SEMANTIC_RELATIVE_TO_BEST", "0.82"),
+            "semantic_adaptive_min_candidates": _int_env(
+                "RAG_SEMANTIC_ADAPTIVE_MIN_CANDIDATES", 4
+            ),
             "rerank_top_k": 50,  # Top K for re-ranking
             "query_expansion_max_terms": 5,  # Max terms for query expansion
         }
@@ -339,30 +360,56 @@ class RAGRetrievalModule:
             if not candidates:
                 return []
 
-            # Compute semantic similarities
-            similarities = []
+            scored: list[tuple[float, dict[str, Any]]] = []
             for article in candidates:
-                # Use title + excerpt + summary for embedding
                 article_text = f"{article.get('title', '')} {article.get('excerpt', '')} {article.get('summary', '')}"
-                article_text = article_text[:1000]  # Limit length
+                article_text = article_text[:1000]
 
-                if article_text:
-                    article_embedding = self.embedding_model.encode([article_text])[0]
-                    similarity = float(
-                        np.dot(query_embedding, article_embedding)
-                        / (np.linalg.norm(query_embedding) * np.linalg.norm(article_embedding))
-                    )
+                if not article_text:
+                    continue
+                article_embedding = self.embedding_model.encode([article_text])[0]
+                qn = np.linalg.norm(query_embedding)
+                an = np.linalg.norm(article_embedding)
+                if qn <= 0 or an <= 0:
+                    continue
+                similarity = float(np.dot(query_embedding, article_embedding) / (qn * an))
+                acopy = dict(article)
+                acopy["semantic_similarity_raw"] = similarity
+                scored.append((similarity, acopy))
 
-                    if similarity >= self.config["similarity_threshold"]:
-                        article["relevance_score"] = similarity
-                        article["retrieval_method"] = "semantic"
-                        similarities.append((similarity, article))
+            if not scored:
+                return []
 
-            # Sort by similarity
-            similarities.sort(key=lambda x: x[0], reverse=True)
+            scored.sort(key=lambda x: x[0], reverse=True)
+            best_sim = scored[0][0]
+            floor = float(self.config["similarity_threshold"])
+            rel = float(self.config.get("similarity_relative_to_best", 0.82))
+            min_c = max(2, int(self.config.get("semantic_adaptive_min_candidates", 4)))
+            adaptive = floor
+            if len(scored) >= min_c and best_sim > 0:
+                adaptive = max(floor, rel * best_sim)
 
-            # Return top results
-            return [article for _, article in similarities[:max_results]]
+            sims = [s for s, _ in scored]
+            smin, smax = min(sims), max(sims)
+            span = (smax - smin) if (smax > smin) else 1.0
+
+            kept: list[tuple[float, dict[str, Any]]] = [
+                (s, a) for s, a in scored if s >= adaptive
+            ]
+            if not kept and scored:
+                s0, a0 = scored[0]
+                if s0 >= 0.15:
+                    kept = [(s0, a0)]
+                    a0["rag_below_adaptive_threshold"] = True
+
+            out: list[dict[str, Any]] = []
+            for s, art in kept[:max_results]:
+                art["relevance_score"] = s
+                art["retrieval_method"] = "semantic"
+                art["retrieval_confidence_hint"] = float((s - smin) / span)
+                art["rag_similarity_cutoff_used"] = adaptive
+                out.append(art)
+            return out
 
         except Exception as e:
             logger.error(f"Error in semantic search: {e}")

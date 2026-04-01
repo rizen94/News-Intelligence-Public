@@ -10,9 +10,24 @@ import re
 from typing import Any
 
 import httpx
+from config.settings import OLLAMA_HOST
 from psycopg2.extras import Json, RealDictCursor
 
 logger = logging.getLogger(__name__)
+
+
+def default_batch_ollama_url() -> str:
+    """
+    When dual-host routing is on, batch topic / extraction LLM calls use the CPU Ollama endpoint
+    (same family as ``STRUCTURED_EXTRACTION``). Otherwise ``OLLAMA_HOST`` (single server).
+    """
+    if os.environ.get("OLLAMA_DUAL_HOST_ROUTING_ENABLED", "false").lower() in (
+        "1",
+        "true",
+        "yes",
+    ):
+        return os.environ.get("OLLAMA_CPU_HOST", OLLAMA_HOST).rstrip("/")
+    return OLLAMA_HOST.rstrip("/")
 
 
 class TopicClusteringService:
@@ -24,7 +39,7 @@ class TopicClusteringService:
     def __init__(
         self,
         db_config: dict[str, str],
-        ollama_url: str = "http://localhost:11434",
+        ollama_url: str | None = None,
         domain: str = "politics",
     ):
         """
@@ -32,11 +47,11 @@ class TopicClusteringService:
 
         Args:
             db_config: Database configuration dictionary
-            ollama_url: URL of the Ollama service
+            ollama_url: URL of the Ollama service (default: OLLAMA_HOST, or OLLAMA_CPU_HOST when dual routing on)
             domain: Domain key (e.g., 'politics', 'finance', 'science-tech')
         """
         self.db_config = db_config
-        self.ollama_url = ollama_url
+        self.ollama_url = (ollama_url or default_batch_ollama_url()).rstrip("/")
         self.model_name = "llama3.1:8b"
         self.timeout = 120  # 2 minutes timeout
         self.domain = domain

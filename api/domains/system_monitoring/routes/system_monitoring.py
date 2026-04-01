@@ -33,6 +33,9 @@ get_monitoring_db_connection = get_ui_db_connection
 
 logger = logging.getLogger(__name__)
 
+# Omit from Monitor phase timeline, run summary catalog, and merged current activity (orchestrator; ~daily).
+MONITOR_EXCLUDED_AUTOMATION_PHASES = frozenset({"nightly_enrichment_context"})
+
 # Import filtering functions from RSS collector
 sys.path.insert(
     0,
@@ -289,6 +292,222 @@ async def health_check():
         }
 
 
+def _merge_current_activities_with_run_counts(
+    current: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """
+    One row per automation phase (task_name), with running_instances from AutomationManager
+    (concurrent workers executing that phase). Non-automation feed rows keep their own id as key.
+    """
+    active_by_phase: dict[str, int] = {}
+    try:
+        from services.automation_manager import get_automation_manager
+
+        mgr = get_automation_manager()
+        if mgr is not None:
+            active_by_phase = dict(mgr.get_status().get("active_tasks_by_phase") or {})
+    except Exception:
+        pass
+
+    groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for item in current:
+        tn = item.get("task_name")
+        key = tn if isinstance(tn, str) and tn.strip() else str(item.get("id") or "activity")
+        groups[key].append(item)
+
+    merged: list[dict[str, Any]] = []
+    for key, items in groups.items():
+        if key in MONITOR_EXCLUDED_AUTOMATION_PHASES:
+            continue
+        if not items:
+            continue
+        primary = max(items, key=lambda x: (x.get("started_at") or ""))
+        row = dict(primary)
+        from_counter = int(active_by_phase.get(key, 0) or 0)
+        row["running_instances"] = max(from_counter, len(items), 1)
+        merged.append(row)
+
+    merged.sort(key=lambda x: x.get("started_at") or "", reverse=True)
+    return merged
+
+
+def _activity_started_elapsed_seconds(started_at: Any) -> float | None:
+    """Seconds since activity started_at (ISO), or None if unparseable."""
+    if not started_at:
+        return None
+    try:
+        raw = str(started_at).strip()
+        if raw.endswith("Z"):
+            raw = raw[:-1] + "+00:00"
+        dt = datetime.fromisoformat(raw)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return max(0.0, (datetime.now(timezone.utc) - dt).total_seconds())
+    except Exception:
+        return None
+
+
+def _mean_float(values: list[float]) -> float | None:
+    if not values:
+        return None
+    return float(sum(values)) / float(len(values))
+
+
+def _typical_phase_duration_seconds(
+    phase_name: str,
+    processing_history: dict[str, Any] | None,
+    db_avgs: dict[str, float],
+    schedule_defaults: dict[str, int],
+) -> tuple[float | None, str]:
+    """
+    Typical wall time for one completion of ``phase_name``.
+    Prefer in-memory recent samples, then DB rolling average, then schedule default.
+    """
+    hist_raw = (processing_history or {}).get(phase_name) if processing_history else None
+    if isinstance(hist_raw, list) and hist_raw:
+        try:
+            hist = [float(x) for x in hist_raw if x is not None]
+        except (TypeError, ValueError):
+            hist = []
+        if len(hist) >= 2:
+            m = _mean_float(hist[-5:])
+            if m is not None and m > 0:
+                return m, "memory"
+        if len(hist) == 1 and hist[0] > 0:
+            return float(hist[0]), "memory"
+    dbv = db_avgs.get(phase_name)
+    if dbv is not None and dbv > 0:
+        return float(dbv), "db_history"
+    est = int(schedule_defaults.get(phase_name) or 0)
+    if est > 0:
+        return float(est), "schedule_default"
+    return None, "none"
+
+
+def _fetch_phase_avg_durations_from_db(phase_names: list[str]) -> dict[str, float]:
+    """Mean duration (seconds) of up to 15 most recent successful runs per phase."""
+    if not phase_names:
+        return {}
+    conn = get_monitoring_db_connection()
+    if not conn:
+        return {}
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                WITH ranked AS (
+                    SELECT
+                        phase_name,
+                        EXTRACT(EPOCH FROM (finished_at - started_at))::double precision AS dur_seconds,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY phase_name ORDER BY finished_at DESC
+                        ) AS rn
+                    FROM automation_run_history
+                    WHERE success = TRUE
+                      AND finished_at IS NOT NULL
+                      AND started_at IS NOT NULL
+                      AND finished_at >= started_at
+                      AND phase_name = ANY(%s)
+                )
+                SELECT phase_name, AVG(dur_seconds)::double precision
+                FROM ranked
+                WHERE rn <= 15
+                GROUP BY phase_name
+                """,
+                (list(phase_names),),
+            )
+            return {str(row[0]): float(row[1]) for row in cur.fetchall() if row[1] is not None}
+    except Exception as e:
+        logger.debug("activity duration DB averages: %s", e)
+        return {}
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _enrich_current_activities_with_run_estimates(
+    current: list[dict[str, Any]],
+    *,
+    processing_history: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    """Add typical run duration and estimated remaining time for automation phases."""
+    if not current:
+        return current
+    try:
+        from services.automation_manager import PHASE_ESTIMATED_DURATION_SECONDS
+    except Exception:
+        PHASE_ESTIMATED_DURATION_SECONDS = {}
+
+    phases = sorted(
+        {
+            str(x.get("task_name")).strip()
+            for x in current
+            if isinstance(x.get("task_name"), str) and str(x.get("task_name")).strip()
+        }
+    )
+    db_avgs = _fetch_phase_avg_durations_from_db(phases)
+
+    for row in current:
+        phase = row.get("task_name")
+        if not isinstance(phase, str) or not phase.strip():
+            continue
+        phase = phase.strip()
+        typical, source = _typical_phase_duration_seconds(
+            phase, processing_history, db_avgs, PHASE_ESTIMATED_DURATION_SECONDS
+        )
+        elapsed = _activity_started_elapsed_seconds(row.get("started_at"))
+        if typical is None or elapsed is None:
+            row["typical_run_duration_source"] = source
+            continue
+        remaining = max(0.0, typical - elapsed)
+        row["typical_run_duration_seconds"] = round(typical, 1)
+        row["typical_run_duration_minutes"] = round(typical / 60.0, 1)
+        row["typical_run_duration_source"] = source
+        row["elapsed_seconds"] = int(round(elapsed))
+        row["estimated_remaining_seconds"] = int(round(remaining))
+        row["estimated_remaining_minutes"] = round(remaining / 60.0, 1)
+        row["exceeded_typical_run"] = bool(elapsed > typical + 1.0)
+    return current
+
+
+MONITOR_OVERVIEW_AUTOMATION_HISTORY_TIMEOUT = 2.0
+
+
+def _get_processing_history_for_monitor() -> dict[str, Any] | None:
+    import queue as queue_module
+    import threading
+
+    result_queue: queue_module.Queue = queue_module.Queue()
+
+    def _run():
+        try:
+            from services.automation_manager import get_automation_manager
+
+            mgr = get_automation_manager()
+            if mgr is None:
+                result_queue.put(None)
+                return
+            status = mgr.get_status()
+            metrics = status.get("metrics") or {}
+            hist = metrics.get("processing_history")
+            result_queue.put(hist if isinstance(hist, dict) else None)
+        except Exception as e:
+            logger.debug("monitor overview processing_history: %s", e)
+            result_queue.put(None)
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    t.join(timeout=MONITOR_OVERVIEW_AUTOMATION_HISTORY_TIMEOUT)
+    if not result_queue.empty():
+        try:
+            return result_queue.get_nowait()
+        except Exception:
+            return None
+    return None
+
+
 @router.get("/monitoring/overview")
 def get_monitoring_overview():
     """
@@ -358,6 +577,16 @@ def get_monitoring_overview():
         from services.activity_feed_service import get_activity_feed
 
         activities = get_activity_feed().get_snapshot(recent_limit=50)
+        cur = activities.get("current")
+        if isinstance(cur, list) and cur:
+            merged = _merge_current_activities_with_run_counts(cur)
+            hist = _get_processing_history_for_monitor()
+            activities = {
+                **activities,
+                "current": _enrich_current_activities_with_run_estimates(
+                    merged, processing_history=hist
+                ),
+            }
     except Exception as e:
         logger.debug("Activity feed: %s", e)
         activities = {"current": [], "recent": []}
@@ -606,6 +835,8 @@ async def get_automation_status(request: Request) -> dict[str, Any]:
 
         phases = []
         for name, sched in schedules.items():
+            if name in MONITOR_EXCLUDED_AUTOMATION_PHASES:
+                continue
             if not isinstance(sched, dict):
                 continue
             last_run = sched.get("last_run")
@@ -2663,6 +2894,7 @@ def get_process_run_summary(
     else:
         if phase_catalog_source is None:
             phase_catalog_source = "schedules"
+    schedule_names -= MONITOR_EXCLUDED_AUTOMATION_PHASES
     out["phase_catalog_source"] = phase_catalog_source
 
     for name in sorted(schedule_names):

@@ -9,11 +9,15 @@ real-world event using a three-tier matching strategy:
 3. Entity-temporal overlap (slow, precise)
 
 When duplicates are found the system designates the earliest-reported version
-as canonical and merges metadata from subsequent sources.
+as canonical and merges metadata from subsequent sources. ``source_count`` and
+``last_corroborated_at`` on the canonical row preserve multi-source tracking.
+
+Tune aggressiveness with ``EVENT_DEDUP_*`` env vars (see ``configs/env.example``).
 """
 
 import json
 import logging
+import os
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -21,10 +25,62 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-SIMILARITY_THRESHOLD = 0.85
-ENTITY_OVERLAP_MIN = 2
 OLLAMA_URL = "http://localhost:11434"
 EMBED_MODEL = "nomic-embed-text"
+
+
+def _dedup_env_float(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _dedup_env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None or str(raw).strip() == "":
+        return default
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return default
+
+
+def _dedup_similarity_threshold() -> float:
+    """Lower → more aggressive tier-2 merges (cosine). Canonical still accumulates source_count."""
+    v = _dedup_env_float("EVENT_DEDUP_SIMILARITY_THRESHOLD", 0.85)
+    return max(0.5, min(v, 0.999))
+
+
+def _dedup_entity_overlap_min() -> int:
+    """Lower → more aggressive tier-3 (entity overlap)."""
+    v = _dedup_env_int("EVENT_DEDUP_ENTITY_OVERLAP_MIN", 2)
+    return max(1, min(v, 20))
+
+
+def _dedup_embedding_top_k() -> int:
+    v = _dedup_env_int("EVENT_DEDUP_EMBEDDING_TOP_K", 10)
+    return max(2, min(v, 50))
+
+
+def _dedup_embedding_margin() -> float:
+    v = _dedup_env_float("EVENT_DEDUP_EMBEDDING_MARGIN", 0.1)
+    return max(0.0, min(v, 0.5))
+
+
+def _dedup_skip_margin_if_sim_ge() -> float:
+    v = _dedup_env_float("EVENT_DEDUP_EMBEDDING_SKIP_MARGIN_IF_SIM_GE", 0.95)
+    return max(0.8, min(v, 1.0))
+
+
+def _dedup_borderline_sim() -> float:
+    v = _dedup_env_float("EVENT_DEDUP_BORDERLINE_SIM", 0.9)
+    return max(0.5, min(v, 0.999))
+
+
+def _dedup_borderline_max_seconds() -> float:
+    v = _dedup_env_float("EVENT_DEDUP_BORDERLINE_MAX_SECONDS_APART", 86400.0)
+    return max(60.0, min(v, 86400.0 * 30))
 
 
 async def _get_embedding(text: str) -> list[float] | None:
@@ -164,7 +220,7 @@ class EventDeduplicationService:
                     embedding = vec
 
             if embedding is not None:
-                canonical = self._match_by_embedding(eid, embedding)
+                canonical = self._match_by_embedding(eid, embedding, edate)
                 if canonical:
                     await self._merge(eid, canonical)
                     return canonical
@@ -235,31 +291,89 @@ class EventDeduplicationService:
         cursor.close()
         return row[0] if row else None
 
-    def _match_by_embedding(self, event_id: int, embedding: list) -> int | None:
+    def _match_by_embedding(
+        self, event_id: int, embedding: list, event_date: datetime | None
+    ) -> int | None:
         cursor = self.conn.cursor()
         try:
+            sim_thr = _dedup_similarity_threshold()
+            top_k = _dedup_embedding_top_k()
+            emb_margin = _dedup_embedding_margin()
+            skip_margin_if_ge = _dedup_skip_margin_if_sim_ge()
+            borderline_sim = _dedup_borderline_sim()
+            borderline_sec = _dedup_borderline_max_seconds()
+            temporal_on = os.environ.get("EVENT_DEDUP_DISABLE_TEMPORAL_BORDERLINE", "").lower() not in (
+                "1",
+                "true",
+                "yes",
+            )
+
             vec_literal = "[" + ",".join(str(x) for x in embedding) + "]"
             cursor.execute(
                 """
-                SELECT id, 1 - (embedding <=> %s::vector) AS similarity
+                SELECT id,
+                       1 - (embedding <=> %s::vector) AS similarity,
+                       actual_event_date,
+                       extraction_timestamp
                 FROM chronological_events
                 WHERE id != %s
                   AND canonical_event_id IS NULL
                   AND embedding IS NOT NULL
                 ORDER BY embedding <=> %s::vector
-                LIMIT 1
+                LIMIT %s
             """,
-                (vec_literal, event_id, vec_literal),
+                (vec_literal, event_id, vec_literal, top_k),
             )
-            row = cursor.fetchone()
-            if row and row[1] >= SIMILARITY_THRESHOLD:
-                return row[0]
+            candidates = cursor.fetchall() or []
+            if not candidates:
+                return None
+
+            best_id = candidates[0][0]
+            best_sim = float(candidates[0][1] or 0.0)
+            best_event_date = candidates[0][2]
+            best_extraction_ts = candidates[0][3]
+
+            if best_sim < sim_thr:
+                return None
+
+            if len(candidates) > 1:
+                second_sim = float(candidates[1][1] or 0.0)
+                margin = best_sim - second_sim
+                if margin < emb_margin and best_sim < skip_margin_if_ge:
+                    return None
+
+            cand_time = best_event_date or best_extraction_ts
+            dt_sec = self._seconds_between_event_times(event_date, cand_time)
+            if temporal_on and (
+                best_sim < borderline_sim
+                and dt_sec is not None
+                and dt_sec > borderline_sec
+            ):
+                return None
+
+            return int(best_id)
         except Exception as e:
             logger.error(f"pgvector similarity query failed: {e}")
             self.conn.rollback()
         finally:
             cursor.close()
         return None
+
+    @staticmethod
+    def _seconds_between_event_times(
+        a: datetime | None, b: datetime | None
+    ) -> float | None:
+        """Absolute seconds between two event times; None if either side missing (skip temporal gate)."""
+        if a is None or b is None:
+            return None
+        if a.tzinfo is not None and b.tzinfo is None:
+            b = b.replace(tzinfo=a.tzinfo)
+        elif a.tzinfo is None and b.tzinfo is not None:
+            a = a.replace(tzinfo=b.tzinfo)
+        try:
+            return abs((a - b).total_seconds())
+        except Exception:
+            return None
 
     def _match_by_entities(
         self,
@@ -268,7 +382,8 @@ class EventDeduplicationService:
         event_date: datetime | None,
         precision: str,
     ) -> int | None:
-        if len(entity_names) < ENTITY_OVERLAP_MIN:
+        overlap_min = _dedup_entity_overlap_min()
+        if len(entity_names) < overlap_min:
             return None
 
         window = self._precision_window(precision)
@@ -307,7 +422,7 @@ class EventDeduplicationService:
                             if name:
                                 cand_names.add(name.lower().strip())
                 overlap = len(set(entity_names) & cand_names)
-                if overlap >= ENTITY_OVERLAP_MIN:
+                if overlap >= overlap_min:
                     return cand_id
         except Exception as e:
             logger.error(f"Entity-temporal match failed: {e}")

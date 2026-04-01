@@ -1,4 +1,4 @@
-"""RSS collector: financial native ads and CNN commerce URLs."""
+"""RSS collector: financial / legal native ads and CNN commerce URLs."""
 
 import sys
 from pathlib import Path
@@ -32,6 +32,54 @@ def test_is_advertisement_financial_phrases():
         "See rates and fees. Variable APR applies.",
         "https://example.com/y",
     )
+
+
+def test_is_advertisement_legal_vendor_product_spotlight():
+    title = "Product Spotlight: Lexis® Create+ For Litigators"
+    body = "Streamline drafting with AI-assisted workflows. Terms apply."
+    assert is_advertisement(title, body, "https://www.abajournal.com/ad/example")
+
+
+def test_is_advertisement_legal_westlaw_trial_phrase():
+    assert is_advertisement(
+        "Westlaw Edge",
+        "Start your Westlaw Edge free trial today.",
+        "https://example.com/promo",
+    )
+
+
+def test_is_advertisement_pharma_savings_card():
+    assert is_advertisement(
+        "Treatment option",
+        "Eligible commercially insured patients may pay as little as $10 with savings card.",
+        "https://example.com/drug-promo",
+    )
+
+
+def test_is_advertisement_ai_chatbot_saas():
+    assert is_advertisement(
+        "Scale support",
+        "Deploy our no-code AI chatbot for your website. Start your free AI trial.",
+        "https://vendor.example/saas",
+    )
+
+
+def test_native_vertical_promo_does_not_match_plain_health_news():
+    assert not is_advertisement(
+        "Study finds modest benefit in older adults",
+        "Researchers reported outcomes in a randomized trial. Discuss screening with your clinician.",
+        "https://nejm.org/doi/example",
+    )
+
+
+def test_quality_score_caps_legal_native_ad_below_ingest():
+    q = calculate_article_quality_score(
+        "Product Spotlight: Lexis® Create+ For Litigators",
+        "Long " * 200,
+        "ABA Journal",
+        "https://example.com/legal-tools",
+    )
+    assert q < 0.3
 
 
 def test_quality_score_caps_cnn_commerce_and_skips_reputable_boost():

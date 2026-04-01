@@ -69,6 +69,123 @@ _FINANCIAL_NATIVE_AD_PHRASES: tuple[str, ...] = (
     "paid partner",
 )
 
+# Legal / professional-services software promos (Lexis, Westlaw, etc.) — not court news.
+_LEGAL_SOFTWARE_NATIVE_AD_PHRASES: tuple[str, ...] = (
+    "product spotlight",
+    "product spotlight:",
+    "lexis create",
+    "lexis® create",
+    "lexis create+",
+    "lexis® create+",
+    "create+ for litigators",
+    "for litigators —",
+    "lexis+ ai",
+    "lexis+ for",
+    "lexisnexis create",
+    "powered by lexisnexis",
+    "sponsored by lexis",
+    "sponsored by lexisnexis",
+    "presented by lexisnexis",
+    "westlaw edge free trial",
+    "try westlaw free",
+    "westlaw precision",
+    "practical law free trial",
+    "casetext co-counsel",
+    "harvey ai for law firms",
+    "legal tech demo",
+    "schedule your demo",
+    "book a demo with",
+    "free firm trial",
+    "legal practice management software",
+    "case management software for lawyers",
+    "westlaw free trial",
+    "lexis free trial",
+    "lexisnexis free trial",
+    "try lexis",
+    "try westlaw",
+    "upgrade to westlaw",
+    "upgrade to lexis",
+)
+
+# DTC pharma / drug marketing and telehealth promo — not trial outcomes or regulatory news.
+_MEDICINE_PHARMA_NATIVE_AD_PHRASES: tuple[str, ...] = (
+    "savings card",
+    "copay card",
+    "instant savings offer",
+    "pay as little as $",
+    "pay no more than",
+    "$0 copay",
+    "eligible commercially insured",
+    "eligible patients may pay",
+    "not actual patients",
+    "not actual patient",
+    "not a real patient",
+    "actor portrayal",
+    "paid actor",
+    "paid actors",
+    "paid spokesperson",
+    "prescribing information and medication guide",
+    "scroll for important safety",
+    "scroll for isi",
+    "important safety information, including boxed warning",
+    "fda-approved treatment option",
+    "prescription treatment website",
+    "get your prescription online",
+    "same-day prescription delivery",
+    "order medication online",
+    "weight loss prescription online",
+    "miracle supplement",
+    "this statement has not been evaluated by the fda",
+    "not intended to diagnose, treat, cure",
+)
+
+# AI chatbot / LLM SaaS promos — not research papers, benchmarks, or policy news.
+_AI_BOT_NATIVE_AD_PHRASES: tuple[str, ...] = (
+    "ai chatbot free trial",
+    "no-code ai chatbot",
+    "no-code chatbot",
+    "white-label ai chatbot",
+    "white-label chatbot",
+    "custom ai chatbot for your",
+    "ai chatbot for your business",
+    "ai chatbot for your website",
+    "automate customer service with ai",
+    "customer service ai chatbot",
+    "conversational ai platform",
+    "enterprise ai chatbot",
+    "sales ai bot",
+    "ai sdr",
+    "ai sales assistant",
+    "hire an ai employee",
+    "digital worker powered by ai",
+    "replace your support team with ai",
+    "gpt for your business",
+    "custom gpt for your",
+    "build your own chatgpt",
+    "clone yourself with ai",
+    "deploy your llm in minutes",
+    "rag-as-a-service",
+    "try our ai assistant",
+    "book a demo with our ai",
+    "start your free ai trial",
+    "unlimited ai messages",
+    "ai agent free trial",
+    "virtual assistant for your sales team",
+    "automate your workflow with our ai",
+    "get more leads with ai bots",
+)
+
+
+def _native_vertical_promo_match(lower: str) -> bool:
+    """Legal SaaS, pharma DTC-style, or AI bot/SaaS promo copy (substring, case-insensitive)."""
+    if any(p in lower for p in _LEGAL_SOFTWARE_NATIVE_AD_PHRASES):
+        return True
+    if any(p in lower for p in _MEDICINE_PHARMA_NATIVE_AD_PHRASES):
+        return True
+    if any(p in lower for p in _AI_BOT_NATIVE_AD_PHRASES):
+        return True
+    return False
+
 
 def _url_looks_like_commerce_native(url: str) -> bool:
     """CNN Underscored and similar paths are commerce, not politics news."""
@@ -92,6 +209,8 @@ def _post_credibility_quality_cap_native_ads(
     if _url_looks_like_commerce_native(url) or any(
         p in combined for p in _FINANCIAL_NATIVE_AD_PHRASES
     ):
+        return min(float(quality_score), 0.28)
+    if _native_vertical_promo_match(combined):
         return min(float(quality_score), 0.28)
     return float(quality_score)
 
@@ -883,8 +1002,10 @@ def calculate_article_quality_score(
 
     # Clamp to 0.0-1.0 range
     score = max(0.0, min(1.0, score))
-    # Financial product native ads often still reach ~0.4–0.5 from length + "CNN" source; force below ingest cutoff.
+    # Financial / legal SaaS native ads often still reach ~0.4–0.5 from length + source boost; force below ingest cutoff.
     if commerce_url or any(p in text_to_check for p in _FINANCIAL_NATIVE_AD_PHRASES):
+        score = min(score, 0.22)
+    if _native_vertical_promo_match(text_to_check):
         score = min(score, 0.22)
     return score
 
@@ -1026,6 +1147,9 @@ def is_advertisement(title: str, content: str, url: str = "") -> bool:
     for phrase in _FINANCIAL_NATIVE_AD_PHRASES:
         if phrase in text_to_check:
             return True
+
+    if _native_vertical_promo_match(text_to_check):
+        return True
 
     if _url_looks_like_commerce_native(url):
         return True

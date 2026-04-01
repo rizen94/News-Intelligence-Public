@@ -1,5 +1,8 @@
 """
 Backlog metrics — pending work counts per automation phase for orchestrator priority.
+Counts are defined to match each phase’s real eligibility (what automation would select),
+not coarse table totals, so Monitor ``pending_records`` reflects actionable backlog.
+
 Used by the automation manager to: skip empty cycles, run backlog mode (shorter interval),
 and queue tasks by amount of work (most first). When workload-driven scheduling is on,
 phases listed here are eligible every tick (subject to cooldown) when they have work;
@@ -8,6 +11,7 @@ _get_raw_pending_counts and BATCH_SIZE_PER_TASK makes more of the pipeline workl
 """
 
 import logging
+import os
 import time
 from typing import Dict, Optional
 
@@ -58,7 +62,20 @@ BATCH_SIZE_PER_TASK: Dict[str, int] = {
     "entity_dossier_compile": 20,  # _run_scheduled_dossier_compiles max per run
     "story_enhancement": 50,  # fact_change_log + story_update_queue proxy per cycle
     "storyline_synthesis": 16,  # ~4 storylines × active domains per _execute_storyline_synthesis tick
+    "pending_db_flush": 200,  # rough lines replayed per successful flush (order-of-magnitude)
 }
+
+# Phases where backlog = pending (orchestrator / not row-batched in this model).
+NO_BACKLOG_BATCH_SUBTRACT_PHASES = frozenset({"nightly_enrichment_context"})
+
+
+def _default_batch_for_unknown_phase() -> int:
+    """When a phase has pending counts but no BATCH_SIZE_PER_TASK entry, subtract at least this many rows per run so row-excess backlog != pending (scheduler); Monitor shows ceil(pending/batch) as batches_to_drain."""
+    try:
+        v = int(os.environ.get("BACKLOG_METRICS_DEFAULT_BATCH_SIZE", "1"))
+    except (TypeError, ValueError):
+        v = 1
+    return max(1, min(v, 50_000))
 
 
 def _get_raw_pending_counts() -> Dict[str, int]:
@@ -119,10 +136,10 @@ def invalidate_backlog_metrics_cache() -> None:
 
 def _per_run_batch_size(task: str) -> int:
     """Align backlog subtraction with actual automation batch sizes (env-tunable for claim phases)."""
+    if task in NO_BACKLOG_BATCH_SUBTRACT_PHASES:
+        return 0
     if task == "entity_extraction":
         try:
-            import os
-
             n = int(os.environ.get("ENTITY_EXTRACTION_ARTICLES_PER_DOMAIN", "20"))
             n = max(5, min(120, n))
             doms = len(get_pipeline_schema_names_active()) or 1
@@ -143,7 +160,28 @@ def _per_run_batch_size(task: str) -> int:
             return int(get_claims_to_facts_batch_limit())
         except Exception:
             pass
-    return int(BATCH_SIZE_PER_TASK.get(task, 0) or 0)
+    if task == "topic_clustering":
+        try:
+            doms = len(get_pipeline_schema_names_active()) or 1
+            return 20 * doms
+        except Exception:
+            pass
+    if task == "storyline_automation":
+        try:
+            from shared.domain_registry import get_pipeline_active_domain_keys
+
+            doms = len(get_pipeline_active_domain_keys()) or 1
+            return 5 * doms
+        except Exception:
+            pass
+    if task in BATCH_SIZE_PER_TASK:
+        return int(BATCH_SIZE_PER_TASK[task])
+    return _default_batch_for_unknown_phase()
+
+
+def get_per_run_batch_size_for_phase(phase_name: str) -> int:
+    """Rows/items assumed processed in one automation run of ``phase_name`` (for Monitor / processing_progress)."""
+    return _per_run_batch_size(phase_name)
 
 
 def _refresh_cache() -> None:
@@ -199,6 +237,27 @@ def _get_conn():
         return get_db_connection()
     except Exception:
         return None
+
+
+def _event_tracking_scan_window_params() -> tuple[int, int]:
+    """Max age (days) and min content length — must match ``discover_events_from_contexts``."""
+    try:
+        from config.settings import event_tracking_max_age_days, event_tracking_min_content_len
+
+        return int(event_tracking_max_age_days()), int(event_tracking_min_content_len())
+    except Exception:
+        d = int(os.environ.get("EVENT_TRACKING_MAX_AGE_DAYS", "14") or 14)
+        n = int(os.environ.get("EVENT_TRACKING_MIN_CONTENT_LEN", "180") or 180)
+        return max(1, min(d, 365)), max(1, min(n, 50_000))
+
+
+def _claim_extraction_min_text_length() -> int:
+    """Matches ``extract_claims_for_context`` (title+body strip length gate)."""
+    try:
+        n = int(os.environ.get("CLAIM_EXTRACTION_MIN_TEXT_LEN", "80"))
+    except (TypeError, ValueError):
+        n = 80
+    return max(40, min(n, 2000))
 
 
 def _count_content_enrichment_backlog() -> int:
@@ -265,25 +324,31 @@ def _count_context_sync_backlog() -> int:
 
 
 def _count_event_tracking_backlog() -> int:
-    """Contexts not yet linked to any event chronicle.
-    Uses a fast approximate count: total contexts minus contexts referenced
-    in event_chronicles via JSONB containment (indexed).  Falls back to 0
-    on any error so this never blocks the event loop for long."""
+    """Contexts the ``event_tracking`` phase can select: same window, min length, and
+    ``NOT EXISTS`` chronicle link predicate as ``discover_events_from_contexts`` (not
+    ``COUNT(contexts) - COUNT(event_chronicles)``, which is not meaningful work remaining)."""
+    max_age_days, min_len = _event_tracking_scan_window_params()
     conn = _get_conn()
     if not conn:
         return 0
     try:
         with conn.cursor() as cur:
-            cur.execute("SET LOCAL statement_timeout = '3s'")
-            cur.execute("SELECT COUNT(*) FROM intelligence.contexts")
-            total = cur.fetchone()[0] or 0
-            cur.execute("SELECT COUNT(*) FROM intelligence.event_chronicles")
-            chronicles = cur.fetchone()[0] or 0
-            if chronicles == 0:
-                return total
-            return max(total - chronicles, 0)
+            cur.execute("SET LOCAL statement_timeout = '12s'")
+            cur.execute(
+                """
+                SELECT COUNT(*) FROM intelligence.contexts c
+                WHERE c.created_at >= NOW() - (%s * INTERVAL '1 day')
+                  AND LENGTH(COALESCE(c.content, '')) >= %s
+                  AND NOT EXISTS (
+                      SELECT 1 FROM intelligence.event_chronicles ec
+                      WHERE ec.developments::text LIKE '%%"context_id": ' || c.id::text || '%%'
+                  )
+                """,
+                (max_age_days, min_len),
+            )
+            return int(cur.fetchone()[0] or 0)
     except Exception as e:
-        logger.debug("backlog event_tracking count: %s", e)
+        logger.warning("backlog event_tracking count failed (showing 0): %s", e)
         return 0
     finally:
         try:
@@ -293,21 +358,26 @@ def _count_event_tracking_backlog() -> int:
 
 
 def _count_claim_extraction_backlog() -> int:
-    """Contexts with no extracted_claims."""
+    """Contexts with no extracted_claims and enough text for extraction (matches batch gate)."""
     conn = _get_conn()
     if not conn:
         return 0
+    min_text = _claim_extraction_min_text_length()
     try:
         with conn.cursor() as cur:
-            cur.execute("SET LOCAL statement_timeout = '3s'")
+            cur.execute("SET LOCAL statement_timeout = '8s'")
             cur.execute(
                 """
                 SELECT COUNT(*) FROM intelligence.contexts c
                 LEFT JOIN intelligence.extracted_claims ec ON ec.context_id = c.id
                 WHERE ec.id IS NULL
-                """
+                  AND (
+                      LENGTH(COALESCE(c.content, '')) + LENGTH(COALESCE(c.title, ''))
+                  ) >= %s
+                """,
+                (min_text,),
             )
-            return cur.fetchone()[0] or 0
+            return int(cur.fetchone()[0] or 0)
     except Exception as e:
         logger.debug("backlog claim_extraction count: %s", e)
         return 0
@@ -319,21 +389,26 @@ def _count_claim_extraction_backlog() -> int:
 
 
 def _count_entity_profile_build_backlog() -> int:
-    """Entity profiles that need sections built or refreshed."""
+    """Profiles matching ``get_entity_profile_ids_to_build`` that also have at least one
+    context mention (``build_profile_sections`` no-ops without mentions)."""
     conn = _get_conn()
     if not conn:
         return 0
     try:
         with conn.cursor() as cur:
-            cur.execute("SET LOCAL statement_timeout = '3s'")
+            cur.execute("SET LOCAL statement_timeout = '8s'")
             cur.execute(
                 """
                 SELECT COUNT(*) FROM intelligence.entity_profiles ep
-                WHERE ep.sections = '[]'::jsonb OR ep.sections IS NULL
-                   OR ep.updated_at < NOW() - INTERVAL '7 days'
+                WHERE (ep.sections = '[]'::jsonb OR ep.sections IS NULL
+                       OR ep.updated_at < NOW() - INTERVAL '7 days')
+                  AND EXISTS (
+                      SELECT 1 FROM intelligence.context_entity_mentions cem
+                      WHERE cem.entity_profile_id = ep.id
+                  )
                 """
             )
-            return cur.fetchone()[0] or 0
+            return int(cur.fetchone()[0] or 0)
     except Exception as e:
         logger.debug("backlog entity_profile_build count: %s", e)
         return 0
@@ -502,6 +577,9 @@ def _count_entity_extraction_pending() -> int:
                       AND (
                           LENGTH(a.content) >= 500
                           OR a.created_at < NOW() - INTERVAL '2 hours'
+                          OR COALESCE(a.enrichment_status, '') IN (
+                              'enriched', 'failed', 'inaccessible'
+                          )
                       )
                     """
                 )
@@ -746,7 +824,7 @@ def _count_proactive_detection_pending() -> int:
                     f"""
                     SELECT COUNT(*) FROM {schema}.articles a
                     LEFT JOIN {schema}.storyline_articles sa ON sa.article_id = a.id
-                    WHERE a.published_at >= NOW() - INTERVAL '72 hours'
+                    WHERE COALESCE(a.published_at, a.created_at) >= NOW() - INTERVAL '72 hours'
                       AND sa.article_id IS NULL
                     """
                 )
@@ -763,7 +841,7 @@ def _count_proactive_detection_pending() -> int:
 
 
 def _count_storyline_automation_pending() -> int:
-    """Storylines with automation_enabled — matches batch selection pool (LIMIT 5 per domain per run)."""
+    """Storylines with ``automation_enabled`` (recurring pool the phase rotates through, not one-shot work)."""
     conn = _get_conn()
     if not conn:
         return 0

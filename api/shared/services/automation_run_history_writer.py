@@ -17,7 +17,7 @@ try:
 
     _RETRYABLE_TYPES = (psycopg2.OperationalError, psycopg2.InterfaceError)
 except Exception:
-    pass
+    _RETRYABLE_TYPES = ()
 
 
 def persist_automation_run_history(

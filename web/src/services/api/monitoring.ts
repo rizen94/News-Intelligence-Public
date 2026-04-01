@@ -172,6 +172,23 @@ export const monitoringApi = {
     }
   },
 
+  /**
+   * Dimension throughput (1h / 24h / 7d) + automation phase run counts and hourly ticks
+   * from automation_run_history — Monitor \"processing pulse\" / ticker.
+   */
+  async getProcessingProgress() {
+    try {
+      const response = await getApi().get(
+        '/api/system_monitoring/processing_progress',
+        { timeout: 60000 }
+      );
+      return response.data;
+    } catch (error) {
+      Logger.apiError('Failed to fetch processing progress', error as Error);
+      return { success: false, data: null, error: (error as any).message };
+    }
+  },
+
   /** PDF document collectors: success vs HTTP 403/404 / parser failures by source (last N days). */
   async getDocumentSourcesHealth(windowDays: number = 30) {
     try {

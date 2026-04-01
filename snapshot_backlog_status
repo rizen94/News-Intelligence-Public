@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Shortcut from repo root: ./snapshot_backlog_status
+exec "$(cd "$(dirname "$0")" && pwd)/scripts/snapshot_backlog_status.sh" "$@"

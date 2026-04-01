@@ -8,15 +8,43 @@
 
 2. **New timestamped snapshot (recommended)** — From repo root, API running:
    ```bash
-   bash scripts/snapshot_backlog_status.sh
+   ./snapshot_backlog_status
    ```
-   Writes `.local/backlog_snapshots/backlog_status_<UTC>.json` and `automation_status_<UTC>.json`.
+   (Repo root shortcut; same as `bash scripts/snapshot_backlog_status.sh`.)
+   Writes `.local/backlog_snapshots/backlog_status_<UTC>.json` and `automation_status_<UTC>.json`, then prints **one timeline table** across up to **four** snapshots (this run plus three prior): same columns for each metric, ordered **oldest → newest**, plus **Δ oldest→now**. First run has no priors yet.
 
-3. **Diff backlog JSON vs an older file** (e.g. first snapshot after this checkpoint):
+   Re-print the last four snapshots on disk without curling:
+
    ```bash
-   uv run python scripts/compare_backlog_snapshots.py \
-     .local/backlog_snapshots/backlog_status_OLD.json \
-     .local/backlog_snapshots/backlog_status_NEW.json
+   ./scripts/backlog_burndown.sh timeline
+   ```
+
+3. **Diff only the two most recent backlog snapshots** (pair mode). **Run from the News Intelligence repo root** (not `~` — paths are relative to that directory).
+
+   ```bash
+   cd /path/to/News\ Intelligence   # your clone
+   ./scripts/backlog_burndown.sh diff
+   ```
+
+   Same thing under the hood as picking the last two `backlog_status_*.json` files in `.local/backlog_snapshots/` (sorted by name) and running `compare_backlog_snapshots.py`.
+
+   Explicit variables (after `cd` to repo root):
+   ```bash
+   OUT_DIR=".local/backlog_snapshots"
+   mapfile -t _bl < <(ls -1 "$OUT_DIR"/backlog_status_*.json 2>/dev/null | sort)
+   n="${#_bl[@]}"
+   if [[ "$n" -lt 2 ]]; then
+     echo "Need at least two files matching $OUT_DIR/backlog_status_*.json (have $n). Run: ./snapshot_backlog_status (repo root)" >&2
+     exit 1
+   fi
+   older="${_bl[$((n - 2))]}"
+   newer="${_bl[$((n - 1))]}"
+   uv run python scripts/compare_backlog_snapshots.py "$older" "$newer"
+   ```
+
+   To compare two **specific** files (from repo root), pass them after `diff`:
+   ```bash
+   ./scripts/backlog_burndown.sh diff .local/backlog_snapshots/backlog_status_OLD.json .local/backlog_snapshots/backlog_status_NEW.json
    ```
    Shows articles/contexts/entity/storyline backlog and overall ETA/iteration deltas.
 

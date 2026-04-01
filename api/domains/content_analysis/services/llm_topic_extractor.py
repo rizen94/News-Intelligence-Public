@@ -23,7 +23,10 @@ if api_dir not in sys.path:
     sys.path.insert(0, api_dir)
 
 from domains.content_analysis.services.llm_activity_tracker import get_llm_activity_tracker
-from domains.content_analysis.services.topic_clustering_service import TopicClusteringService
+from domains.content_analysis.services.topic_clustering_service import (
+    TopicClusteringService,
+    default_batch_ollama_url,
+)
 from modules.ml.entity_extractor import LocalEntityExtractor
 from shared.services.llm_service import LLMService
 
@@ -56,15 +59,16 @@ class LLMTopicExtractor:
         self,
         db_connection_func,
         schema: str = "politics",
-        ollama_url: str = "http://localhost:11434",
+        ollama_url: str | None = None,
     ):
         self.get_db_connection = db_connection_func
         self.schema = schema
-        self.ollama_url = ollama_url
+        resolved = (ollama_url or default_batch_ollama_url()).rstrip("/")
+        self.ollama_url = resolved
 
         # Initialize LLM services (reuse existing infrastructure)
-        self.entity_extractor = LocalEntityExtractor(ollama_url=ollama_url)
-        self.llm_service = LLMService(ollama_base_url=ollama_url)
+        self.entity_extractor = LocalEntityExtractor(ollama_url=resolved)
+        self.llm_service = LLMService(ollama_base_url=resolved)
 
         # Resource management
         self.max_concurrent_extractions = 3  # Limit concurrent LLM calls
