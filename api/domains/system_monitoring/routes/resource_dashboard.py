@@ -16,9 +16,9 @@ from typing import Any
 import psutil
 import requests
 import yaml
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from shared.database.connection import get_ui_db_connection as get_db_connection
-from shared.services.response_cache import cached_response
+from shared.services.response_cache import cached_response, cached_response_sync
 
 logger = logging.getLogger(__name__)
 
@@ -203,7 +203,7 @@ async def get_database_stats():
 
 
 @router.get("/backlog_status")
-@cached_response(ttl=15)
+@cached_response_sync(ttl=15)
 def get_backlog_status() -> dict[str, Any]:
     """
     Backlog progression: articles to enrich, documents to process, storylines to synthesize,
@@ -953,7 +953,7 @@ def get_backlog_status() -> dict[str, Any]:
 
 
 @router.get("/document_sources/health")
-@cached_response(ttl=60)
+@cached_response_sync(ttl=60)
 def get_document_sources_health(window_days: int = 30) -> dict[str, Any]:
     """
     Aggregate intelligence.processed_documents by source_type/source_name for the
@@ -1500,19 +1500,46 @@ async def get_devices():
 
 
 @router.get("/processing_progress")
-@cached_response(ttl=90)
-def get_processing_progress() -> dict[str, Any]:
+@cached_response_sync(ttl=90)
+def get_processing_progress(
+    include_hourly_tick_rows: bool = Query(
+        False,
+        description=(
+            "Include full hourly_phase_ticks array (can be thousands of rows). "
+            "Default false: only hourly_phase_tick_bucket_count is set (Monitor-friendly)."
+        ),
+    ),
+    include_pending_metrics: bool = Query(
+        True,
+        description=(
+            "When false, omit backlog_metrics (heavy per-phase DB counts). "
+            "Throughput + run history remain; use backlog_status for full queues. "
+            "Monitor passes false to avoid gateway timeouts on cold cache."
+        ),
+    ),
+) -> dict[str, Any]:
     """
     Pipeline dimension throughput, per-phase pending/backlog row counts, pass/fail rates from
     ``automation_run_history``, and 72h hourly buckets. Implemented in ``processing_progress.py``
     and mounted here so the path is always ``/api/system_monitoring/processing_progress``.
     """
-    from .processing_progress import compute_processing_progress_response
+    try:
+        from .processing_progress import compute_processing_progress_response
 
-    out = compute_processing_progress_response()
-    if out.get("success") and isinstance(out.get("data"), dict):
-        out["data"]["workload_window_days_note"] = BACKLOG_WORKLOAD_WINDOW_DAYS
-    return out
+        out = compute_processing_progress_response(
+            include_hourly_tick_rows=include_hourly_tick_rows,
+            include_pending_metrics=include_pending_metrics,
+        )
+        if out.get("success") and isinstance(out.get("data"), dict):
+            out["data"]["workload_window_days_note"] = BACKLOG_WORKLOAD_WINDOW_DAYS
+        return out
+    except Exception as e:
+        logger.exception("processing_progress route failed: %s", e)
+        return {
+            "success": False,
+            "data": None,
+            "error": str(e)[:500],
+        }
 
 
 # ---------------------------------------------------------------------------

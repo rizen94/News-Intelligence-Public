@@ -6244,7 +6244,13 @@ automation_manager = None
 
 
 def get_automation_manager() -> AutomationManager:
-    """Get the global automation manager instance"""
+    """Return the process-wide automation manager.
+
+    When the API starts normally, ``main.py`` assigns this to the same instance as
+    ``app.state.automation``. If nothing has set the module global yet, a new
+    **unstarted** manager may be created (legacy callers) — prefer ``request.app.state.automation``
+    in routes when available.
+    """
     global automation_manager
     if automation_manager is None:
         from config.database import get_db_config

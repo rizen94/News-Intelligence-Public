@@ -31,9 +31,50 @@ def _rollback_conn(conn) -> None:
         pass
 
 
-def compute_processing_progress_response() -> dict[str, Any]:
+def _norm_phase_name(raw: Any) -> str | None:
+    """Stable string phase key for grouping and sorting; None if unusable."""
+    if raw is None:
+        return None
+    if isinstance(raw, bytes):
+        try:
+            raw = raw.decode("utf-8", errors="replace")
+        except Exception:
+            return None
+    if not isinstance(raw, str):
+        raw = str(raw)
+    s = raw.strip()
+    return s or None
+
+
+def _json_safe_float(value: Any, *, ndigits: int = 1) -> float | None:
+    """Starlette JSONResponse uses allow_nan=False; drop NaN/Inf so encoding never raises."""
+    if value is None:
+        return None
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(f):
+        return None
+    return round(f, ndigits)
+
+
+def compute_processing_progress_response(
+    *,
+    include_hourly_tick_rows: bool = False,
+    include_pending_metrics: bool = True,
+) -> dict[str, Any]:
     """
     Build JSON for GET /api/system_monitoring/processing_progress.
+
+    ``include_hourly_tick_rows``: when False (default), skip shipping up to thousands of
+    hourly bucket rows; set ``hourly_phase_tick_bucket_count`` via a single COUNT query
+    so the Monitor page stays light on JSON size and encoding time.
+
+    ``include_pending_metrics``: when False, skip ``backlog_metrics`` (dozens of heavy
+    COUNT queries). Phases still show run/pass history from ``automation_run_history``;
+    ``pending_records`` / ``batches_to_drain`` are 0/zeroed. Use for Monitor + reverse
+    proxies with ~60s read timeouts; full queues remain on ``GET .../backlog_status``.
 
     See resource_dashboard route docstring / AGENTS.md for field meanings.
     """
@@ -47,6 +88,7 @@ def compute_processing_progress_response() -> dict[str, Any]:
     dimensions: list[dict[str, Any]] = []
     phases: list[dict[str, Any]] = []
     hourly_phase_ticks: list[dict[str, Any]] = []
+    hourly_phase_tick_bucket_count: int | None = None
 
     try:
         cur = conn.cursor()
@@ -324,29 +366,32 @@ def compute_processing_progress_response() -> dict[str, Any]:
                     f7d,
                     avg_s,
                 ) = row[0], row[1] or 0, row[2] or 0, row[3] or 0, row[4] or 0, row[5] or 0, row[6] or 0, row[7] or 0, row[8]
+                pname = _norm_phase_name(name)
+                if not pname:
+                    continue
                 r24i, r7di = int(r24h), int(r7d)
                 s24i, f24i, s7i, f7i = int(s24h), int(f24h), int(s7d), int(f7d)
                 # Tri-valued success: TRUE / FALSE / NULL — (IS TRUE) and (IS NOT TRUE) partition rows.
                 if s24i + f24i != r24i:
                     logger.warning(
                         "processing_progress: 24h run count mismatch for %s: successes+failures=%s runs=%s",
-                        name,
+                        pname,
                         s24i + f24i,
                         r24i,
                     )
                 if s7i + f7i != r7di:
                     logger.warning(
                         "processing_progress: 7d run count mismatch for %s: successes+failures=%s runs=%s",
-                        name,
+                        pname,
                         s7i + f7i,
                         r7di,
                     )
                 # Sample proportion of completions marked success (not a binomial CI).
-                pr24 = round(100.0 * s24i / r24i, 1) if r24i > 0 else None
-                pr7 = round(100.0 * s7i / r7di, 1) if r7di > 0 else None
+                pr24 = _json_safe_float(100.0 * s24i / r24i, ndigits=1) if r24i > 0 else None
+                pr7 = _json_safe_float(100.0 * s7i / r7di, ndigits=1) if r7di > 0 else None
                 phases.append(
                     {
-                        "phase_name": name,
+                        "phase_name": pname,
                         "runs_1h": int(r1h),
                         "runs_24h": r24i,
                         "runs_7d": r7di,
@@ -356,40 +401,65 @@ def compute_processing_progress_response() -> dict[str, Any]:
                         "failures_7d": f7i,
                         "pass_rate_24h": pr24,
                         "pass_rate_7d": pr7,
-                        "avg_duration_sec_24h": round(float(avg_s), 1) if avg_s is not None else None,
+                        "avg_duration_sec_24h": _json_safe_float(avg_s, ndigits=1),
                     }
                 )
         except Exception as e:
             logger.debug("processing_progress phase summary: %s", e)
             _rollback_conn(conn)
 
+        ex_phases = list(_PROCESSING_PROGRESS_EXCLUDED_PHASES)
         try:
-            cur.execute(
-                """
-                SELECT date_trunc('hour', finished_at) AS hr,
-                       phase_name,
-                       COUNT(*) AS runs,
-                       SUM(CASE WHEN success IS TRUE THEN 0 ELSE 1 END) AS fails
-                FROM automation_run_history
-                WHERE finished_at >= NOW() - INTERVAL '72 hours'
-                  AND NOT (phase_name = ANY(%s))
-                GROUP BY hr, phase_name
-                HAVING COUNT(*) > 0
-                ORDER BY hr ASC, phase_name ASC
-                LIMIT 4000
-                """,
-                (list(_PROCESSING_PROGRESS_EXCLUDED_PHASES),),
-            )
-            for row in cur.fetchall() or []:
-                hr, pname, runs, fails = row[0], row[1], row[2] or 0, row[3] or 0
-                hourly_phase_ticks.append(
-                    {
-                        "hour_utc": hr.isoformat() if hasattr(hr, "isoformat") else str(hr),
-                        "phase_name": pname,
-                        "runs": int(runs),
-                        "failures": int(fails),
-                    }
+            if include_hourly_tick_rows:
+                cur.execute(
+                    """
+                    SELECT date_trunc('hour', finished_at) AS hr,
+                           phase_name,
+                           COUNT(*) AS runs,
+                           SUM(CASE WHEN success IS TRUE THEN 0 ELSE 1 END) AS fails
+                    FROM automation_run_history
+                    WHERE finished_at >= NOW() - INTERVAL '72 hours'
+                      AND NOT (phase_name = ANY(%s))
+                    GROUP BY hr, phase_name
+                    HAVING COUNT(*) > 0
+                    ORDER BY hr ASC, phase_name ASC
+                    LIMIT 4000
+                    """,
+                    (ex_phases,),
                 )
+                for row in cur.fetchall() or []:
+                    hr, pname, runs, fails = row[0], row[1], row[2] or 0, row[3] or 0
+                    tick_phase = _norm_phase_name(pname)
+                    if not tick_phase:
+                        continue
+                    hourly_phase_ticks.append(
+                        {
+                            "hour_utc": hr.isoformat()
+                            if hasattr(hr, "isoformat")
+                            else str(hr),
+                            "phase_name": tick_phase,
+                            "runs": int(runs),
+                            "failures": int(fails),
+                        }
+                    )
+                hourly_phase_tick_bucket_count = len(hourly_phase_ticks)
+            else:
+                cur.execute(
+                    """
+                    SELECT COUNT(*)::bigint FROM (
+                        SELECT 1
+                        FROM automation_run_history
+                        WHERE finished_at >= NOW() - INTERVAL '72 hours'
+                          AND NOT (phase_name = ANY(%s))
+                        GROUP BY date_trunc('hour', finished_at), phase_name
+                        HAVING COUNT(*) > 0
+                    ) subq
+                    """,
+                    (ex_phases,),
+                )
+                rct = cur.fetchone()
+                if rct and rct[0] is not None:
+                    hourly_phase_tick_bucket_count = int(rct[0])
         except Exception as e:
             logger.debug("processing_progress hourly: %s", e)
             _rollback_conn(conn)
@@ -413,27 +483,39 @@ def compute_processing_progress_response() -> dict[str, Any]:
 
     get_batch = _fallback_batch
     try:
-        from services.backlog_metrics import (
-            get_all_backlog_counts,
-            get_all_pending_counts,
-            get_per_run_batch_size_for_phase,
-        )
+        from services.backlog_metrics import get_per_run_batch_size_for_phase
 
         get_batch = get_per_run_batch_size_for_phase
-        pending_m = {k: int(v) for k, v in get_all_pending_counts().items()}
-        # Row-excess counts (for sort keys / parity with automation backlog_counts); not shown as batches.
-        backlog_m = {k: int(v) for k, v in get_all_backlog_counts().items()}
     except Exception as e:
-        logger.debug("processing_progress backlog_metrics merge: %s", e)
+        logger.debug("processing_progress batch size helper: %s", e)
 
-    all_names = sorted(
-        (set(phase_by_name) | set(pending_m) | set(backlog_m))
-        - _PROCESSING_PROGRESS_EXCLUDED_PHASES,
-        key=lambda n: (
+    if include_pending_metrics:
+        try:
+            from services.backlog_metrics import (
+                get_all_backlog_counts,
+                get_all_pending_counts,
+            )
+
+            pending_m = {k: int(v) for k, v in get_all_pending_counts().items()}
+            # Row-excess counts (for sort keys / parity with automation backlog_counts); not shown as batches.
+            backlog_m = {k: int(v) for k, v in get_all_backlog_counts().items()}
+        except Exception as e:
+            logger.debug("processing_progress backlog_metrics merge: %s", e)
+
+    def _phase_merge_sort_key(n: str) -> tuple:
+        # Tie-break with str(n) so keys are never compared across None/str (TypeError in Python 3).
+        return (
             -(pending_m.get(n, 0) + backlog_m.get(n, 0)),
             -(phase_by_name.get(n, {}).get("runs_7d", 0) or 0),
             n,
+        )
+
+    all_names = sorted(
+        (
+            (set(phase_by_name) | set(pending_m) | set(backlog_m))
+            - _PROCESSING_PROGRESS_EXCLUDED_PHASES
         ),
+        key=_phase_merge_sort_key,
     )
     phase_dashboard: list[dict[str, Any]] = []
     for name in all_names:
@@ -509,10 +591,12 @@ def compute_processing_progress_response() -> dict[str, Any]:
         "data": {
             "generated_at_utc": now_iso,
             "workload_window_days_note": _BACKLOG_WORKLOAD_WINDOW_DAYS,
+            "pending_metrics_included": include_pending_metrics,
             "reporting_definitions": reporting_definitions,
             "dimensions": dimensions,
             "phase_dashboard": phase_dashboard,
             "phases": phase_dashboard,
             "hourly_phase_ticks": hourly_phase_ticks,
+            "hourly_phase_tick_bucket_count": hourly_phase_tick_bucket_count,
         },
     }

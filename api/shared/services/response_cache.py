@@ -97,6 +97,50 @@ def cached_response(ttl: int = 60, max_size: int = 1000):
     return decorator
 
 
+def cached_response_sync(ttl: int = 60, max_size: int = 1000):
+    """
+    Same TTL cache as ``cached_response`` but keeps the handler **synchronous**.
+
+    Use for **sync** ``def`` FastAPI routes that do blocking I/O (psycopg2).  The async
+    ``cached_response`` wrapper would make Starlette treat the endpoint as async and run
+    blocking work on the event loop — freezing all other requests on that worker.
+    """
+
+    def decorator(func: Callable):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            if _cache_lock is None:
+                return func(*args, **kwargs)
+
+            cache_key = f"{func.__name__}:{_get_cache_key(*args, **kwargs)}"
+
+            with _cache_lock:
+                if cache_key in _cache:
+                    cached_item = _cache[cache_key]
+                    if time.time() - cached_item["timestamp"] < ttl:
+                        logger.debug("Cache HIT (sync): %s", func.__name__)
+                        return cached_item["value"]
+                    del _cache[cache_key]
+                    logger.debug("Cache EXPIRED (sync): %s", func.__name__)
+
+            result = func(*args, **kwargs)
+
+            with _cache_lock:
+                if len(_cache) >= max_size:
+                    sorted_items = sorted(_cache.items(), key=lambda x: x[1]["timestamp"])
+                    to_remove = len(sorted_items) // 10
+                    for key, _ in sorted_items[:to_remove]:
+                        del _cache[key]
+                _cache[cache_key] = {"value": result, "timestamp": time.time()}
+                logger.debug("Cache STORE (sync): %s", func.__name__)
+
+            return result
+
+        return wrapper
+
+    return decorator
+
+
 def clear_cache(pattern: str | None = None):
     """
     Clear cache entries

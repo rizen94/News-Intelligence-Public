@@ -21,7 +21,8 @@ export const monitoringApi = {
     try {
       const response = await getApi().get(
         '/api/system_monitoring/monitoring/overview',
-        { timeout: 60000 }
+        // DB check + activity enrich can be slow under pool pressure; align with other monitor GETs
+        { timeout: 90000 }
       );
       return response.data;
     } catch (error) {
@@ -173,14 +174,19 @@ export const monitoringApi = {
   },
 
   /**
-   * Dimension throughput (1h / 24h / 7d) + automation phase run counts and hourly ticks
-   * from automation_run_history — Monitor \"processing pulse\" / ticker.
+   * Processing pulse: dimensions, phase run history, optional per-phase pending row counts.
+   * @param options.includePendingMetrics - When false, skips backlog_metrics (faster, ~60s-safe).
+   *   Omit or true for full unprocessed row counts (slower cold cache; use longer interval on client).
    */
-  async getProcessingProgress() {
+  async getProcessingProgress(options?: { includePendingMetrics?: boolean }) {
+    const includePending = options?.includePendingMetrics ?? true;
     try {
       const response = await getApi().get(
         '/api/system_monitoring/processing_progress',
-        { timeout: 60000 }
+        {
+          params: { include_pending_metrics: includePending },
+          timeout: includePending ? 180000 : 90000,
+        }
       );
       return response.data;
     } catch (error) {

@@ -22,6 +22,9 @@ export default defineConfig({
         target: 'http://localhost:8000',
         changeOrigin: true,
         secure: false,
+        // Default ~60s causes 504 on /monitoring/overview + heavy system_monitoring GETs
+        timeout: 180000,
+        proxyTimeout: 180000,
       },
     },
     // Enable HMR with optimal settings

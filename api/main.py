@@ -339,6 +339,11 @@ async def lifespan(app: FastAPI):
         # Store automation manager for shutdown
         app.state.automation = automation
         app.state.automation_thread = automation_thread
+        # Single process-wide reference so get_automation_manager() returns the *running* instance
+        # (not a lazy second AutomationManager that never started — breaks Monitor activity merge).
+        import services.automation_manager as _automation_module
+
+        _automation_module.automation_manager = automation
         # Idle-time research topic refinement: automation can submit low-priority analysis tasks
         automation.set_finance_orchestrator_getter(
             lambda: getattr(app.state, "finance_orchestrator", None)
@@ -402,6 +407,9 @@ async def lifespan(app: FastAPI):
         # Continue without automation if it fails
         app.state.automation = None
         app.state.automation_thread = None
+        import services.automation_manager as _automation_module
+
+        _automation_module.automation_manager = None
 
     # Start Route Supervisor
     try:
@@ -582,6 +590,9 @@ async def lifespan(app: FastAPI):
                     logger.warning("Automation thread did not stop gracefully")
                 else:
                     logger.info("Automation manager stopped")
+            import services.automation_manager as _automation_module
+
+            _automation_module.automation_manager = None
     except Exception as e:
         logger.error(f"Error stopping automation manager: {e}")
 

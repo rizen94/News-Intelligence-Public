@@ -292,8 +292,61 @@ async def health_check():
         }
 
 
+def _resolve_automation_for_monitor(
+    automation: Any | None,
+) -> Any | None:
+    """Prefer the FastAPI-started manager; fall back to module singleton."""
+    if automation is not None:
+        return automation
+    try:
+        from services.automation_manager import get_automation_manager
+
+        return get_automation_manager()
+    except Exception:
+        return None
+
+
+def _synthesize_current_activities_from_automation(automation: Any | None) -> list[dict[str, Any]]:
+    """
+    When the in-memory activity feed is empty (multi-worker mismatch, missed add_current, etc.),
+    derive rows from live AutomationManager counters.
+    """
+    mgr = _resolve_automation_for_monitor(automation)
+    if mgr is None:
+        return []
+    try:
+        st = mgr.get_status()
+    except Exception:
+        return []
+    active = st.get("active_tasks_by_phase") or {}
+    out: list[dict[str, Any]] = []
+    now_iso = datetime.now(timezone.utc).isoformat()
+    for phase, n in sorted(active.items()):
+        try:
+            cnt = int(n or 0)
+        except (TypeError, ValueError):
+            cnt = 0
+        if cnt <= 0:
+            continue
+        if phase in MONITOR_EXCLUDED_AUTOMATION_PHASES:
+            continue
+        label = str(phase).replace("_", " ")
+        out.append(
+            {
+                "id": f"automation-active:{phase}",
+                "message": f"Running {label}",
+                "task_name": phase,
+                "running_instances": cnt,
+                "started_at": now_iso,
+            }
+        )
+    return out
+
+
 def _merge_current_activities_with_run_counts(
     current: list[dict[str, Any]],
+    *,
+    automation: Any | None = None,
 ) -> list[dict[str, Any]]:
     """
     One row per automation phase (task_name), with running_instances from AutomationManager
@@ -301,9 +354,7 @@ def _merge_current_activities_with_run_counts(
     """
     active_by_phase: dict[str, int] = {}
     try:
-        from services.automation_manager import get_automation_manager
-
-        mgr = get_automation_manager()
+        mgr = _resolve_automation_for_monitor(automation)
         if mgr is not None:
             active_by_phase = dict(mgr.get_status().get("active_tasks_by_phase") or {})
     except Exception:
@@ -393,6 +444,10 @@ def _fetch_phase_avg_durations_from_db(phase_names: list[str]) -> dict[str, floa
         return {}
     try:
         with conn.cursor() as cur:
+            try:
+                cur.execute("SET LOCAL statement_timeout = '3s'")
+            except Exception:
+                pass
             cur.execute(
                 """
                 WITH ranked AS (
@@ -431,6 +486,7 @@ def _enrich_current_activities_with_run_estimates(
     current: list[dict[str, Any]],
     *,
     processing_history: dict[str, Any] | None,
+    include_db_duration_avgs: bool = True,
 ) -> list[dict[str, Any]]:
     """Add typical run duration and estimated remaining time for automation phases."""
     if not current:
@@ -447,7 +503,11 @@ def _enrich_current_activities_with_run_estimates(
             if isinstance(x.get("task_name"), str) and str(x.get("task_name")).strip()
         }
     )
-    db_avgs = _fetch_phase_avg_durations_from_db(phases)
+    db_avgs = (
+        _fetch_phase_avg_durations_from_db(phases)
+        if include_db_duration_avgs
+        else {}
+    )
 
     for row in current:
         phase = row.get("task_name")
@@ -509,7 +569,7 @@ def _get_processing_history_for_monitor() -> dict[str, Any] | None:
 
 
 @router.get("/monitoring/overview")
-def get_monitoring_overview():
+def get_monitoring_overview(request: Request):
     """
     Enhanced monitoring: connection status (API, database, webserver) and live activity feed.
     Use for the monitoring UI that shows system health and "what the backend is doing".
@@ -573,23 +633,48 @@ def get_monitoring_overview():
     connections["webserver"] = webserver
 
     activities: dict[str, Any] = {}
+    live_automation = getattr(request.app.state, "automation", None)
     try:
         from services.activity_feed_service import get_activity_feed
 
         activities = get_activity_feed().get_snapshot(recent_limit=50)
         cur = activities.get("current")
-        if isinstance(cur, list) and cur:
-            merged = _merge_current_activities_with_run_counts(cur)
-            hist = _get_processing_history_for_monitor()
-            activities = {
-                **activities,
-                "current": _enrich_current_activities_with_run_estimates(
-                    merged, processing_history=hist
-                ),
-            }
+        if not isinstance(cur, list):
+            cur = []
+        if not cur:
+            cur = _synthesize_current_activities_from_automation(live_automation)
+        if cur:
+            # Merge/enrich must not wipe the feed on DB pool timeout or slow queries.
+            try:
+                merged = _merge_current_activities_with_run_counts(
+                    cur, automation=live_automation
+                )
+            except Exception as e:
+                logger.debug("Activity feed merge: %s", e)
+                merged = cur
+            try:
+                hist = _get_processing_history_for_monitor()
+                merged = _enrich_current_activities_with_run_estimates(
+                    merged,
+                    processing_history=hist,
+                    include_db_duration_avgs=False,
+                )
+            except Exception as e:
+                logger.debug("Activity feed enrich: %s", e)
+            activities = {**activities, "current": merged}
+        else:
+            activities = {**activities, "current": []}
     except Exception as e:
         logger.debug("Activity feed: %s", e)
-        activities = {"current": [], "recent": []}
+        syn = _synthesize_current_activities_from_automation(live_automation)
+        if syn:
+            try:
+                syn = _merge_current_activities_with_run_counts(
+                    syn, automation=live_automation
+                )
+            except Exception:
+                pass
+        activities = {"current": syn, "recent": []}
 
     return {
         "success": True,
@@ -2231,8 +2316,14 @@ async def process_metric_collection():
 
 
 @router.get("/pipeline_status")
-async def get_pipeline_status():
-    """Get pipeline monitoring status with stage progress tracking"""
+def get_pipeline_status():
+    """
+    Pipeline trace summary + per-silo article counts for Monitor.
+
+    **Must stay a sync ``def`` route** (not ``async def``): this handler uses blocking
+    psycopg2. An async route would run that work on the event loop and freeze the API
+    worker for all other clients until queries finish.
+    """
     try:
         conn = get_monitoring_db_connection()
         if not conn:
@@ -2240,6 +2331,10 @@ async def get_pipeline_status():
 
         try:
             with conn.cursor() as cur:
+                try:
+                    cur.execute("SET LOCAL statement_timeout = '8s'")
+                except Exception:
+                    pass
                 # Get pipeline trace statistics (using correct column names)
                 # Table has: success (boolean), error_stage (varchar), not status/stage
                 cur.execute("""
