@@ -7,6 +7,7 @@ import asyncio
 import json
 import logging
 import re
+from datetime import datetime, timezone
 from dataclasses import dataclass
 from typing import Any
 
@@ -896,13 +897,28 @@ class MetadataEnrichmentService:
                         UPDATE {schema}.articles
                         SET quality_score = %s, sentiment_score = %s,
                             categories = %s::jsonb,
-                            metadata = COALESCE(metadata, '{{}}'::jsonb) || '{{"enrichment_done": true}}'::jsonb
+                            metadata = COALESCE(metadata, '{{}}'::jsonb)
+                              || '{{"enrichment_done": true}}'::jsonb
+                              || jsonb_build_object(
+                                  'pipeline',
+                                  COALESCE(metadata->'pipeline', '{{}}'::jsonb)
+                                  || jsonb_build_object(
+                                      'metadata_enrichment',
+                                      COALESCE(metadata->'pipeline'->'metadata_enrichment', '{{}}'::jsonb)
+                                      || jsonb_build_object(
+                                          'last_pass_at', to_jsonb(%s::text),
+                                          'last_outcome', to_jsonb(%s::text)
+                                      )
+                                  )
+                              )
                         WHERE id = %s
                         """,
                         (
                             quality_score,
                             sentiment_score,
                             json.dumps(categories),
+                            datetime.now(timezone.utc).isoformat(),
+                            "enriched",
                             article_id,
                         ),
                     )
@@ -922,6 +938,7 @@ async def run_metadata_enrichment_batch_for_domains(limit_per_domain: int = 5) -
     Call from automation (metadata_enrichment task).
     """
     from shared.database.connection import get_db_connection
+    from shared.pipeline_pass_marker import phase_backlog_uses_pass_marker, sql_article_pass_null
 
     service = await get_enrichment_service()
     conn = get_db_connection()
@@ -931,17 +948,21 @@ async def run_metadata_enrichment_batch_for_domains(limit_per_domain: int = 5) -
     from shared.domain_registry import get_pipeline_schema_names_active
 
     schemas = get_pipeline_schema_names_active()
+    pass_clause = ""
+    if phase_backlog_uses_pass_marker("metadata_enrichment"):
+        pass_clause = f" AND ({sql_article_pass_null('metadata_enrichment', 'a')}) "
     try:
         for schema in schemas:
             try:
                 with conn.cursor() as cur:
                     cur.execute(
                         f"""
-                        SELECT id, title, LEFT(content, 20000) as content
-                        FROM {schema}.articles
-                        WHERE content IS NOT NULL AND LENGTH(content) > 50
-                          AND (metadata IS NULL OR (metadata->>'enrichment_done') IS NULL)
-                        ORDER BY id DESC
+                        SELECT a.id, a.title, LEFT(a.content, 20000) as content
+                        FROM {schema}.articles a
+                        WHERE a.content IS NOT NULL AND LENGTH(a.content) > 50
+                          AND (a.metadata IS NULL OR (a.metadata->>'enrichment_done') IS NULL)
+                          {pass_clause}
+                        ORDER BY a.id DESC
                         LIMIT %s
                         """,
                         (limit_per_domain,),

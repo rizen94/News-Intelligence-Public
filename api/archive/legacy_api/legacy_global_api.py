@@ -1,6 +1,18 @@
 """
-News Intelligence System v4.0 - API Compatibility Layer
-Maintains v3.0 endpoint compatibility while using v4.0 domain architecture
+**ARCHIVED — not imported by `main.py`.** Reference-only copy; see `README.md` in this directory.
+
+Legacy **global** (non-domain-prefixed) API routes.
+
+These URLs predate the current domain-scoped surface (``/api/{domain}/...``) used by the
+v8 pipeline and SPA. They remain for external scripts and old clients that still call
+flat paths such as ``/api/storylines/`` or ``/api/topics/``.
+
+**Prefer** domain-scoped routers under ``api/domains/*/routes`` for new work.
+
+**Removed here (pruned 2026-04):** ``/api/health/``, ``/api/articles/``, ``/api/articles/{id}``,
+and ``/api/topics/categories/stats`` — the first two duplicated ``content_analysis`` routes
+(registered earlier in ``main.py`` and never won route resolution). Category stats now live
+only on ``GET /api/topics/categories/stats`` in ``content_analysis`` (single implementation).
 """
 
 import logging
@@ -15,38 +27,21 @@ from shared.services.domain_aware_service import (
     resolve_storyline_id_to_schema,
 )
 
-# Import v4.0 domain services
-from shared.services.llm_service import llm_service
-
 logger = logging.getLogger(__name__)
 
 
 def _compat_schemas() -> tuple[str, ...]:
-    """Active domain silo schemas (built-in + optional YAML)."""
+    """Active domain silo schemas (registry + DB)."""
     from shared.services.domain_aware_service import get_domain_data_schemas
 
     return get_domain_data_schemas()
 
 
-def _articles_union_subquery(where_sql: str) -> str:
-    """Same WHERE clause applied to each domain's articles (where_sql is '' or 'WHERE ...')."""
-    parts = []
-    for sch in _compat_schemas():
-        parts.append(
-            f"""
-            SELECT id, title, content, url, published_at, source_domain, category,
-                   processing_status, summary, quality_score, word_count, reading_time_minutes,
-                   sentiment_score, entities, created_at, updated_at
-            FROM {sch}.articles
-            {where_sql}
-            """.strip()
-        )
-    return " UNION ALL ".join(parts)
-
-
 def _validate_compat_domain(domain: str | None) -> str:
-    """Return schema name for v3 legacy domain key; default politics."""
-    key = (domain or "politics").strip()
+    """Return schema name for v3 legacy domain key; default first active registry domain."""
+    from shared.domain_registry import first_active_domain_key
+
+    key = (domain or first_active_domain_key()).strip()
     sch = normalize_domain_to_schema(key)
     if sch not in _compat_schemas():
         from shared.domain_registry import get_active_domain_keys
@@ -54,232 +49,23 @@ def _validate_compat_domain(domain: str | None) -> str:
         allowed = ", ".join(get_active_domain_keys())
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid domain for v3 compatibility: {domain}. Active keys: {allowed}.",
+            detail=f"Invalid domain for legacy global API: {domain}. Active keys: {allowed}.",
         )
     return sch
 
 
-# Create compatibility router
-compatibility_router = APIRouter(
-    prefix="/api", tags=["v3.0 Compatibility"], responses={404: {"description": "Not found"}}
+legacy_global_router = APIRouter(
+    prefix="/api",
+    tags=["Legacy global API (pre-domain URLs)"],
+    responses={404: {"description": "Not found"}},
 )
 
 # ============================================================================
-# HEALTH ENDPOINTS - v3.0 Compatible
+# STORYLINES — legacy flat /api/storylines/... (no {domain} prefix)
 # ============================================================================
 
 
-@compatibility_router.get("/health/")
-async def health_check_v3():
-    """v3.0 compatible health check"""
-    try:
-        # Check database connection
-        conn = get_db_connection()
-        if not conn:
-            return {
-                "success": False,
-                "status": "unhealthy",
-                "error": "Database connection failed",
-                "timestamp": datetime.now().isoformat(),
-            }
-
-        # Check LLM service
-        llm_status = await llm_service.get_model_status()
-
-        conn.close()
-
-        return {
-            "success": True,
-            "status": "healthy",
-            "database": "connected",
-            "llm_service": llm_status.get("success", False),
-            "models": {
-                "primary": llm_status.get("primary_model", "unknown"),
-                "secondary": llm_status.get("secondary_model", "unknown"),
-            },
-            "timestamp": datetime.now().isoformat(),
-        }
-
-    except Exception as e:
-        logger.error(f"Health check failed: {e}")
-        return {
-            "success": False,
-            "status": "unhealthy",
-            "error": str(e),
-            "timestamp": datetime.now().isoformat(),
-        }
-
-
-# ============================================================================
-# ARTICLES ENDPOINTS - v3.0 Compatible
-# ============================================================================
-
-
-@compatibility_router.get("/articles/")
-async def get_articles_v3(
-    page: int = 1,
-    limit: int = 20,
-    status: str | None = None,
-    source: str | None = None,
-    category: str | None = None,
-):
-    """v3.0 compatible articles endpoint"""
-    try:
-        conn = get_db_connection()
-        if not conn:
-            raise HTTPException(status_code=500, detail="Database connection failed")
-
-        try:
-            # Build query with filters
-            where_conditions = []
-            params = []
-
-            if status:
-                where_conditions.append("processing_status = %s")
-                params.append(status)
-
-            if source:
-                where_conditions.append("source_domain = %s")
-                params.append(source)
-
-            if category:
-                where_conditions.append("category = %s")
-                params.append(category)
-
-            where_sql = "WHERE " + " AND ".join(where_conditions) if where_conditions else ""
-            union_inner = _articles_union_subquery(where_sql)
-            count_params = params * len(_compat_schemas())
-            count_query = f"SELECT COUNT(*) FROM ({union_inner}) AS all_articles"
-
-            with conn.cursor() as cur:
-                cur.execute(count_query, count_params)
-                total = cur.fetchone()[0]
-
-            offset = (page - 1) * limit
-            articles_query = f"""
-                SELECT * FROM ({union_inner}) AS all_articles
-                ORDER BY created_at DESC
-                LIMIT %s OFFSET %s
-            """
-
-            with conn.cursor() as cur:
-                cur.execute(articles_query, count_params + [limit, offset])
-
-                articles = []
-                for row in cur.fetchall():
-                    articles.append(
-                        {
-                            "id": row[0],
-                            "title": row[1],
-                            "content": row[2],
-                            "url": row[3],
-                            "published_at": row[4].isoformat() if row[4] else None,
-                            "source": row[5],  # source_domain mapped to source for v3 compatibility
-                            "category": row[6],
-                            "status": row[
-                                7
-                            ],  # processing_status mapped to status for v3 compatibility
-                            "summary": row[8],
-                            "quality_score": row[9],
-                            "word_count": row[10],
-                            "reading_time": row[
-                                11
-                            ],  # reading_time_minutes mapped to reading_time for v3 compatibility
-                            "sentiment_score": row[12],
-                            "entities": row[13],
-                            "created_at": row[14].isoformat() if row[14] else None,
-                            "updated_at": row[15].isoformat() if row[15] else None,
-                        }
-                    )
-
-                return {
-                    "success": True,
-                    "data": {
-                        "articles": articles,
-                        "total": total,
-                        "page": page,
-                        "limit": limit,
-                        "pages": (total + limit - 1) // limit,
-                    },
-                    "message": f"Retrieved {len(articles)} articles",
-                    "timestamp": datetime.now().isoformat(),
-                }
-
-        finally:
-            conn.close()
-
-    except Exception as e:
-        logger.error(f"Error fetching articles: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@compatibility_router.get("/articles/{article_id}")
-async def get_article_v3(article_id: int):
-    """v3.0 compatible single article endpoint"""
-    try:
-        conn = get_db_connection()
-        if not conn:
-            raise HTTPException(status_code=500, detail="Database connection failed")
-
-        try:
-            sch = resolve_article_id_to_schema(article_id)
-            if not sch:
-                raise HTTPException(status_code=404, detail="Article not found")
-
-            with conn.cursor() as cur:
-                cur.execute(
-                    f"""
-                    SELECT id, title, content, url, published_at, source_domain, category,
-                           processing_status, summary, quality_score, word_count, reading_time_minutes,
-                           sentiment_score, entities, created_at, updated_at
-                    FROM {sch}.articles
-                    WHERE id = %s
-                """,
-                    (article_id,),
-                )
-
-                article = cur.fetchone()
-                if not article:
-                    raise HTTPException(status_code=404, detail="Article not found")
-
-                return {
-                    "success": True,
-                    "data": {
-                        "id": article[0],
-                        "title": article[1],
-                        "content": article[2],
-                        "url": article[3],
-                        "published_at": article[4].isoformat() if article[4] else None,
-                        "source": article[5],
-                        "category": article[6],
-                        "status": article[7],
-                        "summary": article[8],
-                        "quality_score": article[9],
-                        "word_count": article[10],
-                        "reading_time": article[11],
-                        "sentiment_score": article[12],
-                        "entities": article[13],
-                        "created_at": article[14].isoformat() if article[14] else None,
-                        "updated_at": article[15].isoformat() if article[15] else None,
-                    },
-                    "message": "Article retrieved successfully",
-                    "timestamp": datetime.now().isoformat(),
-                }
-
-        finally:
-            conn.close()
-
-    except Exception as e:
-        logger.error(f"Error fetching article: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# ============================================================================
-# STORYLINES ENDPOINTS - v3.0 Compatible
-# ============================================================================
-
-
-@compatibility_router.get("/storylines/")
+@legacy_global_router.get("/storylines/")
 async def get_storylines_v3():
     """v3.0 compatible storylines endpoint"""
     try:
@@ -332,7 +118,7 @@ async def get_storylines_v3():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@compatibility_router.post("/storylines/")
+@legacy_global_router.post("/storylines/")
 async def create_storyline_v3(request: dict[str, Any]):
     """v3.0 compatible storyline creation"""
     try:
@@ -377,7 +163,7 @@ async def create_storyline_v3(request: dict[str, Any]):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@compatibility_router.get("/storylines/{storyline_id}")
+@legacy_global_router.get("/storylines/{storyline_id}")
 async def get_storyline_v3(storyline_id: int):
     """v3.0 compatible single storyline endpoint"""
     try:
@@ -463,7 +249,7 @@ async def get_storyline_v3(storyline_id: int):
 # ============================================================================
 
 
-@compatibility_router.get("/rss-feeds/")
+@legacy_global_router.get("/rss-feeds/")
 async def get_rss_feeds_v3():
     """v3.0 compatible RSS feeds endpoint"""
     try:
@@ -525,7 +311,7 @@ async def get_rss_feeds_v3():
 # ============================================================================
 
 
-@compatibility_router.get("/dashboard/stats")
+@legacy_global_router.get("/dashboard/stats")
 async def get_dashboard_stats_v3():
     """v3.0 compatible dashboard stats endpoint"""
     try:
@@ -610,7 +396,7 @@ async def get_dashboard_stats_v3():
 # ============================================================================
 
 
-@compatibility_router.post("/storylines/{storyline_id}/add-article")
+@legacy_global_router.post("/storylines/{storyline_id}/add-article")
 async def add_article_to_storyline_v3(storyline_id: int, request: dict[str, Any]):
     """v3.0 compatible add article to storyline endpoint"""
     try:
@@ -678,7 +464,7 @@ async def add_article_to_storyline_v3(storyline_id: int, request: dict[str, Any]
 # ============================================================================
 
 
-@compatibility_router.get("/topics/")
+@legacy_global_router.get("/topics/")
 async def get_topics_v3(
     limit: int = 50, offset: int = 0, search: str | None = None, category: str | None = None
 ):
@@ -775,78 +561,7 @@ async def get_topics_v3(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@compatibility_router.get("/topics/categories/stats")
-async def get_category_stats_v3():
-    """v3.0 compatible category stats endpoint"""
-    try:
-        conn = get_db_connection()
-        if not conn:
-            raise HTTPException(status_code=500, detail="Database connection failed")
-
-        try:
-            with conn.cursor() as cur:
-                agg: dict[Any, dict[str, Any]] = {}
-                for sch in _compat_schemas():
-                    cur.execute(f"""
-                        SELECT tc.cluster_type,
-                               COUNT(DISTINCT tc.id) AS topic_count,
-                               COUNT(atc.article_id) AS total_articles,
-                               AVG(atc.relevance_score) AS avg_relevance
-                        FROM {sch}.topic_clusters tc
-                        LEFT JOIN {sch}.article_topic_clusters atc ON tc.id = atc.topic_cluster_id
-                        WHERE tc.is_active = true
-                        GROUP BY tc.cluster_type
-                    """)
-                    for row in cur.fetchall():
-                        ct = row[0]
-                        if ct not in agg:
-                            agg[ct] = {
-                                "topic_count": 0,
-                                "total_articles": 0,
-                                "_rel_sum": 0.0,
-                                "_rel_w": 0.0,
-                            }
-                        agg[ct]["topic_count"] += row[1] or 0
-                        ta = row[2] or 0
-                        agg[ct]["total_articles"] += ta
-                        av = float(row[3]) if row[3] is not None else 0.0
-                        if ta > 0:
-                            agg[ct]["_rel_sum"] += av * ta
-                            agg[ct]["_rel_w"] += ta
-
-                categories = []
-                for ct, a in sorted(
-                    agg.items(),
-                    key=lambda x: x[1]["total_articles"],
-                    reverse=True,
-                ):
-                    tw = a["_rel_w"]
-                    avg_rel = (a["_rel_sum"] / tw) if tw else 0.0
-                    categories.append(
-                        {
-                            "category": ct,
-                            "topic_count": a["topic_count"],
-                            "total_articles": a["total_articles"],
-                            "avg_relevance": avg_rel,
-                        }
-                    )
-
-                return {
-                    "success": True,
-                    "data": {"categories": categories, "total_categories": len(categories)},
-                    "message": f"Retrieved statistics for {len(categories)} categories",
-                    "timestamp": datetime.now().isoformat(),
-                }
-
-        finally:
-            conn.close()
-
-    except Exception as e:
-        logger.error(f"Error fetching category stats: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@compatibility_router.get("/intelligence/topic-clusters")
+@legacy_global_router.get("/intelligence/topic-clusters")
 async def get_intelligence_topic_clusters_v3(
     time_period: str = "7d", min_articles: int = 3, limit: int = 20
 ):
@@ -947,7 +662,7 @@ async def get_intelligence_topic_clusters_v3(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@compatibility_router.get("/intelligence/trending-topics")
+@legacy_global_router.get("/intelligence/trending-topics")
 async def get_trending_topics_v3(time_period: str = "24h", limit: int = 10):
     """v3.0 compatible trending topics endpoint"""
     try:
@@ -1041,7 +756,7 @@ async def get_trending_topics_v3(time_period: str = "24h", limit: int = 10):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@compatibility_router.get("/topics/{topic_name}/articles")
+@legacy_global_router.get("/topics/{topic_name}/articles")
 async def get_topic_articles_v3(topic_name: str, limit: int = 20, offset: int = 0):
     """v3.0 compatible topic articles endpoint"""
     try:
@@ -1143,7 +858,7 @@ async def get_topic_articles_v3(topic_name: str, limit: int = 20, offset: int = 
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@compatibility_router.get("/topics/{topic_name}/summary")
+@legacy_global_router.get("/topics/{topic_name}/summary")
 async def get_topic_summary_v3(topic_name: str):
     """v3.0 compatible topic summary endpoint"""
     try:
@@ -1242,7 +957,7 @@ async def get_topic_summary_v3(topic_name: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@compatibility_router.post("/topics/cluster")
+@legacy_global_router.post("/topics/cluster")
 async def cluster_articles_v3(request: dict[str, Any]):
     """v3.0 compatible article clustering endpoint"""
     try:
@@ -1262,7 +977,7 @@ async def cluster_articles_v3(request: dict[str, Any]):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@compatibility_router.post("/topics/{topic_name}/convert-to-storyline")
+@legacy_global_router.post("/topics/{topic_name}/convert-to-storyline")
 async def convert_topic_to_storyline_v3(topic_name: str, request: dict[str, Any]):
     """v3.0 compatible topic to storyline conversion endpoint"""
     try:

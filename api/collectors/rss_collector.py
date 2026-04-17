@@ -67,6 +67,12 @@ _FINANCIAL_NATIVE_AD_PHRASES: tuple[str, ...] = (
     "cnn underscored",
     "partner offer",
     "paid partner",
+    "bonus miles after",
+    "bonus points after",
+    "earn miles on every",
+    "earn points on every",
+    "prequalified offer",
+    "pre-approved offer",
 )
 
 # Legal / professional-services software promos (Lexis, Westlaw, etc.) — not court news.
@@ -201,16 +207,80 @@ def _url_looks_like_commerce_native(url: str) -> bool:
     )
 
 
+# Personal-finance affiliate / card-comparison sites (paths are not hard news).
+_FINANCE_AFFILIATE_URL_FRAGMENTS: tuple[str, ...] = (
+    "nerdwallet.com",
+    "bankrate.com",
+    "thepointsguy.com",
+    "creditcards.com",
+    "cardratings.com",
+    "wallethub.com",
+    "comparecards.com",
+    "doctorofcredit.com",
+    "millionmilesecrets.com",
+    "upgradedpoints.com",
+    "/personal-finance/credit-cards",
+    "/money/credit-cards",
+    "/finance/credit-cards",
+)
+
+
+def _url_looks_like_finance_affiliate_vertical(url: str) -> bool:
+    u = (url or "").lower()
+    if not u:
+        return False
+    return any(p in u for p in _FINANCE_AFFILIATE_URL_FRAGMENTS)
+
+
+def _commerce_or_finance_vertical_url(url: str) -> bool:
+    return _url_looks_like_commerce_native(url) or _url_looks_like_finance_affiliate_vertical(
+        url
+    )
+
+
+_CC_ROUNDUP_TITLE_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"(?i)^(the\s+)?(best|top|our|these)\s+\d+\s+.*\bcredit\s+cards?\b"),
+    re.compile(
+        r"(?i)^(the\s+)?(best|top)\s+(cash[-\s]?back|rewards|travel|student|business)\s+cards?\b"
+    ),
+    re.compile(r"(?i)^(compare|comparing)\s+(the\s+)?(best\s+)?.*\bcredit\s+cards?\b"),
+    re.compile(r"(?i)\bcredit\s+card\s+rewards\b.*\b(best|top|our|compare)\b"),
+)
+
+
+def _title_looks_like_credit_card_product_roundup(title: str) -> bool:
+    """
+    Card marketing / roundup titles when the RSS body is empty or too short to match phrases.
+    Skips likely policy/regulatory stories that mention credit cards in passing.
+    """
+    if not title or len(title.strip()) < 6:
+        return False
+    tl = title.lower()
+    if re.search(
+        r"\b(bill|bills|law|hearing|hearings|vote|votes|voted|cfpb|ftc|fcc|"
+        r"lawsuit|lawsuits|settlement|settlements|regulation|regulations|interchange|"
+        r"congress|senate|house|committee)\b",
+        tl,
+    ):
+        return False
+    for pat in _CC_ROUNDUP_TITLE_PATTERNS:
+        if pat.search(title):
+            return True
+    return False
+
+
 def _post_credibility_quality_cap_native_ads(
     quality_score: float, title: str, content: str, url: str
 ) -> float:
     """Source-credibility tier multipliers can push a capped score back above 0.3."""
     combined = f"{title} {content} {url}".lower()
-    if _url_looks_like_commerce_native(url) or any(
+    if _commerce_or_finance_vertical_url(url) or any(
         p in combined for p in _FINANCIAL_NATIVE_AD_PHRASES
     ):
         return min(float(quality_score), 0.28)
     if _native_vertical_promo_match(combined):
+        return min(float(quality_score), 0.28)
+    if _title_looks_like_credit_card_product_roundup(title):
         return min(float(quality_score), 0.28)
     return float(quality_score)
 
@@ -934,7 +1004,7 @@ def calculate_article_quality_score(
         "sloan review",
     ]
     source_lower = source.lower()
-    commerce_url = _url_looks_like_commerce_native(url)
+    commerce_url = _commerce_or_finance_vertical_url(url)
     # Do not boost "CNN" in source name for CNN Underscored / commerce URLs — those are ads.
     if any(reputable in source_lower for reputable in reputable_sources) and not commerce_url:
         score += 0.15
@@ -1006,6 +1076,8 @@ def calculate_article_quality_score(
     if commerce_url or any(p in text_to_check for p in _FINANCIAL_NATIVE_AD_PHRASES):
         score = min(score, 0.22)
     if _native_vertical_promo_match(text_to_check):
+        score = min(score, 0.22)
+    if _title_looks_like_credit_card_product_roundup(title):
         score = min(score, 0.22)
     return score
 
@@ -1110,6 +1182,12 @@ def is_advertisement(title: str, content: str, url: str = "") -> bool:
     if any(indicator in text_to_check for indicator in official_indicators):
         return False
 
+    # Title-only / URL-only signals (RSS body often empty for card roundups)
+    if _title_looks_like_credit_card_product_roundup(title):
+        return True
+    if _url_looks_like_finance_affiliate_vertical(url):
+        return True
+
     # Advertisement indicators
     ad_indicators = [
         "sponsored",
@@ -1151,7 +1229,7 @@ def is_advertisement(title: str, content: str, url: str = "") -> bool:
     if _native_vertical_promo_match(text_to_check):
         return True
 
-    if _url_looks_like_commerce_native(url):
+    if _commerce_or_finance_vertical_url(url):
         return True
 
     # URL patterns that indicate ads
@@ -1182,7 +1260,7 @@ def is_excluded_content(
     """
     Check if article should be excluded (sports, entertainment, pop culture).
     When domain is provided, also applies domain-specific exclusion keywords
-    from domain_synthesis_config (e.g. science-tech excludes consumer electronics).
+    from domain_synthesis_config (e.g. artificial-intelligence excludes chatbot spam keywords).
 
     Args:
         title: Article title
@@ -1324,7 +1402,7 @@ def is_excluded_content(
         "onlyfans",
         "twitch streamer",
         "viral tiktok",
-        # Gaming (unambiguous — note: science-tech should cover gaming industry news)
+        # Gaming (unambiguous — tech industry news may appear in AI domain feeds)
         "esports tournament",
         "fortnite",
         "call of duty",
@@ -1347,7 +1425,7 @@ def is_excluded_content(
         "makeup tutorial",
         # Reality TV (unambiguous)
         "married at first sight",
-        "the challenge",
+        # Not "the challenge" alone — matches normal English ("the challenge of reform").
         "vanderpump rules",
         "90 day fiance",
         "love after lockup",
@@ -1507,7 +1585,10 @@ def collect_rss_feeds() -> int:
             feed_start = _time.time()
             feed_id, feed_name, feed_url, domain_key, schema_name = feed_data
             if not schema_name:
-                schema_name = (domain_key or "").replace("-", "_") or "politics"
+                from shared.domain_registry import first_active_domain_key, resolve_domain_schema
+
+                dk = (domain_key or "").strip() or first_active_domain_key()
+                schema_name = resolve_domain_schema(dk)
 
             def _rss_log(status, fetched=0, saved=0, err=None):
                 try:
@@ -2148,7 +2229,7 @@ def collect_rss_feed(feed_url: str, feed_name: str = "Unknown") -> int:
                 url = entry.get("link", "")[:500]
                 content = _extract_rss_entry_body(entry)
 
-                # Filter out sports, entertainment, and pop culture content (domain-specific for science-tech)
+                # Filter out sports, entertainment, and pop culture content (domain-specific tech filters)
                 if is_excluded_content(
                     title, content, feed_name, feed_url, domain=domain_key_single
                 ):

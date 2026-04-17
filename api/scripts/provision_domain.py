@@ -247,8 +247,10 @@ def main() -> None:
 
     if not schema_name.replace("_", "").isalnum() or not schema_name.islower():
         raise SystemExit("schema_name must be lowercase snake_case alphanumerics only")
-    if domain_key in ("politics", "finance", "science-tech"):
-        raise SystemExit("Refusing: core silos are not provisioned with this script")
+    if domain_key == "science-tech":
+        raise SystemExit(
+            "Refusing: retired domain key science-tech — use artificial-intelligence, medicine, or other YAML silos."
+        )
 
     if args.print_checklist_only:
         print_post_provision_checklist(

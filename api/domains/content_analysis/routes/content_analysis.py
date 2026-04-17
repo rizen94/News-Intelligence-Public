@@ -15,7 +15,7 @@ from domains.content_analysis.services.topic_filter_rules import (
 from domains.content_analysis.services.topic_merge_suggestions import get_merge_suggestions
 from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, Path, Query
 from shared.database.connection import get_db_connection
-from shared.domain_registry import DOMAIN_PATH_PATTERN
+from shared.domain_registry import DOMAIN_PATH_PATTERN, schema_to_primary_domain_key
 from shared.services.domain_aware_service import (
     get_domain_data_schemas,
     parse_optional_domain_to_schema,
@@ -66,7 +66,7 @@ async def get_articles(
     status: str | None = None,
     domain: str | None = Query(
         None,
-        description="Optional: politics, finance, or science-tech. Omit to aggregate all domains.",
+        description="Optional domain URL key (see domain registry). Omit to aggregate all active silos.",
     ),
 ):
     """Get articles with optional filtering (domain-scoped or all domains)."""
@@ -649,17 +649,20 @@ async def get_topics(
                         row[2]
                         or f"Topic cluster covering {cluster_name} with {article_count} articles"
                     )
+                    avg_rel = float(row[8]) if row[8] else 0.0
                     topics.append(
                         {
                             "id": row[0],
                             "name": cluster_name,
                             "description": description,
                             "type": row[3] or "semantic",
+                            "category": row[3] or "semantic",
                             "created_at": row[4].isoformat() if row[4] else None,
                             "updated_at": row[5].isoformat() if row[5] else None,
                             "metadata": row[6] if row[6] else {},
                             "article_count": article_count,
-                            "avg_relevance": float(row[8]) if row[8] else 0.0,
+                            "avg_relevance": avg_rel,
+                            "avg_confidence": round(avg_rel * 100, 1),
                             "article_ids": article_ids,
                         }
                     )
@@ -1326,21 +1329,87 @@ async def convert_topic_to_storyline(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def _aggregate_topic_category_stats(cur) -> list[dict[str, Any]]:
+    """Roll up topic cluster categories across active domain schemas (cluster_type when present)."""
+    agg: dict[str, dict[str, Any]] = {}
+    for sch in get_domain_data_schemas():
+        cur.execute(
+            """
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = %s AND table_name = 'topic_clusters' AND column_name = 'cluster_type'
+            LIMIT 1
+            """,
+            (sch,),
+        )
+        has_cluster_type = cur.fetchone() is not None
+        if has_cluster_type:
+            cur.execute(
+                f"""
+                SELECT COALESCE(tc.cluster_type, 'semantic') AS cat,
+                       COUNT(DISTINCT tc.id) AS topic_count,
+                       COUNT(atc.article_id) AS total_articles,
+                       AVG(atc.relevance_score) AS avg_relevance
+                FROM {sch}.topic_clusters tc
+                LEFT JOIN {sch}.article_topic_clusters atc ON tc.id = atc.topic_cluster_id
+                WHERE tc.is_active = true
+                GROUP BY COALESCE(tc.cluster_type, 'semantic')
+                """
+            )
+        else:
+            cur.execute(
+                f"""
+                SELECT 'semantic' AS cat,
+                       COUNT(DISTINCT tc.id) AS topic_count,
+                       COUNT(atc.article_id) AS total_articles,
+                       AVG(atc.relevance_score) AS avg_relevance
+                FROM {sch}.topic_clusters tc
+                LEFT JOIN {sch}.article_topic_clusters atc ON tc.id = atc.topic_cluster_id
+                WHERE tc.is_active = true
+                """
+            )
+        for row in cur.fetchall():
+            cat = row[0] or "semantic"
+            if cat not in agg:
+                agg[cat] = {
+                    "topic_count": 0,
+                    "total_articles": 0,
+                    "_rel_sum": 0.0,
+                    "_rel_w": 0.0,
+                }
+            agg[cat]["topic_count"] += row[1] or 0
+            ta = row[2] or 0
+            agg[cat]["total_articles"] += ta
+            av = float(row[3]) if row[3] is not None else 0.0
+            if ta > 0:
+                agg[cat]["_rel_sum"] += av * ta
+                agg[cat]["_rel_w"] += ta
+
+    categories: list[dict[str, Any]] = []
+    for ct, a in sorted(agg.items(), key=lambda x: x[1]["total_articles"], reverse=True):
+        tw = a["_rel_w"]
+        avg_rel = (a["_rel_sum"] / tw) if tw else 0.0
+        categories.append(
+            {
+                "category": ct,
+                "topic_count": a["topic_count"],
+                "total_articles": a["total_articles"],
+                "avg_relevance": avg_rel,
+            }
+        )
+    return categories
+
+
 @router.get("/topics/categories/stats")
 async def get_category_stats():
-    """Get statistics for topic categories"""
+    """Aggregate topic category stats across all active domain silos (formerly split across legacy routers)."""
     try:
         conn = get_db_connection()
         if not conn:
             raise HTTPException(status_code=500, detail="Database connection failed")
 
         try:
-            with conn.cursor():
-                # Current schema has no cluster_type; return empty categories list for now
-                categories = []
-
-                # (Optional) derive categories heuristically in future
-
+            with conn.cursor() as cur:
+                categories = _aggregate_topic_category_stats(cur)
                 return {
                     "success": True,
                     "data": {"categories": categories, "total_categories": len(categories)},
@@ -1465,100 +1534,41 @@ async def get_word_cloud_data(
                             "total_frequency": total_freq or 0,
                         }
                 else:
-                    # Fallback: Use topic_clusters directly - use cluster_name as the word cloud word
-                    # This is simpler and more direct - each topic cluster becomes a word in the cloud
+                    # Fallback: topic cluster names only (avoids optional columns like cluster_type
+                    # that may not exist on all template-derived silos).
                     cur.execute(
                         f"""
-                        SELECT
-                            tc.cluster_name,
-                            tc.cluster_keywords,
-                            tc.article_count,
-                            tc.relevance_score,
-                            tc.cluster_type,
-                            COUNT(atc.article_id) as actual_article_count
+                        SELECT tc.cluster_name,
+                               COUNT(atc.article_id)::bigint AS actual_article_count
                         FROM {schema}.topic_clusters tc
                         LEFT JOIN {schema}.article_topic_clusters atc ON tc.id = atc.topic_cluster_id
-                        GROUP BY tc.id, tc.cluster_name, tc.cluster_keywords, tc.article_count, tc.relevance_score, tc.cluster_type
+                        GROUP BY tc.id, tc.cluster_name
                         HAVING COUNT(atc.article_id) >= %s
-                        ORDER BY COUNT(atc.article_id) DESC, tc.relevance_score DESC
+                        ORDER BY COUNT(atc.article_id) DESC, tc.cluster_name
                         LIMIT %s
                     """,
                         (min_frequency, limit),
                     )
 
                     for row in cur.fetchall():
-                        (
-                            cluster_name,
-                            cluster_keywords,
-                            article_count,
-                            relevance_score,
-                            cluster_type,
-                            actual_count,
-                        ) = row
-
+                        cluster_name, actual_count = row
                         if not cluster_name:
                             continue
-
-                        # Use cluster_name as the primary word (it's the topic name)
-                        # This makes the word cloud show actual topic names, not individual keywords
+                        ac = int(actual_count or 0)
+                        rel = min(1.0, 0.35 + (ac / 50.0))
                         word_cloud_data.append(
                             {
                                 "text": cluster_name,
-                                "size": min(
-                                    100, max(20, int((actual_count or article_count or 1) * 3))
-                                ),  # Scale based on article count
-                                "frequency": actual_count or article_count or 1,
-                                "relevance": float(relevance_score) if relevance_score else 0.5,
-                                "articles": actual_count or article_count or 0,
-                                "quality_score": float(relevance_score) if relevance_score else 0.5,
-                                "category": cluster_type or "general",
-                                "topic": cluster_name,  # Same as text for topic-based word cloud
+                                "size": min(100, max(20, int(max(ac, 1) * 3))),
+                                "frequency": max(ac, 1),
+                                "relevance": rel,
+                                "articles": ac,
+                                "quality_score": rel,
+                                "category": "semantic",
+                                "topic": cluster_name,
                             }
                         )
 
-                        # Also extract individual keywords from cluster_keywords if available
-                        if cluster_keywords:
-                            keywords_to_add = []
-                            if isinstance(cluster_keywords, list):
-                                keywords_to_add.extend(cluster_keywords)
-                            elif isinstance(cluster_keywords, dict):
-                                keywords_to_add.extend(cluster_keywords.get("keywords", []))
-
-                            # Add keywords as additional words (smaller size)
-                            for keyword in set(keywords_to_add):
-                                if (
-                                    keyword
-                                    and len(keyword) > 2
-                                    and keyword.lower() != cluster_name.lower()
-                                ):
-                                    word_cloud_data.append(
-                                        {
-                                            "text": keyword,
-                                            "size": min(
-                                                80,
-                                                max(
-                                                    15,
-                                                    int((actual_count or article_count or 1) * 2),
-                                                ),
-                                            ),
-                                            "frequency": max(
-                                                1, (actual_count or article_count or 1) // 2
-                                            ),
-                                            "relevance": float(relevance_score)
-                                            if relevance_score
-                                            else 0.4,
-                                            "articles": max(
-                                                1, (actual_count or article_count or 1) // 2
-                                            ),
-                                            "quality_score": float(relevance_score)
-                                            if relevance_score
-                                            else 0.4,
-                                            "category": cluster_type or "general",
-                                            "topic": cluster_name,
-                                        }
-                                    )
-
-                    # Group by category
                     for word in word_cloud_data:
                         cat = word.get("category", "general")
                         if cat not in categories:
@@ -1734,7 +1744,10 @@ def _attach_topic_trend_signals(
     if not topic_ids:
         return topics
 
-    domain_key = schema  # intelligence domain_key uses science_tech format
+    try:
+        domain_key = schema_to_primary_domain_key(schema)
+    except Exception:
+        domain_key = str(schema).replace("_", "-")
     counts_by_topic: dict[int, dict[str, int]] = {}
     top_entities_by_topic: dict[int, list[str]] = {}
 
@@ -1839,7 +1852,10 @@ def _augment_word_cloud_with_entity_signals(
     if limit <= 0:
         return word_cloud_data
 
-    domain_key = schema
+    try:
+        domain_key = schema_to_primary_domain_key(schema)
+    except Exception:
+        domain_key = str(schema).replace("_", "-")
     existing = {str(w.get("text", "")).strip().lower() for w in word_cloud_data if w.get("text")}
     room = max(0, min(20, limit) - min(len(word_cloud_data), min(20, limit)))
     if room <= 0:
@@ -2141,7 +2157,9 @@ async def get_big_picture_analysis(
 
                 # Build narrative summary from available data
                 top_cat = topic_distribution[0]["category"] if topic_distribution else "general"
-                top_cat_count = topic_distribution[0]["count"] if topic_distribution else 0
+                top_cat_count = (
+                    topic_distribution[0].get("article_count", 0) if topic_distribution else 0
+                )
                 trending_names = [
                     t.get("name", "") for t in (trending_topics or [])[:3] if t.get("name")
                 ]

@@ -2,7 +2,7 @@
 Domain Knowledge Service
 Provides domain-specific context, historical data, and enrichment for RAG analysis.
 
-Each domain (politics, finance, science-tech) has:
+Each domain (politics, finance, artificial-intelligence, …) has:
 - Knowledge base with key entities and concepts
 - Historical context templates
 - Domain-specific entity recognition patterns
@@ -457,7 +457,7 @@ class DomainKnowledgeService:
                 "terminology": FINANCE_TERMINOLOGY,
                 "sources": FINANCE_SOURCES,
             },
-            "science-tech": {
+            "artificial-intelligence": {
                 "entities": SCIENCE_TECH_ENTITIES,
                 "terminology": SCIENCE_TECH_TERMINOLOGY,
                 "sources": SCIENCE_TECH_SOURCES,
@@ -542,7 +542,7 @@ class DomainKnowledgeService:
             return self._generate_politics_context(entity_names, timeframe)
         elif domain == "finance":
             return self._generate_finance_context(entity_names, timeframe)
-        elif domain in ["science-tech", "science_tech"]:
+        elif domain in ("artificial-intelligence", "science-tech", "science_tech"):
             return self._generate_science_tech_context(entity_names, timeframe)
         else:
             return f"Context for {', '.join(entity_names)} in {domain_name}."
@@ -768,7 +768,7 @@ class DomainKnowledgeService:
                 "and economic data releases. Key dates include employment reports, "
                 "CPI releases, and Fed announcements."
             )
-        elif domain in ["science-tech", "science_tech"]:
+        elif domain in ("artificial-intelligence", "science-tech", "science_tech"):
             return (
                 "Technology timelines are marked by product launches, research milestones, "
                 "and regulatory developments. Conference seasons and earnings reports "

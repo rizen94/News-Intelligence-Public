@@ -1,5 +1,5 @@
 # Curated entities for faster claim / resolution matching (not exhaustive — extend freely).
-# Keys = domain_key (politics, finance, science-tech, …). Each entry:
+# Keys = domain_key (politics, finance, artificial-intelligence, …). Each entry:
 #   name: canonical display string (required)
 #   type: person | organization | subject | recurring_event  (or ORG / PERSON / GPE legacy)
 #   aliases: optional list of alternate strings seen in news text
@@ -172,7 +172,7 @@ finance:
     type: organization
     aliases: ["NYSE"]
 
-science-tech:
+artificial-intelligence:
   - name: "OpenAI"
     type: organization
   - name: "Google"

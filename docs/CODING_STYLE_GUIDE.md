@@ -381,7 +381,11 @@ CREATE INDEX idx_articles_category_idx ON articles(category);
 ## 🌐 **API STANDARDS**
 
 ### **Router Prefix Convention (CRITICAL)**
-The project uses **flat `/api`** — no version segment in the path (e.g. `/api/{domain}/finance/...`, not `/api/...`).
+The project uses **flat `/api`** — **no version segment** in the path (`/api/v4/...` is obsolete).
+
+- **Domain-scoped resources** (per-silo articles, storylines, topic clusters, content analysis): **`/api/{domain}/...`** where `{domain}` is a registry URL key (`politics`, `finance`, `artificial-intelligence`, …).
+- **Global namespaces** (system monitoring, orchestrator, context-centric intelligence, article deduplication under `/api/articles/...`): **`/api/<namespace>/...`** with no domain segment.
+- **Frontend:** `web/src/services/apiConnectionManager.ts` lists first-path-segment namespaces that must **not** receive automatic domain injection; registry domain keys are detected separately.
 
 ```python
 # ✅ CORRECT - Main domain routers (included directly in main.py)
@@ -881,7 +885,7 @@ Release builds run **`npm run build`** (TypeScript + Vite). Standalone **`npx ts
 When you change the **API** (routes, path segments, response shape) or **core behaviour** (entry points, DB config, domain layout):
 
 1. **Update docs in the same change (or next commit):** `AGENTS.md`, this guide, `ARCHITECTURE_AND_OPERATIONS.md`, and any domain/feature doc that references the change.
-2. **Paths:** Flat `/api` (no version in path). Route segments: `snake_case` (e.g. `system_monitoring`, `rss_feeds`). Domain-scoped: `/api/{domain}/...` with domain `politics` | `finance` | `science-tech`.
+2. **Paths:** Flat `/api` (no version in path). Route segments: `snake_case` (e.g. `system_monitoring`, `rss_feeds`, `content_analysis`). Domain-scoped data: `/api/{domain}/...` using **active keys from the domain registry** (not a fixed enum in docs).
 3. **Code and tests:** Keep test URLs and frontend API calls in sync with real routes (no `/api/v4/`, no kebab-case route segments).
 4. **Single source:** Entry points and file layout in `AGENTS.md` and “Project structure” in this guide must match the repo (`main.py`, `api/domains/*/routes/`, `MainLayout.tsx`).
 

@@ -20,11 +20,21 @@ from shared.domain_registry import get_active_domain_keys
 
 logger = logging.getLogger(__name__)
 
+
+def _normalize_tracked_domain_key_for_lens(key: str) -> str:
+    k = str(key).lower().strip().replace("_", "-")
+    if k in ("science-tech", "sciencetech", "science tech"):
+        return "artificial-intelligence"
+    return k
+
+
 # Optional hints so lenses differ meaningfully when multiple domains apply.
 LENS_FOCUS: dict[str, str] = {
     "politics": "Institutions, alliances, elections, sanctions, legislative/executive actions, diplomacy.",
     "finance": "Markets, rates, commodities, currencies, flows, credit, corporate exposure.",
-    "science-tech": "Technology, research, cyber, infrastructure, innovation, supply chains.",
+    "artificial-intelligence": "AI systems, models, safety, compute, product launches, policy and market structure.",
+    "medicine": "Trials, regulators, mechanisms, public health, access and evidence quality.",
+    "environment-climate": "Climate science, energy transition, ecosystems, sustainability and policy.",
 }
 
 
@@ -187,7 +197,8 @@ async def generate_narrative_stack_for_event(event_id: int) -> dict[str, Any]:
 
         active = list(get_active_domain_keys())
         allowed = set(active)
-        dk_set = set(domain_keys or []) & allowed
+        dk_raw = [_normalize_tracked_domain_key_for_lens(k) for k in (domain_keys or [])]
+        dk_set = set(dk_raw) & allowed
         if not dk_set:
             dk_set = set(active)
 

@@ -93,22 +93,29 @@
 | POST | `/api/{domain}/storylines/{storyline_id}/analyze` | Analyze. |
 | POST | `/api/{domain}/storylines/{storyline_id}/rag_analysis` | RAG analysis. |
 | POST | `/api/{domain}/storylines/detect` | Detect storylines. |
-| GET | `/api/{domain}/storylines/consolidation/status` | Consolidation status. |
-| POST | `/api/{domain}/storylines/consolidation/run` | Run consolidation. |
+| GET | `/api/storylines/consolidation/status` | Consolidation status (global). |
+| POST | `/api/storylines/consolidation/run` | Run consolidation (all domains). |
+| POST | `/api/{domain}/storylines/consolidation/run` | Run consolidation for one domain. |
 | POST | `/api/{domain}/storylines/merge/{primary_id}/{secondary_id}` | Merge two storylines. |
 | GET | `/api/{domain}/storylines/{storyline_id}/automation/settings` | Automation settings. |
 | PUT | `/api/{domain}/storylines/{storyline_id}/automation/settings` | Update automation. |
 | GET | `/api/{domain}/events` | Events (timeline). |
 
-### 3.5 Topics (legacy / alternate) (`/api`)
+### 3.5 Topic management (DB `topics` / assignments — domain-scoped)
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/{domain}/topics` | List topics. |
-| GET | `/api/topics/{topic_id}` | Get topic. |
-| POST | `/api/topics` | Create topic. |
-| PUT | `/api/topics/{topic_id}` | Update topic. |
-| POST | `/api/topics/merge` | Merge topics. |
+| GET | `/api/{domain}/topics` | List managed topics. |
+| GET | `/api/{domain}/topics/needing_review` | Topics below accuracy threshold. |
+| GET | `/api/{domain}/topics/{topic_id}` | Get one topic. |
+| POST | `/api/{domain}/topics` | Create topic. |
+| PUT | `/api/{domain}/topics/{topic_id}` | Update topic. |
+| POST | `/api/{domain}/topics/merge` | Merge topics (body: `topic_ids`, optional `domain` override). |
+| GET | `/api/{domain}/topics/{topic_id}/articles` | Articles linked to topic. |
+| POST | `/api/{domain}/articles/{article_id}/process_topics` | LLM topic extraction for one article. |
+| POST | `/api/{domain}/articles/batch_process_topics` | Batch process (body: article id list). |
+| POST | `/api/{domain}/assignments/{assignment_id}/feedback` | Assignment feedback. |
+| GET | `/api/topics/categories/stats` | Aggregate category stats (all silos). |
 
 ---
 

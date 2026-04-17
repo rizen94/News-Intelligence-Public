@@ -20,7 +20,7 @@ def calculate_domain_bias_score(
     Calculate bias score for an article based on domain.
 
     Args:
-        domain: Domain name ('politics', 'finance', 'science-tech')
+        domain: Domain name ('politics', 'finance', 'artificial-intelligence', …)
         title: Article title
         content: Article content
         source: Source name/domain
@@ -30,7 +30,7 @@ def calculate_domain_bias_score(
     """
     # Only apply bias detection to politics domain
     if domain not in ["politics"]:
-        # Finance and science-tech don't need political bias detection
+        # Non-politics domains skip political bias detection
         return None
 
     # For politics domain, use simplified political bias detection

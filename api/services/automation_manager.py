@@ -21,6 +21,7 @@ could stack hundreds of redundant queued sweeps while workers were busy.
 With **CLAIM_EXTRACTION_DRAIN** (default on), **claim_extraction** also skips new scheduler/chain enqueues when running+queued depth already reaches the per-phase concurrent cap (``_should_skip_redundant_phase_request``), so context_sync completion cannot pile hundreds of duplicate tasks on ``_requested_task_queue``.
 If a duplicate still reaches a worker under the cap, ``_discard_redundant_claim_extraction_when_at_cap`` completes it without re-queueing (per-phase defer used ``bypass_schedule_depth_cap`` and recycled the same backlog forever).
 **AUTOMATION_PER_PHASE_CONCURRENT_CAP** caps how many workers may execute the same phase at once (default 2; 0=unlimited); **nightly_sequential_drain** bypasses; nightly window multiplies cap via **AUTOMATION_PER_PHASE_CONCURRENT_NIGHTLY_MULT** for catch-up when those phases are scheduled.
+**AUTOMATION_DB_POOL_PRESSURE_GATE_ENABLED** (default true): while worker psycopg2 pool utilization ≥ **AUTOMATION_DB_WORKER_UTILIZATION_SKIP_THRESHOLD** (default 0.82), defer *new* scheduled enqueues and continuous batch re-queues except **AUTOMATION_DB_POOL_GATE_EXEMPT_PHASES** (default: health_check, pending_db_flush). Manual Monitor phase requests still run (**requested_activity_id** bypasses request_phase deferral).
 
 **Offload to Widow (DB host):** set ``AUTOMATION_SKIP_RSS_IN_COLLECTION_CYCLE=true`` on the GPU/main API host when
 RSS runs on Widow; set ``AUTOMATION_DISABLED_SCHEDULES=context_sync,entity_profile_sync,pending_db_flush`` (comma-separated)
@@ -182,8 +183,63 @@ DB_HEAVY_PHASES = frozenset(
         "entity_organizer",
         "collection_cycle",
         "content_enrichment",
+        # Churn-heavy automation phases (worker pool + LLM); used for router cooldowns / resource class
+        "timeline_generation",
+        "event_deduplication",
+        "event_extraction",
+        "watchlist_alerts",
+        "story_continuation",
+        "ml_processing",
+        "topic_clustering",
+        "sentiment_analysis",
+        "entity_extraction",
+        "quality_scoring",
     }
 )
+
+
+def _automation_db_pool_pressure_gate_enabled() -> bool:
+    """When True, defer new scheduled work if worker psycopg2 pool utilization is above threshold."""
+    return os.getenv("AUTOMATION_DB_POOL_PRESSURE_GATE_ENABLED", "true").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+
+
+def _db_pool_gate_exempt_phases() -> frozenset[str]:
+    """Phases that may still schedule when the worker pool is hot (liveness + spill replay)."""
+    base = frozenset({"health_check", "pending_db_flush"})
+    raw = os.environ.get("AUTOMATION_DB_POOL_GATE_EXEMPT_PHASES", "").strip()
+    if not raw:
+        return base
+    return base | frozenset(x.strip() for x in raw.split(",") if x.strip())
+
+
+def automation_db_pool_should_defer_phase(phase_name: str) -> bool:
+    """
+    Return True if this phase should not be *newly* scheduled while worker DB pool is under pressure.
+
+    Does not apply to tasks already queued. Manual Monitor requests (requested_activity_id) bypass
+    in request_phase. Defer/retry paths that re-queue the same Task use the same enqueue APIs but
+    typically run when pressure drops; exempt phases always pass.
+    """
+    if phase_name in _db_pool_gate_exempt_phases():
+        return False
+    if not _automation_db_pool_pressure_gate_enabled():
+        return False
+    try:
+        from shared.database.connection import get_db_pool_snapshot
+
+        snap = get_db_pool_snapshot()
+        w = float((snap.get("worker") or {}).get("utilization") or 0.0)
+    except Exception:
+        return False
+    try:
+        thr = float(os.getenv("AUTOMATION_DB_WORKER_UTILIZATION_SKIP_THRESHOLD", "0.82"))
+    except ValueError:
+        thr = 0.82
+    return w >= thr
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -298,6 +354,30 @@ DEFAULT_AUTOMATION_PER_PHASE_CONCURRENT_CAP_PHASES = frozenset(
         "storyline_synthesis",
         "storyline_processing",
         "content_refinement_queue",
+        # Previously uncapped (exec_cap=0): too many same-phase workers → worker DB pool exhaustion
+        "timeline_generation",
+        "event_deduplication",
+        "watchlist_alerts",
+        "story_continuation",
+        "ml_processing",
+        "research_topic_refinement",
+        "narrative_thread_build",
+        "storyline_automation",
+        "content_enrichment",
+        "proactive_detection",
+        "fact_verification",
+        "cross_domain_synthesis",
+        "digest_generation",
+        "entity_dossier_compile",
+        "entity_position_tracker",
+        "storyline_discovery",
+        "editorial_document_generation",
+        "editorial_briefing_generation",
+        "storyline_enrichment",
+        "pattern_matching",
+        "data_cleanup",
+        "cache_cleanup",
+        "quality_scoring",
     }
 )
 
@@ -2001,6 +2081,14 @@ class AutomationManager:
                                 self._phase_pipeline_inflight(phase_name),
                             )
                             continue
+                        if automation_db_pool_should_defer_phase(phase_name) and not (
+                            requested_activity_id
+                        ):
+                            logger.debug(
+                                "request_phase: defer %s (DB worker pool pressure)",
+                                phase_name,
+                            )
+                            continue
                         task = Task(
                             id=f"{phase_name}_{int(datetime.now(timezone.utc).timestamp())}",
                             name=phase_name,
@@ -2365,6 +2453,8 @@ class AutomationManager:
             if time_since >= cooldown_sec and self._are_dependencies_satisfied(
                 task_name, schedule, current_time
             ):
+                if automation_db_pool_should_defer_phase(task_name):
+                    return False
                 return True
             return False
 
@@ -2383,6 +2473,8 @@ class AutomationManager:
             or (current_time - schedule["last_run"]).total_seconds() >= effective_interval
         ):
             if self._are_dependencies_satisfied(task_name, schedule, current_time):
+                if automation_db_pool_should_defer_phase(task_name):
+                    return False
                 return True
         return False
 
@@ -2400,6 +2492,12 @@ class AutomationManager:
                 task_name,
                 self._automation_queue_depth(),
                 AUTOMATION_QUEUE_SOFT_CAP,
+            )
+            return
+        if automation_db_pool_should_defer_phase(task_name):
+            logger.debug(
+                "DB worker pool pressure — skip scheduled create/queue for %s",
+                task_name,
             )
             return
         # Create task
@@ -2979,6 +3077,11 @@ class AutomationManager:
                                 "Queue soft cap: skip continuous re-queue for %s (depth=%s)",
                                 task.name,
                                 self._automation_queue_depth(),
+                            )
+                        elif automation_db_pool_should_defer_phase(task.name):
+                            logger.debug(
+                                "DB worker pool pressure — skip continuous re-queue for %s",
+                                task.name,
                             )
                         else:
                             next_task = Task(
@@ -4747,22 +4850,27 @@ class AutomationManager:
     async def _execute_sentiment_analysis(self, task: Task):
         """Execute sentiment analysis task"""
         from services.ai_processing_service import get_ai_service
+        from shared.pipeline_pass_marker import phase_backlog_uses_pass_marker, record_article_phase_pass, sql_article_pass_null
 
         ai_service = get_ai_service()
         analyzed_count = 0
 
         ml_ready = sql_ml_ready_and_content_bounds()
+        pass_clause = ""
+        if phase_backlog_uses_pass_marker("sentiment_analysis"):
+            pass_clause = f" AND ({sql_article_pass_null('sentiment_analysis', 'a')}) "
         for schema in get_pipeline_schema_names_active():
             # Fetch candidates quickly, then close transaction before awaited LLM work.
             conn = await self._get_db_connection()
             try:
                 with conn.cursor() as cursor:
                     cursor.execute(f"""
-                        SELECT id, content FROM {schema}.articles
-                        WHERE sentiment_score IS NULL
-                          AND COALESCE((metadata #>> '{{pipeline_skip,sentiment_analysis_skip}}')::boolean, false) = false
+                        SELECT a.id, a.content FROM {schema}.articles a
+                        WHERE a.sentiment_score IS NULL
+                          AND COALESCE((a.metadata #>> '{{pipeline_skip,sentiment_analysis_skip}}')::boolean, false) = false
                           AND ({ml_ready})
-                        ORDER BY created_at DESC
+                          {pass_clause}
+                        ORDER BY a.created_at DESC
                         LIMIT 100
                     """)
                     articles = cursor.fetchall()
@@ -4792,6 +4900,7 @@ class AutomationManager:
                                 (score, label or None, article_id),
                             )
                             write_conn.commit()
+                        record_article_phase_pass(schema, article_id, "sentiment_analysis", "scored")
                         analyzed_count += 1
                     finally:
                         write_conn.close()
@@ -5101,6 +5210,12 @@ class AutomationManager:
             articles_per_domain = 20
         articles_per_domain = max(5, min(120, articles_per_domain))
 
+        from shared.pipeline_pass_marker import phase_backlog_uses_pass_marker, sql_article_pass_null
+
+        pass_clause = ""
+        if phase_backlog_uses_pass_marker("entity_extraction"):
+            pass_clause = f" AND ({sql_article_pass_null('entity_extraction', 'a')}) "
+
         conn = await self._get_db_connection()
         try:
             cursor = conn.cursor()
@@ -5122,6 +5237,7 @@ class AutomationManager:
                                 'enriched', 'failed', 'inaccessible'
                             )
                           )
+                          {pass_clause}
                         ORDER BY a.created_at DESC
                         LIMIT {articles_per_domain}
                     """)
@@ -5150,7 +5266,18 @@ class AutomationManager:
                         content=content,
                         schema=schema_name,
                     )
-                    return bool(result.get("success"))
+                    ok = bool(result.get("success"))
+                    if ok:
+                        from shared.pipeline_pass_marker import record_article_phase_pass
+
+                        cnt = (result.get("counts") or {}).get("entities") or 0
+                        record_article_phase_pass(
+                            schema_name,
+                            article_id,
+                            "entity_extraction",
+                            "entities_stored" if int(cnt) > 0 else "no_entities_stored",
+                        )
+                    return ok
                 except Exception as e:
                     logger.error(
                         "Entity extraction for article %s (%s): %s", article_id, domain_key, e
@@ -5247,6 +5374,17 @@ class AutomationManager:
                                     (len(events), article_id),
                                 )
                                 conn_a.commit()
+                                try:
+                                    from shared.pipeline_pass_marker import record_article_phase_pass
+
+                                    record_article_phase_pass(
+                                        schema,
+                                        article_id,
+                                        "event_extraction",
+                                        "timeline_saved",
+                                    )
+                                except Exception:
+                                    pass
                                 cur.close()
                                 return saved
                             except Exception:
@@ -5278,6 +5416,12 @@ class AutomationManager:
                         domain_for_events = schema_to_primary_domain_key(schema)
                     except KeyError:
                         domain_for_events = schema.replace("_", "-")
+                    from shared.pipeline_pass_marker import phase_backlog_uses_pass_marker, sql_article_pass_null
+
+                    ev_pass = ""
+                    if phase_backlog_uses_pass_marker("event_extraction"):
+                        ev_pass = f" AND ({sql_article_pass_null('event_extraction', 'a')}) "
+
                     conn = await self._get_db_connection()
                     cursor = conn.cursor()
                     try:
@@ -5299,6 +5443,7 @@ class AutomationManager:
                                   a.processing_status = 'completed'
                                   OR a.enrichment_status IN ('completed', 'enriched')
                               )
+                              {ev_pass}
                             ORDER BY a.published_at DESC NULLS LAST
                             LIMIT 30
                         """)
@@ -5574,21 +5719,31 @@ class AutomationManager:
             from domains.content_analysis.services.topic_clustering_service import (
                 TopicClusteringService,
             )
+            from shared.domain_registry import first_active_domain_key, resolve_domain_schema
             from shared.services.domain_aware_service import get_all_domains
 
             # Get all active domains
             domains = get_all_domains()
             if not domains:
-                logger.warning("No active domains found, defaulting to 'politics'")
-                domains = [{"domain_key": "politics", "schema_name": "politics"}]
+                fb = first_active_domain_key()
+                logger.warning("No active domains found, defaulting to %s", fb)
+                domains = [{"domain_key": fb, "schema_name": resolve_domain_schema(fb)}]
 
             # Topic clustering configuration constants
             try:
-                from config.settings import topic_clustering_graduation_confidence
+                from config.settings import (
+                    topic_clustering_backlog_uses_pass_marker,
+                    topic_clustering_graduation_confidence,
+                    topic_clustering_iterative_refinement_enabled,
+                )
 
                 CONFIDENCE_THRESHOLD = float(topic_clustering_graduation_confidence())
+                TC_USE_PASS_MARKER = topic_clustering_backlog_uses_pass_marker()
+                TC_ITERATIVE = topic_clustering_iterative_refinement_enabled()
             except Exception:
                 CONFIDENCE_THRESHOLD = 0.88
+                TC_USE_PASS_MARKER = True
+                TC_ITERATIVE = False
             LOW_CONFIDENCE_THRESHOLD = 0.7
             BATCH_SIZE = 20
             NEW_ARTICLE_COUNT = 8  # 40% of batch size
@@ -5611,6 +5766,11 @@ class AutomationManager:
                 # Initialize topic clustering service for this domain
                 topic_service = TopicClusteringService(db_config, domain=domain_key)
 
+                if TC_USE_PASS_MARKER and not TC_ITERATIVE:
+                    tc_where = """(pass_at IS NULL OR TRIM(COALESCE(pass_at, '')) = '')"""
+                else:
+                    tc_where = """priority_group != 'high_confidence'"""
+
                 # Process articles incrementally with balanced prioritization
                 conn = await self._get_db_connection()
                 try:
@@ -5627,6 +5787,7 @@ class AutomationManager:
                                     COALESCE(AVG(ata.confidence_score), 0.0) as avg_confidence,
                                     COALESCE(MIN(ata.confidence_score), 0.0) as min_confidence,
                                     COALESCE(MAX(ata.confidence_score), 0.0) as max_confidence,
+                                    (a.metadata->'pipeline'->'topic_clustering'->>'last_pass_at') AS pass_at,
                                     CASE
                                         WHEN COUNT(ata.id) = 0 THEN 'new'
                                         WHEN COALESCE(AVG(ata.confidence_score), 0.0) < %s THEN 'low_confidence'
@@ -5637,7 +5798,8 @@ class AutomationManager:
                                 LEFT JOIN {schema_name}.article_topic_assignments ata ON a.id = ata.article_id
                                 WHERE a.content IS NOT NULL
                                 AND LENGTH(a.content) > 100
-                                GROUP BY a.id, a.title, a.created_at
+                                GROUP BY a.id, a.title, a.created_at,
+                                    (a.metadata->'pipeline'->'topic_clustering'->>'last_pass_at')
                             )
                             SELECT
                                 id,
@@ -5647,9 +5809,10 @@ class AutomationManager:
                                 min_confidence,
                                 max_confidence,
                                 priority_group,
+                                pass_at,
                                 created_at
                             FROM article_confidence
-                            WHERE priority_group != 'high_confidence'  -- Exclude articles above threshold
+                            WHERE {tc_where}
                             ORDER BY
                                 CASE priority_group
                                     WHEN 'new' THEN 1

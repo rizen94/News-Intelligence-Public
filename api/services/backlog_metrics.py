@@ -3,6 +3,17 @@ Backlog metrics — pending work counts per automation phase for orchestrator pr
 Counts are defined to match each phase’s real eligibility (what automation would select),
 not coarse table totals, so Monitor ``pending_records`` reflects actionable backlog.
 
+**topic_clustering (default):** ``pending`` = articles with no ``metadata.pipeline.topic_clustering.last_pass_at``
+that have sufficient body text — i.e. never completed a successful clustering pass (including
+``no_topics_extracted`` outcomes). Legacy “churn” counting (low average confidence after assignments)
+is available via ``TOPIC_CLUSTERING_BACKLOG_USE_PASS_MARKER=false``.
+
+**Other phases:** ``PIPELINE_BACKLOG_USE_PASS_MARKERS`` (default true) and per-phase
+``<PHASE>_BACKLOG_USE_PASS_MARKER`` gate the same ``metadata.pipeline.<phase>.last_pass_at`` pattern for
+entity_extraction, metadata_enrichment, storyline_discovery, event_extraction, sentiment_analysis,
+claim_extraction, and event_tracking. ``entity_profile_sync`` uses ``old_entity_to_new`` as the completion
+signal (no separate pass field).
+
 Used by the automation manager to: skip empty cycles, run backlog mode (shorter interval),
 and queue tasks by amount of work (most first). When workload-driven scheduling is on,
 phases listed here are eligible every tick (subject to cooldown) when they have work;
@@ -20,6 +31,11 @@ from shared.article_processing_gates import (
     sql_ml_ready_and_content_bounds,
 )
 from shared.domain_registry import get_pipeline_schema_names_active, pipeline_url_schema_pairs
+from shared.pipeline_pass_marker import (
+    phase_backlog_uses_pass_marker,
+    sql_article_pass_null,
+    sql_context_pass_null,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +58,7 @@ BATCH_SIZE_PER_TASK: Dict[str, int] = {
     # Unified nightly phase: enrichment + context_sync + refinement queue
     "nightly_enrichment_context": 0,
     # Per-run throughput (automation_manager batch limits × domain count where applicable)
-    "metadata_enrichment": 15,  # 5 × politics/finance/science_tech
+    "metadata_enrichment": 15,  # order-of-magnitude per domain batch
     "ml_processing": 150,  # 50 × 3 schemas
     "entity_extraction": 60,  # 20 × 3
     "sentiment_analysis": 300,  # 100 × 3
@@ -331,18 +347,23 @@ def _count_event_tracking_backlog() -> int:
     conn = _get_conn()
     if not conn:
         return 0
+    pass_sql = ""
+    if phase_backlog_uses_pass_marker("event_tracking"):
+        pass_sql = f" AND ({sql_context_pass_null('event_tracking', 'c')}) "
     try:
         with conn.cursor() as cur:
             cur.execute("SET LOCAL statement_timeout = '30s'")
             cur.execute(
-                """
+                f"""
                 SELECT COUNT(*) FROM intelligence.contexts c
                 WHERE c.created_at >= NOW() - (%s * INTERVAL '1 day')
                   AND LENGTH(COALESCE(c.content, '')) >= %s
                   AND NOT EXISTS (
-                      SELECT 1 FROM intelligence.event_chronicles ec
-                      WHERE ec.developments::text LIKE '%%"context_id": ' || c.id::text || '%%'
+                      SELECT 1 FROM intelligence.event_chronicles ec,
+                      LATERAL jsonb_array_elements(ec.developments) AS dev
+                      WHERE (dev->>'context_id')::int = c.id
                   )
+                  {pass_sql}
                 """,
                 (max_age_days, min_len),
             )
@@ -363,17 +384,21 @@ def _count_claim_extraction_backlog() -> int:
     if not conn:
         return 0
     min_text = _claim_extraction_min_text_length()
+    pass_sql = ""
+    if phase_backlog_uses_pass_marker("claim_extraction"):
+        pass_sql = f" AND ({sql_context_pass_null('claim_extraction', 'c')}) "
     try:
         with conn.cursor() as cur:
             cur.execute("SET LOCAL statement_timeout = '8s'")
             cur.execute(
-                """
+                f"""
                 SELECT COUNT(*) FROM intelligence.contexts c
                 LEFT JOIN intelligence.extracted_claims ec ON ec.context_id = c.id
                 WHERE ec.id IS NULL
                   AND (
                       LENGTH(COALESCE(c.content, '')) + LENGTH(COALESCE(c.title, ''))
                   ) >= %s
+                  {pass_sql}
                 """,
                 (min_text,),
             )
@@ -503,15 +528,19 @@ def _count_metadata_enrichment_pending() -> int:
     if not conn:
         return 0
     total = 0
+    pass_sql = ""
+    if phase_backlog_uses_pass_marker("metadata_enrichment"):
+        pass_sql = f" AND ({sql_article_pass_null('metadata_enrichment', 'a')}) "
     try:
         for schema in get_pipeline_schema_names_active():
             with conn.cursor() as cur:
                 cur.execute("SET LOCAL statement_timeout = '3s'")
                 cur.execute(
                     f"""
-                    SELECT COUNT(*) FROM {schema}.articles
-                    WHERE content IS NOT NULL AND LENGTH(content) > 50
-                      AND (metadata IS NULL OR (metadata->>'enrichment_done') IS NULL)
+                    SELECT COUNT(*) FROM {schema}.articles a
+                    WHERE a.content IS NOT NULL AND LENGTH(a.content) > 50
+                      AND (a.metadata IS NULL OR (a.metadata->>'enrichment_done') IS NULL)
+                      {pass_sql}
                     """
                 )
                 total += int(cur.fetchone()[0] or 0)
@@ -562,6 +591,9 @@ def _count_entity_extraction_pending() -> int:
     if not conn:
         return 0
     total = 0
+    pass_sql = ""
+    if phase_backlog_uses_pass_marker("entity_extraction"):
+        pass_sql = f" AND ({sql_article_pass_null('entity_extraction', 'a')}) "
     try:
         for schema in get_pipeline_schema_names_active():
             with conn.cursor() as cur:
@@ -581,6 +613,7 @@ def _count_entity_extraction_pending() -> int:
                               'enriched', 'failed', 'inaccessible'
                           )
                       )
+                      {pass_sql}
                     """
                 )
                 total += int(cur.fetchone()[0] or 0)
@@ -601,16 +634,20 @@ def _count_sentiment_analysis_pending() -> int:
         return 0
     total = 0
     ml_ready = sql_ml_ready_and_content_bounds()
+    pass_sql = ""
+    if phase_backlog_uses_pass_marker("sentiment_analysis"):
+        pass_sql = f" AND ({sql_article_pass_null('sentiment_analysis', 'a')}) "
     try:
         for schema in get_pipeline_schema_names_active():
             with conn.cursor() as cur:
                 cur.execute("SET LOCAL statement_timeout = '3s'")
                 cur.execute(
                     f"""
-                    SELECT COUNT(*) FROM {schema}.articles
-                    WHERE sentiment_score IS NULL
-                      AND COALESCE((metadata #>> '{{pipeline_skip,sentiment_analysis_skip}}')::boolean, false) = false
+                    SELECT COUNT(*) FROM {schema}.articles a
+                    WHERE a.sentiment_score IS NULL
+                      AND COALESCE((a.metadata #>> '{{pipeline_skip,sentiment_analysis_skip}}')::boolean, false) = false
                       AND ({ml_ready})
+                      {pass_sql}
                     """
                 )
                 total += int(cur.fetchone()[0] or 0)
@@ -691,37 +728,53 @@ def _count_storyline_processing_pending() -> int:
 
 
 def _count_topic_clustering_pending() -> int:
-    """Articles not fully graduated in topic assignments (matches topic_clustering priority filter)."""
+    """Articles awaiting a first successful topic_clustering pass (or legacy graduation backlog)."""
     conn = _get_conn()
     if not conn:
         return 0
     total = 0
     try:
-        from config.settings import topic_clustering_graduation_confidence
+        from config.settings import (
+            topic_clustering_backlog_uses_pass_marker,
+            topic_clustering_graduation_confidence,
+        )
 
+        use_pass = topic_clustering_backlog_uses_pass_marker()
         conf = float(topic_clustering_graduation_confidence())
     except Exception:
+        use_pass = True
         conf = 0.88
     try:
         for schema in get_pipeline_schema_names_active():
             with conn.cursor() as cur:
                 cur.execute("SET LOCAL statement_timeout = '3s'")
-                cur.execute(
-                    f"""
-                    SELECT COUNT(*) FROM (
-                        SELECT a.id
+                if use_pass:
+                    cur.execute(
+                        f"""
+                        SELECT COUNT(*)
                         FROM {schema}.articles a
-                        LEFT JOIN {schema}.article_topic_assignments ata
-                          ON a.id = ata.article_id
                         WHERE a.content IS NOT NULL
                           AND LENGTH(a.content) > 100
-                        GROUP BY a.id
-                        HAVING COUNT(ata.id) = 0
-                            OR COALESCE(AVG(ata.confidence_score), 0) < %s
-                    ) t
-                    """,
-                    (conf,),
-                )
+                          AND (a.metadata->'pipeline'->'topic_clustering'->>'last_pass_at') IS NULL
+                        """
+                    )
+                else:
+                    cur.execute(
+                        f"""
+                        SELECT COUNT(*) FROM (
+                            SELECT a.id
+                            FROM {schema}.articles a
+                            LEFT JOIN {schema}.article_topic_assignments ata
+                              ON a.id = ata.article_id
+                            WHERE a.content IS NOT NULL
+                              AND LENGTH(a.content) > 100
+                            GROUP BY a.id
+                            HAVING COUNT(ata.id) = 0
+                                OR COALESCE(AVG(ata.confidence_score), 0) < %s
+                        ) t
+                        """,
+                        (conf,),
+                    )
                 total += int(cur.fetchone()[0] or 0)
         return total
     except Exception as e:
@@ -779,6 +832,9 @@ def _count_storyline_discovery_pending() -> int:
     if not conn:
         return 0
     total = 0
+    pass_sql = ""
+    if phase_backlog_uses_pass_marker("storyline_discovery"):
+        pass_sql = f" AND ({sql_article_pass_null('storyline_discovery', 'a')}) "
     try:
         for schema in get_pipeline_schema_names_active():
             with conn.cursor() as cur:
@@ -790,11 +846,13 @@ def _count_storyline_discovery_pending() -> int:
                         ORDER BY created_at DESC
                         LIMIT %s
                     )
-                    SELECT COUNT(*) FROM cand c
+                    SELECT COUNT(*) FROM {schema}.articles a
+                    INNER JOIN cand ON cand.id = a.id
                     WHERE NOT EXISTS (
                         SELECT 1 FROM {schema}.storyline_articles sa
-                        WHERE sa.article_id = c.id
+                        WHERE sa.article_id = a.id
                     )
+                    {pass_sql}
                     """,
                     (cap,),
                 )
@@ -955,7 +1013,9 @@ def _count_claims_to_facts_pending() -> int:
 
 
 def _count_entity_profile_sync_pending() -> int:
-    """entity_canonical rows without intelligence.old_entity_to_new mapping (per domain)."""
+    """entity_canonical rows without intelligence.old_entity_to_new mapping (per domain).
+
+    Completion is structural (mapping row exists); there is no separate pass marker."""
     conn = _get_conn()
     if not conn:
         return 0
@@ -1004,6 +1064,9 @@ def _count_event_extraction_pending() -> int:
     if not conn:
         return 0
     total = 0
+    pass_sql = ""
+    if phase_backlog_uses_pass_marker("event_extraction"):
+        pass_sql = f" AND ({sql_article_pass_null('event_extraction', 'a')}) "
     try:
         for schema in get_pipeline_schema_names_active():
             with conn.cursor() as cur:
@@ -1019,6 +1082,7 @@ def _count_event_extraction_pending() -> int:
                           a.processing_status = 'completed'
                           OR a.enrichment_status IN ('completed', 'enriched')
                       )
+                      {pass_sql}
                     """
                 )
                 total += int(cur.fetchone()[0] or 0)

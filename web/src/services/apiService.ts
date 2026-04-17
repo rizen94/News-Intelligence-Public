@@ -150,8 +150,6 @@ class APIService {
 
   // Topics
   getTopics = topicsApi.getTopics;
-  getTopicCategoriesStats = topicsApi.getTopicCategoriesStats;
-  getCategoryStats = topicsApi.getTopicCategoriesStats;
   getTopic = topicsApi.getTopic;
   updateTopic = topicsApi.updateTopic;
   getTopicWordCloud = topicsApi.getTopicWordCloud;
@@ -192,6 +190,7 @@ class APIService {
   getAutomationStatus = monitoringApi.getAutomationStatus;
   getBacklogStatus = monitoringApi.getBacklogStatus;
   getProcessingProgress = monitoringApi.getProcessingProgress;
+  getGpuMetricHistory = monitoringApi.getGpuMetricHistory;
   getDocumentSourcesHealth = monitoringApi.getDocumentSourcesHealth;
   getDatabaseConnections = monitoringApi.getDatabaseConnections;
   triggerPhase = monitoringApi.triggerPhase;

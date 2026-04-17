@@ -19,7 +19,6 @@ import MonitorHeartIcon from '@mui/icons-material/MonitorHeart';
 import AnalyticsIcon from '@mui/icons-material/Analytics';
 import ShowChartIcon from '@mui/icons-material/ShowChart';
 import AutoStoriesIcon from '@mui/icons-material/AutoStories';
-import MenuBookIcon from '@mui/icons-material/MenuBook';
 import NewspaperIcon from '@mui/icons-material/Newspaper';
 import RssFeedIcon from '@mui/icons-material/RssFeed';
 import LabelIcon from '@mui/icons-material/Label';
@@ -81,8 +80,7 @@ const NAV_SECTIONS: NavSection[] = [
     id: 'outputs',
     label: 'Outputs',
     items: [
-      { path: 'briefings', label: 'Briefings', icon: <MenuBookIcon /> },
-      { path: 'report', label: "Today's Report", icon: <NewspaperIcon /> },
+      { path: 'briefings', label: 'Briefing', icon: <NewspaperIcon /> },
       { path: 'watchlist', label: 'Watchlist', icon: <VisibilityIcon /> },
     ],
   },

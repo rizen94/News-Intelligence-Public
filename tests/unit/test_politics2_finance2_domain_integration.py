@@ -1,4 +1,4 @@
-"""Integration checks for template silos politics-2 / finance-2 (migration 201 + YAML)."""
+"""Integration checks for politics / finance silos (schemas politics_2 / finance_2, migration 201 + YAML)."""
 
 import os
 import sys
@@ -55,21 +55,21 @@ from shared.domain_registry import (  # noqa: E402
 
 def test_politics2_finance2_in_active_registry():
     keys = get_active_domain_keys()
-    assert "politics-2" in keys, "api/config/domains/politics-2.yaml should be is_active"
-    assert "finance-2" in keys, "api/config/domains/finance-2.yaml should be is_active"
+    assert "politics" in keys, "api/config/domains/politics.yaml should be is_active"
+    assert "finance" in keys, "api/config/domains/finance.yaml should be is_active"
 
 
 def test_politics2_finance2_valid_and_schema_map():
-    assert is_valid_domain_key("politics-2")
-    assert is_valid_domain_key("finance-2")
-    assert resolve_domain_schema("politics-2") == "politics_2"
-    assert resolve_domain_schema("finance-2") == "finance_2"
+    assert is_valid_domain_key("politics")
+    assert is_valid_domain_key("finance")
+    assert resolve_domain_schema("politics") == "politics_2"
+    assert resolve_domain_schema("finance") == "finance_2"
 
 
 def test_politics2_finance2_in_url_schema_pairs():
     pairs = dict(url_schema_pairs())
-    assert pairs.get("politics-2") == "politics_2"
-    assert pairs.get("finance-2") == "finance_2"
+    assert pairs.get("politics") == "politics_2"
+    assert pairs.get("finance") == "finance_2"
 
 
 def test_pipeline_url_schema_pairs_matches_full_when_exclude_empty(monkeypatch):
@@ -83,10 +83,10 @@ def test_pipeline_excludes_legacy_domain_keys(monkeypatch):
     pipe = dict(pipeline_url_schema_pairs())
     assert "politics" not in pipe
     assert "finance" not in pipe
-    if "politics-2" in dict(url_schema_pairs()):
-        assert pipe.get("politics-2") == "politics_2"
-    if "finance-2" in dict(url_schema_pairs()):
-        assert pipe.get("finance-2") == "finance_2"
+    if "politics" in dict(url_schema_pairs()):
+        assert pipe.get("politics") == "politics_2"
+    if "finance" in dict(url_schema_pairs()):
+        assert pipe.get("finance") == "finance_2"
 
 
 def test_pipeline_include_allowlist(monkeypatch):
@@ -97,11 +97,12 @@ def test_pipeline_include_allowlist(monkeypatch):
         assert dk in ("legal", "medicine")
 
 
-def test_pipeline_excludes_science_tech(monkeypatch):
+def test_pipeline_excludes_domain_via_env(monkeypatch):
     monkeypatch.delenv("PIPELINE_INCLUDE_DOMAIN_KEYS", raising=False)
-    monkeypatch.setenv("PIPELINE_EXCLUDE_DOMAIN_KEYS", "science-tech")
+    monkeypatch.setenv("PIPELINE_EXCLUDE_DOMAIN_KEYS", "artificial-intelligence")
     pipe = dict(pipeline_url_schema_pairs())
-    assert "science-tech" not in pipe
+    if "artificial-intelligence" in dict(url_schema_pairs()):
+        assert "artificial-intelligence" not in pipe
 
 
 def test_nightly_unified_pipeline_disabled(monkeypatch):
@@ -122,8 +123,8 @@ def test_legislative_scan_domain_keys_env(monkeypatch):
     monkeypatch.delenv("LEGISLATIVE_SCAN_DOMAIN_KEYS", raising=False)
     assert legislative_scan_domain_keys() == ("politics", "legal")
 
-    monkeypatch.setenv("LEGISLATIVE_SCAN_DOMAIN_KEYS", "politics-2, legal")
-    assert legislative_scan_domain_keys() == ("politics-2", "legal")
+    monkeypatch.setenv("LEGISLATIVE_SCAN_DOMAIN_KEYS", "politics, legal")
+    assert legislative_scan_domain_keys() == ("politics", "legal")
 
 
 def test_reserved_schema_names_include_template_schemas():
@@ -161,17 +162,12 @@ def test_politics_content_domain_key_default(monkeypatch):
     assert settings.politics_postgres_content_domain_key() == "politics-2"
 
 
-def test_synthesis_config_merge_for_minus_two_silos():
+def test_synthesis_config_politics_finance_anchors():
     reload_config()
-    p1 = get_domain_synthesis_config("politics")
-    p2 = get_domain_synthesis_config("politics-2")
-    assert p2.focus_areas == p1.focus_areas
-    assert p2.event_type_priorities == p1.event_type_priorities
-
-    f1 = get_domain_synthesis_config("finance")
-    f2 = get_domain_synthesis_config("finance-2")
-    assert f2.focus_areas == f1.focus_areas
-    assert "commodities" in " ".join(f2.focus_areas).lower()
+    p = get_domain_synthesis_config("politics")
+    assert p.focus_areas
+    f = get_domain_synthesis_config("finance")
+    assert "commodities" in " ".join(f.focus_areas).lower()
 
 
 @pytest.mark.requires_db
@@ -238,20 +234,21 @@ def test_finance_2_extension_tables_after_migration_206():
 
 
 @pytest.mark.requires_db
-def test_public_domains_rows_for_minus_two():
+def test_public_domains_rows_politics_finance_schemas():
     conn = _db_conn_or_skip()
     try:
         with conn.cursor() as cur:
             cur.execute(
                 """
                 SELECT domain_key, schema_name FROM public.domains
-                WHERE domain_key IN ('politics-2', 'finance-2')
-                ORDER BY domain_key
+                WHERE schema_name IN ('politics_2', 'finance_2')
+                ORDER BY schema_name
                 """
             )
             rows = cur.fetchall()
-        got = {r[0]: r[1] for r in rows}
-        assert got.get("finance-2") == "finance_2"
-        assert got.get("politics-2") == "politics_2"
+        by_schema = {r[1]: r[0] for r in rows}
+        # Pre–211 DBs may still use politics-2 / finance-2 keys; post–211 use politics / finance.
+        assert by_schema.get("politics_2") in ("politics", "politics-2")
+        assert by_schema.get("finance_2") in ("finance", "finance-2")
     finally:
         conn.close()

@@ -8,6 +8,37 @@ defaults:
   max_entities_per_synthesis: 30
   min_article_confidence: 0.3
   clustering_similarity_threshold: 0.65
+  # Merged into every domain’s topic_filter (RSS is_excluded_content + synthesis).
+  # High-precision phrases for affiliate credit-card / personal-finance spam that
+  # often lands in general-news feeds (e.g. politics template silos).
+  topic_filter:
+    exclude_keywords:
+      - best credit cards
+      - best credit card
+      - top credit cards
+      - top credit card
+      - compare credit cards
+      - comparing credit cards
+      - credit card offers
+      - credit card offer
+      - cash back cards
+      - cash-back cards
+      - cashback cards
+      - rewards cards
+      - travel rewards cards
+      - balance transfer cards
+      - sign-up bonus
+      - welcome bonus
+      - annual fee waived
+      - 0% intro apr
+      - personal finance tips
+      - mortgage rates for homebuyers
+      - refinance your mortgage
+      - savings account bonus
+      - checking account bonus
+      - high-yield savings
+      - underscored money
+      - cnn underscored
 
 domains:
   politics: &politics_v1
@@ -161,132 +192,6 @@ domains:
       where possible. Identify causal chains between events and market movements.
       Prioritize commodities, tariffs, sanctions, central bank actions, and
       resource demand shifts. Track how geopolitical events shape prices.
-
-  politics-2:
-    <<: *politics_v1
-
-  finance-2:
-    <<: *finance_v1
-
-  science-tech:
-    focus_areas:
-      - how a breakthrough or tool changes what is possible in adjacent fields
-      - evidence strength (preprint vs peer-reviewed vs deployed product)
-      - limits and failure modes of a technology (what it cannot do)
-      - cross-field influence (e.g. compute, data, regulation, ethics)
-      - parallel research tracks and competing approaches
-      - clinical and regulatory pipelines when relevant
-      - aerospace, energy transition, materials, and biotech convergence
-      - AI systems as tools for science (not hype about general intelligence)
-      - genomics, DNA sequencing, and therapeutic modalities
-      - quantum and novel computing when tied to real benchmarks
-
-    # Big-picture axes for topic clustering and storyline linking (influence graph, not politics-style events)
-    macro_subject_axes:
-      - artificial_intelligence_and_ml
-      - medicine_and_therapeutics
-      - genomics_dna_and_proteomics
-      - neuroscience_and_brain_interfaces
-      - climate_energy_and_storage
-      - aerospace_and_space
-      - materials_and_nanotechnology
-      - robotics_and_automation
-      - cybersecurity_and_digital_infrastructure
-      - semiconductors_and_hardware
-
-    event_type_priorities:
-      - research_publication
-      - scientific_discovery
-      - clinical_trial
-      - regulatory_approval
-      - patent_filing
-      - product_launch
-      - industry_partnership
-      - report_release
-      - agreement
-      - public_statement
-      - appointment
-      - meeting
-
-    entity_type_weights:
-      organization: 1.0  # labs, companies, agencies, consortia
-      person: 0.75       # principal investigators, founders — avoid over-weighting single quotes
-      technology: 1.0    # models, assays, platforms, spacecraft — central to linking
-      location: 0.35     # geography matters for policy and trials, less than politics
-
-    storyline_patterns:
-      - capability arc (what was demonstrated, under what conditions, vs marketing claims)
-      - cross-field influence (upstream method enables downstream application)
-      - replication and dispute (conflicting studies, retractions, consensus shifts)
-      - maturation pipeline (lab → trial → approval → scale; or prototype → product)
-      - enabling stack (data, compute, instruments, benchmarks moving together)
-      - regulatory and safety framing (biosafety, AI evaluation, export controls)
-      - convergence (AI + wet lab, space + materials, energy + grid)
-
-    editorial_sections:
-      - What Was Actually Shown
-      - Limits and Caveats
-      - Related Methods and Competing Approaches
-      - Cross-Domain Connections
-      - Regulatory or Safety Context
-      - What to Watch Next
-
-    topic_filter:
-      exclude_keywords:
-        - tv prices
-        - television deals
-        - gaming console
-        - nintendo switch
-        - playstation
-        - xbox
-        - streaming service
-        - netflix
-        - disney plus
-        - spotify
-        - smart tv
-        - soundbar
-        - headphone review
-        - phone case
-        - screen protector
-        - best laptop deals
-        - black friday tech
-        - cyber monday
-        - unboxing
-        - tech reviewer
-      exclude_categories:
-        - consumer_electronics
-        - gaming
-        - streaming
-        - entertainment_tech
-      include_categories:
-        - medicine
-        - artificial_intelligence
-        - aerospace
-        - materials_science
-        - energy
-        - biotechnology
-        - quantum_computing
-        - robotics
-        - climate_science
-        - genomics
-        - neuroscience
-
-    # Slightly tighter clustering so storylines favour substantive technical similarity
-    clustering_similarity_threshold: 0.68
-
-    llm_context: >
-      You are analyzing science and technology news for a domain that cares about
-      cross-field progress and realistic capabilities. Prefer linking articles when
-      they share mechanisms, datasets, hardware dependencies, regulatory pathways,
-      or methodological lineage—not superficial keyword overlap. Treat press releases
-      and vendor claims skeptically: distinguish demonstrated results (benchmarks,
-      trials, deployments) from roadmap language. State what a technology or study
-      does NOT establish when the text is vague. Avoid political-style “scandal” or
-      “who won” framing unless the article is explicitly about policy or competition.
-      Highlight how breakthroughs in one area (e.g. cheaper sequencing, better
-      models, new materials) enable or constrain others. When inferring connections
-      across fields, only do so when the article or well-known public facts support
-      them; otherwise say unknown or not stated.
 
   legal:
     focus_areas:

@@ -337,7 +337,7 @@ const ArticleDetail: React.FC = () => {
       )}
 
       <Box sx={{ mt: 3 }}>
-        <ArticleTopics articleId={articleId} />
+        <ArticleTopics articleId={articleId} domain={domain} />
       </Box>
     </Box>
   );

@@ -1,10 +1,11 @@
-# News Intelligence — Database backups on Widow
-# Daily at 3 AM, weekly on Sundays at 4 AM
+# News Intelligence — Database backup on Widow (homelab: single rolling file on NAS)
+# One daily run; no stacked dated dumps. Log archive runs on primary.
 # Paths substituted by setup_widow_app.sh
-# (Log archive runs on primary — it has the activity logs)
+#
+# Output: /mnt/nas/Data Lake Storage/news-intelligence/database-backup/news_intel_latest.pgdump
+# (override BACKUP_BASE if the NAS mount differs on this host.)
 
 SHELL=/bin/bash
 PATH=/usr/local/bin:/usr/bin:/bin
 
-0 3 * * * WIDOW_USER /opt/news-intelligence/scripts/db_backup.sh >> /opt/news-intelligence/logs/backup.log 2>&1
-0 4 * * 0 WIDOW_USER /opt/news-intelligence/scripts/db_backup_weekly.sh >> /opt/news-intelligence/logs/backup.log 2>&1
+0 3 * * * WIDOW_USER /opt/news-intelligence/scripts/db_backup_single_latest.sh >> /opt/news-intelligence/logs/backup.log 2>&1

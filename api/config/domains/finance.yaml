@@ -1,0 +1,25 @@
+# Primary finance silo — Postgres schema ``finance_2`` (migration 201 + 206 for extension tables).
+# URL domain key ``finance`` maps to schema ``finance_2`` (see docs/DOMAIN_CUTOVER_POLITICS_FINANCE.md).
+
+domain_key: finance
+schema_name: finance_2
+display_name: Finance
+description: >-
+  Finance and markets coverage; canonical domain key after migration 211. Data lives in schema finance_2.
+display_order: 2
+is_active: true
+
+data_sources:
+  rss:
+    seed_feed_urls: []
+
+focus_areas:
+  - Commodities, markets, macro — same scope as historical finance silo
+
+llm_prompt_guidance: |
+  Same as production finance silo for markets and macro narrative.
+
+workload_assumptions:
+  expected_active_feeds: 0
+  rough_new_articles_per_day: 0
+  llm_heavy_phases_enabled: true

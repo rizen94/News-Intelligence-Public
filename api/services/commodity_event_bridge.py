@@ -15,9 +15,9 @@ logger = logging.getLogger(__name__)
 
 
 def _is_finance_silo_domain_key(dk: str) -> bool:
-    """True for built-in finance, template finance-2, and FINANCE_PG_CONTENT_DOMAIN_KEY."""
+    """True for canonical finance domain key and FINANCE_PG_CONTENT_DOMAIN_KEY."""
     key = (dk or "").strip().lower()
-    if key in ("finance", "finance-2"):
+    if key == "finance":
         return True
     try:
         from config.settings import finance_postgres_content_domain_key
@@ -149,7 +149,7 @@ def maybe_append_finance_domain_key(
         fin_dk = finance_postgres_content_domain_key().strip()
     except Exception:
         fin_dk = "finance"
-    if fin_dk.lower() in lowered or "finance" in lowered or "finance-2" in lowered:
+    if fin_dk.lower() in lowered or "finance" in lowered:
         return
     blob = f"{event_name or ''} {geographic_scope or ''} {summary or ''}"
     if not text_suggests_macro_commodity_link(blob):

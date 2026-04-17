@@ -7,8 +7,7 @@ What this file does:
     automation; middleware order is CORS → TrustedHost → optional SecurityMiddleware
     (see ``config.settings`` ``news_intel_*`` helpers for production tightening).
   - Mounts domain routers (news_aggregation, content_analysis, storyline_management,
-    intelligence_hub + context_centric, finance, user_management, system_monitoring)
-    and the v3 ``compatibility_router``.
+    intelligence_hub + context_centric, finance, user_management, system_monitoring).
 
 Where to read next:
   - DB access: ``shared.database.connection`` (single source of truth; never ad-hoc psycopg2).
@@ -77,8 +76,6 @@ except Exception as e:
 
 # Import pipeline monitoring
 # from routes.pipeline_monitoring import router as pipeline_monitoring_router
-# Import compatibility layer
-from compatibility.v3_compatibility import compatibility_router
 from config.settings import (
     MODELS,
     news_intel_api_docs_enabled,
@@ -861,10 +858,6 @@ app.include_router(finance_router)
 app.include_router(user_management_router)
 app.include_router(system_monitoring_router)
 # app.include_router(pipeline_monitoring_router)
-
-# Include v3.0 compatibility layer
-app.include_router(compatibility_router)
-
 
 @app.get("/api/public/demo_config")
 async def public_demo_config(request: Request):

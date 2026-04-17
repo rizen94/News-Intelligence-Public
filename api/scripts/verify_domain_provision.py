@@ -147,8 +147,8 @@ def main() -> None:
     if schema_name and not re.fullmatch(r"[a-z][a-z0-9_]*", schema_name):
         errors.append("schema_name must be lowercase snake_case (^[a-z][a-z0-9_]*$)")
 
-    if domain_key in ("politics", "finance", "science-tech"):
-        warnings.append("Built-in domain — verification is informational; do not re-provision as optional.")
+    if domain_key == "science-tech":
+        errors.append("Retired domain key science-tech — do not onboard; use split silos (e.g. artificial-intelligence).")
 
     # Registry (active YAML only)
     from shared.domain_registry import (
@@ -160,9 +160,6 @@ def main() -> None:
     if schema_name in RESERVED_SCHEMA_NAMES and domain_key not in (
         "politics",
         "finance",
-        "science-tech",
-        "politics-2",
-        "finance-2",
     ):
         errors.append(
             f"schema_name {schema_name!r} is in RESERVED_SCHEMA_NAMES — pick a different schema for a new silo"
@@ -172,7 +169,7 @@ def main() -> None:
         keys = {e["domain_key"] for e in get_domain_entries() if e.get("is_active", True)}
         if domain_key and domain_key not in keys:
             errors.append(
-                f"domain_key {domain_key!r} not in domain_registry (is YAML is_active true and file name not _*.yaml?)"
+                f"domain_key {domain_key!r} not in domain_registry (active row in public.domains + optional YAML merge?)"
             )
         if domain_key and domain_key in keys and resolve_domain_schema(domain_key) != schema_name:
             errors.append(

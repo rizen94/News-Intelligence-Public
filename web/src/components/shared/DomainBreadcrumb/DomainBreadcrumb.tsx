@@ -30,8 +30,12 @@ const DomainBreadcrumb: React.FC<DomainBreadcrumbProps> = ({
         return 'primary';
       case 'finance':
         return 'success';
-      case 'science-tech':
+      case 'artificial-intelligence':
         return 'secondary';
+      case 'medicine':
+        return 'error';
+      case 'environment-climate':
+        return 'success';
       default:
         return 'default';
     }

@@ -1193,7 +1193,7 @@ async def get_commodity_geo_events(
     ),
     include_cross_domain: bool = Query(
         False,
-        description="Include politics/science-tech tracked_events with mappable scope when relevant to the commodity.",
+        description="Include politics/artificial-intelligence tracked_events with mappable scope when relevant to the commodity.",
     ),
     include_map_overlays: bool = Query(
         True,

@@ -405,7 +405,13 @@ class LLMService:
                 TaskType.QUICK_SUMMARY, approx_prompt_chars=len(context or "")
             )
             response = await self._call_ollama(model, prompt)
-            return {"success": True, "summary": (response or "").strip()}
+            try:
+                from shared.llm_text_sanitize import strip_llm_wrapping_artifacts
+
+                cleaned = strip_llm_wrapping_artifacts(response or "")
+            except Exception:
+                cleaned = (response or "").strip()
+            return {"success": True, "summary": cleaned}
         except Exception as e:
             logger.debug("generate_briefing_lead failed: %s", e)
             return {"success": False, "error": str(e)}

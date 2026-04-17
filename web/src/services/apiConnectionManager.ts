@@ -37,6 +37,14 @@ class APIConnectionManager {
         if (config.url?.includes('/api/')) {
           const match = config.url.match(/\/api\/(.+)$/);
           const firstSegment = match ? match[1].split('/')[0] : '';
+          /**
+           * First path segment after /api/ that is NOT a registry domain key — keep URL flat
+           * (no /api/{currentDomain}/ injection). Domain keys (politics, finance, …) are handled
+           * separately via isRegistryDomainPathSegment.
+           *
+           * Add a segment here when the backend exposes a global namespace at /api/<segment>/...
+           * (e.g. article dedup under /api/articles/..., intelligence hub under /api/intelligence/...).
+           */
           const globalApiPrefixes = [
             'system_monitoring',
             'route_supervisor',
@@ -55,6 +63,12 @@ class APIConnectionManager {
             'narrative_threads',
             'synthesis',
             'entities',
+            'articles',
+            'storylines',
+            'intelligence',
+            'public',
+            'deduplication',
+            'topics',
           ];
           const isGlobalRoute =
             globalApiPrefixes.includes(firstSegment) ||

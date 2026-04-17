@@ -586,6 +586,13 @@ def compute_processing_progress_response(
         ),
     }
 
+    try:
+        from shared.gpu_metrics import maybe_record_gpu_metric_sample
+
+        maybe_record_gpu_metric_sample()
+    except Exception:
+        pass
+
     return {
         "success": True,
         "data": {

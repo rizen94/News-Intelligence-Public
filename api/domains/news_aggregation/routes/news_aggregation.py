@@ -13,7 +13,12 @@ from typing import Any
 from domains.news_aggregation.services.article_service import ArticleService
 from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, Path, Query
 from shared.database.connection import get_db_connection, get_ui_db_connection
-from shared.domain_registry import DOMAIN_PATH_PATTERN, get_active_domain_keys, is_valid_domain_key
+from shared.domain_registry import (
+    DOMAIN_PATH_PATTERN,
+    first_active_domain_key,
+    get_active_domain_keys,
+    is_valid_domain_key,
+)
 from shared.services.domain_aware_service import (
     get_domain_data_schemas,
     resolve_active_domain_schema,
@@ -337,7 +342,7 @@ async def delete_domain_rss_feed(
 async def create_rss_feed(feed_data: dict[str, Any] = Body(...)):
     """Create RSS feed (legacy). Prefer POST /{domain}/rss_feeds. Uses domain from body or defaults to politics."""
     active = get_active_domain_keys()
-    domain = feed_data.get("domain") or (active[0] if active else "politics")
+    domain = feed_data.get("domain") or (active[0] if active else first_active_domain_key())
     if not is_valid_domain_key(domain):
         raise HTTPException(
             status_code=400,
@@ -700,9 +705,9 @@ async def get_recent_articles_legacy(
     Legacy endpoint - redirects to politics domain.
     Use /api/{domain}/articles instead.
     """
-    # Redirect to politics domain
+    # Redirect to first active domain (legacy path)
     return await get_domain_articles(
-        domain="politics",
+        domain=first_active_domain_key(),
         limit=limit,
         offset=offset if offset is not None else ((page - 1) * limit if page else 0),
         hours=hours,

@@ -82,9 +82,9 @@ Article text:
 Respond with ONLY a JSON array of event objects. If no discrete events are found, return an empty array [].
 Do NOT include any text outside the JSON array."""
 
-# Science-tech: fewer “political” discrete beats; stress evidence and avoid invented links.
-SCIENCE_TECH_EVENT_ADDENDUM = """
-Science & technology domain addendum:
+# Research-oriented silos (AI, medicine, climate): fewer “political” discrete beats; stress evidence.
+RESEARCH_DOMAIN_EVENT_ADDENDUM = """
+Research & technology domain addendum:
 - Prefer event types: research_publication, scientific_discovery, clinical_trial, regulatory_approval,
   patent_filing, product_launch, industry_partnership, report_release, meeting, public_statement.
 - Do NOT invent causal links or “breakthrough” narratives unless the article states them clearly.
@@ -94,11 +94,17 @@ Science & technology domain addendum:
 """
 
 
-def _is_science_tech_domain(domain: str | None) -> bool:
+def _uses_research_event_addendum(domain: str | None) -> bool:
     if not domain:
         return False
     k = domain.lower().strip().replace("_", "-")
-    return k in ("science-tech", "sciencetech", "science tech")
+    if k in ("sciencetech", "science tech", "science-tech"):
+        k = "artificial-intelligence"
+    return k in (
+        "artificial-intelligence",
+        "medicine",
+        "environment-climate",
+    )
 
 
 def compute_event_fingerprint(
@@ -171,8 +177,8 @@ class EventExtractionService:
                 prompt = f"Domain: {domain}\n{cfg.llm_context}\n\n{prompt}"
             if cfg.event_type_priorities:
                 prompt += f"\n\nPrioritise these event types for this domain: {', '.join(cfg.event_type_priorities[:10])}"
-            if _is_science_tech_domain(domain):
-                prompt += SCIENCE_TECH_EVENT_ADDENDUM
+            if _uses_research_event_addendum(domain):
+                prompt += RESEARCH_DOMAIN_EVENT_ADDENDUM
 
         try:
             gen = await self._caller.generate(

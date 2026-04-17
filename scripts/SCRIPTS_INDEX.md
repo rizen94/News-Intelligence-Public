@@ -14,7 +14,8 @@
 | `setup_autostart.sh` | Enable auto-start on boot (systemd user services) |
 | `setup_nas_ssh_tunnel.sh` | SSH tunnel to NAS (rollback only) |
 | `restart_api_with_db.sh` | Restart API |
-| `db_backup.sh` | DB backup (run on Widow) |
+| `db_backup_single_latest.sh` | **Policy:** one rolling `pg_dump` on NAS (`news_intel_latest.pgdump`); see `docs/DATABASE_BACKUP.md` |
+| `db_backup.sh` | Legacy multi-retention daily dump (do not use with single-file policy) |
 
 ## Widow / secondary
 

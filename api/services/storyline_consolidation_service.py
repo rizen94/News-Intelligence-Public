@@ -45,6 +45,7 @@ class StorylineInfo:
     created_at: datetime
     updated_at: datetime
     parent_id: int | None = None
+    is_mega: bool = False
     centroid: np.ndarray | None = None
     entities: set[str] = field(default_factory=set)
     article_ids: list[int] = field(default_factory=list)
@@ -119,16 +120,32 @@ class StorylineConsolidationService:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 # Get active storylines - basic columns only
                 logger.debug(f"[{domain}] Executing storylines query (hours={hours})...")
-                cur.execute(f"""
+                # Include parent_storyline_id / is_mega_storyline so we do not re-parent children
+                # or treat existing megas as new cluster members. Always load current mega parents
+                # (by title dedup) even if created outside the rolling window.
+                cur.execute(
+                    f"""
                     SELECT s.id, s.title, s.description,
                            COALESCE(s.article_count, 0) as article_count,
-                           s.created_at, s.updated_at
+                           s.created_at, s.updated_at,
+                           s.parent_storyline_id,
+                           COALESCE(s.is_mega_storyline, FALSE) AS is_mega_storyline
                     FROM {schema}.storylines s
-                    WHERE s.created_at > NOW() - INTERVAL '{hours} hours'
-                    AND (s.status = 'active' OR s.status = 'suggested')
-                    ORDER BY s.article_count DESC NULLS LAST
-                    LIMIT 200
-                """)
+                    WHERE s.merged_into_id IS NULL
+                      AND (
+                        s.is_mega_storyline IS TRUE
+                        OR (
+                          s.updated_at >= NOW() - INTERVAL '{hours} hours'
+                          AND LOWER(COALESCE(s.status, '')) IN (
+                            'active', 'suggested', 'ongoing', 'developing'
+                          )
+                        )
+                      )
+                    ORDER BY s.is_mega_storyline DESC NULLS LAST,
+                             s.article_count DESC NULLS LAST
+                    LIMIT 500
+                """
+                )
 
                 rows = cur.fetchall()
                 logger.debug(f"[{domain}] Query returned {len(rows)} rows")
@@ -141,9 +158,8 @@ class StorylineConsolidationService:
                         article_count=row["article_count"] or 0,
                         created_at=row["created_at"],
                         updated_at=row["updated_at"],
-                        parent_id=row.get(
-                            "parent_storyline_id"
-                        ),  # May be None if column doesn't exist
+                        parent_id=row.get("parent_storyline_id"),
+                        is_mega=bool(row.get("is_mega_storyline")),
                     )
 
                     # Get article IDs for this storyline
@@ -349,6 +365,10 @@ class StorylineConsolidationService:
             for j in range(i + 1, n):
                 s1, s2 = storylines[i], storylines[j]
 
+                # Do not merge mega parents via pairwise merge (use mega title dedup instead)
+                if s1.is_mega or s2.is_mega:
+                    continue
+
                 # Skip if one is already a parent of the other
                 if s1.parent_id == s2.id or s2.parent_id == s1.id:
                     continue
@@ -489,6 +509,12 @@ class StorylineConsolidationService:
             for j in range(i + 1, n):
                 s1, s2 = storylines[i], storylines[j]
 
+                # Megas are parents, not members of a new child cluster; children already parented skip
+                if s1.is_mega or s2.is_mega:
+                    continue
+                if s1.parent_id is not None or s2.parent_id is not None:
+                    continue
+
                 # Skip if neither has entities nor centroid
                 if (not s1.entities and s1.centroid is None) or (
                     not s2.entities and s2.centroid is None
@@ -508,6 +534,8 @@ class StorylineConsolidationService:
 
             if storylines[i].parent_id is not None:
                 continue  # Already has a parent
+            if storylines[i].is_mega:
+                continue  # Existing mega is never a leaf in a new mega group
 
             # BFS to find connected component
             component = []
@@ -534,6 +562,91 @@ class StorylineConsolidationService:
 
         return groups
 
+    def _fold_duplicate_mega_rows(
+        self, cur, schema: str, mega_title: str, canonical_id: int
+    ) -> None:
+        """Merge extra mega rows with the same title into canonical_id (reparent + article pool)."""
+        cur.execute(
+            f"""
+            SELECT id FROM {schema}.storylines
+            WHERE COALESCE(is_mega_storyline, FALSE) = TRUE
+              AND merged_into_id IS NULL
+              AND id <> %s
+              AND LOWER(TRIM(title)) = LOWER(TRIM(%s))
+            ORDER BY id ASC
+            """,
+            (canonical_id, mega_title),
+        )
+        dup_rows = cur.fetchall()
+        dup_ids = [r[0] for r in dup_rows]
+        for dup_id in dup_ids:
+            cur.execute(
+                f"""
+                UPDATE {schema}.storylines
+                SET parent_storyline_id = %s, last_consolidated_at = NOW()
+                WHERE parent_storyline_id = %s AND merged_into_id IS NULL
+                """,
+                (canonical_id, dup_id),
+            )
+            cur.execute(
+                f"""
+                INSERT INTO {schema}.storyline_articles
+                (storyline_id, article_id, relevance_score, created_at)
+                SELECT %s, article_id, relevance_score * 0.9, NOW()
+                FROM {schema}.storyline_articles
+                WHERE storyline_id = %s
+                ON CONFLICT (storyline_id, article_id) DO NOTHING
+                """,
+                (canonical_id, dup_id),
+            )
+            cur.execute(
+                f"DELETE FROM {schema}.storyline_articles WHERE storyline_id = %s",
+                (dup_id,),
+            )
+            cur.execute(
+                f"""
+                UPDATE {schema}.storylines
+                SET merged_into_id = %s, updated_at = NOW()
+                WHERE id = %s
+                """,
+                (canonical_id, dup_id),
+            )
+
+    def _refresh_mega_counts_from_db(self, cur, schema: str, mega_id: int) -> None:
+        """Set description and article totals from actual child + storyline_articles rows."""
+        cur.execute(
+            f"""
+            SELECT COUNT(*)::int FROM {schema}.storylines
+            WHERE parent_storyline_id = %s AND merged_into_id IS NULL
+            """,
+            (mega_id,),
+        )
+        sub_n = cur.fetchone()[0]
+        cur.execute(
+            f"""
+            SELECT COUNT(DISTINCT article_id)::int
+            FROM {schema}.storyline_articles
+            WHERE storyline_id = %s
+            """,
+            (mega_id,),
+        )
+        art_n = cur.fetchone()[0]
+        desc = (
+            f"Mega-storyline covering {sub_n} related sub-stories "
+            f"with {art_n} total articles"
+        )
+        cur.execute(
+            f"""
+            UPDATE {schema}.storylines
+            SET article_count = %s,
+                total_articles = %s,
+                description = %s,
+                updated_at = NOW()
+            WHERE id = %s
+            """,
+            (art_n, art_n, desc, mega_id),
+        )
+
     def create_mega_storyline(self, domain: str, children: list[StorylineInfo]) -> int | None:
         """
         Create a parent mega-storyline for a group of related storylines.
@@ -548,16 +661,12 @@ class StorylineConsolidationService:
             return None
 
         schema = domain.replace("-", "_")
+        self.ensure_schema_columns(schema)
         conn = self.get_db_connection()
 
         try:
             with conn.cursor() as cur:
                 # Generate mega-storyline title from common entities
-                all_entities = set()
-                for child in children:
-                    all_entities.update(child.entities)
-
-                # Find most common entity for title
                 entity_counts = defaultdict(int)
                 for child in children:
                     for entity in child.entities:
@@ -570,52 +679,66 @@ class StorylineConsolidationService:
                     # Use first child's title as base
                     mega_title = f"Related Stories: {children[0].title[:40]}..."
 
-                # Calculate total articles
-                total_articles = sum(c.article_count for c in children)
-
-                # Create mega-storyline
+                # Reuse existing mega with the same canonical title (avoid duplicate "Ongoing: X" rows)
                 cur.execute(
                     f"""
-                    INSERT INTO {schema}.storylines
-                    (storyline_uuid, title, description, status, processing_status,
-                     article_count, total_articles, is_mega_storyline,
-                     consolidation_score, created_at, updated_at)
-                    VALUES (
-                        gen_random_uuid(), %s, %s, 'active', 'completed',
-                        %s, %s, TRUE, %s, NOW(), NOW()
-                    )
-                    RETURNING id
-                """,
-                    (
-                        mega_title,
-                        f"Mega-storyline covering {len(children)} related sub-stories with {total_articles} total articles",
-                        total_articles,
-                        total_articles,
-                        0.8,
-                    ),
+                    SELECT id FROM {schema}.storylines
+                    WHERE COALESCE(is_mega_storyline, FALSE) = TRUE
+                      AND merged_into_id IS NULL
+                      AND LOWER(TRIM(title)) = LOWER(TRIM(%s))
+                    ORDER BY id ASC
+                    LIMIT 1
+                    """,
+                    (mega_title,),
                 )
+                row = cur.fetchone()
+                mega_id = row[0] if row else None
+                created_new = mega_id is None
 
-                result = cur.fetchone()
-                if not result:
-                    conn.rollback()
-                    return None
+                if mega_id is not None:
+                    self._fold_duplicate_mega_rows(cur, schema, mega_title, mega_id)
+                else:
+                    total_articles = sum(c.article_count for c in children)
+                    cur.execute(
+                        f"""
+                        INSERT INTO {schema}.storylines
+                        (storyline_uuid, title, description, status, processing_status,
+                         article_count, total_articles, is_mega_storyline,
+                         consolidation_score, created_at, updated_at)
+                        VALUES (
+                            gen_random_uuid(), %s, %s, 'active', 'completed',
+                            %s, %s, TRUE, %s, NOW(), NOW()
+                        )
+                        RETURNING id
+                        """,
+                        (
+                            mega_title,
+                            "Mega-storyline (initializing…)",
+                            total_articles,
+                            total_articles,
+                            0.8,
+                        ),
+                    )
+                    ins = cur.fetchone()
+                    if not ins:
+                        conn.rollback()
+                        return None
+                    mega_id = ins[0]
 
-                mega_id = result[0]
-
-                # Update children to point to parent
                 child_ids = [c.id for c in children]
                 cur.execute(
                     f"""
                     UPDATE {schema}.storylines
                     SET parent_storyline_id = %s,
                         last_consolidated_at = NOW()
-                    WHERE id = ANY(%s)
-                """,
-                    (mega_id, child_ids),
+                    WHERE id = ANY(%s) AND id <> %s
+                    """,
+                    (mega_id, child_ids, mega_id),
                 )
 
-                # Copy all articles to mega-storyline
                 for child in children:
+                    if child.id == mega_id:
+                        continue
                     cur.execute(
                         f"""
                         INSERT INTO {schema}.storyline_articles
@@ -628,11 +751,13 @@ class StorylineConsolidationService:
                         (mega_id, child.id),
                     )
 
+                self._refresh_mega_counts_from_db(cur, schema, mega_id)
+
                 conn.commit()
 
                 logger.info(
-                    f"Created mega-storyline {mega_id}: '{mega_title}' "
-                    f"with {len(children)} children, {total_articles} articles"
+                    f"{'Created' if created_new else 'Updated'} mega-storyline {mega_id}: "
+                    f"'{mega_title}' ({len(children)} cluster members)"
                 )
 
                 return mega_id
@@ -734,7 +859,11 @@ class StorylineConsolidationService:
             if result["merges_performed"] > 0:
                 storylines = self.fetch_storylines(domain)
                 storylines = self.compute_storyline_embeddings(domain, storylines)
-                storylines = [s for s in storylines if s.centroid is not None]
+                storylines = [
+                    s
+                    for s in storylines
+                    if s.centroid is not None or len(s.entities) > 0
+                ]
 
             # Step 6: Find and create mega-storylines
             logger.info(f"[{domain}] Finding mega-storyline candidates...")

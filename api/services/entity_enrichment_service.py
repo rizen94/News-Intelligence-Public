@@ -125,8 +125,34 @@ def enrich_entity_profile(entity_profile_id: int) -> bool:
 
     summary = _fetch_wikipedia_summary(canonical_name)
     if not summary:
+        # Mark profile so we don't retry forever
+        conn = get_db_connection()
+        if conn:
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        UPDATE intelligence.entity_profiles
+                        SET metadata = jsonb_set(
+                                COALESCE(metadata, '{}')::jsonb,
+                                '{wiki_enrichment_status}',
+                                '"not_found"'
+                            ),
+                            updated_at = NOW()
+                        WHERE id = %s
+                        """,
+                        (entity_profile_id,),
+                    )
+                conn.commit()
+            except Exception as e:
+                logger.debug("Failed to mark wiki_enrichment_status for profile %s: %s", entity_profile_id, e)
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+            finally:
+                conn.close()
         return False
-
     conn = get_db_connection()
     if not conn:
         return False
@@ -203,6 +229,7 @@ def get_entity_profile_ids_to_enrich(limit: int = 20) -> list[int]:
                 SELECT ep.id FROM intelligence.entity_profiles ep
                 WHERE ep.metadata->>'canonical_name' IS NOT NULL
                   AND ep.metadata->>'canonical_name' != ''
+                  AND COALESCE(ep.metadata->>'wiki_enrichment_status', 'pending') = 'pending'
                   AND (
                     ep.sections IS NULL
                     OR ep.sections::text NOT ILIKE '%%Background (Wikipedia)%%'
@@ -253,6 +280,7 @@ def run_enrichment_batch(limit: int = 20) -> int:
                     SELECT COUNT(*) FROM intelligence.entity_profiles ep
                     WHERE ep.metadata->>'canonical_name' IS NOT NULL
                       AND ep.metadata->>'canonical_name' != ''
+                      AND COALESCE(ep.metadata->>'wiki_enrichment_status', 'pending') = 'pending'
                       AND (
                         ep.sections IS NULL
                         OR ep.sections::text NOT ILIKE '%%Background (Wikipedia)%%'

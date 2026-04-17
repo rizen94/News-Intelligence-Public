@@ -69,9 +69,15 @@ router = APIRouter(
 
 def _registry_silo_schemas() -> list[str]:
     """Schemas for YAML-active silos that exist in Postgres (same basis as RSS / ``get_all_domains``)."""
+    from shared.domain_registry import get_schema_names_active
+
     rows = get_all_domains()
     out = [str(r["schema_name"]) for r in rows]
-    return out if out else ["politics", "finance", "science_tech"]
+    if out:
+        return out
+    # DB unavailable or empty: prefer active registry silos (template era), not legacy three.
+    fallback = list(get_schema_names_active())
+    return fallback if fallback else ["politics_2", "finance_2"]
 
 
 def _check_frontend_once() -> dict[str, Any]:
@@ -236,6 +242,13 @@ async def health_check():
         except Exception:
             cb_summary = {"open_circuits": 0, "breakers": {}}
 
+        try:
+            from shared.gpu_metrics import maybe_record_gpu_metric_sample
+
+            maybe_record_gpu_metric_sample()
+        except Exception:
+            pass
+
         # Determine overall status and why (for troubleshooting)
         overall_status = "healthy"
         degraded_reasons: list[str] = []
@@ -306,17 +319,43 @@ def _resolve_automation_for_monitor(
         return None
 
 
+def _safe_get_automation_status(automation: Any | None, timeout: float = 2.0) -> dict[str, Any]:
+    """Get automation status with timeout protection — never blocks the overview endpoint."""
+    import queue as queue_module
+    import threading
+
+    mgr = _resolve_automation_for_monitor(automation)
+    if mgr is None:
+        return {}
+
+    result_queue: queue_module.Queue = queue_module.Queue()
+
+    def _run():
+        try:
+            result_queue.put(mgr.get_status())
+        except Exception as e:
+            logger.debug("_safe_get_automation_status: %s", e)
+            result_queue.put({})
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    t.join(timeout=timeout)
+    if not result_queue.empty():
+        try:
+            return result_queue.get_nowait()
+        except Exception:
+            return {}
+    logger.debug("_safe_get_automation_status timed out after %.1fs", timeout)
+    return {}
+
+
 def _synthesize_current_activities_from_automation(automation: Any | None) -> list[dict[str, Any]]:
     """
     When the in-memory activity feed is empty (multi-worker mismatch, missed add_current, etc.),
     derive rows from live AutomationManager counters.
     """
-    mgr = _resolve_automation_for_monitor(automation)
-    if mgr is None:
-        return []
-    try:
-        st = mgr.get_status()
-    except Exception:
+    st = _safe_get_automation_status(automation, timeout=2.0)
+    if not st:
         return []
     active = st.get("active_tasks_by_phase") or {}
     out: list[dict[str, Any]] = []
@@ -354,9 +393,8 @@ def _merge_current_activities_with_run_counts(
     """
     active_by_phase: dict[str, int] = {}
     try:
-        mgr = _resolve_automation_for_monitor(automation)
-        if mgr is not None:
-            active_by_phase = dict(mgr.get_status().get("active_tasks_by_phase") or {})
+        st = _safe_get_automation_status(automation, timeout=2.0)
+        active_by_phase = dict(st.get("active_tasks_by_phase") or {})
     except Exception:
         pass
 
@@ -536,36 +574,12 @@ MONITOR_OVERVIEW_AUTOMATION_HISTORY_TIMEOUT = 2.0
 
 
 def _get_processing_history_for_monitor() -> dict[str, Any] | None:
-    import queue as queue_module
-    import threading
-
-    result_queue: queue_module.Queue = queue_module.Queue()
-
-    def _run():
-        try:
-            from services.automation_manager import get_automation_manager
-
-            mgr = get_automation_manager()
-            if mgr is None:
-                result_queue.put(None)
-                return
-            status = mgr.get_status()
-            metrics = status.get("metrics") or {}
-            hist = metrics.get("processing_history")
-            result_queue.put(hist if isinstance(hist, dict) else None)
-        except Exception as e:
-            logger.debug("monitor overview processing_history: %s", e)
-            result_queue.put(None)
-
-    t = threading.Thread(target=_run, daemon=True)
-    t.start()
-    t.join(timeout=MONITOR_OVERVIEW_AUTOMATION_HISTORY_TIMEOUT)
-    if not result_queue.empty():
-        try:
-            return result_queue.get_nowait()
-        except Exception:
-            return None
-    return None
+    st = _safe_get_automation_status(None, timeout=MONITOR_OVERVIEW_AUTOMATION_HISTORY_TIMEOUT)
+    if not st:
+        return None
+    metrics = st.get("metrics") or {}
+    hist = metrics.get("processing_history")
+    return hist if isinstance(hist, dict) else None
 
 
 @router.get("/monitoring/overview")
@@ -657,7 +671,6 @@ def get_monitoring_overview(request: Request):
                 merged = _enrich_current_activities_with_run_estimates(
                     merged,
                     processing_history=hist,
-                    include_db_duration_avgs=False,
                 )
             except Exception as e:
                 logger.debug("Activity feed enrich: %s", e)
@@ -1713,7 +1726,7 @@ async def resolve_alert(alert_id: int):
 @router.get("/anomalies")
 async def get_anomalies(
     domain: str | None = Query(
-        None, description="politics, finance, or science-tech; omit for all"
+        None, description="URL domain key (e.g. politics, finance, artificial-intelligence); omit for all"
     ),
     hours: int = Query(24, ge=1, le=168),
     sensitivity: float = Query(2.0, ge=0.5, le=5.0),
@@ -2097,7 +2110,7 @@ async def get_dashboard_metrics():
 async def apply_migration_128():
     """
     Apply migration 128: Add Official Government and SEC RSS Feeds
-    This adds official government feeds to finance, politics, and science_tech domains
+    This adds official government feeds to finance, politics, and artificial_intelligence (science agency) silos
     """
     try:
         conn = get_monitoring_db_connection()
@@ -2126,7 +2139,7 @@ VALUES
     ('CBO Publications', 'https://www.cbo.gov/rss/publications.xml', true, 3600, NOW())
 ON CONFLICT (feed_url) DO NOTHING;
 
-INSERT INTO science_tech.rss_feeds (feed_name, feed_url, is_active, fetch_interval_seconds, created_at)
+INSERT INTO artificial_intelligence.rss_feeds (feed_name, feed_url, is_active, fetch_interval_seconds, created_at)
 VALUES
     ('NASA News', 'https://www.nasa.gov/rss/dyn/breaking_news.rss', true, 3600, NOW()),
     ('NIST News', 'https://www.nist.gov/news-events/news/feed', true, 3600, NOW()),
@@ -2183,9 +2196,9 @@ ON CONFLICT (feed_url) DO NOTHING;
             politics_count = cur.fetchone()[0]
 
             cur.execute(
-                "SELECT COUNT(*) FROM science_tech.rss_feeds WHERE feed_name LIKE 'NASA%' OR feed_name LIKE 'NIST%' OR feed_name LIKE 'Department of Energy%' OR feed_name LIKE 'NIH%'"
+                "SELECT COUNT(*) FROM artificial_intelligence.rss_feeds WHERE feed_name LIKE 'NASA%' OR feed_name LIKE 'NIST%' OR feed_name LIKE 'Department of Energy%' OR feed_name LIKE 'NIH%'"
             )
-            science_count = cur.fetchone()[0]
+            ai_agency_count = cur.fetchone()[0]
 
             return {
                 "success": True,
@@ -2193,9 +2206,9 @@ ON CONFLICT (feed_url) DO NOTHING;
                 "feeds_added": {
                     "finance": finance_count,
                     "politics": politics_count,
-                    "science_tech": science_count,
+                    "artificial_intelligence": ai_agency_count,
                 },
-                "total": finance_count + politics_count + science_count,
+                "total": finance_count + politics_count + ai_agency_count,
             }
 
         except Exception as e:
@@ -2324,10 +2337,35 @@ def get_pipeline_status():
     psycopg2. An async route would run that work on the event loop and freeze the API
     worker for all other clients until queries finish.
     """
+
+    def _pipeline_status_error_payload(message: str) -> dict[str, Any]:
+        return {
+            "success": False,
+            "error": message[:500],
+            "data": {
+                "pipeline_status": "unknown",
+                "overall_progress": 0,
+                "current_stage": None,
+                "stage_progress": {},
+                "active_traces": 0,
+                "recent_traces_count": 0,
+                "total_traces": 0,
+                "success_rate": 0.0,
+                "articles_processed": 0,
+                "articles_analyzed": 0,
+                "recent_articles": 0,
+                "errors": 0,
+                "recent_traces": [],
+                "latest_trace_id": None,
+            },
+            "timestamp": datetime.now().isoformat(),
+        }
+
     try:
         conn = get_monitoring_db_connection()
         if not conn:
-            raise HTTPException(status_code=500, detail="Database connection failed")
+            logger.error("pipeline_status: database connection failed (no conn)")
+            return _pipeline_status_error_payload("Database connection failed")
 
         try:
             with conn.cursor() as cur:
@@ -2413,10 +2451,10 @@ def get_pipeline_status():
                     )
 
                 # Sum article stats across pipeline silos (includes template silos when in pipeline)
-                _schemas = get_pipeline_schema_names_active() or (
-                    "politics",
-                    "finance",
-                    "science_tech",
+                _schemas = get_pipeline_schema_names_active() or get_schema_names_active() or (
+                    "politics_2",
+                    "finance_2",
+                    "artificial_intelligence",
                 )
                 _sum_total = " + ".join(f"(SELECT COUNT(*) FROM {s}.articles)" for s in _schemas)
                 _sum_sent = " + ".join(
@@ -2484,7 +2522,7 @@ def get_pipeline_status():
 
     except Exception as e:
         logger.error(f"Error fetching pipeline status: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        return _pipeline_status_error_payload(str(e))
 
 
 @router.post("/pipeline/trigger")

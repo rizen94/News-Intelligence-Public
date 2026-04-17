@@ -34,12 +34,26 @@ const DomainIndicator: React.FC<DomainIndicatorProps> = ({
           icon: '💰',
           name: 'Finance',
         };
-      case 'science-tech':
+      case 'artificial-intelligence':
         return {
           color: '#7b1fa2',
           bg: '#f3e5f5',
-          icon: '🔬',
-          name: 'Science & Technology',
+          icon: '🤖',
+          name: 'Artificial Intelligence',
+        };
+      case 'medicine':
+        return {
+          color: '#c62828',
+          bg: '#ffebee',
+          icon: '🏥',
+          name: 'Medicine',
+        };
+      case 'environment-climate':
+        return {
+          color: '#00695c',
+          bg: '#e0f2f1',
+          icon: '🌍',
+          name: 'Environment & Climate',
         };
       case 'legal':
         return {

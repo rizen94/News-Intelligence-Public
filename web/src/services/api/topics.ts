@@ -20,16 +20,6 @@ export const topicsApi = {
     }
   },
 
-  async getTopicCategoriesStats(domain?: string) {
-    try {
-      const response = await getApi().get('/api/topics/categories/stats');
-      return response.data;
-    } catch (error) {
-      Logger.apiError('Failed to fetch topic categories stats', error as Error);
-      return { success: false, error: (error as any).message };
-    }
-  },
-
   async getTopic(topicName: string, domain?: string) {
     try {
       const domainKey = domain || getCurrentDomain();
@@ -307,14 +297,26 @@ export const topicsApi = {
     }
   },
 
+  /**
+   * Merge two rows in `{schema}.topics` by numeric id (matches API `TopicMerge.topic_ids: list[int]`).
+   */
   async mergeTopics(
-    primaryTopic: string,
-    secondaryTopic: string,
+    primaryTopicId: number,
+    secondaryTopicId: number,
     domain?: string
   ) {
     try {
-      const response = await getApi().post('/api/topics/merge', {
-        topic_ids: [primaryTopic, secondaryTopic],
+      const a = Number(primaryTopicId);
+      const b = Number(secondaryTopicId);
+      if (!Number.isFinite(a) || !Number.isFinite(b) || a < 1 || b < 1) {
+        return {
+          success: false,
+          error: 'mergeTopics requires two positive numeric topic IDs',
+        };
+      }
+      const domainKey = domain || getCurrentDomain();
+      const response = await getApi().post(`/api/${domainKey}/topics/merge`, {
+        topic_ids: [a, b],
         keep_primary: true,
       });
       return response.data;
@@ -337,11 +339,19 @@ export const topicsApi = {
     }
   },
 
-  async getTopicsNeedingReview(threshold: number = 0.6, limit: number = 50) {
+  async getTopicsNeedingReview(
+    threshold: number = 0.6,
+    limit: number = 50,
+    domain?: string
+  ) {
     try {
-      const response = await getApi().get('/api/topics/needing_review', {
-        params: { threshold, limit },
-      });
+      const domainKey = domain || getCurrentDomain();
+      const response = await getApi().get(
+        `/api/${domainKey}/topics/needing_review`,
+        {
+          params: { threshold, limit },
+        }
+      );
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to fetch topics needing review', error as Error);
@@ -349,9 +359,12 @@ export const topicsApi = {
     }
   },
 
-  async getManagedTopic(topicId: number) {
+  async getManagedTopic(topicId: number, domain?: string) {
     try {
-      const response = await getApi().get(`/api/topics/${topicId}`);
+      const domainKey = domain || getCurrentDomain();
+      const response = await getApi().get(
+        `/api/${domainKey}/topics/${topicId}`
+      );
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to fetch managed topic', error as Error);
@@ -359,11 +372,19 @@ export const topicsApi = {
     }
   },
 
-  async getManagedTopicArticles(topicId: number, params: any = {}) {
+  async getManagedTopicArticles(
+    topicId: number,
+    params: any = {},
+    domain?: string
+  ) {
     try {
-      const response = await getApi().get(`/api/topics/${topicId}/articles`, {
-        params,
-      });
+      const domainKey = domain || getCurrentDomain();
+      const response = await getApi().get(
+        `/api/${domainKey}/topics/${topicId}/articles`,
+        {
+          params,
+        }
+      );
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to fetch managed topic articles', error as Error);
@@ -371,10 +392,11 @@ export const topicsApi = {
     }
   },
 
-  async processArticleTopics(articleId: number) {
+  async processArticleTopics(articleId: number, domain?: string) {
     try {
+      const domainKey = domain || getCurrentDomain();
       const response = await getApi().post(
-        `/api/articles/${articleId}/process_topics`
+        `/api/${domainKey}/articles/${articleId}/process_topics`
       );
       return response.data;
     } catch (error) {
@@ -389,11 +411,13 @@ export const topicsApi = {
       is_correct: boolean;
       feedback_notes?: string;
       validated_by?: string;
-    }
+    },
+    domain?: string
   ) {
     try {
+      const domainKey = domain || getCurrentDomain();
       const response = await getApi().post(
-        `/api/assignments/${assignmentId}/feedback`,
+        `/api/${domainKey}/assignments/${assignmentId}/feedback`,
         feedback
       );
       return response.data;

@@ -23,7 +23,7 @@ def resolve_active_domain_schema(
     Resolve Postgres schema for a URL/domain key.
 
     1. Prefer ``public.domains`` when a row exists and ``is_active``.
-    2. Else, if the key is active in ``shared.domain_registry`` (built-ins + YAML) and the
+    2. Else, if the key is active in ``shared.domain_registry`` (DB + YAML merge) and the
        schema exists in ``information_schema.schemata``, use that schema.
 
     This keeps the web SPA (``registry_domains``) and article/RSS APIs aligned when a silo
@@ -91,7 +91,7 @@ class DomainAwareService:
         Initialize service with domain context.
 
         Args:
-            domain: Domain key (e.g., 'politics', 'finance', 'science-tech')
+            domain: Domain key (e.g., 'politics', 'finance')
 
         Raises:
             ValueError: If domain is invalid or not active
@@ -105,10 +105,10 @@ class DomainAwareService:
         Convert domain key to schema name.
 
         Args:
-            domain: Domain key (e.g., 'politics', 'finance', 'science-tech')
+            domain: Domain key (e.g., 'politics', 'finance')
 
         Returns:
-            Schema name (e.g., 'politics', 'finance', 'science_tech')
+            Schema name (e.g., 'politics_2', 'finance_2')
         """
         return domain.replace("-", "_")
 
@@ -260,12 +260,11 @@ def resolve_domain_token_to_schema(token: str) -> str:
 def get_all_domains() -> list[dict[str, Any]]:
     """
     Domains for automation (topic clustering, batch scripts, etc.): every silo that is active in
-    the registry YAML and has a matching Postgres schema.
+    the registry (``public.domains`` merged with YAML) and has a matching Postgres schema.
 
     **Inclusion is driven by registry + ``information_schema``**, same idea as RSS
-    (``url_schema_pairs()``). ``public.domains`` is used only to enrich ``name`` /
-    ``display_order`` — not to exclude silos. To disable a silo end-to-end, set
-    ``is_active: false`` in ``api/config/domains/{key}.yaml`` (or remove the file).
+    (``url_schema_pairs()``). ``public.domains`` supplies ``name`` / ``display_order`` when present.
+    To disable a silo end-to-end, set ``is_active = false`` on its ``public.domains`` row (and/or YAML).
     """
     from shared.domain_registry import get_domain_entries
 
@@ -307,7 +306,7 @@ def get_all_domains() -> list[dict[str, Any]]:
 
 
 def get_domain_data_schemas() -> tuple[str, ...]:
-    """Postgres schema names for all active domains (built-in + YAML). Single source: domain_registry."""
+    """Postgres schema names for all active domains (``public.domains`` + YAML). Single source: domain_registry."""
     from shared.domain_registry import get_schema_names_active
 
     return get_schema_names_active()

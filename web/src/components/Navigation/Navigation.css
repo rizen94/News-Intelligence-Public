@@ -48,8 +48,16 @@
   background: #2e7d32;
 }
 
-.nav-domain-badge[data-domain='science-tech'] {
+.nav-domain-badge[data-domain='artificial-intelligence'] {
   background: #7b1fa2;
+}
+
+.nav-domain-badge[data-domain='medicine'] {
+  background: #c62828;
+}
+
+.nav-domain-badge[data-domain='environment-climate'] {
+  background: #00695c;
 }
 
 .nav-list {

@@ -76,6 +76,40 @@ COUNTRY_ALIASES = {
 }
 
 
+# Names the LLM produces when it finds nothing — must never become canonical entities
+GARBAGE_ENTITY_NAMES = frozenset({
+    "", "none", "none found", "none specified", "n/a", "na", "unknown",
+    "not specified", "not applicable", "not mentioned", "not available",
+    "no one", "no entity", "no entities", "no entities found",
+    "no people found", "no organizations found", "no subjects found",
+    "no events found", "unspecified", "unnamed", "anonymous", "various",
+    "undisclosed", "null", "empty", "the article", "this article",
+    "the author", "the reporter", "staff reporter", "staff writer",
+    "associated press", "reuters",
+})
+
+
+def _is_garbage_entity(name: str) -> bool:
+    """Return True if name is a placeholder/garbage value that should not be stored."""
+    n = name.strip().lower()
+    if n in GARBAGE_ENTITY_NAMES:
+        return True
+    # Catch patterns like "None found for this article"
+    # Catch "None found...", "Not specified..." etc.
+    # Deliberately omits "no " prefix — real entities like "No Kings", "No 10" exist
+    if n.startswith("none ") or n.startswith("not "):
+        return True
+    # Catch remaining "no" garbage phrases not already in GARBAGE_ENTITY_NAMES
+    NO_GARBAGE_PHRASES = ("no results", "no data", "no information", "no details",
+                          "no name", "no names", "no persons", "no organizations")
+    if n in NO_GARBAGE_PHRASES:
+        return True
+    # Single character or just punctuation
+    if len(n) < 2 or all(c in '.-_/\\' for c in n):
+        return True
+    return False
+
+
 class ArticleEntityExtractionService:
     """
     Extracts and stores article entities using LLM.
@@ -157,6 +191,10 @@ Rules:
 - subjects: Themes, concepts (NOT dates/times/countries)
 - keywords: Thematic only - NO dates, times, or country names
 - dates/times/countries: Store in their arrays only
+- If NO entities of a given type exist in the article, return an EMPTY array [] for that type
+- NEVER use placeholder values like "None found", "N/A", "Unknown", "Not specified", or "None" as entity names
+- Every name must be a real, specific named entity actually mentioned in the text
+- Do not invent or hallucinate entities not present in the article
 """
 
         result = await self._caller.generate(
@@ -258,6 +296,9 @@ Rules:
                     name = _item_name(item)
                     if not name or len(name) < 2:
                         continue
+                    if _is_garbage_entity(name):
+                        logger.debug("Skipping garbage entity: %r (type=%s)", name, entity_type)
+                        continue
                     # Resolve relational phrases (e.g. "Zohran Mamdani's wife") to real name via LLM
                     name_to_use = name
                     original_phrase = None
@@ -315,12 +356,15 @@ Rules:
                     except Exception as e:
                         logger.debug(f"article_entities insert skip: {e}")
 
-            # 1b. Auto-populate entity_canonical.description from local Wikipedia if missing
+           # 1b. Auto-populate entity_canonical.description from local Wikipedia if missing
+            #     Only attempt for entities with wiki_status='pending' (avoids re-querying failures)
             if canonical_ids_used:
                 cur.execute(
                     f"""
                     SELECT id, canonical_name FROM {schema}.entity_canonical
-                    WHERE id = ANY(%s) AND (description IS NULL OR description = '')
+                    WHERE id = ANY(%s)
+                      AND (description IS NULL OR description = '')
+                      AND COALESCE(wiki_status, 'pending') = 'pending'
                     """,
                     (list(canonical_ids_used),),
                 )
@@ -335,10 +379,23 @@ Rules:
                             cur.execute(
                                 f"""
                                 UPDATE {schema}.entity_canonical
-                                SET description = %s, wikipedia_page_id = %s, updated_at = NOW()
+                                SET description = %s, wikipedia_page_id = %s,
+                                    wiki_status = 'found', wiki_checked_at = NOW(),
+                                    updated_at = NOW()
                                 WHERE id = %s
                                 """,
                                 (extract, page_id, eid),
+                            )
+                        else:
+                            # Wikipedia had no result — mark so we don't retry every article
+                            cur.execute(
+                                f"""
+                                UPDATE {schema}.entity_canonical
+                                SET wiki_status = 'not_found', wiki_checked_at = NOW(),
+                                    updated_at = NOW()
+                                WHERE id = %s
+                                """,
+                                (eid,),
                             )
                     except Exception as e:
                         logger.debug("Wikipedia description backfill for entity %s: %s", eid, e)

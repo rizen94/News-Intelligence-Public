@@ -175,6 +175,11 @@ async def discover_events_from_contexts(
         min_len = int(os.environ.get("EVENT_TRACKING_MIN_CONTENT_LEN", "180") or 180)
 
     try:
+        from shared.pipeline_pass_marker import phase_backlog_uses_pass_marker, sql_context_pass_null
+
+        pass_sql = ""
+        if phase_backlog_uses_pass_marker("event_tracking"):
+            pass_sql = f" AND ({sql_context_pass_null('event_tracking', 'c')}) "
         with conn.cursor() as cur:
             # Fetch existing event names so we can tell the LLM to find NEW events only
             cur.execute("SELECT event_name FROM intelligence.tracked_events")
@@ -183,16 +188,18 @@ async def discover_events_from_contexts(
             # Only analyze contexts not already linked to an event chronicle
             if domain_key:
                 cur.execute(
-                    """
+                    f"""
                     SELECT c.id, c.title, c.content, c.domain_key, c.metadata, c.created_at
                     FROM intelligence.contexts c
                     WHERE c.domain_key = %s
                       AND c.created_at >= NOW() - (%s * INTERVAL '1 day')
                       AND LENGTH(COALESCE(c.content, '')) >= %s
                       AND NOT EXISTS (
-                          SELECT 1 FROM intelligence.event_chronicles ec
-                          WHERE ec.developments::text LIKE '%%"context_id": ' || c.id || '%%'
+                          SELECT 1 FROM intelligence.event_chronicles ec,
+                          LATERAL jsonb_array_elements(ec.developments) AS dev
+                          WHERE (dev->>'context_id')::int = c.id
                       )
+                      {pass_sql}
                     ORDER BY c.created_at DESC
                     LIMIT %s
                 """,
@@ -200,15 +207,17 @@ async def discover_events_from_contexts(
                 )
             else:
                 cur.execute(
-                    """
+                    f"""
                     SELECT c.id, c.title, c.content, c.domain_key, c.metadata, c.created_at
                     FROM intelligence.contexts c
                     WHERE c.created_at >= NOW() - (%s * INTERVAL '1 day')
                       AND LENGTH(COALESCE(c.content, '')) >= %s
                       AND NOT EXISTS (
-                          SELECT 1 FROM intelligence.event_chronicles ec
-                          WHERE ec.developments::text LIKE '%%"context_id": ' || c.id || '%%'
+                          SELECT 1 FROM intelligence.event_chronicles ec,
+                          LATERAL jsonb_array_elements(ec.developments) AS dev
+                          WHERE (dev->>'context_id')::int = c.id
                     )
+                      {pass_sql}
                     ORDER BY c.created_at DESC
                     LIMIT %s
                 """,
@@ -272,6 +281,15 @@ async def discover_events_from_contexts(
             "  proposed: %s (%s)", ev.get("event_name", "?")[:60], ev.get("event_type", "?")
         )
     if not events:
+        try:
+            from shared.pipeline_pass_marker import bulk_record_context_phase_pass, phase_backlog_uses_pass_marker
+
+            if phase_backlog_uses_pass_marker("event_tracking"):
+                bulk_record_context_phase_pass(
+                    [r[0] for r in rows], "event_tracking", "llm_no_events"
+                )
+        except Exception:
+            pass
         return {"events_created": 0, "message": "LLM returned no valid events"}
 
     context_ids_set = {r[0] for r in rows}
@@ -428,6 +446,15 @@ async def discover_events_from_contexts(
         conn.commit()
         conn.close()
         logger.info(f"discover_events: created {len(created_events)} events")
+        try:
+            from shared.pipeline_pass_marker import bulk_record_context_phase_pass, phase_backlog_uses_pass_marker
+
+            if phase_backlog_uses_pass_marker("event_tracking"):
+                bulk_record_context_phase_pass(
+                    [r[0] for r in rows], "event_tracking", "batch_analyzed"
+                )
+        except Exception:
+            pass
         return {"events_created": len(created_events), "events": created_events}
     except Exception as e:
         logger.error(f"discover_events: insert failed: {e}")
@@ -752,9 +779,10 @@ async def _update_existing_event_chronicles(limit: int = 20) -> int:
                     WHERE c.created_at > COALESCE(%s, '2020-01-01'::date)
                       AND ({ilike_conditions})
                       AND NOT EXISTS (
-                          SELECT 1 FROM intelligence.event_chronicles ec
+                          SELECT 1 FROM intelligence.event_chronicles ec,
+                          LATERAL jsonb_array_elements(ec.developments) AS dev
                           WHERE ec.event_id = %s
-                            AND ec.developments::text LIKE '%%"context_id": ' || c.id || '%%'
+                            AND (dev->>'context_id')::int = c.id
                       )
                     LIMIT 10
                     """,

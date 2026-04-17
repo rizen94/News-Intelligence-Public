@@ -7,8 +7,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "api"))
 
 from collectors.rss_collector import (  # noqa: E402
     _url_looks_like_commerce_native,
+    _url_looks_like_finance_affiliate_vertical,
     calculate_article_quality_score,
     is_advertisement,
+    is_excluded_content,
 )
 
 
@@ -80,6 +82,43 @@ def test_quality_score_caps_legal_native_ad_below_ingest():
         "https://example.com/legal-tools",
     )
     assert q < 0.3
+
+
+def test_url_finance_affiliate_vertical():
+    assert _url_looks_like_finance_affiliate_vertical(
+        "https://www.nerdwallet.com/article/credit-cards/best-cards"
+    )
+    assert not _url_looks_like_finance_affiliate_vertical(
+        "https://www.reuters.com/world/us/congress-2025-01-01/"
+    )
+
+
+def test_is_advertisement_title_only_credit_card_roundup():
+    assert is_advertisement(
+        "Compare the best credit cards for dining rewards",
+        "",
+        "https://example.com/article",
+    )
+    assert is_advertisement(
+        "Top 6 credit cards for travel in 2026",
+        "",
+        "https://example.com/article",
+    )
+    assert not is_advertisement(
+        "Senate panel holds hearing on credit card fee cap bill",
+        "Lawmakers discussed interchange fees.",
+        "https://example.com/politics/1",
+    )
+
+
+def test_is_excluded_content_politics_merged_defaults_best_credit_cards():
+    assert is_excluded_content(
+        "Our picks",
+        "Best credit cards for groceries and gas this year.",
+        "Wirecutter",
+        "",
+        domain="politics",
+    )
 
 
 def test_quality_score_caps_cnn_commerce_and_skips_reputable_boost():

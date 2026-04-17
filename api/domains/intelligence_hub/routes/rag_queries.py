@@ -441,17 +441,31 @@ async def cross_domain_query(request: RAGQueryRequest):
                 )
             all_sources.extend(result.sources_cited)
 
-        # Generate combined insight
-        combined_prompt = f"""Based on insights from multiple domains (politics, finance, technology), provide a synthesized answer to: {request.query}
+        label_for: dict[str, str] = {
+            "politics": "Politics perspective",
+            "finance": "Finance perspective",
+            "artificial-intelligence": "AI & technology perspective",
+            "medicine": "Medicine & health perspective",
+            "environment-climate": "Environment & climate perspective",
+            "legal": "Legal perspective",
+        }
+        perspective_lines: list[str] = []
+        for dk in domains:
+            if dk not in results:
+                continue
+            label = label_for.get(dk, f"{dk.replace('-', ' ').title()} perspective")
+            perspective_lines.append(f"{label}: {results[dk]['answer'][:300]}")
 
-Politics perspective: {results["politics"]["answer"][:300]}
-Finance perspective: {results["finance"]["answer"][:300]}
-Technology perspective: {results["science-tech"]["answer"][:300]}
+        body = "\n".join(perspective_lines) if perspective_lines else "(no domain answers)"
+        combined_prompt = f"""Based on insights from multiple domains, provide a synthesized answer to: {request.query}
+
+{body}
 
 Synthesize these perspectives into a cohesive cross-domain insight:"""
 
         combined_answer, confidence = rag_service.generate_answer(combined_prompt)
 
+        n = len(results) or 1
         return {
             "success": True,
             "query": request.query,
@@ -459,7 +473,7 @@ Synthesize these perspectives into a cohesive cross-domain insight:"""
             "domain_results": results,
             "cross_domain_entities": all_entities[:10],
             "all_sources": list(set(all_sources)),
-            "overall_confidence": sum(r["confidence"] for r in results.values()) / len(domains),
+            "overall_confidence": sum(r["confidence"] for r in results.values()) / n,
         }
 
     except Exception as e:

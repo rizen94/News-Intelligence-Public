@@ -204,7 +204,7 @@ def news_intel_rate_limit_per_minute() -> int:
 
 
 def get_rss_ingest_excluded_domain_keys() -> frozenset[str]:
-    """Domain keys skipped by ``collect_rss_feeds`` (comma-separated env). Use with template silos ``politics-2`` / ``finance-2``."""
+    """Domain keys skipped by ``collect_rss_feeds`` (comma-separated env). Use to exclude legacy schemas during cutover."""
     raw = os.environ.get("RSS_INGEST_EXCLUDE_DOMAIN_KEYS", "").strip()
     if not raw:
         return frozenset()
@@ -225,8 +225,8 @@ def rss_ingest_mirror_pipeline_enabled() -> bool:
 
 
 def finance_postgres_content_domain_key() -> str:
-    """ArticleService / finance helpers: which ``domain_key`` owns finance RSS articles (``finance`` or ``finance-2``)."""
-    return (os.environ.get("FINANCE_PG_CONTENT_DOMAIN_KEY", "finance") or "finance").strip()
+    """ArticleService / finance helpers: which ``domain_key`` owns finance RSS articles (default ``finance`` → schema ``finance_2``)."""
+    return (os.environ.get("FINANCE_PG_CONTENT_DOMAIN_KEY") or "finance").strip()
 
 
 def finance_intelligence_context_domain_key() -> str:
@@ -236,8 +236,8 @@ def finance_intelligence_context_domain_key() -> str:
 
 
 def politics_postgres_content_domain_key() -> str:
-    """Background jobs that read politics articles by silo (``politics`` or ``politics-2``)."""
-    return (os.environ.get("POLITICS_PG_CONTENT_DOMAIN_KEY", "politics") or "politics").strip()
+    """Background jobs that read politics articles by silo (default ``politics`` → schema ``politics_2``)."""
+    return (os.environ.get("POLITICS_PG_CONTENT_DOMAIN_KEY") or "politics").strip()
 
 
 def event_tracking_max_age_days() -> int:
@@ -274,6 +274,32 @@ def topic_clustering_graduation_confidence() -> float:
     except ValueError:
         n = 0.88
     return min(0.99, max(0.50, n))
+
+
+def topic_clustering_backlog_uses_pass_marker() -> bool:
+    """
+    When true (default), Monitor/automation ``pending`` for topic_clustering counts only articles
+    that have never completed a successful clustering pass (``metadata.pipeline.topic_clustering.last_pass_at``).
+    Legacy behavior (count low-confidence re-refinement as backlog) when false.
+    """
+    return os.environ.get("TOPIC_CLUSTERING_BACKLOG_USE_PASS_MARKER", "true").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+
+
+def topic_clustering_iterative_refinement_enabled() -> bool:
+    """
+    When true, topic_clustering selects articles below graduation confidence for repeat passes
+    (legacy churn). When false (default), each article is only queued until the first successful pass
+    records ``last_pass_at`` — aligned with ``topic_clustering_backlog_uses_pass_marker``.
+    """
+    return os.environ.get("TOPIC_CLUSTERING_ITERATIVE_REFINEMENT", "false").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
 
 
 # ============================================================

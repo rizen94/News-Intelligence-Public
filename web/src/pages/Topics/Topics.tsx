@@ -112,8 +112,6 @@ if (!apiService || typeof apiService.getTopics !== 'function') {
       Promise.resolve({ success: false, error: 'apiService not initialized' }),
     getArticles: () =>
       Promise.resolve({ success: false, error: 'apiService not initialized' }),
-    getCategoryStats: () =>
-      Promise.resolve({ success: false, error: 'apiService not initialized' }),
     getWordCloud: () =>
       Promise.resolve({ success: false, error: 'apiService not initialized' }),
     getBigPicture: () =>
@@ -142,7 +140,10 @@ interface Topic {
   category?: string;
   subcategory?: string;
   article_count?: number;
+  /** 0–100, from API */
   avg_confidence?: number;
+  /** 0–1 raw score */
+  avg_relevance?: number;
   latest_article?: string;
 }
 
@@ -273,6 +274,51 @@ const Topics: React.FC = () => {
     }[]
   >([]);
   const [mergeSuggestionsLoading, setMergeSuggestionsLoading] = useState(false);
+  const [wordCloudError, setWordCloudError] = useState<string | null>(null);
+  const [bigPictureError, setBigPictureError] = useState<string | null>(null);
+  const [trendingError, setTrendingError] = useState<string | null>(null);
+
+  /** Category filter chips derived from loaded topics (avoids an extra round-trip; global stats exist at GET /api/topics/categories/stats). */
+  const categoriesFromTopics = useMemo((): Category[] => {
+    const tally: Record<string, number> = {};
+    for (const t of topics) {
+      const c = (t.category || 'semantic').trim() || 'semantic';
+      tally[c] = (tally[c] || 0) + (t.article_count || 0);
+    }
+    return Object.entries(tally)
+      .map(([category, article_count]) => ({ category, article_count }))
+      .sort((a, b) => b.article_count - a.article_count);
+  }, [topics]);
+
+  const filteredTopics = useMemo(() => {
+    if (!selectedCategory) return topics;
+    return topics.filter(
+      t => (t.category || 'semantic') === selectedCategory
+    );
+  }, [topics, selectedCategory]);
+
+  const wordCloudDisplayWords = useMemo((): WordCloudWord[] => {
+    const raw =
+      wordCloudData?.word_cloud || wordCloudData?.words || [];
+    if (raw.length > 0) return raw;
+    return topics.slice(0, 48).map(t => {
+      const n = t.article_count || 1;
+      const rel = t.avg_relevance ?? (t.avg_confidence != null ? t.avg_confidence / 100 : 0.5);
+      return {
+        text: t.name,
+        size: Math.min(100, Math.max(22, 18 + n * 2)),
+        frequency: n,
+        relevance: Math.min(1, Math.max(0.35, rel)),
+        category: t.category || 'semantic',
+      };
+    });
+  }, [wordCloudData, topics]);
+
+  const wordCloudUsesTopicFallback = useMemo(() => {
+    const raw =
+      wordCloudData?.word_cloud || wordCloudData?.words || [];
+    return raw.length === 0 && topics.length > 0;
+  }, [wordCloudData, topics]);
 
   const loadTopics = useCallback(async () => {
     try {
@@ -483,57 +529,53 @@ const Topics: React.FC = () => {
     [domain]
   );
 
-  const loadCategories = useCallback(async () => {
-    try {
-      const service = getApiServiceSafe();
-      const response = await service.getCategoryStats();
-
-      if (response.success) {
-        setCategories(response.data.categories || []);
-      }
-    } catch (err) {
-      console.error('Error loading categories:', err);
-    }
-  }, []);
+  // Sync category chips from domain topic list.
+  useEffect(() => {
+    setCategories(categoriesFromTopics);
+  }, [categoriesFromTopics]);
 
   // New enhanced data loading functions
   const loadWordCloudData = useCallback(async () => {
     try {
+      setWordCloudError(null);
       const service = getApiServiceSafe();
       // Use min_frequency=1 to get all topics (even with 1 article)
       const response = await service.getWordCloud(timePeriod, 50, domain);
-      if (response.success) {
+      if (response.success && response.data) {
         setWordCloudData(response.data);
-        console.log('Word cloud data loaded:', response.data);
       } else {
-        console.warn('Word cloud response not successful:', response);
-        // Still set empty data so UI shows "No topics found" message
+        const msg =
+          (response as any).message ||
+          (response as any).error ||
+          'Word cloud API did not return data.';
+        setWordCloudError(msg);
         setWordCloudData({ word_cloud: [], words: [] });
       }
     } catch (err) {
       console.error('Error loading word cloud data:', err);
-      // Set empty data on error
+      setWordCloudError(getUserFriendlyError(err));
       setWordCloudData({ word_cloud: [], words: [] });
     }
   }, [timePeriod, domain]);
 
   const loadBigPictureData = useCallback(async () => {
     try {
+      setBigPictureError(null);
       const service = getApiServiceSafe();
       const response = await service.getBigPicture(timePeriod, domain);
-      console.log('Big Picture API Response:', response);
       if (response.success && response.data) {
-        console.log('Setting big picture data:', response.data);
         setBigPictureData(response.data);
       } else {
-        console.warn(
-          'Big Picture API returned unsuccessful or no data:',
-          response
-        );
+        const msg =
+          (response as any).message ||
+          (response as any).error ||
+          'Big picture API did not return data.';
+        setBigPictureError(msg);
         setBigPictureData(null);
       }
     } catch (err) {
       console.error('Error loading big picture data:', err);
+      setBigPictureError(getUserFriendlyError(err));
       setBigPictureData(null);
     }
   }, [timePeriod, domain]);
@@ -569,13 +611,23 @@ const Topics: React.FC = () => {
 
   const loadTrendingTopics = useCallback(async () => {
     try {
+      setTrendingError(null);
       const service = getApiServiceSafe();
       const response = await service.getTrendingTopics(timePeriod, 20, domain);
       if (response.success) {
         setTrendingTopics(response.data?.trending_topics || []);
+      } else {
+        setTrendingError(
+          (response as any).message ||
+            (response as any).error ||
+            'Trending topics unavailable.'
+        );
+        setTrendingTopics([]);
       }
     } catch (err) {
       console.error('Error loading trending topics:', err);
+      setTrendingError(getUserFriendlyError(err));
+      setTrendingTopics([]);
     }
   }, [timePeriod, domain]);
 
@@ -674,7 +726,6 @@ const Topics: React.FC = () => {
   // Initial load - only run once on mount or when domain changes
   useEffect(() => {
     loadTopics();
-    loadCategories();
     loadWordCloudData();
     loadBigPictureData();
     loadTrendingTopics();
@@ -821,13 +872,16 @@ const Topics: React.FC = () => {
   const BigPictureInsights: React.FC<{
     data: BigPictureData | null;
     domain?: string;
+    loadError?: string | null;
     onBanTopic?: (topicName: string) => Promise<void>;
-  }> = ({ data, domain, onBanTopic }) => {
+  }> = ({ data, domain, loadError, onBanTopic }) => {
     if (!data || !data.insights) {
       return (
         <Box sx={{ p: 3, textAlign: 'center' }}>
           <Typography color='text.secondary'>
-            Loading big picture data...
+            {loadError
+              ? 'No chart data loaded for this period.'
+              : 'No overview yet for this time window — try a longer range or run topic clustering so articles link to clusters.'}
           </Typography>
         </Box>
       );
@@ -1146,8 +1200,21 @@ const Topics: React.FC = () => {
               Hybrid trend map across topic clusters plus entity/context
               signals. Larger words indicate stronger multi-source coverage.
             </Typography>
+            {wordCloudError && (
+              <Alert severity='warning' sx={{ mb: 2 }}>
+                Word cloud API: {wordCloudError}. Showing topic clusters from
+                the topic list when available.
+              </Alert>
+            )}
+            {wordCloudUsesTopicFallback && !wordCloudError && topics.length > 0 && (
+              <Alert severity='info' sx={{ mb: 2 }}>
+                Showing topic cluster names from your domain list (same data as
+                &quot;All Topics&quot;). Use Refresh after clustering to load
+                enriched keywords when available.
+              </Alert>
+            )}
             <WordCloudVisualization
-              words={wordCloudData?.word_cloud || wordCloudData?.words || []}
+              words={wordCloudDisplayWords}
               onTopicClick={async (topicName: string) => {
                 // Find the topic from the topics list or create a minimal topic object
                 const topic = topics.find(t => t.name === topicName) || {
@@ -1205,9 +1272,15 @@ const Topics: React.FC = () => {
             >
               Manage banned topics
             </Button>
+            {bigPictureError && (
+              <Alert severity='error' sx={{ mb: 2 }}>
+                {bigPictureError}
+              </Alert>
+            )}
             <BigPictureInsights
               data={bigPictureData}
               domain={domain}
+              loadError={bigPictureError}
               onBanTopic={async topicName => {
                 const service = getApiServiceSafe();
                 const res = await service.banTopic(
@@ -1312,6 +1385,11 @@ const Topics: React.FC = () => {
               Topics gaining momentum based on recent article activity and
               relevance.
             </Typography>
+            {trendingError && (
+              <Alert severity='warning' sx={{ mb: 2 }}>
+                {trendingError}
+              </Alert>
+            )}
             {trendingTopics.length === 0 ? (
               <Box sx={{ textAlign: 'center', py: 4 }}>
                 <TrendingUp
@@ -1321,7 +1399,9 @@ const Topics: React.FC = () => {
                   No trending topics found
                 </Typography>
                 <Typography variant='body2' color='text.secondary'>
-                  Try expanding the time period or triggering clustering.
+                  Try expanding the time period, run topic clustering, or open
+                  &quot;All Topics&quot; to browse clusters that already have
+                  article assignments.
                 </Typography>
               </Box>
             ) : (
@@ -1537,9 +1617,23 @@ const Topics: React.FC = () => {
           )}
 
           {/* Topics Grid */}
+          {!loading && topics.length > 0 && filteredTopics.length === 0 && (
+            <Alert severity='info' sx={{ mb: 2 }}>
+              No topics match category &quot;{selectedCategory}&quot;. Choose
+              &quot;All Categories&quot; or pick another label.
+            </Alert>
+          )}
+          {!loading && topics.length === 0 && (
+            <EmptyState
+              title='No topic clusters yet'
+              message='Run topic clustering (or wait for the pipeline) so articles are assigned to named clusters. Then refresh this page.'
+              actionLabel='Cluster articles'
+              onAction={handleClusterArticles}
+            />
+          )}
           {!loading && (
             <Grid container spacing={3}>
-              {topics.map((topic: Topic) => (
+              {filteredTopics.map((topic: Topic) => (
                 <Grid item xs={12} md={6} lg={4} key={topic.name}>
                   <Card
                     sx={{
@@ -1601,7 +1695,11 @@ const Topics: React.FC = () => {
                         sx={{ mb: 2 }}
                       >
                         {topic.article_count} articles •{' '}
-                        {topic.avg_confidence?.toFixed(1) || '0.0'}% confidence
+                        {(topic.avg_confidence != null
+                          ? topic.avg_confidence
+                          : (topic.avg_relevance ?? 0) * 100
+                        ).toFixed(1)}
+                        % relevance
                       </Typography>
 
                       <Box
@@ -1927,7 +2025,7 @@ const Topics: React.FC = () => {
       {/* Tab Content: Management */}
       {activeTab === 5 && (
         <Box>
-          <TopicManagement />
+          <TopicManagement domain={domain} />
         </Box>
       )}
 

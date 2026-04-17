@@ -20,8 +20,8 @@ Three-machine setup:
 ### Data Flow
 
 - **Primary** runs the FastAPI app, connects to Widow’s database over LAN
-- **Widow** runs PostgreSQL and the RSS collector (systemd), backs up to local (or NAS if mounted)
-- **NAS** is used for archives/backups; no application logic
+- **Widow** runs PostgreSQL and the RSS collector (systemd), backs up with **`scripts/db_backup_single_latest.sh`** to the NAS Data Lake share when mounted
+- **NAS** is used for archives/backups; no application logic. **DB backup policy:** one rolling `news_intel_latest.pgdump` (~24h RPO)—see [DATABASE_BACKUP.md](DATABASE_BACKUP.md)
 
 ---
 
@@ -67,7 +67,7 @@ Three-machine setup:
 
 - PostgreSQL 16 (system service)
 - RSS worker: `newsplatform-secondary.service` (every 10 min)
-- Backups: cron at 03:00 daily, 04:00 Sun weekly
+- Backups: cron **03:00 daily** — single file `news_intel_latest.pgdump` under `/mnt/nas/Data Lake Storage/news-intelligence/database-backup/` (see [DATABASE_BACKUP.md](DATABASE_BACKUP.md))
 
 **SSH**
 
@@ -81,7 +81,7 @@ ssh widow   # or ssh user@<WIDOW_HOST_IP>
 # On Widow
 sudo systemctl status newsplatform-secondary
 sudo systemctl status postgresql
-./scripts/db_backup.sh   # Manual backup
+./scripts/db_backup_single_latest.sh   # Manual backup (policy: one NAS file)
 ```
 
 ---

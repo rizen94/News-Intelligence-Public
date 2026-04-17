@@ -34,7 +34,7 @@ class TopicFilter:
 class DomainSynthesisConfig:
     domain_key: str
     focus_areas: list[str] = field(default_factory=list)
-    """Cross-cutting themes for topic/storyline alignment (e.g. science-tech: AI, genomics)."""
+    """Cross-cutting themes for topic/storyline alignment (e.g. artificial-intelligence: ML, safety)."""
     macro_subject_axes: list[str] = field(default_factory=list)
     event_type_priorities: list[str] = field(default_factory=list)
     entity_type_weights: dict[str, float] = field(default_factory=dict)
@@ -85,10 +85,10 @@ def reload_config() -> None:
 
 
 def _normalise_domain_key(domain_key: str) -> str:
-    """Accept 'science_tech', 'science-tech', 'sciencetech' → 'science-tech'."""
+    """Map retired science-tech aliases to artificial-intelligence; normalize separators."""
     k = domain_key.lower().strip().replace("_", "-")
-    if k in ("sciencetech", "science tech"):
-        return "science-tech"
+    if k in ("sciencetech", "science tech", "science-tech"):
+        return "artificial-intelligence"
     return k
 
 
@@ -102,10 +102,17 @@ def get_domain_synthesis_config(domain_key: str) -> DomainSynthesisConfig:
     norm_key = _normalise_domain_key(domain_key)
     domain_raw = (raw.get("domains") or {}).get(norm_key, {})
 
+    tf_defaults = (defaults.get("topic_filter") or {}) if isinstance(defaults, dict) else {}
     tf_raw = domain_raw.get("topic_filter", {})
+    base_kw = [k.lower() for k in (tf_defaults.get("exclude_keywords") or [])]
+    dom_kw = [k.lower() for k in (tf_raw.get("exclude_keywords") or [])]
+    merged_kw = list(dict.fromkeys(base_kw + dom_kw))
+    base_cat = [c.lower() for c in (tf_defaults.get("exclude_categories") or [])]
+    dom_cat = [c.lower() for c in (tf_raw.get("exclude_categories") or [])]
+    merged_cat = list(dict.fromkeys(base_cat + dom_cat))
     topic_filter = TopicFilter(
-        exclude_keywords=[k.lower() for k in (tf_raw.get("exclude_keywords") or [])],
-        exclude_categories=[c.lower() for c in (tf_raw.get("exclude_categories") or [])],
+        exclude_keywords=merged_kw,
+        exclude_categories=merged_cat,
         include_categories=[c.lower() for c in (tf_raw.get("include_categories") or [])],
     )
 

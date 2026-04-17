@@ -1,28 +1,23 @@
 """
 Single source of truth for URL domain keys and Postgres schema names.
 
-Core domains (politics, finance, science-tech) are always registered.
-Additional silos use the same pipeline once onboarded: load ``api/config/domains/*.yaml`` when ``is_active`` is true.
+**Authoritative list: ``public.domains``** (rows with ``is_active`` true). YAML files under
+``api/config/domains/*.yaml`` **merge into** DB rows for the same ``domain_key`` (prompts, RSS seeds,
+focus hints) but **cannot** introduce a domain that is not present in the database.
 
 Loader rules (keep in sync with api/config/domains/README.md):
-- Skip any ``*.yaml`` file whose name starts with ``_`` (e.g. ``_template.example.yaml``).
-- Skip files where ``is_active`` is false (missing key defaults to true — templates should set false explicitly).
-- Strip every key whose name starts with ``_`` from each loaded document (human-only comments).
-- Ignore YAML that tries to redefine politics, finance, or science-tech.
+- Skip any ``*.yaml`` file whose name starts with ``_``.
+- Strip every key whose name starts with ``_`` from each loaded document.
+- When the DB is empty or unreachable, fall back to **YAML-only** (developer bootstrap / tests).
 
-``data_sources.rss.seed_feed_urls`` (and optional ``seed_feed_category``) are **not** read here.
-They are inserted into ``{schema_name}.rss_feeds`` by ``api/scripts/provision_domain.py`` (after SQL)
-and ``api/scripts/seed_domain_rss_from_yaml.py`` (backfill).
-
-``DOMAIN_PATH_PATTERN`` only constrains URL shape; ``is_valid_domain_key()`` re-reads YAML each call
-so newly onboarded silos work without restarting the API. ``ACTIVE_DOMAIN_KEYS*`` at import is a snapshot only.
+``data_sources.rss.seed_feed_urls`` are inserted by ``provision_domain.py`` / ``seed_domain_rss_from_yaml.py``.
 
 See docs/DOMAIN_EXTENSION_TEMPLATE.md and api/config/domains/README.md.
 """
 
 from __future__ import annotations
 
-import re
+import logging
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -32,34 +27,11 @@ try:
 except ImportError:  # pragma: no cover
     yaml = None
 
+logger = logging.getLogger(__name__)
+
 _CONFIG_DIR = Path(__file__).resolve().parent.parent / "config" / "domains"
 
-# Built-in silos — never removed via YAML; YAML cannot deactivate these.
-_BUILTIN: tuple[dict[str, Any], ...] = (
-    {
-        "domain_key": "politics",
-        "schema_name": "politics",
-        "display_name": "Politics",
-        "display_order": 1,
-        "is_active": True,
-    },
-    {
-        "domain_key": "finance",
-        "schema_name": "finance",
-        "display_name": "Finance",
-        "display_order": 2,
-        "is_active": True,
-    },
-    {
-        "domain_key": "science-tech",
-        "schema_name": "science_tech",
-        "display_name": "Science & Technology",
-        "display_order": 3,
-        "is_active": True,
-    },
-)
-
-# Schemas that must never be targeted by provision_domain as a "new" silo.
+# Schemas that must never be targeted by provision_domain as a *new* YAML silo (system + legacy dumps).
 RESERVED_SCHEMA_NAMES: frozenset[str] = frozenset(
     {
         "public",
@@ -75,17 +47,6 @@ RESERVED_SCHEMA_NAMES: frozenset[str] = frozenset(
         "artificial_intelligence",
     }
 )
-
-
-def resolve_domain_schema(domain_key: str) -> str:
-    """
-    Map URL ``domain_key`` to Postgres ``schema_name`` for active/builtin entries.
-    Fallback: ``hyphen → underscore`` (for stale rows or tests).
-    """
-    for e in get_domain_entries():
-        if e["domain_key"] == domain_key:
-            return str(e["schema_name"])
-    return str(domain_key).replace("-", "_")
 
 
 def _strip_doc_keys(data: dict[str, Any]) -> dict[str, Any]:
@@ -111,21 +72,106 @@ def _load_yaml_domain_files() -> list[dict[str, Any]]:
         key = raw.get("domain_key")
         if not key or not isinstance(key, str):
             continue
-        # Do not allow YAML to redefine core keys (avoid hijack / drift).
-        if key in ("politics", "finance", "science-tech"):
-            continue
         out.append(_strip_doc_keys(raw))
     return out
 
 
+def _load_domain_entries_from_db() -> list[dict[str, Any]] | None:
+    """Return domain dicts from ``public.domains``, or None if DB unavailable."""
+    try:
+        from psycopg2.extras import RealDictCursor
+
+        from shared.database.connection import get_ui_db_connection
+    except Exception as e:  # pragma: no cover
+        logger.debug("domain_registry DB load skipped: %s", e)
+        return None
+
+    conn = get_ui_db_connection()
+    if not conn:
+        return None
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT domain_key, schema_name, name, display_order, is_active
+                FROM public.domains
+                ORDER BY display_order NULLS LAST, domain_key
+                """
+            )
+            rows = cur.fetchall()
+    except Exception as e:
+        logger.warning("domain_registry: could not read public.domains: %s", e)
+        return None
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        dk = str(r.get("domain_key") or "").strip()
+        sch = str(r.get("schema_name") or "").strip()
+        if not dk or not sch:
+            continue
+        name = r.get("name")
+        out.append(
+            {
+                "domain_key": dk,
+                "schema_name": sch,
+                "display_name": (str(name).strip() if name else dk),
+                "display_order": int(r.get("display_order") or 99),
+                "is_active": bool(r.get("is_active", True)),
+            }
+        )
+    return out
+
+
 def get_domain_entries() -> list[dict[str, Any]]:
-    """All domains (builtin + active YAML), sorted by display_order then key."""
-    by_key: dict[str, dict[str, Any]] = {e["domain_key"]: dict(e) for e in _BUILTIN}
-    for d in _load_yaml_domain_files():
-        k = d["domain_key"]
-        merged = {**by_key.get(k, {}), **d}
-        by_key[k] = merged
-    return sorted(by_key.values(), key=lambda x: (x.get("display_order", 99), x["domain_key"]))
+    """
+    All domains: **DB first**, merged with YAML for matching ``domain_key``.
+    If ``public.domains`` is empty/unavailable, active YAML files only (bootstrap).
+    """
+    db_rows = _load_domain_entries_from_db()
+    yaml_docs = _load_yaml_domain_files()
+    yaml_by_key = {d["domain_key"]: d for d in yaml_docs if d.get("domain_key")}
+
+    if db_rows is not None and len(db_rows) > 0:
+        by_key: dict[str, dict[str, Any]] = {}
+        for e in db_rows:
+            by_key[e["domain_key"]] = dict(e)
+        for k, y in yaml_by_key.items():
+            if k not in by_key:
+                continue
+            merged = {**y, **by_key[k]}
+            by_key[k] = merged
+        return sorted(by_key.values(), key=lambda x: (x.get("display_order", 99), x["domain_key"]))
+
+    # Bootstrap: no DB rows — use YAML-only (tests / pre-migration dev).
+    if not yaml_docs:
+        logger.warning(
+            "domain_registry: public.domains is empty and no active YAML domains; registry is empty"
+        )
+        return []
+    logger.info("domain_registry: using YAML-only domain list (public.domains empty or unreachable)")
+    return sorted(yaml_docs, key=lambda x: (x.get("display_order", 99), x["domain_key"]))
+
+
+def first_active_domain_key(fallback: str = "politics") -> str:
+    """First active registry domain key — for API defaults when no domain is specified."""
+    keys = get_active_domain_keys()
+    return keys[0] if keys else fallback
+
+
+def resolve_domain_schema(domain_key: str) -> str:
+    """
+    Map URL ``domain_key`` to Postgres ``schema_name`` for active entries.
+    Fallback: ``hyphen → underscore`` (for stale rows or tests).
+    """
+    for e in get_domain_entries():
+        if e["domain_key"] == domain_key:
+            return str(e["schema_name"])
+    return str(domain_key).replace("-", "_")
 
 
 def get_active_domain_keys() -> tuple[str, ...]:
@@ -171,8 +217,6 @@ def get_pipeline_excluded_domain_keys() -> frozenset[str]:
     """
     Domain keys excluded from **automation / enrichment / backlog processing** (comma-separated env).
 
-    Set ``PIPELINE_EXCLUDE_DOMAIN_KEYS=politics,finance`` when ingest and work have moved to
-    ``politics-2`` / ``finance-2``. RSS collection uses ``RSS_INGEST_EXCLUDE_DOMAIN_KEYS`` separately.
     Comparison is case-insensitive.
     """
     import os
@@ -217,15 +261,13 @@ def get_pipeline_schema_names_active() -> tuple[str, ...]:
 
 
 def get_pipeline_active_domain_keys() -> tuple[str, ...]:
-    """URL/route domain keys included in pipeline processing (``PIPELINE_INCLUDE_*`` then ``PIPELINE_EXCLUDE_*``)."""
+    """URL/route domain keys included in pipeline processing."""
     return tuple(dk for dk, _sch in iter_pipeline_url_schema_pairs())
 
 
-# FastAPI Path: shape-only so new YAML-onboarded silos work without restarting the API process.
-# Authoritative allowlist is ``get_active_domain_keys()`` / ``is_valid_domain_key`` (YAML + builtins).
+# FastAPI Path: shape-only so YAML-onboarded silos work without restarting the API process.
 DOMAIN_PATH_PATTERN = r"^[a-z0-9]+(?:-[a-z0-9]+)*$"
 
-# Snapshot at import — prefer ``get_active_domain_keys()`` when the list must reflect current YAML.
 ACTIVE_DOMAIN_KEYS: tuple[str, ...] = get_active_domain_keys()
 ACTIVE_DOMAIN_KEYS_SET: frozenset[str] = frozenset(ACTIVE_DOMAIN_KEYS)
 

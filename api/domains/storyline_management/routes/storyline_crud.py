@@ -331,7 +331,7 @@ async def get_domain_storyline(
                 # Entities: article_entities + entity_canonical for this storyline's articles
                 entity_list = []
                 if article_ids:
-                    domain_key = domain  # politics | finance | science-tech
+                    domain_key = domain  # URL domain key for this storyline
                     cur.execute(
                         f"""
                         SELECT ec.id, ec.canonical_name, ec.entity_type, ec.description,
@@ -565,8 +565,9 @@ async def update_domain_storyline(
 
 
 def _entity_profile_domain_keys_for_path(path_domain: str) -> list[str]:
-    if path_domain == "science-tech":
-        return ["science-tech", "science_tech"]
+    """Tokens that may appear in intelligence.entity_profiles.domain_key for this route domain."""
+    if path_domain in ("science-tech", "science_tech"):
+        return ["artificial-intelligence", "science-tech", "science_tech"]
     return [path_domain]
 
 

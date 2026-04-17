@@ -18,7 +18,7 @@ Safety:
     that setting requires superuser on many deployments).
 
 After copy, runs ``sync_domain_entity_profiles`` for ``--target-domain-key`` so claim resolution
-can match on ``politics-2`` (or your chosen key).
+must match the current ``public.domains.domain_key`` for the target schema (e.g. ``politics-2`` until migration **211**, then ``politics``).
 
 Examples::
 
@@ -27,6 +27,8 @@ Examples::
 
   PYTHONPATH=api uv run python api/scripts/copy_domain_silo_table_data.py \\
     --source-schema politics --target-schema politics_2 --target-domain-key politics-2
+
+  # After migration 211 renames keys to ``politics`` / ``finance``, use ``--target-domain-key politics``.
 
   # Re-copy from scratch (wipes target silo tables only):
   PYTHONPATH=api uv run python api/scripts/copy_domain_silo_table_data.py \\
@@ -235,7 +237,7 @@ def main() -> int:
     p.add_argument(
         "--target-domain-key",
         required=True,
-        help="Registry domain_key for entity_profiles sync, e.g. politics-2",
+        help="Registry domain_key for entity_profiles sync (e.g. politics-2 pre-211, politics post-211)",
     )
     p.add_argument("--dry-run", action="store_true", help="Print counts and SQL preview only")
     p.add_argument(

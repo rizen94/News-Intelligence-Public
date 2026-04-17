@@ -560,7 +560,7 @@ export default function CommodityDashboard() {
       <Card variant='outlined' sx={{ mb: 3 }}>
         <CardHeader
           title='Geographic & logistics context'
-          subheader={`Tracked events for ${commodityLabel} with mappable regions. Cross-domain rows are politics/science-tech items that match this commodity; map lines are reference routes only (not live vessels).`}
+          subheader={`Tracked events for ${commodityLabel} with mappable regions. Cross-domain rows are politics/AI items that match this commodity; map lines are reference routes only (not live vessels).`}
         />
         <CardContent>
           <Box

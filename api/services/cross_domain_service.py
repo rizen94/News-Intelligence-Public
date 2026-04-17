@@ -1,5 +1,5 @@
 """
-Cross-domain synthesis service — find correlations across politics, finance, science-tech.
+Cross-domain synthesis service — find correlations across active pipeline domains.
 Populates intelligence.cross_domain_correlations; supports unified timeline.
 See docs/DATA_PIPELINE_ENHANCEMENTS_ROADMAP.md.
 """
@@ -15,9 +15,10 @@ logger = logging.getLogger(__name__)
 
 
 def _norm_tracked_domain_key(d: str) -> str:
-    x = str(d).lower().strip()
-    if x == "science-tech":
-        return "science_tech"
+    """Normalize legacy tokens so they match ``get_pipeline_active_domain_keys()`` hyphen keys."""
+    x = str(d).lower().strip().replace("_", "-")
+    if x in ("science-tech", "sciencetech", "science tech"):
+        return "artificial-intelligence"
     return x
 
 

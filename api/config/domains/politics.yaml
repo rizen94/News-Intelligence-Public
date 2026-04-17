@@ -1,0 +1,26 @@
+# Primary politics silo — Postgres schema ``politics_2`` (migration 201).
+# URL domain key ``politics`` maps to schema ``politics_2`` so we keep clean names without
+# moving data back into the legacy ``politics`` schema (see docs/DOMAIN_CUTOVER_POLITICS_FINANCE.md).
+
+domain_key: politics
+schema_name: politics_2
+display_name: Politics
+description: >-
+  Politics coverage; canonical domain key after migration 211. Data lives in schema politics_2.
+display_order: 1
+is_active: true
+
+data_sources:
+  rss:
+    seed_feed_urls: []
+
+focus_areas:
+  - Same editorial scope as historical politics silo
+
+llm_prompt_guidance: |
+  Align with institutional politics and policy coverage.
+
+workload_assumptions:
+  expected_active_feeds: 0
+  rough_new_articles_per_day: 0
+  llm_heavy_phases_enabled: true

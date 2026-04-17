@@ -165,19 +165,19 @@ def _fetch_arxiv(max_items: int) -> list[tuple[str, str, str, str]]:
 
 
 # Source key -> (domain_filter, fetcher)
-# domain_filter: None = all, or "politics"|"finance"|"science-tech"
+# domain_filter: None = all, or "politics"|"finance"|"artificial-intelligence"
 SOURCES = {
     "crs": ("politics", _fetch_crs),
     "gao": (None, _fetch_gao),
     "cbo": (None, _fetch_cbo),
-    "arxiv": ("science-tech", _fetch_arxiv),
+    "arxiv": ("artificial-intelligence", _fetch_arxiv),
 }
 
 
 def collect_documents(domain: str | None = None, max_per_source: int = 10) -> int:
     """
     Run enabled document sources; insert new URLs into intelligence.processed_documents.
-    domain: if set, only run sources that match this domain (politics|finance|science-tech).
+    domain: if set, only run sources that match this domain (politics|finance|artificial-intelligence).
     Returns count of new documents inserted.
     """
     from shared.database.connection import get_db_connection

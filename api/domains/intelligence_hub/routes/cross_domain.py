@@ -158,7 +158,7 @@ def post_trend_analysis(
 
 @router.get("/predictions/{domain}")
 def get_intelligence_predictions(
-    domain: str = Path(..., description="politics, finance, or science-tech"),
+    domain: str = Path(..., description="Domain URL key (see domain registry)"),
     entity_id: int | None = Query(None),
     horizon_days: int | None = Query(None),
 ) -> dict[str, Any]:

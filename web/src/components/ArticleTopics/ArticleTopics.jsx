@@ -31,8 +31,11 @@ import {
   Refresh,
 } from '@mui/icons-material';
 import apiService from '../../services/apiService';
+import { getCurrentDomain } from '../../utils/domainHelper';
 
-const ArticleTopics = ({ articleId }) => {
+/** @param {{ articleId: number, domain?: string }} props */
+const ArticleTopics = ({ articleId, domain: domainProp }) => {
+  const domain = domainProp || getCurrentDomain();
   const [topics, setTopics] = useState([]);
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState(false);
@@ -45,13 +48,13 @@ const ArticleTopics = ({ articleId }) => {
     if (articleId) {
       loadArticleTopics();
     }
-  }, [articleId]);
+  }, [articleId, domain]);
 
   const loadArticleTopics = async () => {
     try {
       setLoading(true);
       setError(null);
-      const response = await apiService.getArticleTopics(articleId);
+      const response = await apiService.getArticleTopics(articleId, domain);
 
       if (response.success) {
         setTopics(response.data.topics || []);
@@ -69,7 +72,7 @@ const ArticleTopics = ({ articleId }) => {
     try {
       setProcessing(true);
       setError(null);
-      const response = await apiService.processArticleTopics(articleId);
+      const response = await apiService.processArticleTopics(articleId, domain);
 
       if (response.success) {
         await loadArticleTopics();
@@ -94,7 +97,8 @@ const ArticleTopics = ({ articleId }) => {
           is_correct: isCorrect,
           feedback_notes: feedbackNotes,
           validated_by: 'current_user', // TODO: Get from auth context
-        }
+        },
+        domain
       );
 
       if (response.success) {

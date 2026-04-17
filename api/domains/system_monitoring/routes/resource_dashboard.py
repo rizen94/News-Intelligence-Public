@@ -17,6 +17,7 @@ import psutil
 import requests
 import yaml
 from fastapi import APIRouter, HTTPException, Query
+from shared.gpu_metrics import fetch_gpu_metric_hourly_buckets
 from shared.database.connection import get_ui_db_connection as get_db_connection
 from shared.services.response_cache import cached_response, cached_response_sync
 
@@ -1492,6 +1493,40 @@ async def get_devices():
             "total_project_usage_bytes": total_project_bytes,
         },
     }
+
+
+# ---------------------------------------------------------------------------
+# GPU / VRAM history (Monitor — hourly aggregates from gpu_metric_samples)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/gpu_metric_history")
+@cached_response_sync(ttl=60)
+def get_gpu_metric_history(
+    hours: int = Query(
+        72,
+        ge=1,
+        le=168,
+        description="Hours of history to aggregate (hourly buckets, max 7d).",
+    ),
+) -> dict[str, Any]:
+    """Hourly GPU utilization + VRAM % (+ optional temp) for the Monitor historic section."""
+    try:
+        rows = fetch_gpu_metric_hourly_buckets(hours=hours)
+        return {
+            "success": True,
+            "data": {
+                "hours": hours,
+                "hourly": rows,
+                "note": (
+                    "Samples are recorded when health or processing_progress runs (throttled). "
+                    "Sparse buckets until enough samples exist."
+                ),
+            },
+        }
+    except Exception as e:
+        logger.exception("gpu_metric_history failed: %s", e)
+        return {"success": False, "data": None, "error": str(e)[:500]}
 
 
 # ---------------------------------------------------------------------------

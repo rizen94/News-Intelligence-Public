@@ -31,7 +31,7 @@ LEGISLATIVE_SCAN_DOMAIN_KEYS: tuple[str, ...] = ("politics", "legal")
 
 
 def legislative_scan_domain_keys() -> tuple[str, ...]:
-    """Comma-separated URL domain keys, e.g. ``politics-2,legal``. Invalid keys are skipped."""
+    """Comma-separated URL domain keys, e.g. ``politics,legal``. Invalid keys are skipped."""
     raw = os.environ.get("LEGISLATIVE_SCAN_DOMAIN_KEYS", "").strip()
     if not raw:
         return LEGISLATIVE_SCAN_DOMAIN_KEYS

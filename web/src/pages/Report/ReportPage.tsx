@@ -1,6 +1,6 @@
 /**
- * Today's Report — Single report API, 5W1H editorial + key_actors, progressive disclosure.
- * See docs/EDITORIAL_DISPLAY_STRATEGY.md. Fallback to title/description when editorial_document is null.
+ * Domain briefing — Report API (5W1H + key_actors), optional feed + on-demand digest.
+ * See docs/EDITORIAL_DISPLAY_STRATEGY.md. Replaces separate Briefings + Today's Report pages.
  */
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -9,6 +9,7 @@ import {
   Typography,
   Card,
   CardActionArea,
+  CardContent,
   Grid,
   Chip,
   Button,
@@ -25,9 +26,11 @@ import Refresh from '@mui/icons-material/Refresh';
 import ExpandMore from '@mui/icons-material/ExpandMore';
 import ExpandLess from '@mui/icons-material/ExpandLess';
 import OpenInNew from '@mui/icons-material/OpenInNew';
+import AutoAwesome from '@mui/icons-material/AutoAwesome';
 import apiService from '../../services/apiService';
 import { useDomain } from '../../contexts/DomainContext';
 import EntityCard from '../../components/EntityCard/EntityCard';
+import { sanitizeLeadText } from '../../utils/sanitizeDisplayText';
 import type {
   ReportPayload,
   EditorialDocument,
@@ -56,7 +59,7 @@ function getTimeOfDayLabel(slot: ReportPayload['time_of_day']): string {
     case 'weekend':
       return 'Week in review · Deeper reads';
     default:
-      return "Today's report";
+      return 'Your briefing';
   }
 }
 
@@ -84,7 +87,8 @@ function LeadStorylineCard({
   const ed = item.editorial_document;
   const has5W1H = is5W1H(ed ?? undefined);
 
-  const lede = (ed?.lede ?? '').trim() || item.title;
+  const cleanedLede = sanitizeLeadText((ed?.lede ?? '').trim());
+  const lede = cleanedLede || item.title;
   const support =
     !has5W1H && item.title ? (item.title !== lede ? item.title : '') : '';
 
@@ -271,12 +275,35 @@ function LeadStorylineCard({
   );
 }
 
+interface FeedArticle {
+  id?: number;
+  title?: string;
+  source?: string;
+}
+interface FeedStoryline {
+  id?: number;
+  title?: string;
+}
+interface GeneratedDigest {
+  content: string;
+  generated_at: string;
+  article_count: number;
+}
+
 export default function ReportPage() {
   const { domain } = useDomain();
   const navigate = useNavigate();
   const [payload, setPayload] = useState<ReportPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [feedArticles, setFeedArticles] = useState<FeedArticle[]>([]);
+  const [feedStorylines, setFeedStorylines] = useState<FeedStoryline[]>([]);
+  const [generating, setGenerating] = useState(false);
+  const [generatedDigest, setGeneratedDigest] = useState<GeneratedDigest | null>(
+    null
+  );
+  const [generateError, setGenerateError] = useState<string | null>(null);
+  const [digestExpanded, setDigestExpanded] = useState(true);
 
   useEffect(() => {
     load();
@@ -285,14 +312,60 @@ export default function ReportPage() {
   const load = async () => {
     setLoading(true);
     setError(null);
-    const res = await apiService.getReport(domain);
+    const [res, feedRes] = await Promise.all([
+      apiService.getReport(domain),
+      apiService.getBriefingFeed(domain, 6, 4).catch(() => null),
+    ]);
     if (res.success && res.data) {
       setPayload(res.data);
     } else {
       setError(res.message ?? 'Failed to load report');
       setPayload(null);
     }
+    const fd = feedRes as {
+      success?: boolean;
+      data?: { articles?: FeedArticle[]; storylines?: FeedStoryline[] };
+    } | null;
+    if (fd?.success && fd.data) {
+      setFeedArticles(Array.isArray(fd.data.articles) ? fd.data.articles : []);
+      setFeedStorylines(
+        Array.isArray(fd.data.storylines) ? fd.data.storylines : []
+      );
+    } else {
+      setFeedArticles([]);
+      setFeedStorylines([]);
+    }
     setLoading(false);
+  };
+
+  const handleGenerateDigest = async () => {
+    setGenerating(true);
+    setGenerateError(null);
+    try {
+      const response = await apiService.generateDailyBriefing(undefined, domain);
+      const content =
+        response?.data?.content ?? (response as { content?: string })?.content;
+      if (response?.success !== false && content) {
+        setGeneratedDigest({
+          content: String(content),
+          generated_at: new Date().toISOString(),
+          article_count:
+            response?.data?.article_count ??
+            (response as { article_count?: number })?.article_count ??
+            0,
+        });
+      } else {
+        setGenerateError(
+          (response as { error?: string })?.error ??
+            (response as { message?: string })?.message ??
+            'Failed to generate digest'
+        );
+      }
+    } catch (e: unknown) {
+      setGenerateError((e as Error)?.message ?? 'Failed to generate digest');
+    } finally {
+      setGenerating(false);
+    }
   };
 
   const timeOfDay = payload?.time_of_day ?? 'morning';
@@ -311,7 +384,7 @@ export default function ReportPage() {
       >
         <Box>
           <Typography variant='h4' sx={{ fontWeight: 700 }}>
-            Today&apos;s Report
+            Briefing
           </Typography>
           <Typography variant='body2' color='text.secondary'>
             {getTimeOfDayLabel(timeOfDay)}
@@ -407,7 +480,10 @@ export default function ReportPage() {
                     >
                       <ListItemText
                         primary={inv.name?.slice(0, 50) || `#${inv.id}`}
-                        secondary={inv.briefing?.slice(0, 60)}
+                        secondary={sanitizeLeadText(inv.briefing ?? '').slice(
+                          0,
+                          60
+                        )}
                         primaryTypographyProps={{ variant: 'body2' }}
                       />
                     </ListItemButton>
@@ -575,6 +651,136 @@ export default function ReportPage() {
             </Paper>
           ) : null}
 
+          {(feedArticles.length > 0 || feedStorylines.length > 0) && (
+            <Paper variant='outlined' sx={{ p: 2, bgcolor: 'grey.50' }}>
+              <Typography
+                variant='overline'
+                color='text.secondary'
+                sx={{ fontWeight: 600, display: 'block', mb: 1 }}
+              >
+                More coverage
+              </Typography>
+              <Typography variant='body2' color='text.secondary' sx={{ mb: 1.5 }}>
+                From your briefing feed (re-ranked; demotes low-signal topics).
+              </Typography>
+              <Grid container spacing={2}>
+                <Grid item xs={12} md={6}>
+                  <Typography variant='caption' color='text.secondary'>
+                    Articles
+                  </Typography>
+                  <List dense disablePadding>
+                    {feedArticles.slice(0, 5).map(a => (
+                      <ListItemButton
+                        key={a.id ?? a.title}
+                        dense
+                        onClick={() =>
+                          a.id != null &&
+                          navigate(`/${domain}/articles/${a.id}`)
+                        }
+                      >
+                        <ListItemText
+                          primary={(a.title || '').slice(0, 72)}
+                          primaryTypographyProps={{ variant: 'body2' }}
+                        />
+                      </ListItemButton>
+                    ))}
+                  </List>
+                </Grid>
+                <Grid item xs={12} md={6}>
+                  <Typography variant='caption' color='text.secondary'>
+                    Storylines
+                  </Typography>
+                  <List dense disablePadding>
+                    {feedStorylines.slice(0, 4).map(s => (
+                      <ListItemButton
+                        key={s.id ?? s.title}
+                        dense
+                        onClick={() =>
+                          s.id != null &&
+                          navigate(`/${domain}/storylines/${s.id}`)
+                        }
+                      >
+                        <ListItemText
+                          primary={(s.title || '').slice(0, 72)}
+                          primaryTypographyProps={{ variant: 'body2' }}
+                        />
+                      </ListItemButton>
+                    ))}
+                  </List>
+                </Grid>
+              </Grid>
+            </Paper>
+          )}
+
+          <Card variant='outlined'>
+            <CardContent>
+              <Button
+                fullWidth
+                onClick={() => setDigestExpanded(!digestExpanded)}
+                endIcon={digestExpanded ? <ExpandLess /> : <ExpandMore />}
+                sx={{ justifyContent: 'space-between', textTransform: 'none' }}
+              >
+                <Typography variant='subtitle1' fontWeight={600}>
+                  Extended digest (AI)
+                </Typography>
+              </Button>
+              <Collapse in={digestExpanded}>
+                <Typography variant='body2' color='text.secondary' sx={{ mt: 1, mb: 2 }}>
+                  On-demand summary from recent domain activity (separate from the
+                  lead cards above). Useful for a narrative scan.
+                </Typography>
+                {!generatedDigest ? (
+                  <Button
+                    variant='contained'
+                    startIcon={
+                      generating ? (
+                        <CircularProgress size={20} color='inherit' />
+                      ) : (
+                        <AutoAwesome />
+                      )
+                    }
+                    onClick={handleGenerateDigest}
+                    disabled={generating}
+                  >
+                    {generating ? 'Generating…' : 'Generate extended digest'}
+                  </Button>
+                ) : (
+                  <Box>
+                    <Typography variant='caption' color='text.secondary' display='block' sx={{ mb: 1 }}>
+                      {new Date(generatedDigest.generated_at).toLocaleString()} ·{' '}
+                      {generatedDigest.article_count} articles (window)
+                    </Typography>
+                    <Typography
+                      component='div'
+                      sx={{ whiteSpace: 'pre-wrap' }}
+                      variant='body2'
+                    >
+                      {sanitizeLeadText(generatedDigest.content) || generatedDigest.content}
+                    </Typography>
+                    <Button
+                      size='small'
+                      sx={{ mt: 1 }}
+                      startIcon={<AutoAwesome />}
+                      onClick={handleGenerateDigest}
+                      disabled={generating}
+                    >
+                      Regenerate
+                    </Button>
+                  </Box>
+                )}
+                {generateError && (
+                  <Alert
+                    severity='error'
+                    sx={{ mt: 2 }}
+                    onClose={() => setGenerateError(null)}
+                  >
+                    {generateError}
+                  </Alert>
+                )}
+              </Collapse>
+            </CardContent>
+          </Card>
+
           <Divider sx={{ my: 1 }} />
           <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
             <Button
@@ -590,13 +796,6 @@ export default function ReportPage() {
               onClick={() => navigate(`/${domain}/investigate`)}
             >
               Investigate
-            </Button>
-            <Button
-              size='small'
-              variant='outlined'
-              onClick={() => navigate(`/${domain}/briefings`)}
-            >
-              Briefings
             </Button>
           </Box>
         </Box>

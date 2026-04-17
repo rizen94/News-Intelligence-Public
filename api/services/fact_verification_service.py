@@ -483,7 +483,13 @@ def finance_sec_articles_signal(
 ) -> dict[str, Any]:
     """Match claim terms against recent articles in the finance silo schema (``resolve_domain_schema(domain_key)``) whose URL looks SEC/EDGAR-hosted."""
     out: dict[str, Any] = {"status": "skipped", "match_count": 0}
-    if domain_key not in ("finance", "finance-2"):
+    try:
+        from config.settings import finance_postgres_content_domain_key
+
+        fk = finance_postgres_content_domain_key().strip().lower()
+    except Exception:
+        fk = "finance"
+    if (domain_key or "").strip().lower() != fk:
         out["status"] = "skipped_domain"
         return out
     if os.environ.get("FACT_VERIFY_SEC_FINANCE", "true").lower() not in ("1", "true", "yes"):
@@ -1481,9 +1487,15 @@ def verify_claim(
         wiki_check = wikipedia_reference_check(claim_text, claim.get("subject"))
         wikidata_check = wikidata_reference_check(claim_text, claim.get("subject"))
         gdelt_check = gdelt_mention_signal(claim_text, claim.get("subject"))
+        try:
+            from config.settings import finance_postgres_content_domain_key as _fpk
+
+            _fin = _fpk().strip().lower()
+        except Exception:
+            _fin = "finance"
         sec_check = (
             finance_sec_articles_signal(claim_text, domain_key)
-            if domain_key in ("finance", "finance-2")
+            if (domain_key or "").strip().lower() == _fin
             else {"status": "skipped_domain", "match_count": 0}
         )
         internal_sim = count_internal_similar_claims(

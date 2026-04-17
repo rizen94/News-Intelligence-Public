@@ -27,6 +27,7 @@ import {
   Info,
 } from '@mui/icons-material';
 import apiService from '../../services/apiService';
+import { getDomainKeysList } from '../../utils/domainHelper';
 
 const ConsolidationPanel = () => {
   const [loading, setLoading] = useState(true);
@@ -439,7 +440,7 @@ const ConsolidationPanel = () => {
                 Run Consolidation by Domain
               </Typography>
               <Box display='flex' gap={2} flexWrap='wrap'>
-                {['politics', 'finance', 'science-tech'].map(domain => (
+                {getDomainKeysList().map(domain => (
                   <Button
                     key={domain}
                     variant='outlined'

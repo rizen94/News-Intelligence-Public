@@ -69,6 +69,7 @@ import apiService from '../../services/apiService';
 import StorylineManagementDialog from '../../components/StorylineManagementDialog';
 import { useDomainNavigation } from '../../hooks/useDomainNavigation';
 import { useDomainRoute } from '../../hooks/useDomainRoute';
+import { useDomain } from '../../contexts/DomainContext';
 import { useNotification } from '../../hooks/useNotification';
 import { getUserFriendlyError } from '../../utils/errorHandler';
 import { formatDomainLabel } from '../../utils/domainHelper';
@@ -996,13 +997,7 @@ const Storylines: React.FC = () => {
           <TimelineIcon sx={{ fontSize: 64, color: 'text.secondary', mb: 2 }} />
           <Typography variant='h6' color='text.secondary' gutterBottom>
             No storylines found
-            {domain
-              ? ` for ${
-                  domain === 'science-tech'
-                    ? 'Science & Tech'
-                    : domain.charAt(0).toUpperCase() + domain.slice(1)
-                }`
-              : ''}
+            {domain ? ` for ${domainName || domain}` : ''}
           </Typography>
           <Typography variant='body2' color='text.secondary' sx={{ mb: 2 }}>
             {searchQuery || filterStatus || filterCategory || filterPriority

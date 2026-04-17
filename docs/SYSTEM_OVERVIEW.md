@@ -363,7 +363,7 @@ All routes are mounted from `api/main.py`. Each domain router defines its own pr
 
 ### 3.9 v3 Compatibility Layer
 
-**File:** `api/compatibility/v3_compatibility.py` — Legacy routes at `/api/articles/`, `/api/storylines/`, `/api/rss-feeds/`, `/api/topics/`, `/api/dashboard/stats`, `/api/intelligence/topic-clusters`.
+**Retired:** The old flat `/api/...` router was removed from `main.py`; an archived copy for reference lives at `api/archive/legacy_api/legacy_global_api.py` (see `api/archive/legacy_api/README.md`). Use domain-scoped routes under `api/domains/*/routes`.
 
 ---
 
@@ -466,7 +466,7 @@ Located in `web/src/services/api/`. Each module maps to a set of API endpoints.
 | `monitoring.ts` | `/api/system_monitoring/*`, `/api/orchestrator/*`, `/api/{domain}/finance/*` (market data), `/api/articles/duplicates/*` |
 | `watchlist.ts` | `/api/watchlist`, `/api/monitoring/activity-feed`, dormant-alerts, coverage-gaps |
 | `rss.ts` | `/api/{domain}/rss_feeds` |
-| `topics.ts` | `/api/{domain}/content_analysis/topics`, `/api/topics/*` |
+| `topics.ts` | `/api/{domain}/content_analysis/topics`, `/api/{domain}/topics/*` (managed topics), `/api/topics/categories/stats` (aggregate) |
 | `financeAnalysis.ts` | `/api/{domain}/finance/analyze`, tasks, evidence, research-topics |
 | `intelligence.ts` | `/api/{domain}/intelligence/*`, RAG, synthesis, briefings |
 | `client.ts` | Axios instance via `apiConnectionManager` |

@@ -152,6 +152,15 @@ def _subject_matches_seeded_pool(cur, domain_key: str, subject_text: str) -> boo
     return bool(cur.fetchone())
 
 
+def claim_extraction_min_text_len() -> int:
+    """Matches backlog_metrics._claim_extraction_min_text_length (title+body gate)."""
+    try:
+        n = int(os.environ.get("CLAIM_EXTRACTION_MIN_TEXT_LEN", "80"))
+    except (TypeError, ValueError):
+        n = 80
+    return max(40, min(n, 2000))
+
+
 def claim_pipeline_max_fetch() -> int:
     """
     When CLAIM_EXTRACTION_BATCH_LIMIT or CLAIMS_TO_FACTS_BATCH_LIMIT is <= 0 (meaning "no explicit cap"),
@@ -547,7 +556,15 @@ async def extract_claims_for_context(context_id: int) -> int:
         except (TypeError, ValueError, json.JSONDecodeError):
             cred_mult = 1.0
     text = f"{title or ''}\n\n{content or ''}"[:6000].strip()
-    if len(text) < 80:
+    min_tl = claim_extraction_min_text_len()
+    if len(text) < min_tl:
+        try:
+            from shared.pipeline_pass_marker import phase_backlog_uses_pass_marker, record_context_phase_pass
+
+            if phase_backlog_uses_pass_marker("claim_extraction"):
+                record_context_phase_pass(context_id, "claim_extraction", "skipped_short_text")
+        except Exception:
+            pass
         return 0
 
     prompt = f"""Extract factual claims from this text as subject-predicate-object triples. One claim per line of reasoning.
@@ -585,6 +602,13 @@ Keep each subject under ~80 characters when possible."""
         parse_ok,
     )
     if not claims:
+        try:
+            from shared.pipeline_pass_marker import phase_backlog_uses_pass_marker, record_context_phase_pass
+
+            if phase_backlog_uses_pass_marker("claim_extraction"):
+                record_context_phase_pass(context_id, "claim_extraction", "parsed_empty")
+        except Exception:
+            pass
         return 0
 
     conn = get_db_connection()
@@ -641,6 +665,18 @@ Keep each subject under ~80 characters when possible."""
             skipped_unseeded,
             strict_seeded,
         )
+    try:
+        from shared.pipeline_pass_marker import phase_backlog_uses_pass_marker, record_context_phase_pass
+
+        if phase_backlog_uses_pass_marker("claim_extraction"):
+            if inserted > 0:
+                record_context_phase_pass(context_id, "claim_extraction", "claims_inserted")
+            else:
+                record_context_phase_pass(
+                    context_id, "claim_extraction", "no_claims_after_filters"
+                )
+    except Exception:
+        pass
     return inserted
 
 
@@ -653,20 +689,30 @@ class ClaimExtractionBatchResult(NamedTuple):
 
 def get_context_ids_without_claims(limit: int = 50) -> list[int]:
     """Return context IDs that have no rows in extracted_claims, for batch processing."""
+    from shared.pipeline_pass_marker import phase_backlog_uses_pass_marker, sql_context_pass_null
+
     conn = get_db_connection()
     if not conn:
         return []
+    min_len = claim_extraction_min_text_len()
+    pass_sql = ""
+    if phase_backlog_uses_pass_marker("claim_extraction"):
+        pass_sql = f" AND ({sql_context_pass_null('claim_extraction', 'c')}) "
     try:
         with conn.cursor() as cur:
             cur.execute(
-                """
+                f"""
                 SELECT c.id FROM intelligence.contexts c
                 LEFT JOIN intelligence.extracted_claims ec ON ec.context_id = c.id
                 WHERE ec.id IS NULL
+                  AND (
+                      LENGTH(COALESCE(c.content, '')) + LENGTH(COALESCE(c.title, ''))
+                  ) >= %s
+                  {pass_sql}
                 ORDER BY c.created_at DESC
                 LIMIT %s
                 """,
-                (limit,),
+                (min_len, limit),
             )
             return [r[0] for r in cur.fetchall()]
     finally:

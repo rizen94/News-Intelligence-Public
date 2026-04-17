@@ -39,7 +39,8 @@ import requests
 from psycopg2.extras import RealDictCursor
 
 from services.domain_synthesis_config import get_domain_synthesis_config
-from shared.domain_registry import resolve_domain_schema
+from shared.domain_registry import first_active_domain_key, resolve_domain_schema
+from shared.pipeline_pass_marker import bulk_record_article_phase_pass, phase_backlog_uses_pass_marker
 
 logger = logging.getLogger(__name__)
 
@@ -1069,7 +1070,7 @@ Reply with ONLY a JSON object:
         Build a StorylineCluster sufficient for generate_storyline_metadata / fast fallbacks
         without running embedding or HDBSCAN (used by proactive detection, etc.).
         """
-        domain_key = (domain or "").strip() or "politics"
+        domain_key = (domain or "").strip() or first_active_domain_key()
         ae_list: list[ArticleEmbedding] = []
         for a in articles:
             try:
@@ -1849,6 +1850,12 @@ Reply with ONLY a JSON object:
         }
 
         if len(articles) < min_sz:
+            if phase_backlog_uses_pass_marker("storyline_discovery"):
+                sch = _schema_from_domain_key(domain)
+                aids = [a.article_id for a in articles if getattr(a, "article_id", 0) > 0]
+                bulk_record_article_phase_pass(
+                    sch, aids, "storyline_discovery", "insufficient_articles_for_clustering"
+                )
             return {
                 "success": True,
                 "message": f"Not enough articles for clustering (found {len(articles)}, need {min_sz})",
@@ -2022,6 +2029,11 @@ Reply with ONLY a JSON object:
             f"{len(breaking_news)} breaking news in {total_duration:.2f}s "
             f"(cached: {cached_count}, parallel: {MAX_EMBEDDING_WORKERS}x)"
         )
+
+        if phase_backlog_uses_pass_marker("storyline_discovery"):
+            sch = _schema_from_domain_key(domain)
+            aids = [a.article_id for a in articles if getattr(a, "article_id", 0) > 0]
+            bulk_record_article_phase_pass(sch, aids, "storyline_discovery", "discovery_pass")
 
         return result
 

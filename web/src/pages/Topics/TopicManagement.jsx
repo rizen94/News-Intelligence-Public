@@ -60,9 +60,13 @@ import {
 import { Checkbox } from '@mui/material';
 // Import with explicit default to avoid webpack issues
 import apiServiceDefault, { getApiService } from '../../services/apiService';
+import { getCurrentDomain } from '../../utils/domainHelper';
+
 const apiService = apiServiceDefault || getApiService();
 
-const TopicManagement = () => {
+/** @param {{ domain?: string }} props Route domain from parent (`/:domain/topics`); falls back to registry default. */
+const TopicManagement = ({ domain: domainProp }) => {
+  const domain = domainProp || getCurrentDomain();
   const navigate = useNavigate();
   const [topics, setTopics] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -104,7 +108,7 @@ const TopicManagement = () => {
         sort_by: sortBy,
       };
 
-      const response = await apiService.getManagedTopics(params);
+      const response = await apiService.getManagedTopics(params, domain);
 
       if (response.success) {
         setTopics(response.data.topics || []);
@@ -116,11 +120,11 @@ const TopicManagement = () => {
     } finally {
       setLoading(false);
     }
-  }, [searchQuery, selectedCategory, statusFilter, sortBy]);
+  }, [searchQuery, selectedCategory, statusFilter, sortBy, domain]);
 
   const loadTopicsNeedingReview = useCallback(async () => {
     try {
-      const response = await apiService.getTopicsNeedingReview(0.6, 50);
+      const response = await apiService.getTopicsNeedingReview(0.6, 50, domain);
 
       if (response.success) {
         setTopicsNeedingReview(response.data.topics || []);
@@ -128,13 +132,17 @@ const TopicManagement = () => {
     } catch (err) {
       console.error('Error loading topics needing review:', err);
     }
-  }, []);
+  }, [domain]);
 
   const loadTopicArticles = useCallback(async topicId => {
     try {
-      const response = await apiService.getManagedTopicArticles(topicId, {
-        limit: 50,
-      });
+      const response = await apiService.getManagedTopicArticles(
+        topicId,
+        {
+          limit: 50,
+        },
+        domain
+      );
 
       if (response.success) {
         setTopicArticles(response.data.articles || []);
@@ -142,12 +150,12 @@ const TopicManagement = () => {
     } catch (err) {
       console.error('Error loading topic articles:', err);
     }
-  }, []);
+  }, [domain]);
 
   const loadTopicDetails = useCallback(
     async topicId => {
       try {
-        const response = await apiService.getManagedTopic(topicId);
+        const response = await apiService.getManagedTopic(topicId, domain);
 
         if (response.success) {
           setSelectedTopic(response.data);
@@ -157,7 +165,7 @@ const TopicManagement = () => {
         console.error('Error loading topic details:', err);
       }
     },
-    [loadTopicArticles]
+    [loadTopicArticles, domain]
   );
 
   const handleSubmitFeedback = async (isCorrect, feedbackNotes) => {
@@ -171,7 +179,8 @@ const TopicManagement = () => {
           is_correct: isCorrect,
           feedback_notes: feedbackNotes,
           validated_by: 'current_user', // TODO: Get from auth context
-        }
+        },
+        domain
       );
 
       if (response.success) {
@@ -202,11 +211,15 @@ const TopicManagement = () => {
       const assignments = Array.from(selectedAssignments);
       const results = await Promise.allSettled(
         assignments.map(assignmentId =>
-          apiService.submitTopicFeedback(assignmentId, {
-            is_correct: isCorrect,
-            feedback_notes: feedbackNotes,
-            validated_by: 'current_user',
-          })
+          apiService.submitTopicFeedback(
+            assignmentId,
+            {
+              is_correct: isCorrect,
+              feedback_notes: feedbackNotes,
+              validated_by: 'current_user',
+            },
+            domain
+          )
         )
       );
 
@@ -272,12 +285,13 @@ const TopicManagement = () => {
       setFeedbackLoading(true);
       setError(null);
 
-      // mergeTopics expects two topic names (cluster names), not IDs
-      const primaryTopic =
-        topicsToMerge[0].name || topicsToMerge[0].cluster_name;
-      const secondaryTopic =
-        topicsToMerge[1].name || topicsToMerge[1].cluster_name;
-      const result = await apiService.mergeTopics(primaryTopic, secondaryTopic);
+      const primaryId = topicsToMerge[0].id;
+      const secondaryId = topicsToMerge[1].id;
+      if (primaryId == null || secondaryId == null) {
+        setError('Selected topics must have numeric ids for merge');
+        return;
+      }
+      const result = await apiService.mergeTopics(primaryId, secondaryId, domain);
 
       if (result.success) {
         setSnackbar({
@@ -315,7 +329,7 @@ const TopicManagement = () => {
   const handleProcessArticle = async articleId => {
     try {
       setProcessingArticle(articleId);
-      const response = await apiService.processArticleTopics(articleId);
+      const response = await apiService.processArticleTopics(articleId, domain);
 
       if (response.success) {
         // Reload topics

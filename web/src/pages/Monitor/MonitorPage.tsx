@@ -40,34 +40,21 @@ import StorageIcon from '@mui/icons-material/Storage';
 import PublicIcon from '@mui/icons-material/Public';
 import ScheduleIcon from '@mui/icons-material/Schedule';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ResponsiveContainer,
+} from 'recharts';
 import apiService from '@/services/apiService';
-import { safeServiceCall } from '@/utils/safeServiceCall';
 import { getDefaultDomainKey, getDomainKeysList } from '@/utils/domainHelper';
 
-const POLL_INTERVAL_MS = 4500;
-/**
- * Processing pulse: light polls (no backlog_metrics) every tick for fresh run/pass + dimensions;
- * full polls (unprocessed row counts) every N ticks to limit DB load and proxy timeouts.
- * N × POLL_INTERVAL_MS ≈ 31.5s at defaults.
- */
-const PULSE_FULL_PENDING_EVERY_N_POLLS = 7;
-/** Max parallel Monitor API calls per wave (browser + reverse-proxy friendly; avoids stampedes). */
-const MONITOR_FETCH_CONCURRENCY = 2;
-
-/** Run async tasks in waves of `concurrency` to avoid piling simultaneous connections. */
-async function runPoolLimit(
-  tasks: Array<() => Promise<unknown>>,
-  concurrency: number
-): Promise<unknown[]> {
-  const results: unknown[] = [];
-  for (let i = 0; i < tasks.length; i += concurrency) {
-    const chunk = await Promise.all(
-      tasks.slice(i, i + concurrency).map(fn => fn())
-    );
-    results.push(...chunk);
-  }
-  return results;
-}
+/** Poll interval for full Monitor refresh (overview + pipeline + processing pulse together). */
+const POLL_INTERVAL_MS = 15000;
 
 function timeAgo(iso: string): string {
   const d = new Date(iso);
@@ -209,10 +196,19 @@ export default function MonitorPage() {
   const [pipeline, setPipeline] = useState<{
     success?: boolean;
     data?: Record<string, unknown>;
+    error?: string;
+  } | null>(null);
+  const [gpuMetricHistory, setGpuMetricHistory] = useState<{
+    success?: boolean;
+    data?: {
+      hours?: number;
+      hourly?: Array<Record<string, unknown>>;
+    };
+    error?: string;
   } | null>(null);
   const [processingPulse, setProcessingPulse] = useState<{
     success?: boolean;
-      data?: {
+    data?: {
       generated_at_utc?: string;
       reporting_definitions?: Record<string, string>;
       dimensions?: ProcessingPulseDimension[];
@@ -226,16 +222,11 @@ export default function MonitorPage() {
       }>;
       /** When hourly rows are omitted (default API), server still returns bucket count. */
       hourly_phase_tick_bucket_count?: number | null;
-      /** False when API skipped backlog_metrics (Monitor default — avoids proxy 504). */
-      pending_metrics_included?: boolean;
     };
     error?: string;
   } | null>(null);
-  /** Overview (health + current activity) — independent of pipeline so slow pipeline_status cannot blank the page. */
-  const [overviewReady, setOverviewReady] = useState(false);
-  const [pipelineReady, setPipelineReady] = useState(false);
-  /** True while processing_progress request is in flight. */
-  const [heavyMonitorPending, setHeavyMonitorPending] = useState(false);
+  /** First full bundle (overview + pipeline + pulse) not yet finished. */
+  const [initialLoad, setInitialLoad] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [triggerPhaseName, setTriggerPhaseName] = useState<string>('');
   const [triggering, setTriggering] = useState(false);
@@ -245,181 +236,80 @@ export default function MonitorPage() {
     warning?: string;
   } | null>(null);
 
-  const loadOverview = useCallback(async () => {
-    try {
-      const data = await apiService.getMonitoringOverview();
-      setOverview(data ?? null);
-    } catch (e) {
-      setOverview({ success: false, error: (e as Error).message });
-    }
+  /** One bundle: health/activity, pipeline card, full processing pulse (incl. unprocessed rows). */
+  const refreshMonitor = useCallback(async () => {
+    const [ov, pipe, pulse, gpuH] = await Promise.all([
+      apiService.getMonitoringOverview(),
+      apiService.getPipelineStatus(),
+      apiService.getProcessingProgress(),
+      apiService.getGpuMetricHistory(72),
+    ]);
+    setOverview(ov ?? null);
+    setPipeline(pipe ?? null);
+    setProcessingPulse(pulse ?? null);
+    setGpuMetricHistory(gpuH ?? null);
   }, []);
+
+  const gpuChartRows = useMemo(() => {
+    const hourly = gpuMetricHistory?.data?.hourly;
+    if (!Array.isArray(hourly) || hourly.length === 0) return [];
+    return hourly.map((row: Record<string, unknown>) => ({
+      label: row.hour_utc
+        ? shortLocalDateTime(String(row.hour_utc))
+        : '—',
+      util:
+        typeof row.avg_gpu_utilization_percent === 'number'
+          ? row.avg_gpu_utilization_percent
+          : null,
+      vram:
+        typeof row.avg_gpu_vram_percent === 'number'
+          ? row.avg_gpu_vram_percent
+          : null,
+      temp:
+        typeof row.avg_gpu_temperature_c === 'number'
+          ? row.avg_gpu_temperature_c
+          : null,
+    }));
+  }, [gpuMetricHistory]);
 
   useEffect(() => {
     let cancelled = false;
     let pollTimeoutId: ReturnType<typeof setTimeout> | null = null;
-    let pollTickIndex = 0;
-    const svc = apiService as unknown as Record<string, unknown>;
 
-    const load = () => {
-      setOverviewReady(false);
-      setPipelineReady(false);
-      setHeavyMonitorPending(false);
+    void (async () => {
+      setInitialLoad(true);
       setError(null);
-
-      /** Stale-while-revalidate: light pulse first (fast), then full counts (heavy). */
-      const runPulse = () => {
-        setHeavyMonitorPending(true);
-        void (async () => {
-          await new Promise<void>(resolve => {
-            requestAnimationFrame(() => resolve());
-          });
-          if (cancelled) return;
-          const light = await apiService.getProcessingProgress({
-            includePendingMetrics: false,
-          });
-          if (!cancelled) {
-            setProcessingPulse(light ?? null);
-            setHeavyMonitorPending(false);
-          }
-          if (cancelled) return;
-          const full = await apiService.getProcessingProgress({
-            includePendingMetrics: true,
-          });
-          if (!cancelled) setProcessingPulse(full ?? null);
-        })();
-      };
-
-      void (async () => {
-        try {
-          const ov = await apiService.getMonitoringOverview();
-          if (!cancelled) setOverview(ov ?? null);
-          runPulse();
-        } catch (e) {
-          if (!cancelled) {
-            setError((e as Error).message);
-            setOverview({
-              success: false,
-              error: (e as Error).message,
-            });
-          }
-          runPulse();
-        } finally {
-          if (!cancelled) setOverviewReady(true);
-        }
-      })();
-
-      void (async () => {
-        const pipe = await safeServiceCall<{
-          success?: boolean;
-          data?: Record<string, unknown>;
-        }>(svc, 'getPipelineStatus');
-        if (!cancelled) setPipeline(pipe ?? null);
-        if (!cancelled) setPipelineReady(true);
-      })();
-    };
-
-    /**
-     * Poll must not overlap: sequential ticks avoid stacking requests every 4.5s
-     * while the pipeline and DB pool are busy.
-     */
-    const runPollTick = async () => {
-      if (cancelled) return;
-      pollTickIndex += 1;
-      const pulseFullThisTick =
-        pollTickIndex % PULSE_FULL_PENDING_EVERY_N_POLLS === 0;
       try {
-        await loadOverview();
-        if (cancelled) return;
-        const [pipeR, pulseR] = await runPoolLimit(
-          [
-            () => safeServiceCall(svc, 'getPipelineStatus'),
-            () =>
-              apiService.getProcessingProgress({
-                includePendingMetrics: pulseFullThisTick,
-              }),
-          ],
-          MONITOR_FETCH_CONCURRENCY
-        );
-        if (!cancelled && pipeR) setPipeline(pipeR as typeof pipeline);
-        if (!cancelled && pulseR) {
-          const p = pulseR as typeof processingPulse;
-          if (pulseFullThisTick) {
-            if (p?.success && p.data) {
-              setProcessingPulse(p);
-            }
-            /* On timeout/504, keep existing pulse (often last good full + merged light). */
-          } else if (p?.success && p.data) {
-            setProcessingPulse(prev => {
-              if (
-                !prev?.success ||
-                !prev.data ||
-                prev.data.pending_metrics_included !== true
-              ) {
-                return p;
-              }
-              const prevByPhase = new Map(
-                (
-                  prev.data.phase_dashboard ??
-                  prev.data.phases ??
-                  []
-                ).map(row => [row.phase_name, row])
-              );
-              const rows = (
-                p.data.phase_dashboard ??
-                p.data.phases ??
-                []
-              ).map(row => {
-                const phase = row.phase_name;
-                const old =
-                  phase != null ? prevByPhase.get(phase) : undefined;
-                if (!old) return row;
-                return {
-                  ...row,
-                  pending_records: old.pending_records,
-                  estimated_batch_per_run: old.estimated_batch_per_run,
-                  batches_to_drain: old.batches_to_drain,
-                };
-              });
-              return {
-                ...p,
-                data: {
-                  ...p.data,
-                  phase_dashboard: rows,
-                  phases: rows,
-                  pending_metrics_included: true,
-                },
-              };
-            });
-          } else {
-            setProcessingPulse(p);
-          }
-        }
-      } catch {
-        /* individual safeServiceCall already swallows; loadOverview too */
+        await refreshMonitor();
+      } catch (e) {
+        if (!cancelled) setError((e as Error).message);
+      } finally {
+        if (!cancelled) setInitialLoad(false);
       }
-    };
-
-    const scheduleNextPoll = () => {
       if (cancelled) return;
-      pollTimeoutId = setTimeout(() => {
-        void (async () => {
-          try {
-            await runPollTick();
-          } finally {
-            if (!cancelled) scheduleNextPoll();
-          }
-        })();
-      }, POLL_INTERVAL_MS);
-    };
 
-    load();
-    if (!cancelled) scheduleNextPoll();
+      /** Wait for each tick to finish before scheduling the next (no overlapping bundles). */
+      const schedulePoll = () => {
+        pollTimeoutId = setTimeout(() => {
+          void (async () => {
+            if (cancelled) return;
+            try {
+              await refreshMonitor();
+            } catch {
+              /* monitoring APIs usually return { success: false }; guard anyway */
+            }
+            if (!cancelled) schedulePoll();
+          })();
+        }, POLL_INTERVAL_MS);
+      };
+      schedulePoll();
+    })();
 
     return () => {
       cancelled = true;
       if (pollTimeoutId !== null) clearTimeout(pollTimeoutId);
     };
-  }, [loadOverview]);
+  }, [refreshMonitor]);
 
   const handleTriggerPhase = async () => {
     if (!triggerPhaseName || !apiService.triggerPhase) return;
@@ -441,10 +331,9 @@ export default function MonitorPage() {
           warning: result?.warning as string | undefined,
         });
         setTriggerPhaseName('');
-        loadOverview();
-        // Refresh again so Current activity shows "Requested — queued" then "Running..." when the worker starts
-        setTimeout(loadOverview, 2500);
-        setTimeout(loadOverview, 6000);
+        void refreshMonitor();
+        setTimeout(() => void refreshMonitor(), 2500);
+        setTimeout(() => void refreshMonitor(), 6000);
       } else {
         setTriggerResult({
           success: false,
@@ -515,9 +404,7 @@ export default function MonitorPage() {
   ]);
 
   const overviewLoadFailed =
-    overviewReady &&
-    overview != null &&
-    overview.success === false;
+    !initialLoad && overview != null && overview.success === false;
 
   const statusChip = (status: string | undefined, label: string) => {
     if (status === 'not_loaded') {
@@ -598,7 +485,7 @@ export default function MonitorPage() {
           <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 } }}>
             <Box sx={{ display: 'flex', alignItems: 'center' }}>
               <ApiIcon sx={{ mr: 1, color: 'text.secondary' }} />
-              {!overviewReady && !overview ? (
+              {initialLoad ? (
                 <Skeleton width={80} height={24} />
               ) : (
                 statusChip(
@@ -618,7 +505,7 @@ export default function MonitorPage() {
           <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 } }}>
             <Box sx={{ display: 'flex', alignItems: 'center' }}>
               <StorageIcon sx={{ mr: 1, color: 'text.secondary' }} />
-              {!overviewReady && !overview ? (
+              {initialLoad ? (
                 <Skeleton width={80} height={24} />
               ) : (
                 statusChip(
@@ -636,7 +523,7 @@ export default function MonitorPage() {
           <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 } }}>
             <Box sx={{ display: 'flex', alignItems: 'center' }}>
               <PublicIcon sx={{ mr: 1, color: 'text.secondary' }} />
-              {!overviewReady && !overview ? (
+              {initialLoad ? (
                 <Skeleton width={80} height={24} />
               ) : (
                 statusChip(
@@ -670,7 +557,7 @@ export default function MonitorPage() {
       </Typography>
       <Card variant='outlined' sx={{ mb: 3 }}>
         <CardContent sx={{ py: 1.5 }}>
-          {!overviewReady && currentActivities.length === 0 ? (
+          {initialLoad && currentActivities.length === 0 ? (
             <Skeleton
               variant='rectangular'
               height={60}
@@ -820,12 +707,6 @@ export default function MonitorPage() {
       <Typography variant='subtitle1' sx={{ fontWeight: 600, mb: 0.5 }}>
         Processing pulse (7-day window)
       </Typography>
-      <Typography variant='caption' color='text.secondary' display='block' sx={{ mb: 0.75 }}>
-        Refresh: throughput chips and run/pass columns about every {POLL_INTERVAL_MS / 1000}s;
-        <strong> Unprocessed rows</strong> / runs-to-clear about every{' '}
-        {(POLL_INTERVAL_MS * PULSE_FULL_PENDING_EVERY_N_POLLS) / 1000}
-        s (heavy DB counts), with the last full values kept between those polls.
-      </Typography>
       <Typography variant='caption' color='text.secondary' display='block' sx={{ mb: 1 }}>
         <strong>Phase queue (three numbers):</strong> (1){' '}
         <strong>Unprocessed rows</strong> — database records still waiting for that phase. (2){' '}
@@ -856,15 +737,6 @@ export default function MonitorPage() {
                   : '—'}{' '}
                 (UTC clock)
               </Typography>
-              {processingPulse.data.pending_metrics_included === false && (
-                <Typography variant='caption' color='text.secondary' display='block'>
-                  Per-phase <strong>Unprocessed rows</strong> / <strong>Runs to clear</strong> are not
-                  loaded on this view (keeps the request under reverse-proxy timeouts). Runs, pass rates,
-                  and ticker chips still update. Full queue SQL is available via{' '}
-                  <code style={{ fontSize: '0.85em' }}>GET /api/system_monitoring/backlog_status</code> and
-                  automation <strong>pending_counts</strong>.
-                </Typography>
-              )}
               <Box>
                 <Typography variant='caption' color='text.secondary' sx={{ display: 'block', mb: 0.75 }}>
                   Pipeline throughput ticker
@@ -1057,8 +929,88 @@ export default function MonitorPage() {
                   bucket rows (72h)
                 </Typography>
               </Box>
+              <Divider />
+              <Box>
+                <Typography variant='caption' color='text.secondary' sx={{ display: 'block', mb: 0.75 }}>
+                  GPU / VRAM (hourly averages, last 72h)
+                </Typography>
+                <Typography variant='caption' color='text.secondary' sx={{ display: 'block', mb: 1 }}>
+                  Samples from <code style={{ fontSize: '0.85em' }}>nvidia-smi</code> (throttled). History
+                  fills as Monitor and health endpoints run. Apply migration{' '}
+                  <code style={{ fontSize: '0.85em' }}>209_gpu_metric_samples.sql</code> if the chart stays
+                  empty.
+                </Typography>
+                {gpuMetricHistory?.success === false && (
+                  <Typography variant='body2' color='text.secondary' sx={{ mb: 1 }}>
+                    {gpuMetricHistory?.error || 'GPU history unavailable.'}
+                  </Typography>
+                )}
+                {gpuChartRows.length > 0 ? (
+                  <Box sx={{ width: '100%', height: 280 }}>
+                    <ResponsiveContainer>
+                      <LineChart
+                        data={gpuChartRows}
+                        margin={{ top: 8, right: 16, left: 0, bottom: 8 }}
+                      >
+                        <CartesianGrid strokeDasharray='3 3' />
+                        <XAxis dataKey='label' tick={{ fontSize: 11 }} interval='preserveStartEnd' />
+                        <YAxis
+                          yAxisId='pct'
+                          domain={[0, 100]}
+                          tick={{ fontSize: 11 }}
+                          label={{ value: '%', angle: 0, position: 'insideLeft' }}
+                        />
+                        <YAxis
+                          yAxisId='temp'
+                          orientation='right'
+                          domain={[0, 100]}
+                          tick={{ fontSize: 11 }}
+                          label={{ value: '°C', angle: 0, position: 'insideRight' }}
+                        />
+                        <Tooltip />
+                        <Legend />
+                        <Line
+                          yAxisId='pct'
+                          type='monotone'
+                          dataKey='util'
+                          name='GPU util %'
+                          stroke='#1976d2'
+                          dot={false}
+                          strokeWidth={2}
+                          connectNulls
+                        />
+                        <Line
+                          yAxisId='pct'
+                          type='monotone'
+                          dataKey='vram'
+                          name='VRAM %'
+                          stroke='#ed6c02'
+                          dot={false}
+                          strokeWidth={2}
+                          connectNulls
+                        />
+                        <Line
+                          yAxisId='temp'
+                          type='monotone'
+                          dataKey='temp'
+                          name='Temp °C'
+                          stroke='#2e7d32'
+                          dot={false}
+                          strokeWidth={1}
+                          connectNulls
+                        />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </Box>
+                ) : (
+                  <Typography variant='body2' color='text.secondary'>
+                    No hourly GPU samples yet — open Monitor for a few minutes after migration 209, or check
+                    that <code style={{ fontSize: '0.85em' }}>nvidia-smi</code> works on the API host.
+                  </Typography>
+                )}
+              </Box>
             </Box>
-          ) : heavyMonitorPending && processingPulse == null ? (
+          ) : initialLoad ? (
             <Skeleton variant='rectangular' height={120} sx={{ borderRadius: 1 }} />
           ) : (
             <Typography color='text.secondary' variant='body2'>
@@ -1081,7 +1033,7 @@ export default function MonitorPage() {
             avatar={<ScheduleIcon />}
           />
           <CardContent>
-            {!pipelineReady && !pipeline?.data ? (
+            {initialLoad && !pipeline?.data ? (
               <Skeleton variant='rectangular' height={80} />
             ) : (
               <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
@@ -1103,6 +1055,11 @@ export default function MonitorPage() {
                   {String(pipelineData?.articles_analyzed ?? '—')} · Recent (1h):{' '}
                   {String(pipelineData?.recent_articles ?? '—')}
                 </Typography>
+                {pipeline?.success === false && pipeline.error && (
+                  <Typography variant='caption' color='error' display='block'>
+                    {pipeline.error}
+                  </Typography>
+                )}
                 {pipelineData?.active_traces != null &&
                   Number(pipelineData.active_traces) > 0 && (
                     <Typography variant='caption' color='info.main'>

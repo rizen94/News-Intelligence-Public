@@ -1,0 +1,88 @@
+# =============================================================================
+# DOMAIN ONBOARDING (fill in for a NEW additional silo — not politics/finance/science-tech)
+# =============================================================================
+#
+# Save as: api/config/domains/<domain_key>.yaml  (filename must NOT start with _)
+# Loader: api/shared/domain_registry.py
+# Procedure: docs/DOMAIN_EXTENSION_TEMPLATE.md + api/config/domains/README.md
+#
+# WORKFLOW (summary — this silo is live: is_active true below)
+#   1) New domains: start with is_active: false until DB silo + verify exist, then set true.
+#   2) Validate YAML (syntax + UTF-8).
+#   3) SQL migration: public.domains row + CREATE SCHEMA + silo tables (parity with existing domains).
+#   4) Run api/scripts/provision_domain.py (YAML + SQL + verify command).
+#   5) SPA loads domains from GET /api/system_monitoring/registry_domains — no manual frontend list edit.
+#
+# DATABASE / URL RULES
+#   domain_key:     ^[a-z0-9-]+$   (hyphens OK; no underscores)
+#   schema_name:    ^[a-z0-9_]+$   (underscores OK; no hyphens)
+#   display_name:   max 100 chars → public.domains.name
+#
+# =============================================================================
+
+# --- REQUIRED ----------------------------------------------------------------
+domain_key: environment-climate
+
+# --- REQUIRED ----------------------------------------------------------------
+schema_name: environment_climate
+
+# --- REQUIRED ----------------------------------------------------------------
+display_name: Environment & Climate
+
+# --- OPTIONAL ----------------------------------------------------------------
+description: >-
+  Environmental science, climate change, sustainability, and ecological research.
+
+# --- OPTIONAL ----------------------------------------------------------------
+display_order: 15
+
+# --- REGISTRY ---------------------------------------------------------------
+# true: included in domain_registry / url_schema_pairs (YAML re-read each call for iterators).
+is_active: true
+
+# --- HUMAN-ONLY (stripped by loader — use for notes to operators) ------------
+_instructions: |
+  Covers environmental science, climate change research, sustainability initiatives,
+  ecological studies, and environmental policy developments. Focus on scientific
+  research, policy impacts, and sustainability practices.
+
+# --- OPTIONAL ----------------------------------------------------------------
+data_sources:
+  rss:
+    seed_feed_urls:
+      # Environmental science and climate news feeds
+      - https://www.environmentalhealthnews.org/feed/
+      - https://www.climate.gov/rss.xml
+      - https://www.epa.gov/newsreleases/rss.xml
+      - https://www.nature.com/nclimate.rss
+      - https://www.sciencedaily.com/rss/top/environmental_sciences.xml
+      - https://www.economist.com/feeds/print-sections/environment.xml
+      - https://www.theguardian.com/environment/rss
+      - https://www.npr.org/rss/rss.php?id=1004
+      - https://www.sciencedirect.com/journal/environmental-research/rss
+      - https://www.pnas.org/content/early/rss
+
+# --- OPTIONAL ----------------------------------------------------------------
+focus_areas:
+  - Climate change research and impacts
+  - Environmental policy and regulation
+  - Sustainability and green technology
+  - Ecological research and biodiversity
+  - Renewable energy developments
+  - Environmental health and pollution
+  - Conservation and wildlife protection
+  - Carbon emissions and climate modeling
+
+# --- OPTIONAL ----------------------------------------------------------------
+llm_prompt_guidance: |
+  Focus on evidence-based environmental science and climate research. Distinguish between
+  scientific consensus, emerging research, and policy implications. Highlight environmental
+  impacts, sustainability practices, and regulatory developments. Avoid sensationalizing
+  environmental claims. Include relevant scientific studies, policy documents, and
+  regulatory approvals where applicable.
+
+# --- OPTIONAL ----------------------------------------------------------------
+workload_assumptions:
+  expected_active_feeds: 12
+  rough_new_articles_per_day: 150
+  llm_heavy_phases_enabled: true

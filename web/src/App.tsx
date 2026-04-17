@@ -62,7 +62,6 @@ import Articles from './pages/Articles/Articles';
 import ArticleDetail from './pages/Articles/ArticleDetail';
 import ArticleDeduplicationManager from './pages/Articles/ArticleDeduplicationManager';
 import Briefings from './pages/Briefings/Briefings';
-import ReportPage from './pages/Report/ReportPage';
 import RSSFeeds from './pages/RSSFeeds/RSSFeeds';
 import Topics from './pages/Topics/Topics';
 import Watchlist from './pages/Watchlist/Watchlist';
@@ -147,7 +146,10 @@ function App() {
                   />
                   <Route path='articles/:id' element={<ArticleDetail />} />
                   <Route path='briefings' element={<Briefings />} />
-                  <Route path='report' element={<ReportPage />} />
+                  <Route
+                    path='report'
+                    element={<Navigate to='../briefings' replace />}
+                  />
                   <Route
                     path='rss_feeds'
                     element={

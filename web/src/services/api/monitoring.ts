@@ -22,7 +22,7 @@ export const monitoringApi = {
       const response = await getApi().get(
         '/api/system_monitoring/monitoring/overview',
         // DB check + activity enrich can be slow under pool pressure; align with other monitor GETs
-        { timeout: 90000 }
+        { timeout: 120000 }
       );
       return response.data;
     } catch (error) {
@@ -84,7 +84,7 @@ export const monitoringApi = {
     try {
       const response = await getApi().get(
         '/api/system_monitoring/pipeline_status',
-        { timeout: 60000 }
+        { timeout: 120000 }
       );
       return response.data;
     } catch (error) {
@@ -173,24 +173,33 @@ export const monitoringApi = {
     }
   },
 
-  /**
-   * Processing pulse: dimensions, phase run history, optional per-phase pending row counts.
-   * @param options.includePendingMetrics - When false, skips backlog_metrics (faster, ~60s-safe).
-   *   Omit or true for full unprocessed row counts (slower cold cache; use longer interval on client).
-   */
-  async getProcessingProgress(options?: { includePendingMetrics?: boolean }) {
-    const includePending = options?.includePendingMetrics ?? true;
+  /** Full processing pulse including per-phase unprocessed row counts (backlog_metrics). */
+  async getProcessingProgress() {
     try {
       const response = await getApi().get(
         '/api/system_monitoring/processing_progress',
         {
-          params: { include_pending_metrics: includePending },
-          timeout: includePending ? 180000 : 90000,
+          params: { include_pending_metrics: true },
+          timeout: 300000,
         }
       );
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to fetch processing progress', error as Error);
+      return { success: false, data: null, error: (error as any).message };
+    }
+  },
+
+  /** Hourly GPU utilization + VRAM % (from nvidia-smi samples; requires migration 209). */
+  async getGpuMetricHistory(hours: number = 72) {
+    try {
+      const response = await getApi().get(
+        '/api/system_monitoring/gpu_metric_history',
+        { params: { hours }, timeout: 30000 }
+      );
+      return response.data;
+    } catch (error) {
+      Logger.apiError('Failed to fetch GPU metric history', error as Error);
       return { success: false, data: null, error: (error as any).message };
     }
   },

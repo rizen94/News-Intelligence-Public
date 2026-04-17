@@ -43,7 +43,8 @@ route structure, where every router mounts at `/api`.
    - Treats a first path segment as **domain-scoped** when it matches an active key from [`domainHelper`](../web/src/utils/domainHelper.ts) (loaded from **`/api/system_monitoring/registry_domains`**, with a static fallback list).
    - Detects whether a URL is a **global route** (system_monitoring, orchestrator, watchlist, context_centric, entity_profiles, etc.) or a **domain-scoped route**.
    - **Global routes:** base URL is set to origin only (prevents double-prefixing if a custom URL has a path).
-   - **Domain-scoped routes:** if the URL does not already contain the current domain, the interceptor injects it (e.g. `/api/topics/merge` becomes `/api/politics/topics/merge`).
+   - **Domain-scoped routes:** if the URL does not already contain the current domain, the interceptor injects it (e.g. a mistaken relative path can be corrected — prefer **explicit** `/api/{domain}/...` in service modules).
+   - **Global first segments** (no injection): see `globalApiPrefixes` in `apiConnectionManager.ts` (`system_monitoring`, `articles`, `storylines`, `intelligence`, `topics` for aggregate stats only, etc.), plus registry domain keys when already present.
    - Most API service files already include the domain in their URLs. The interceptor is a safety net for the few that don't.
 
 4. **Custom API URL**

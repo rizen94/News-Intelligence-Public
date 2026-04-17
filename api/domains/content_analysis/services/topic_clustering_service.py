@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import re
+from datetime import datetime, timezone
 from typing import Any
 
 import httpx
@@ -75,6 +76,53 @@ class TopicClusteringService:
         with conn.cursor() as cur:
             cur.execute(f"SET search_path TO {self.schema}, public")
         return conn
+
+    def record_topic_clustering_pass(self, article_id: int, outcome: str) -> None:
+        """
+        Mark an article as having completed a topic_clustering attempt (Monitor backlog + automation).
+
+        Stored at ``articles.metadata.pipeline.topic_clustering`` (JSONB merge).
+        """
+        iso = datetime.now(timezone.utc).isoformat()
+        conn = None
+        try:
+            conn = self._get_db_connection()
+            cur = conn.cursor()
+            cur.execute(
+                f"""
+                UPDATE {self.schema}.articles
+                SET metadata =
+                    COALESCE(metadata, '{{}}'::jsonb)
+                    || jsonb_build_object(
+                        'pipeline',
+                        COALESCE(metadata->'pipeline', '{{}}'::jsonb)
+                        || jsonb_build_object(
+                            'topic_clustering',
+                            COALESCE(metadata->'pipeline'->'topic_clustering', '{{}}'::jsonb)
+                            || jsonb_build_object(
+                                'last_pass_at', to_jsonb(%s::text),
+                                'last_outcome', to_jsonb(%s::text)
+                            )
+                        )
+                    )
+                WHERE id = %s
+                """,
+                (iso, outcome, article_id),
+            )
+            conn.commit()
+        except Exception as e:
+            logger.warning("record_topic_clustering_pass failed for article %s: %s", article_id, e)
+            if conn:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
 
     async def _call_ollama(self, prompt: str, system_prompt: str = None) -> str:
         """
@@ -155,7 +203,13 @@ class TopicClusteringService:
                 if cfg.llm_context:
                     domain_hint += f" {cfg.llm_context[:500]}"
                 dk = (self.domain or "").lower().replace("_", "-")
-                if dk in ("science-tech", "sciencetech"):
+                if dk in (
+                    "artificial-intelligence",
+                    "medicine",
+                    "environment-climate",
+                    "science-tech",
+                    "sciencetech",
+                ):
                     category_choices = (
                         "technology, health, medicine, artificial_intelligence, biotechnology, genomics, "
                         "aerospace, energy, materials_science, quantum_computing, robotics, climate_science, "
@@ -516,6 +570,7 @@ JSON Response:"""
 
             if not extracted_topics:
                 logger.warning(f"⚠️ No topics extracted for article {article_id}")
+                self.record_topic_clustering_pass(article_id, "no_topics_extracted")
                 return {
                     "success": True,
                     "article_id": article_id,
@@ -529,6 +584,9 @@ JSON Response:"""
             logger.info(
                 f"✅ Processed article {article_id}: {assignment_result.get('total_assigned', 0)} topics assigned"
             )
+
+            if assignment_result.get("success"):
+                self.record_topic_clustering_pass(article_id, "topics_assigned")
 
             return assignment_result
 

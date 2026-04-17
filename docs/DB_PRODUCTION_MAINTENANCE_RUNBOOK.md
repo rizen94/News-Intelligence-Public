@@ -6,7 +6,7 @@ Use this for **staging first**, then **production**, when executing assessment c
 
 - Change ticket approved; owner on-call.
 - [_archive/retired_root_docs_2026_03/DB_FULL_ASSESSMENT.md](_archive/retired_root_docs_2026_03/DB_FULL_ASSESSMENT.md) baseline section updated for this environment.
-- Backup completed and verified (`scripts/db_backup.sh` or org standard).
+- Backup completed and verified (`scripts/db_backup_single_latest.sh` → `news_intel_latest.pgdump` on NAS; see [DATABASE_BACKUP.md](DATABASE_BACKUP.md)).
 
 ## Steps
 

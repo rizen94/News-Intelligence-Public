@@ -212,7 +212,9 @@ class RouteSupervisor:
         # Substitute path parameters
         test_path = route_path
         if "{domain}" in test_path:
-            test_path = test_path.replace("{domain}", domain or "politics")
+            from shared.domain_registry import first_active_domain_key
+
+            test_path = test_path.replace("{domain}", domain or first_active_domain_key())
         if "{article_id}" in test_path:
             test_path = test_path.replace("{article_id}", "1")
         if "{storyline_id}" in test_path:

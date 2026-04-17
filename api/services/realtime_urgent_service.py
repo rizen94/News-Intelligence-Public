@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from shared.database.connection import get_db_connection
-from shared.domain_registry import get_active_domain_keys, is_valid_domain_key
+from shared.domain_registry import first_active_domain_key, get_active_domain_keys, is_valid_domain_key
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +37,7 @@ def process_urgent_payload(
     title = (payload.get("title") or "")[:2000].strip()
     content = (payload.get("content") or payload.get("body") or "")[:500000].strip()
     active = get_active_domain_keys()
-    fallback = active[0] if active else "politics"
+    fallback = active[0] if active else first_active_domain_key()
     domain_key = (payload.get("domain") or fallback).strip()
     if not is_valid_domain_key(domain_key):
         domain_key = fallback

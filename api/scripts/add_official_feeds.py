@@ -113,7 +113,7 @@ OFFICIAL_FEEDS = {
             "description": "Congressional Budget Office publications",
         },
     ],
-    "science_tech": [
+    "artificial_intelligence": [
         {
             "feed_name": "NASA News",
             "feed_url": "https://www.nasa.gov/rss/dyn/breaking_news.rss",
@@ -221,7 +221,7 @@ def main():
         schema_name = {
             "finance": "finance",
             "politics": "politics",
-            "science_tech": "science_tech",
+            "artificial_intelligence": "artificial_intelligence",
         }.get(domain_key, domain_key)
 
         print(f"\n📂 Processing {domain_key.upper()} domain ({len(feeds)} feeds)...")

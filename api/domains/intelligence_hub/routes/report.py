@@ -28,7 +28,7 @@ def _domain_keys_matching_path(path_domain: str) -> list[str]:
         schema = domain_key_to_schema(path_domain)
     except KeyError:
         if path_domain == "science_tech":
-            keys.append("science-tech")
+            keys.extend(["artificial-intelligence", "science-tech"])
         return list(dict.fromkeys(keys))
     for dk in schema_to_domain_key(schema):
         keys.append(dk)
@@ -46,8 +46,8 @@ def _path_segment_for_db_domain_key(db_key: str) -> str:
             return db_key
         if str(e["schema_name"]) == db_key:
             return e["domain_key"]
-    if db_key == "science_tech":
-        return "science-tech"
+    if db_key in ("science_tech", "science-tech"):
+        return "artificial-intelligence"
     return db_key
 
 
@@ -56,6 +56,24 @@ def _get_schema_for_domain(domain: str) -> str | None:
         return domain_key_to_schema(domain)
     except KeyError:
         return None
+
+
+def _sanitize_editorial_document_for_api(ed: dict | None) -> dict | None:
+    """Strip JSON/prompt noise from lede and other string fields before JSON response."""
+    if not ed or not isinstance(ed, dict):
+        return ed
+    try:
+        from shared.llm_text_sanitize import strip_llm_wrapping_artifacts
+
+        out = dict(ed)
+        if out.get("lede"):
+            out["lede"] = strip_llm_wrapping_artifacts(out.get("lede"), max_length=800)
+        for key in ("why", "how", "analysis", "outlook"):
+            if out.get(key) and isinstance(out[key], str):
+                out[key] = strip_llm_wrapping_artifacts(out[key], max_length=4000)
+        return out
+    except Exception:
+        return ed
 
 
 def _time_of_day() -> str:
@@ -74,7 +92,7 @@ def _time_of_day() -> str:
 
 @router.get("/{domain}/report")
 def get_report(
-    domain: str = Path(..., description="Domain key (e.g. politics, finance, science-tech)"),
+    domain: str = Path(..., description="Domain key (e.g. politics, finance, artificial-intelligence)"),
     lead_limit: int = Query(10, ge=1, le=30, description="Max lead storylines to return"),
 ) -> dict[str, Any]:
     """Assemble report payload: lead storylines (5W1H + key_actors), investigations, recent events, daily_brief."""
@@ -196,7 +214,7 @@ def get_report(
                         )
                 ed = editorial_document
                 if ed and isinstance(ed, dict):
-                    pass
+                    ed = _sanitize_editorial_document_for_api(ed)
                 else:
                     ed = None
                 phase = (status or "Developing").capitalize()

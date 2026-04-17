@@ -491,13 +491,27 @@ def _parse_editorial_json(
                     "based_on_articles": article_ids,
                 }
             )
+            try:
+                from shared.llm_text_sanitize import strip_llm_wrapping_artifacts
+
+                result["lede"] = strip_llm_wrapping_artifacts(
+                    result.get("lede"), max_length=500
+                )
+            except Exception:
+                pass
             return result
     except (json.JSONDecodeError, ValueError):
         pass
 
+    try:
+        from shared.llm_text_sanitize import strip_llm_wrapping_artifacts
+
+        raw_lede = strip_llm_wrapping_artifacts(llm_text[:800], max_length=400)
+    except Exception:
+        raw_lede = (llm_text or "")[:300]
     return {
         **EDITORIAL_DOC_TEMPLATE,
-        "lede": llm_text[:300],
+        "lede": raw_lede or (llm_text or "")[:300],
         "sources": sources,
         "generated_at": datetime.now().isoformat(),
         "based_on_articles": article_ids,

@@ -13,6 +13,15 @@ from fastapi import APIRouter, Body, Path, Query
 logger = logging.getLogger(__name__)
 
 
+def _sanitize_briefing_line_text(text: str) -> str:
+    try:
+        from shared.llm_text_sanitize import strip_llm_wrapping_artifacts
+
+        return strip_llm_wrapping_artifacts(text, max_length=2000)
+    except Exception:
+        return (text or "").strip()
+
+
 def _build_llm_lead_prompt(key_developments: dict[str, Any], domain: str) -> str:
     """Build context string for LLM briefing lead. Marks recent vs older items so the LLM can prioritize today's developments."""
     parts = []
@@ -74,11 +83,14 @@ def _brief_to_content(brief: dict[str, Any]) -> str:
         editorial_ledes = kd.get("editorial_ledes") or []
         headlines = kd.get("top_headlines") or []
         if editorial_ledes:
-            ledes = [
-                item.get("lede", "").strip()
-                for item in editorial_ledes[:3]
-                if item.get("lede", "").strip()
-            ]
+            ledes = []
+            for item in editorial_ledes[:3]:
+                raw = (item.get("lede") or "").strip()
+                if not raw:
+                    continue
+                cleaned = _sanitize_briefing_line_text(raw)
+                if cleaned:
+                    ledes.append(cleaned)
             if ledes:
                 parts.append("What's new\n" + "\n".join("• " + lede for lede in ledes))
         elif headlines:
@@ -232,7 +244,7 @@ def post_generate_brief(
 
 @router.post("/{domain}/intelligence/briefings/daily")
 async def post_domain_daily_briefing(
-    domain: str = Path(..., description="Domain key (e.g. politics, finance, science-tech)"),
+    domain: str = Path(..., description="Domain key (e.g. politics, finance, artificial-intelligence)"),
     date: str | None = Body(None, embed=True, description="YYYY-MM-DD; default today"),
     use_llm_lead: bool = Body(
         True,
@@ -271,7 +283,7 @@ async def post_domain_daily_briefing(
 
                     result = await llm_service.generate_briefing_lead(context, domain=domain)
                     if result.get("success") and result.get("summary"):
-                        lead = (result["summary"] or "").strip()
+                        lead = _sanitize_briefing_line_text((result["summary"] or "").strip())
                         if lead:
                             content = "Lead: " + lead + "\n\n" + content
                 except Exception as llm_err:
@@ -434,7 +446,7 @@ def get_alert_digest(
 
 @router.post("/{domain}/intelligence/feedback")
 def post_content_feedback(
-    domain: str = Path(..., description="Domain key (e.g. politics, finance, science-tech)"),
+    domain: str = Path(..., description="Domain key (e.g. politics, finance, artificial-intelligence)"),
     item_type: str = Body(..., embed=True, description="article | storyline | briefing"),
     item_id: int | None = Body(None, embed=True),
     rating: int | None = Body(None, embed=True, ge=1, le=5),
@@ -471,7 +483,7 @@ def _get_schema_for_domain(domain: str) -> str | None:
 
 @router.get("/{domain}/intelligence/briefing_feed")
 def get_briefing_feed(
-    domain: str = Path(..., description="Domain key (e.g. politics, finance, science-tech)"),
+    domain: str = Path(..., description="Domain key (e.g. politics, finance, artificial-intelligence)"),
     articles_limit: int = Query(10, ge=1, le=50),
     storylines_limit: int = Query(6, ge=1, le=30),
 ) -> dict[str, Any]:

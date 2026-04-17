@@ -125,9 +125,13 @@ class PooledConnection:
 def get_db_config() -> Dict[str, Any]:
     """
     Get database configuration from environment variables.
-    Supports two modes:
-    - Widow (secondary): DB_HOST=192.168.93.101, DB_PORT=5432, DB_NAME=news_intel
-    - NAS via tunnel (rollback): DB_HOST=localhost, DB_PORT=5433, DB_NAME=news_intelligence
+
+    **Primary (normal operation):** Postgres on **Widow** (or PgBouncer on Widow), e.g.
+    ``DB_HOST=<widow_lan_ip>``, ``DB_PORT=5432`` or ``6432``, ``DB_NAME=news_intel``.
+    All app traffic uses the connection pools in this module against that target.
+
+    **Backup / rollback only:** NAS Postgres reached via SSH tunnel to ``localhost:5433``
+    (``DB_HOST=localhost``, ``DB_PORT=5433``). Use for rare restore scenarios — not for daily API use.
     """
     db_host = os.getenv("DB_HOST", "192.168.93.101")
     db_port_str = os.getenv("DB_PORT", "5432")

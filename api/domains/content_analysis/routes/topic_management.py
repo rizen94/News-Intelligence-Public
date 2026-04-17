@@ -64,7 +64,7 @@ class TopicFeedback(BaseModel):
 
 
 class TopicCreate(BaseModel):
-    """Model for creating a new topic"""
+    """Model for creating a new topic (domain comes from URL path)."""
 
     name: str
     description: str | None = None
@@ -125,6 +125,31 @@ async def health_check():
 # ============================================================================
 
 
+@router.get("/{domain}/topics/needing_review")
+async def get_topics_needing_review(
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
+    threshold: float = Query(0.6, ge=0.0, le=1.0),
+    limit: int = Query(50, ge=1, le=200),
+):
+    """
+    Topics that need review for a domain silo (accuracy below threshold).
+    """
+    if not validate_domain(domain):
+        raise HTTPException(status_code=400, detail=f"Invalid or inactive domain: {domain}")
+    try:
+        topic_service = TopicClusteringService(get_db_config(), domain=domain)
+        topics = topic_service.get_topics_needing_review(threshold=threshold, limit=limit)
+
+        return {
+            "success": True,
+            "data": {"topics": topics, "count": len(topics), "threshold": threshold, "domain": domain},
+        }
+
+    except Exception as e:
+        logger.error(f"Error getting topics needing review: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/{domain}/topics")
 async def get_domain_topics(
     domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
@@ -141,7 +166,7 @@ async def get_domain_topics(
     Get list of topics for a specific domain with filtering and sorting
 
     Args:
-        domain: Domain key (politics, finance, science-tech)
+        domain: Registry domain URL key
         limit: Maximum number of topics to return
         offset: Number of topics to skip
         category: Filter by category
@@ -265,16 +290,15 @@ async def get_domain_topics(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/topics/{topic_id}")
+@router.get("/{domain}/topics/{topic_id}")
 async def get_topic(
-    topic_id: int,
-    domain: str | None = Query(
-        None,
-        description="politics, finance, or science-tech; omit to search all domain schemas",
-    ),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
+    topic_id: int = Path(..., ge=1),
 ):
-    """Get a single topic by ID"""
+    """Get a single topic by ID within a domain silo."""
     try:
+        if not validate_domain(domain):
+            raise HTTPException(status_code=400, detail=f"Invalid or inactive domain: {domain}")
         conn = get_db_connection()
         if not conn:
             raise HTTPException(status_code=500, detail="Database connection failed")
@@ -344,12 +368,17 @@ async def get_topic(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/topics")
-async def create_topic(topic: TopicCreate):
-    """Create a new topic manually"""
+@router.post("/{domain}/topics")
+async def create_topic(
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
+    topic: TopicCreate = Body(...),
+):
+    """Create a new topic manually in a domain silo."""
     try:
+        if not validate_domain(domain):
+            raise HTTPException(status_code=400, detail=f"Invalid or inactive domain: {domain}")
         try:
-            sch = parse_optional_domain_to_schema(topic.domain or "politics")
+            sch = parse_optional_domain_to_schema(domain)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
 
@@ -404,17 +433,16 @@ async def create_topic(topic: TopicCreate):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.put("/topics/{topic_id}")
+@router.put("/{domain}/topics/{topic_id}")
 async def update_topic(
-    topic_id: int,
-    topic_update: TopicUpdate,
-    domain: str = Query(
-        "politics",
-        description="Domain schema for this topic: politics, finance, or science-tech",
-    ),
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
+    topic_id: int = Path(..., ge=1),
+    topic_update: TopicUpdate = Body(...),
 ):
-    """Update a topic"""
+    """Update a topic in a domain silo."""
     try:
+        if not validate_domain(domain):
+            raise HTTPException(status_code=400, detail=f"Invalid or inactive domain: {domain}")
         try:
             sch = parse_optional_domain_to_schema(domain)
         except ValueError as e:
@@ -549,8 +577,12 @@ async def get_domain_article_topics(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/articles/{article_id}/process_topics")
-async def process_article_topics(article_id: int, background_tasks: BackgroundTasks):
+@router.post("/{domain}/articles/{article_id}/process_topics")
+async def process_article_topics(
+    background_tasks: BackgroundTasks,
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
+    article_id: int = Path(..., ge=1),
+):
     """
     Process an article to extract and assign topics using LLM
 
@@ -560,7 +592,9 @@ async def process_article_topics(article_id: int, background_tasks: BackgroundTa
     3. Assign topics to the article
     """
     try:
-        topic_service = TopicClusteringService(get_db_config(), domain="politics")
+        if not validate_domain(domain):
+            raise HTTPException(status_code=400, detail=f"Invalid or inactive domain: {domain}")
+        topic_service = TopicClusteringService(get_db_config(), domain=domain)
         result = await topic_service.process_article(article_id)
 
         if not result.get("success"):
@@ -575,18 +609,17 @@ async def process_article_topics(article_id: int, background_tasks: BackgroundTa
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/topics/{topic_id}/articles")
+@router.get("/{domain}/topics/{topic_id}/articles")
 async def get_topic_articles(
-    topic_id: int,
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
+    topic_id: int = Path(..., ge=1),
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
-    domain: str | None = Query(
-        None,
-        description="politics, finance, or science-tech; omit to search all schemas",
-    ),
 ):
-    """Get all articles assigned to a topic"""
+    """Get all articles assigned to a topic in a domain silo."""
     try:
+        if not validate_domain(domain):
+            raise HTTPException(status_code=400, detail=f"Invalid or inactive domain: {domain}")
         conn = get_db_connection()
         if not conn:
             raise HTTPException(status_code=500, detail="Database connection failed")
@@ -670,8 +703,12 @@ async def get_topic_articles(
 # ============================================================================
 
 
-@router.post("/assignments/{assignment_id}/feedback")
-async def submit_feedback(assignment_id: int, feedback: TopicFeedback):
+@router.post("/{domain}/assignments/{assignment_id}/feedback")
+async def submit_feedback(
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
+    assignment_id: int = Path(..., ge=1),
+    feedback: TopicFeedback = Body(...),
+):
     """
     Submit feedback on a topic assignment for iterative learning
 
@@ -681,7 +718,9 @@ async def submit_feedback(assignment_id: int, feedback: TopicFeedback):
     3. Record learning history
     """
     try:
-        topic_service = TopicClusteringService(get_db_config(), domain="politics")
+        if not validate_domain(domain):
+            raise HTTPException(status_code=400, detail=f"Invalid or inactive domain: {domain}")
+        topic_service = TopicClusteringService(get_db_config(), domain=domain)
         result = topic_service.record_feedback(
             assignment_id=assignment_id,
             is_correct=feedback.is_correct,
@@ -707,38 +746,15 @@ async def submit_feedback(assignment_id: int, feedback: TopicFeedback):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/topics/needing_review")
-async def get_topics_needing_review(
-    threshold: float = Query(0.6, ge=0.0, le=1.0), limit: int = Query(50, ge=1, le=200)
-):
-    """
-    Get topics that need review based on accuracy threshold
-
-    Topics with accuracy below the threshold and with review history
-    are returned for human review and correction.
-    """
-    try:
-        topic_service = TopicClusteringService(get_db_config(), domain="politics")
-        topics = topic_service.get_topics_needing_review(threshold=threshold, limit=limit)
-
-        return {
-            "success": True,
-            "data": {"topics": topics, "count": len(topics), "threshold": threshold},
-        }
-
-    except Exception as e:
-        logger.error(f"Error getting topics needing review: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
 # ============================================================================
 # Batch Operations
 # ============================================================================
 
 
-@router.post("/articles/batch_process_topics")
+@router.post("/{domain}/articles/batch_process_topics")
 async def batch_process_articles(
-    article_ids: list[int] = Body(...), background_tasks: BackgroundTasks = None
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
+    article_ids: list[int] = Body(...),
 ):
     """
     Process multiple articles for topic extraction and assignment
@@ -748,7 +764,9 @@ async def batch_process_articles(
     try:
         import asyncio
 
-        topic_service = TopicClusteringService(get_db_config(), domain="politics")
+        if not validate_domain(domain):
+            raise HTTPException(status_code=400, detail=f"Invalid or inactive domain: {domain}")
+        topic_service = TopicClusteringService(get_db_config(), domain=domain)
 
         # Process articles concurrently (but limit concurrency)
         semaphore = asyncio.Semaphore(5)  # Max 5 concurrent processes
@@ -783,10 +801,13 @@ async def batch_process_articles(
 # ============================================================================
 
 
-@router.post("/topics/merge")
-async def merge_topics(merge_request: TopicMerge):
+@router.post("/{domain}/topics/merge")
+async def merge_topics(
+    domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN),
+    merge_request: TopicMerge = Body(...),
+):
     """
-    Merge multiple topics into one
+    Merge multiple topics into one within a domain silo.
 
     This will:
     1. Keep the first topic as the primary (or create new merged topic)
@@ -801,6 +822,8 @@ async def merge_topics(merge_request: TopicMerge):
         keep_primary: If True, keep first topic; if False, create new merged topic
     """
     try:
+        if not validate_domain(domain):
+            raise HTTPException(status_code=400, detail=f"Invalid or inactive domain: {domain}")
         if len(merge_request.topic_ids) < 2:
             raise HTTPException(status_code=400, detail="At least 2 topics required for merge")
 
@@ -810,7 +833,7 @@ async def merge_topics(merge_request: TopicMerge):
 
         try:
             try:
-                sch = parse_optional_domain_to_schema(merge_request.domain or "politics")
+                sch = parse_optional_domain_to_schema(merge_request.domain or domain)
             except ValueError as e:
                 raise HTTPException(status_code=400, detail=str(e))
 
@@ -889,11 +912,11 @@ async def merge_topics(merge_request: TopicMerge):
                 # Get data from topics to merge
                 for topic_id in topics_to_merge:
                     cur.execute(
-                        """
+                        f"""
                         SELECT name, description, category, keywords, confidence_score, accuracy_score,
                                review_count, correct_assignments, incorrect_assignments,
-                               (SELECT COUNT(*) FROM article_topic_assignments WHERE topic_id = %s) as article_count
-                        FROM topics
+                               (SELECT COUNT(*) FROM {sch}.article_topic_assignments WHERE topic_id = %s) as article_count
+                        FROM {sch}.topics
                         WHERE id = %s
                     """,
                         (topic_id, topic_id),
