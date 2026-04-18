@@ -111,6 +111,7 @@ DEFAULT_NIGHTLY_SEQUENTIAL_PHASES: tuple[str, ...] = (
     "cross_domain_synthesis",
     "entity_dossier_compile",
     "entity_organizer",
+    "graph_connection_distillation",
     "storyline_synthesis",
     "narrative_thread_build",
     "story_enhancement",

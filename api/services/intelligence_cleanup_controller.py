@@ -170,6 +170,7 @@ class IntelligenceCleanupController:
 
         schema = _schema(domain_key)
         merged = 0
+        merged_pairs: list[tuple[int, int]] = []
 
         try:
             with conn.cursor() as cur:
@@ -187,6 +188,8 @@ class IntelligenceCleanupController:
                         continue
                     keep_id = ids[0]
                     merge_ids = ids[1:]
+                    for mid in merge_ids:
+                        merged_pairs.append((int(keep_id), int(mid)))
                     cur.execute(
                         f"""
                         UPDATE {schema}.article_entities
@@ -199,6 +202,12 @@ class IntelligenceCleanupController:
                     merged += len(merge_ids)
 
             conn.commit()
+            try:
+                from services.graph_connection_queue_service import finalize_entity_merges_in_queue
+
+                finalize_entity_merges_in_queue(domain_key, merged_pairs)
+            except Exception:
+                pass
             conn.close()
         except Exception as e:
             logger.warning(f"duplicate merge {domain_key}: {e}")

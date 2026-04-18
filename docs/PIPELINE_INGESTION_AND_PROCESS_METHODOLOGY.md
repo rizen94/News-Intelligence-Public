@@ -19,7 +19,7 @@
 ## Scheduling model (how tasks actually run)
 
 - **Workload-driven scheduling** (default path): phases with pending work (per `backlog_metrics`) are eligible every tick (subject to cooldown), not only on wall-clock intervals. Idle phases use their `interval` from `schedules`.
-- **Collection throttle:** When downstream pending (enrichment + `context_sync` + `document_processing`) exceeds `COLLECTION_THROTTLE_PENDING_THRESHOLD`, `collection_cycle` can defer RSS so **collect → process → sync** can catch up.
+- **Collection throttle:** When downstream pending (enrichment + `context_sync` + `document_processing`, minus `COLLECTION_THROTTLE_EXCLUDE_PHASES`, plus optional `COLLECTION_THROTTLE_EXTRA_PHASES`) exceeds `COLLECTION_THROTTLE_PENDING_THRESHOLD`, workload-driven scheduling **does not enqueue `collection_cycle`** (the whole cycle, not RSS only). Standalone `content_enrichment` and nightly unified drain still run so rows can catch up.
 - **Queue soft cap:** When `AUTOMATION_QUEUE_SOFT_CAP` is exceeded (default 100), new enqueues are skipped except phases in `AUTOMATION_QUEUE_PAUSE_ALLOW`. **`nightly_enrichment_context` is not allowlisted** (it would stack redundant drains). **`AUTOMATION_NIGHTLY_ENRICHMENT_MAX_QUEUED`** caps running+queued nightly tasks (default 5).
 - **Widow / split hosts:** `AUTOMATION_SKIP_RSS_IN_COLLECTION_CYCLE` on the main host when RSS runs elsewhere; `content_enrichment` still drains `{domain}.articles` rows that need full text. See `AGENTS.md` and `docs/WIDOW_DB_ADJACENT_CRON.md`.
 
@@ -36,7 +36,7 @@ This section states **what “good” means per layer**, **what we deliberately 
 | **`SKIP_WHEN_EMPTY`** (`backlog_metrics.py`) | Phases in this set **do not enqueue** when pending count is 0 — avoids empty LLM/DB cycles. Omitted phases (e.g. `document_processing`, `content_refinement_queue`) still tick on interval so stuck work or “idle completion” is visible. |
 | **Workload-driven scheduling** (`automation_manager`) | If a phase has pending work (`get_all_pending_counts`), it becomes eligible every tick (subject to cooldown + `depends_on`), not only on its idle interval. |
 | **`depends_on`** | **Scheduling order only**: a task is not eligible until dependencies have run at least once in the manager’s history window; it does *not* mean “upstream must be empty.” Downstream backlog counts are the real “is there work?” signal. |
-| **Collection throttle** | When enrichment + `context_sync` + `document_processing` pending exceeds `COLLECTION_THROTTLE_PENDING_THRESHOLD`, **`collection_cycle` defers RSS** so quality-sensitive steps can drain — **quality before volume**. |
+| **Collection throttle** | When the configured downstream pending sum exceeds `COLLECTION_THROTTLE_PENDING_THRESHOLD`, **`collection_cycle` is not scheduled** (entire cycle) so quality-sensitive steps can drain — **quality before volume**. Standalone enrichment and nightly drain still run. |
 | **Pipeline domain scope** | Per-domain automation loops use **`get_pipeline_active_domain_keys()`** / **`pipeline_url_schema_pairs()`** so paused legacy silos are not enriched, synced, or story-processed. |
 | **`BATCH_SIZE_PER_TASK`** | Defines “normal” batch per run; pending **above** this is treated as backlog (shorter effective interval in backlog mode). |
 | **`BATCH_PHASES_CONTINUOUS` + `MAX_REQUEUE_PER_WINDOW`** | After `collection_cycle`, some phases may re-enqueue in the same analysis window up to a cap so one pass does not starve others. |

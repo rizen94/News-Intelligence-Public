@@ -78,6 +78,7 @@ BATCH_SIZE_PER_TASK: Dict[str, int] = {
     "entity_dossier_compile": 20,  # _run_scheduled_dossier_compiles max per run
     "story_enhancement": 50,  # fact_change_log + story_update_queue proxy per cycle
     "storyline_synthesis": 16,  # ~4 storylines × active domains per _execute_storyline_synthesis tick
+    "graph_connection_distillation": 12,  # GRAPH_CONNECTION_DISTILLATION_BATCH proposals per run
     "pending_db_flush": 200,  # rough lines replayed per successful flush (order-of-magnitude)
 }
 
@@ -92,6 +93,46 @@ def _default_batch_for_unknown_phase() -> int:
     except (TypeError, ValueError):
         v = 1
     return max(1, min(v, 50_000))
+
+
+# Keys assigned in _get_raw_pending_counts (keep in sync with that function).
+# Invariant: SKIP_WHEN_EMPTY must be a subset — otherwise AutomationManager never schedules those phases
+# (pending defaults to 0). Validated at import below after SKIP_WHEN_EMPTY is defined.
+RAW_PENDING_COUNT_KEYS = frozenset(
+    {
+        "content_enrichment",
+        "context_sync",
+        "event_tracking",
+        "claim_extraction",
+        "entity_profile_build",
+        "investigation_report_refresh",
+        "document_processing",
+        "pending_db_flush",
+        "content_refinement_queue",
+        "metadata_enrichment",
+        "ml_processing",
+        "entity_extraction",
+        "sentiment_analysis",
+        "quality_scoring",
+        "storyline_processing",
+        "topic_clustering",
+        "timeline_generation",
+        "storyline_discovery",
+        "rag_enhancement",
+        "event_extraction",
+        "proactive_detection",
+        "storyline_automation",
+        "claims_to_facts",
+        "legislative_references",
+        "entity_profile_sync",
+        "entity_enrichment",
+        "entity_dossier_compile",
+        "story_enhancement",
+        "storyline_synthesis",
+        "graph_connection_distillation",
+        "nightly_enrichment_context",
+    }
+)
 
 
 def _get_raw_pending_counts() -> Dict[str, int]:
@@ -129,6 +170,10 @@ def _get_raw_pending_counts() -> Dict[str, int]:
         raw["legislative_references"] = _count_legislative_references_backlog()
         raw["entity_profile_sync"] = _count_entity_profile_sync_pending()
         raw["entity_enrichment"] = _count_entity_enrichment_pending()
+        raw["entity_dossier_compile"] = _count_entity_dossier_compile_pending()
+        raw["story_enhancement"] = _count_story_enhancement_pending()
+        raw["storyline_synthesis"] = _count_storyline_synthesis_pending()
+        raw["graph_connection_distillation"] = _count_graph_connection_distillation_pending()
         raw["nightly_enrichment_context"] = (
             int(raw.get("content_enrichment", 0) or 0)
             + int(raw.get("context_sync", 0) or 0)
@@ -136,6 +181,14 @@ def _get_raw_pending_counts() -> Dict[str, int]:
         )
     except Exception as e:
         logger.warning("backlog_metrics _get_raw_pending_counts: %s", e)
+        return raw
+    built = frozenset(raw.keys())
+    if built != RAW_PENDING_COUNT_KEYS:
+        raise RuntimeError(
+            "backlog_metrics: _get_raw_pending_counts keys drifted from RAW_PENDING_COUNT_KEYS — "
+            f"extra={sorted(built - RAW_PENDING_COUNT_KEYS)} "
+            f"missing={sorted(RAW_PENDING_COUNT_KEYS - built)}"
+        )
     return raw
 
 
@@ -1126,34 +1179,42 @@ def _count_entity_dossier_compile_pending() -> int:
 
 
 def _count_story_enhancement_pending() -> int:
-    """Unprocessed story-state queues driving run_enhancement_cycle."""
+    """Pending work for ``run_enhancement_cycle`` (queues + enrich + profile build — same stages as automation)."""
+    queues = 0
     conn = _get_conn()
-    if not conn:
-        return 0
-    try:
-        with conn.cursor() as cur:
-            cur.execute("SET LOCAL statement_timeout = '5s'")
-            cur.execute(
-                """
-                SELECT
-                  COALESCE((SELECT COUNT(*) FROM intelligence.fact_change_log WHERE processed = FALSE), 0)
-                + COALESCE((SELECT COUNT(*) FROM intelligence.story_update_queue WHERE processed = FALSE), 0)
-                AS n
-                """
-            )
-            return int(cur.fetchone()[0] or 0)
-    except Exception as e:
-        logger.debug("backlog story_enhancement count: %s", e)
-        return 0
-    finally:
+    if conn:
         try:
-            conn.close()
-        except Exception:
-            pass
+            with conn.cursor() as cur:
+                cur.execute("SET LOCAL statement_timeout = '5s'")
+                cur.execute(
+                    """
+                    SELECT
+                      COALESCE((SELECT COUNT(*) FROM intelligence.fact_change_log WHERE processed = FALSE), 0)
+                    + COALESCE((SELECT COUNT(*) FROM intelligence.story_update_queue WHERE processed = FALSE), 0)
+                    AS n
+                    """
+                )
+                row = cur.fetchone()
+                queues = int(row[0] or 0) if row else 0
+        except Exception as e:
+            logger.debug("backlog story_enhancement queues: %s", e)
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+    try:
+        extra = int(_count_entity_enrichment_pending() or 0) + int(
+            _count_entity_profile_build_backlog() or 0
+        )
+    except Exception as e:
+        logger.debug("backlog story_enhancement enrich/build: %s", e)
+        extra = 0
+    return queues + extra
 
 
 def _count_storyline_synthesis_pending() -> int:
-    """Storylines with 3+ articles needing synthesized_content (aligns with storyline_synthesis task)."""
+    """Storylines with 3+ articles needing first synthesis or re-synthesis (matches _execute_storyline_synthesis)."""
     conn = _get_conn()
     if not conn:
         return 0
@@ -1171,6 +1232,12 @@ def _count_storyline_synthesis_pending() -> int:
                             GROUP BY storyline_id HAVING COUNT(*) >= 3
                         ) sa ON sa.storyline_id = s.id
                         WHERE s.synthesized_content IS NULL
+                           OR EXISTS (
+                             SELECT 1 FROM {schema}.storyline_articles sa2
+                             JOIN {schema}.articles a ON a.id = sa2.article_id
+                             WHERE sa2.storyline_id = s.id
+                               AND a.created_at > COALESCE(s.synthesized_at, '1970-01-01'::timestamptz)
+                           )
                         """
                     )
                     total += int(cur.fetchone()[0] or 0)
@@ -1183,6 +1250,7 @@ def _count_storyline_synthesis_pending() -> int:
                                 SELECT storyline_id FROM {schema}.storyline_articles
                                 GROUP BY storyline_id HAVING COUNT(*) >= 3
                             ) sa ON sa.storyline_id = s.id
+                            WHERE s.synthesized_content IS NULL
                             """
                         )
                         total += int(cur.fetchone()[0] or 0)
@@ -1240,6 +1308,17 @@ def _count_legislative_references_backlog() -> int:
     return total
 
 
+def _count_graph_connection_distillation_pending() -> int:
+    """Pending rows in intelligence.graph_connection_proposals (merge / associate / hyperedge)."""
+    try:
+        from services.graph_connection_queue_service import count_pending_graph_connection_proposals
+
+        return int(count_pending_graph_connection_proposals())
+    except Exception as e:
+        logger.debug("backlog graph_connection_distillation count: %s", e)
+        return 0
+
+
 # Phases that should be skipped when backlog is 0 (avoid empty cycles)
 # document_processing omitted so it runs on interval even if backlog count is wrong (e.g. DB timeout)
 # content_refinement_queue omitted: must run on interval when idle so automation history updates;
@@ -1273,7 +1352,16 @@ SKIP_WHEN_EMPTY = frozenset({
     "entity_dossier_compile",
     "story_enhancement",
     "storyline_synthesis",
+    "graph_connection_distillation",
 })
+
+_missing_skip_pending = SKIP_WHEN_EMPTY - RAW_PENDING_COUNT_KEYS
+if _missing_skip_pending:
+    raise RuntimeError(
+        "backlog_metrics: SKIP_WHEN_EMPTY contains phases not in RAW_PENDING_COUNT_KEYS "
+        f"(scheduler would starve them): {sorted(_missing_skip_pending)}. "
+        "Add counts to _get_raw_pending_counts and extend RAW_PENDING_COUNT_KEYS."
+    )
 
 # When backlog exceeds this, use backlog-mode interval so we run more often
 BACKLOG_HIGH_THRESHOLD = 200

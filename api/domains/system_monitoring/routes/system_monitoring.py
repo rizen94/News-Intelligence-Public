@@ -893,6 +893,7 @@ async def get_automation_status(request: Request) -> dict[str, Any]:
         for t in (
             "entity_profile_build",
             "entity_organizer",
+            "graph_connection_distillation",
             "pattern_recognition",
             "cross_domain_synthesis",
             "storyline_discovery",

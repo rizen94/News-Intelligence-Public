@@ -486,6 +486,77 @@ class StorylineConsolidationService:
         finally:
             conn.close()
 
+    def merge_storylines_by_ids(
+        self,
+        domain: str,
+        primary_id: int,
+        secondary_id: int,
+        overall_confidence: float,
+    ) -> int | None:
+        """
+        Merge secondary into primary when only ids are known (e.g. graph_connection worker).
+        Loads minimal titles/descriptions from DB; no-ops if either row is missing or already merged.
+        """
+        if primary_id == secondary_id:
+            return None
+        schema = domain.replace("-", "_")
+        conn = self.get_db_connection()
+        rows: dict[int, tuple[str, str, int | None]] = {}
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    SELECT id, title, description, merged_into_id
+                    FROM {schema}.storylines
+                    WHERE id IN (%s, %s)
+                    """,
+                    (primary_id, secondary_id),
+                )
+                for rid, title, desc, merged_into in cur.fetchall():
+                    rows[int(rid)] = (
+                        str(title or ""),
+                        str(desc or ""),
+                        int(merged_into) if merged_into is not None else None,
+                    )
+        except Exception as e:
+            logger.warning("merge_storylines_by_ids load %s: %s", domain, e)
+            return None
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+        if primary_id not in rows or secondary_id not in rows:
+            return None
+        if rows[secondary_id][2] is not None or rows[primary_id][2] is not None:
+            return None
+
+        pt, pdesc, _ = rows[primary_id]
+        st, _, _ = rows[secondary_id]
+        primary = StorylineInfo(
+            id=primary_id,
+            title=pt,
+            description=pdesc,
+            article_count=0,
+            created_at=datetime.now(),
+            updated_at=datetime.now(),
+        )
+        secondary = StorylineInfo(
+            id=secondary_id,
+            title=st,
+            description=sdesc,
+            article_count=0,
+            created_at=datetime.now(),
+            updated_at=datetime.now(),
+        )
+        return self.merge_storylines(
+            domain,
+            primary,
+            secondary,
+            {"overall": float(overall_confidence)},
+        )
+
     def find_mega_storyline_candidates(
         self, storylines: list[StorylineInfo], threshold: float = PARENT_SIMILARITY_THRESHOLD
     ) -> list[list[StorylineInfo]]:
@@ -789,6 +860,8 @@ class StorylineConsolidationService:
             "storylines_analyzed": 0,
             "merges_performed": 0,
             "mega_storylines_created": 0,
+            "merge_proposals_queued": 0,
+            "hyperedge_proposals_queued": 0,
             "errors": [],
         }
 
@@ -843,6 +916,19 @@ class StorylineConsolidationService:
             merge_candidates = self.find_merge_candidates(storylines)
             result["merge_candidates_found"] = len(merge_candidates)
 
+            try:
+                from services.graph_connection_queue_service import (
+                    mark_storyline_merge_applied,
+                    record_storyline_merge_candidates,
+                )
+
+                result["merge_proposals_queued"] = record_storyline_merge_candidates(
+                    domain, merge_candidates
+                )
+            except Exception as qe:
+                logger.debug("graph_connection merge queue: %s", qe)
+                result["merge_proposals_queued"] = 0
+
             # Step 4: Perform merges
             merged_ids = set()
             for primary, secondary, similarity in merge_candidates:
@@ -854,6 +940,14 @@ class StorylineConsolidationService:
                 if merge_result:
                     merged_ids.add(secondary.id)
                     result["merges_performed"] += 1
+                    try:
+                        from services.graph_connection_queue_service import (
+                            mark_storyline_merge_applied,
+                        )
+
+                        mark_storyline_merge_applied(domain, primary.id, secondary.id)
+                    except Exception as me:
+                        logger.debug("mark merge applied: %s", me)
 
             # Step 5: Re-fetch after merges (for accurate mega-storyline creation)
             if result["merges_performed"] > 0:
@@ -869,6 +963,20 @@ class StorylineConsolidationService:
             logger.info(f"[{domain}] Finding mega-storyline candidates...")
             mega_groups = self.find_mega_storyline_candidates(storylines)
             result["mega_candidates_found"] = len(mega_groups)
+
+            try:
+                from services.graph_connection_queue_service import (
+                    record_storyline_hyperedge_groups,
+                )
+
+                result["hyperedge_proposals_queued"] = record_storyline_hyperedge_groups(
+                    domain,
+                    mega_groups[:5],
+                    pairwise_confidence_fn=self.calculate_storyline_similarity,
+                )
+            except Exception as he:
+                logger.debug("graph_connection hyperedge queue: %s", he)
+                result["hyperedge_proposals_queued"] = 0
 
             for group in mega_groups[:5]:  # Limit to 5 mega-storylines per run
                 mega_id = self.create_mega_storyline(domain, group)

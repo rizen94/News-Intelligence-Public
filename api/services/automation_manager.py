@@ -181,6 +181,7 @@ DB_HEAVY_PHASES = frozenset(
         "extracted_claims_dedupe",
         "pending_db_flush",
         "entity_organizer",
+        "graph_connection_distillation",
         "collection_cycle",
         "content_enrichment",
         # Churn-heavy automation phases (worker pool + LLM); used for router cooldowns / resource class
@@ -482,6 +483,7 @@ ANALYSIS_PIPELINE_STEPS: tuple[tuple[str, ...], ...] = (
     (
         "entity_profile_build",
         "entity_organizer",
+        "graph_connection_distillation",
         "pattern_recognition",
         "cross_domain_synthesis",
         "storyline_discovery",
@@ -628,6 +630,7 @@ PHASE_ESTIMATED_DURATION_SECONDS = {
     "pattern_matching": 90,
     "cross_domain_synthesis": 120,
     "entity_organizer": 600,  # observed can be 5–90 min under load; was 180
+    "graph_connection_distillation": 90,  # pending proposals batch + DB merges / link inserts
     "entity_dossier_compile": 90,  # compile entity dossiers (no LLM), ~2-5s per dossier
     "entity_position_tracker": 300,  # LLM position extraction per entity, ~30-60s per entity
     "metadata_enrichment": 90,  # language/categories/sentiment/quality per domain batch
@@ -968,6 +971,17 @@ class AutomationManager:
                 "phase": 2,
                 "depends_on": ["entity_profile_sync"],
                 "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["entity_organizer"],
+            },
+            "graph_connection_distillation": {
+                "interval": 600,  # 10 minutes — drain merge/associate/hyperedge proposal queue
+                "last_run": None,
+                "enabled": True,
+                "priority": TaskPriority.NORMAL,
+                "phase": 2,
+                "depends_on": ["entity_organizer"],
+                "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS[
+                    "graph_connection_distillation"
+                ],
             },
             # PHASE 3: ML Processing (Runs frequently on processed articles)
             "ml_processing": {
@@ -2943,6 +2957,8 @@ class AutomationManager:
                 await self._execute_metadata_enrichment(task)
             elif task.name == "entity_organizer":
                 await self._execute_entity_organizer(task)
+            elif task.name == "graph_connection_distillation":
+                await self._execute_graph_connection_distillation(task)
             elif task.name == "digest_generation":
                 await self._execute_digest_generation(task)
             elif task.name == "data_cleanup":
@@ -3300,6 +3316,8 @@ class AutomationManager:
             return "Building narrative threads (cross-storyline arcs)"
         if name == "entity_organizer":
             return "Entity organizer (cleanup + relationships)"
+        if name == "graph_connection_distillation":
+            return "Graph connection distillation (proposal queue → merges / links)"
         if name == "entity_enrichment":
             return "Running entity enrichment"
         if name == "pattern_matching":
@@ -4326,6 +4344,34 @@ class AutomationManager:
                 )
         except Exception as e:
             logger.warning("Entity resolution batch failed: %s", e)
+
+    async def _execute_graph_connection_distillation(self, task: Task):
+        """Apply pending graph_connection_proposals (storyline merges, entity merges, M2M links)."""
+        try:
+            from services.graph_connection_processor_service import (
+                process_graph_connection_proposals_batch,
+            )
+
+            loop = asyncio.get_event_loop()
+            stats = await loop.run_in_executor(
+                self.executor,
+                process_graph_connection_proposals_batch,
+                None,
+            )
+            if stats and (
+                stats.get("storyline_merged")
+                or stats.get("storyline_links")
+                or stats.get("entity_merged")
+                or stats.get("entity_links")
+                or stats.get("topic_links")
+                or stats.get("hyperedge_links")
+                or stats.get("rejected")
+            ):
+                logger.info("Graph connection distillation: %s", stats)
+            if stats and stats.get("errors"):
+                logger.debug("Graph connection distillation errors: %s", stats["errors"])
+        except Exception as e:
+            logger.warning("Graph connection distillation failed: %s", e)
 
     def _is_data_load_active(self) -> bool:
         """True if any data-load phase (rss, content_enrichment, entity_extraction) ran recently."""
