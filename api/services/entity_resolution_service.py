@@ -11,6 +11,7 @@ See docs/RAG_ENHANCEMENT_ROADMAP.md, docs/V6_QUALITY_FIRST_TODO.md T1.2.
 import logging
 import os
 import re
+import unicodedata
 from typing import Any
 
 from shared.database.connection import get_db_connection
@@ -47,6 +48,146 @@ def _normalize_name(name: str, entity_type: str) -> str:
     elif entity_type == "organization":
         n = ORG_SUFFIXES.sub("", n).strip()
     return re.sub(r"\s+", " ", n)
+
+
+def _normalize_for_fuzzy(text: str) -> str:
+    """
+    Aggressive normalization for fuzzy compare / dedupe keys (not for display).
+
+    - Unicode NFKC + lowercase
+    - Common abbreviation punctuation (U.S.A. → usa)
+    - Non-alphanumeric → spaces; collapse whitespace
+    - Light typo repair: leading ``iu`` before a vowel (``iunited`` → ``united``)
+    """
+    if not text:
+        return ""
+    t = unicodedata.normalize("NFKC", text).lower().strip()
+    t = t.replace("’", "'").replace("`", "'").replace("“", '"').replace("”", '"')
+    # Abbreviations (order matters: longest first)
+    t = re.sub(r"\bu\.s\.a\.?\b", "usa", t)
+    t = re.sub(r"\bu\.s\.?\b", "us", t)
+    t = re.sub(r"\bu\.k\.?\b", "uk", t)
+    t = re.sub(r"\bu\.n\.?\b", "un", t)
+    t = re.sub(r"\be\.u\.?\b", "eu", t)
+    t = re.sub(r"\bn\.y\.c\.?\b", "nyc", t)
+    t = re.sub(r"\bd\.c\.?\b", "dc", t)
+    t = re.sub(r"\bu\s*s\s*a\b", "usa", t)
+    t = re.sub(r"\bu\s*s\b(?!\w)", "us", t)
+    t = re.sub(r"\bu\s*k\b(?!\w)", "uk", t)
+    t = re.sub(r"\bu\s*n\b(?!\w)", "un", t)
+    t = re.sub(r"\be\s*u\b(?!\w)", "eu", t)
+    t = re.sub(r"[^a-z0-9]+", " ", t)
+    t = re.sub(r"\s+", " ", t).strip()
+    words: list[str] = []
+    for w in t.split():
+        if len(w) >= 5 and w.startswith("iu") and w[2] in "aeiou":
+            w = w[1:]
+        if len(w) >= 4 and w[0] == w[1] and w[0].isalpha():
+            w = w[1:]
+        words.append(w)
+    return " ".join(words)
+
+
+def _normalize_for_entity_match(name: str, entity_type: str) -> str:
+    """Chain title/org stripping + fuzzy normalization for matching keys."""
+    return _normalize_for_fuzzy(_normalize_name(name or "", entity_type))
+
+
+# Known equivalent surface forms (human-readable); frozen to normalized tokens at import.
+_ENTITY_EQUIVALENCE_GROUPS_RAW: tuple[tuple[str, ...], ...] = (
+    (
+        "United States",
+        "United States of America",
+        "USA",
+        "US",
+        "U.S.",
+        "U.S.A.",
+        "the United States",
+        "the United States of America",
+    ),
+    (
+        "United Kingdom",
+        "Great Britain",
+        "UK",
+        "U.K.",
+        "Britain",
+    ),
+    (
+        "European Union",
+        "EU",
+        "E.U.",
+    ),
+    (
+        "United Nations",
+        "UN",
+        "U.N.",
+    ),
+    (
+        "New York City",
+        "NYC",
+        "N.Y.C.",
+    ),
+    (
+        "Washington DC",
+        "Washington D.C.",
+        "Washington, D.C.",
+    ),
+)
+
+_ENTITY_EQUIV_NORM: tuple[frozenset[str], ...] = tuple(
+    frozenset(_normalize_for_fuzzy(x) for x in grp) for grp in _ENTITY_EQUIVALENCE_GROUPS_RAW
+)
+_TERM_TO_BUCKET: dict[str, str] = {}
+_BUCKET_TO_TERMS: dict[str, frozenset[str]] = {}
+for _i, _fs in enumerate(_ENTITY_EQUIV_NORM):
+    _bid = f"eq:{_i}"
+    _BUCKET_TO_TERMS[_bid] = _fs
+    for _t in _fs:
+        _TERM_TO_BUCKET[_t] = _bid
+
+
+def _equivalence_bucket_id(normalized: str) -> str | None:
+    """Stable bucket id if ``normalized`` is a known alias form, else None."""
+    if not normalized:
+        return None
+    return _TERM_TO_BUCKET.get(normalized)
+
+
+def normalize_entity_match_key(name: str, entity_type: str) -> str:
+    """
+    Stable key for dedupe grouping: fuzzy-normalized string, or shared bucket id
+    for known abbreviations (e.g. US / USA / United States).
+    """
+    n = _normalize_for_entity_match(name, entity_type)
+    bid = _equivalence_bucket_id(n)
+    if bid:
+        return bid
+    return n
+
+
+def _equivalence_sql_terms(name: str, entity_type: str) -> list[str]:
+    """All normalized bucket strings for SQL ``= ANY(...)`` when ``name`` hits a bucket."""
+    n = _normalize_for_entity_match(name, entity_type)
+    bid = _equivalence_bucket_id(n)
+    if not bid:
+        return []
+    return sorted(_BUCKET_TO_TERMS[bid])
+
+
+def _match_variant_strings(name: str, entity_type: str) -> set[str]:
+    """Lowered surface + normalized + full bucket expansion for overlap checks."""
+    raw = (name or "").strip()
+    out: set[str] = set()
+    if not raw:
+        return out
+    out.add(raw.lower())
+    out.add(_normalize_name(raw, entity_type).lower())
+    mx = _normalize_for_entity_match(raw, entity_type)
+    out.add(mx)
+    bid = _equivalence_bucket_id(mx)
+    if bid:
+        out.update(_BUCKET_TO_TERMS[bid])
+    return out
 
 
 # Last-word "surname" matching only applies when the last word is not a role/title.
@@ -246,6 +387,31 @@ def resolve_to_canonical(
                 conn.close()
                 return row[0]
 
+            # --- Step 1b: known abbreviation / geo bucket (US / USA / United States, …) ---
+            eq_terms = _equivalence_sql_terms(name, etype)
+            if eq_terms:
+                cur.execute(
+                    f"""
+                    SELECT id FROM {schema}.entity_canonical
+                    WHERE entity_type = %s
+                      AND (
+                        lower(trim(canonical_name)) = ANY(%s)
+                        OR EXISTS (
+                            SELECT 1 FROM unnest(COALESCE(aliases, '{{}}')) a
+                            WHERE lower(trim(a)) = ANY(%s)
+                        )
+                      )
+                    LIMIT 1
+                    """,
+                    (etype, eq_terms, eq_terms),
+                )
+                row = cur.fetchone()
+                if row:
+                    _add_alias(cur, schema, row[0], name)
+                    conn.commit()
+                    conn.close()
+                    return row[0]
+
             # --- Step 2: title-stripped match ---
             stripped = _normalize_name(name, etype)
             if stripped.lower() != name.lower():
@@ -422,17 +588,25 @@ def resolve_with_candidates(
 
         name_lower = name.lower()
         stripped_lower = stripped.lower()
+        mention_variants = _match_variant_strings(name, etype)
 
         for cid, cname, aliases in rows:
             cname_lower = cname.lower()
             alias_lowers = [a.lower() for a in (aliases or [])]
             all_names = [cname_lower] + alias_lowers
+            row_variants: set[str] = set()
+            row_variants.update(_match_variant_strings(cname, etype))
+            for al in aliases or []:
+                row_variants.update(_match_variant_strings(al, etype))
             confidence = 0.0
             match_reason = ""
 
             if name_lower in all_names:
                 confidence = 1.0
                 match_reason = "exact_match"
+            elif mention_variants & row_variants:
+                confidence = 0.98
+                match_reason = "equivalent_variant"
             elif stripped_lower in all_names:
                 confidence = 0.95
                 match_reason = "title_stripped"
@@ -442,7 +616,7 @@ def resolve_with_candidates(
             elif last_name and any(a.endswith(f" {last_name.lower()}") for a in all_names):
                 confidence = 0.6
                 match_reason = "last_name"
-            elif stripped_lower and any(_similarity(stripped_lower, a) > 0.7 for a in all_names):
+            elif stripped_lower and any(_similarity(name, a) > 0.7 for a in all_names):
                 confidence = 0.5
                 match_reason = "fuzzy"
 
@@ -473,13 +647,18 @@ def resolve_with_candidates(
 
 
 def _similarity(a: str, b: str) -> float:
-    """Bigram similarity (Dice coefficient) — lightweight fuzzy matching."""
-    if not a or not b:
+    """Bigram similarity (Dice coefficient) on fuzzy-normalized strings; known buckets match as 1.0."""
+    na = _normalize_for_fuzzy(a)
+    nb = _normalize_for_fuzzy(b)
+    if not na or not nb:
         return 0.0
-    if a == b:
+    ba, bb = _equivalence_bucket_id(na), _equivalence_bucket_id(nb)
+    if ba and bb and ba == bb:
         return 1.0
-    bigrams_a = set(a[i : i + 2] for i in range(len(a) - 1))
-    bigrams_b = set(b[i : i + 2] for i in range(len(b) - 1))
+    if na == nb:
+        return 1.0
+    bigrams_a = set(na[i : i + 2] for i in range(len(na) - 1))
+    bigrams_b = set(nb[i : i + 2] for i in range(len(nb) - 1))
     if not bigrams_a or not bigrams_b:
         return 0.0
     intersection = bigrams_a & bigrams_b
@@ -646,7 +825,9 @@ def find_merge_candidates(
         for i, (id_a, name_a, type_a, aliases_a) in enumerate(entities):
             stripped_a = _normalize_name(name_a, type_a).lower()
             last_a = _extract_last_name(name_a)
-            all_a = {name_a.lower(), stripped_a} | {a.lower() for a in (aliases_a or [])}
+            all_a: set[str] = set(_match_variant_strings(name_a, type_a))
+            for ax in aliases_a or []:
+                all_a.update(_match_variant_strings(ax, type_a))
 
             for j in range(i + 1, len(entities)):
                 id_b, name_b, type_b, aliases_b = entities[j]
@@ -657,7 +838,9 @@ def find_merge_candidates(
                     continue
 
                 stripped_b = _normalize_name(name_b, type_b).lower()
-                all_b = {name_b.lower(), stripped_b} | {a.lower() for a in (aliases_b or [])}
+                all_b: set[str] = set(_match_variant_strings(name_b, type_b))
+                for bx in aliases_b or []:
+                    all_b.update(_match_variant_strings(bx, type_b))
 
                 confidence = 0.0
                 reason = ""
@@ -688,9 +871,9 @@ def find_merge_candidates(
                                 if na in nb or nb in na:
                                     confidence = max(confidence, 0.7)
                                     reason = reason or "substring"
-                    # Bigram similarity
+                    # Bigram similarity (normalization + bucket equivalence inside _similarity)
                     if confidence < min_confidence:
-                        sim = _similarity(stripped_a, stripped_b)
+                        sim = _similarity(name_a, name_b)
                         if sim >= 0.7:
                             confidence = max(confidence, sim * 0.8)
                             reason = reason or "fuzzy_similarity"
@@ -1234,14 +1417,18 @@ def link_cross_domain_entities(
             for j in range(i + 1, len(domains)):
                 d1, d2 = domains[i], domains[j]
                 for id1, name1, type1, aliases1 in domain_entities[d1]:
-                    all_names_1 = {name1.lower()} | {a.lower() for a in (aliases1 or [])}
+                    all_names_1: set[str] = set(_match_variant_strings(name1, type1))
+                    for a1 in aliases1 or []:
+                        all_names_1.update(_match_variant_strings(a1, type1))
                     stripped_1 = _normalize_name(name1, type1).lower()
 
                     for id2, name2, type2, aliases2 in domain_entities[d2]:
                         if type1 != type2:
                             continue
 
-                        all_names_2 = {name2.lower()} | {a.lower() for a in (aliases2 or [])}
+                        all_names_2: set[str] = set(_match_variant_strings(name2, type2))
+                        for a2 in aliases2 or []:
+                            all_names_2.update(_match_variant_strings(a2, type2))
                         stripped_2 = _normalize_name(name2, type2).lower()
 
                         confidence = 0.0
@@ -1249,7 +1436,7 @@ def link_cross_domain_entities(
                             confidence = 0.95
                         elif stripped_1 == stripped_2:
                             confidence = 0.9
-                        elif _similarity(stripped_1, stripped_2) > 0.85:
+                        elif _similarity(name1, name2) > 0.85:
                             confidence = 0.75
 
                         if confidence >= min_confidence:

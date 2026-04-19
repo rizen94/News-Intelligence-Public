@@ -186,7 +186,12 @@ const StoryControlDashboard: React.FC = () => {
     try {
       setLoading(true);
       const response = await apiService.getActiveStories();
-      setStories(response);
+      const r = response as { data?: Story[]; error?: string };
+      if (r.error) {
+        setStories([]);
+        return;
+      }
+      setStories(Array.isArray(r.data) ? r.data : []);
     } catch (err: any) {
       console.error('Error fetching stories:', err);
       setError(err.message);

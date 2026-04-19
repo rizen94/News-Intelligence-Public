@@ -1,5 +1,6 @@
 /**
- * Intelligence Dashboard — 3 columns: What's New, Active Investigations, System Intelligence.
+ * Intelligence Dashboard — threads strip + What's New + Active Investigations.
+ * Collection/pipeline counts live on Monitor (ops / finance-adjacent).
  * Product notes: docs/archive/planning_incubator/WEB_PRODUCT_DISPLAY_PLAN.md
  */
 import React, { useEffect, useState } from 'react';
@@ -15,19 +16,16 @@ import {
   ListItemButton,
   ListItemText,
   Box,
-  Chip,
   Skeleton,
   Divider,
 } from '@mui/material';
 import {
   contextCentricApi,
-  heroBarEventsStoredCount,
   type Context,
   type TrackedEvent,
-  type ContextCentricStatus,
 } from '../../services/api/contextCentric';
-import apiService from '../../services/apiService';
 import { useDomainRoute } from '../../hooks/useDomainRoute';
+import ThreadCard from '../../components/Thread/ThreadCard';
 
 function timeAgo(date: Date): string {
   const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
@@ -56,47 +54,22 @@ export default function Dashboard() {
   const navigate = useNavigate();
   const [contexts, setContexts] = useState<Context[]>([]);
   const [events, setEvents] = useState<TrackedEvent[]>([]);
-  const [status, setStatus] = useState<ContextCentricStatus | null>(null);
-  const [orchStatus, setOrchStatus] = useState<Record<string, unknown> | null>(null);
   const [contextsLoading, setContextsLoading] = useState(true);
   const [eventsLoading, setEventsLoading] = useState(true);
-  const [statusOrchLoading, setStatusOrchLoading] = useState(true);
 
-  // Load in two waves so the right column (status/orch) can show first, then contexts and events
   useEffect(() => {
     let cancelled = false;
 
     const load = async () => {
       setContextsLoading(true);
       setEventsLoading(true);
-      setStatusOrchLoading(true);
 
-      // Wave 1: light endpoints so "System Intelligence" appears quickly
-      const stRes = contextCentricApi.getStatus(null).catch(() => null);
-      const oRes = (async () => {
-        try {
-          const fn = apiService.getOrchestratorDashboard;
-          if (typeof fn !== 'function') return null;
-          const d = await fn.call(apiService, { decision_log_limit: 1 });
-          return (d as { status?: Record<string, unknown> } | null)?.status ?? null;
-        } catch {
-          return null;
-        }
-      })();
-      const [statusData, orchData] = await Promise.all([stRes, oRes]);
-      if (cancelled) return;
-      setStatus(statusData ?? null);
-      setOrchStatus(orchData ?? null);
-      setStatusOrchLoading(false);
-
-      // Wave 2: contexts (brief) and events in parallel
       const ctxRes = contextCentricApi.getContexts({ domain_key: domain, limit: 10, brief: true }).catch(() => ({ items: [] as Context[] }));
       const evRes = contextCentricApi.getTrackedEvents({ domain_key: domain, limit: 8 }).catch(() => ({ items: [] as TrackedEvent[] }));
       const [ctxData, evData] = await Promise.all([ctxRes, evRes]);
       if (cancelled) return;
       const rawCtx = ctxData?.items ?? [];
       const rawEv = evData?.items ?? [];
-      // Safety net if API omits domain_key filter or returns mixed rows
       setContexts(rawCtx.filter((c) => !c.domain_key || c.domain_key === domain));
       setEvents(
         rawEv.filter(
@@ -111,16 +84,81 @@ export default function Dashboard() {
     return () => { cancelled = true; };
   }, [domain]);
 
-  const lastTimes = (orchStatus?.last_collection_times as Record<string, string> | undefined) ?? {};
-
   return (
     <Box>
       <Typography variant="h5" sx={{ mb: 2, fontWeight: 600 }}>
         Dashboard
       </Typography>
       <Grid container spacing={3}>
-        {/* Left: What's New */}
-        <Grid item xs={12} md={4}>
+        <Grid item xs={12}>
+          <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 0.5 }}>
+            Threads
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Latest contexts and tracked events (same thread model as Briefing and
+            Investigate).
+          </Typography>
+          <Grid container spacing={2}>
+            {contextsLoading
+              ? [1, 2, 3].map(i => (
+                  <Grid item xs={12} md={4} key={`sk-c-${i}`}>
+                    <Skeleton variant="rectangular" height={140} sx={{ borderRadius: 1 }} />
+                  </Grid>
+                ))
+              : contexts.slice(0, 3).map(c => {
+                  const snippet = c.content ? cleanSnippet(c.content, 100) : null;
+                  const ago = c.created_at ? timeAgo(new Date(c.created_at)) : null;
+                  return (
+                    <Grid item xs={12} md={4} key={c.id}>
+                      <ThreadCard
+                        kind="context"
+                        title={c.title || '(No title)'}
+                        subtitle={ago ? `Added ${ago}` : undefined}
+                        why={snippet ?? undefined}
+                        href={`/${domain}/discover/contexts/${c.id}?from=dashboard`}
+                        ctaLabel="Open context"
+                      />
+                    </Grid>
+                  );
+                })}
+            {!contextsLoading &&
+              !eventsLoading &&
+              contexts.length === 0 &&
+              events.length === 0 && (
+                <Grid item xs={12}>
+                  <Typography variant="body2" color="text.secondary">
+                    No threads yet — open Briefing or add tracked events under
+                    Investigate.
+                  </Typography>
+                </Grid>
+              )}
+            {eventsLoading
+              ? [1, 2].map(i => (
+                  <Grid item xs={12} md={4} key={`sk-e-${i}`}>
+                    <Skeleton variant="rectangular" height={140} sx={{ borderRadius: 1 }} />
+                  </Grid>
+                ))
+              : events.slice(0, 3).map(e => (
+                  <Grid item xs={12} md={4} key={e.id}>
+                    <ThreadCard
+                      kind="event"
+                      title={e.event_name || `Event #${e.id}`}
+                      subtitle={
+                        e.start_date
+                          ? `Since ${new Date(e.start_date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`
+                          : e.event_type ?? undefined
+                      }
+                      why={e.geographic_scope ?? undefined}
+                      href={`/${domain}/investigate/events/${e.id}?from=dashboard`}
+                      chip={e.event_type ?? undefined}
+                      ctaLabel="Open event"
+                    />
+                  </Grid>
+                ))}
+          </Grid>
+        </Grid>
+        {/* What's New */}
+        <Grid item xs={12} md={6}>
           <Card sx={{ height: '100%' }}>
             <CardHeader title="What's New" subheader="Latest contexts" />
             <CardContent sx={{ p: 0, '&:last-child': { pb: 0 } }}>
@@ -156,8 +194,8 @@ export default function Dashboard() {
           </Card>
         </Grid>
 
-        {/* Middle: Active Investigations */}
-        <Grid item xs={12} md={4}>
+        {/* Active Investigations */}
+        <Grid item xs={12} md={6}>
           <Card sx={{ height: '100%' }}>
             <CardHeader title="Active Investigations" subheader="Tracked events" />
             <CardContent>
@@ -192,60 +230,6 @@ export default function Dashboard() {
                   View all →
                 </Typography>
               </Box>
-            </CardContent>
-          </Card>
-        </Grid>
-
-        {/* Right: System Intelligence */}
-        <Grid item xs={12} md={4}>
-          <Card sx={{ height: '100%' }}>
-            <CardHeader title="System Intelligence" subheader="Collection & pipeline" />
-            <CardContent>
-              {statusOrchLoading ? (
-                <Skeleton variant="rectangular" height={120} />
-              ) : (
-                <>
-                  {status && (
-                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mb: 2 }}>
-                      <Chip size="small" label={`Contexts: ${status.contexts}`} />
-                      <Chip size="small" label={`Entity Profiles: ${status.entity_profiles}`} />
-                      <Chip
-                        size="small"
-                        label={`Events: ${heroBarEventsStoredCount(status)}`}
-                      />
-                    </Box>
-                  )}
-                  <Typography variant="body2" color="text.secondary" gutterBottom>
-                    Collection
-                  </Typography>
-                  {Object.entries(lastTimes).length === 0 ? (
-                    <Typography variant="caption" color="text.secondary">No collection times yet.</Typography>
-                  ) : (
-                    <List dense disablePadding>
-                      {Object.entries(lastTimes).map(([source, time]) => (
-                        <ListItemText
-                          key={source}
-                          primary={source}
-                          secondary={time ? new Date(time).toLocaleString() : '—'}
-                          primaryTypographyProps={{ variant: 'body2' }}
-                          secondaryTypographyProps={{ variant: 'caption' }}
-                        />
-                      ))}
-                    </List>
-                  )}
-                  <Box sx={{ mt: 2 }}>
-                    <Typography
-                      component="button"
-                      variant="body2"
-                      color="primary"
-                      sx={{ cursor: 'pointer', border: 'none', background: 'none' }}
-                      onClick={() => navigate(`/${domain}/monitor`)}
-                    >
-                      Monitor →
-                    </Typography>
-                  </Box>
-                </>
-              )}
             </CardContent>
           </Card>
         </Grid>

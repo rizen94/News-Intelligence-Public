@@ -48,6 +48,8 @@ class DomainSynthesisConfig:
     max_entities_per_synthesis: int = 30
     min_article_confidence: float = 0.3
     clustering_similarity_threshold: float = 0.65
+    """Minimum articles in an embedding cluster to form a storyline (ai_storyline_discovery)."""
+    storyline_min_cluster_size: int = 3
 
     def is_excluded_topic(self, text: str) -> bool:
         """Check whether text matches any exclude keyword (case-insensitive)."""
@@ -141,5 +143,11 @@ def get_domain_synthesis_config(domain_key: str) -> DomainSynthesisConfig:
         clustering_similarity_threshold=domain_raw.get(
             "clustering_similarity_threshold",
             defaults.get("clustering_similarity_threshold", 0.65),
+        ),
+        storyline_min_cluster_size=int(
+            domain_raw.get(
+                "storyline_min_cluster_size",
+                defaults.get("storyline_min_cluster_size", 3),
+            )
         ),
     )

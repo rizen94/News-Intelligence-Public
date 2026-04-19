@@ -474,8 +474,7 @@ class ProactiveDetectionService(DomainAwareService):
                         f"""
                         UPDATE {self.schema}.storylines
                         SET title = %s,
-                            description = COALESCE(NULLIF(%s, ''), description),
-                            updated_at = NOW()
+                            description = COALESCE(NULLIF(%s, ''), description)
                         WHERE id = %s
                         """,
                         (new_t, new_d, storyline_id),

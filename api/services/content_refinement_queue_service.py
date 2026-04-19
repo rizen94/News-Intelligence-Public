@@ -653,8 +653,7 @@ async def _run_headline_refiner(domain_key: str, storyline_id: int) -> None:
                 f"""
                 UPDATE {schema}.storylines
                 SET title = %s,
-                    description = COALESCE(NULLIF(%s, ''), description),
-                    updated_at = NOW()
+                    description = COALESCE(NULLIF(%s, ''), description)
                 WHERE id = %s
                 """,
                 (new_t, new_d, storyline_id),
@@ -701,11 +700,10 @@ async def _run_timeline_narrative(domain_key: str, storyline_id: int, mode: str)
                 f"""
                 UPDATE {schema}.storylines
                 SET {col_text} = %s,
-                    {col_at} = %s,
-                    updated_at = %s
+                    {col_at} = %s
                 WHERE id = %s
                 """,
-                (text, now, now, storyline_id),
+                (text, now, storyline_id),
             )
         conn.commit()
     finally:

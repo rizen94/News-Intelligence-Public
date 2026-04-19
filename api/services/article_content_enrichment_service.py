@@ -306,6 +306,7 @@ def enrich_articles_batch(batch_size: int = 20) -> int:
         strict_enrichment_applies,
         strict_enrichment_cutoff_utc,
     )
+    from shared.pipeline_article_selection import sql_order_created_at
 
     from services.context_processor_service import (
         ensure_context_for_article,
@@ -328,6 +329,7 @@ def enrich_articles_batch(batch_size: int = 20) -> int:
             return 0
         n_domains = len(pairs)
         share = max(1, (batch_size + n_domains - 1) // n_domains)
+        _ca_ord = sql_order_created_at()
 
         for domain_key, schema_name in pairs:
             if remaining <= 0:
@@ -341,7 +343,7 @@ def enrich_articles_batch(batch_size: int = 20) -> int:
                     WHERE (enrichment_status IS NULL OR enrichment_status IN ('pending', 'failed'))
                       AND COALESCE(enrichment_attempts, 0) < 3
                       AND url IS NOT NULL AND url != ''
-                    ORDER BY COALESCE(enrichment_attempts, 0) ASC, created_at DESC
+                    ORDER BY COALESCE(enrichment_attempts, 0) ASC, created_at {_ca_ord}
                     LIMIT %s
                     """,
                     (fetch_limit,),

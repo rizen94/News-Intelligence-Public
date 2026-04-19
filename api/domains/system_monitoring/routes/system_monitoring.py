@@ -968,6 +968,12 @@ async def get_automation_status(request: Request) -> dict[str, Any]:
             )
         phases.sort(key=lambda p: (p.get("stage_order", 99), p.get("name") or ""))
         backlog_counts = status.get("backlog_counts") or {}
+        try:
+            from shared.pipeline_article_selection import pipeline_article_selection_mode_report
+
+            _pipe_sel = pipeline_article_selection_mode_report()
+        except Exception:
+            _pipe_sel = {}
         return {
             "success": True,
             "data": {
@@ -988,6 +994,7 @@ async def get_automation_status(request: Request) -> dict[str, Any]:
                 "queued_tasks_by_lane": status.get("queued_tasks_by_lane") or {},
                 "active_tasks_by_lane": status.get("active_tasks_by_lane") or {},
                 "runs_last_60m_by_lane": status.get("runs_last_60m_by_lane") or {},
+                "pipeline_article_selection": _pipe_sel,
             },
         }
     except asyncio.TimeoutError:

@@ -58,6 +58,7 @@ const NAV_SECTIONS: NavSection[] = [
     label: 'Stories',
     items: [
       { path: 'storylines', label: 'Storylines', icon: <AutoStoriesIcon /> },
+      { path: 'watchlist', label: 'Watchlist', icon: <VisibilityIcon /> },
     ],
   },
   {
@@ -74,6 +75,11 @@ const NAV_SECTIONS: NavSection[] = [
     items: [
       { path: 'discover', label: 'Discover', icon: <ExploreIcon /> },
       { path: 'investigate', label: 'Investigate', icon: <SearchIcon /> },
+      {
+        path: 'investigate/narrative-threads',
+        label: 'Narrative threads',
+        icon: <AutoStoriesIcon />,
+      },
     ],
   },
   {

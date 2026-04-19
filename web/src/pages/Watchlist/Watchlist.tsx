@@ -37,6 +37,8 @@ import LinkIcon from '@mui/icons-material/Link';
 import TrendingDownIcon from '@mui/icons-material/TrendingDown';
 import { useDomain } from '../../contexts/DomainContext';
 import apiService from '../../services/apiService';
+import { formatDomainLabel } from '../../utils/domainHelper';
+import ThreadCard from '../../components/Thread/ThreadCard';
 
 const STATUS_COLORS: Record<
   string,
@@ -134,6 +136,21 @@ const Watchlist: React.FC = () => {
         </Alert>
       )}
 
+      {unreadCount > 0 && (
+        <Alert
+          severity='warning'
+          sx={{ mb: 2 }}
+          action={
+            <Button color='inherit' size='small' onClick={() => setTab(1)}>
+              View alerts
+            </Button>
+          }
+        >
+          {unreadCount} unread alert{unreadCount !== 1 ? 's' : ''} — storylines
+          are scoped to the current domain ({formatDomainLabel(domain)}).
+        </Alert>
+      )}
+
       <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{ mb: 2 }}>
         <Tab label={`Watched (${watchlist.length})`} />
         <Tab
@@ -149,6 +166,32 @@ const Watchlist: React.FC = () => {
 
       {/* Tab 0: Watched Storylines */}
       <TabPanel value={tab} index={0}>
+        {watchlist.length > 0 && (
+          <Box
+            sx={{
+              display: 'grid',
+              gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)', md: 'repeat(4, 1fr)' },
+              gap: 2,
+              mb: 3,
+            }}
+          >
+            {watchlist.slice(0, 4).map(w => (
+              <ThreadCard
+                key={w.storyline_id}
+                kind='watched'
+                title={w.storyline_title || `Storyline #${w.storyline_id}`}
+                subtitle={
+                  w.last_event_at
+                    ? `Last event ${new Date(w.last_event_at).toLocaleDateString()}`
+                    : undefined
+                }
+                chip={w.storyline_status}
+                href={`/${domain}/storylines/${w.storyline_id}?from=watchlist`}
+                ctaLabel='Open storyline'
+              />
+            ))}
+          </Box>
+        )}
         <TableContainer component={Paper}>
           <Table size='small'>
             <TableHead>
@@ -179,6 +222,14 @@ const Watchlist: React.FC = () => {
                       }
                     >
                       {w.storyline_title}
+                    </Typography>
+                    <Typography
+                      variant='caption'
+                      color='text.secondary'
+                      display='block'
+                    >
+                      Domain: {formatDomainLabel(domain)} · open Storylines in
+                      this domain for the full list.
                     </Typography>
                   </TableCell>
                   <TableCell>{w.user_label || '—'}</TableCell>

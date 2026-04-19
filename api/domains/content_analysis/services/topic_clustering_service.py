@@ -587,6 +587,10 @@ JSON Response:"""
 
             if assignment_result.get("success"):
                 self.record_topic_clustering_pass(article_id, "topics_assigned")
+            else:
+                # Without a pass marker, backlog + automation keep selecting this article forever
+                # (topics were extracted but assign_topics_to_article did not commit).
+                self.record_topic_clustering_pass(article_id, "assignment_failed")
 
             return assignment_result
 

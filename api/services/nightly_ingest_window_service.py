@@ -326,6 +326,13 @@ async def _maybe_nightly_kickoff_rss(
         "yes",
     ):
         return
+    try:
+        from shared.pipeline_article_selection import pipeline_backfill_collection_should_pause
+
+        if pipeline_backfill_collection_should_pause():
+            return
+    except Exception:
+        pass
     zi = nightly_automation_tz()
     today = datetime.now(zi).strftime("%Y-%m-%d")
     if _nightly_kickoff_rss_local_date == today:

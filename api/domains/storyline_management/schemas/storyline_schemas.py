@@ -176,6 +176,10 @@ class StorylineDetailResponse(StorylineResponse):
         default_factory=list,
         description="job_type values queued in intelligence.content_refinement_queue",
     )
+    last_article_added_at: datetime | None = Field(
+        None,
+        description="When the newest article was linked to this storyline (storyline_articles.added_at)",
+    )
 
 
 class StorylineRefinementEnqueueRequest(BaseModel):
@@ -203,6 +207,10 @@ class StorylineListItem(BaseModel):
     status: str
     created_at: datetime
     updated_at: datetime
+    last_article_added_at: datetime | None = Field(
+        None,
+        description="MAX(storyline_articles.added_at); preferred for 'what's new' vs row updated_at",
+    )
     top_entities: list[dict[str, Any]] = Field(
         default_factory=list
     )  # [{name, type, description_short}]

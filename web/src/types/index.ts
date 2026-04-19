@@ -166,6 +166,8 @@ export interface Storyline {
   master_summary?: string | null;
   created_at: string;
   updated_at: string;
+  /** When the most recent article was linked (storyline_articles.added_at); use for "what's new". */
+  last_article_added_at?: string | null;
   last_evolution_at?: string | null;
   evolution_count?: number | null;
   editorial_document?: Record<string, unknown> | null;

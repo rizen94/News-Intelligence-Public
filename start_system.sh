@@ -26,6 +26,14 @@ if [[ -f "$SCRIPT_DIR/.env" ]]; then
         export "$key"="$val"
     done < <(grep -E '^(DB_|DATABASE|NEWS_API_KEY|FRED_API_KEY)=' "$SCRIPT_DIR/.env" 2>/dev/null || true)
 fi
+# Optional: configs/.env (many installs keep FRONTEND_PORT etc. here without duplicating DB_* in project root)
+if [[ -f "$SCRIPT_DIR/configs/.env" ]]; then
+    _fe_line=$(grep -E '^[[:space:]]*FRONTEND_PORT=' "$SCRIPT_DIR/configs/.env" | tail -1 || true)
+    if [[ -n "${_fe_line}" ]]; then
+        export FRONTEND_PORT="${_fe_line#*=}"
+        FRONTEND_PORT="${FRONTEND_PORT//[$'\r']}"
+    fi
+fi
 
 # ============================================================================
 # DATABASE: Widow (direct) or NAS (SSH tunnel rollback)
@@ -140,7 +148,8 @@ stop_existing() {
     # Stop API server: pkill then wait for process and port to clear (avoids "already running" + health fail)
     if is_running "$API_UVICORN_PGREP"; then
         log "Stopping existing API server..."
-        pkill -f "$API_UVICORN_PGREP" || true
+        # stderr silenced: pkill can print "Operation not permitted" for another user's matching process
+        pkill -f "$API_UVICORN_PGREP" 2>/dev/null || true
         local wait_count=0
         while is_running "$API_UVICORN_PGREP" && [ $wait_count -lt 10 ]; do
             sleep 1
@@ -148,9 +157,12 @@ stop_existing() {
         done
         if is_running "$API_UVICORN_PGREP"; then
             warning "API process still present, sending SIGKILL..."
-            pkill -9 -f "$API_UVICORN_PGREP" || true
+            pkill -9 -f "$API_UVICORN_PGREP" 2>/dev/null || true
             sleep 2
         fi
+    fi
+    if is_running "$API_UVICORN_PGREP"; then
+        warning "Could not signal some uvicorn PIDs (often another user's process, e.g. Open WebUI). Freeing port 8000 if possible..."
     fi
     if is_port_in_use 8000; then
         log "Freeing port 8000..."
@@ -160,7 +172,7 @@ stop_existing() {
     # Stop frontend
     if is_running "node.*react-scripts\|vite\|webpack"; then
         log "Stopping existing frontend..."
-        pkill -f "react-scripts\|vite.*start\|webpack.*serve" || true
+        pkill -f "react-scripts\|vite.*start\|webpack.*serve" 2>/dev/null || true
         sleep 2
     fi
     
@@ -292,7 +304,7 @@ start_api() {
             return 0
         fi
         warning "API process present but not responding to health check; restarting..."
-        pkill -9 -f "$API_UVICORN_PGREP" || true
+        pkill -9 -f "$API_UVICORN_PGREP" 2>/dev/null || true
         sleep 3
     fi
     
@@ -363,15 +375,20 @@ start_api() {
 # Start Frontend
 start_frontend() {
     log "Starting frontend..."
+    local fe_port="${FRONTEND_PORT:-3000}"
     
     if is_running "node.*react-scripts\|vite.*start\|webpack.*serve"; then
         warning "Frontend already running"
         return 0
     fi
-    
-    # Check if port 3000 is in use
-    if is_port_in_use 3000; then
-        error "Port 3000 is already in use. Please free the port or stop the existing service."
+
+    # Port busy but already serving the UI (leftover dev server or second terminal) — OK
+    if is_port_in_use "$fe_port"; then
+        if curl -sf --connect-timeout 2 --max-time 5 "http://localhost:${fe_port}/" >/dev/null 2>&1; then
+            info "Port ${fe_port} is in use and responds to HTTP — reusing existing frontend (not starting another npm)."
+            return 0
+        fi
+        error "Port ${fe_port} is in use but does not respond like a dev server. Free it: ss -tlnp | grep :${fe_port}  (or stop the other app)"
         return 1
     fi
     
@@ -385,7 +402,7 @@ start_frontend() {
     
     # Start frontend in background
     log "Starting React development server..."
-    CHOKIDAR_USEPOLLING=true nohup npm start > "$FRONTEND_LOG" 2>&1 &
+    CHOKIDAR_USEPOLLING=true PORT="${fe_port}" BROWSER=none nohup npm start > "$FRONTEND_LOG" 2>&1 &
     FRONTEND_PID=$!
     
     # Wait for frontend to be ready
@@ -393,7 +410,7 @@ start_frontend() {
     local max_attempts=60
     local attempt=0
     while [ $attempt -lt $max_attempts ]; do
-        if curl -s http://localhost:3000 > /dev/null 2>&1; then
+        if curl -s "http://localhost:${fe_port}/" > /dev/null 2>&1; then
             success "Frontend started (PID: $FRONTEND_PID)"
             echo "$FRONTEND_PID" > "$LOG_DIR/frontend.pid"
             return 0
@@ -439,8 +456,9 @@ verify_services() {
     fi
     
     # Check Frontend
-    if curl -s --connect-timeout 5 --max-time 10 http://localhost:3000 > /dev/null 2>&1; then
-        success "✅ Frontend: Running (http://localhost:3000)"
+    local vfe="${FRONTEND_PORT:-3000}"
+    if curl -s --connect-timeout 5 --max-time 10 "http://localhost:${vfe}/" > /dev/null 2>&1; then
+        success "✅ Frontend: Running (http://localhost:${vfe})"
     else
         warning "⚠️  Frontend: Not responding yet (may still be starting)"
     fi
@@ -450,7 +468,7 @@ verify_services() {
         success "All critical services are running!"
         log ""
         log "Access URLs:"
-        echo "  🌐 Frontend:    http://localhost:3000"
+        echo "  🌐 Frontend:    http://localhost:${FRONTEND_PORT:-3000}"
         echo "  🔧 API:        http://localhost:8000"
         echo "  📚 API Docs:   http://localhost:8000/docs"
         echo ""
@@ -539,14 +557,13 @@ main() {
     log "=========================================="
 }
 
-# Handle script interruption
+# Handle Ctrl+C / SIGTERM only (do not trap normal EXIT — avoids confusing "Cleaning up" after success)
 cleanup() {
-    log "Cleaning up on exit..."
-    # Note: We don't stop services on cleanup for persistence
-    exit 0
+    log "Interrupted — services left running (use stop_system.sh to stop)."
+    exit 130
 }
 
-trap cleanup EXIT INT TERM
+trap cleanup INT TERM
 
 # Run main function
 main "$@"

@@ -199,10 +199,15 @@ const Articles: React.FC = () => {
       const response = await apiService.getStorylines({}, domain);
       // Backend returns { data: StorylineListItem[], pagination, domain } (no .success); or { success: false, error }
       if ('error' in response && response.error) return;
-      const storylinesList = Array.isArray(response.data)
-        ? response.data
-        : (response as { data?: { storylines?: unknown[] } }).data
-            ?.storylines || [];
+      const res = response as { data?: unknown };
+      const raw = res.data;
+      const storylinesList = Array.isArray(raw)
+        ? raw
+        : raw &&
+            typeof raw === 'object' &&
+            Array.isArray((raw as { storylines?: unknown[] }).storylines)
+          ? (raw as { storylines: unknown[] }).storylines
+          : [];
       setStorylines(storylinesList);
     } catch (error) {
       console.error('Failed to load storylines:', error);

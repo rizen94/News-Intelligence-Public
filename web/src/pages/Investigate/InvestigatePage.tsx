@@ -7,12 +7,10 @@ import { useNavigate } from 'react-router-dom';
 import {
   Card,
   CardContent,
-  CardActionArea,
   Typography,
   Box,
   Button,
   Skeleton,
-  Chip,
   Dialog,
   DialogTitle,
   DialogContent,
@@ -27,21 +25,7 @@ import {
   type TrackedEvent,
 } from '@/services/api/contextCentric';
 import { useDomain } from '@/contexts/DomainContext';
-
-const EVENT_TYPE_COLORS: Record<
-  string,
-  'error' | 'warning' | 'info' | 'success' | 'default'
-> = {
-  conflict: 'error',
-  disaster: 'error',
-  economic: 'warning',
-  election: 'info',
-  legislation: 'info',
-  diplomatic: 'success',
-  investigation: 'default',
-  policy: 'default',
-  market_event: 'warning',
-};
+import ThreadCard from '@/components/Thread/ThreadCard';
 
 const EVENT_TYPES = [
   'election',
@@ -299,9 +283,9 @@ export default function InvestigatePage() {
       </Dialog>
 
       <Typography variant='body2' color='text.secondary' sx={{ mb: 1.5 }}>
-        Events, entities, search, documents, and narrative threads. Create
-        events to track; use Entities and Search for intelligence; Documents and
-        Narrative threads for ingested docs and storyline synthesis.
+        Narrative threads (Investigate → Narrative threads) are synthesized
+        cross-story views; storylines under Stories are article-driven threads.
+        Create tracked events here; use Entities and Search for intelligence.
       </Typography>
       <Typography variant='subtitle2' color='text.secondary' sx={{ mb: 1 }}>
         Tracked events
@@ -327,59 +311,31 @@ export default function InvestigatePage() {
           </CardContent>
         </Card>
       ) : (
-        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+        <Box
+          sx={{
+            display: 'grid',
+            gridTemplateColumns: { xs: '1fr', md: 'repeat(2, 1fr)' },
+            gap: 1.5,
+          }}
+        >
           {events.map(e => (
-            <Card key={e.id} variant='outlined'>
-              <CardActionArea
-                onClick={() =>
-                  navigate(`/${domain}/investigate/events/${e.id}`)
-                }
-              >
-                <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 } }}>
-                  <Box
-                    sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}
-                  >
-                    <Box sx={{ flex: 1 }}>
-                      <Typography variant='subtitle1' sx={{ fontWeight: 600 }}>
-                        {e.event_name || `Event #${e.id}`}
-                      </Typography>
-                      <Box
-                        sx={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: 1,
-                          mt: 0.5,
-                          flexWrap: 'wrap',
-                        }}
-                      >
-                        <Chip
-                          label={e.event_type}
-                          size='small'
-                          color={
-                            EVENT_TYPE_COLORS[e.event_type ?? ''] ?? 'default'
-                          }
-                          variant='outlined'
-                        />
-                        {e.geographic_scope && (
-                          <Typography variant='caption' color='text.secondary'>
-                            {e.geographic_scope}
-                          </Typography>
-                        )}
-                        {e.start_date && (
-                          <Typography variant='caption' color='text.disabled'>
-                            Since{' '}
-                            {new Date(e.start_date).toLocaleDateString(
-                              undefined,
-                              { month: 'short', day: 'numeric' }
-                            )}
-                          </Typography>
-                        )}
-                      </Box>
-                    </Box>
-                  </Box>
-                </CardContent>
-              </CardActionArea>
-            </Card>
+            <ThreadCard
+              key={e.id}
+              kind='event'
+              title={e.event_name || `Event #${e.id}`}
+              subtitle={
+                e.start_date
+                  ? `Since ${new Date(e.start_date).toLocaleDateString(undefined, {
+                      month: 'short',
+                      day: 'numeric',
+                    })}`
+                  : undefined
+              }
+              why={e.geographic_scope ?? undefined}
+              chip={e.event_type ?? undefined}
+              href={`/${domain}/investigate/events/${e.id}?from=investigate`}
+              ctaLabel='Open event'
+            />
           ))}
         </Box>
       )}

@@ -84,7 +84,14 @@ class MLProcessingService:
                     SELECT id, title, description, article_count
                     FROM storylines
                     WHERE ml_processing_status = 'pending'
-                    OR (ml_processing_status = 'completed' AND updated_at > ml_last_processed)
+                    OR (
+                        ml_processing_status = 'completed'
+                        AND EXISTS (
+                            SELECT 1 FROM storyline_articles sa
+                            WHERE sa.storyline_id = storylines.id
+                              AND sa.added_at > COALESCE(storylines.ml_last_processed, '1970-01-01'::timestamptz)
+                        )
+                    )
                     ORDER BY priority DESC, created_at ASC
                     LIMIT 5
                 """)
@@ -411,8 +418,7 @@ As new articles are added to this storyline, the narrative analysis will be auto
                     UPDATE storylines
                     SET master_summary = :summary,
                         ml_processing_status = 'completed',
-                        ml_last_processed = CURRENT_TIMESTAMP,
-                        updated_at = CURRENT_TIMESTAMP
+                        ml_last_processed = CURRENT_TIMESTAMP
                     WHERE id = :storyline_id
                 """)
 

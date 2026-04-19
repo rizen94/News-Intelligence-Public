@@ -11,6 +11,7 @@ import {
   CardContent,
   Typography,
   Box,
+  Paper,
   Stack,
   Chip,
   Skeleton,
@@ -31,7 +32,9 @@ import {
   MenuItem,
   Button,
   Link,
+  TextField,
 } from '@mui/material';
+import PushPinIcon from '@mui/icons-material/PushPin';
 import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
 import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
 import RefreshIcon from '@mui/icons-material/Refresh';
@@ -51,7 +54,13 @@ import {
   ResponsiveContainer,
 } from 'recharts';
 import apiService from '@/services/apiService';
+import {
+  contextCentricApi,
+  heroBarEventsStoredCount,
+  type ContextCentricStatus,
+} from '@/services/api/contextCentric';
 import { getDefaultDomainKey, getDomainKeysList } from '@/utils/domainHelper';
+import { usePinnedThreads } from '@/hooks/usePinnedThreads';
 
 /** Poll interval for full Monitor refresh (overview + pipeline + processing pulse together). */
 const POLL_INTERVAL_MS = 15000;
@@ -184,6 +193,8 @@ function pulseTrendSymbol(
 export default function MonitorPage() {
   const { domain: routeDomain } = useParams<{ domain: string }>();
   const navDomain = routeDomain ?? getDefaultDomainKey();
+  const pinned = usePinnedThreads(navDomain);
+  const [pinStorylineInput, setPinStorylineInput] = useState('');
   const [overview, setOverview] = useState<{
     success?: boolean;
     connections?: Record<string, unknown>;
@@ -210,6 +221,8 @@ export default function MonitorPage() {
     success?: boolean;
     data?: {
       generated_at_utc?: string;
+      /** False when API skipped backlog_metrics (faster; phase "Unprocessed rows" are zeros). */
+      pending_metrics_included?: boolean;
       reporting_definitions?: Record<string, string>;
       dimensions?: ProcessingPulseDimension[];
       phase_dashboard?: ProcessingPulsePhase[];
@@ -235,20 +248,70 @@ export default function MonitorPage() {
     message: string;
     warning?: string;
   } | null>(null);
+  /** Global corpus counters + orchestrator collection times (moved from Dashboard). */
+  const [ccStatus, setCcStatus] = useState<ContextCentricStatus | null>(null);
+  const [orchCollection, setOrchCollection] = useState<Record<
+    string,
+    unknown
+  > | null>(null);
+  /** From GET /api/system_monitoring/automation/status — confirms FIFO vs legacy LIFO batch ordering. */
+  const [pipelineArticleSelection, setPipelineArticleSelection] = useState<{
+    mode?: string;
+    label?: string;
+    sql_created_at?: string;
+    order_env?: string;
+  } | null>(null);
 
   /** One bundle: health/activity, pipeline card, full processing pulse (incl. unprocessed rows). */
   const refreshMonitor = useCallback(async () => {
-    const [ov, pipe, pulse, gpuH] = await Promise.all([
+    const orchDash = (async () => {
+      try {
+        const fn = apiService.getOrchestratorDashboard;
+        if (typeof fn !== 'function') return null;
+        const d = await fn.call(apiService, { decision_log_limit: 1 });
+        return (d as { status?: Record<string, unknown> } | null)?.status ?? null;
+      } catch {
+        return null;
+      }
+    })();
+
+    const [ov, pipe, pulse, gpuH, stData, orchData, autoEnvelope] = await Promise.all([
       apiService.getMonitoringOverview(),
       apiService.getPipelineStatus(),
-      apiService.getProcessingProgress(),
+      // Real per-phase queue depths require backlog_metrics (slower); nginx allows long reads on /api/system_monitoring/.
+      apiService.getProcessingProgress({ includePendingMetrics: true }),
       apiService.getGpuMetricHistory(72),
+      contextCentricApi.getStatus(null).catch(() => null),
+      orchDash,
+      apiService.getAutomationStatus().catch(() => null),
     ]);
     setOverview(ov ?? null);
     setPipeline(pipe ?? null);
     setProcessingPulse(pulse ?? null);
     setGpuMetricHistory(gpuH ?? null);
+    setCcStatus(stData ?? null);
+    setOrchCollection(orchData ?? null);
+    const autoData = (
+      autoEnvelope as {
+        data?: {
+          pipeline_article_selection?: {
+            mode?: string;
+            label?: string;
+            sql_created_at?: string;
+            order_env?: string;
+          };
+        };
+      } | null
+    )?.data;
+    setPipelineArticleSelection(autoData?.pipeline_article_selection ?? null);
   }, []);
+
+  const lastCollectionTimes = useMemo(() => {
+    const raw = orchCollection?.last_collection_times as
+      | Record<string, string>
+      | undefined;
+    return raw && typeof raw === 'object' ? raw : {};
+  }, [orchCollection]);
 
   const gpuChartRows = useMemo(() => {
     const hourly = gpuMetricHistory?.data?.hourly;
@@ -463,6 +526,137 @@ export default function MonitorPage() {
         (read-only; enable with <code>NEWS_INTEL_SQL_EXPLORER=true</code> on the
         API)
       </Typography>
+
+      <Paper variant='outlined' sx={{ p: 2, mb: 2 }}>
+        <Typography variant='subtitle1' sx={{ fontWeight: 600, mb: 0.5 }}>
+          Pinned threads
+        </Typography>
+        <Typography variant='caption' color='text.secondary' display='block' sx={{ mb: 1.5 }}>
+          Stored in this browser per domain — quick links into storylines you care
+          about while watching the pipeline. Phase 2: optional API filters on
+          processing_progress / backlog.
+        </Typography>
+        <Stack direction='row' flexWrap='wrap' gap={1} sx={{ mb: 2 }}>
+          {[...pinned.pinnedStorylineIds].length === 0 ? (
+            <Typography variant='body2' color='text.secondary'>
+              No pins yet — add a storyline ID below.
+            </Typography>
+          ) : (
+            [...pinned.pinnedStorylineIds].map(id => (
+              <Chip
+                key={id}
+                icon={<PushPinIcon />}
+                label={`Storyline ${id}`}
+                component={RouterLink}
+                to={`/${navDomain}/storylines/${id}`}
+                onDelete={e => {
+                  e.preventDefault();
+                  pinned.unpinStoryline(id);
+                }}
+                clickable
+                variant='outlined'
+              />
+            ))
+          )}
+        </Stack>
+        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems={{ sm: 'center' }}>
+          <TextField
+            size='small'
+            label='Storyline ID'
+            type='number'
+            value={pinStorylineInput}
+            onChange={e => setPinStorylineInput(e.target.value)}
+            sx={{ maxWidth: 200 }}
+          />
+          <Button
+            size='small'
+            variant='outlined'
+            onClick={() => {
+              const n = parseInt(pinStorylineInput, 10);
+              if (!Number.isNaN(n) && n > 0) {
+                pinned.pinStoryline(n);
+                setPinStorylineInput('');
+              }
+            }}
+          >
+            Pin storyline
+          </Button>
+        </Stack>
+      </Paper>
+
+      <Card variant='outlined' sx={{ mb: 3 }}>
+        <CardHeader
+          title='System intelligence'
+          subheader='Global corpus status & last collection by source (orchestrator)'
+        />
+        <CardContent>
+          {initialLoad ? (
+            <Skeleton variant='rectangular' height={120} />
+          ) : (
+            <>
+              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mb: 2 }}>
+                {ccStatus && (
+                  <>
+                    <Chip size='small' label={`Contexts: ${ccStatus.contexts}`} />
+                    <Chip
+                      size='small'
+                      label={`Entity Profiles: ${ccStatus.entity_profiles}`}
+                    />
+                    <Chip
+                      size='small'
+                      label={`Events: ${heroBarEventsStoredCount(ccStatus)}`}
+                    />
+                  </>
+                )}
+                {pipelineArticleSelection?.mode && (
+                  <Chip
+                    size='small'
+                    color={
+                      pipelineArticleSelection.mode === 'lifo'
+                        ? 'warning'
+                        : 'success'
+                    }
+                    variant='outlined'
+                    title={
+                      pipelineArticleSelection.sql_created_at
+                        ? `SQL ORDER BY created_at ${pipelineArticleSelection.sql_created_at} (PIPELINE_ARTICLE_SELECTION_ORDER=${pipelineArticleSelection.order_env ?? '—'})`
+                        : undefined
+                    }
+                    label={
+                      pipelineArticleSelection.mode === 'lifo'
+                        ? 'Batch order: LIFO (newest first)'
+                        : 'Batch order: FIFO (oldest first)'
+                    }
+                  />
+                )}
+              </Box>
+              <Typography variant='body2' color='text.secondary' gutterBottom>
+                Collection
+              </Typography>
+              {Object.keys(lastCollectionTimes).length === 0 ? (
+                <Typography variant='caption' color='text.secondary'>
+                  No collection times yet.
+                </Typography>
+              ) : (
+                <List dense disablePadding>
+                  {Object.entries(lastCollectionTimes).map(([source, time]) => (
+                    <ListItemText
+                      key={source}
+                      primary={source}
+                      secondary={
+                        time ? new Date(time).toLocaleString() : '—'
+                      }
+                      primaryTypographyProps={{ variant: 'body2' }}
+                      secondaryTypographyProps={{ variant: 'caption' }}
+                    />
+                  ))}
+                </List>
+              )}
+            </>
+          )}
+        </CardContent>
+      </Card>
+
       {error && (
         <Alert severity='warning' sx={{ mb: 2 }} onClose={() => setError(null)}>
           {error}
@@ -730,6 +924,14 @@ export default function MonitorPage() {
         <CardContent sx={{ py: 1.5 }}>
           {processingPulse?.success && processingPulse.data ? (
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              {processingPulse.data.pending_metrics_included === false && (
+                <Alert severity='info' sx={{ py: 0.5 }}>
+                  Per-phase <strong>Unprocessed rows</strong> use a fast path (skips heavy backlog counts
+                  so proxies do not close the connection). Throughput chips and run counts still reflect the
+                  last 7 days. For queue depths and ETAs, call{' '}
+                  <code style={{ fontSize: '0.85em' }}>GET /api/system_monitoring/backlog_status</code>.
+                </Alert>
+              )}
               <Typography variant='caption' color='text.secondary'>
                 Generated{' '}
                 {processingPulse.data.generated_at_utc

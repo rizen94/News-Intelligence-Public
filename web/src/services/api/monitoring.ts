@@ -173,14 +173,20 @@ export const monitoringApi = {
     }
   },
 
-  /** Full processing pulse including per-phase unprocessed row counts (backlog_metrics). */
-  async getProcessingProgress() {
+  /**
+   * Processing pulse (throughput + phase run history). Pending row counts are optional: when false,
+   * skips heavy backlog_metrics queries (avoids nginx/proxy "Network Error" under load). Use
+   * backlog_status for full queue ETAs, or pass includePendingMetrics true when proxy timeouts allow.
+   */
+  async getProcessingProgress(options?: { includePendingMetrics?: boolean }) {
+    const includePendingMetrics = options?.includePendingMetrics === true;
     try {
       const response = await getApi().get(
         '/api/system_monitoring/processing_progress',
         {
-          params: { include_pending_metrics: true },
-          timeout: 300000,
+          params: { include_pending_metrics: includePendingMetrics },
+          // Light response ~seconds; with pending metrics can be minutes — keep headroom for cold DB.
+          timeout: includePendingMetrics ? 300000 : 120000,
         }
       );
       return response.data;

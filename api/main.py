@@ -7,7 +7,7 @@ What this file does:
     automation; middleware order is CORS → TrustedHost → optional SecurityMiddleware
     (see ``config.settings`` ``news_intel_*`` helpers for production tightening).
   - Mounts domain routers (news_aggregation, content_analysis, storyline_management,
-    intelligence_hub + context_centric, finance, user_management, system_monitoring).
+    intelligence_hub (includes context_centric + report), finance, user_management, system_monitoring).
 
 Where to read next:
   - DB access: ``shared.database.connection`` (single source of truth; never ad-hoc psycopg2).
@@ -89,7 +89,6 @@ from config.settings import (
 from domains.content_analysis.routes import router as content_analysis_router
 from domains.finance.routes.finance import router as finance_router
 from domains.intelligence_hub.routes import router as intelligence_hub_router
-from domains.intelligence_hub.routes.context_centric import router as context_centric_router
 
 # Import domain routers (consolidated — one per domain)
 from domains.news_aggregation.routes import router as news_aggregation_router
@@ -852,8 +851,7 @@ app.include_router(politics_router)
 app.include_router(content_analysis_router)
 app.include_router(storyline_management_router)
 app.include_router(intelligence_hub_router)
-# Context-centric (tracked_events, report, entity_profiles, etc.) at /api/... so frontend always finds report endpoint
-app.include_router(context_centric_router)
+# context_centric + report routes are included via intelligence_hub_router (domains/intelligence_hub/routes/__init__.py)
 app.include_router(finance_router)
 app.include_router(user_management_router)
 app.include_router(system_monitoring_router)

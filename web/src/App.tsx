@@ -9,6 +9,8 @@
  * and global `/api/...` routes (see docs/WEB_API_CONNECTIONS.md).
  *
  * Layout: Hero status bar + sidebar (Discover, Investigate, Monitor, Analyze).
+ * Public demo: `PublicDemoProvider` + `DemoRouteGuard` hide watchlist, ops, and
+ * other write-heavy routes — see `AppNav` filter and guarded routes below.
  * Product display notes (incorporation candidate): docs/archive/planning_incubator/WEB_PRODUCT_DISPLAY_PLAN.md
  */
 import React, { useEffect } from 'react';
@@ -84,7 +86,7 @@ function App() {
   useEffect(() => {
     errorHandler.initialize();
     loggingService.info('News Intelligence (Dashboard) initialized', {
-      version: '8.0',
+      version: '9.0',
       environment: import.meta.env.MODE || 'development',
     });
     const connectionManager = getAPIConnectionManager();

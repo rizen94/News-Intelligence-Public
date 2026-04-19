@@ -185,24 +185,25 @@ const StorylineDetail = () => {
           response?.error
         )
           return;
+        const sd = storylineData as Record<string, unknown>;
         if (
-          storylineData.ml_processing_status === 'pending' ||
-          storylineData.ml_processing_status === 'processing'
+          sd.ml_processing_status === 'pending' ||
+          sd.ml_processing_status === 'processing'
         ) {
           setIsProcessing(true);
           setProcessingStatus('LLM processing in progress...');
           if (Math.random() < 0.3)
             await loadStoryline({ background: true });
         } else if (
-          storylineData.ml_processing_status === 'completed' &&
-          (storylineData.analysis_summary ||
-            (storylineData as { master_summary?: string }).master_summary)
+          sd.ml_processing_status === 'completed' &&
+          (sd.analysis_summary ||
+            (sd as { master_summary?: string }).master_summary)
         ) {
           setIsProcessing(false);
           setProcessingStatus(null);
           await loadStoryline({ background: true });
           clearInterval(pollInterval);
-        } else if (storylineData.ml_processing_status === 'failed') {
+        } else if (sd.ml_processing_status === 'failed') {
           setIsProcessing(false);
           setProcessingStatus(null);
           setError('LLM processing failed. Please try analyzing again.');
@@ -1660,14 +1661,19 @@ const StorylineDetail = () => {
                 </Alert>
               )}
 
-              <Box sx={{ display: 'flex', gap: 3 }}>
+              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
                 <Typography variant='body2' color='text.secondary'>
                   <strong>Articles:</strong>{' '}
                   {storyline?.article_count ?? articles?.length ?? 0}
                 </Typography>
+                {storyline.last_article_added_at ? (
+                  <Typography variant='body2' color='text.secondary'>
+                    <strong>Latest article linked:</strong>{' '}
+                    {formatDate(storyline.last_article_added_at)}
+                  </Typography>
+                ) : null}
                 <Typography variant='body2' color='text.secondary'>
-                  <strong>Last Updated:</strong>{' '}
-                  {formatDate(storyline.updated_at)}
+                  <strong>Metadata updated:</strong> {formatDate(storyline.updated_at)}
                 </Typography>
                 <Typography variant='body2' color='text.secondary'>
                   <strong>Created:</strong> {formatDate(storyline.created_at)}
@@ -1922,11 +1928,25 @@ const StorylineDetail = () => {
                 </Timeline>
               ) : (
                 <Typography variant='body2' color='text.secondary'>
-                  No structured timeline events yet. If the summary above
-                  mentions a timeline, that text is narrative-only until events
-                  are extracted (queue deep analysis / timeline generation).
-                  Open &quot;Interactive Timeline&quot; for the full view when
-                  data exists.
+                  No structured timeline events yet — the timeline API may return
+                  an empty list while articles are still linked on this storyline
+                  (known read/write path mismatch in some deployments). Check{' '}
+                  <Link
+                    component={RouterLink}
+                    to={`/${effectiveDomain}/articles`}
+                    underline='hover'
+                  >
+                    Articles
+                  </Link>{' '}
+                  for sources, or open{' '}
+                  <Link
+                    component={RouterLink}
+                    to={`/${effectiveDomain}/storylines/${id}/timeline`}
+                    underline='hover'
+                  >
+                    Interactive Timeline
+                  </Link>{' '}
+                  when events exist.
                 </Typography>
               )}
             </CardContent>

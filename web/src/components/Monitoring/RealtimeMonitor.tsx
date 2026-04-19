@@ -161,7 +161,8 @@ const RealtimeMonitor: React.FC = () => {
       if (
         metricsData.status === 'fulfilled' &&
         metricsData.value &&
-        !healthData.value?.data?.system
+        (healthData.status !== 'fulfilled' ||
+          !healthData.value?.data?.system)
       ) {
         setSystemMetrics(
           metricsData.value?.data?.metrics?.[0] ?? metricsData.value

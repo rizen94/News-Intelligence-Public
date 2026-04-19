@@ -7,7 +7,9 @@ defaults:
   max_articles_per_synthesis: 50
   max_entities_per_synthesis: 30
   min_article_confidence: 0.3
-  clustering_similarity_threshold: 0.65
+  # Aligns with ai_storyline_discovery historical global default; legal/medicine override below.
+  clustering_similarity_threshold: 0.70
+  storyline_min_cluster_size: 3
   # Merged into every domain’s topic_filter (RSS is_excluded_content + synthesis).
   # High-precision phrases for affiliate credit-card / personal-finance spam that
   # often lands in general-news feeds (e.g. politics template silos).
@@ -231,6 +233,10 @@ domains:
       - local ordinance cycles (hearing, vote, implementation)
       - federal–state interaction (preemption, funding, enforcement shifts)
 
+    # Same case or statute is often described with different wording across outlets; clusters are slower than politics.
+    clustering_similarity_threshold: 0.58
+    storyline_min_cluster_size: 2
+
     editorial_sections:
       - What Changed
       - Jurisdiction and Authority
@@ -302,6 +308,10 @@ domains:
       - trial readouts and regulatory paths (data → decision → access)
       - outbreak and public health response arcs
       - drug safety and label updates when sourced to regulators or studies
+
+    # Journal abstracts and wire copy differ; drug/trial threads evolve over months.
+    clustering_similarity_threshold: 0.59
+    storyline_min_cluster_size: 2
 
     editorial_sections:
       - Evidence and endpoints

@@ -758,7 +758,7 @@ export default function CommodityDashboard() {
           ) : (
             <List dense>
               {newsItems.slice(0, 15).map((item, i) => (
-                <React.Fragment key={item.id ?? i}>
+                <React.Fragment key={String((item as { id?: unknown }).id ?? i)}>
                   <ListItemButton
                     component='a'
                     href={item.url || '#'}
@@ -869,8 +869,7 @@ export default function CommodityDashboard() {
                 <List dense disablePadding>
                   {regulatoryEvents.slice(0, 8).map(ev => (
                     <ListItemButton
-                      key={ev.id}
-                      disablePadding
+                      key={String(ev.id)}
                       sx={{ py: 0.25, px: 0 }}
                       disableRipple
                     >
@@ -929,8 +928,7 @@ export default function CommodityDashboard() {
                 <List dense disablePadding>
                   {supplyChainItems.slice(0, 8).map((item, i) => (
                     <ListItemButton
-                      key={item.id ?? i}
-                      disablePadding
+                      key={String((item as { id?: unknown }).id ?? i)}
                       sx={{ py: 0.25, px: 0 }}
                       disableRipple
                     >

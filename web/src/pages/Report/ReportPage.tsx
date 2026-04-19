@@ -1,8 +1,9 @@
 /**
  * Domain briefing — Report API (5W1H + key_actors), optional feed + on-demand digest.
- * See docs/EDITORIAL_DISPLAY_STRATEGY.md. Replaces separate Briefings + Today's Report pages.
+ * v9: four editorial lenses (Domain pulse, Collisions, Power ledger, Quiet-but-watch).
+ * See docs/EDITORIAL_DISPLAY_STRATEGY.md.
  */
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Box,
@@ -16,18 +17,25 @@ import {
   CircularProgress,
   Alert,
   List,
+  ListItem,
   ListItemButton,
   ListItemText,
   Collapse,
   Paper,
   Divider,
+  Skeleton,
 } from '@mui/material';
 import Refresh from '@mui/icons-material/Refresh';
 import ExpandMore from '@mui/icons-material/ExpandMore';
 import ExpandLess from '@mui/icons-material/ExpandLess';
 import OpenInNew from '@mui/icons-material/OpenInNew';
 import AutoAwesome from '@mui/icons-material/AutoAwesome';
+import SearchIcon from '@mui/icons-material/Search';
 import apiService from '../../services/apiService';
+import {
+  contextCentricApi,
+  type PatternDiscovery,
+} from '../../services/api/contextCentric';
 import { useDomain } from '../../contexts/DomainContext';
 import EntityCard from '../../components/EntityCard/EntityCard';
 import { sanitizeLeadText } from '../../utils/sanitizeDisplayText';
@@ -290,14 +298,44 @@ interface GeneratedDigest {
   article_count: number;
 }
 
+function patternDiscoverySummary(p: PatternDiscovery): string {
+  const t = p.pattern_type?.replace(/_/g, ' ') ?? 'Pattern';
+  if (p.data != null && typeof p.data === 'object') {
+    const d = p.data as Record<string, unknown>;
+    const bit = Object.keys(d)
+      .slice(0, 2)
+      .map(k => `${k}: ${String(d[k]).slice(0, 48)}`)
+      .join(' · ');
+    return bit ? `${t} — ${bit}` : t;
+  }
+  return t;
+}
+
+function uniqueLeadActors(leads: ReportStoryline[]) {
+  const map = new Map<
+    number,
+    NonNullable<ReportStoryline['key_actors']>[0]
+  >();
+  for (const s of leads) {
+    for (const a of s.key_actors ?? []) {
+      if (!map.has(a.canonical_entity_id)) map.set(a.canonical_entity_id, a);
+    }
+  }
+  return [...map.values()];
+}
+
 export default function ReportPage() {
   const { domain } = useDomain();
   const navigate = useNavigate();
   const [payload, setPayload] = useState<ReportPayload | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [reportLoading, setReportLoading] = useState(true);
+  const [reportError, setReportError] = useState<string | null>(null);
   const [feedArticles, setFeedArticles] = useState<FeedArticle[]>([]);
   const [feedStorylines, setFeedStorylines] = useState<FeedStoryline[]>([]);
+  const [feedLoading, setFeedLoading] = useState(true);
+  const [patterns, setPatterns] = useState<PatternDiscovery[]>([]);
+  const [patternsLoading, setPatternsLoading] = useState(true);
+  const [patternsError, setPatternsError] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
   const [generatedDigest, setGeneratedDigest] = useState<GeneratedDigest | null>(
     null
@@ -306,22 +344,89 @@ export default function ReportPage() {
   const [digestExpanded, setDigestExpanded] = useState(true);
 
   useEffect(() => {
-    load();
+    let cancelled = false;
+    setReportLoading(true);
+    setReportError(null);
+    setFeedLoading(true);
+    setPatternsLoading(true);
+    setPatternsError(null);
+    setPayload(null);
+
+    (async () => {
+      const res = await apiService.getReport(domain);
+      if (cancelled) return;
+      if (res.success && res.data) {
+        setPayload(res.data);
+        setReportError(null);
+      } else {
+        setReportError(res.message ?? 'Failed to load report');
+        setPayload(null);
+      }
+      setReportLoading(false);
+    })();
+
+    (async () => {
+      const feedRes = await apiService
+        .getBriefingFeed(domain, 6, 4)
+        .catch(() => null);
+      if (cancelled) return;
+      const fd = feedRes as {
+        success?: boolean;
+        data?: { articles?: FeedArticle[]; storylines?: FeedStoryline[] };
+      } | null;
+      if (fd?.success && fd.data) {
+        setFeedArticles(Array.isArray(fd.data.articles) ? fd.data.articles : []);
+        setFeedStorylines(
+          Array.isArray(fd.data.storylines) ? fd.data.storylines : []
+        );
+      } else {
+        setFeedArticles([]);
+        setFeedStorylines([]);
+      }
+      setFeedLoading(false);
+    })();
+
+    (async () => {
+      try {
+        const data = await contextCentricApi.getPatternDiscoveries({
+          domain_key: domain,
+          limit: 8,
+        });
+        if (cancelled) return;
+        setPatterns(data?.items ?? []);
+        setPatternsError(null);
+      } catch {
+        if (cancelled) return;
+        setPatterns([]);
+        setPatternsError('Could not load pattern discoveries.');
+      } finally {
+        if (!cancelled) setPatternsLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, [domain]);
 
   const load = async () => {
-    setLoading(true);
-    setError(null);
-    const [res, feedRes] = await Promise.all([
-      apiService.getReport(domain),
-      apiService.getBriefingFeed(domain, 6, 4).catch(() => null),
-    ]);
+    setReportLoading(true);
+    setReportError(null);
+    setFeedLoading(true);
+    setPatternsLoading(true);
+    setPatternsError(null);
+
+    const res = await apiService.getReport(domain);
     if (res.success && res.data) {
       setPayload(res.data);
+      setReportError(null);
     } else {
-      setError(res.message ?? 'Failed to load report');
+      setReportError(res.message ?? 'Failed to load report');
       setPayload(null);
     }
+    setReportLoading(false);
+
+    const feedRes = await apiService.getBriefingFeed(domain, 6, 4).catch(() => null);
     const fd = feedRes as {
       success?: boolean;
       data?: { articles?: FeedArticle[]; storylines?: FeedStoryline[] };
@@ -335,8 +440,37 @@ export default function ReportPage() {
       setFeedArticles([]);
       setFeedStorylines([]);
     }
-    setLoading(false);
+    setFeedLoading(false);
+
+    try {
+      const data = await contextCentricApi.getPatternDiscoveries({
+        domain_key: domain,
+        limit: 8,
+      });
+      setPatterns(data?.items ?? []);
+      setPatternsError(null);
+    } catch {
+      setPatterns([]);
+      setPatternsError('Could not load pattern discoveries.');
+    } finally {
+      setPatternsLoading(false);
+    }
   };
+
+  const quietPicks = useMemo(() => {
+    if (!payload?.lead_storylines?.length) return [];
+    return [...payload.lead_storylines]
+      .sort(
+        (a, b) =>
+          new Date(a.updated_at).getTime() - new Date(b.updated_at).getTime()
+      )
+      .slice(0, 3);
+  }, [payload]);
+
+  const powerActors = useMemo(
+    () => (payload ? uniqueLeadActors(payload.lead_storylines) : []),
+    [payload]
+  );
 
   const handleGenerateDigest = async () => {
     setGenerating(true);
@@ -395,68 +529,88 @@ export default function ReportPage() {
           size='small'
           startIcon={<Refresh />}
           onClick={load}
-          disabled={loading}
+          disabled={reportLoading}
         >
           Refresh
         </Button>
       </Box>
 
-      {loading ? (
-        <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
-          <CircularProgress />
-        </Box>
-      ) : error ? (
-        <Alert severity='error'>{error}</Alert>
-      ) : !payload ? null : (
-        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-          {payload.lead_storylines.length > 0 ? (
-            <LeadStorylineCard
-              item={payload.lead_storylines[0]}
-              domain={payload.domain}
-              isLead
-              onNavigate={id => navigate(`/${payload.domain}/storylines/${id}`)}
-            />
-          ) : (
-            <Paper variant='outlined' sx={{ p: 3, textAlign: 'center' }}>
-              <Typography color='text.secondary'>
-                No lead storylines for this domain yet.
-              </Typography>
-            </Paper>
-          )}
-
-          {payload.lead_storylines.length > 1 && (
+      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+        {/* —— Domain pulse —— */}
+        <Box>
+          <Typography
+            variant='overline'
+            color='primary.main'
+            sx={{ fontWeight: 700, letterSpacing: 0.08 }}
+          >
+            Domain pulse
+          </Typography>
+          <Typography variant='body2' color='text.secondary' sx={{ mb: 2 }}>
+            What moved: lead storylines, investigations, events, and coverage. Deep
+            links open the storyline or event with{' '}
+            <Typography component='span' variant='body2' sx={{ fontStyle: 'italic' }}>
+              ?from=daily
+            </Typography>{' '}
+            for context.
+          </Typography>
+          {reportLoading && !payload ? (
+            <Skeleton variant='rounded' height={220} sx={{ mb: 2 }} />
+          ) : reportError && !payload ? (
+            <Alert severity='error'>{reportError}</Alert>
+          ) : payload ? (
             <>
+              {payload.lead_storylines.length > 0 ? (
+                <LeadStorylineCard
+                  item={payload.lead_storylines[0]}
+                  domain={payload.domain}
+                  isLead
+                  onNavigate={id =>
+                    navigate(`/${payload.domain}/storylines/${id}?from=daily`)
+                  }
+                />
+              ) : (
+                <Paper variant='outlined' sx={{ p: 3, textAlign: 'center' }}>
+                  <Typography color='text.secondary'>
+                    No lead storylines for this domain yet.
+                  </Typography>
+                </Paper>
+              )}
+
+              {payload.lead_storylines.length > 1 && (
+                <>
+                  <Typography
+                    variant='overline'
+                    color='text.secondary'
+                    sx={{ fontWeight: 600, mt: 2, display: 'block' }}
+                  >
+                    Also leading
+                  </Typography>
+                  <Grid container spacing={2}>
+                    {payload.lead_storylines.slice(1, 3).map(item => (
+                      <Grid item xs={12} md={6} key={item.id}>
+                        <LeadStorylineCard
+                          item={item}
+                          domain={payload.domain}
+                          isLead={false}
+                          onNavigate={id =>
+                            navigate(
+                              `/${payload.domain}/storylines/${id}?from=daily`
+                            )
+                          }
+                        />
+                      </Grid>
+                    ))}
+                  </Grid>
+                </>
+              )}
+
               <Typography
                 variant='overline'
                 color='text.secondary'
-                sx={{ fontWeight: 600 }}
+                sx={{ fontWeight: 600, mt: 2, display: 'block' }}
               >
-                Also leading
+                Digest
               </Typography>
-              <Grid container spacing={2}>
-                {payload.lead_storylines.slice(1, 3).map(item => (
-                  <Grid item xs={12} md={6} key={item.id}>
-                    <LeadStorylineCard
-                      item={item}
-                      domain={payload.domain}
-                      isLead={false}
-                      onNavigate={id =>
-                        navigate(`/${payload.domain}/storylines/${id}`)
-                      }
-                    />
-                  </Grid>
-                ))}
-              </Grid>
-            </>
-          )}
-
-          <Typography
-            variant='overline'
-            color='text.secondary'
-            sx={{ fontWeight: 600 }}
-          >
-            Digest
-          </Typography>
           <Grid container spacing={2}>
             <Grid item xs={12} md={4}>
               <Paper variant='outlined' sx={{ p: 2 }}>
@@ -474,7 +628,7 @@ export default function ReportPage() {
                       dense
                       onClick={() =>
                         navigate(
-                          `/${payload.domain}/investigate/events/${inv.id}`
+                          `/${payload.domain}/investigate/events/${inv.id}?from=daily`
                         )
                       }
                     >
@@ -517,7 +671,7 @@ export default function ReportPage() {
                       dense
                       onClick={() =>
                         navigate(
-                          `/${payload.domain}/investigate/events/${ev.id}`
+                          `/${payload.domain}/investigate/events/${ev.id}?from=daily`
                         )
                       }
                     >
@@ -590,7 +744,7 @@ export default function ReportPage() {
                           dense
                           onClick={() =>
                             navigate(
-                              `/${ev.suggested_domain ?? domain}/investigate/events/${ev.id}`
+                              `/${ev.suggested_domain ?? domain}/investigate/events/${ev.id}?from=daily`
                             )
                           }
                         >
@@ -625,7 +779,9 @@ export default function ReportPage() {
                           key={`${s.origin_domain}-${s.id}`}
                           dense
                           onClick={() =>
-                            navigate(`/${s.origin_domain}/storylines/${s.id}`)
+                            navigate(
+                              `/${s.origin_domain}/storylines/${s.id}?from=daily`
+                            )
                           }
                         >
                           <ListItemText
@@ -651,66 +807,238 @@ export default function ReportPage() {
             </Paper>
           ) : null}
 
-          {(feedArticles.length > 0 || feedStorylines.length > 0) && (
+              {feedLoading ? (
+                <Skeleton variant='rounded' height={120} sx={{ mb: 1 }} />
+              ) : (feedArticles.length > 0 || feedStorylines.length > 0) ? (
+                <Paper variant='outlined' sx={{ p: 2, bgcolor: 'grey.50' }}>
+                  <Typography
+                    variant='overline'
+                    color='text.secondary'
+                    sx={{ fontWeight: 600, display: 'block', mb: 1 }}
+                  >
+                    More coverage
+                  </Typography>
+                  <Typography
+                    variant='body2'
+                    color='text.secondary'
+                    sx={{ mb: 1.5 }}
+                  >
+                    From your briefing feed (re-ranked; demotes low-signal
+                    topics).
+                  </Typography>
+                  <Grid container spacing={2}>
+                    <Grid item xs={12} md={6}>
+                      <Typography variant='caption' color='text.secondary'>
+                        Articles
+                      </Typography>
+                      <List dense disablePadding>
+                        {feedArticles.slice(0, 5).map(a => (
+                          <ListItemButton
+                            key={a.id ?? a.title}
+                            dense
+                            onClick={() =>
+                              a.id != null &&
+                              navigate(`/${domain}/articles/${a.id}?from=daily`)
+                            }
+                          >
+                            <ListItemText
+                              primary={(a.title || '').slice(0, 72)}
+                              primaryTypographyProps={{ variant: 'body2' }}
+                            />
+                          </ListItemButton>
+                        ))}
+                      </List>
+                    </Grid>
+                    <Grid item xs={12} md={6}>
+                      <Typography variant='caption' color='text.secondary'>
+                        Storylines
+                      </Typography>
+                      <List dense disablePadding>
+                        {feedStorylines.slice(0, 4).map(s => (
+                          <ListItemButton
+                            key={s.id ?? s.title}
+                            dense
+                            onClick={() =>
+                              s.id != null &&
+                              navigate(
+                                `/${domain}/storylines/${s.id}?from=daily`
+                              )
+                            }
+                          >
+                            <ListItemText
+                              primary={(s.title || '').slice(0, 72)}
+                              primaryTypographyProps={{ variant: 'body2' }}
+                            />
+                          </ListItemButton>
+                        ))}
+                      </List>
+                    </Grid>
+                  </Grid>
+                </Paper>
+              ) : null}
+            </>
+          ) : null}
+        </Box>
+
+        {/* Collisions — patterns & co-occurrence (summary + Search) */}
+        <Box>
+          <Typography
+            variant='overline'
+            color='primary.main'
+            sx={{ fontWeight: 700, letterSpacing: 0.08 }}
+          >
+            Collisions
+          </Typography>
+          <Typography variant='body2' color='text.secondary' sx={{ mb: 1.5 }}>
+            Emerging pattern discoveries for this domain. Open Search for full
+            claim / entity / pattern exploration.
+          </Typography>
+          {patternsLoading ? (
+            <Skeleton variant='rounded' height={100} />
+          ) : patternsError ? (
+            <Alert severity='warning'>{patternsError}</Alert>
+          ) : patterns.length === 0 ? (
+            <Typography variant='body2' color='text.secondary'>
+              No pattern discoveries in window — try Search for full exploration.
+            </Typography>
+          ) : (
             <Paper variant='outlined' sx={{ p: 2, bgcolor: 'grey.50' }}>
-              <Typography
-                variant='overline'
-                color='text.secondary'
-                sx={{ fontWeight: 600, display: 'block', mb: 1 }}
+              <List dense disablePadding>
+                {patterns.slice(0, 5).map(p => (
+                  <ListItem key={p.id} disablePadding sx={{ py: 0.5 }}>
+                    <ListItemText
+                      primary={patternDiscoverySummary(p)}
+                      primaryTypographyProps={{ variant: 'body2' }}
+                    />
+                  </ListItem>
+                ))}
+              </List>
+              <Button
+                size='small'
+                variant='outlined'
+                startIcon={<SearchIcon />}
+                sx={{ mt: 1 }}
+                onClick={() =>
+                  navigate(`/${domain}/investigate/search?from=daily`)
+                }
               >
-                More coverage
-              </Typography>
-              <Typography variant='body2' color='text.secondary' sx={{ mb: 1.5 }}>
-                From your briefing feed (re-ranked; demotes low-signal topics).
-              </Typography>
-              <Grid container spacing={2}>
-                <Grid item xs={12} md={6}>
-                  <Typography variant='caption' color='text.secondary'>
-                    Articles
-                  </Typography>
-                  <List dense disablePadding>
-                    {feedArticles.slice(0, 5).map(a => (
-                      <ListItemButton
-                        key={a.id ?? a.title}
-                        dense
-                        onClick={() =>
-                          a.id != null &&
-                          navigate(`/${domain}/articles/${a.id}`)
-                        }
-                      >
-                        <ListItemText
-                          primary={(a.title || '').slice(0, 72)}
-                          primaryTypographyProps={{ variant: 'body2' }}
-                        />
-                      </ListItemButton>
-                    ))}
-                  </List>
-                </Grid>
-                <Grid item xs={12} md={6}>
-                  <Typography variant='caption' color='text.secondary'>
-                    Storylines
-                  </Typography>
-                  <List dense disablePadding>
-                    {feedStorylines.slice(0, 4).map(s => (
-                      <ListItemButton
-                        key={s.id ?? s.title}
-                        dense
-                        onClick={() =>
-                          s.id != null &&
-                          navigate(`/${domain}/storylines/${s.id}`)
-                        }
-                      >
-                        <ListItemText
-                          primary={(s.title || '').slice(0, 72)}
-                          primaryTypographyProps={{ variant: 'body2' }}
-                        />
-                      </ListItemButton>
-                    ))}
-                  </List>
-                </Grid>
-              </Grid>
+                Open in Search
+              </Button>
             </Paper>
           )}
+        </Box>
+
+        {/* Power ledger — entities / dossiers */}
+        <Box>
+          <Typography
+            variant='overline'
+            color='primary.main'
+            sx={{ fontWeight: 700, letterSpacing: 0.08 }}
+          >
+            Power ledger
+          </Typography>
+          <Typography variant='body2' color='text.secondary' sx={{ mb: 1.5 }}>
+            Key actors from lead storylines — open dossiers when linked.
+          </Typography>
+          {!payload ? (
+            reportLoading ? (
+              <Skeleton variant='rounded' height={80} />
+            ) : (
+              <Typography variant='body2' color='text.secondary'>
+                Load briefing to see entities.
+              </Typography>
+            )
+          ) : powerActors.length === 0 ? (
+            <Typography variant='body2' color='text.secondary'>
+              No key actors in lead cards yet.
+            </Typography>
+          ) : (
+            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+              {powerActors.slice(0, 12).map((actor, i) => (
+                <EntityCard
+                  key={`${actor.canonical_entity_id}-${i}`}
+                  entity={{
+                    canonical_entity_id: actor.canonical_entity_id,
+                    name: actor.name,
+                    type: actor.type,
+                    description: actor.description,
+                    profile_id: actor.profile_id ?? null,
+                    has_dossier: false,
+                    role_in_story: actor.role_in_story,
+                  }}
+                  mode='compact'
+                  domain={payload.domain}
+                />
+              ))}
+            </Box>
+          )}
+          <Button
+            size='small'
+            sx={{ mt: 1 }}
+            onClick={() =>
+              navigate(`/${domain}/investigate/entities?from=daily`)
+            }
+          >
+            All entities
+          </Button>
+        </Box>
+
+        {/* Quiet-but-watch */}
+        <Box>
+          <Typography
+            variant='overline'
+            color='primary.main'
+            sx={{ fontWeight: 700, letterSpacing: 0.08 }}
+          >
+            Quiet-but-watch
+          </Typography>
+          <Alert severity='info' sx={{ mb: 2 }}>
+            Threads that move slowly can still matter. Storyline{' '}
+            <code>updated_at</code> may reflect automation, not a new article —
+            use Storylines sort &quot;Latest article&quot; and Watchlist alerts
+            for resurfacing. Backend flags for material change may arrive in a
+            later release.
+          </Alert>
+          {payload && quietPicks.length > 0 && (
+            <Paper variant='outlined' sx={{ p: 2, mb: 2 }}>
+              <Typography
+                variant='subtitle2'
+                color='text.secondary'
+                gutterBottom
+              >
+                Slower-moving leads (by last update in this briefing)
+              </Typography>
+              <List dense disablePadding>
+                {quietPicks.map(s => (
+                  <ListItemButton
+                    key={s.id}
+                    dense
+                    onClick={() =>
+                      navigate(
+                        `/${payload.domain}/storylines/${s.id}?from=daily`
+                      )
+                    }
+                  >
+                    <ListItemText
+                      primary={s.title?.slice(0, 72) || `#${s.id}`}
+                      secondary={`Updated ${timeAgo(new Date(s.updated_at))}`}
+                      primaryTypographyProps={{ variant: 'body2' }}
+                    />
+                  </ListItemButton>
+                ))}
+              </List>
+            </Paper>
+          )}
+          <Button
+            variant='outlined'
+            size='small'
+            onClick={() =>
+              navigate(`/${domain}/watchlist?from=daily`)
+            }
+          >
+            Watchlist &amp; alerts
+          </Button>
+        </Box>
 
           <Card variant='outlined'>
             <CardContent>
@@ -798,8 +1126,7 @@ export default function ReportPage() {
               Investigate
             </Button>
           </Box>
-        </Box>
-      )}
+      </Box>
     </Box>
   );
 }

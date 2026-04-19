@@ -303,6 +303,7 @@ def sync_domain_articles_to_contexts(domain_key: str, limit: int = 100) -> int:
     Returns number of new contexts created.
     """
     from shared.database.connection import get_db_connection
+    from shared.pipeline_article_selection import sql_order_created_at
 
     conn = get_db_connection()
     if not conn:
@@ -311,6 +312,7 @@ def sync_domain_articles_to_contexts(domain_key: str, limit: int = 100) -> int:
 
     schema_name = _schema_for_domain(domain_key)
     created = 0
+    _ca_ord = sql_order_created_at()
     try:
         with conn.cursor() as cur:
             # Articles without a context (not in article_to_context)
@@ -324,7 +326,7 @@ def sync_domain_articles_to_contexts(domain_key: str, limit: int = 100) -> int:
                 WHERE atc.context_id IS NULL
                   AND (a.enrichment_status IS NULL OR a.enrichment_status != 'removed')
                   AND ({ready})
-                ORDER BY a.created_at DESC
+                ORDER BY a.created_at {_ca_ord}
                 LIMIT %s
                 """,
                 (domain_key, limit),

@@ -115,22 +115,25 @@ async def get_domain_storylines(
                 params = []
 
                 if status:
-                    where_clause = "WHERE status = %s"
+                    where_clause = "WHERE s.status = %s"
                     params.append(status)
 
                 # Get total count
-                count_query = f"SELECT COUNT(*) FROM {schema}.storylines {where_clause}"
+                count_query = f"SELECT COUNT(*) FROM {schema}.storylines s {where_clause}"
                 cur.execute(count_query, params)
                 total = cur.fetchone()[0]
 
                 # Get paginated storylines
                 query = f"""
-                    SELECT id, title, description, created_at, updated_at,
-                           status, article_count, document_status,
-                           editorial_document->>'lede' as editorial_lede
-                    FROM {schema}.storylines
+                    SELECT s.id, s.title, s.description, s.created_at, s.updated_at,
+                           s.status, s.article_count, s.document_status,
+                           s.editorial_document->>'lede' as editorial_lede,
+                           (SELECT MAX(sa.added_at) FROM {schema}.storyline_articles sa
+                            WHERE sa.storyline_id = s.id) AS last_article_added_at
+                    FROM {schema}.storylines s
                     {where_clause}
-                    ORDER BY updated_at DESC
+                    ORDER BY (SELECT MAX(sa2.added_at) FROM {schema}.storyline_articles sa2 WHERE sa2.storyline_id = s.id) DESC NULLS LAST,
+                             s.updated_at DESC NULLS LAST
                     LIMIT %s OFFSET %s
                 """
                 params.extend([limit, offset])
@@ -139,6 +142,7 @@ async def get_domain_storylines(
 
                 storylines = []
                 for row in cur.fetchall():
+                    laa = row[9] if len(row) > 9 else None
                     storylines.append(
                         {
                             "id": row[0],
@@ -150,6 +154,7 @@ async def get_domain_storylines(
                             "article_count": row[6] if len(row) > 6 else 0,
                             "document_status": row[7] if len(row) > 7 else None,
                             "editorial_lede": row[8] if len(row) > 8 else None,
+                            "last_article_added_at": laa.isoformat() if laa else None,
                         }
                     )
 
@@ -653,6 +658,16 @@ async def get_domain_storyline(
                         }
                     )
 
+                cur.execute(
+                    f"""
+                    SELECT MAX(sa.added_at) FROM {schema}.storyline_articles sa
+                    WHERE sa.storyline_id = %s
+                    """,
+                    (storyline_id,),
+                )
+                laa_r = cur.fetchone()
+                last_article_added_at = laa_r[0] if laa_r and laa_r[0] else None
+
                 return {
                     "success": True,
                     "data": {
@@ -662,6 +677,9 @@ async def get_domain_storyline(
                             "description": storyline[2],
                             "created_at": storyline[3].isoformat() if storyline[3] else None,
                             "updated_at": storyline[4].isoformat() if storyline[4] else None,
+                            "last_article_added_at": last_article_added_at.isoformat()
+                            if last_article_added_at
+                            else None,
                             "status": storyline[5],
                             "analysis_summary": storyline[6],
                             "quality_score": float(storyline[7]) if storyline[7] else None,
@@ -728,20 +746,21 @@ async def add_article_to_domain_storyline_by_id(
                 """,
                     (storyline_id, article_id, datetime.now()),
                 )
+                inserted = cur.rowcount > 0
 
-                # Update article count in domain schema
-                cur.execute(
-                    f"""
-                    UPDATE {schema}.storylines
-                    SET article_count = (
-                        SELECT COUNT(*) FROM {schema}.storyline_articles
-                        WHERE storyline_id = %s
-                    ),
-                    updated_at = %s
-                    WHERE id = %s
-                """,
-                    (storyline_id, datetime.now(), storyline_id),
-                )
+                if inserted:
+                    cur.execute(
+                        f"""
+                        UPDATE {schema}.storylines
+                        SET article_count = (
+                            SELECT COUNT(*) FROM {schema}.storyline_articles
+                            WHERE storyline_id = %s
+                        ),
+                        updated_at = %s
+                        WHERE id = %s
+                        """,
+                        (storyline_id, datetime.now(), storyline_id),
+                    )
 
                 conn.commit()
 
@@ -1462,7 +1481,6 @@ async def process_storyline_rag_analysis(
                             SET analysis_summary = %s,
                                 quality_score = %s,
                                 ml_processing_status = 'completed',
-                                updated_at = %s,
                                 editorial_document = %s,
                                 document_version = COALESCE(document_version, 0) + 1,
                                 document_status = 'rag_analyzed',
@@ -1472,7 +1490,6 @@ async def process_storyline_rag_analysis(
                             (
                                 analysis_text,
                                 0.90,
-                                datetime.now(),
                                 _json.dumps(editorial_doc),
                                 datetime.now(),
                                 storyline_id,

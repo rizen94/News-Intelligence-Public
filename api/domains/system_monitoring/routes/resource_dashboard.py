@@ -1545,16 +1545,16 @@ def get_processing_progress(
         ),
     ),
     include_pending_metrics: bool = Query(
-        True,
+        False,
         description=(
-            "When false, omit backlog_metrics (heavy per-phase DB counts). "
+            "When false (default), omit backlog_metrics (heavy per-phase DB counts). "
             "Throughput + run history remain; use backlog_status for full queues. "
-            "Monitor passes false to avoid gateway timeouts on cold cache."
+            "Set true only when reverse-proxy read timeouts allow (can exceed 120s on large DBs)."
         ),
     ),
 ) -> dict[str, Any]:
     """
-    Pipeline dimension throughput, per-phase pending/backlog row counts, pass/fail rates from
+    Pipeline dimension throughput, optional per-phase pending/backlog row counts, pass/fail rates from
     ``automation_run_history``, and 72h hourly buckets. Implemented in ``processing_progress.py``
     and mounted here so the path is always ``/api/system_monitoring/processing_progress``.
     """

@@ -68,17 +68,16 @@ async def get_domain_storylines(
 
         try:
             with conn.cursor() as cur:
-                # Build query with optional status filter
-                base_query = f"FROM {schema}.storylines"
+                # Build query with optional status filter (alias `s` for list + count)
                 where_clause = ""
                 params = []
 
                 if status:
-                    where_clause = "WHERE status = %s"
+                    where_clause = "WHERE s.status = %s"
                     params.append(status)
 
                 # Get total count
-                count_query = f"SELECT COUNT(*) {base_query} {where_clause}"
+                count_query = f"SELECT COUNT(*) FROM {schema}.storylines s {where_clause}"
                 cur.execute(count_query, params)
                 total = cur.fetchone()[0]
 
@@ -88,11 +87,14 @@ async def get_domain_storylines(
 
                 # Get paginated results
                 query = f"""
-                    SELECT id, title, description, created_at, updated_at,
-                           status, article_count, quality_score
-                    {base_query}
+                    SELECT s.id, s.title, s.description, s.created_at, s.updated_at,
+                           s.status, s.article_count, s.quality_score,
+                           (SELECT MAX(sa.added_at) FROM {schema}.storyline_articles sa
+                            WHERE sa.storyline_id = s.id) AS last_article_added_at
+                    FROM {schema}.storylines s
                     {where_clause}
-                    ORDER BY updated_at DESC
+                    ORDER BY (SELECT MAX(sa2.added_at) FROM {schema}.storyline_articles sa2 WHERE sa2.storyline_id = s.id) DESC NULLS LAST,
+                             s.updated_at DESC NULLS LAST
                     LIMIT %s OFFSET %s
                 """
                 cur.execute(query, params + [page_size, offset])
@@ -137,6 +139,7 @@ async def get_domain_storylines(
 
                 storylines = []
                 for row in list_rows:
+                    laa = row[8] if len(row) > 8 else None
                     storylines.append(
                         StorylineListItem(
                             id=row[0],
@@ -147,6 +150,7 @@ async def get_domain_storylines(
                             status=row[5],
                             created_at=row[3],
                             updated_at=row[4],
+                            last_article_added_at=laa,
                             top_entities=top_entities_by_storyline.get(row[0], []),
                         )
                     )
@@ -416,6 +420,16 @@ async def get_domain_storyline(
 
                 refinement_pending = list_pending_job_types(domain, storyline_id)
 
+                cur.execute(
+                    f"""
+                    SELECT MAX(sa.added_at) FROM {schema}.storyline_articles sa
+                    WHERE sa.storyline_id = %s
+                    """,
+                    (storyline_id,),
+                )
+                laa_row = cur.fetchone()
+                last_article_added_at = laa_row[0] if laa_row and laa_row[0] else None
+
                 return StorylineDetailResponse(
                     id=storyline[0],
                     title=storyline[1],
@@ -427,6 +441,7 @@ async def get_domain_storyline(
                     master_summary=storyline[7] if len(storyline) > 7 else None,
                     created_at=storyline[3],
                     updated_at=storyline[4],
+                    last_article_added_at=last_article_added_at,
                     last_evolution_at=storyline[10],
                     evolution_count=storyline[11],
                     source_coverage=source_coverage,

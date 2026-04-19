@@ -314,13 +314,19 @@ const StoryTimeline: React.FC = () => {
       {eventsEmpty && (
         <Alert severity='info' sx={{ mb: 3 }}>
           No chronological events are linked to this storyline yet (or all rows
-          are merged as duplicates).
+          are merged as duplicates). If articles exist but this list is empty, a
+          backend timeline qualification issue may apply — browse{' '}
+          <Link component={RouterLink} to={`/${domain}/articles`}>
+            domain articles
+          </Link>{' '}
+          or return to{' '}
+          <Link component={RouterLink} to={`/${domain}/storylines/${id}`}>
+            the storyline
+          </Link>
+          .
           {timeline.merged_duplicate_events_count
             ? ` ${timeline.merged_duplicate_events_count} merged duplicate row(s) exist in the database.`
-            : ''}{' '}
-          <Link component={RouterLink} to={`/${domain}/storylines/${id}`}>
-            Back to storyline
-          </Link>
+            : ''}
         </Alert>
       )}
 

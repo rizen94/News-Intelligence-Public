@@ -939,6 +939,7 @@ async def run_metadata_enrichment_batch_for_domains(limit_per_domain: int = 5) -
     """
     from shared.database.connection import get_db_connection
     from shared.pipeline_pass_marker import phase_backlog_uses_pass_marker, sql_article_pass_null
+    from shared.pipeline_article_selection import sql_order_id
 
     service = await get_enrichment_service()
     conn = get_db_connection()
@@ -951,6 +952,7 @@ async def run_metadata_enrichment_batch_for_domains(limit_per_domain: int = 5) -
     pass_clause = ""
     if phase_backlog_uses_pass_marker("metadata_enrichment"):
         pass_clause = f" AND ({sql_article_pass_null('metadata_enrichment', 'a')}) "
+    _id_ord = sql_order_id()
     try:
         for schema in schemas:
             try:
@@ -962,7 +964,7 @@ async def run_metadata_enrichment_batch_for_domains(limit_per_domain: int = 5) -
                         WHERE a.content IS NOT NULL AND LENGTH(a.content) > 50
                           AND (a.metadata IS NULL OR (a.metadata->>'enrichment_done') IS NULL)
                           {pass_clause}
-                        ORDER BY a.id DESC
+                        ORDER BY a.id {_id_ord}
                         LIMIT %s
                         """,
                         (limit_per_domain,),

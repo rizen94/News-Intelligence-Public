@@ -164,6 +164,8 @@ class IntelligenceCleanupController:
         """Merge entities with the same lowercase name + type."""
         from collections import defaultdict
 
+        from services.entity_resolution_service import normalize_entity_match_key
+
         conn = get_db_connection()
         if not conn:
             return 0
@@ -181,7 +183,8 @@ class IntelligenceCleanupController:
 
                 by_lower = defaultdict(list)
                 for row_id, name, etype in rows:
-                    by_lower[(name.lower().strip(), etype)].append(row_id)
+                    key = (normalize_entity_match_key(name, etype), etype)
+                    by_lower[key].append(row_id)
 
                 for _, ids in by_lower.items():
                     if len(ids) < 2:

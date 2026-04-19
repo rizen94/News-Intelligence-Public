@@ -606,17 +606,17 @@ Format the summary as a professional news analysis suitable for publication.
             else:
                 pass
 
-            # Update storyline
+            # Update storyline (quality-only refresh must not bump updated_at — that timestamp is for
+            # new articles / user edits; otherwise lists look "fresh" every automation pass.)
             with conn.cursor() as cur:
                 cur.execute(
                     f"""
                     UPDATE {self.schema}.storylines
                     SET article_count = %s,
-                        quality_score = %s,
-                        updated_at = %s
+                        quality_score = %s
                     WHERE id = %s
                 """,
-                    (article_count, avg_quality, datetime.now(), storyline_id),
+                    (article_count, avg_quality, storyline_id),
                 )
 
             return {

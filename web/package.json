@@ -1,6 +1,6 @@
 {
   "name": "news-intelligence-system-web",
-  "version": "8.0.0",
+  "version": "9.0.0",
   "description": "Web frontend for News Intelligence System — multi-domain news analysis",
   "private": true,
   "dependencies": {

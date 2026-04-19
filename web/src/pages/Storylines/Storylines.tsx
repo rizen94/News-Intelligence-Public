@@ -88,10 +88,71 @@ interface Storyline {
   total_events?: number;
   created_at: string;
   updated_at?: string;
+  /** Prefer for “resurfacing” — distinct from automation-only updated_at */
+  last_article_added_at?: string | null;
   impact_score?: number;
   key_entities?: string[];
   last_event_at?: string;
   reactivation_count?: number;
+}
+
+const NEW_ARTICLE_BADGE_DAYS = 3;
+
+function isRecentArticleSignal(iso?: string | null): boolean {
+  if (!iso) return false;
+  const t = new Date(iso).getTime();
+  if (Number.isNaN(t)) return false;
+  return (Date.now() - t) / 86400000 <= NEW_ARTICLE_BADGE_DAYS;
+}
+
+function sortStorylinesClient(items: Storyline[], sortBy: string): Storyline[] {
+  const xs = [...items];
+  const dateMs = (s: Storyline, field: 'last_article' | 'updated' | 'created') => {
+    const raw =
+      field === 'last_article'
+        ? s.last_article_added_at || s.updated_at || s.created_at
+        : field === 'updated'
+          ? s.updated_at || s.created_at
+          : s.created_at;
+    const t = new Date(raw).getTime();
+    return Number.isNaN(t) ? 0 : t;
+  };
+  const pri = (p?: string) => {
+    const o: Record<string, number> = {
+      high: 3,
+      medium: 2,
+      low: 1,
+    };
+    return o[(p ?? '').toLowerCase()] ?? 0;
+  };
+  switch (sortBy) {
+    case 'last_article_added_at':
+      return xs.sort(
+        (a, b) => dateMs(b, 'last_article') - dateMs(a, 'last_article')
+      );
+    case 'updated_at':
+      return xs.sort((a, b) => dateMs(b, 'updated') - dateMs(a, 'updated'));
+    case 'created_at':
+      return xs.sort((a, b) => dateMs(b, 'created') - dateMs(a, 'created'));
+    case 'impact_score':
+      return xs.sort(
+        (a, b) => (b.impact_score ?? 0) - (a.impact_score ?? 0)
+      );
+    case 'article_count':
+      return xs.sort(
+        (a, b) => (b.article_count ?? 0) - (a.article_count ?? 0)
+      );
+    case 'priority':
+      return xs.sort((a, b) => pri(b.priority) - pri(a.priority));
+    case 'title':
+      return xs.sort((a, b) =>
+        (a.title || '').localeCompare(b.title || '', undefined, {
+          sensitivity: 'base',
+        })
+      );
+    default:
+      return xs;
+  }
 }
 
 interface TimelineEvent {
@@ -181,7 +242,7 @@ const Storylines: React.FC = () => {
   const [filterStatus, setFilterStatus] = useState('');
   const [filterCategory, setFilterCategory] = useState('');
   const [filterPriority, setFilterPriority] = useState('');
-  const [sortBy, setSortBy] = useState('updated_at');
+  const [sortBy, setSortBy] = useState('last_article_added_at');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
@@ -255,7 +316,7 @@ const Storylines: React.FC = () => {
         setTotalStorylines(0);
       }
 
-      setStorylines(storylinesData);
+      setStorylines(sortStorylinesClient(storylinesData, sortBy));
 
       // Calculate statistics
       const calculatedStats: Stats = {
@@ -468,6 +529,14 @@ const Storylines: React.FC = () => {
     });
   };
 
+  /** Prefer last article link time so automation/synthesis does not look like daily news churn. */
+  const storylineActivityLabel = (s: Storyline): { label: string; at?: string } => {
+    if (s.last_article_added_at) {
+      return { label: 'Latest article', at: s.last_article_added_at };
+    }
+    return { label: 'Updated', at: s.updated_at || s.created_at };
+  };
+
   const truncateText = (text?: string, maxLength: number = 150): string => {
     if (!text) return '';
     return text.length > maxLength
@@ -526,6 +595,14 @@ const Storylines: React.FC = () => {
         </Typography>
 
         <Box display='flex' flexWrap='wrap' gap={1} mb={2}>
+          {isRecentArticleSignal(storyline.last_article_added_at) && (
+            <Chip
+              size='small'
+              label='New article'
+              color='success'
+              variant='outlined'
+            />
+          )}
           {storyline.status && (
             <Chip
               label={storyline.status}
@@ -573,7 +650,10 @@ const Storylines: React.FC = () => {
             </Typography>
           </Box>
           <Typography variant='caption' color='text.secondary'>
-            Updated: {formatDate(storyline.updated_at || storyline.created_at)}
+            {(() => {
+              const a = storylineActivityLabel(storyline);
+              return `${a.label}: ${formatDate(a.at)}`;
+            })()}
           </Typography>
         </Box>
 
@@ -651,6 +731,14 @@ const Storylines: React.FC = () => {
                 {storyline.title || 'Untitled Storyline'}
               </Typography>
               <Box display='flex' gap={1}>
+                {isRecentArticleSignal(storyline.last_article_added_at) && (
+                  <Chip
+                    size='small'
+                    label='New article'
+                    color='success'
+                    variant='outlined'
+                  />
+                )}
                 {storyline.status && (
                   <Chip
                     label={storyline.status}
@@ -697,8 +785,10 @@ const Storylines: React.FC = () => {
                   </Typography>
                 </Box>
                 <Typography variant='caption'>
-                  Updated:{' '}
-                  {formatDate(storyline.updated_at || storyline.created_at)}
+                  {(() => {
+                    const a = storylineActivityLabel(storyline);
+                    return `${a.label}: ${formatDate(a.at)}`;
+                  })()}
                 </Typography>
                 {storyline.key_entities &&
                   storyline.key_entities.length > 0 && (
@@ -955,8 +1045,11 @@ const Storylines: React.FC = () => {
                 label='Sort By'
                 onChange={e => handleFilterChange('sort', e.target.value)}
               >
-                <MenuItem value='updated_at'>Last Updated</MenuItem>
-                <MenuItem value='created_at'>Created Date</MenuItem>
+              <MenuItem value='last_article_added_at'>
+                Latest article (default)
+              </MenuItem>
+              <MenuItem value='updated_at'>Last Updated</MenuItem>
+              <MenuItem value='created_at'>Created Date</MenuItem>
                 <MenuItem value='impact_score'>Impact Score</MenuItem>
                 <MenuItem value='article_count'>Article Count</MenuItem>
                 <MenuItem value='priority'>Priority</MenuItem>
@@ -974,7 +1067,7 @@ const Storylines: React.FC = () => {
               setFilterStatus('');
               setFilterCategory('');
               setFilterPriority('');
-              setSortBy('updated_at');
+              setSortBy('last_article_added_at');
               setPage(1);
             }}
           >
@@ -997,7 +1090,7 @@ const Storylines: React.FC = () => {
           <TimelineIcon sx={{ fontSize: 64, color: 'text.secondary', mb: 2 }} />
           <Typography variant='h6' color='text.secondary' gutterBottom>
             No storylines found
-            {domain ? ` for ${domainName || domain}` : ''}
+            {domain ? ` for ${formatDomainLabel(domain)}` : ''}
           </Typography>
           <Typography variant='body2' color='text.secondary' sx={{ mb: 2 }}>
             {searchQuery || filterStatus || filterCategory || filterPriority

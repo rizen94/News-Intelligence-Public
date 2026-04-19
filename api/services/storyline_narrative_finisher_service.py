@@ -490,19 +490,34 @@ def persist_narrative_finish_to_db(
     try:
         with get_ephemeral_db_connection_context() as conn:
             with conn.cursor() as cur:
-                cur.execute(
-                    f"""
-                    UPDATE {schema}.storylines
-                    SET
-                        canonical_narrative = COALESCE(NULLIF(%s, ''), canonical_narrative),
-                        narrative_finisher_meta = %s::jsonb,
-                        narrative_finisher_model = %s,
-                        narrative_finisher_at = NOW(),
-                        updated_at = NOW()
-                    WHERE id = %s
-                    """,
-                    (canonical, json.dumps(meta), run_result.get("model"), storyline_id),
-                )
+                # Bump storyline.updated_at only when canonical text is applied (new narrative), not
+                # on meta-only / empty refresh passes — keeps "last updated" aligned with real change.
+                if canonical:
+                    cur.execute(
+                        f"""
+                        UPDATE {schema}.storylines
+                        SET
+                            canonical_narrative = COALESCE(NULLIF(%s, ''), canonical_narrative),
+                            narrative_finisher_meta = %s::jsonb,
+                            narrative_finisher_model = %s,
+                            narrative_finisher_at = NOW(),
+                            updated_at = NOW()
+                        WHERE id = %s
+                        """,
+                        (canonical, json.dumps(meta), run_result.get("model"), storyline_id),
+                    )
+                else:
+                    cur.execute(
+                        f"""
+                        UPDATE {schema}.storylines
+                        SET
+                            narrative_finisher_meta = %s::jsonb,
+                            narrative_finisher_model = %s,
+                            narrative_finisher_at = NOW()
+                        WHERE id = %s
+                        """,
+                        (json.dumps(meta), run_result.get("model"), storyline_id),
+                    )
             conn.commit()
         return True
     except Exception as e:

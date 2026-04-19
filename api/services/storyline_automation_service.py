@@ -1325,18 +1325,20 @@ class StorylineAutomationService(DomainAwareService):
                             logger.warning(f"Error adding article {article.get('id')}: {e}")
                             continue
 
-                # Update storyline article count
-                cur.execute(
-                    f"""
-                    UPDATE {self.schema}.storylines
-                    SET article_count = (
-                        SELECT COUNT(*) FROM {self.schema}.storyline_articles WHERE storyline_id = %s
-                    ),
-                    updated_at = %s
-                    WHERE id = %s
-                """,
-                    (storyline_id, datetime.now(), storyline_id),
-                )
+                # Only touch storyline.updated_at when membership actually changed (avoids "daily
+                # updates" when automation scores articles but adds nothing).
+                if added_count > 0:
+                    cur.execute(
+                        f"""
+                        UPDATE {self.schema}.storylines
+                        SET article_count = (
+                            SELECT COUNT(*) FROM {self.schema}.storyline_articles WHERE storyline_id = %s
+                        ),
+                        updated_at = %s
+                        WHERE id = %s
+                        """,
+                        (storyline_id, datetime.now(), storyline_id),
+                    )
 
                 conn.commit()
 

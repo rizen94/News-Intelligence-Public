@@ -2,6 +2,11 @@
 News Intelligence System v8.0 - Enterprise Automation Manager
 Collect-then-analyze pipeline: collection_cycle, pipeline-ordered analysis (Foundation → Extraction → Intelligence → Output).
 
+**Article batch order:** default **FIFO** (oldest rows first) via ``PIPELINE_ARTICLE_SELECTION_ORDER=fifo``.
+Set ``lifo`` to restore newest-first selection. **Backfill:** ``PIPELINE_BACKFILL_MODE=true`` plus optional
+``PIPELINE_BACKFILL_COLLECTION_RESUME_AT`` (or default 48h state file) pauses RSS + document discovery while
+existing rows are processed.
+
 Workload-driven scheduling (USE_WORKLOAD_DRIVEN_ORDER=True): the scheduler checks every process every tick.
 Order and run eligibility are determined by current workload, not fixed intervals. When a phase has pending
 work it is eligible every WORKLOAD_MIN_COOLDOWN seconds; when idle, intervals apply. Collection is throttled
@@ -61,6 +66,14 @@ from typing import Any
 from psycopg2.extras import RealDictCursor
 
 from shared.article_processing_gates import sql_ml_ready_and_content_bounds
+from shared.pipeline_article_selection import (
+    log_terminal_skip_stub_candidate,
+    pipeline_article_selection_mode_report,
+    pipeline_backfill_collection_should_pause,
+    pipeline_backfill_status_line,
+    sql_order_coalesce_pub_created,
+    sql_order_created_at,
+)
 from shared.domain_registry import (
     get_pipeline_active_domain_keys,
     get_pipeline_schema_names_active,
@@ -1325,6 +1338,20 @@ class AutomationManager:
             "load_factor": 1.0,  # Multiplier for intervals based on load
             "processing_history": {},  # Track actual vs estimated durations
         }
+
+        try:
+            pr = pipeline_article_selection_mode_report()
+            logger.info(
+                "Pipeline article batch order: %s (ORDER BY created_at %s) — PIPELINE_ARTICLE_SELECTION_ORDER=%s",
+                pr["label"],
+                pr["sql_created_at"],
+                pr["order_env"],
+            )
+            bfs = pipeline_backfill_status_line()
+            if bfs:
+                logger.warning("%s", bfs)
+        except Exception:
+            pass
 
     def _apply_automation_disabled_schedules(self) -> None:
         """Disable named schedules and strip them from depends_on so dependents still run (Widow cron offload)."""
@@ -3446,14 +3473,22 @@ class AutomationManager:
             metadata=task.metadata or {},
         )
         # 1. RSS fetch (optional: Widow / cron runs collect_rss_feeds; main GPU host skips duplicate RSS)
+        backfill_pause = pipeline_backfill_collection_should_pause()
+        if backfill_pause:
+            sl = pipeline_backfill_status_line()
+            if sl:
+                logger.warning("Collection cycle: %s", sl)
         skip_rss = os.environ.get("AUTOMATION_SKIP_RSS_IN_COLLECTION_CYCLE", "").lower() in (
             "1",
             "true",
             "yes",
-        )
+        ) or backfill_pause
         if skip_rss:
             logger.info(
-                "Collection cycle: skipping RSS (AUTOMATION_SKIP_RSS_IN_COLLECTION_CYCLE)"
+                "Collection cycle: skipping RSS (%s)",
+                "PIPELINE_BACKFILL_MODE pause"
+                if backfill_pause
+                else "AUTOMATION_SKIP_RSS_IN_COLLECTION_CYCLE",
             )
         else:
             try:
@@ -3484,11 +3519,14 @@ class AutomationManager:
                 except Exception as e:
                     logger.warning(f"Collection cycle enrichment step failed: {e}")
                     break
-        # 3. Document collection
-        try:
-            await self._execute_document_collection(dummy)
-        except Exception as e:
-            logger.warning(f"Collection cycle document collection failed: {e}")
+        # 3. Document collection (skip during backfill pause — avoid adding new external documents)
+        if not backfill_pause:
+            try:
+                await self._execute_document_collection(dummy)
+            except Exception as e:
+                logger.warning(f"Collection cycle document collection failed: {e}")
+        else:
+            logger.info("Collection cycle: skipping document collection (PIPELINE_BACKFILL_MODE pause)")
         # 4. Document processing — loop until drained or cap
         max_doc_iters = 20
         for _ in range(max_doc_iters):
@@ -3507,7 +3545,14 @@ class AutomationManager:
                 break
         # 5. Drain pending collection queue (URLs/feeds queued by RAG/synthesis)
         drained = 0
-        while self._pending_collection_queue:
+        if backfill_pause:
+            qn = len(self._pending_collection_queue)
+            if qn:
+                logger.info(
+                    "Collection cycle: deferring %s pending collection queue item(s) (backfill pause)",
+                    qn,
+                )
+        while not backfill_pause and self._pending_collection_queue:
             req = self._pending_collection_queue.pop(0)
             drained += 1
             try:
@@ -4765,6 +4810,7 @@ class AutomationManager:
 
             processed_count = 0
             ml_ready = sql_ml_ready_and_content_bounds()
+            _ord = sql_order_created_at()
             for schema in get_pipeline_schema_names_active():
                 conn = await self._get_db_connection()
                 try:
@@ -4773,7 +4819,7 @@ class AutomationManager:
                             SELECT id FROM {schema}.articles
                             WHERE ml_processed = FALSE
                               AND ({ml_ready})
-                            ORDER BY created_at DESC
+                            ORDER BY created_at {_ord}
                             LIMIT 50
                         """)
                         articles = cursor.fetchall()
@@ -4826,6 +4872,7 @@ class AutomationManager:
         conn = await self._get_db_connection()
         if not conn:
             return
+        terminal_skip = False
         try:
             with conn.cursor() as cur:
                 cur.execute(
@@ -4854,6 +4901,7 @@ class AutomationManager:
                 if failures >= max_failures:
                     p[skip_key] = True
                 md["pipeline_skip"] = p
+                terminal_skip = bool(p.get(skip_key))
 
                 if phase_name == "event_extraction" and bool(p.get(skip_key)):
                     cur.execute(
@@ -4878,6 +4926,8 @@ class AutomationManager:
                         (json.dumps(md), article_id),
                     )
             conn.commit()
+            if terminal_skip:
+                log_terminal_skip_stub_candidate(schema, article_id, phase_name)
         except Exception as e:
             try:
                 conn.rollback()
@@ -4905,6 +4955,7 @@ class AutomationManager:
         pass_clause = ""
         if phase_backlog_uses_pass_marker("sentiment_analysis"):
             pass_clause = f" AND ({sql_article_pass_null('sentiment_analysis', 'a')}) "
+        _ord = sql_order_created_at()
         for schema in get_pipeline_schema_names_active():
             # Fetch candidates quickly, then close transaction before awaited LLM work.
             conn = await self._get_db_connection()
@@ -4916,7 +4967,7 @@ class AutomationManager:
                           AND COALESCE((a.metadata #>> '{{pipeline_skip,sentiment_analysis_skip}}')::boolean, false) = false
                           AND ({ml_ready})
                           {pass_clause}
-                        ORDER BY a.created_at DESC
+                        ORDER BY a.created_at {_ord}
                         LIMIT 100
                     """)
                     articles = cursor.fetchall()
@@ -5261,6 +5312,7 @@ class AutomationManager:
         pass_clause = ""
         if phase_backlog_uses_pass_marker("entity_extraction"):
             pass_clause = f" AND ({sql_article_pass_null('entity_extraction', 'a')}) "
+        _ord = sql_order_created_at()
 
         conn = await self._get_db_connection()
         try:
@@ -5284,7 +5336,7 @@ class AutomationManager:
                             )
                           )
                           {pass_clause}
-                        ORDER BY a.created_at DESC
+                        ORDER BY a.created_at {_ord}
                         LIMIT {articles_per_domain}
                     """)
                     domain_articles[schema_name] = cursor.fetchall()
@@ -5467,6 +5519,7 @@ class AutomationManager:
                     ev_pass = ""
                     if phase_backlog_uses_pass_marker("event_extraction"):
                         ev_pass = f" AND ({sql_article_pass_null('event_extraction', 'a')}) "
+                    _ev_ord = sql_order_coalesce_pub_created("a")
 
                     conn = await self._get_db_connection()
                     cursor = conn.cursor()
@@ -5490,7 +5543,7 @@ class AutomationManager:
                                   OR a.enrichment_status IN ('completed', 'enriched')
                               )
                               {ev_pass}
-                            ORDER BY a.published_at DESC NULLS LAST
+                            ORDER BY {_ev_ord}
                             LIMIT 30
                         """)
                         articles = cursor.fetchall()
@@ -5616,6 +5669,7 @@ class AutomationManager:
         scored_count = 0
 
         ml_ready = sql_ml_ready_and_content_bounds()
+        _ord = sql_order_created_at()
         for schema in get_pipeline_schema_names_active():
             # Fetch candidates quickly, then close transaction before awaited LLM work.
             conn = await self._get_db_connection()
@@ -5626,7 +5680,7 @@ class AutomationManager:
                         WHERE quality_score IS NULL
                           AND COALESCE((metadata #>> '{{pipeline_skip,quality_scoring_skip}}')::boolean, false) = false
                           AND ({ml_ready})
-                        ORDER BY created_at DESC
+                        ORDER BY created_at {_ord}
                         LIMIT 50
                     """)
                     articles = cursor.fetchall()
@@ -5718,7 +5772,7 @@ class AutomationManager:
                         cur.execute(
                             f"""
                             UPDATE {schema}.storylines
-                            SET timeline_summary = %s, updated_at = NOW()
+                            SET timeline_summary = %s
                             WHERE id = %s
                         """,
                             (summary, sid),
@@ -5822,6 +5876,7 @@ class AutomationManager:
                 try:
                     cursor = conn.cursor()
                     try:
+                        tc_age_order = sql_order_created_at()
                         cursor.execute(
                             f"""
                             WITH article_confidence AS (
@@ -5866,7 +5921,7 @@ class AutomationManager:
                                     WHEN 'medium_confidence' THEN 3
                                 END,
                                 avg_confidence ASC,  -- Lower confidence first within each group
-                                created_at DESC
+                                created_at {tc_age_order}
                         """,
                             (LOW_CONFIDENCE_THRESHOLD, CONFIDENCE_THRESHOLD),
                         )

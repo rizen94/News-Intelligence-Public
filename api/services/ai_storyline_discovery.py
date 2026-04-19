@@ -426,6 +426,9 @@ class AIStorylineDiscovery:
         if limit is None:
             limit = STORYLINE_DISCOVERY_ARTICLE_LIMIT
 
+        from shared.pipeline_article_selection import sql_order_created_at
+
+        _ord = sql_order_created_at()
         conn = self.get_db_connection()
         try:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -436,7 +439,7 @@ class AIStorylineDiscovery:
                                embedding_vector, embedding_model, extracted_entities
                         FROM {schema}.articles
                         WHERE created_at > NOW() - (%s * INTERVAL '1 hour')
-                        ORDER BY created_at DESC
+                        ORDER BY created_at {_ord}
                         LIMIT %s
                         """,
                         (hours, limit),
@@ -447,7 +450,7 @@ class AIStorylineDiscovery:
                         SELECT id, title, COALESCE(content, '') as content, created_at,
                                embedding_vector, embedding_model, extracted_entities
                         FROM {schema}.articles
-                        ORDER BY created_at DESC
+                        ORDER BY created_at {_ord}
                         LIMIT %s
                         """,
                         (limit,),
@@ -1779,14 +1782,34 @@ Reply with ONLY a JSON object:
 
         ``hours`` if set (>0) restricts to articles with ``created_at`` in the last N hours.
         Omit or pass None/0 for all-time (subject to ``STORYLINE_DISCOVERY_ARTICLE_LIMIT``).
-        ``min_similarity`` / ``min_cluster_size`` override module defaults for clustering.
+        ``min_similarity`` / ``min_cluster_size`` override per-domain config for clustering.
+
+        Per-domain defaults come from ``domain_synthesis_config.yaml`` (``clustering_similarity_threshold``,
+        ``storyline_min_cluster_size``). Legal/medicine use looser similarity and smaller clusters
+        because cases, statutes, and trial readouts are phrased differently and often unfold slowly
+        compared to politics/finance breaking narratives.
         """
-        sim_thresh = (
-            float(min_similarity) if min_similarity is not None else SIMILARITY_THRESHOLD
-        )
+        cfg = get_domain_synthesis_config(domain)
+        if min_similarity is not None:
+            sim_thresh = float(min_similarity)
+        else:
+            sim_thresh = float(cfg.clustering_similarity_threshold)
         sim_thresh = max(0.35, min(0.99, sim_thresh))
-        min_sz = min_cluster_size if min_cluster_size is not None else MIN_CLUSTER_SIZE
-        min_sz = max(2, min(100, int(min_sz)))
+
+        if min_cluster_size is not None:
+            min_sz = int(min_cluster_size)
+        else:
+            min_sz = int(cfg.storyline_min_cluster_size)
+        min_sz = max(2, min(100, min_sz))
+
+        logger.info(
+            "[%s] Storyline discovery clustering: similarity_threshold=%.3f min_cluster_size=%d "
+            "(from %s)",
+            domain,
+            sim_thresh,
+            min_sz,
+            "call overrides" if (min_similarity is not None or min_cluster_size is not None) else "domain_synthesis_config",
+        )
 
         start_time = datetime.now()
         stats = {

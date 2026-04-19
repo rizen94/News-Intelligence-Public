@@ -62,7 +62,7 @@ def _json_safe_float(value: Any, *, ndigits: int = 1) -> float | None:
 def compute_processing_progress_response(
     *,
     include_hourly_tick_rows: bool = False,
-    include_pending_metrics: bool = True,
+    include_pending_metrics: bool = False,
 ) -> dict[str, Any]:
     """
     Build JSON for GET /api/system_monitoring/processing_progress.
@@ -477,6 +477,7 @@ def compute_processing_progress_response(
     phase_by_name = {p["phase_name"]: p for p in phases if p.get("phase_name")}
     pending_m: dict[str, int] = {}
     backlog_m: dict[str, int] = {}
+    pending_metrics_merge_error: str | None = None
 
     def _fallback_batch(_: str) -> int:
         return 1
@@ -500,7 +501,11 @@ def compute_processing_progress_response(
             # Row-excess counts (for sort keys / parity with automation backlog_counts); not shown as batches.
             backlog_m = {k: int(v) for k, v in get_all_backlog_counts().items()}
         except Exception as e:
-            logger.debug("processing_progress backlog_metrics merge: %s", e)
+            pending_metrics_merge_error = str(e)[:500]
+            logger.warning(
+                "processing_progress: backlog_metrics merge failed (pending_records will be zeros): %s",
+                e,
+            )
 
     def _phase_merge_sort_key(n: str) -> tuple:
         # Tie-break with str(n) so keys are never compared across None/str (TypeError in Python 3).
@@ -599,6 +604,7 @@ def compute_processing_progress_response(
             "generated_at_utc": now_iso,
             "workload_window_days_note": _BACKLOG_WORKLOAD_WINDOW_DAYS,
             "pending_metrics_included": include_pending_metrics,
+            "pending_metrics_merge_error": pending_metrics_merge_error,
             "reporting_definitions": reporting_definitions,
             "dimensions": dimensions,
             "phase_dashboard": phase_dashboard,

@@ -414,8 +414,7 @@ Focus on the most important and newsworthy facts. Extract 5-15 key facts."""
                         synthesized_markdown = %s,
                         synthesized_at = NOW(),
                         synthesis_word_count = %s,
-                        synthesis_quality_score = %s,
-                        updated_at = NOW()
+                        synthesis_quality_score = %s
                     WHERE id = %s
                 """,
                     (

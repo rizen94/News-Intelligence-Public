@@ -36,6 +36,7 @@ from shared.pipeline_pass_marker import (
     sql_article_pass_null,
     sql_context_pass_null,
 )
+from shared.pipeline_article_selection import sql_order_created_at
 
 logger = logging.getLogger(__name__)
 
@@ -301,11 +302,28 @@ def get_backlog_count(task_name: str) -> Optional[int]:
 
 
 def _get_conn():
+    """
+    Read-only COUNT queries for backlog / Monitor.
+
+    Prefer the **worker** pool (same as automation). When that pool is saturated or times out,
+    fall back to the **UI** pool so ``processing_progress`` (which already uses the UI pool for
+    its main query block) can still show ``pending_records`` instead of silent all-zeros.
+    """
     try:
         from shared.database.connection import get_db_connection
+
         return get_db_connection()
     except Exception:
-        return None
+        try:
+            from shared.database.connection import get_ui_db_connection
+
+            conn = get_ui_db_connection()
+            logger.debug(
+                "backlog_metrics: worker pool connection failed; using UI pool for pending counts"
+            )
+            return conn
+        except Exception:
+            return None
 
 
 def _event_tracking_scan_window_params() -> tuple[int, int]:
@@ -888,6 +906,7 @@ def _count_storyline_discovery_pending() -> int:
     pass_sql = ""
     if phase_backlog_uses_pass_marker("storyline_discovery"):
         pass_sql = f" AND ({sql_article_pass_null('storyline_discovery', 'a')}) "
+    _ord = sql_order_created_at()
     try:
         for schema in get_pipeline_schema_names_active():
             with conn.cursor() as cur:
@@ -896,7 +915,7 @@ def _count_storyline_discovery_pending() -> int:
                     f"""
                     WITH cand AS (
                         SELECT id FROM {schema}.articles
-                        ORDER BY created_at DESC
+                        ORDER BY created_at {_ord}
                         LIMIT %s
                     )
                     SELECT COUNT(*) FROM {schema}.articles a
