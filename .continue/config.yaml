@@ -1,0 +1,61 @@
+name: News Intelligence — Local Only
+version: 1.1.0
+schema: v1
+
+# Source of truth for Continue in this workspace.
+# Global ~/.continue/config.yaml is intentionally minimal; do not duplicate models there.
+
+models:
+  # --- coding primary (tool-capable) ---------------------------------------
+  - name: Qwen 3 Coder
+    provider: ollama
+    model: qwen3-coder:latest
+    apiBase: http://127.0.0.1:11434
+    capabilities:
+      - tool_use
+    roles:
+      - chat
+      - edit
+      - apply
+      - autocomplete
+    defaultCompletionOptions:
+      contextLength: 32768
+
+  # --- fast tool-use chat ---------------------------------------------------
+  - name: Llama 3.1 8B
+    provider: ollama
+    model: llama3.1:8b
+    apiBase: http://127.0.0.1:11434
+    capabilities:
+      - tool_use
+    roles:
+      - chat
+      - edit
+      - apply
+
+  # --- heavy reasoning ------------------------------------------------------
+  - name: Qwen 3.5 27B
+    provider: ollama
+    model: qwen3.5:27b
+    apiBase: http://127.0.0.1:11434
+    capabilities:
+      - tool_use
+    roles:
+      - chat
+      - edit
+
+  - name: DeepSeek R1 32B
+    provider: ollama
+    model: deepseek-r1:32b
+    apiBase: http://127.0.0.1:11434
+    roles:
+      - chat
+      - edit
+
+  # --- embeddings -----------------------------------------------------------
+  - name: Nomic Embed
+    provider: ollama
+    model: nomic-embed-text:latest
+    apiBase: http://127.0.0.1:11434
+    roles:
+      - embed

@@ -1,0 +1,1 @@
+../../setup_morning_data_pipeline.sh

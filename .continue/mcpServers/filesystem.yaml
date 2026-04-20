@@ -1,0 +1,39 @@
+name: local-filesystem
+version: 0.1.0
+schema: v1
+
+# Filesystem MCP — explicit allowlist.
+#
+# Security posture:
+#   The @modelcontextprotocol/server-filesystem package only permits read/write
+#   operations under the directory arguments listed below. Anything outside
+#   these roots (including ~/.ssh, ~/.config, /etc, /opt/security-ops, sibling
+#   projects, system data, ~/Documents that is not explicitly listed) MUST be
+#   refused by the server.
+#
+# Refusal smoke test (run from the workspace root):
+#   bash scripts/devtools/smoke_filesystem_mcp.sh
+#
+# To add a new path, append it to args. Do NOT add $HOME, /, /etc, or any
+# project root that contains secrets.
+
+mcpServers:
+  - name: Filesystem
+    type: stdio
+    command: npx
+    args:
+      - "-y"
+      - "@modelcontextprotocol/server-filesystem"
+      # --- News Intelligence: code surfaces only -----------------------------
+      - "/home/pete/Documents/projects/Projects/News Intelligence/api"
+      - "/home/pete/Documents/projects/Projects/News Intelligence/scripts"
+      - "/home/pete/Documents/projects/Projects/News Intelligence/migrations"
+      - "/home/pete/Documents/projects/Projects/News Intelligence/lib"
+      - "/home/pete/Documents/projects/Projects/News Intelligence/diagnostics"
+      - "/home/pete/Documents/projects/Projects/News Intelligence/docs"
+      - "/home/pete/Documents/projects/Projects/News Intelligence/configs"
+      - "/home/pete/Documents/projects/Projects/News Intelligence/.continue"
+      # --- HomeLab AI Stack: docs + scripts only -----------------------------
+      - "/home/pete/Documents/projects/Projects/HomeLab-AI-Stack/docs"
+      - "/home/pete/Documents/projects/Projects/HomeLab-AI-Stack/scripts"
+      - "/home/pete/Documents/projects/Projects/HomeLab-AI-Stack/configs"

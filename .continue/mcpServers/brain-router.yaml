@@ -1,0 +1,12 @@
+name: homelab-brain-router
+version: 0.0.1
+schema: v1
+mcpServers:
+  - name: BrainRouter
+    type: stdio
+    command: /home/pete/ai-stack/.venv-homelab/bin/python
+    args:
+      - "/home/pete/Documents/projects/Projects/HomeLab-AI-Stack/scripts/brain_router_mcp_server.py"
+    env:
+      BRAIN_ROUTER_BASE_URL: "http://127.0.0.1:18052"
+

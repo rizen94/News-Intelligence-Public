@@ -1,0 +1,1 @@
+../../ddns_update_duckdns.sh

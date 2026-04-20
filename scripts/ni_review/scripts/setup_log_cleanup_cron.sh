@@ -1,0 +1,1 @@
+../../setup_log_cleanup_cron.sh

@@ -1,0 +1,1 @@
+../../export_cold_data_to_nas.sh

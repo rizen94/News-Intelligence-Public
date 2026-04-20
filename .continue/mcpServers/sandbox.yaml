@@ -1,0 +1,18 @@
+name: homelab-sandbox
+version: 0.1.0
+schema: v1
+
+# Code-exec MCP — every snippet runs inside the homelab-sandbox-runner Docker
+# container, never on the host. See HomeLab-AI-Stack/scripts/sandbox_mcp_server.py
+# for tool definitions and safety caps (timeout, output truncation).
+
+mcpServers:
+  - name: Sandbox
+    type: stdio
+    command: /home/pete/ai-stack/.venv-homelab/bin/python
+    args:
+      - "/home/pete/Documents/projects/Projects/HomeLab-AI-Stack/scripts/sandbox_mcp_server.py"
+    env:
+      SANDBOX_CONTAINER: "homelab-sandbox-runner"
+      SANDBOX_MAX_TIMEOUT: "60"
+      SANDBOX_MAX_OUTPUT_BYTES: "65536"

@@ -1,0 +1,18 @@
+name: local-git
+version: 0.1.0
+schema: v1
+
+# Git MCP — official Python server (mcp-server-git), launched via uvx so it is
+# isolated from the project venv and auto-installed on first run.
+#
+# Scope: only the News Intelligence repo. To add HomeLab-AI-Stack, copy this
+# file or extend Continue with a second mcpServers entry pointed at that repo.
+
+mcpServers:
+  - name: Git
+    type: stdio
+    command: /home/pete/.local/bin/uvx
+    args:
+      - "mcp-server-git"
+      - "--repository"
+      - "/home/pete/Documents/projects/Projects/News Intelligence"
