@@ -1,0 +1,320 @@
+{
+  "generated_at": "2026-05-16T19:03:31.896809+00:00",
+  "packs_run": [
+    "2"
+  ],
+  "connection": {
+    "host": "192.168.93.101",
+    "port": "5432",
+    "database": "news_intel"
+  },
+  "database": {
+    "name": "news_intel",
+    "bytes": 8191319063
+  },
+  "connectivity_note": null,
+  "pack_2_global": {
+    "pack_2b_multi_context_per_article": [],
+    "pack_2b_orphan_contexts": [
+      {
+        "orphan_contexts": 73177
+      }
+    ],
+    "pack_2b_orphan_context_classification": [
+      {
+        "source_type": "pdf_section",
+        "domain_key": "documents",
+        "orphan_count": 50261
+      },
+      {
+        "source_type": "article",
+        "domain_key": "politics",
+        "orphan_count": 19358
+      },
+      {
+        "source_type": "article",
+        "domain_key": "finance",
+        "orphan_count": 3558
+      }
+    ],
+    "pack_2b_orphan_legacy_domain_keys": [
+      {
+        "domain_key": "politics",
+        "orphan_count": 19358
+      },
+      {
+        "domain_key": "finance",
+        "orphan_count": 3558
+      }
+    ],
+    "pack_2c_claim_duplicates": [],
+    "pack_2c_entity_profile_duplicates": [],
+    "pack_2c_claims_missing_fields": [
+      {
+        "missing_subject": 0,
+        "missing_object": 316043,
+        "total": 1657695
+      }
+    ],
+    "pack_2e_processed_documents_failures": [
+      {
+        "docs_total": 748,
+        "permanent_failures": 97,
+        "no_sections": 97
+      }
+    ]
+  },
+  "pack_2_duplicates": {
+    "per_domain": [
+      {
+        "domain_key": "legal",
+        "schema_name": "legal",
+        "errors": [],
+        "url_duplicate_groups": 1,
+        "url_duplicate_extra_rows": 1,
+        "title_source_duplicate_groups": 1,
+        "articles_on_multiple_storylines": 0,
+        "duplicate_storyline_titles": 0,
+        "storylines_missing_summary": 0
+      },
+      {
+        "domain_key": "medicine",
+        "schema_name": "medicine",
+        "errors": [],
+        "url_duplicate_groups": 4,
+        "url_duplicate_extra_rows": 4,
+        "title_source_duplicate_groups": 4,
+        "articles_on_multiple_storylines": 0,
+        "duplicate_storyline_titles": 0,
+        "storylines_missing_summary": 0
+      },
+      {
+        "domain_key": "artificial-intelligence",
+        "schema_name": "artificial_intelligence",
+        "errors": [],
+        "url_duplicate_groups": 3,
+        "url_duplicate_extra_rows": 3,
+        "title_source_duplicate_groups": 3,
+        "articles_on_multiple_storylines": 0,
+        "duplicate_storyline_titles": 0,
+        "storylines_missing_summary": 0
+      },
+      {
+        "domain_key": "politics",
+        "schema_name": "politics_2",
+        "errors": [],
+        "url_duplicate_groups": 0,
+        "url_duplicate_extra_rows": 0,
+        "title_source_duplicate_groups": 4,
+        "articles_on_multiple_storylines": 0,
+        "duplicate_storyline_titles": 26,
+        "storylines_missing_summary": 45
+      },
+      {
+        "domain_key": "finance",
+        "schema_name": "finance_2",
+        "errors": [],
+        "url_duplicate_groups": 2,
+        "url_duplicate_extra_rows": 2,
+        "title_source_duplicate_groups": 2,
+        "articles_on_multiple_storylines": 0,
+        "duplicate_storyline_titles": 22,
+        "storylines_missing_summary": 32
+      }
+    ],
+    "cross_domain_urls": {
+      "cross_domain_url_count": 981,
+      "sample": [
+        {
+          "url": "https://www.bloomberg.com/news/articles/2026-04-21/gold-steadies-as-trump-extends-iran-ceasefire-peace-talks-stall",
+          "domain_keys": [
+            "finance",
+            "politics"
+          ]
+        },
+        {
+          "url": "https://finance.yahoo.com/sectors/energy/articles/goldman-hikes-oil-forecasts-again-as-hormuz-shock-builds-064448538.html",
+          "domain_keys": [
+            "finance",
+            "politics"
+          ]
+        },
+        {
+          "url": "https://www.bloomberg.com/news/articles/2026-05-04/swiss-lawmakers-gather-to-discuss-law-that-will-shape-ubs-future",
+          "domain_keys": [
+            "finance",
+            "politics"
+          ]
+        },
+        {
+          "url": "https://www.bloomberg.com/news/articles/2026-04-20/iron-ore-gains-with-china-demand-resilient-ahead-of-may-day",
+          "domain_keys": [
+            "finance",
+            "politics"
+          ]
+        },
+        {
+          "url": "https://www.bloomberg.com/news/videos/2026-04-17/trump-says-iran-is-removing-mines-from-hormuz-strait-video",
+          "domain_keys": [
+            "finance",
+            "politics"
+          ]
+        },
+        {
+          "url": "https://www.bloomberg.com/news/articles/2026-05-03/mideast-peace-efforts-in-focus-as-trading-resumes-markets-wrap",
+          "domain_keys": [
+            "finance",
+            "politics"
+          ]
+        },
+        {
+          "url": "https://www.bloomberg.com/news/articles/2026-04-29/aging-oil-tanker-suggests-iran-may-be-bringing-older-ships-back",
+          "domain_keys": [
+            "finance",
+            "politics"
+          ]
+        },
+        {
+          "url": "https://www.bloomberg.com/news/articles/2026-04-25/thousands-protest-against-outgoing-malaysian-anti-graft-chief",
+          "domain_keys": [
+            "finance",
+            "politics"
+          ]
+        },
+        {
+          "url": "https://www.bloomberg.com/news/articles/2026-04-20/imf-draws-packed-senegal-session-as-new-program-talks-drag",
+          "domain_keys": [
+            "finance",
+            "politics"
+          ]
+        },
+        {
+          "url": "https://www.bloomberg.com/news/articles/2026-04-21/meloni-demands-terna-ceo-choose-7-3-million-payout-or-eni-role",
+          "domain_keys": [
+            "finance",
+            "politics"
+          ]
+        },
+        {
+          "url": "https://www.bloomberg.com/news/videos/2026-04-29/the-asia-trade-4-29-2026-video",
+          "domain_keys": [
+            "finance",
+            "politics"
+          ]
+        },
+        {
+          "url": "https://www.bloomberg.com/news/articles/2026-04-28/advantest-shares-decline-after-outlook-misses-on-tight-capacity",
+          "domain_keys": [
+            "finance",
+            "politics"
+          ]
+        },
+        {
+          "url": "https://www.bloomberg.com/news/videos/2026-05-03/the-energy-source-hiding-beneath-your-feet-video",
+          "domain_keys": [
+            "finance",
+            "politics"
+          ]
+        },
+        {
+          "url": "https://www.bloomberg.com/news/articles/2026-04-29/iron-ore-advances-as-rising-costs-offset-bhp-cmrg-resolution",
+          "domain_keys": [
+            "finance",
+            "politics"
+          ]
+        },
+        {
+          "url": "https://www.bloomberg.com/news/articles/2026-04-17/snb-s-schlegel-stresses-higher-willingness-on-fx-interventions",
+          "domain_keys": [
+            "finance",
+            "politics"
+          ]
+        },
+        {
+          "url": "https://www.bloomberg.com/news/articles/2026-04-21/eqt-lands-record-asia-buyout-fund-at-15-6-billion-amid-turmoil",
+          "domain_keys": [
+            "finance",
+            "politics"
+          ]
+        },
+        {
+          "url": "https://www.bloomberg.com/news/articles/2026-05-04/geothermal-energy-developer-fervo-seeks-1-33-billion-in-us-ipo",
+          "domain_keys": [
+            "finance",
+            "politics"
+          ]
+        },
+        {
+          "url": "https://www.bloomberg.com/news/videos/2026-04-30/tech-earnings-show-ai-is-driving-a-massive-spending-race-video",
+          "domain_keys": [
+            "finance",
+            "politics"
+          ]
+        },
+        {
+          "url": "https://www.bloomberg.com/news/articles/2026-05-04/japan-can-conduct-30-more-yen-interventions-goldman-sachs-says",
+          "domain_keys": [
+            "finance",
+            "politics"
+          ]
+        },
+        {
+          "url": "https://www.bloomberg.com/news/articles/2026-04-18/uk-bears-scars-to-economy-trump-ties-even-as-war-risks-subside",
+          "domain_keys": [
+            "finance",
+            "politics"
+          ]
+        },
+        {
+          "url": "https://www.bloomberg.com/news/videos/2026-04-27/bernstein-s-liang-on-china-s-edge-in-pharma-sector-video",
+          "domain_keys": [
+            "finance",
+            "politics"
+          ]
+        },
+        {
+          "url": "https://www.bloomberg.com/news/articles/2026-05-02/is-this-a-stock-market-melt-up-here-are-ways-to-tell",
+          "domain_keys": [
+            "finance",
+            "politics"
+          ]
+        },
+        {
+          "url": "https://www.bloomberg.com/news/videos/2026-04-17/s-p-500-closes-at-record-high-closing-bell-video",
+          "domain_keys": [
+            "finance",
+            "politics"
+          ]
+        },
+        {
+          "url": "https://www.bloomberg.com/news/videos/2026-05-03/btw-goop-kitchen-ozempic-breath-hotspan-video",
+          "domain_keys": [
+            "finance",
+            "politics"
+          ]
+        },
+        {
+          "url": "https://www.bloomberg.com/news/articles/2026-04-20/gold-steadies-as-traders-weigh-next-round-of-us-iran-peace-talks",
+          "domain_keys": [
+            "finance",
+            "politics"
+          ]
+        }
+      ]
+    }
+  },
+  "audit_dashboard_summary": {
+    "articles_total_active_domains": 0,
+    "enriched_articles_active_domains": 0,
+    "context_linked_articles_active_domains": 0,
+    "url_duplicate_extra_rows": 10
+  },
+  "recommended_actions": [
+    {
+      "priority": "medium",
+      "area": "dedupe",
+      "finding": "981 URLs appear in multiple domain silos",
+      "action": "Review RSS_INGEST_EXCLUDE_DOMAIN_KEYS and cross-silo syndication policy"
+    }
+  ]
+}

@@ -14,11 +14,16 @@ Configurable retention policies control what gets cleaned and when.
 """
 
 import logging
+import os
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from shared.database.connection import get_db_connection
-from shared.domain_registry import get_active_domain_keys, resolve_domain_schema
+from shared.domain_registry import (
+    get_active_domain_keys,
+    get_pipeline_active_domain_keys,
+    resolve_domain_schema,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +44,21 @@ DEFAULT_POLICY = {
     "retention_queue_days": 7,
     "retention_pattern_matches_days": 90,
     "retention_storyline_states_days": 365,
+    # Unpromoted extracted_claims older than N days (0 = disabled). Never deletes versioned_fact-linked rows.
+    "retention_extracted_claims_days": 0,
+    "retention_extracted_claims_batch_size": 5000,
+    # After article age cleanup: drop stale bridges; optional orphan article contexts (no claims).
+    "prune_stale_article_to_context": True,
+    "prune_orphan_article_contexts": False,
+    "prune_orphan_article_contexts_min_age_days": 7,
 }
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.environ.get(name, "").strip().lower()
+    if not raw:
+        return default
+    return raw in ("1", "true", "yes", "on")
 
 
 def _schema(domain_key: str) -> str:
@@ -100,11 +119,112 @@ class IntelligenceCleanupController:
         if retention:
             results["retention"] = retention
 
+        claims_days = int(self.policy.get("retention_extracted_claims_days") or 0)
+        if not claims_days:
+            claims_days = int(os.environ.get("EXTRACTED_CLAIMS_RETENTION_DAYS", "0") or 0)
+        if claims_days > 0:
+            batch = int(self.policy.get("retention_extracted_claims_batch_size") or 5000)
+            results["extracted_claims_pruned"] = self.prune_unpromoted_extracted_claims(
+                min_age_days=claims_days,
+                batch_size=batch,
+            )
+
+        try:
+            from services.versioned_facts_lifecycle_service import (
+                supersede_near_duplicate_versioned_facts,
+            )
+
+            sup = supersede_near_duplicate_versioned_facts()
+            if sup:
+                results["versioned_facts_superseded"] = sup
+        except Exception as e:
+            logger.debug("versioned_facts supersession skipped: %s", e)
+
+        if self.policy.get("prune_stale_article_to_context", True):
+            results["stale_article_bridges_removed"] = self.prune_stale_article_to_context_bridges()
+
+        if self.policy.get("prune_orphan_article_contexts") or _env_bool(
+            "DATA_CLEANUP_PRUNE_ORPHAN_ARTICLE_CONTEXTS", False
+        ):
+            min_age = int(self.policy.get("prune_orphan_article_contexts_min_age_days") or 7)
+            results["orphan_article_contexts_removed"] = self.prune_orphan_article_contexts(
+                min_age_days=min_age
+            )
+
         total = _sum_results(results)
         logger.info(
             f"Intelligence cleanup complete: {total} total actions across {len(domains)} domain(s)"
         )
         return {"domains": results, "total_actions": total}
+
+    def prune_stale_article_to_context_bridges(self) -> int:
+        """Delete article_to_context rows whose article no longer exists in the silo schema."""
+        conn = get_db_connection()
+        if not conn:
+            return 0
+        removed = 0
+        try:
+            with conn.cursor() as cur:
+                for domain_key in get_pipeline_active_domain_keys():
+                    schema = _schema(domain_key)
+                    cur.execute(
+                        f"""
+                        DELETE FROM intelligence.article_to_context atc
+                        WHERE atc.domain_key = %s
+                          AND NOT EXISTS (
+                            SELECT 1 FROM {schema}.articles a WHERE a.id = atc.article_id
+                          )
+                        """,
+                        (domain_key,),
+                    )
+                    removed += max(0, cur.rowcount or 0)
+            conn.commit()
+            conn.close()
+            if removed:
+                logger.info("Removed %s stale article_to_context bridge(s)", removed)
+            return removed
+        except Exception as e:
+            logger.warning("prune_stale_article_to_context_bridges: %s", e)
+            _safe_rollback_close(conn)
+            return 0
+
+    def prune_orphan_article_contexts(self, *, min_age_days: int = 7) -> int:
+        """
+        Remove article-sourced contexts with no bridge and no extracted_claims (legacy sync failures).
+        Does not touch pdf_section or other source types.
+        """
+        conn = get_db_connection()
+        if not conn:
+            return 0
+        cutoff = datetime.now(timezone.utc) - timedelta(days=max(1, min_age_days))
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    DELETE FROM intelligence.contexts c
+                    WHERE c.source_type = 'article'
+                      AND c.created_at < %s
+                      AND NOT EXISTS (
+                        SELECT 1 FROM intelligence.article_to_context m
+                        WHERE m.context_id = c.id
+                      )
+                      AND NOT EXISTS (
+                        SELECT 1 FROM intelligence.extracted_claims ec
+                        WHERE ec.context_id = c.id
+                      )
+                    """,
+                    (cutoff,),
+                )
+                removed = max(0, cur.rowcount or 0)
+            conn.commit()
+            conn.close()
+            if removed:
+                logger.info("Removed %s orphan article context(s)", removed)
+            return removed
+        except Exception as e:
+            logger.warning("prune_orphan_article_contexts: %s", e)
+            _safe_rollback_close(conn)
+            return 0
 
     # -- Entity noise removal --------------------------------------------------
 
@@ -430,6 +550,56 @@ class IntelligenceCleanupController:
             logger.warning(f"stale event archive: {e}")
             _safe_rollback_close(conn)
         return archived
+
+    def prune_unpromoted_extracted_claims(
+        self, *, min_age_days: int, batch_size: int = 5000
+    ) -> int:
+        """
+        Delete unpromoted extracted_claims older than min_age_days (batched).
+        Skips rows referenced by intelligence.versioned_facts.metadata.source_claim_id.
+        """
+        conn = get_db_connection()
+        if not conn:
+            return 0
+        days = max(30, int(min_age_days))
+        bs = max(100, min(50_000, int(batch_size)))
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SET LOCAL statement_timeout = '180s'")
+                cur.execute(
+                    """
+                    WITH doomed AS (
+                      SELECT ec.id
+                      FROM intelligence.extracted_claims ec
+                      WHERE ec.created_at < %s
+                        AND NOT EXISTS (
+                          SELECT 1 FROM intelligence.versioned_facts vf
+                          WHERE vf.metadata->>'source_claim_id' = ec.id::text
+                        )
+                      ORDER BY ec.created_at ASC
+                      LIMIT %s
+                    )
+                    DELETE FROM intelligence.extracted_claims ec
+                    USING doomed d
+                    WHERE ec.id = d.id
+                    """,
+                    (cutoff, bs),
+                )
+                removed = max(0, cur.rowcount or 0)
+            conn.commit()
+            conn.close()
+            if removed:
+                logger.info(
+                    "Pruned %s unpromoted extracted_claims older than %s days",
+                    removed,
+                    days,
+                )
+            return removed
+        except Exception as e:
+            logger.warning("prune_unpromoted_extracted_claims: %s", e)
+            _safe_rollback_close(conn)
+            return 0
 
     # -- Intelligence table retention (keep under ~1 TB) -----------------------
 

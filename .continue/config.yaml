@@ -4,12 +4,15 @@ schema: v1
 
 # Source of truth for Continue in this workspace.
 # Global ~/.continue/config.yaml is intentionally minimal; do not duplicate models there.
+#
+# Installed tags (ollama list): lab-backbone-autogen, lab-backbone, qwen2.5:32b-instruct,
+# llama3.1:8b, nomic-embed-text. Do not reference tags here until `ollama pull` / `ollama create`.
 
 models:
-  # --- coding primary (tool-capable) ---------------------------------------
-  - name: Qwen 3 Coder
+  # --- agent / coding primary (tool-capable, 8k ctx — stays mostly on GPU) -----
+  - name: Lab backbone autogen
     provider: ollama
-    model: qwen3-coder:latest
+    model: lab-backbone-autogen:latest
     apiBase: http://127.0.0.1:11434
     capabilities:
       - tool_use
@@ -19,9 +22,9 @@ models:
       - apply
       - autocomplete
     defaultCompletionOptions:
-      contextLength: 32768
+      contextLength: 8192
 
-  # --- fast tool-use chat ---------------------------------------------------
+  # --- fast tool-use chat (lightweight, 100% GPU on 32 GB cards) --------------
   - name: Llama 3.1 8B
     provider: ollama
     model: llama3.1:8b
@@ -33,10 +36,10 @@ models:
       - edit
       - apply
 
-  # --- heavy reasoning ------------------------------------------------------
-  - name: Qwen 3.5 27B
+  # --- heavy reasoning (32B; large KV — may spill CPU if context is high) -----
+  - name: Qwen 2.5 32B instruct
     provider: ollama
-    model: qwen3.5:27b
+    model: qwen2.5:32b-instruct
     apiBase: http://127.0.0.1:11434
     capabilities:
       - tool_use
@@ -44,13 +47,17 @@ models:
       - chat
       - edit
 
-  - name: DeepSeek R1 32B
+  - name: Lab backbone 32k
     provider: ollama
-    model: deepseek-r1:32b
+    model: lab-backbone:latest
     apiBase: http://127.0.0.1:11434
+    capabilities:
+      - tool_use
     roles:
       - chat
       - edit
+    defaultCompletionOptions:
+      contextLength: 32768
 
   # --- embeddings -----------------------------------------------------------
   - name: Nomic Embed

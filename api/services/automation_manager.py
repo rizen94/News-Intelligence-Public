@@ -4559,6 +4559,18 @@ class AutomationManager:
             finally:
                 conn.close()
             logger.info(f"Data cleanup: deleted {deleted_count} old articles")
+            if deleted_count > 0:
+                try:
+                    from services.intelligence_cleanup_controller import IntelligenceCleanupController
+
+                    bridges = IntelligenceCleanupController().prune_stale_article_to_context_bridges()
+                    if bridges:
+                        logger.info(
+                            "Data cleanup: pruned %s stale article_to_context bridge(s)",
+                            bridges,
+                        )
+                except Exception as bridge_err:
+                    logger.warning(f"Data cleanup (article bridges): {bridge_err}")
         except Exception as e:
             logger.warning(f"Data cleanup (articles): {e}")
 
@@ -5283,6 +5295,26 @@ class AutomationManager:
                             domain,
                             result["claims_verified"],
                         )
+                        try:
+                            from services.versioned_facts_lifecycle_service import (
+                                writeback_verification_batch,
+                            )
+
+                            wb = writeback_verification_batch(
+                                result.get("results") or []
+                            )
+                            if wb.get("facts_updated"):
+                                logger.info(
+                                    "Fact verification writeback [%s]: %s versioned_facts updated",
+                                    domain,
+                                    wb["facts_updated"],
+                                )
+                        except Exception as wb_err:
+                            logger.debug(
+                                "Fact verification writeback skipped [%s]: %s",
+                                domain,
+                                wb_err,
+                            )
                 except Exception as e:
                     logger.debug("Fact verification failed for %s: %s", domain, e)
         except Exception as e:

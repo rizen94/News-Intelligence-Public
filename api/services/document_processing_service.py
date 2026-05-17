@@ -65,6 +65,17 @@ Text:
 {text}"""
 
 
+def _strip_null_chars(value: Any) -> Any:
+    """Recursively remove NUL characters that PostgreSQL cannot store in text/jsonb."""
+    if isinstance(value, str):
+        return value.replace("\x00", "")
+    if isinstance(value, list):
+        return [_strip_null_chars(v) for v in value]
+    if isinstance(value, dict):
+        return {k: _strip_null_chars(v) for k, v in value.items()}
+    return value
+
+
 # ---------------------------------------------------------------------------
 # Permanent-failure policy (download HTTP details live in document_download_service)
 # ---------------------------------------------------------------------------
@@ -518,18 +529,21 @@ def process_document(
                 params: list[Any] = []
 
                 if extracted_sections is not None:
+                    extracted_sections = _strip_null_chars(extracted_sections)
                     updates.append("extracted_sections = %s")
                     params.append(json.dumps(extracted_sections))
                 if key_findings is not None:
+                    key_findings = _strip_null_chars(key_findings)
                     updates.append("key_findings = %s")
                     params.append(json.dumps(key_findings))
                 if entities_mentioned is not None:
+                    entities_mentioned = _strip_null_chars(entities_mentioned)
                     updates.append("entities_mentioned = %s")
                     params.append(json.dumps(entities_mentioned))
 
                 # Store processing metadata
                 updates.append("metadata = COALESCE(metadata, '{}') || %s")
-                params.append(json.dumps({"processing": processing_metadata}))
+                params.append(json.dumps({"processing": _strip_null_chars(processing_metadata)}))
 
                 if provenance_file_hash is not None:
                     updates.append("file_hash = %s")
@@ -595,11 +609,19 @@ def process_document(
                     doc_domain = "documents"
                 sections_list = extracted_sections or []
                 doc_title = (title or "Document")[:500]
+                cur.execute(
+                    """
+                    DELETE FROM intelligence.contexts
+                    WHERE source_type = 'pdf_section'
+                      AND metadata->>'document_id' = %s
+                    """,
+                    (str(document_id),),
+                )
                 for idx, sec in enumerate(sections_list):
                     if not isinstance(sec, dict):
                         continue
-                    sec_title = (sec.get("title") or f"Section {idx + 1}")[:2000]
-                    sec_content = (sec.get("content") or "")[:500000]
+                    sec_title = _strip_null_chars((sec.get("title") or f"Section {idx + 1}")[:2000])
+                    sec_content = _strip_null_chars((sec.get("content") or "")[:500000])
                     if not sec_content.strip():
                         continue
                     cur.execute(

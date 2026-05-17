@@ -342,6 +342,7 @@ def sync_domain_articles_to_contexts(domain_key: str, limit: int = 100) -> int:
                 content = (content or "")[:500000]
                 raw_content = content
                 try:
+                    cur.execute("SAVEPOINT context_sync_article")
                     cur.execute(
                         """
                         INSERT INTO intelligence.contexts
@@ -371,9 +372,14 @@ def sync_domain_articles_to_contexts(domain_key: str, limit: int = 100) -> int:
                         """,
                         (context_id, domain_key, article_id),
                     )
+                    cur.execute("RELEASE SAVEPOINT context_sync_article")
                     created += 1
                     link_context_to_article_entities(context_id, domain_key, article_id)
                 except Exception as e:
+                    try:
+                        cur.execute("ROLLBACK TO SAVEPOINT context_sync_article")
+                    except Exception:
+                        pass
                     logger.debug(f"Context sync skip article {article_id}: {e}")
                     continue
 

@@ -45,6 +45,7 @@ Context for AI assistants. Use project terminology consistently.
 | **Claim subject gaps** (research list for unpromoted claim subjects) | `GET/POST /api/context_centric/claim_subject_gaps/...`, **`POST .../bulk_ignore`**, `api/scripts/claim_subject_gap_bulk_ignore.py`, `api/services/claim_subject_gap_service.py`, migration **`198_claim_subject_gap_catalog.sql`**; automation **`claim_subject_gap_refresh`** / **`extracted_claims_dedupe`** (`context_centric.yaml`); dedupe CLI **`scripts/merge_duplicate_extracted_claims.py`** |
 | **Curated entity seed** (bulk canonicals + profiles for major actors) | `api/config/seed_world_entities.yaml`, `api/scripts/seed_world_entities_from_yaml.py`, `api/services/entity_seed_catalog_service.py` |
 | **External entity seeds** (REST Countries, Wikidata SPARQL, CSV, DB frequency pass) | `docs/EXTERNAL_ENTITY_SEEDS.md`, `api/scripts/restcountries_seed.py`, `wikidata_sparql_seed.py`, `seed_entities_from_csv.py`, `second_pass_frequent_subjects.py` |
+| **MemPalace operator drawers** (pipeline handoff, not mined file corpus) | Wing **`News Intelligence`**, rooms: `pipeline_handoff`, `context_hygiene`, `lean_storage`, `fact_lifecycle`, `audit_baseline` — search via MemPalace MCP `mempalace_search` / `mempalace_list_drawers` |
 
 ---
 
