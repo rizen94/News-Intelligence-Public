@@ -21,7 +21,7 @@ echo "✅ Cache cleared"
 
 # Start API server with simple method
 echo "🚀 Starting API server..."
-cd "/home/pete/Documents/projects/Projects/News Intelligence"
+cd "/home/pete/Documents/projects/News Intelligence"
 source .venv/bin/activate
 cd api
 

@@ -1,6 +1,8 @@
 # Domain extension template
 
-**Concept:** One **onboarding YAML** per additional silo (`api/config/domains/{domain_key}.yaml`) plus a **mechanical path**: SQL migration, [`api/scripts/provision_domain.py`](../api/scripts/provision_domain.py), and verification. Once live, that silo is **first-class** — same routes and pipeline as the three built-ins. The web app discovers domains from **`GET /api/system_monitoring/registry_domains`** (backed by [`domain_registry`](../api/shared/domain_registry.py)); built-ins **politics**, **finance**, **science-tech** are always present and cannot be overridden by YAML.
+**Concept:** One **domain spec** (`api/config/domains/specs/{domain_key}.domain.json`) is the authoring source of truth. A generator emits **slim runtime YAML** (`api/config/domains/{domain_key}.yaml`) and **silo SQL** (`api/database/migrations/NNN_{schema}_domain_silo.sql`). Provision with [`api/scripts/provision_domain.py`](../api/scripts/provision_domain.py) (`--config` or `--spec`) and verify. Once live, that silo is **first-class** — same routes and pipeline as built-ins. The web app discovers domains from **`GET /api/system_monitoring/registry_domains`** (backed by [`domain_registry`](../api/shared/domain_registry.py)).
+
+**Do not hand-edit generated YAML** (header: `Generated from specs/...`). Edit the JSON spec and re-run **`generate_domain_artifacts.py`**.
 
 **Onboarding YAML is not Docker or Kubernetes.** These files are **application configuration** read by Python (**`get_domain_entries()`** re-reads YAML on each call). They do not start containers or sidecars. Think of a domain as an **isolated silo** (Postgres schema + declared metadata), not a separate runtime unit.
 
@@ -17,8 +19,10 @@
 
 **Operator entry points**
 
+- **Spec format & scripts:** [`api/config/domains/specs/README.md`](../api/config/domains/specs/README.md)
 - **Field rules & loader:** [`api/config/domains/README.md`](../api/config/domains/README.md)
-- **Example YAML:** [`api/config/domains/_template.example.yaml`](../api/config/domains/_template.example.yaml)
+- **Template spec:** [`api/config/domains/specs/_template.domain.json`](../api/config/domains/specs/_template.domain.json)
+- **Silo table contract:** [`api/shared/domain_silo_contract.py`](../api/shared/domain_silo_contract.py)
 - **Registry (Python):** [`api/shared/domain_registry.py`](../api/shared/domain_registry.py)
 - **Topic / synthesis bias (separate file):** [`api/config/domain_synthesis_config.yaml`](../api/config/domain_synthesis_config.yaml) — not created by migration; add a block when you want clustering / narrative bias for the new key (see [`domain_synthesis_config.py`](../api/services/domain_synthesis_config.py)).
 
@@ -73,14 +77,14 @@ print('OK:', p)
 
 ## Order of operations (high level)
 
-1. Copy `_template.example.yaml` → `{domain_key}.yaml`, set **`is_active: false`**.
-2. Run the YAML validation snippet above.
-3. **Author a SQL migration** (active dir: `api/database/migrations/`) modeled on **`180_legal_domain_silo.sql`**: `INSERT` into `public.domains` / `public.domain_metadata` (`ON CONFLICT DO NOTHING`), `CREATE SCHEMA`, `create_domain_table('<schema>', '<table>', 'science_tech')` for each core table, `add_domain_foreign_keys` / `create_domain_indexes` / `create_domain_triggers`, then **manual FK fixes** where `LIKE` does not copy references (e.g. `article_entities` → `articles` / `entity_canonical`), plus any table not covered by the generic helpers (e.g. `story_entity_index`). Prefer **looping over `public.domains`** in *future* migrations that alter every silo — avoid hardcoding `legal.*` only when the change applies to all domains (see migration `177_*` style).
+1. Copy **`specs/_template.domain.json`** → **`specs/{domain_key}.domain.json`**, set **`is_active: false`**, fill RSS feeds and metadata.
+2. **`validate_domain_spec.py --spec ...`**
+3. **`generate_domain_artifacts.py --spec ... --migration-number NNN --force`** → slim YAML + SQL (includes **`article_topic_clusters`** by default).
 4. Apply the migration (your usual runner / DBA process), then register it in **`public.applied_migrations`** if your ops use the ledger ([`register_applied_migration.py`](../api/scripts/register_applied_migration.py)).
-5. Run **`provision_domain.py`** with **`--config`**, **`--sql`**, and **`--verify-cmd`** (see script docstring). Order inside the script: **apply SQL → commit → RSS seed → commit → verify**. **`data_sources.rss.seed_feed_urls`** (list of URL strings or `{feed_name, feed_url, fetch_interval_seconds?}` objects) is inserted into **`{schema_name}.rss_feeds`** unless you pass **`--no-seed-rss`** or **`--skip-rss-seed`**. Optional **`data_sources.rss.seed_feed_category`** sets **`rss_feeds.category`** (required NOT NULL on silo tables). For an already-provisioned silo, use **`api/scripts/seed_domain_rss_from_yaml.py`**.
-6. On success: set **`is_active: true`** in YAML; **`provision_domain.py`** activates **`public.domains`** by default; add **`domain_synthesis_config.yaml`** block if needed.
-7. **Restart** only if a long-lived process still caches domains at import (see README *Process restart*); RSS and most iterators read YAML each run.
-8. Confirm **`GET /api/system_monitoring/registry_domains`** lists the key; run your grep pass from the checklist below for any remaining literals.
+5. Run **`provision_domain.py`** with **`--spec`** or **`--config`**, **`--sql`**, and **`--verify-cmd`**. Order inside the script: **apply SQL → commit → RSS seed → commit → verify**. RSS URLs in the spec map to **`{schema_name}.rss_feeds`** unless **`--no-seed-rss`**. Backfill: **`seed_domain_rss_from_yaml.py`**.
+6. **`verify_domain_provision.py --domain-key ...`**; **`verify_domain_spec_parity.py --all`** after regenerating YAML.
+7. On success: set **`is_active: true`** in the spec, re-generate YAML; **`provision_domain.py`** activates **`public.domains`** by default; add **`domain_synthesis_config.yaml`** block if needed.
+8. **`ensure_domain_silo_alignment.py`** on each DB host; confirm **`GET /api/system_monitoring/registry_domains`**; grep for hardcoded domain tuples (see checklist below).
 
 ### Registry vs `public.domains`
 

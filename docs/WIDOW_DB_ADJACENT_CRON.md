@@ -1,14 +1,18 @@
-# Widow: DB-adjacent cron (no full API on Widow)
+# Widow: DB-adjacent cron
 
-**Goal:** Keep **AutomationManager only on the main GPU machine** (single scheduler). Run **RSS** and **light, SQL-heavy sync** next to PostgreSQL on **Widow** so the main host spends less time on collection and context bookkeeping.
+**Goal:** Run **light, SQL-heavy sync** next to PostgreSQL on **Widow**. **AutomationManager runs in the Widow API** (`news-intelligence-api-public.service`) — use `AUTOMATION_DISABLED_SCHEDULES` so cron and AutomationManager do not duplicate work.
 
-**How processing flows:** `collect_rss_feeds` inserts rows into domain **`articles`** tables. Downstream work (enrichment, entity extraction, LLM, topic clustering) is still driven by **AutomationManager on the main PC**, which reads **database state** — there is no separate “RSS queue” into AutomationManager. Skipping RSS on the main host only removes duplicate fetching; new rows are still picked up by existing phases. The **`content_enrichment`** scheduled task (plus the enrichment loop inside **`collection_cycle`**) drains pending full-text fetches on a **5-minute** cadence so Widow-ingested articles are not stuck waiting only for **`collection_cycle`** (which can be throttled when downstream backlog is high).
+**Boot / systemd:** [WIDOW_BOOT_RESILIENCE.md](WIDOW_BOOT_RESILIENCE.md)
+
+**How processing flows:** `collect_rss_feeds` inserts rows into domain **`articles`** tables. Downstream work (enrichment, entity extraction, LLM, topic clustering) is driven by **AutomationManager** in the Widow API process, which reads **database state**. The **`content_enrichment`** scheduled task drains pending full-text fetches on a **5-minute** cadence.
+
+**Full operator checklist:** [PIPELINE_OPERATIONS_WIDOW.md](PIPELINE_OPERATIONS_WIDOW.md)
 
 ---
 
-## 1. Main GPU host (API + AutomationManager)
+## 1. Widow API `.env` (AutomationManager)
 
-Add to project-root **`.env`** (or the environment of the process that runs uvicorn):
+Add to **`/opt/news-intelligence/.env`** (systemd `news-intelligence-api-public`):
 
 ```bash
 # RSS runs on Widow (systemd secondary and/or cron --rss); do not fetch feeds every collection_cycle here
@@ -18,15 +22,15 @@ AUTOMATION_SKIP_RSS_IN_COLLECTION_CYCLE=true
 AUTOMATION_DISABLED_SCHEDULES=context_sync,entity_profile_sync,pending_db_flush
 ```
 
-Restart the API after changing env. `AUTOMATION_DISABLED_SCHEDULES` turns off those schedules **and** removes them from other tasks’ `depends_on` so dependents (e.g. claim extraction) still run.
+Restart the API after changing env: `sudo systemctl restart news-intelligence-api-public`.
 
 ---
 
 ## 2. Widow: RSS
 
-**Option A (default):** Keep **`newsplatform-secondary.service`** — RSS every 10 minutes, no API.
+**Option A (default):** Keep **`newsplatform-secondary.service`** — RSS every 10 minutes when the operating schedule allows (weekday 07:00–16:00 and nightly 00:00–07:00 local; see **`api/services/pipeline_schedule_service.py`**). During **quiet** windows the worker logs a skip and sleeps — no separate cron time math is required.
 
-**Option B:** Stop the secondary service and run **`run_widow_db_adjacent.py --rss`** from cron instead. **Do not** run both on the same interval unless you want duplicate collection attempts (feeds should dedupe, but it wastes work).
+**Option B:** Stop the secondary service and run **`run_widow_db_adjacent.py --rss`** from cron instead. **Do not** run both on the same interval unless you want duplicate collection attempts (feeds should dedupe, but it wastes work). The `--rss`, `--context-sync`, and `--entity-profile-sync` flags honor the same schedule gates; **`--pending-db-flush`** always runs.
 
 ### New domain silos (medicine, artificial-intelligence, etc.)
 

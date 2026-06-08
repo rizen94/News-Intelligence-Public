@@ -1,51 +1,37 @@
-# Politics & finance domain cutover (schemas ``politics_2`` / ``finance_2``)
+# Politics & finance domain cutover (completed)
 
-Canonical **URL keys** are **`politics`** and **`finance`**. Postgres **schemas** stay **`politics_2`** and **`finance_2`** (migration 201) so we do not have to move rows into the legacy `politics` / `finance` schemas.
+**Status (migrations 219 / 227):** URL keys **`politics`** and **`finance`** use Postgres schemas **`politics`** and **`finance`** — no `politics_2`, `finance_2`, `politics-2`, or `finance-2`.
 
-## Ordered steps
+## Historical context
 
-### 1. Backup
+Migrations **201**–**211** introduced template silos (`politics_2` / `finance_2`) while retiring legacy keys. Migration **219** drops empty legacy schemas and renames `*_2` → canonical names when the fork silo was authoritative.
 
-Full database backup first.
+**Widow / homelab (2026):** Live data remained in **`politics`** / **`finance`**; **`227_drop_politics_finance_2_stubs.sql`** updates `public.domains` and drops the partial `politics_2` / `finance_2` forks without destroying primary silos.
 
-### 2. Copy silo data (no data loss)
+## Operator steps
 
-Use `api/scripts/copy_domain_silo_table_data.py` with a `--target-domain-key` that matches **`public.domains`** *at the time you run it*:
+### Path A — fork silo was canonical (219)
 
-- **Before migration 211:** registry still has `politics-2` / `finance-2` → use `--target-domain-key politics-2` (and `finance-2` for finance).
-- **After migration 211:** keys are `politics` / `finance` → use those.
+1. Full database backup.
+2. `PYTHONPATH=api uv run python api/scripts/audit_politics_finance_schemas.py`
+3. If legacy `politics` / `finance` still have rows, copy into `politics_2` / `finance_2` with `copy_domain_silo_table_data.py`, then re-audit.
+4. `PYTHONPATH=api uv run python api/scripts/run_migration_219.py`
 
-Typical first-time cutover (pre-211):
+### Path B — primary silo was canonical (227, Widow)
 
-```bash
-cd api
-PYTHONPATH=. uv run python scripts/copy_domain_silo_table_data.py \
-  --source-schema politics --target-schema politics_2 --target-domain-key politics-2 --dry-run
-# then without --dry-run
-```
+1. Full database backup.
+2. Audit shows row counts in `politics` / `finance` and stubs in `politics_2` / `finance_2`.
+3. `PYTHONPATH=api uv run python api/scripts/run_migration_227.py`
+4. Register in `public.applied_migrations`.
 
-Repeat for `finance` → `finance_2` (apply migration **206** first if you need finance-only tables on `finance_2`).
+### After either path
 
-### 3. RSS / ingest
+5. Restart API + workers; `verify_domain_provision.py --domain-key politics` and `finance`.
+6. `check_domain_suffix_cruft.py` should pass.
 
-Copy or seed `rss_feeds` in `politics_2` / `finance_2`, set `RSS_INGEST_EXCLUDE_DOMAIN_KEYS` to avoid duplicate collection into legacy + template schemas.
+## Config
 
-### 4. Migration **210**
+- Domain specs: `api/config/domains/specs/politics.domain.json`, `finance.domain.json` (`schema_name` matches `domain_key` mapping).
+- `POLITICS_PG_CONTENT_DOMAIN_KEY` / `FINANCE_PG_CONTENT_DOMAIN_KEY` default to **`politics`** / **`finance`**.
 
-`api/database/migrations/210_retire_legacy_domain_keys.sql` — repoints shared `domain_key` strings off legacy `politics` / `finance` / `science-tech` and deactivates those three `public.domains` rows.
-
-### 5. Migration **211**
-
-`api/database/migrations/211_rename_template_domain_keys_to_politics_finance.sql` — removes inactive stubs, renames `politics-2` → `politics` and `finance-2` → `finance`, updates `intelligence.*` references.
-
-Repo YAML: `api/config/domains/politics.yaml`, `finance.yaml` (`domain_key` `politics` / `finance`, `schema_name` `politics_2` / `finance_2`).
-
-### 6. Env defaults (after 211)
-
-`POLITICS_PG_CONTENT_DOMAIN_KEY` defaults to **`politics`**; `FINANCE_PG_CONTENT_DOMAIN_KEY` to **`finance`**.
-
-### 7. Restart API + web
-
-Reload registry (DB + merged YAML).
-
-See also `docs/LEGACY_DOMAIN_RETIREMENT.md` for science-tech and migration 210 context.
+See also [`DOMAIN_EXTENSION_TEMPLATE.md`](DOMAIN_EXTENSION_TEMPLATE.md) and [`LEGACY_DOMAIN_RETIREMENT.md`](LEGACY_DOMAIN_RETIREMENT.md).

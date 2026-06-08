@@ -66,7 +66,7 @@ ollama:
 
 ```bash
 # Navigate to project directory
-cd "/home/pete/Documents/projects/Projects/News Intelligence"
+cd "/home/pete/Documents/projects/News Intelligence"
 
 # Stop current system
 docker-compose down
@@ -111,7 +111,7 @@ echo "✅ NVIDIA Container Toolkit installed!"
 Then enable GPU in docker-compose:
 
 ```bash
-cd "/home/pete/Documents/projects/Projects/News Intelligence"
+cd "/home/pete/Documents/projects/News Intelligence"
 docker-compose down
 sed -i "/# GPU Configuration/,/# End GPU Configuration/s/^#//" docker-compose.yml
 docker-compose up -d

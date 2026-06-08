@@ -12,8 +12,8 @@ Pick one pattern; the app does not require a specific provider.
 
 | Option | When to use |
 |--------|-------------|
+| **Home + PopOS Caddy front door** (**current**) | Router **80/443 → PopOS**; Caddy routes `news-intelligence-ag.duckdns.org` → Widow nginx. See [WIDOW_PUBLIC_STACK.md](WIDOW_PUBLIC_STACK.md). |
 | **VPS / always-on host with public IP** | Stable `A`/`AAAA` DNS to that IP; simplest mental model. |
-| **Home + dynamic DNS** | **Router** = main entry (WAN **80/443** → LAN proxy host). DDNS on the **router** if supported; else **[DYNAMIC_DNS_WIDOW.md](DYNAMIC_DNS_WIDOW.md)** fallback script on Widow. Do not expose DB/Ollama. |
 | **Cloudflare Tunnel (or similar)** | No inbound port forwarding; origin still uses TLS or terminates at Cloudflare. |
 
 Use a **single public hostname** (e.g. `news.example.com`) for the UI and API (same origin).
@@ -24,19 +24,19 @@ Use a **single public hostname** (e.g. `news.example.com`) for the UI and API (s
 
 Serve the built SPA from disk and proxy `/api/` to FastAPI. Vite outputs to **`web/dist`** — point `root` / volume mount there.
 
-### nginx
+### nginx (Widow LAN backend)
 
-- Terminate TLS (e.g. **certbot** with the nginx plugin, or manual certs).
-- **HTTP → HTTPS** redirect on port 80.
+Widow nginx serves the SPA and proxies `/api/` to local uvicorn. **Public TLS** is on **PopOS Caddy** — see [WIDOW_PUBLIC_STACK.md](WIDOW_PUBLIC_STACK.md).
+
 - **`try_files`** for SPA: `$uri $uri/ /index.html`.
-- **`location /api/`** → `proxy_pass` to the API (e.g. `http://127.0.0.1:8000/api/`).
+- **`location /api/`** → `proxy_pass` to `http://127.0.0.1:8000/api/`.
 - Set `proxy_set_header Host $host;` and `X-Forwarded-Proto` so `NEWS_INTEL_TRUSTED_HOSTS` matches the public hostname.
 
-See **[nginx/public-demo-site.conf.example](../nginx/public-demo-site.conf.example)** for a starting server block.
+See **[nginx/public-demo-site.conf.example](../nginx/public-demo-site.conf.example)** and **[nginx/widow-public-demo-site.conf.template](../nginx/widow-public-demo-site.conf.template)**.
 
-### Caddy
+### Caddy (PopOS WAN entry — production)
 
-Automatic Let’s Encrypt is typical. See **[Caddyfile.example](../Caddyfile.example)** at the repo root.
+**Let's Encrypt** for `news-intelligence-ag.duckdns.org` is managed by **`ai-lab-caddy`** on PopOS. Config: **`HomeLab-AI-Stack/ai-lab/config/caddy/Caddyfile`**. See HomeLab [PUBLIC_HTTPS_ROUTING.md](../../HomeLab-AI-Stack/docs/PUBLIC_HTTPS_ROUTING.md).
 
 ### Bind API on localhost (recommended)
 
@@ -77,11 +77,31 @@ Server middleware blocks **PUT**, **PATCH**, **DELETE**, and **POST** (except op
 | `NEWS_INTEL_DEMO_READ_ONLY` | `true` / `1` — enable demo rules when Host matches (see below). |
 | `NEWS_INTEL_DEMO_HOSTS` | Comma-separated hostnames **without port** (e.g. `demo.example.com`). Must match `Host` from the proxy. |
 | `NEWS_INTEL_DEMO_READ_ONLY_ALL` | If `true` and `NEWS_INTEL_DEMO_HOSTS` is empty, apply read-only to **all** hosts (single-purpose demo server only). |
-| `NEWS_INTEL_DEMO_POST_ALLOWLIST` | Optional comma-separated **path prefixes** allowing POST in demo (default: none). Prefer empty for public beta. |
+| `NEWS_INTEL_DEMO_POST_ALLOWLIST` | Optional comma-separated **path prefixes** allowing POST in demo (default: none). If **`NEWS_INTEL_PUBLIC_WEB_AUTH`** is on and demo read-only is on, include **`/api/public/auth/login`** and **`/api/public/auth/logout`** so admins can sign in. |
 
 Implementation: `api/shared/middleware/demo_readonly.py`, registered in `api/main.py`.
 
-**Discovery for the SPA:** `GET /api/public/demo_config` returns `{ success, data: { readonly, hint } }` so the UI can hide mutations without a separate build flag.
+**Discovery for the SPA:** `GET /api/public/demo_config` returns `{ success, data: { readonly, auth_enabled, role, authenticated, username, hint } }` so the UI can hide mutations and ops surfaces without a separate build flag.
+
+---
+
+## 5b. Guest vs admin session auth (optional)
+
+When **`NEWS_INTEL_PUBLIC_WEB_AUTH=true`**, unauthenticated visitors default to **guest** (unless **`NEWS_INTEL_ALLOW_ANONYMOUS_GUEST=false`**). Guests cannot call **`/api/system_monitoring/*`**, **`/api/orchestrator/*`**, **`/api/user_management/*`**, or use mutating methods except **`POST /api/public/auth/login`** and **`POST /api/public/auth/logout`**. An **admin** session (JWT in an HTTP-only cookie after login) has full API access, still subject to demo read-only host rules.
+
+| Variable | Effect |
+|----------|--------|
+| `NEWS_INTEL_PUBLIC_WEB_AUTH` | `true` / `1` — enable guest/admin RBAC + `/api/public/auth/*`. |
+| `NEWS_INTEL_JWT_SECRET` | HS256 signing secret for the session cookie (falls back to **`JWT_SECRET`** if unset). Required when auth is on — the API refuses to start without it. |
+| `NEWS_INTEL_ALLOW_ANONYMOUS_GUEST` | Default **true** — no login required for guest read UX. **false** forces login for API use (except auth bootstrap paths). |
+| `NEWS_INTEL_AUTH_COOKIE_NAME` | Cookie name (default **`ni_session`**). |
+| `NEWS_INTEL_AUTH_COOKIE_MAX_AGE_SECONDS` | Session lifetime (default **604800**). |
+| `NEWS_INTEL_AUTH_COOKIE_SECURE` | Default **true** in production. |
+| `NEWS_INTEL_AUTH_COOKIE_SAMESITE` | **`lax`** (default), **`strict`**, or **`none`**. |
+
+**Database:** apply migration **`217`** (`api/scripts/run_migration_217.py`), then create users with **`api/scripts/seed_public_web_auth_users.py`** and **`NEWS_INTEL_BOOTSTRAP_ADMIN_PASSWORD`** (optional guest password env). Roles live in **`public.user_profiles.roles`** JSONB (`["admin"]` or `["guest"]`).
+
+Implementation: `api/domains/public_auth/routes/auth.py`, `api/shared/middleware/public_web_auth.py`.
 
 ---
 
@@ -110,6 +130,6 @@ RSS, automation, and refinement **continue on the server**; the public site only
 
 ---
 
-## 9. Optional edge auth (not v1)
+## 9. Proxy-level extras
 
-HTTP Basic Auth, Cloudflare Access, or IP allowlists are **out of scope** for the first public beta; add at the reverse proxy if abuse risk increases.
+HTTP Basic Auth, Cloudflare Access, or IP allowlists are optional **defense in depth** on top of in-app guest/admin auth (**§5b**) if abuse risk increases.

@@ -12,8 +12,8 @@
 |------|--------|
 | **Internet entry point** | **Router** — only it has your public (WAN) IP on the outside. |
 | **DDNS updates** | Prefer **router firmware** if it supports DuckDNS (or your provider). One place, no cron elsewhere. |
-| **Port forwarding** | **Router:** WAN **TCP 80** and **443** → LAN IP of the host running **nginx/Caddy** (not necessarily Widow). |
-| **TLS + SPA + `/api` proxy** | That internal host (often Widow or your app server). |
+| **Port forwarding** | **Router:** WAN **TCP 80** and **443** → LAN IP of **PopOS** (`192.168.93.99`) where **Caddy** listens. |
+| **TLS + SPA + `/api` proxy** | **PopOS Caddy** terminates public TLS; **`news-intelligence-ag.duckdns.org`** → Widow nginx. **Widow** serves SPA + local `/api` on LAN. |
 | **PostgreSQL / Ollama** | **Not** forwarded; LAN-only. |
 
 Visitors: `https://mydemo.duckdns.org` → DNS → your **WAN IP** → **router** → forwarded to **proxy host:443**.
@@ -33,10 +33,10 @@ Visitors: `https://mydemo.duckdns.org` → DNS → your **WAN IP** → **router*
 
    | WAN / external | Protocol | LAN IP | LAN port |
    |----------------|----------|--------|----------|
-   | **80** | TCP | IP of **proxy host** | **80** |
-   | **443** | TCP | same | **443** |
+   | **80** | TCP | IP of **PopOS** (Caddy) | **80** |
+   | **443** | TCP | IP of **PopOS** (Caddy) | **443** |
 
-   Use the **LAN** address of the machine where Caddy/nginx listens (e.g. `192.168.93.x`), not the router’s own LAN IP unless the proxy literally runs on the router (unusual).
+   Use **`192.168.93.99`** (PopOS), not Widow — Caddy proxies to Widow for NI. Open WebUI and NI share this entry point via hostname routing ([WIDOW_PUBLIC_STACK.md](WIDOW_PUBLIC_STACK.md)).
 
 3. **Do not** forward **5432**, **11434**, or **8000** to the internet for this pattern.
 
@@ -83,18 +83,22 @@ TLS (Caddy/certbot) on the **proxy host** once DNS points to your WAN IP and **8
 | HTTPS timeout | Port-forward targets wrong LAN IP; proxy not listening on 443; ISP blocking 80/443 (rare). |
 | Double DDNS conflict | Disable one of router DDNS vs Widow cron. |
 
-## 6. HTTPS on Widow (nginx)
+TLS (Let's Encrypt via **PopOS Caddy**) on the **WAN entry host** once DNS points to your WAN IP and **80/443** reach PopOS. Widow nginx uses an internal cert for the Caddy→Widow hop; public browsers trust Caddy's certificate.
 
-Install **nginx** on the machine that receives **80/443** from the router (often Widow):
+## 6. HTTPS — PopOS Caddy + Widow nginx (current)
+
+**Public TLS:** `ai-lab-caddy` on PopOS — see HomeLab [PUBLIC_HTTPS_ROUTING.md](../../HomeLab-AI-Stack/docs/PUBLIC_HTTPS_ROUTING.md).
+
+**Widow backend (LAN):** nginx serves **`web/dist`** and proxies **`/api/`** to **`127.0.0.1:8000`**. Optional initial setup:
 
 ```bash
-# On Widow, from repo (or copy template + script), set your real DuckDNS hostname:
-export PUBLIC_DEMO_HOSTNAME=mydemo.duckdns.org
+# On Widow — LAN backend only (public cert is on PopOS Caddy)
+export PUBLIC_DEMO_HOSTNAME=news-intelligence-ag.duckdns.org
+export PUBLIC_API_UPSTREAM=127.0.0.1:8000
 sudo bash ./scripts/widow_setup_public_nginx.sh
+./scripts/deploy_public_demo_to_widow.sh
 ```
 
-This configures **HTTP → HTTPS redirect** (port 80 is not used to serve the app), **ACME** path for Let’s Encrypt, **self-signed** TLS on 443 until you run **certbot** after the router and DNS work. Deploy **`web/dist`** to `/var/www/news-intelligence/web/dist`. Run the **FastAPI** process on **127.0.0.1:8000** on the same host so `/api/` proxies correctly.
-
-**Replace the placeholder:** If you used a different `PUBLIC_DEMO_HOSTNAME` than your real DuckDNS name, re-run the script with the correct value or edit `/etc/nginx/sites-available/news-intelligence-public` and `sudo nginx -t && sudo systemctl reload nginx`.
+**Do not** run certbot on Widow for the public hostname unless Caddy is removed from the WAN path.
 
 **Related:** [PUBLIC_DEPLOYMENT.md](PUBLIC_DEPLOYMENT.md) · [WIDOW_DB_ADJACENT_CRON.md](WIDOW_DB_ADJACENT_CRON.md) · [SECURITY_OPERATIONS.md](SECURITY_OPERATIONS.md)

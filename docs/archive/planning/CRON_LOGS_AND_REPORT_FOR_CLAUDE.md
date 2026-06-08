@@ -42,20 +42,20 @@ Replace existing News Intelligence entries with the following (paths quoted). Yo
 
 ```cron
 # News Intelligence - delete old pipeline_trace.log (7+ days)
-0 2 * * * find "/home/pete/Documents/projects/Projects/News Intelligence/logs" -name 'pipeline_trace.log*' -mtime +7 -delete
+0 2 * * * find "/home/pete/Documents/projects/News Intelligence/logs" -name 'pipeline_trace.log*' -mtime +7 -delete
 
 # News Intelligence Morning Data Pipeline - RSS + entity + topic extraction
-0 4 * * * "/home/pete/Documents/projects/Projects/News Intelligence/scripts/morning_data_pipeline.sh"
-0 5 * * * "/home/pete/Documents/projects/Projects/News Intelligence/scripts/morning_data_pipeline.sh"
-0 6 * * * "/home/pete/Documents/projects/Projects/News Intelligence/scripts/morning_data_pipeline.sh"
+0 4 * * * "/home/pete/Documents/projects/News Intelligence/scripts/morning_data_pipeline.sh"
+0 5 * * * "/home/pete/Documents/projects/News Intelligence/scripts/morning_data_pipeline.sh"
+0 6 * * * "/home/pete/Documents/projects/News Intelligence/scripts/morning_data_pipeline.sh"
 
 # News Intelligence Log Archive - 2x daily (6 AM, 6 PM)
-0 6 * * * cd "/home/pete/Documents/projects/Projects/News Intelligence" && "/home/pete/Documents/projects/Projects/News Intelligence/.venv/bin/python" scripts/log_archive_to_nas.py >> "/home/pete/logs/news_intelligence/log_archive.log" 2>&1
-0 18 * * * cd "/home/pete/Documents/projects/Projects/News Intelligence" && "/home/pete/Documents/projects/Projects/News Intelligence/.venv/bin/python" scripts/log_archive_to_nas.py >> "/home/pete/logs/news_intelligence/log_archive.log" 2>&1
+0 6 * * * cd "/home/pete/Documents/projects/News Intelligence" && "/home/pete/Documents/projects/News Intelligence/.venv/bin/python" scripts/log_archive_to_nas.py >> "/home/pete/logs/news_intelligence/log_archive.log" 2>&1
+0 18 * * * cd "/home/pete/Documents/projects/News Intelligence" && "/home/pete/Documents/projects/News Intelligence/.venv/bin/python" scripts/log_archive_to_nas.py >> "/home/pete/logs/news_intelligence/log_archive.log" 2>&1
 
 # News Intelligence RSS Collection - Twice daily with API health check (6 AM and 6 PM)
-0 6 * * * "/home/pete/Documents/projects/Projects/News Intelligence/scripts/rss_collection_with_health_check.sh" >> "/home/pete/logs/news_intelligence/rss_collection.log" 2>&1
-0 18 * * * "/home/pete/Documents/projects/Projects/News Intelligence/scripts/rss_collection_with_health_check.sh" >> "/home/pete/logs/news_intelligence/rss_collection.log" 2>&1
+0 6 * * * "/home/pete/Documents/projects/News Intelligence/scripts/rss_collection_with_health_check.sh" >> "/home/pete/logs/news_intelligence/rss_collection.log" 2>&1
+0 18 * * * "/home/pete/Documents/projects/News Intelligence/scripts/rss_collection_with_health_check.sh" >> "/home/pete/logs/news_intelligence/rss_collection.log" 2>&1
 ```
 
 To apply via scripts (recommended): run the four setup scripts above in order; they merge into existing crontab and remove old unquoted News Intelligence entries.
@@ -72,7 +72,7 @@ To apply via scripts (recommended): run the four setup scripts above in order; t
 | API server | `$PROJECT/logs/api_server.log` (if file logging enabled) | API stdout/stderr |
 | Pipeline traces | `$PROJECT/logs/pipeline_trace.log` | Pipeline trace output (if written) |
 
-`$PROJECT` = `/home/pete/Documents/projects/Projects/News Intelligence`
+`$PROJECT` = `/home/pete/Documents/projects/News Intelligence`
 
 View: `tail -f "/home/pete/logs/news_intelligence/rss_collection.log"` (adjust path as needed).
 
@@ -83,7 +83,7 @@ View: `tail -f "/home/pete/logs/news_intelligence/rss_collection.log"` (adjust p
 Run from project root (no full project venv needed; uses `.venv-report` if present):
 
 ```bash
-cd "/home/pete/Documents/projects/Projects/News Intelligence"
+cd "/home/pete/Documents/projects/News Intelligence"
 ./scripts/run_last_24h_report.sh
 ```
 

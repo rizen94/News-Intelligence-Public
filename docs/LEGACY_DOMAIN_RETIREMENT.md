@@ -4,12 +4,12 @@ The application registry is driven by **`public.domains`** (merged with `api/con
 
 ## Cutover sequence for politics & finance
 
-Use **`docs/DOMAIN_CUTOVER_POLITICS_FINANCE.md`**: copy data → migration **210** → migration **211** so URL keys become plain **`politics`** and **`finance`** while data stays in schemas **`politics_2`** and **`finance_2`**.
+See **`docs/DOMAIN_CUTOVER_POLITICS_FINANCE.md`**: migrations **210**–**211** repointed URL keys; migration **219** unified Postgres schemas to **`politics`** and **`finance`**.
 
-## Defaults (post–211 naming)
+## Defaults
 
-- `POLITICS_PG_CONTENT_DOMAIN_KEY` defaults to **`politics`** (schema `politics_2`).
-- `FINANCE_PG_CONTENT_DOMAIN_KEY` defaults to **`finance`** (schema `finance_2`).
+- `POLITICS_PG_CONTENT_DOMAIN_KEY` defaults to **`politics`** (schema **`politics`**).
+- `FINANCE_PG_CONTENT_DOMAIN_KEY` defaults to **`finance`** (schema **`finance`**).
 
 ## Science & technology (retired `science-tech` / `science_tech`)
 

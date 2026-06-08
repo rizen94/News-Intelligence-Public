@@ -1,16 +1,46 @@
 # Database backup (homelab)
 
-## Policy
+## Policy (Phase 0 — longitudinal intelligence)
+
+| Tier | Cadence | Retention | Location |
+|------|---------|-----------|----------|
+| **Hot rolling** | Daily (03:00) | Single latest file replaced each run | NAS `news_intel_latest.pgdump` |
+| **Weekly local** | Sunday | Keep **4** weekly files on separate disk | `BACKUP_WEEKLY_DIR` (default: `/opt/news-intelligence/backups/weekly`) |
+| **Monthly cold** | 1st of month | **12** months then prune | NAS `database-backup/monthly/` or off-site copy |
+
+**RPO:** ~24h for daily hot copy; weekly/monthly are disaster-recovery anchors.  
+**Not** WAL/PITR — appropriate for homelab; living corpus is irreplaceable once longitudinal facts accumulate.
+
+## Daily single-file (existing)
 
 | Item | Choice |
 |------|--------|
-| **Goal** | One cold copy on the NAS, minimal wasted space |
 | **Method** | Nightly `pg_dump` **custom format** (`-F custom`), **single file** replaced each run |
 | **File** | `news_intel_latest.pgdump` |
-| **RPO** | ~24 hours if cron runs daily (work committed *after* the dump started is not in the file) |
-| **Retention** | **No** stack of dated dumps; optional local fallback on Widow only if NAS unavailable |
+| **Script** | [`scripts/db_backup_single_latest.sh`](../scripts/db_backup_single_latest.sh) |
 
-This is **not** WAL archiving or point-in-time recovery—appropriate for a home server.
+## Weekly archive
+
+Use [`scripts/db_backup_weekly_retained.sh`](../scripts/db_backup_weekly_retained.sh) (Sunday cron):
+
+```bash
+# Example crontab (Widow, Sunday 04:00 ET)
+0 4 * * 0 pete /opt/news-intelligence/scripts/db_backup_weekly_retained.sh >> /opt/news-intelligence/logs/backup-weekly.log 2>&1
+```
+
+Env: `BACKUP_WEEKLY_DIR`, `BACKUP_WEEKLY_KEEP=4`
+
+## Monthly cold archive
+
+On the 1st of each month, copy the latest weekly (or run dedicated dump) to:
+
+`$NAS_BACKUP_PATH/monthly/news_intel_YYYY-MM.pgdump`
+
+Prune monthly files older than 12 months. Copy to off-site cold storage with:
+
+[`scripts/db_backup_cold_archive.sh`](../scripts/db_backup_cold_archive.sh) (`BACKUP_COLD_DIR` or `NAS_BACKUP_PATH/database-backup/cold`).
+
+## Restore (outline)
 
 ## NAS location
 

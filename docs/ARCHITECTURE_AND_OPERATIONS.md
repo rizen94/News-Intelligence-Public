@@ -1,36 +1,59 @@
 # News Intelligence — Architecture & Operations
 
 **Version:** v8.0 (stable)  
-**Last updated:** 2026-03-16
+**Last updated:** 2026-06-06
 
-**Related:** [SYSTEM_OVERVIEW.md](SYSTEM_OVERVIEW.md) (routes and UI map) · [DATA_FLOW_ARCHITECTURE.md](DATA_FLOW_ARCHITECTURE.md) (pipeline stages) · [SETUP_ENV_AND_RUNTIME.md](SETUP_ENV_AND_RUNTIME.md) · [SECURITY_OPERATIONS.md](SECURITY_OPERATIONS.md)
+**Related:** [PROJECT_STATUS.md](../PROJECT_STATUS.md) · [SYSTEM_OVERVIEW.md](SYSTEM_OVERVIEW.md) · [PIPELINE_AND_AUTOMATION.md](PIPELINE_AND_AUTOMATION.md) · [SETUP_ENV_AND_RUNTIME.md](SETUP_ENV_AND_RUNTIME.md) · [SECURITY_OPERATIONS.md](SECURITY_OPERATIONS.md)
 
 ---
 
-## Architecture Overview
+## Architecture overview (post-migration, June 2026)
 
-Three-machine setup:
+The full News Intelligence stack runs on **Widow**. PopOS hosts HomeLab only. See [PROJECT_BOUNDARIES.md](../../PROJECT_BOUNDARIES.md) for the NI vs HomeLab split.
 
 | Machine | IP | Role |
 |---------|-----|------|
-| **Primary** | <PRIMARY_HOST_IP> | API, ML, Ollama, Redis, Frontend |
-| **Widow** | <WIDOW_HOST_IP> | PostgreSQL, RSS worker, DB backups |
-| **NAS** | <NAS_HOST_IP> | Storage only (no PostgreSQL) |
+| **Widow** | `192.168.93.101` | Full NI stack: API, frontend, Postgres, automation, local Ollama (GTX 1080 8 GB) |
+| **PopOS** | `192.168.93.99` | HomeLab AI Stack; **Caddy** WAN `:80/:443`; RTX **5090** Ollama for 70B narrative finisher |
+| **NAS** | `192.168.93.100` | CIFS `/mnt/nas` — storage and backups only (no GPU) |
 
-### Data Flow
+### Public HTTPS (PopOS Caddy → Widow)
 
-- **Primary** runs the FastAPI app, connects to Widow’s database over LAN
-- **Widow** runs PostgreSQL and the RSS collector (systemd), backs up with **`scripts/db_backup_single_latest.sh`** to the NAS Data Lake share when mounted
-- **NAS** is used for archives/backups; no application logic. **DB backup policy:** one rolling `news_intel_latest.pgdump` (~24h RPO)—see [DATABASE_BACKUP.md](DATABASE_BACKUP.md)
+WAN **443** terminates on **PopOS Caddy** (`ai-lab-caddy`). Hostname `news-intelligence-ag.duckdns.org` proxies to **Widow nginx** (`192.168.93.101`); Open WebUI uses `legion-agent.duckdns.org` on the same Caddy instance. See [WIDOW_PUBLIC_STACK.md](WIDOW_PUBLIC_STACK.md).
+
+### Widow paths
+
+| Path | Role |
+|------|------|
+| `/home/pete/Documents/projects/News Intelligence` | Dev workspace (canonical) |
+| `/opt/news-intelligence` | Production runtime (API on `:8000`) |
+| `/home/pete/projects/News Intelligence` | Deprecated duplicate — do not use |
+
+### Data flow
+
+- **Widow** runs FastAPI, frontend, automation, and PostgreSQL locally (`localhost:5432/news_intel`)
+- **70B narrative finisher** routes to **PopOS** (`OLLAMA_POP_OS_HOST=http://192.168.93.99:11434`) — RTX 5090
+- **Public demo:** PopOS Caddy → Widow nginx → SPA + `/api/` (see [WIDOW_PUBLIC_STACK.md](WIDOW_PUBLIC_STACK.md))
+- **HomeLab** on PopOS reads NI data read-only via Postgres MCP (`NEWS_INTEL_DATABASE_URI` → Widow `:5432`)
 
 ---
 
-## Quick Start
+## Quick start (on Widow)
+
+**Production** — use systemd (survives reboot):
 
 ```bash
-./start_system.sh    # Start API, frontend, Redis
-./status_system.sh   # Check all services
-./stop_system.sh     # Stop API and frontend (keeps DB/Redis)
+sudo systemctl start news-intelligence.target
+/opt/news-intelligence/scripts/verify_widow_boot.sh
+```
+
+Install once: [WIDOW_BOOT_RESILIENCE.md](WIDOW_BOOT_RESILIENCE.md).
+
+**Dev only** — local frontend + manual processes (do **not** run alongside production API):
+
+```bash
+cd "/home/pete/Documents/projects/News Intelligence"
+./start_system.sh   # WARNING: spawns duplicate AutomationManager if API already running
 ```
 
 **URLs**
@@ -42,51 +65,53 @@ Three-machine setup:
 
 ---
 
-## Database Configuration
+## Database configuration
 
-**Primary config (Widow):**
+**Canonical (Widow, local):**
 
-- Host: <WIDOW_HOST_IP>
-- Port: 5432
-- Database: news_intel
-- User: newsapp
-- Password: in `.db_password_widow` or `.env` as `DB_PASSWORD`
+| Setting | Value |
+|---------|-------|
+| Host | `localhost` (on Widow) or `192.168.93.101` (from remote clients) |
+| Port | `5432` |
+| Database | `news_intel` |
+| User | `newsapp` |
+| Password | Widow `configs/.env` (`DB_PASSWORD`) or `.db_password_widow` |
 
-**Rollback to NAS (if needed):**
+**Code single source of truth:** `api/shared/database/connection.py`  
+**Schema:** `api/database/migrations/` — see [DATABASE.md](DATABASE.md)
 
-1. Start PostgreSQL on NAS (Package Center or `systemctl start postgresql`)
-2. In `.env`: `DB_HOST=localhost`, `DB_PORT=5433`, `DB_NAME=news_intelligence`, `DB_PASSWORD=newsapp_password`
+**Legacy emergency rollback (NAS tunnel only — do not use for normal ops):**
+
+1. Start PostgreSQL on NAS
+2. In `.env`: `DB_HOST=localhost`, `DB_PORT=5433`, `DB_NAME=news_intelligence` (legacy name)
 3. Run `./scripts/setup_nas_ssh_tunnel.sh`
 4. Restart app
 
 ---
 
-## Widow (Secondary)
-
-**Services**
+## Widow services
 
 - PostgreSQL 16 (system service)
 - RSS worker: `newsplatform-secondary.service` (every 10 min)
-- Backups: cron **03:00 daily** — single file `news_intel_latest.pgdump` under `/mnt/nas/Data Lake Storage/news-intelligence/database-backup/` (see [DATABASE_BACKUP.md](DATABASE_BACKUP.md))
+- DB backups: cron **03:00 daily** — `news_intel_latest.pgdump` under `/mnt/nas/Data Lake Storage/news-intelligence/database-backup/`
 
 **SSH**
 
 ```bash
-ssh widow   # or ssh user@<WIDOW_HOST_IP>
+ssh widow   # or ssh pete@192.168.93.101
 ```
 
-**Common commands**
+**Common commands (on Widow)**
 
 ```bash
-# On Widow
 sudo systemctl status newsplatform-secondary
 sudo systemctl status postgresql
-./scripts/db_backup_single_latest.sh   # Manual backup (policy: one NAS file)
+./scripts/db_backup_single_latest.sh
 ```
 
 ---
 
-## Key Scripts
+## Key scripts
 
 | Script | Purpose |
 |--------|---------|
@@ -94,7 +119,7 @@ sudo systemctl status postgresql
 | `stop_system.sh` | Stop API and frontend |
 | `status_system.sh` | Status of all components |
 | `scripts/deploy_to_widow.sh` | Deploy code to Widow |
-| `scripts/configure_widow_no_sleep.sh` | Disable Widow sleep (run on Widow) |
+| `scripts/configure_widow_no_sleep.sh` | Disable Widow sleep |
 | `scripts/decommission_nas_postgresql.sh` | Stop NAS PostgreSQL |
 
 ---
@@ -107,29 +132,16 @@ When the API is running (`./start_system.sh`), the following run **without manua
 |-----------|-----------|--------|
 | **OrchestratorCoordinator** | Assess → plan → execute → learn every 60s | FastAPI lifespan |
 | **Collection** | RSS fetch when CollectionGovernor recommends (min interval 5 min) | Coordinator loop |
-| **Collection** | Finance refresh (gold/silver/platinum) when governor recommends | Coordinator loop |
-| **AutomationManager** | All phases on intervals (rss_processing 30 min, article_processing 5 min, digest_generation 1 hr, etc.) | Background thread + scheduler |
-| **Processing** | One phase per cycle via ProcessingGovernor (importance + watchlist) | Coordinator calls `automation.request_phase()` |
+| **Collection** | Finance refresh when governor recommends | Coordinator loop |
+| **AutomationManager** | All phases on intervals | Background thread + scheduler |
+| **Processing** | One phase per cycle via ProcessingGovernor | Coordinator |
 | **Finance orchestrator** | Scheduled refresh and queue worker | FastAPI lifespan |
-| **Digest** | Weekly digest when phase runs (digest_generation depends on timeline_generation) | AutomationManager phase |
-| **Health monitor** | Polls health feeds, creates alerts on failure | FastAPI lifespan |
-| **Storyline consolidation** | Periodic consolidation (configurable interval) | Background thread |
+| **Digest** | Weekly digest when phase runs | AutomationManager |
+| **Health monitor** | Polls health feeds, creates alerts | FastAPI lifespan |
+| **Storyline consolidation** | Periodic consolidation | Background thread |
 | **Route supervisor** | Route and DB connection monitoring | Background thread |
 
-**Optional (feature-flagged):**
-
-- **Newsroom Orchestrator v6** (reporter_tick → ARTICLE_INGESTED, journalist/editor/archivist/chief_editor): only runs if `newsroom.enabled` is true in `api/config/newsroom.yaml` or `NEWSROOM_ORCHESTRATOR_ENABLED=1`. Default is disabled.
-
-**Cron / external:** Optional. `scripts/rss_collection_with_health_check.sh` can be used as a fallback (e.g. if API is down); when the API is up, RSS is driven by the coordinator and AutomationManager.
-
-**Confidence:** The data pipeline is fully connected for normal operation: start the system and collection, processing, digest, and downstream phases run on their schedules and governor recommendations. No manual trigger is required so long as the system is on and DB/LLM are available.
-
-### Monitor page and pipeline (v8.1)
-
-- **Migration 171** — `intelligence.tracked_events` has an optional `storyline_id` (VARCHAR 255) so tracked events can be linked to storylines for synthesis. Run once: `PYTHONPATH=api .venv/bin/python api/scripts/run_migration_171.py`.
-- **Claims→facts task** — AutomationManager runs `claims_to_facts` (after `claim_extraction`, interval 1h). It promotes high-confidence extracted claims to `versioned_facts`, which fires the story-state trigger chain (`fact_change_log` → storyline_states). Visible in the Monitor **Phase timeline** and in the **Run phase now** dropdown.
-- **Domain synthesis & enrichment card** — The Monitor page shows a card "Domain synthesis & enrichment" with domain configs (politics, finance, science-tech), GDELT enrichment status, and the last run of the claims→facts bridge.
-- **Backlog priority removed** — The previous "enrichment backlog first" behaviour (gate other phases when content_enrichment backlog &gt; 0) is disabled; the pipeline cycle runs all phases on their intervals without that gate.
+**Optional:** Newsroom Orchestrator v6 — only if `newsroom.enabled` in config or `NEWSROOM_ORCHESTRATOR_ENABLED=1`.
 
 ---
 
@@ -137,13 +149,14 @@ When the API is running (`./start_system.sh`), the following run **without manua
 
 **DB connection fails**
 
-- Confirm Widow is on (ping <WIDOW_HOST_IP>)
+- Confirm Widow is on: `ping 192.168.93.101`
 - If Widow sleeps: run `scripts/configure_widow_no_sleep.sh` on Widow
+- Check: `pg_isready -h localhost -p 5432 -U newsapp`
 
-**API won’t start**
+**API won't start**
 
 - Check `.env` has `DB_PASSWORD` or `.db_password_widow` exists
-- Confirm DB: `pg_isready -h <WIDOW_HOST_IP> -p 5432 -U newsapp`
+- Confirm production tree at `/opt/news-intelligence` vs dev tree drift
 
 **Widow RSS worker stopped**
 

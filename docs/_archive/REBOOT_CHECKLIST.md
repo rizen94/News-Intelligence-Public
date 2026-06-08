@@ -10,7 +10,7 @@
 ## 🔄 Post-Reboot Actions
 1. Navigate to project directory:
    ```bash
-   cd /home/pete/Documents/projects/Projects/News\ Intelligence
+   cd /home/pete/Documents/projects/News\ Intelligence
    ```
 
 2. Start the system:

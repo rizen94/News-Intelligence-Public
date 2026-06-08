@@ -10,7 +10,7 @@
 
 | Risk | Mitigation |
 |------|------------|
-| Anonymous access to API | Default: no JWT; rely on **network isolation** (firewall, VPN) or terminate TLS + auth at **reverse proxy**. Optional: shared secret on sensitive routes (future). |
+| Anonymous access to API | Default: **network isolation** or TLS at the proxy. Optional **`NEWS_INTEL_PUBLIC_WEB_AUTH`**: guests get a read-only curated API surface; admins sign in for Monitor and mutations (still bounded by demo read-only host rules when enabled). |
 | OpenAPI / `/docs` leaking surface | **Production** disables Swagger/ReDoc and `/openapi.json` unless `NEWS_INTEL_ENABLE_API_DOCS=true`. |
 | Overly permissive CORS | **Production** uses explicit `NEWS_INTEL_CORS_ORIGINS` (comma-separated). Empty = no browser CORS origins. |
 | Host header attacks | **Production** uses `NEWS_INTEL_TRUSTED_HOSTS`; if unset, defaults to `localhost` and `127.0.0.1` only — **set your LAN hostname or IP** if browsers hit the API by IP. |
@@ -37,7 +37,14 @@
 | `NEWS_INTEL_DEMO_READ_ONLY` | `true` / `1` | With **`NEWS_INTEL_DEMO_HOSTS`**, blocks mutating methods for matching `Host` (public read-only demo). See [PUBLIC_DEPLOYMENT.md](PUBLIC_DEPLOYMENT.md). |
 | `NEWS_INTEL_DEMO_HOSTS` | Comma hostnames, no port | Hostnames for which demo read-only applies (must match reverse-proxy `Host`). |
 | `NEWS_INTEL_DEMO_READ_ONLY_ALL` | `true` / `1` | If set and **`NEWS_INTEL_DEMO_HOSTS`** is empty, apply read-only on every host (single-purpose demo server only). |
-| `NEWS_INTEL_DEMO_POST_ALLOWLIST` | Comma path prefixes | Optional POST allowlist in demo mode; default none. |
+| `NEWS_INTEL_DEMO_POST_ALLOWLIST` | Comma path prefixes | Optional POST allowlist in demo mode; default none. With **`NEWS_INTEL_PUBLIC_WEB_AUTH`**, add **`/api/public/auth/login`** and **`/api/public/auth/logout`** when demo read-only is on. |
+| `NEWS_INTEL_PUBLIC_WEB_AUTH` | `true` / `1` | Guest vs admin session RBAC; requires **`NEWS_INTEL_JWT_SECRET`** or **`JWT_SECRET`**. See [PUBLIC_DEPLOYMENT.md](PUBLIC_DEPLOYMENT.md) §5b. |
+| `NEWS_INTEL_JWT_SECRET` | Strong random string | Signs **`ni_session`** cookie JWT (falls back to **`JWT_SECRET`**). |
+| `NEWS_INTEL_ALLOW_ANONYMOUS_GUEST` | `true` / `false` | Default **true** — anonymous visitors are guests. |
+| `NEWS_INTEL_AUTH_COOKIE_NAME` | string | Session cookie name (default **`ni_session`**). |
+| `NEWS_INTEL_AUTH_COOKIE_MAX_AGE_SECONDS` | int | Cookie **`Max-Age`** (default **604800**). |
+| `NEWS_INTEL_AUTH_COOKIE_SECURE` | `true` / `false` | Default **true** in production. |
+| `NEWS_INTEL_AUTH_COOKIE_SAMESITE` | `lax` / `strict` / `none` | Cookie **`SameSite`** (default **`lax`**). |
 
 Copy examples into project-root `.env` from [configs/env.example](../configs/env.example).
 
@@ -80,9 +87,12 @@ Copy examples into project-root `.env` from [configs/env.example](../configs/env
 6. Confirm `NEWS_INTEL_SQL_EXPLORER` and `LOG_LLM_FULL_TEXT` are off unless you accept the risk.
 7. Firewall DB, Redis, and Ollama from untrusted networks.
 8. For a **public read-only demo**, set `NEWS_INTEL_DEMO_*` per [PUBLIC_DEPLOYMENT.md](PUBLIC_DEPLOYMENT.md).
+9. For **guest vs admin** browser sessions, set `NEWS_INTEL_PUBLIC_WEB_AUTH` and secrets per [PUBLIC_DEPLOYMENT.md](PUBLIC_DEPLOYMENT.md) §5b; apply migration **217** and bootstrap users.
 
 ---
 
-## 7. JWT / future auth
+## 7. Session JWT (`NEWS_INTEL_PUBLIC_WEB_AUTH`)
 
-OpenAPI text may mention future JWT. Until implemented, **do not assume** bearer auth protects routes — protection is **network + env profile + edge proxy**.
+When **`NEWS_INTEL_PUBLIC_WEB_AUTH`** is enabled, the API sets an HTTP-only session cookie (**`ni_session`** by default) carrying an HS256 JWT. **Guests** cannot reach **`/api/system_monitoring/*`**, **`/api/orchestrator/*`**, or **`/api/user_management/*`**, and cannot use mutating HTTP methods except **`POST /api/public/auth/login`** / **`logout`**. **`/api/user_management/*`** additionally requires an **admin** role in the session.
+
+Rotate **`NEWS_INTEL_JWT_SECRET`** (or **`JWT_SECRET`**) if compromised — all sessions invalidate. Full variable list: [PUBLIC_DEPLOYMENT.md](PUBLIC_DEPLOYMENT.md) §5b.

@@ -387,6 +387,42 @@ The project uses **flat `/api`** — **no version segment** in the path (`/api/v
 - **Global namespaces** (system monitoring, orchestrator, context-centric intelligence, article deduplication under `/api/articles/...`): **`/api/<namespace>/...`** with no domain segment.
 - **Frontend:** `web/src/services/apiConnectionManager.ts` lists first-path-segment namespaces that must **not** receive automatic domain injection; registry domain keys are detected separately.
 
+### **Domain key vs Postgres schema (single source of truth)**
+
+Some silos use a hyphenated **URL domain key** and a different **Postgres schema** (e.g. `environment-climate` → `environment_climate`). **Politics** and **finance** use matching keys and schemas (`politics`, `finance`). **Do not** map domains with `domain.replace("-", "_")` alone.
+
+| Layer | Use | Module |
+|--------|-----|--------|
+| **Backend — SQL / `{schema}.table`** | `resolve_domain_schema(domain_key)` | `api/shared/domain_registry.py` |
+| **Backend — `intelligence.*.domain_key`, logs, API payloads** | `normalize_domain_key(token)` | same |
+| **Backend — validate row + optional `domain_id`** | `resolve_active_domain_schema(domain, conn)` or `DomainAwareService(domain)` | `api/shared/services/domain_aware_service.py` |
+| **Frontend — `/api/{domain}/...` calls** | `resolveDomainKeyForApi(explicit?)` | `web/src/utils/domainHelper.ts` (re-export from `web/src/services/api/client.ts`) |
+| **Frontend — React Router links** | `useDomainRoute()` + `storylineDetailPath()` / `getPathAfterDomainSwitch()` | `web/src/hooks/useDomainRoute.ts`, `domainHelper.ts` |
+| **Frontend — display schema name** | `getDomainSchema(domainKey)` from registry | `domainHelper.ts` |
+
+```python
+# ❌ WRONG — breaks hyphenated registry keys
+schema = domain.replace("-", "_")
+
+# ✅ CORRECT — route handlers and services
+from shared.domain_registry import resolve_domain_schema
+schema = resolve_domain_schema(domain)
+```
+
+```typescript
+// ❌ WRONG — localStorage may disagree with URL bar
+const domainKey = domain || getCurrentDomain();
+
+// ✅ CORRECT — API modules
+import { resolveDomainKeyForApi } from '@/utils/domainHelper';
+const domainKey = resolveDomainKeyForApi(domain);
+
+// ✅ CORRECT — page navigation
+const { domain } = useDomainRoute();
+```
+
+Registry YAML (`api/config/domains/*.yaml`) and `GET /api/system_monitoring/registry_domains` are authoritative; run `api/scripts/verify_domain_schema_resolution.py` after domain changes.
+
 ```python
 # ✅ CORRECT - Main domain routers (included directly in main.py)
 # Use prefix /api; no version in path

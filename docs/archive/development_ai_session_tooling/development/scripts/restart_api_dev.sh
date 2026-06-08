@@ -15,14 +15,14 @@ sleep 3
 
 # Clear Python cache
 echo "🧹 Clearing Python cache..."
-cd "/home/pete/Documents/projects/Projects/News Intelligence"
+cd "/home/pete/Documents/projects/News Intelligence"
 find . -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
 find . -name "*.pyc" -delete 2>/dev/null || true
 echo "✅ Cache cleared"
 
 # Start API server in development mode
 echo "🚀 Starting API server (development mode)..."
-cd "/home/pete/Documents/projects/Projects/News Intelligence"
+cd "/home/pete/Documents/projects/News Intelligence"
 source .venv/bin/activate
 cd api
 
