@@ -21,8 +21,8 @@ export interface Domain {
 
 /** Used when the API is unreachable or returned no domains (SSR, offline, boot). Template silos — not legacy keys. */
 const FALLBACK_DOMAINS: Domain[] = [
-  { key: 'politics', name: 'Politics', schema: 'politics_2' },
-  { key: 'finance', name: 'Finance', schema: 'finance_2' },
+  { key: 'politics', name: 'Politics', schema: 'politics' },
+  { key: 'finance', name: 'Finance', schema: 'finance' },
   { key: 'artificial-intelligence', name: 'Artificial Intelligence', schema: 'artificial_intelligence' },
   { key: 'medicine', name: 'Medicine', schema: 'medicine' },
   { key: 'legal', name: 'Legal', schema: 'legal' },

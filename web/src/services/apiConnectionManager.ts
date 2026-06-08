@@ -13,24 +13,6 @@ import errorHandler from './errorHandler';
 
 class APIConnectionManager {
   private apiInstance: AxiosInstance;
-  // #region agent log
-  private static _debugReqStart = new WeakMap<object, number>();
-  private _emitApiDebug(payload: Record<string, unknown>): void {
-    const body = {
-      sessionId: 'c062dd',
-      timestamp: Date.now(),
-      ...payload,
-    };
-    fetch('http://127.0.0.1:7678/ingest/79eeed92-cd4a-41d4-872f-8f142138548b', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Debug-Session-Id': 'c062dd',
-      },
-      body: JSON.stringify(body),
-    }).catch(() => {});
-  }
-  // #endregion
 
   constructor() {
     // Create single axios instance
@@ -106,23 +88,6 @@ class APIConnectionManager {
         } else {
           config.baseURL = getCurrentApiUrl();
         }
-        // #region agent log
-        if (config.url) {
-          APIConnectionManager._debugReqStart.set(config, Date.now());
-          this._emitApiDebug({
-            hypothesisId: 'C',
-            location: 'apiConnectionManager.ts:request',
-            message: 'api_request_start',
-            runId: 'frontend-audit',
-            data: {
-              method: (config.method || 'get').toUpperCase(),
-              url: config.url,
-              baseURL: config.baseURL || '',
-              timeout: config.timeout ?? API_CONFIG.timeout,
-            },
-          });
-        }
-        // #endregion
         return config;
       },
       error => {
@@ -133,51 +98,8 @@ class APIConnectionManager {
 
     // Response interceptor - only error handling
     this.apiInstance.interceptors.response.use(
-      response => {
-        // #region agent log
-        const started = APIConnectionManager._debugReqStart.get(response.config);
-        const durationMs =
-          typeof started === 'number' ? Date.now() - started : null;
-        this._emitApiDebug({
-          hypothesisId: durationMs != null && durationMs > 2000 ? 'A' : 'E',
-          location: 'apiConnectionManager.ts:response',
-          message: 'api_request_ok',
-          runId: 'frontend-audit',
-          data: {
-            method: (response.config.method || 'get').toUpperCase(),
-            url: response.config.url || '',
-            status: response.status,
-            durationMs,
-          },
-        });
-        // #endregion
-        return response;
-      },
+      response => response,
       (error: AxiosError) => {
-        // #region agent log
-        const cfg = error.config;
-        const started = cfg ? APIConnectionManager._debugReqStart.get(cfg) : undefined;
-        const durationMs =
-          typeof started === 'number' ? Date.now() - started : null;
-        this._emitApiDebug({
-          hypothesisId: error.response ? 'B' : 'D',
-          location: 'apiConnectionManager.ts:response_error',
-          message: 'api_request_fail',
-          runId: 'frontend-audit',
-          data: {
-            method: (cfg?.method || 'get').toUpperCase(),
-            url: cfg?.url || '',
-            status: error.response?.status ?? null,
-            code: error.code || null,
-            durationMs,
-            isTimeout: error.code === 'ECONNABORTED',
-            detail:
-              typeof error.response?.data === 'object'
-                ? JSON.stringify(error.response?.data).slice(0, 200)
-                : String(error.message || '').slice(0, 200),
-          },
-        });
-        // #endregion
         // Simple error handling
         if (!error.response) {
           errorHandler.handleNetworkError(error, { url: error.config?.url });

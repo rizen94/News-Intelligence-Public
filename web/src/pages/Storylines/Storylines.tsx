@@ -27,6 +27,7 @@ import {
   Add as AddIcon,
   Edit as EditIcon,
   Delete as DeleteIcon,
+  RateReview as RateReviewIcon,
 } from '@mui/icons-material';
 import {
   Box,
@@ -90,6 +91,9 @@ interface Storyline {
   updated_at?: string;
   /** Prefer for “resurfacing” — distinct from automation-only updated_at */
   last_article_added_at?: string | null;
+  /** Last RAG/editorial review pass — not new article material */
+  last_refinement?: string | null;
+  last_automation_run?: string | null;
   impact_score?: number;
   key_entities?: string[];
   last_event_at?: string;
@@ -250,6 +254,7 @@ const Storylines: React.FC = () => {
   const [bookmarkedStorylines, setBookmarkedStorylines] = useState<Set<number>>(
     new Set()
   );
+  const [reviewQueueCount, setReviewQueueCount] = useState(0);
   const [stats, setStats] = useState<Stats>({
     total: 0,
     active: 0,
@@ -288,6 +293,16 @@ const Storylines: React.FC = () => {
       // Response shape varies by API path; normalize with a loose type here
       const response: any = await apiService.getStorylines(params, domain);
 
+      if (response?.success === false) {
+        const msg = response.error || 'Failed to load storylines';
+        setError(msg);
+        showError(msg);
+        setStorylines([]);
+        setTotalPages(1);
+        setTotalStorylines(0);
+        return;
+      }
+
       // Handle response formats: crud returns { data, pagination, domain }; legacy may return { success, data: { storylines, total } }
       let storylinesData: Storyline[] = [];
       const pagination = response.pagination;
@@ -316,7 +331,8 @@ const Storylines: React.FC = () => {
         setTotalStorylines(0);
       }
 
-      setStorylines(sortStorylinesClient(storylinesData, sortBy));
+      const sorted = sortStorylinesClient(storylinesData, sortBy);
+      setStorylines(sorted);
 
       // Calculate statistics
       const calculatedStats: Stats = {
@@ -369,6 +385,19 @@ const Storylines: React.FC = () => {
     viewMode,
     domain,
   ]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const res = await apiService.getReviewQueueCount(domain);
+      if (!cancelled && res?.success) {
+        setReviewQueueCount(res.data?.count ?? 0);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [domain]);
 
   const fetchTimelineData = useCallback(async (storylineId: number) => {
     try {
@@ -529,12 +558,15 @@ const Storylines: React.FC = () => {
     });
   };
 
-  /** Prefer last article link time so automation/synthesis does not look like daily news churn. */
+  /** Prefer last article link; show review time separately when no new material. */
   const storylineActivityLabel = (s: Storyline): { label: string; at?: string } => {
     if (s.last_article_added_at) {
       return { label: 'Latest article', at: s.last_article_added_at };
     }
-    return { label: 'Updated', at: s.updated_at || s.created_at };
+    if (s.last_refinement) {
+      return { label: 'Last reviewed', at: s.last_refinement };
+    }
+    return { label: 'Created', at: s.created_at };
   };
 
   const truncateText = (text?: string, maxLength: number = 150): string => {
@@ -853,6 +885,14 @@ const Storylines: React.FC = () => {
         </Box>
         <Box display='flex' gap={2} alignItems='center'>
           <Button
+            variant='outlined'
+            color={reviewQueueCount > 0 ? 'warning' : 'inherit'}
+            startIcon={<RateReviewIcon />}
+            onClick={() => navigate(`/${domain}/storylines/review-queue`)}
+          >
+            Review queue{reviewQueueCount > 0 ? ` (${reviewQueueCount})` : ''}
+          </Button>
+          <Button
             variant='contained'
             startIcon={<AddIcon />}
             onClick={handleCreateStoryline}
@@ -1048,7 +1088,7 @@ const Storylines: React.FC = () => {
               <MenuItem value='last_article_added_at'>
                 Latest article (default)
               </MenuItem>
-              <MenuItem value='updated_at'>Last Updated</MenuItem>
+              <MenuItem value='updated_at'>Material change (title/status/articles)</MenuItem>
               <MenuItem value='created_at'>Created Date</MenuItem>
                 <MenuItem value='impact_score'>Impact Score</MenuItem>
                 <MenuItem value='article_count'>Article Count</MenuItem>

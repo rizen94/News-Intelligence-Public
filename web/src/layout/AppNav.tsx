@@ -25,6 +25,7 @@ import LabelIcon from '@mui/icons-material/Label';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import EventNoteIcon from '@mui/icons-material/EventNote';
 import ChecklistIcon from '@mui/icons-material/Checklist';
+import RateReviewIcon from '@mui/icons-material/RateReview';
 import TableChartIcon from '@mui/icons-material/TableChart';
 import { usePublicDemoMode } from '../contexts/PublicDemoContext';
 import { getDefaultDomainKey } from '../utils/domainHelper';
@@ -58,6 +59,11 @@ const NAV_SECTIONS: NavSection[] = [
     label: 'Stories',
     items: [
       { path: 'storylines', label: 'Storylines', icon: <AutoStoriesIcon /> },
+      {
+        path: 'storylines/review-queue',
+        label: 'Review queue',
+        icon: <RateReviewIcon />,
+      },
       { path: 'watchlist', label: 'Watchlist', icon: <VisibilityIcon /> },
     ],
   },
