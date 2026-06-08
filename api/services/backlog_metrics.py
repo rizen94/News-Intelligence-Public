@@ -119,9 +119,10 @@ RAW_PENDING_COUNT_KEYS = frozenset(
         "topic_clustering",
         "timeline_generation",
         "storyline_discovery",
+        "proactive_detection",
+        "storyline_assembly",
         "rag_enhancement",
         "event_extraction",
-        "proactive_detection",
         "storyline_automation",
         "claims_to_facts",
         "legislative_references",
@@ -166,6 +167,7 @@ def _get_raw_pending_counts() -> Dict[str, int]:
         raw["rag_enhancement"] = _count_rag_enhancement_pending()
         raw["event_extraction"] = _count_event_extraction_pending()
         raw["proactive_detection"] = _count_proactive_detection_pending()
+        raw["storyline_assembly"] = _count_storyline_assembly_pending()
         raw["storyline_automation"] = _count_storyline_automation_pending()
         raw["claims_to_facts"] = _count_claims_to_facts_pending()
         raw["legislative_references"] = _count_legislative_references_backlog()
@@ -244,6 +246,17 @@ def _per_run_batch_size(task: str) -> int:
             return 5 * doms
         except Exception:
             pass
+    if task == "story_enhancement":
+        try:
+            import os
+
+            fact = max(10, min(500, int(os.environ.get("STORY_ENHANCEMENT_FACT_BATCH", "100"))))
+            queue = max(1, min(50, int(os.environ.get("STORY_ENHANCEMENT_QUEUE_BATCH", "10"))))
+            enrich = max(1, min(50, int(os.environ.get("STORY_ENHANCEMENT_ENRICH_LIMIT", "10"))))
+            build = max(1, min(50, int(os.environ.get("STORY_ENHANCEMENT_BUILD_LIMIT", "10"))))
+            return fact + queue + enrich + build
+        except Exception:
+            return int(BATCH_SIZE_PER_TASK["story_enhancement"])
     if task in BATCH_SIZE_PER_TASK:
         return int(BATCH_SIZE_PER_TASK[task])
     return _default_batch_for_unknown_phase()
@@ -940,6 +953,18 @@ def _count_storyline_discovery_pending() -> int:
             pass
 
 
+def _count_storyline_assembly_pending() -> int:
+    """Unlinked recent articles across pipeline domains — assembly ties detection + discovery + automation."""
+    try:
+        from services.storyline_assembly_service import count_unlinked_articles
+        from shared.domain_registry import get_pipeline_active_domain_keys
+
+        return sum(count_unlinked_articles(dk) for dk in get_pipeline_active_domain_keys())
+    except Exception as e:
+        logger.debug("backlog storyline_assembly count: %s", e)
+        return 0
+
+
 def _count_proactive_detection_pending() -> int:
     """Recent articles (72h) with no storyline_articles row — matches proactive_detection candidate query."""
     conn = _get_conn()
@@ -991,6 +1016,38 @@ def _count_storyline_automation_pending() -> int:
     except Exception as e:
         logger.debug("backlog storyline_automation count: %s", e)
         return 0
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def get_storyline_review_queue_pending() -> int:
+    """Pending rows in public.storyline_article_suggestions (operator curation pressure)."""
+    by_domain = get_storyline_review_queue_pending_by_domain()
+    return sum(by_domain.values())
+
+
+def get_storyline_review_queue_pending_by_domain() -> Dict[str, int]:
+    """Pending suggestion rows grouped by domain_key (operator curation pressure)."""
+    conn = _get_conn()
+    if not conn:
+        return {}
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SET LOCAL statement_timeout = '3s'")
+            cur.execute(
+                """
+                SELECT domain_key, COUNT(*) FROM public.storyline_article_suggestions
+                WHERE status = 'pending'
+                GROUP BY domain_key
+                """
+            )
+            return {str(row[0]): int(row[1] or 0) for row in cur.fetchall() if row[0]}
+    except Exception as e:
+        logger.debug("backlog storyline_review_queue count: %s", e)
+        return {}
     finally:
         try:
             conn.close()
@@ -1198,38 +1255,36 @@ def _count_entity_dossier_compile_pending() -> int:
 
 
 def _count_story_enhancement_pending() -> int:
-    """Pending work for ``run_enhancement_cycle`` (queues + enrich + profile build — same stages as automation)."""
-    queues = 0
+    """Hot-queue depth for ``run_enhancement_cycle`` (fact_change_log + story_update_queue only).
+
+    This is **not** storyline historical memory completeness — long arcs live in
+    versioned_facts, chronological_events, and story_entity_index (see storyline_historical_context_service).
+    Entity enrichment and profile-build backlog are separate phases.
+    """
     conn = _get_conn()
-    if conn:
-        try:
-            with conn.cursor() as cur:
-                cur.execute("SET LOCAL statement_timeout = '5s'")
-                cur.execute(
-                    """
-                    SELECT
-                      COALESCE((SELECT COUNT(*) FROM intelligence.fact_change_log WHERE processed = FALSE), 0)
-                    + COALESCE((SELECT COUNT(*) FROM intelligence.story_update_queue WHERE processed = FALSE), 0)
-                    AS n
-                    """
-                )
-                row = cur.fetchone()
-                queues = int(row[0] or 0) if row else 0
-        except Exception as e:
-            logger.debug("backlog story_enhancement queues: %s", e)
-        finally:
-            try:
-                conn.close()
-            except Exception:
-                pass
+    if not conn:
+        return 0
     try:
-        extra = int(_count_entity_enrichment_pending() or 0) + int(
-            _count_entity_profile_build_backlog() or 0
-        )
+        with conn.cursor() as cur:
+            cur.execute("SET LOCAL statement_timeout = '5s'")
+            cur.execute(
+                """
+                SELECT
+                  COALESCE((SELECT COUNT(*) FROM intelligence.fact_change_log WHERE processed = FALSE), 0)
+                + COALESCE((SELECT COUNT(*) FROM intelligence.story_update_queue WHERE processed = FALSE), 0)
+                AS n
+                """
+            )
+            row = cur.fetchone()
+            return int(row[0] or 0) if row else 0
     except Exception as e:
-        logger.debug("backlog story_enhancement enrich/build: %s", e)
-        extra = 0
-    return queues + extra
+        logger.debug("backlog story_enhancement queues: %s", e)
+        return 0
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 def _count_storyline_synthesis_pending() -> int:
@@ -1361,6 +1416,7 @@ SKIP_WHEN_EMPTY = frozenset({
     "timeline_generation",
     "storyline_discovery",
     "proactive_detection",
+    "storyline_assembly",
     "storyline_automation",
     "rag_enhancement",
     "event_extraction",

@@ -164,6 +164,7 @@ OLLAMA_AUTOMATION_PHASES = frozenset(
         "document_processing",
         "storyline_discovery",
         "proactive_detection",
+        "storyline_assembly",
         "fact_verification",
         "narrative_thread_build",
         "event_coherence_review",
@@ -470,6 +471,8 @@ DOWNTIME_ORGANIZER_SLEEP = 45  # Seconds between organizer cycles during downtim
 DOWNTIME_POLL_SLEEP = 30  # Seconds to sleep when data load is active (before rechecking)
 
 # v8: Pipeline-ordered analysis (run after each collection_cycle)
+# Events moved to Step 1 (Extraction) — foundational entities should feed intelligence phases
+# Fact verification moved to Step 1 — verification precedes intelligence synthesis
 ANALYSIS_PIPELINE_STEPS: tuple[tuple[str, ...], ...] = (
     # Step 0: Foundation
     (
@@ -480,17 +483,19 @@ ANALYSIS_PIPELINE_STEPS: tuple[tuple[str, ...], ...] = (
         "entity_extraction",
         "metadata_enrichment",
     ),
-    # Step 1: Extraction
+    # Step 1: Extraction (events elevated to foundational level)
     (
         "claim_extraction",
         "legislative_references",
         "claims_to_facts",
         "claim_subject_gap_refresh",
         "extracted_claims_dedupe",
+        "event_extraction",  # Moved from Step 3 — events are foundational
         "event_tracking",
         "topic_clustering",
         "quality_scoring",
         "sentiment_analysis",
+        "fact_verification",  # Moved from Step 2 — verify before synthesis
     ),
     # Step 2: Intelligence
     (
@@ -501,7 +506,7 @@ ANALYSIS_PIPELINE_STEPS: tuple[tuple[str, ...], ...] = (
         "cross_domain_synthesis",
         "storyline_discovery",
         "proactive_detection",
-        "fact_verification",
+        "storyline_assembly",
         "event_coherence_review",
         "entity_enrichment",
         "story_enhancement",
@@ -516,7 +521,6 @@ ANALYSIS_PIPELINE_STEPS: tuple[tuple[str, ...], ...] = (
         "storyline_automation",
         "storyline_enrichment",
         "story_continuation",
-        "event_extraction",
         "event_deduplication",
         "timeline_generation",
         "editorial_document_generation",
@@ -636,6 +640,12 @@ PHASE_ESTIMATED_DURATION_SECONDS = {
     "investigation_report_refresh": 300,
     "entity_profile_build": 600,
     "pattern_recognition": 120,
+    "embeddings_worker": 600,
+    "macro_series_refresh": 300,
+    "external_events_sync": 240,
+    "sanctions_refresh": 180,
+    "arc_report_generation": 900,
+    "longitudinal_matview_refresh": 60,
     "storyline_automation": 180,
     "storyline_enrichment": 600,  # full-history pass: ~10 min
     "story_enhancement": 300,
@@ -659,6 +669,7 @@ PHASE_ESTIMATED_DURATION_SECONDS = {
     # v8: collect-then-analyze — single master task runs RSS + enrichment + docs
     "collection_cycle": 1800,  # 30 min; RSS + drain enrichment + doc collection + drain doc processing + pending queue
     "proactive_detection": 300,  # v8: emerging storylines per domain
+    "storyline_assembly": 900,  # proactive + discovery + automation per domain
     "fact_verification": 120,  # v8: verify_recent_claims per domain
     "content_refinement_queue": 420,  # storyline RAG / timeline narrative / ~70B finisher (queued user jobs)
     "nightly_enrichment_context": 21600,  # 02:00–07:00 local unified pipeline (NIGHTLY_PIPELINE_*); exits when idle
@@ -833,7 +844,7 @@ class AutomationManager:
             },
             # PHASE 2a: Claim extraction (contexts -> extracted_claims; LLM rate limits)
             "claim_extraction": {
-                "interval": 1800,  # 30 minutes - max 50 contexts/run, ~1-2 min, cost-controlled
+                "interval": 1800,  # 30 min fallback when idle; workload-driven when backlog > 0
                 "last_run": None,
                 "enabled": True,
                 "priority": TaskPriority.NORMAL,
@@ -944,6 +955,61 @@ class AutomationManager:
                 "phase": 2,
                 "depends_on": ["context_sync", "entity_profile_sync"],
                 "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["pattern_recognition"],
+            },
+            # Longitudinal intelligence (Phases 1–4): nightly-heavy; yields to ingest
+            "embeddings_worker": {
+                "interval": 3600,
+                "last_run": None,
+                "enabled": True,
+                "priority": TaskPriority.LOW,
+                "phase": 2,
+                "depends_on": ["content_enrichment"],
+                "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["embeddings_worker"],
+            },
+            "macro_series_refresh": {
+                "interval": 86400,
+                "last_run": None,
+                "enabled": True,
+                "priority": TaskPriority.LOW,
+                "phase": 2,
+                "depends_on": [],
+                "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["macro_series_refresh"],
+            },
+            "external_events_sync": {
+                "interval": 43200,
+                "last_run": None,
+                "enabled": True,
+                "priority": TaskPriority.LOW,
+                "phase": 2,
+                "depends_on": [],
+                "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["external_events_sync"],
+            },
+            "sanctions_refresh": {
+                "interval": 86400,
+                "last_run": None,
+                "enabled": True,
+                "priority": TaskPriority.LOW,
+                "phase": 2,
+                "depends_on": [],
+                "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["sanctions_refresh"],
+            },
+            "arc_report_generation": {
+                "interval": 604800,
+                "last_run": None,
+                "enabled": True,
+                "priority": TaskPriority.LOW,
+                "phase": 3,
+                "depends_on": ["macro_series_refresh", "embeddings_worker"],
+                "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["arc_report_generation"],
+            },
+            "longitudinal_matview_refresh": {
+                "interval": 21600,
+                "last_run": None,
+                "enabled": True,
+                "priority": TaskPriority.LOW,
+                "phase": 2,
+                "depends_on": ["external_events_sync"],
+                "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["longitudinal_matview_refresh"],
             },
             # PHASE 2.6: Entity dossier compile (articles + storylines + relationships -> entity_dossiers)
             "entity_dossier_compile": {
@@ -1067,6 +1133,15 @@ class AutomationManager:
                 "phase": 6,
                 "depends_on": ["collection_cycle"],
                 "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["proactive_detection"],
+            },
+            "storyline_assembly": {
+                "interval": 1800,  # 30 min — detect + discover + link per domain
+                "last_run": None,
+                "enabled": True,
+                "priority": TaskPriority.HIGH,
+                "phase": 6,
+                "depends_on": ["content_enrichment"],
+                "estimated_duration": PHASE_ESTIMATED_DURATION_SECONDS["storyline_assembly"],
             },
             "fact_verification": {
                 "interval": 14400,  # 4 hours — verify recent claims (v8)
@@ -1353,12 +1428,21 @@ class AutomationManager:
         except Exception:
             pass
 
-    def _apply_automation_disabled_schedules(self) -> None:
-        """Disable named schedules and strip them from depends_on so dependents still run (Widow cron offload)."""
+    def get_disabled_schedule_names(self) -> list[str]:
+        """Phases disabled via AUTOMATION_DISABLED_SCHEDULES (e.g. Widow cron offload)."""
         raw = os.environ.get("AUTOMATION_DISABLED_SCHEDULES", "").strip()
         if not raw:
+            return []
+        return sorted({x.strip() for x in raw.split(",") if x.strip()})
+
+    def is_schedule_disabled(self, phase_name: str) -> bool:
+        return phase_name.strip() in set(self.get_disabled_schedule_names())
+
+    def _apply_automation_disabled_schedules(self) -> None:
+        """Disable named schedules and strip them from depends_on so dependents still run (Widow cron offload)."""
+        disabled = set(self.get_disabled_schedule_names())
+        if not disabled:
             return
-        disabled = {x.strip() for x in raw.split(",") if x.strip()}
         for name in disabled:
             if name in self.schedules:
                 self.schedules[name]["enabled"] = False
@@ -2234,7 +2318,9 @@ class AutomationManager:
                     p = schedule.get(
                         "priority", TaskPriority.NORMAL
                     ).value  # lower = higher priority
-                    backlog = backlog_counts.get(task_name, 0)
+                    backlog = int(backlog_counts.get(task_name, 0) or 0)
+                    pending_raw = int((self._pending_counts or {}).get(task_name, 0) or 0)
+                    work_score = max(backlog, pending_raw)
                     resource_class = self._phase_resource_class(task_name)
                     lane, _ = self._resolve_effective_lane(task_name, resource_class)
                     if (
@@ -2243,9 +2329,22 @@ class AutomationManager:
                         and backlog > 0
                     ):
                         p = TaskPriority.CRITICAL.value
-                    elif backlog > BACKLOG_HIGH_THRESHOLD:
+                    elif work_score > BACKLOG_HIGH_THRESHOLD:
                         # Boost priority by one level when this task has a lot of work (prioritize work that needs doing)
                         p = max(TaskPriority.CRITICAL.value, p - 1)
+                    try:
+                        severe = int(
+                            os.environ.get("AUTOMATION_BACKLOG_SEVERE_THRESHOLD", "25000")
+                        )
+                    except ValueError:
+                        severe = 25000
+                    if work_score >= severe and task_name in (
+                        "story_enhancement",
+                        "entity_extraction",
+                        "topic_clustering",
+                        "metadata_enrichment",
+                    ):
+                        p = TaskPriority.CRITICAL.value
                     # Prefer queueing tasks that fit current free resources.
                     if AUTOMATION_DYNAMIC_RESOURCE_ROUTING_ENABLED:
                         hr = self._resource_headroom or {}
@@ -2260,8 +2359,8 @@ class AutomationManager:
                         ):
                             p = max(TaskPriority.CRITICAL.value, p - 1)
                     phase = schedule.get("phase", 0)
-                    # Sort: higher priority first (lower p), then more backlog first (-backlog), then earlier phase
-                    return (p, -backlog, phase)
+                    # Sort: higher priority first (lower p), then more work first (-work_score), then earlier phase
+                    return (p, -work_score, phase)
 
                 for task_name, schedule in sorted(all_runnable, key=_work_driven_sort_key):
                     await self._create_and_queue_task(task_name, schedule, current_time)
@@ -2376,6 +2475,14 @@ class AutomationManager:
 
         if not self._check_dependencies(task_name, schedule):
             return False
+
+        try:
+            from services.pipeline_schedule_service import automation_phase_allowed
+
+            if not automation_phase_allowed(task_name):
+                return False
+        except Exception:
+            pass
 
         # When PostgreSQL is down, do not schedule new phases (avoids LLM/CPU waste). Flush runs when DB is back.
         try:
@@ -2976,6 +3083,18 @@ class AutomationManager:
                 await self._execute_entity_profile_build(task)
             elif task.name == "pattern_recognition":
                 await self._execute_pattern_recognition(task)
+            elif task.name == "embeddings_worker":
+                await self._execute_embeddings_worker(task)
+            elif task.name == "macro_series_refresh":
+                await self._execute_macro_series_refresh(task)
+            elif task.name == "external_events_sync":
+                await self._execute_external_events_sync(task)
+            elif task.name == "sanctions_refresh":
+                await self._execute_sanctions_refresh(task)
+            elif task.name == "arc_report_generation":
+                await self._execute_arc_report_generation(task)
+            elif task.name == "longitudinal_matview_refresh":
+                await self._execute_longitudinal_matview_refresh(task)
             elif task.name == "entity_dossier_compile":
                 await self._execute_entity_dossier_compile(task)
             elif task.name == "entity_position_tracker":
@@ -3044,6 +3163,8 @@ class AutomationManager:
                 await self._execute_storyline_discovery(task)
             elif task.name == "proactive_detection":
                 await self._execute_proactive_detection(task)
+            elif task.name == "storyline_assembly":
+                await self._execute_storyline_assembly(task)
             elif task.name == "fact_verification":
                 await self._execute_fact_verification(task)
             else:
@@ -3418,9 +3539,23 @@ class AutomationManager:
             async with self._content_enrichment_lock:
                 loop = asyncio.get_event_loop()
                 # Burst (48h catch-up): batch 60; revert to 40 after
-                await loop.run_in_executor(None, lambda: enrich_articles_batch(batch_size=60))
+                enriched = await loop.run_in_executor(
+                    None, lambda: enrich_articles_batch(batch_size=60)
+                )
+            if enriched and enriched > 0:
+                await self._maybe_request_storyline_assembly_after_enrichment()
         except Exception as e:
             logger.warning(f"Content enrichment failed: {e}")
+
+    async def _maybe_request_storyline_assembly_after_enrichment(self) -> None:
+        """Queue per-domain storyline assembly when unlinked article backlog exceeds threshold."""
+        try:
+            from services.storyline_assembly_service import domains_needing_assembly
+
+            for domain_key in domains_needing_assembly():
+                self.request_phase("storyline_assembly", domain=domain_key)
+        except Exception as e:
+            logger.debug("storyline assembly after enrichment: %s", e)
 
     async def _execute_document_collection(self, task: Task):
         """Discover government and academic PDF documents (invoked from collection_cycle)."""
@@ -4057,9 +4192,21 @@ class AutomationManager:
         from services.enhancement_orchestrator_service import run_enhancement_cycle
 
         try:
-            # Production: max 10 stories/run, 60s budget; 100 fact changes, 10 queue, 10 enrich, 10 build
+            def _int_env(name: str, default: int) -> int:
+                try:
+                    return int(os.environ.get(name, str(default)))
+                except ValueError:
+                    return default
+
+            fact_batch = max(10, min(500, _int_env("STORY_ENHANCEMENT_FACT_BATCH", 100)))
+            queue_batch = max(1, min(50, _int_env("STORY_ENHANCEMENT_QUEUE_BATCH", 10)))
+            enrich_limit = max(1, min(50, _int_env("STORY_ENHANCEMENT_ENRICH_LIMIT", 10)))
+            build_limit = max(1, min(50, _int_env("STORY_ENHANCEMENT_BUILD_LIMIT", 10)))
             result = await run_enhancement_cycle(
-                fact_batch=100, queue_batch=10, enrich_limit=10, build_limit=10
+                fact_batch=fact_batch,
+                queue_batch=queue_batch,
+                enrich_limit=enrich_limit,
+                build_limit=build_limit,
             )
             total = (
                 result.get("fact_change_log_processed", 0)
@@ -4433,6 +4580,79 @@ class AutomationManager:
         """True when no data-load phase ran recently — safe to run idle-only work (e.g. research topic refinement)."""
         return not self._is_data_load_active()
 
+    def _get_rss_feeds_caught_up_status(self) -> dict:
+        """Get current status of RSS feeds caught-up flags for monitoring."""
+        try:
+            conn = get_db_connection()
+            if not conn:
+                return {}
+            
+            cur = conn.cursor()
+            
+            # Get all active feeds with their caught-up status
+            cur.execute("""
+                SELECT 
+                    id,
+                    feed_name,
+                    feed_url,
+                    is_caught_up,
+                    caught_up_since,
+                    last_caught_up_check,
+                    last_fetched_at,
+                    is_active,
+                    fetch_interval
+                FROM rss_feeds 
+                WHERE is_active = TRUE
+                ORDER BY feed_name
+            """)
+            
+            feeds = cur.fetchall()
+            conn.close()
+            
+            feed_status = []
+            for feed in feeds:
+                feed_id, name, url, is_caught_up, caught_up_since, last_check, last_fetched, is_active, fetch_interval = feed
+                
+                # Calculate time since last caught up check
+                time_since_check = None
+                if last_check:
+                    time_since_check = (datetime.now(timezone.utc) - last_check).total_seconds()
+                
+                # Calculate time since last fetch
+                time_since_fetch = None
+                if last_fetched:
+                    time_since_fetch = (datetime.now(timezone.utc) - last_fetched).total_seconds()
+                
+                # Calculate next expected fetch time
+                next_fetch_time = None
+                if last_fetched and fetch_interval:
+                    next_fetch_time = last_fetched + timedelta(seconds=fetch_interval)
+                
+                feed_status.append({
+                    'id': feed_id,
+                    'name': name,
+                    'url': url,
+                    'is_caught_up': is_caught_up,
+                    'caught_up_since': caught_up_since,
+                    'last_caught_up_check': last_check,
+                    'last_fetched_at': last_fetched,
+                    'is_active': is_active,
+                    'fetch_interval': fetch_interval,
+                    'time_since_check': time_since_check,
+                    'time_since_fetch': time_since_fetch,
+                    'next_fetch_time': next_fetch_time
+                })
+            
+            return {
+                'feeds': feed_status,
+                'total_feeds': len(feeds),
+                'caught_up_feeds': len([f for f in feeds if f[3]]),  # is_caught_up is at index 3
+                'timestamp': datetime.now(timezone.utc)
+            }
+        except Exception as e:
+            logger.error(f"Error getting RSS feeds caught-up status: {e}")
+            return {}
+
     async def _entity_organizer_downtime_loop(self):
         """During downtime between data loads, loop: cleanup + relationship extraction (vectors between entities)."""
         logger.info("Entity organizer downtime loop started")
@@ -4485,12 +4705,200 @@ class AutomationManager:
         except Exception as e:
             logger.warning(f"Pattern recognition failed: {e}")
 
+    async def _execute_embeddings_worker(self, task: Task):
+        """Chunk + embed articles into intelligence.embedding_chunks (nightly-friendly)."""
+        import asyncio
+
+        from services.embeddings_worker_service import run_embeddings_worker_batch
+
+        try:
+            result = await asyncio.get_event_loop().run_in_executor(
+                None, run_embeddings_worker_batch
+            )
+            if result.get("embedded_articles"):
+                logger.info("Embeddings worker: %s", result)
+        except Exception as e:
+            logger.warning("Embeddings worker failed: %s", e)
+
+    async def _execute_macro_series_refresh(self, task: Task):
+        import asyncio
+
+        from services.gpr_epu_import_service import import_gpr_epu_from_config
+        from services.macro_series_service import refresh_longitudinal_macro_series
+        from services.trade_resources_import_service import run_trade_resources_import
+        from services.vdem_freedomhouse_import_service import import_vdem_freedom_house_from_config
+
+        try:
+            fred = await asyncio.get_event_loop().run_in_executor(
+                None, refresh_longitudinal_macro_series
+            )
+            csv_imp = await asyncio.get_event_loop().run_in_executor(
+                None, import_gpr_epu_from_config
+            )
+            trade = await asyncio.get_event_loop().run_in_executor(
+                None, run_trade_resources_import
+            )
+            legitimacy = await asyncio.get_event_loop().run_in_executor(
+                None, import_vdem_freedom_house_from_config
+            )
+            logger.info(
+                "Macro series refresh: fred=%s csv=%s trade=%s legitimacy=%s",
+                fred,
+                csv_imp,
+                trade,
+                legitimacy,
+            )
+        except Exception as e:
+            logger.warning("Macro series refresh failed: %s", e)
+
+    async def _execute_external_events_sync(self, task: Task):
+        import asyncio
+
+        from services.acled_client import run_acled_incremental_sync
+        from services.ucdp_client import run_ucdp_backfill_batch
+
+        try:
+            acled = await asyncio.get_event_loop().run_in_executor(
+                None, run_acled_incremental_sync
+            )
+            ucdp = await asyncio.get_event_loop().run_in_executor(
+                None, run_ucdp_backfill_batch
+            )
+            logger.info("External events sync: acled=%s ucdp=%s", acled, ucdp)
+        except Exception as e:
+            logger.warning("External events sync failed: %s", e)
+
+    async def _execute_sanctions_refresh(self, task: Task):
+        import asyncio
+
+        from services.sanctions_ingest_service import run_sanctions_refresh
+
+        try:
+            result = await asyncio.get_event_loop().run_in_executor(
+                None, run_sanctions_refresh
+            )
+            logger.info("Sanctions refresh: %s", result)
+        except Exception as e:
+            logger.warning("Sanctions refresh failed: %s", e)
+
+    async def _execute_arc_report_generation(self, task: Task):
+        import asyncio
+        import os
+
+        from services.arc_catalog_service import list_active_arcs, sync_arc_definitions_from_yaml
+        from services.nightly_ingest_window_service import in_nightly_pipeline_window_est
+        from services.slow_report_service import generate_slow_report
+
+        anytime = os.environ.get("ARC_REPORT_ANYTIME", "false").lower() in ("1", "true", "yes")
+        if not anytime and not in_nightly_pipeline_window_est():
+            logger.info("Arc report generation skipped outside nightly pipeline window")
+            return
+
+        try:
+            await asyncio.get_event_loop().run_in_executor(None, sync_arc_definitions_from_yaml)
+            arcs = await asyncio.get_event_loop().run_in_executor(None, list_active_arcs)
+            for arc in arcs:
+                aid = arc.get("arc_id")
+                if not aid:
+                    continue
+                result = await asyncio.get_event_loop().run_in_executor(
+                    None, lambda a=aid: generate_slow_report(a, report_type="weekly_brief")
+                )
+                logger.info("Arc report %s: %s", aid, result.get("validation"))
+        except Exception as e:
+            logger.warning("Arc report generation failed: %s", e)
+
+    async def _execute_longitudinal_matview_refresh(self, task: Task):
+        import asyncio
+
+        from shared.database.connection import get_db_connection_context
+
+        def _refresh():
+            with get_db_connection_context() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "REFRESH MATERIALIZED VIEW CONCURRENTLY intelligence.mv_arc_spine_events"
+                    )
+                    cur.execute(
+                        "REFRESH MATERIALIZED VIEW CONCURRENTLY intelligence.mv_tension_heatmap_monthly"
+                    )
+                conn.commit()
+
+        try:
+            await asyncio.get_event_loop().run_in_executor(None, _refresh)
+            logger.info("Longitudinal mat views refreshed")
+        except Exception as e:
+            logger.warning("Longitudinal matview refresh failed (run non-concurrent if first load): %s", e)
+            def _refresh_non_concurrent():
+                with get_db_connection_context() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute("REFRESH MATERIALIZED VIEW intelligence.mv_arc_spine_events")
+                        cur.execute(
+                            "REFRESH MATERIALIZED VIEW intelligence.mv_tension_heatmap_monthly"
+                        )
+                    conn.commit()
+
+            try:
+                await asyncio.get_event_loop().run_in_executor(None, _refresh_non_concurrent)
+            except Exception as e2:
+                logger.warning("Longitudinal matview non-concurrent refresh failed: %s", e2)
+
     async def _execute_editorial_document_generation(self, task: Task):
         """Generate/refine editorial_document for active storylines across all domains."""
         from services.editorial_document_service import generate_storyline_editorial
+        from services.content_validation_service import content_validation_service
 
         for domain in get_pipeline_active_domain_keys():
             try:
+                # Validate content before proceeding with editorial generation
+                # This ensures that downstream processes have sufficient content
+                logger.debug(f"Checking content availability for editorial document generation in domain {domain}")
+                
+                # Get storylines that need editorial work
+                schema = resolve_domain_schema(domain)
+                conn = get_db_connection()
+                if conn:
+                    try:
+                        with conn.cursor() as cursor:
+                            cursor.execute(
+                                f"""
+                                SELECT s.id, s.title, s.description, s.analysis_summary,
+                                       s.editorial_document, s.document_version, s.last_refinement,
+                                       s.updated_at
+                                FROM {schema}.storylines s
+                                WHERE s.status IN ('active', 'developing', 'ongoing')
+                                  AND (
+                                      s.editorial_document IS NULL
+                                      OR s.editorial_document = '{{}}'::jsonb
+                                      OR s.updated_at > COALESCE(s.last_refinement, '1970-01-01'::timestamptz)
+                                  )
+                                ORDER BY s.updated_at DESC
+                                LIMIT 10
+                                """
+                            )
+                            storylines = cursor.fetchall()
+                        
+                        # Validate that these storylines have sufficient content
+                        for row in storylines:
+                            sid, title, description, analysis_summary, existing_doc, doc_version, last_refined, updated_at = row
+                            storyline_validation = await content_validation_service.validate_storyline_content_requirements(domain, sid)
+                            if not storyline_validation.get("valid", False):
+                                logger.warning(f"Skipping storyline {sid} in domain {domain} - insufficient content")
+                                continue
+                            
+                        conn.commit()
+                    except Exception as e:
+                        logger.warning(f"Content validation check failed for domain {domain}: {e}")
+                        try:
+                            conn.rollback()
+                        except Exception:
+                            pass
+                    finally:
+                        try:
+                            conn.close()
+                        except Exception:
+                            pass
+                
                 result = await generate_storyline_editorial(domain, limit=5)
                 logger.info("Editorial doc generation (%s): %s", domain, result)
             except Exception as e:
@@ -5029,11 +5437,13 @@ class AutomationManager:
 
     async def _execute_storyline_processing(self, task: Task):
         """Execute storyline processing per domain: generates analysis_summary, seeds editorial_document.
-        Uses domain-aware StorylineService so politics/finance/science_tech storylines get narratives."""
+        Uses domain-aware StorylineService so politics/finance/science_tech storylines get narratives.
+        Includes content validation to ensure downstream processes have sufficient content."""
         from domains.storyline_management.services.storyline_service import (
             StorylineService as DomainStorylineService,
         )
         from shared.database.connection import get_db_connection
+        from services.content_validation_service import content_validation_service
 
         processed_count = 0
         for domain, schema in pipeline_url_schema_pairs():
@@ -5068,6 +5478,13 @@ class AutomationManager:
                         row[4],
                     )
                     summary_for_check = analysis_summary or master_summary
+                    
+                    # Validate content before proceeding with processing
+                    storyline_validation = await content_validation_service.validate_storyline_content_requirements(domain, sid)
+                    if not storyline_validation.get("valid", False):
+                        logger.warning("Skipping storyline %s/%s: insufficient content", domain, sid)
+                        continue
+                    
                     if len(summary_for_check) < 100:
                         try:
                             result = await svc.generate_storyline_summary(sid)
@@ -5075,6 +5492,9 @@ class AutomationManager:
                                 continue
                             summary_text = (result.get("data") or {}).get("summary", "")
                             if summary_text:
+                                from shared.llm_text_sanitize import sanitize_briefing_lede
+
+                                summary_text = sanitize_briefing_lede(summary_text, max_length=400)
                                 processed_count += 1
                                 if not has_ed:
                                     try:
@@ -5093,8 +5513,7 @@ class AutomationManager:
                                                                 'generated_at', NOW()::text
                                                             ),
                                                             document_version = COALESCE(document_version, 0) + 1,
-                                                            document_status = 'auto_seeded',
-                                                            updated_at = NOW()
+                                                            document_status = 'auto_seeded'
                                                         WHERE id = %s AND (editorial_document IS NULL OR editorial_document = '{{}}'::jsonb)
                                                     """,
                                                         (summary_text, summary_text, sid),
@@ -5107,7 +5526,12 @@ class AutomationManager:
                                             "Seed editorial_document %s/%s: %s", domain, sid, ed_err
                                         )
                         except Exception as e:
-                            logger.error("Error processing storyline %s/%s: %s", domain, sid, e)
+                            logger.warning(
+                                "Error processing storyline %s/%s (generate_storyline_summary): %s",
+                                domain,
+                                sid,
+                                e,
+                            )
             except Exception as e:
                 logger.warning("Storyline processing domain %s: %s", domain, e)
 
@@ -5141,6 +5565,14 @@ class AutomationManager:
                 )
         else:
             # Run for all automation-enabled storylines (each domain)
+            batch_limit = 5
+            try:
+                batch_limit = max(
+                    5,
+                    int(os.environ.get("STORYLINE_AUTOMATION_BATCH_PER_DOMAIN", "15")),
+                )
+            except ValueError:
+                pass
             for d in get_pipeline_active_domain_keys():
                 try:
                     svc = StorylineAutomationService(domain=d)
@@ -5152,8 +5584,8 @@ class AutomationManager:
                                 SELECT id FROM {schema}.storylines
                                 WHERE automation_enabled = true
                                 ORDER BY last_automation_run ASC NULLS FIRST
-                                LIMIT 5
-                            """)
+                                LIMIT %s
+                            """, (batch_limit,))
                             storyline_rows = cur.fetchall()
                     finally:
                         conn.close()
@@ -5236,6 +5668,16 @@ class AutomationManager:
                     saved = len(result.get("saved_storylines", []))
                     clusters = result.get("summary", {}).get("clusters_found", 0)
                     total_created += saved
+                    cp = (result.get("stats") or {}).get("clustering_params") or {}
+                    sd = (result.get("stats") or {}).get("storyline_development") or {}
+                    logger.info(
+                        "Storyline discovery [%s]: clusters=%d saved=%d thresholds=%s development=%s",
+                        domain,
+                        clusters,
+                        saved,
+                        cp,
+                        sd,
+                    )
                     if saved > 0:
                         logger.info(
                             "Storyline discovery [%s]: %d clusters → %d new storylines",
@@ -5259,7 +5701,7 @@ class AutomationManager:
             for domain in get_pipeline_active_domain_keys():
                 try:
                     svc = ProactiveDetectionService(domain=domain)
-                    result = await svc.detect_emerging_storylines(hours=72, min_articles=3)
+                    result = await svc.detect_emerging_storylines()
                     if result.get("success"):
                         d = result.get("data") or {}
                         if (
@@ -5276,6 +5718,38 @@ class AutomationManager:
                     logger.debug("Proactive detection failed for %s: %s", domain, e)
         except Exception as e:
             logger.warning("Proactive detection task failed: %s", e)
+
+    async def _execute_storyline_assembly(self, task: Task):
+        """Run proactive detection + discovery + automation for one domain or all pipeline domains."""
+        from services.storyline_assembly_service import (
+            run_storyline_assembly_all_domains,
+            run_storyline_assembly_for_domain,
+        )
+
+        meta = task.metadata or {}
+        domain = meta.get("domain")
+        try:
+            if domain:
+                result = await run_storyline_assembly_for_domain(domain)
+                logger.info(
+                    "Storyline assembly [%s]: unlinked %s → %s steps=%s",
+                    domain,
+                    result.get("unlinked_before"),
+                    result.get("unlinked_after"),
+                    list((result.get("steps") or {}).keys()),
+                )
+            else:
+                batch = await run_storyline_assembly_all_domains()
+                for dk, res in (batch.get("domains") or {}).items():
+                    if res.get("unlinked_before", 0) != res.get("unlinked_after", 0):
+                        logger.info(
+                            "Storyline assembly [%s]: unlinked %s → %s",
+                            dk,
+                            res.get("unlinked_before"),
+                            res.get("unlinked_after"),
+                        )
+        except Exception as e:
+            logger.warning("Storyline assembly failed: %s", e)
 
     async def _execute_fact_verification(self, task: Task):
         """v8: Verify recent claims per domain (governance-weighted corroboration, Wikipedia + internal checks; results returned to logs/API, not persisted on claim rows)."""
@@ -5541,7 +6015,15 @@ class AutomationManager:
                             )
                             return 0
 
+                from shared.database.db_availability import schema_has_table
+
                 for schema in get_pipeline_schema_names_active():
+                    if not schema_has_table(schema, "articles"):
+                        logger.warning(
+                            "event_extraction: skip schema %s (articles table missing)",
+                            schema,
+                        )
+                        continue
                     try:
                         domain_for_events = schema_to_primary_domain_key(schema)
                     except KeyError:
@@ -5623,11 +6105,33 @@ class AutomationManager:
             conn = await self._get_db_connection()
             try:
                 svc = EventDeduplicationService(conn)
-                stats = await svc.deduplicate_recent(limit=100)
-                logger.info(
-                    f"v5 event deduplication completed: "
-                    f"checked={stats['checked']}, merged={stats['merged']}"
-                )
+                # Simple direct call with fallback to ensure method exists
+                try:
+                    stats = await svc.deduplicate_recent(limit=100)
+                    logger.info(
+                        f"v5 event deduplication completed: "
+                        f"checked={stats['checked']}, merged={stats['merged']}"
+                    )
+                except AttributeError as attr_err:
+                    if "deduplicate_recent" in str(attr_err):
+                        # Try to reload the module to fix potential import caching issues
+                        logger.warning("Method not found, attempting module reload: %s", attr_err)
+                        import importlib
+                        import sys
+                        # Remove from cache if present
+                        module_name = "services.event_deduplication_service"
+                        if module_name in sys.modules:
+                            del sys.modules[module_name]
+                        # Re-import
+                        from services.event_deduplication_service import EventDeduplicationService as NewEventDeduplicationService
+                        svc_fresh = NewEventDeduplicationService(conn)
+                        stats = await svc_fresh.deduplicate_recent(limit=100)
+                        logger.info(
+                            f"v5 event deduplication completed (after reload): "
+                            f"checked={stats['checked']}, merged={stats['merged']}"
+                        )
+                    else:
+                        raise
             finally:
                 conn.close()
         except Exception as e:
@@ -5636,6 +6140,7 @@ class AutomationManager:
                     "Event deduplication skipped (chronological_events not migrated): %s", e
                 )
             else:
+                logger.error(f"Event deduplication failed: {e}", exc_info=True)
                 raise
 
     async def _execute_story_continuation_v5(self, task: Task):
@@ -5754,9 +6259,17 @@ class AutomationManager:
         logger.info(f"Quality scoring completed: {scored_count} articles scored")
 
     async def _execute_timeline_generation(self, task: Task):
-        """Execute timeline generation per domain using public chronological_events + domain storylines."""
+        """
+        Summarize existing chronological_events into storylines.timeline_summary text.
+
+        Does not extract events (that is event_extraction + story_continuation). Optional
+        historical_context enriches summaries with older facts when STORYLINE_HISTORICAL_IN_TIMELINE_SUMMARY=1.
+        """
         from services.timeline_builder_service import TimelineBuilderService
 
+        use_historical = os.environ.get(
+            "STORYLINE_HISTORICAL_IN_TIMELINE_SUMMARY", "1"
+        ).strip().lower() in ("1", "true", "yes")
         generated_count = 0
 
         for schema in get_pipeline_schema_names_active():
@@ -5798,6 +6311,22 @@ class AutomationManager:
                         if title:
                             parts.append(f"{ds}: {title}" if ds else title)
                     summary = f"Timeline ({len(events)} events): " + " | ".join(parts[:12])
+                    if use_historical:
+                        try:
+                            from shared.domain_registry import schema_to_primary_domain_key
+                            from services.storyline_historical_context_service import (
+                                build_storyline_historical_context,
+                                render_historical_context_for_llm,
+                            )
+
+                            dk = schema_to_primary_domain_key(schema)
+                            hctx = build_storyline_historical_context(dk, sid, conn=conn)
+                            if hctx.get("success"):
+                                hist = render_historical_context_for_llm(hctx, max_chars=2000)
+                                if hist:
+                                    summary = summary + "\n\n" + hist
+                        except Exception as hist_err:
+                            logger.debug("timeline_summary historical_context: %s", hist_err)
                     if len(summary) > 12000:
                         summary = summary[:11997] + "..."
                     with conn.cursor() as cur:
@@ -5822,7 +6351,8 @@ class AutomationManager:
                     conn.close()
 
         logger.info(
-            "Timeline generation completed: %s timeline summaries updated (all domains)",
+            "Timeline summary generation completed: %s storyline summaries from existing "
+            "chronological_events (no event extraction in this phase)",
             generated_count,
         )
 
@@ -5851,11 +6381,17 @@ class AutomationManager:
             from domains.content_analysis.services.topic_clustering_service import (
                 TopicClusteringService,
             )
-            from shared.domain_registry import first_active_domain_key, resolve_domain_schema
-            from shared.services.domain_aware_service import get_all_domains
+            from shared.domain_registry import (
+                first_active_domain_key,
+                pipeline_url_schema_pairs,
+                resolve_domain_schema,
+            )
 
-            # Get all active domains
-            domains = get_all_domains()
+            # Pipeline-active silos only (same basis as entity_extraction / backlog_metrics)
+            domains = [
+                {"domain_key": dk, "schema_name": schema}
+                for dk, schema in pipeline_url_schema_pairs()
+            ]
             if not domains:
                 fb = first_active_domain_key()
                 logger.warning("No active domains found, defaulting to %s", fb)
@@ -5895,8 +6431,9 @@ class AutomationManager:
 
                 logger.info(f"📊 Processing domain: {domain_key} (schema: {schema_name})")
 
-                # Initialize topic clustering service for this domain
+                # Initialize topic clustering service for this domain (schema from registry)
                 topic_service = TopicClusteringService(db_config, domain=domain_key)
+                topic_service.schema = schema_name
 
                 if TC_USE_PASS_MARKER and not TC_ITERATIVE:
                     tc_where = """(pass_at IS NULL OR TRIM(COALESCE(pass_at, '')) = '')"""

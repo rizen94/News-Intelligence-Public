@@ -15,7 +15,11 @@ from domains.content_analysis.services.topic_filter_rules import (
 from domains.content_analysis.services.topic_merge_suggestions import get_merge_suggestions
 from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, Path, Query
 from shared.database.connection import get_db_connection
-from shared.domain_registry import DOMAIN_PATH_PATTERN, schema_to_primary_domain_key
+from shared.domain_registry import (
+    DOMAIN_PATH_PATTERN,
+    resolve_domain_schema,
+    schema_to_primary_domain_key,
+)
 from shared.services.domain_aware_service import (
     get_domain_data_schemas,
     parse_optional_domain_to_schema,
@@ -583,6 +587,10 @@ async def get_topics(
     offset: int = Query(0, ge=0),
     search: str | None = Query(None),
     category: str | None = Query(None),
+    include_article_ids: bool = Query(
+        False,
+        description="Include full article id lists per cluster (very large JSON; default off)",
+    ),
 ):
     """Get topic clusters with optional filtering for a specific domain"""
     try:
@@ -590,7 +598,7 @@ async def get_topics(
         if not validate_domain(domain):
             raise HTTPException(status_code=400, detail=f"Invalid domain: {domain}")
 
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
         conn = get_db_connection()
         if not conn:
             raise HTTPException(status_code=500, detail="Database connection failed")
@@ -612,7 +620,13 @@ async def get_topics(
 
                 where_clause = "WHERE " + " AND ".join(where_conditions)
 
-                # Get topics with article counts and article IDs (minimal columns for schema compatibility)
+                article_ids_sql = (
+                    "ARRAY_AGG(atc.article_id) FILTER (WHERE atc.article_id IS NOT NULL) AS article_ids"
+                    if include_article_ids
+                    else "NULL::integer[] AS article_ids"
+                )
+
+                # Get topics with article counts; omit heavy ARRAY_AGG unless requested
                 cur.execute(
                     f"""
                     SELECT tc.id, tc.cluster_name,
@@ -620,7 +634,7 @@ async def get_topics(
                            tc.created_at, tc.updated_at, '{{}}'::jsonb as metadata,
                            COUNT(atc.article_id) as article_count,
                            AVG(atc.relevance_score) as avg_relevance,
-                           ARRAY_AGG(atc.article_id) FILTER (WHERE atc.article_id IS NOT NULL) as article_ids
+                           {article_ids_sql}
                     FROM {schema}.topic_clusters tc
                     LEFT JOIN {schema}.article_topic_clusters atc ON tc.id = atc.topic_cluster_id
                     {where_clause}
@@ -633,16 +647,6 @@ async def get_topics(
 
                 topics = []
                 for row in cur.fetchall():
-                    # Handle article_ids (column 10, index 9)
-                    article_ids = []
-                    if len(row) > 9:
-                        article_ids_raw = row[9]
-                        if article_ids_raw:
-                            # Remove duplicates and None values
-                            article_ids = list(
-                                set([aid for aid in article_ids_raw if aid is not None])
-                            )
-
                     cluster_name = row[1] or ""
                     article_count = row[7] or 0
                     description = (
@@ -650,22 +654,28 @@ async def get_topics(
                         or f"Topic cluster covering {cluster_name} with {article_count} articles"
                     )
                     avg_rel = float(row[8]) if row[8] else 0.0
-                    topics.append(
-                        {
-                            "id": row[0],
-                            "name": cluster_name,
-                            "description": description,
-                            "type": row[3] or "semantic",
-                            "category": row[3] or "semantic",
-                            "created_at": row[4].isoformat() if row[4] else None,
-                            "updated_at": row[5].isoformat() if row[5] else None,
-                            "metadata": row[6] if row[6] else {},
-                            "article_count": article_count,
-                            "avg_relevance": avg_rel,
-                            "avg_confidence": round(avg_rel * 100, 1),
-                            "article_ids": article_ids,
-                        }
-                    )
+                    entry: dict[str, Any] = {
+                        "id": row[0],
+                        "name": cluster_name,
+                        "description": description,
+                        "type": row[3] or "semantic",
+                        "category": row[3] or "semantic",
+                        "created_at": row[4].isoformat() if row[4] else None,
+                        "updated_at": row[5].isoformat() if row[5] else None,
+                        "metadata": row[6] if row[6] else {},
+                        "article_count": article_count,
+                        "avg_relevance": avg_rel,
+                        "avg_confidence": round(avg_rel * 100, 1),
+                    }
+                    if include_article_ids and len(row) > 9:
+                        raw_ids = row[9]
+                        if raw_ids:
+                            entry["article_ids"] = list(
+                                {aid for aid in raw_ids if aid is not None}
+                            )
+                        else:
+                            entry["article_ids"] = []
+                    topics.append(entry)
 
                 # Apply date/country filter rules and banned topics - exclude from display
                 banned = _get_banned_topics(cur, schema)
@@ -711,7 +721,7 @@ async def get_topic_merge_suggestions(
     try:
         if not validate_domain(domain):
             raise HTTPException(status_code=400, detail=f"Invalid domain: {domain}")
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
         conn = get_db_connection()
         if not conn:
             raise HTTPException(status_code=500, detail="Database connection failed")
@@ -773,7 +783,7 @@ async def merge_topic_clusters(
     try:
         if not validate_domain(domain):
             raise HTTPException(status_code=400, detail=f"Invalid domain: {domain}")
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
         conn = get_db_connection()
         if not conn:
             raise HTTPException(status_code=500, detail="Database connection failed")
@@ -911,7 +921,7 @@ async def get_clustering_status(domain: str = Path(..., pattern=DOMAIN_PATH_PATT
         if not validate_domain(domain):
             raise HTTPException(status_code=400, detail=f"Invalid domain: {domain}")
 
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
         conn = get_db_connection()
         if not conn:
             raise HTTPException(status_code=500, detail="Database connection failed")
@@ -992,7 +1002,7 @@ async def get_topic_articles(
         if not validate_domain(domain):
             raise HTTPException(status_code=400, detail=f"Invalid domain: {domain}")
 
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
         conn = get_db_connection()
         if not conn:
             raise HTTPException(status_code=500, detail="Database connection failed")
@@ -1090,7 +1100,7 @@ async def get_topic_summary(
         if not validate_domain(domain):
             raise HTTPException(status_code=400, detail=f"Invalid domain: {domain}")
 
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
         conn = get_db_connection()
         if not conn:
             raise HTTPException(status_code=500, detail="Database connection failed")
@@ -1193,7 +1203,7 @@ async def convert_topic_to_storyline(
         if not validate_domain(domain):
             raise HTTPException(status_code=400, detail=f"Invalid domain: {domain}")
 
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
         storyline_title = request.get("storyline_title", f"Storyline: {cluster_name}")
 
         conn = get_db_connection()
@@ -1438,7 +1448,7 @@ async def get_word_cloud_data(
         if not validate_domain(domain):
             raise HTTPException(status_code=400, detail=f"Invalid domain: {domain}")
 
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
         conn = get_db_connection()
         if not conn:
             raise HTTPException(status_code=500, detail="Database connection failed")
@@ -1915,7 +1925,7 @@ async def get_banned_topics(domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN)
     try:
         if not validate_domain(domain):
             raise HTTPException(status_code=400, detail=f"Invalid domain: {domain}")
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
         conn = get_db_connection()
         if not conn:
             raise HTTPException(status_code=500, detail="Database connection failed")
@@ -1959,7 +1969,7 @@ async def ban_topic(
     try:
         if not validate_domain(domain):
             raise HTTPException(status_code=400, detail=f"Invalid domain: {domain}")
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
         conn = get_db_connection()
         if not conn:
             raise HTTPException(status_code=500, detail="Database connection failed")
@@ -1999,7 +2009,7 @@ async def unban_topic(
     try:
         if not validate_domain(domain):
             raise HTTPException(status_code=400, detail=f"Invalid domain: {domain}")
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
         conn = get_db_connection()
         if not conn:
             raise HTTPException(status_code=500, detail="Database connection failed")
@@ -2037,7 +2047,7 @@ async def get_big_picture_analysis(
         if not validate_domain(domain):
             raise HTTPException(status_code=400, detail=f"Invalid domain: {domain}")
 
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
         conn = get_db_connection()
         if not conn:
             raise HTTPException(status_code=500, detail="Database connection failed")
@@ -2057,8 +2067,21 @@ async def get_big_picture_analysis(
                 )
                 recent_articles_count = cur.fetchone()[0]
 
-                # Get topic distribution
-                # FIXED: Use article_topic_clusters (not article_topic_assignments)
+                # Distinct clusters with ≥1 article in window (accurate count; distribution list is capped below)
+                cur.execute(
+                    f"""
+                    SELECT COUNT(DISTINCT tc.id)
+                    FROM {schema}.topic_clusters tc
+                    INNER JOIN {schema}.article_topic_clusters atc ON tc.id = atc.topic_cluster_id
+                    INNER JOIN {schema}.articles a ON atc.article_id = a.id
+                    WHERE a.created_at >= %s
+                """,
+                    (cutoff_time,),
+                )
+                active_topics_distinct = int(cur.fetchone()[0] or 0)
+
+                # Topic distribution (cap rows — full cross-tab was unbounded and crushed the browser)
+                topic_distribution_limit = 120
                 cur.execute(
                     f"""
                     SELECT tc.cluster_name, COUNT(atc.article_id) as article_count
@@ -2068,8 +2091,9 @@ async def get_big_picture_analysis(
                     WHERE (a.created_at >= %s OR a.created_at IS NULL)
                     GROUP BY tc.cluster_name
                     ORDER BY article_count DESC
+                    LIMIT %s
                 """,
-                    (cutoff_time,),
+                    (cutoff_time, topic_distribution_limit),
                 )
 
                 topic_distribution = []
@@ -2144,13 +2168,13 @@ async def get_big_picture_analysis(
                 # Calculate insights
                 insights = {
                     "total_articles": recent_articles_count,
-                    "active_topics": len(topic_distribution),
+                    "active_topics": active_topics_distinct,
                     "top_category": topic_distribution[0]["category"]
                     if topic_distribution
                     else "None",
                     "source_diversity": len(source_diversity),
                     "avg_articles_per_topic": round(
-                        recent_articles_count / max(len(topic_distribution), 1), 1
+                        recent_articles_count / max(active_topics_distinct, 1), 1
                     ),
                     "time_period_hours": time_period_hours,
                 }
@@ -2166,7 +2190,7 @@ async def get_big_picture_analysis(
                 narrative_parts = []
                 narrative_parts.append(
                     f"Over the last {time_period_hours} hours, {recent_articles_count} articles were analyzed "
-                    f"across {len(topic_distribution)} categories from {len(source_diversity)} sources."
+                    f"across {active_topics_distinct} categories from {len(source_diversity)} sources."
                 )
                 if top_cat and top_cat_count:
                     narrative_parts.append(
@@ -2186,7 +2210,7 @@ async def get_big_picture_analysis(
                         "summary": {
                             "period": f"Last {time_period_hours} hours",
                             "articles_analyzed": recent_articles_count,
-                            "topics_active": len(topic_distribution),
+                            "topics_active": active_topics_distinct,
                             "sources": len(source_diversity),
                         },
                     },
@@ -2214,7 +2238,7 @@ async def get_trending_topics(
         if not validate_domain(domain):
             raise HTTPException(status_code=400, detail=f"Invalid domain: {domain}")
 
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
         conn = get_db_connection()
         if not conn:
             raise HTTPException(status_code=500, detail="Database connection failed")
@@ -2310,7 +2334,7 @@ async def process_article_clustering(
         try:
             from ..services.llm_topic_extractor import LLMTopicExtractor
 
-            schema = domain.replace("-", "_")
+            schema = resolve_domain_schema(domain)
             logger.debug(f"Using schema: {schema}")
 
             extractor = LLMTopicExtractor(get_db_connection, schema=schema)
@@ -2329,7 +2353,7 @@ async def process_article_clustering(
             logger.info("Articles will be queued for LLM processing when available")
 
             # Queue articles for LLM processing (no fallback - ensures eventual consistency)
-            schema = domain.replace("-", "_")
+            schema = resolve_domain_schema(domain)
             extractor = LLMTopicExtractor(get_db_connection, schema=schema)
 
             # Get articles and queue them
@@ -2397,7 +2421,7 @@ async def process_article_clustering(
         else:
             elapsed = (datetime.now() - start_time).total_seconds()
             # Check if articles were queued
-            schema = domain.replace("-", "_")
+            schema = resolve_domain_schema(domain)
             conn = get_db_connection()
             if conn:
                 try:
@@ -2514,15 +2538,38 @@ async def process_new_storyline_comprehensive(domain: str, storyline_id: int, sc
 
         storyline_service = StorylineService(domain=domain)
 
-        # Step 1: Generate comprehensive summary with breakdown
-        logger.info(f"Generating comprehensive summary for storyline {storyline_id}")
-        summary_result = await storyline_service.generate_storyline_summary(storyline_id)
+        conn_check = get_db_connection()
+        skip_summary = False
+        if conn_check:
+            try:
+                with conn_check.cursor() as cur:
+                    cur.execute(
+                        f"""
+                        SELECT COALESCE(LENGTH(TRIM(analysis_summary)), 0)
+                        FROM {schema}.storylines WHERE id = %s
+                        """,
+                        (storyline_id,),
+                    )
+                    row = cur.fetchone()
+                    if row and int(row[0] or 0) >= 100:
+                        skip_summary = True
+            finally:
+                conn_check.close()
 
-        if summary_result.get("success"):
-            logger.info(f"✅ Generated comprehensive summary for storyline {storyline_id}")
+        if not skip_summary:
+            logger.info(f"Generating comprehensive summary for storyline {storyline_id}")
+            summary_result = await storyline_service.generate_storyline_summary(storyline_id)
+
+            if summary_result.get("success"):
+                logger.info(f"✅ Generated comprehensive summary for storyline {storyline_id}")
+            else:
+                logger.warning(
+                    f"Summary generation returned: {summary_result.get('error', 'Unknown error')}"
+                )
         else:
-            logger.warning(
-                f"Summary generation returned: {summary_result.get('error', 'Unknown error')}"
+            logger.info(
+                "Skipping duplicate summary LLM for storyline %s (analysis_summary already populated)",
+                storyline_id,
             )
 
         # Step 2: Extract timeline events from articles

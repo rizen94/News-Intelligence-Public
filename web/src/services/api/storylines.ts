@@ -29,7 +29,13 @@ export const storylinesApi = {
 
       const response = await getApi().get<StorylineListResponse>(
         `/api/${domainKey}/storylines`,
-        { params: apiParams }
+        {
+          params: {
+            ...apiParams,
+            include_top_entities: false,
+          },
+          timeout: 120000,
+        }
       );
       return response.data;
     } catch (error) {
@@ -585,16 +591,117 @@ export const storylinesApi = {
   async rejectSuggestion(
     storylineId: string | number,
     suggestionId: string | number,
+    reason?: string,
     domain?: string
   ) {
     try {
       const domainKey = domain || getCurrentDomain();
+      const params = reason ? `?reason=${encodeURIComponent(reason)}` : '';
       const response = await getApi().post(
-        `/api/${domainKey}/storylines/${storylineId}/automation/suggestions/${suggestionId}/reject`
+        `/api/${domainKey}/storylines/${storylineId}/automation/suggestions/${suggestionId}/reject${params}`
       );
       return response.data;
     } catch (error) {
       Logger.apiError('Failed to reject suggestion', error as Error);
+      return { success: false, error: (error as any).message };
+    }
+  },
+
+  async getReviewQueue(
+    options: {
+      domain?: string;
+      status?: string;
+      limit?: number;
+      offset?: number;
+      storylineId?: number;
+    } = {}
+  ) {
+    try {
+      const domainKey = options.domain || getCurrentDomain();
+      const params = new URLSearchParams();
+      if (options.status) params.set('status', options.status);
+      if (options.limit != null) params.set('limit', String(options.limit));
+      if (options.offset != null) params.set('offset', String(options.offset));
+      if (options.storylineId != null) {
+        params.set('storyline_id', String(options.storylineId));
+      }
+      const qs = params.toString();
+      const response = await getApi().get(
+        `/api/${domainKey}/storylines/review-queue${qs ? `?${qs}` : ''}`
+      );
+      return response.data;
+    } catch (error) {
+      Logger.apiError('Failed to get review queue', error as Error);
+      return { success: false, error: (error as any).message };
+    }
+  },
+
+  async getReviewQueueCount(domain?: string) {
+    try {
+      const domainKey = domain || getCurrentDomain();
+      const response = await getApi().get(
+        `/api/${domainKey}/storylines/review-queue/count`
+      );
+      return response.data;
+    } catch (error) {
+      Logger.apiError('Failed to get review queue count', error as Error);
+      return { success: false, data: { count: 0 }, error: (error as any).message };
+    }
+  },
+
+  async bulkApproveSuggestions(
+    domain: string,
+    body: { suggestion_ids?: number[]; all?: boolean; storyline_id?: number }
+  ) {
+    try {
+      const response = await getApi().post(
+        `/api/${domain}/storylines/review-queue/bulk-approve`,
+        body
+      );
+      return response.data;
+    } catch (error) {
+      Logger.apiError('Failed to bulk approve', error as Error);
+      return { success: false, error: (error as any).message };
+    }
+  },
+
+  async bulkRejectSuggestions(
+    domain: string,
+    body: {
+      suggestion_ids?: number[];
+      all?: boolean;
+      storyline_id?: number;
+      reason_code?: string;
+      review_notes?: string;
+    }
+  ) {
+    try {
+      const response = await getApi().post(
+        `/api/${domain}/storylines/review-queue/bulk-reject`,
+        body
+      );
+      return response.data;
+    } catch (error) {
+      Logger.apiError('Failed to bulk reject', error as Error);
+      return { success: false, error: (error as any).message };
+    }
+  },
+
+  async triggerDomainAutomationDiscovery(
+    domain: string,
+    options: { force_refresh?: boolean; limit?: number } = {}
+  ) {
+    try {
+      const params = new URLSearchParams();
+      if (options.force_refresh) params.set('force_refresh', 'true');
+      if (options.limit != null) params.set('limit', String(options.limit));
+      const qs = params.toString();
+      const response = await getApi().post(
+        `/api/${domain}/storylines/automation/discover${qs ? `?${qs}` : ''}`
+      );
+      return response.data;
+    } catch (error) {
+      Logger.apiError('Failed to trigger domain discovery', error as Error);
       return { success: false, error: (error as any).message };
     }
   },

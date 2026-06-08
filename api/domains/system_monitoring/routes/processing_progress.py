@@ -589,7 +589,28 @@ def compute_processing_progress_response(
         "hourly_phase_ticks_failures": (
             "Per bucket, failures = completions where success is not TRUE (same rule as pass rate)."
         ),
+        "storyline_review_queue_pending": (
+            "Pending rows in public.storyline_article_suggestions awaiting operator approve/reject. "
+            "Separate from storyline_automation pool depth (scheduler eligibility for suggest_only storylines)."
+        ),
     }
+
+    operator_metrics: dict[str, Any] = {}
+    if include_pending_metrics:
+        try:
+            from services.backlog_metrics import (
+                get_storyline_review_queue_pending,
+                get_storyline_review_queue_pending_by_domain,
+            )
+
+            operator_metrics = {
+                "storyline_review_queue_pending": get_storyline_review_queue_pending(),
+                "storyline_review_queue_pending_by_domain": (
+                    get_storyline_review_queue_pending_by_domain()
+                ),
+            }
+        except Exception as e:
+            logger.debug("processing_progress operator_metrics: %s", e)
 
     try:
         from shared.gpu_metrics import maybe_record_gpu_metric_sample
@@ -605,6 +626,7 @@ def compute_processing_progress_response(
             "workload_window_days_note": _BACKLOG_WORKLOAD_WINDOW_DAYS,
             "pending_metrics_included": include_pending_metrics,
             "pending_metrics_merge_error": pending_metrics_merge_error,
+            "operator_metrics": operator_metrics,
             "reporting_definitions": reporting_definitions,
             "dimensions": dimensions,
             "phase_dashboard": phase_dashboard,

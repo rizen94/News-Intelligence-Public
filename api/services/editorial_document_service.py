@@ -9,6 +9,7 @@ Pipeline phase: should run after storyline_processing and event_tracking, before
 """
 
 import json
+from shared.domain_registry import resolve_domain_schema
 import logging
 from datetime import datetime
 from typing import Any
@@ -67,7 +68,7 @@ async def generate_storyline_editorial(domain: str, limit: int = 10) -> dict[str
     Never holds a pooled DB connection across ``await`` (LLM): that left sessions
     **idle in transaction** for minutes and exhausted the worker pool.
     """
-    schema = domain.replace("-", "_")
+    schema = resolve_domain_schema(domain)
     processed = 0
     skipped = 0
     errors = 0
@@ -90,6 +91,7 @@ async def generate_storyline_editorial(domain: str, limit: int = 10) -> dict[str
                   AND (
                       s.editorial_document IS NULL
                       OR s.editorial_document = '{{}}'::jsonb
+                      OR s.document_status IN ('auto_seeded', 'parse_failed')
                       OR s.updated_at > COALESCE(s.last_refinement, '1970-01-01'::timestamptz)
                   )
                 ORDER BY s.updated_at DESC
@@ -220,7 +222,11 @@ async def generate_storyline_editorial(domain: str, limit: int = 10) -> dict[str
                 skipped += 1
                 continue
 
-            editorial = _parse_editorial_json(llm_text, title, article_ids, sources)
+            editorial, parse_ok = _parse_editorial_json(llm_text, title, article_ids, sources)
+            if parse_ok:
+                doc_status = "refined" if not is_new else "draft"
+            else:
+                doc_status = "parse_failed"
 
             new_version = (doc_version or 0) + 1
             conn_u = get_db_connection()
@@ -241,7 +247,7 @@ async def generate_storyline_editorial(domain: str, limit: int = 10) -> dict[str
                         (
                             json.dumps(editorial),
                             new_version,
-                            "refined" if not is_new else "draft",
+                            doc_status,
                             sid,
                         ),
                     )
@@ -464,84 +470,69 @@ async def generate_event_editorial(limit: int = 10) -> dict[str, Any]:
 
 def _parse_editorial_json(
     llm_text: str, title: str, article_ids: list[int], sources: list[str]
-) -> dict:
-    """Try to parse LLM output as editorial JSON (5W1H or legacy); fall back to template with raw text."""
-    try:
-        cleaned = llm_text.strip()
-        if cleaned.startswith("```"):
-            cleaned = cleaned.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
-        parsed = json.loads(cleaned)
-        if isinstance(parsed, dict):
-            result = {**EDITORIAL_DOC_TEMPLATE}
-            result.update(
-                {
-                    "lede": parsed.get("lede", ""),
-                    "who": parsed.get("who", []),
-                    "what": parsed.get("what", []),
-                    "when": parsed.get("when", []),
-                    "where": parsed.get("where", []),
-                    "why": parsed.get("why", ""),
-                    "how": parsed.get("how", ""),
-                    "developments": parsed.get("developments", []),
-                    "analysis": parsed.get("analysis", ""),
-                    "outlook": parsed.get("outlook", ""),
-                    "key_entities": parsed.get("key_entities", []),
-                    "sources": sources,
-                    "generated_at": datetime.now().isoformat(),
-                    "based_on_articles": article_ids,
-                }
-            )
-            try:
-                from shared.llm_text_sanitize import strip_llm_wrapping_artifacts
+) -> tuple[dict, bool]:
+    """Try to parse LLM output as editorial JSON (5W1H); fall back to sanitized lede only."""
+    from shared.llm_text_sanitize import parse_llm_json_response, sanitize_on_persist
 
-                result["lede"] = strip_llm_wrapping_artifacts(
-                    result.get("lede"), max_length=500
-                )
-            except Exception:
-                pass
-            return result
-    except (json.JSONDecodeError, ValueError):
-        pass
+    parsed, _ = parse_llm_json_response(llm_text)
+    if isinstance(parsed, dict):
+        result = {**EDITORIAL_DOC_TEMPLATE}
+        result.update(
+            {
+                "lede": sanitize_on_persist(parsed.get("lede", ""), "lede"),
+                "who": parsed.get("who", []),
+                "what": parsed.get("what", []),
+                "when": parsed.get("when", []),
+                "where": parsed.get("where", []),
+                "why": sanitize_on_persist(parsed.get("why", ""), "analysis"),
+                "how": sanitize_on_persist(parsed.get("how", ""), "analysis"),
+                "developments": parsed.get("developments", []),
+                "analysis": sanitize_on_persist(parsed.get("analysis", ""), "analysis"),
+                "outlook": sanitize_on_persist(parsed.get("outlook", ""), "summary"),
+                "key_entities": parsed.get("key_entities", []),
+                "sources": sources,
+                "generated_at": datetime.now().isoformat(),
+                "based_on_articles": article_ids,
+            }
+        )
+        return result, True
 
-    try:
-        from shared.llm_text_sanitize import strip_llm_wrapping_artifacts
-
-        raw_lede = strip_llm_wrapping_artifacts(llm_text[:800], max_length=400)
-    except Exception:
-        raw_lede = (llm_text or "")[:300]
+    raw_lede = sanitize_on_persist((llm_text or "")[:800], "lede", max_length=400)
+    logger.warning(
+        "Editorial JSON parse failed for storyline %r — storing sanitized lede only",
+        title[:80],
+    )
     return {
         **EDITORIAL_DOC_TEMPLATE,
-        "lede": raw_lede or (llm_text or "")[:300],
+        "lede": raw_lede or sanitize_on_persist(title, "title"),
         "sources": sources,
         "generated_at": datetime.now().isoformat(),
         "based_on_articles": article_ids,
-    }
+    }, False
 
 
 def _parse_briefing_json(llm_text: str, event_name: str) -> dict:
-    """Try to parse LLM output as briefing JSON; fall back to template."""
-    try:
-        cleaned = llm_text.strip()
-        if cleaned.startswith("```"):
-            cleaned = cleaned.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
-        parsed = json.loads(cleaned)
-        if isinstance(parsed, dict):
-            result = {**EDITORIAL_BRIEFING_TEMPLATE}
-            result.update(
-                {
-                    "headline": parsed.get("headline", event_name),
-                    "summary": parsed.get("summary", ""),
-                    "impact": parsed.get("impact", ""),
-                    "what_next": parsed.get("what_next", ""),
-                    "key_participants": parsed.get("key_participants", []),
-                }
-            )
-            return result
-    except (json.JSONDecodeError, ValueError):
-        pass
+    """Try to parse LLM output as briefing JSON; fall back to sanitized template."""
+    from shared.llm_text_sanitize import parse_llm_json_response, sanitize_on_persist
+
+    parsed, _ = parse_llm_json_response(llm_text)
+    if isinstance(parsed, dict):
+        result = {**EDITORIAL_BRIEFING_TEMPLATE}
+        result.update(
+            {
+                "headline": sanitize_on_persist(
+                    parsed.get("headline") or event_name, "title"
+                ),
+                "summary": sanitize_on_persist(parsed.get("summary", ""), "summary"),
+                "impact": sanitize_on_persist(parsed.get("impact", ""), "analysis"),
+                "what_next": sanitize_on_persist(parsed.get("what_next", ""), "summary"),
+                "key_participants": parsed.get("key_participants", []),
+            }
+        )
+        return result
 
     return {
         **EDITORIAL_BRIEFING_TEMPLATE,
-        "headline": event_name,
-        "summary": llm_text[:300],
+        "headline": sanitize_on_persist(event_name, "title"),
+        "summary": sanitize_on_persist((llm_text or "")[:600], "summary"),
     }

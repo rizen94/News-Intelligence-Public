@@ -115,6 +115,11 @@ class APIService {
   getAutomationSuggestions = storylinesApi.getAutomationSuggestions;
   approveSuggestion = storylinesApi.approveSuggestion;
   rejectSuggestion = storylinesApi.rejectSuggestion;
+  getReviewQueue = storylinesApi.getReviewQueue;
+  getReviewQueueCount = storylinesApi.getReviewQueueCount;
+  bulkApproveSuggestions = storylinesApi.bulkApproveSuggestions;
+  bulkRejectSuggestions = storylinesApi.bulkRejectSuggestions;
+  triggerDomainAutomationDiscovery = storylinesApi.triggerDomainAutomationDiscovery;
 
   // Intelligence
   getRAGContext = intelligenceApi.getRAGContext;

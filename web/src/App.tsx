@@ -58,6 +58,7 @@ import TaskTraceViewer from './pages/Finance/TaskTraceViewer';
 import Storylines from './pages/Storylines/Storylines';
 import StorylineDetail from './pages/Storylines/StorylineDetail';
 import StorylineDiscovery from './pages/Storylines/StorylineDiscovery';
+import StorylineReviewQueue from './pages/Storylines/StorylineReviewQueue';
 import SynthesizedView from './pages/Storylines/SynthesizedView';
 import StoryTimeline from './pages/StoryTimeline/StoryTimeline';
 import Articles from './pages/Articles/Articles';
@@ -89,12 +90,7 @@ function App() {
       version: '9.0',
       environment: import.meta.env.MODE || 'development',
     });
-    const connectionManager = getAPIConnectionManager();
-    connectionManager.testConnection().then(connected => {
-      if (connected) loggingService.info('API connection established');
-      else loggingService.warn('API connection check failed');
-    });
-    return () => connectionManager.cleanup();
+    return () => getAPIConnectionManager().cleanup();
   }, []);
 
   return (
@@ -119,6 +115,14 @@ function App() {
                     element={<ContextDetailPage />}
                   />
                   <Route path='storylines' element={<Storylines />} />
+                  <Route
+                    path='storylines/review-queue'
+                    element={
+                      <DemoRouteGuard>
+                        <StorylineReviewQueue />
+                      </DemoRouteGuard>
+                    }
+                  />
                   {/* Static segments before :id — otherwise "discovery" / "synthesized" match as storyline ids */}
                   <Route
                     path='storylines/discovery'
@@ -129,7 +133,7 @@ function App() {
                     }
                   />
                   <Route
-                    path='storylines/synthesized'
+                    path='storylines/:id/synthesized'
                     element={<SynthesizedView />}
                   />
                   <Route

@@ -47,6 +47,7 @@ class StorylineFinisherBundle:
     entity_highlights: list[str] = field(default_factory=list)
     context_labels: list[str] = field(default_factory=list)
     timeline_bullets: list[str] = field(default_factory=list)
+    historical_context_rendered: str = ""
 
 
 def _strip_json_code_fence(blob: str) -> str:
@@ -247,6 +248,21 @@ def load_finisher_bundle_from_db(
                         seen_ctx.add(c)
                         uniq_contexts.append(c)
 
+                historical_rendered = ""
+                try:
+                    from services.storyline_historical_context_service import (
+                        build_storyline_historical_context,
+                        render_historical_context_for_llm,
+                    )
+
+                    hctx = build_storyline_historical_context(
+                        domain_key, storyline_id, conn=conn
+                    )
+                    if hctx.get("success"):
+                        historical_rendered = render_historical_context_for_llm(hctx)
+                except Exception as he:
+                    logger.debug("finisher historical_context skipped: %s", he)
+
                 return StorylineFinisherBundle(
                     domain_key=domain_key,
                     schema_name=schema,
@@ -258,6 +274,7 @@ def load_finisher_bundle_from_db(
                     entity_highlights=entity_highlights,
                     context_labels=uniq_contexts,
                     timeline_bullets=timeline_bullets,
+                    historical_context_rendered=historical_rendered,
                 )
     except Exception as e:
         logger.exception("load_finisher_bundle_from_db failed: %s", e)
@@ -297,8 +314,11 @@ Context labels:
 Timeline / event bullets (if any):
 {timeline or "(none listed)"}
 
+Established facts and full chronological spine (durable memory; may include events older than 30 days):
+{bundle.historical_context_rendered[:14000] if bundle.historical_context_rendered else "(none loaded)"}
+
 Tasks:
-1) Write a refined **canonical narrative** (4–12 short paragraphs): what this storyline IS, how it evolved, who/what matters, and what is uncertain. Write for analysts re-opening this in a month — not a recap of today's headlines only.
+1) Write a refined **canonical narrative** (4–12 short paragraphs): what this storyline IS, how it evolved, who/what matters, and what is uncertain. Name specific companies, officials, sectors, or commodities when sources support it; explain implications for markets, policy, or affected sectors — not boilerplate about "related coverage."
 2) Suggest **new** entities or themes worth linking (not already obvious in lists).
 3) Call out **redundant or misleading** prior phrases to remove or soften in stored copy.
 4) Return **valid JSON only** after a line containing exactly ---JSON--- with this shape:
@@ -331,7 +351,7 @@ Draft description: {draft_description or "(none)"}
 Evidence (headlines / summaries):
 {lines or "(none)"}
 
-Rules: Use clear subject–verb–object news style; no clickbait; preserve factual scope implied by the sources.
+Rules: Use clear subject–verb–object news style; no clickbait; preserve factual scope implied by the sources. Name specific companies/sectors when present; state market or sector implications in the description — never bare "Reports" or "Earnings" without context.
 
 Reply with ONLY valid JSON after a line containing exactly ---JSON---
 {{
@@ -394,8 +414,12 @@ async def refine_storyline_headline_with_70b(
     parsed, err = parse_headline_refiner_response(result.text)
     out["parse_error"] = err
     if isinstance(parsed, dict):
-        out["title"] = (parsed.get("title") or "").strip()
-        out["description"] = (parsed.get("description") or "").strip()
+        from shared.llm_text_sanitize import sanitize_briefing_title, strip_llm_wrapping_artifacts
+
+        out["title"] = sanitize_briefing_title((parsed.get("title") or "").strip())
+        out["description"] = strip_llm_wrapping_artifacts(
+            (parsed.get("description") or "").strip(), max_length=500
+        )
         out["success"] = bool(out["title"])
     return out
 
@@ -474,7 +498,11 @@ def persist_narrative_finish_to_db(
     parsed = run_result.get("parsed")
     if not isinstance(parsed, dict):
         parsed = {}
-    canonical = (parsed.get("canonical_narrative") or "").strip()
+    from shared.llm_text_sanitize import sanitize_on_persist
+
+    canonical = sanitize_on_persist(
+        (parsed.get("canonical_narrative") or "").strip(), "narrative"
+    )
     meta: dict[str, Any] = {
         "suggested_new_entities": parsed.get("suggested_new_entities"),
         "suggested_new_context_hooks": parsed.get("suggested_new_context_hooks"),

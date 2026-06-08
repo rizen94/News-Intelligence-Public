@@ -17,6 +17,11 @@ import {
   Divider,
   Tooltip,
   LinearProgress,
+  MenuItem,
+  Select,
+  FormControl,
+  InputLabel,
+  TextField,
 } from '@mui/material';
 import {
   Close as CloseIcon,
@@ -28,6 +33,14 @@ import {
 } from '@mui/icons-material';
 import apiService from '../services/apiService';
 import { useDomainRoute } from '../hooks/useDomainRoute';
+
+const REJECT_REASONS = [
+  { code: 'not_relevant', label: 'Not relevant' },
+  { code: 'duplicate', label: 'Duplicate coverage' },
+  { code: 'low_quality', label: 'Low quality source' },
+  { code: 'wrong_storyline', label: 'Wrong storyline' },
+  { code: 'other', label: 'Other' },
+];
 
 const ArticleSuggestionsDialog = ({
   open,
@@ -43,6 +56,10 @@ const ArticleSuggestionsDialog = ({
     message: null,
     severity: 'info',
   });
+  const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
+  const [rejectTargetId, setRejectTargetId] = useState(null);
+  const [rejectReason, setRejectReason] = useState('not_relevant');
+  const [rejectNotes, setRejectNotes] = useState('');
 
   useEffect(() => {
     if (open && storylineId) {
@@ -120,13 +137,27 @@ const ArticleSuggestionsDialog = ({
     }
   };
 
-  const handleReject = async suggestionId => {
+  const openRejectDialog = suggestionId => {
+    setRejectTargetId(suggestionId);
+    setRejectReason('not_relevant');
+    setRejectNotes('');
+    setRejectDialogOpen(true);
+  };
+
+  const handleRejectConfirm = async () => {
+    if (rejectTargetId == null) return;
+    const suggestionId = rejectTargetId;
+    setRejectDialogOpen(false);
+    const reasonLabel =
+      REJECT_REASONS.find(r => r.code === rejectReason)?.label || rejectReason;
+    const notes = rejectNotes.trim() || reasonLabel;
+
     try {
       setProcessing(prev => new Set(prev).add(suggestionId));
       const response = await apiService.rejectSuggestion(
         storylineId,
         suggestionId,
-        'Not relevant',
+        notes,
         domain
       );
 
@@ -164,7 +195,12 @@ const ArticleSuggestionsDialog = ({
         next.delete(suggestionId);
         return next;
       });
+      setRejectTargetId(null);
     }
+  };
+
+  const handleReject = suggestionId => {
+    openRejectDialog(suggestionId);
   };
 
   const handleDiscover = async () => {
@@ -485,6 +521,46 @@ const ArticleSuggestionsDialog = ({
           Refresh
         </Button>
       </DialogActions>
+
+      <Dialog
+        open={rejectDialogOpen}
+        onClose={() => setRejectDialogOpen(false)}
+        maxWidth='xs'
+        fullWidth
+      >
+        <DialogTitle>Reject suggestion</DialogTitle>
+        <DialogContent>
+          <FormControl fullWidth sx={{ mt: 1, mb: 2 }}>
+            <InputLabel id='reject-reason-label'>Reason</InputLabel>
+            <Select
+              labelId='reject-reason-label'
+              value={rejectReason}
+              label='Reason'
+              onChange={e => setRejectReason(e.target.value)}
+            >
+              {REJECT_REASONS.map(r => (
+                <MenuItem key={r.code} value={r.code}>
+                  {r.label}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+          <TextField
+            fullWidth
+            multiline
+            minRows={2}
+            label='Notes (optional)'
+            value={rejectNotes}
+            onChange={e => setRejectNotes(e.target.value)}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setRejectDialogOpen(false)}>Cancel</Button>
+          <Button onClick={handleRejectConfirm} color='error' variant='contained'>
+            Reject
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Dialog>
   );
 };

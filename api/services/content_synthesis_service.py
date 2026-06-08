@@ -244,7 +244,9 @@ def synthesize_domain_context(
                 SELECT te.id, te.event_name, te.event_type,
                        te.editorial_briefing,
                        te.editorial_briefing_json->>'momentum_score' AS momentum,
-                       (SELECT COUNT(*) FROM intelligence.event_chronicles ec WHERE ec.event_id = te.id) AS chronicle_count
+                       (SELECT COUNT(*) FROM intelligence.event_chronicles ec WHERE ec.event_id = te.id) AS chronicle_count,
+                       te.global_narrative,
+                       te.narrative_lenses
                 FROM intelligence.tracked_events te
                 WHERE te.domain_keys @> %s::jsonb OR te.domain_keys IS NULL
                 ORDER BY te.updated_at DESC NULLS LAST
@@ -254,12 +256,15 @@ def synthesize_domain_context(
             )
             events = []
             for erow in cur.fetchall():
+                lenses = erow[7] if isinstance(erow[7], dict) else {}
+                lens_text = lenses.get(domain_key) if isinstance(lenses, dict) else None
+                briefing = (lens_text or erow[6] or erow[3] or "")[:500]
                 events.append(
                     {
                         "id": erow[0],
                         "name": erow[1] or "",
                         "type": erow[2] or "",
-                        "editorial_briefing": (erow[3] or "")[:500],
+                        "editorial_briefing": briefing,
                         "momentum": erow[4],
                         "chronicle_count": erow[5],
                     }
@@ -491,6 +496,9 @@ def synthesize_storyline_context(
     if not conn:
         return {"success": False, "error": "Database connection failed"}
 
+    historical_context = None
+    historical_context_rendered = ""
+    context_bundle = None
     try:
         with conn.cursor() as cur:
             # Storyline metadata
@@ -773,6 +781,48 @@ def synthesize_storyline_context(
                 except Exception as tl_err:
                     logger.debug("synthesize_storyline_context timeline_builder: %s", tl_err)
 
+            try:
+                from services.context_bundle_service import build_context_bundle_sync
+
+                retrieval_query = (storyline.get("title") or "").strip() or f"storyline {storyline_id}"
+                context_bundle = build_context_bundle_sync(
+                    storyline_id=storyline_id,
+                    domain_key=domain_key,
+                    query=retrieval_query,
+                )
+
+                if context_bundle and context_bundle.get("success"):
+                    historical_context = context_bundle.get("historical_context")
+                    historical_context_rendered = context_bundle.get("rendered_for_prompt") or ""
+                    if not historical_context_rendered and historical_context:
+                        from services.storyline_historical_context_service import (
+                            render_historical_context_for_llm,
+                        )
+
+                        historical_context_rendered = render_historical_context_for_llm(
+                            historical_context
+                        )
+            except Exception as hc_err:
+                logger.debug("synthesize_storyline_context context_bundle: %s", hc_err)
+                try:
+                    from services.storyline_historical_context_service import (
+                        build_storyline_historical_context,
+                        render_historical_context_for_llm,
+                    )
+
+                    historical_context = build_storyline_historical_context(
+                        domain_key, storyline_id, conn=conn
+                    )
+                    if historical_context.get("success"):
+                        historical_context_rendered = render_historical_context_for_llm(
+                            historical_context
+                        )
+                except Exception as fallback_err:
+                    logger.debug(
+                        "synthesize_storyline_context historical_context fallback: %s",
+                        fallback_err,
+                    )
+
         conn.close()
         result = {
             "success": True,
@@ -787,6 +837,9 @@ def synthesize_storyline_context(
             "documents": documents,
             "chronological_events": chronological_events,
             "timeline": timeline,
+            "historical_context": historical_context,
+            "historical_context_rendered": historical_context_rendered,
+            "context_bundle": context_bundle,
             "domain_synthesis_config": {
                 "llm_context": domain_config.llm_context,
                 "editorial_sections": domain_config.editorial_sections,
@@ -1161,6 +1214,16 @@ def render_synthesis_for_llm(synthesis: dict[str, Any], max_chars: int = 8000) -
             summary = meta.get("narrative_summary") or ""
             if summary:
                 parts.append(f"- {summary[:300]}")
+
+    hist_rendered = synthesis.get("historical_context_rendered") or ""
+    if hist_rendered:
+        parts.append("\n## Historical memory (facts + chronological spine)")
+        parts.append(hist_rendered[:4000])
+    elif synthesis.get("historical_context", {}).get("success"):
+        from services.storyline_historical_context_service import render_historical_context_for_llm
+
+        parts.append("\n## Historical memory (facts + chronological spine)")
+        parts.append(render_historical_context_for_llm(synthesis["historical_context"])[:4000])
 
     # Claims
     claims = synthesis.get("claims", [])

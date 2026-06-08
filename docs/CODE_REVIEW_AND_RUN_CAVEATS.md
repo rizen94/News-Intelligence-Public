@@ -35,7 +35,7 @@ GPU: **not strictly required** to browse code; for **continuous** operation with
 
 ## Why we do **not** recommend a casual “clone and run” (today)
 
-- **Docker is archived** (not the default path): old Compose + Dockerfiles live under [`docs/archive/docker_stack/`](archive/docker_stack/README.md). The running API uses **`DB_*`** via [`api/shared/database/connection.py`](../api/shared/database/connection.py) on **bare metal** (`start_system.sh`).
+- **Docker is archived** (not the default path): old Compose + Dockerfiles live under [`docs/archive/docker_stack/`](archive/docker_stack/README.md). **Production on Widow uses systemd only** — `news-intelligence-api-public.service` at `/opt/news-intelligence`; deploy via [`scripts/deploy_to_widow.sh`](../scripts/deploy_to_widow.sh). Do not use `start_system.sh` alongside the systemd API.
 - **Defaults target a lab setup** (e.g. DB host / tunnel behavior in connection helpers). You must **override env** for your network.
 - **Automation is heavy**: many phases call **Ollama** and touch the DB on timers — weak laptops will struggle; you may need to tune or disable phases in governance config.
 - **Multi-service reality**: RSS workers, NAS paths, and optional Redis may exist in ops docs; a minimal run still needs **Postgres + API + (optional) web + Ollama** thought through.

@@ -29,7 +29,7 @@ const APIConnectionStatus: React.FC<APIConnectionStatusProps> = ({
       setIsConnected(connected);
       if (!connected) {
         setError(
-          'API not reachable. Ensure the API is running (e.g. port 8000). In dev, the frontend proxies /api to localhost:8000.'
+          'API not reachable at /api on this host (504/timeout usually means the backend is overloaded, not a wrong API URL). Ensure the API service is running on Widow.'
         );
       }
     } catch (err: unknown) {
@@ -51,7 +51,7 @@ const APIConnectionStatus: React.FC<APIConnectionStatusProps> = ({
     // User can also manually refresh
     const interval = setInterval(() => {
       checkConnection();
-    }, 30000); // Check every 30 seconds (much less frequent)
+    }, 120000); // HeroStatusBar polls health every 60s — avoid duplicate hammering
 
     return () => clearInterval(interval);
   }, []);

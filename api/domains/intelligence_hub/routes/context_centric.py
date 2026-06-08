@@ -1391,6 +1391,7 @@ def list_tracked_events(
         where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
         params.extend([limit, offset])
         with conn.cursor() as cur:
+            cur.execute("SET LOCAL statement_timeout = '5s'")
             cur.execute(
                 f"""
                 SELECT {_EVENT_COLS}

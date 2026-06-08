@@ -677,14 +677,49 @@ async def _run_timeline_narrative(domain_key: str, storyline_id: int, mode: str)
         if not timeline.get("events"):
             raise RuntimeError("no_timeline_events")
 
+        context_bundle: dict | None = None
+        retrieval_query = ""
+        try:
+            title_row = None
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"SELECT title FROM {schema}.storylines WHERE id = %s",
+                    (storyline_id,),
+                )
+                title_row = cur.fetchone()
+            if title_row and title_row[0]:
+                retrieval_query = str(title_row[0])
+            if timeline.get("events"):
+                latest = timeline["events"][-1]
+                retrieval_query = f"{retrieval_query} {latest.get('title', '')}".strip()
+
+            from services.context_bundle_service import ContextBundleService
+
+            context_bundle = await ContextBundleService().build_context_bundle(
+                storyline_id=storyline_id,
+                domain_key=domain_key,
+                query=retrieval_query or f"storyline {storyline_id}",
+            )
+        except Exception as hc_err:
+            logger.debug("timeline narrative context_bundle: %s", hc_err)
+
+        timeline["storyline_id"] = storyline_id
+        timeline["domain_key"] = domain_key
+
         ns = NarrativeSynthesisService()
         try:
+            narrative_kwargs = {
+                "context_bundle": context_bundle,
+                "storyline_id": storyline_id,
+                "domain_key": domain_key,
+                "retrieval_query": retrieval_query or None,
+            }
             if mode == "briefing":
-                result = await ns.generate_briefing(timeline)
+                result = await ns.generate_briefing(timeline, **narrative_kwargs)
                 col_text = "timeline_narrative_briefing"
                 col_at = "timeline_narrative_briefing_at"
             else:
-                result = await ns.generate_chronological_narrative(timeline)
+                result = await ns.generate_chronological_narrative(timeline, **narrative_kwargs)
                 col_text = "timeline_narrative_chronological"
                 col_at = "timeline_narrative_chronological_at"
         finally:
@@ -693,7 +728,10 @@ async def _run_timeline_narrative(domain_key: str, storyline_id: int, mode: str)
         if not result.get("success"):
             raise RuntimeError(result.get("error", "narrative_generation_failed"))
 
-        text = (result.get("narrative") or result.get("briefing") or "").strip()
+        from shared.llm_text_sanitize import sanitize_on_persist
+
+        raw_text = (result.get("narrative") or result.get("briefing") or "").strip()
+        text = sanitize_on_persist(raw_text, "narrative")
         now = datetime.now(timezone.utc)
         with conn.cursor() as cur:
             cur.execute(

@@ -41,6 +41,7 @@ import {
 import ReactMarkdown from 'react-markdown';
 
 import { sanitizeSnippet } from '../../utils/sanitizeSnippet';
+import { getApi } from '../../services/api/client';
 
 type SynthesisResponse = Record<string, any> | null;
 type QualityResponse = Record<string, any> | null;
@@ -98,12 +99,12 @@ const SynthesizedView: React.FC = () => {
     setError(null);
     try {
       if (!forceRegenerate) {
-        const cachedResponse = await fetch(
-          `/api/${domain}/synthesis/storyline/${id}/cached`
-        );
-        if (cachedResponse.ok) {
-          const cachedData = await cachedResponse.json();
-          if (cachedData.has_synthesis && cachedData.content) {
+        try {
+          const cachedResponse = await getApi().get(
+            `/api/${domain}/synthesis/storyline/${id}/cached`
+          );
+          const cachedData = cachedResponse.data;
+          if (cachedData?.has_synthesis && cachedData.content) {
             setSynthesis({
               title: cachedData.title,
               summary: cachedData.content?.split('\n\n')[0] || '',
@@ -118,20 +119,20 @@ const SynthesizedView: React.FC = () => {
             setLoading(false);
             return;
           }
+        } catch {
+          // No cache — fall through to POST synthesis.
         }
       }
-      const response = await fetch(`/api/${domain}/synthesis/storyline/${id}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      const response = await getApi().post(
+        `/api/${domain}/synthesis/storyline/${id}`,
+        {
           depth,
           include_terms: true,
           include_timeline: true,
           format: 'json',
-        }),
-      });
-      if (!response.ok) throw new Error(`Synthesis failed: ${response.status}`);
-      setSynthesis(await response.json());
+        }
+      );
+      setSynthesis(response.data);
     } catch (err: any) {
       setError(err?.message || 'Failed to load synthesis');
     } finally {
@@ -141,19 +142,21 @@ const SynthesizedView: React.FC = () => {
 
   const loadQuality = async () => {
     try {
-      const response = await fetch(`/api/${domain}/synthesis/quality/${id}`);
-      if (response.ok) setQuality(await response.json());
+      const response = await getApi().get(
+        `/api/${domain}/synthesis/quality/${id}`
+      );
+      setQuality(response.data);
     } catch {
       // Non-blocking.
     }
   };
 
   const downloadMarkdown = async () => {
-    const response = await fetch(
-      `/api/${domain}/synthesis/storyline/${id}/markdown?depth=${depth}`
+    const response = await getApi().get(
+      `/api/${domain}/synthesis/storyline/${id}/markdown`,
+      { params: { depth } }
     );
-    if (!response.ok) return;
-    const data = await response.json();
+    const data = response.data;
     const blob = new Blob([data.markdown], { type: 'text/markdown' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');

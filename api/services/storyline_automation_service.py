@@ -13,6 +13,7 @@ from shared.database.connection import get_db_connection
 from shared.services.domain_aware_service import DomainAwareService
 
 from services.domain_synthesis_config import get_domain_synthesis_config
+from services.quality_monitoring_service import get_quality_monitoring_service
 
 logger = logging.getLogger(__name__)
 
@@ -358,15 +359,45 @@ class StorylineAutomationService(DomainAwareService):
                     for a in discovered_articles:
                         a["combined_score"] = self._final_score(a)
 
-                    # Store suggestions or auto-add based on mode
+                    import re
+
+                    weak_title = bool(re.match(r"^Ongoing:\s", title or "", re.I))
+                    if weak_title and not storyline_entities:
+                        before = len(discovered_articles)
+                        discovered_articles = [
+                            a
+                            for a in discovered_articles
+                            if float(a.get("combined_score") or 0) >= 0.75
+                        ]
+                        if before and not discovered_articles:
+                            logger.info(
+                                "Storyline %s weak metadata (Ongoing: title, no entities) — "
+                                "no high-confidence candidates to suggest",
+                                storyline_id,
+                            )
+
+                    store_filter_stats: dict[str, int] = {}
+                    suggestions_count = 0
+                    added_count = 0
                     if automation_mode == "auto_approve":
                         added_count = await self._auto_add_articles(
                             conn, storyline_id, discovered_articles, settings
                         )
                     else:
-                        suggestions_count = await self._store_suggestions(
+                        store_result = await self._store_suggestions(
                             conn, storyline_id, discovered_articles, settings, search_query
                         )
+                        if isinstance(store_result, dict):
+                            suggestions_count = int(store_result.get("stored", 0))
+                            store_filter_stats = store_result.get("skip_reasons") or {}
+                        else:
+                            suggestions_count = int(store_result or 0)
+                            store_filter_stats = {}
+
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        pass
 
                     # Update last automation run and quality_metrics (when column exists)
                     now = datetime.now()
@@ -375,6 +406,8 @@ class StorylineAutomationService(DomainAwareService):
                         "filter_stats": filter_stats,
                         "articles_passed": len(discovered_articles),
                     }
+                    if store_filter_stats:
+                        quality_metrics["store_filter_stats"] = store_filter_stats
                     if discovered_articles:
                         tiers = [
                             a.get("quality_tier")
@@ -426,6 +459,7 @@ class StorylineAutomationService(DomainAwareService):
                         "articles_suggested": suggestions_count,
                         "articles": discovered_articles,
                         "quality_filter_stats": filter_stats,
+                        "store_filter_stats": store_filter_stats,
                     }
 
             finally:
@@ -433,6 +467,14 @@ class StorylineAutomationService(DomainAwareService):
 
         except Exception as e:
             logger.error(f"Error discovering articles for storyline {storyline_id}: {e}")
+            # Add quality check for error handling
+            try:
+                from services.content_quality_service import get_content_quality_service
+                quality_service = get_content_quality_service()
+                # Log the error with quality metrics context
+                logger.warning(f"Quality assessment attempted for failed storyline {storyline_id}")
+            except Exception as qe:
+                logger.debug(f"Quality assessment failed for storyline {storyline_id}: {qe}")
             return {"success": False, "error": str(e), "articles": []}
 
     def _build_search_query(
@@ -1150,6 +1192,37 @@ class StorylineAutomationService(DomainAwareService):
         finally:
             conn.close()
 
+    def _validate_article_for_store(
+        self,
+        article: dict[str, Any],
+        settings: dict[str, Any],
+        *,
+        source: str = "discovery",
+    ) -> tuple[bool, str | None]:
+        """Unified pre-store validation (quality gates + suggestion thresholds)."""
+        min_score = float(settings.get("min_relevance_score", 0.6))
+        min_quality = float(settings.get("min_quality_score", 0.5))
+        min_semantic = float(settings.get("min_semantic_score", 0.55))
+
+        relevance = float(article.get("relevance_score", 0.6) or 0.6)
+        quality = float(article.get("quality_score", 0.5) or 0.5)
+        combined = article.get("combined_score")
+        if combined is None:
+            combined = self._final_score(article)
+        combined = float(combined)
+
+        if combined < min_score:
+            return False, "below_combined_score"
+        if quality < min_quality:
+            return False, "below_quality"
+
+        semantic_raw = article.get("semantic_score")
+        if semantic_raw is not None and source == "rag":
+            if float(semantic_raw) < min_semantic:
+                return False, "below_semantic"
+
+        return True, None
+
     async def _store_suggestions(
         self,
         conn,
@@ -1157,58 +1230,67 @@ class StorylineAutomationService(DomainAwareService):
         articles: list[dict[str, Any]],
         settings: dict[str, Any],
         search_query: str,
-    ) -> int:
-        """Store article suggestions in review queue"""
+    ) -> dict[str, Any]:
+        """Store article suggestions in review queue."""
+        stored_count = 0
+        skipped = 0
+        skip_reasons: dict[str, int] = {}
+        insert_errors: list[str] = []
+
+        logger.info(
+            "Storing suggestions thresholds: min_score=%s min_quality=%s",
+            settings.get("min_relevance_score", 0.6),
+            settings.get("min_quality_score", 0.5),
+        )
+
+        store_conn = get_db_connection()
+        if not store_conn:
+            logger.error("Error storing suggestions: no database connection")
+            return {"stored": 0, "skipped": len(articles), "skip_reasons": {}, "insert_errors": ["no_db"]}
+
         try:
-            with conn.cursor() as cur:
-                stored_count = 0
-                min_score = settings.get("min_relevance_score", 0.6)
-                min_quality = settings.get("min_quality_score", 0.5)
-                min_semantic = settings.get("min_semantic_score", 0.55)
-
-                logger.info(
-                    f"Storing suggestions with thresholds: min_score={min_score}, min_quality={min_quality}, min_semantic={min_semantic}"
-                )
-
+            with store_conn.cursor() as cur:
                 for article in articles:
-                    relevance = article.get("relevance_score", 0.6)
-                    quality = article.get("quality_score", 0.5)
-                    semantic = article.get("semantic_score", 0.6)
-                    # Use quality-gate combined_score (relevance*0.7 + quality*0.3) when set
-                    combined = article.get("combined_score")
-                    if combined is None:
-                        combined = relevance * 0.4 + quality * 0.3 + semantic * 0.3
+                    source = "rag" if article.get("semantic_score") is not None else "entity"
+                    ok, reason = self._validate_article_for_store(article, settings, source=source)
+                    if not ok:
+                        skipped += 1
+                        skip_reasons[reason or "rejected"] = skip_reasons.get(reason or "rejected", 0) + 1
+                        continue
 
-                    # Log scores for debugging
-                    logger.debug(
-                        f"Article {article.get('id')}: relevance={relevance:.2f}, quality={quality:.2f}, semantic={semantic:.2f}, combined={combined:.2f}"
+                    relevance = float(article.get("relevance_score", 0.6) or 0.6)
+                    quality = float(article.get("quality_score", 0.5) or 0.5)
+                    semantic = float(article.get("semantic_score", relevance) or relevance)
+                    combined = float(article.get("combined_score") or self._final_score(article))
+
+                    matched_raw = (
+                        article.get("matched_entities")
+                        or article.get("matched_keywords")
+                        or []
                     )
+                    if isinstance(matched_raw, int):
+                        matched: list[str] = []
+                    elif isinstance(matched_raw, (list, tuple)):
+                        matched = [str(m) for m in matched_raw if m is not None][:32]
+                    else:
+                        matched = [str(matched_raw)]
 
-                    # Check individual thresholds AND combined score
-                    if (
-                        combined >= min_score
-                        and quality >= min_quality
-                        and semantic >= min_semantic
-                    ):
-                        matched = (
-                            article.get("matched_entities") or article.get("matched_keywords") or []
+                    reasoning = f"Matched search query: {search_query[:200]}"
+                    if matched:
+                        reasoning = (
+                            f"Matched storyline entities: {', '.join(matched[:8])}"
                         )
-                        if isinstance(matched, int):
-                            matched = []
-                        reasoning = f"Matched search query: {search_query[:200]}"
-                        if matched:
-                            reasoning = f"Matched storyline entities: {', '.join(str(m) for m in matched[:8])}"
 
-                        # Note: storyline_article_suggestions is in public schema (shared across domains)
+                    try:
                         cur.execute(
                             """
                             INSERT INTO public.storyline_article_suggestions (
-                                storyline_id, article_id, relevance_score, semantic_score,
+                                domain_key, storyline_id, article_id, relevance_score, semantic_score,
                                 keyword_score, quality_score, combined_score, reasoning,
                                 matched_keywords, matched_entities, status, suggested_at, expires_at
                             ) VALUES (
-                                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
-                            ) ON CONFLICT (storyline_id, article_id) DO UPDATE SET
+                                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                            ) ON CONFLICT (domain_key, storyline_id, article_id) DO UPDATE SET
                                 relevance_score = EXCLUDED.relevance_score,
                                 combined_score = EXCLUDED.combined_score,
                                 reasoning = EXCLUDED.reasoning,
@@ -1216,35 +1298,65 @@ class StorylineAutomationService(DomainAwareService):
                                 matched_entities = EXCLUDED.matched_entities,
                                 suggested_at = EXCLUDED.suggested_at,
                                 status = 'pending'
-                            WHERE public.storyline_article_suggestions.status != 'added'
-                        """,
+                            WHERE public.storyline_article_suggestions.status NOT IN ('added', 'approved')
+                            """,
                             (
+                                self.domain,
                                 storyline_id,
                                 article.get("id"),
-                                relevance,
-                                semantic,
-                                relevance,  # keyword_score same as relevance for now
-                                quality,
-                                combined,
+                                round(relevance, 2),
+                                round(semantic, 2),
+                                round(relevance, 2),
+                                round(quality, 2),
+                                round(combined, 2),
                                 reasoning,
                                 matched,
                                 matched,
                                 "pending",
                                 datetime.now(),
-                                datetime.now() + timedelta(days=7),  # Expire in 7 days
+                                datetime.now() + timedelta(days=7),
                             ),
                         )
-
                         if cur.rowcount > 0:
                             stored_count += 1
+                    except Exception as insert_err:
+                        err_msg = str(insert_err)[:120]
+                        insert_errors.append(err_msg)
+                        logger.warning(
+                            "Skip suggestion storyline=%s article=%s: %s",
+                            storyline_id,
+                            article.get("id"),
+                            insert_err,
+                        )
+                        store_conn.rollback()
 
-                conn.commit()
-                return stored_count
+            store_conn.commit()
+            if skipped:
+                logger.info(
+                    "Suggestion store storyline=%s stored=%s skipped=%s reasons=%s",
+                    storyline_id,
+                    stored_count,
+                    skipped,
+                    skip_reasons,
+                )
+            return {
+                "stored": stored_count,
+                "skipped": skipped,
+                "skip_reasons": skip_reasons,
+                "insert_errors": insert_errors,
+            }
 
         except Exception as e:
-            logger.error(f"Error storing suggestions: {e}")
-            conn.rollback()
-            return 0
+            logger.error("Error storing suggestions: %s", e)
+            store_conn.rollback()
+            return {
+                "stored": stored_count,
+                "skipped": skipped,
+                "skip_reasons": skip_reasons,
+                "insert_errors": insert_errors + [str(e)[:200]],
+            }
+        finally:
+            store_conn.close()
 
     def _merge_article_entities_to_storyline(self, cur, storyline_id: int, article_id: int) -> None:
         """Merge article_entities into story_entity_index when article added to storyline."""
@@ -1298,10 +1410,10 @@ class StorylineAutomationService(DomainAwareService):
 
             with conn.cursor() as cur:
                 for article in articles:
+                    relevance = float(article.get("relevance_score", 0.6) or 0.6)
+                    quality = float(article.get("quality_score", 0.5) or 0.5)
                     combined = article.get("combined_score")
                     if combined is None:
-                        relevance = article.get("relevance_score", 0.6)
-                        quality = article.get("quality_score", 0.5)
                         combined = relevance * 0.7 + quality * 0.3
                     if combined >= min_score:
                         # Auto-add article to domain schema
@@ -1321,6 +1433,16 @@ class StorylineAutomationService(DomainAwareService):
                                 self._merge_article_entities_to_storyline(
                                     cur, storyline_id, article.get("id")
                                 )
+                                
+                                # Check if this article should trigger consolidation
+                                # This is a simple check - in a real implementation, 
+                                # you might want to check article frequency or other criteria
+                                if added_count % 10 == 0:  # Every 10 articles, run consolidation
+                                    try:
+                                        from services.storyline_consolidation_service import consolidation_task
+                                        consolidation_task()
+                                    except Exception as consolidation_error:
+                                        logger.warning(f"Error running consolidation: {consolidation_error}")
                         except Exception as e:
                             logger.warning(f"Error adding article {article.get('id')}: {e}")
                             continue

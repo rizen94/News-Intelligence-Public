@@ -2469,7 +2469,7 @@ const StorylineDetail = () => {
           </Button>
           <Button
             variant='contained'
-            onClick={() => navigateToDomain(`/storylines/${id}/synthesis`)}
+            onClick={() => navigateToDomain(`/storylines/${id}/synthesized`)}
           >
             Open Full View
           </Button>

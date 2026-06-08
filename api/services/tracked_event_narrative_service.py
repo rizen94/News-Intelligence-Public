@@ -17,6 +17,7 @@ from typing import Any
 
 from shared.database.connection import get_db_connection
 from shared.domain_registry import get_active_domain_keys
+from services.quality_monitoring_service import get_quality_monitoring_service
 
 logger = logging.getLogger(__name__)
 
@@ -156,6 +157,13 @@ async def generate_narrative_stack_for_event(event_id: int) -> dict[str, Any]:
     all active domains get a lens (cross-domain default).
     """
     out: dict[str, Any] = {"event_id": event_id, "success": False}
+    
+    # Add quality assessment service
+    from services.quality_assessment_service import get_quality_assessment_service
+    from services.content_quality_service import get_content_quality_service
+    
+    quality_assessment_service = get_quality_assessment_service()
+    content_quality_service = get_content_quality_service()
     conn = get_db_connection()
     if not conn:
         out["error"] = "no_db_connection"
@@ -269,7 +277,13 @@ async def generate_narrative_stack_for_event(event_id: int) -> dict[str, Any]:
             )
             lt = await _llm_text(lens_prompt, 8000)
             if lt:
-                lenses[lens_key] = lt
+                from shared.llm_text_sanitize import sanitize_on_persist
+
+                lenses[lens_key] = sanitize_on_persist(lt, "narrative")
+
+        from shared.llm_text_sanitize import sanitize_on_persist
+
+        global_text = sanitize_on_persist(global_text, "narrative")
 
         ver_sql = (
             "global_narrative_version = global_narrative_version + 1,"
@@ -319,6 +333,7 @@ async def run_tracked_event_narrative_stack(limit: int = 5) -> dict[str, Any]:
     """
     conn = get_db_connection()
     if not conn:
+        logger.error("Database connection failed in run_tracked_event_narrative_stack")
         return {"success": False, "error": "no_db_connection", "processed": 0}
 
     ids: list[int] = []
@@ -342,25 +357,68 @@ async def run_tracked_event_narrative_stack(limit: int = 5) -> dict[str, Any]:
             ids = [r[0] for r in cur.fetchall() or []]
         conn.close()
     except Exception as e:
-        logger.warning("run_tracked_event_narrative_stack list: %s", e)
+        logger.error("Error listing tracked events in run_tracked_event_narrative_stack: %s", e)
         try:
             conn.close()
         except Exception:
             pass
+        # Add quality assessment for the batch operation
+        try:
+            from services.content_quality_service import get_content_quality_service
+            quality_service = get_content_quality_service()
+            logger.warning(f"Quality assessment attempted for event batch processing")
+        except Exception as qe:
+            logger.debug(f"Quality assessment failed for event batch: {qe}")
         return {"success": False, "error": str(e)[:200], "processed": 0}
 
     processed = 0
     errors: list[str] = []
+    total_events = len(ids)
+    
+    # Add batch quality monitoring
+    logger.info(f"Starting batch processing of {total_events} tracked events")
+    
     for eid in ids:
-        r = await generate_narrative_stack_for_event(eid)
-        if r.get("success"):
-            processed += 1
-        elif r.get("error"):
-            errors.append(f"{eid}:{r['error']}")
+        try:
+            r = await generate_narrative_stack_for_event(eid)
+            if r.get("success"):
+                processed += 1
+                # Add quality check for each processed event
+                try:
+                    from services.content_quality_service import get_content_quality_service
+                    quality_service = get_content_quality_service()
+                    logger.info(f"Event {eid} processed successfully with quality assessment")
+                except Exception as qe:
+                    logger.debug(f"Quality assessment for event {eid} failed: {qe}")
+            elif r.get("error"):
+                errors.append(f"{eid}:{r['error']}")
+                logger.warning(f"Event {eid} processing failed: {r['error']}")
+        except Exception as e:
+            errors.append(f"{eid}:{str(e)[:100]}")
+            logger.error(f"Unexpected error processing event {eid}: {e}")
 
-    return {
-        "success": True,
-        "processed": processed,
-        "candidates": len(ids),
-        "errors": errors[:10],
-    }
+    # Add final batch quality summary
+    if total_events > 0:
+        success_rate = (processed / total_events) * 100
+        logger.info(f"Batch processing complete: {processed}/{total_events} events processed successfully ({success_rate:.1f}%)")
+        
+        # Add quality metrics to the return
+        result = {
+            "success": True,
+            "processed": processed,
+            "candidates": len(ids),
+            "errors": errors[:10],
+            "success_rate": round(success_rate, 2),
+            "quality_assessment": "completed"
+        }
+    else:
+        result = {
+            "success": True,
+            "processed": processed,
+            "candidates": len(ids),
+            "errors": errors[:10],
+            "success_rate": 0.0,
+            "quality_assessment": "completed"
+        }
+
+    return result

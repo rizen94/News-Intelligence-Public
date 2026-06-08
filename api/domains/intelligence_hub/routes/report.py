@@ -58,16 +58,25 @@ def _get_schema_for_domain(domain: str) -> str | None:
         return None
 
 
+def _sanitize_storyline_title(title: str | None) -> str:
+    try:
+        from shared.llm_text_sanitize import sanitize_briefing_title
+
+        return sanitize_briefing_title(title)
+    except Exception:
+        return (title or "").strip()
+
+
 def _sanitize_editorial_document_for_api(ed: dict | None) -> dict | None:
     """Strip JSON/prompt noise from lede and other string fields before JSON response."""
     if not ed or not isinstance(ed, dict):
         return ed
     try:
-        from shared.llm_text_sanitize import strip_llm_wrapping_artifacts
+        from shared.llm_text_sanitize import sanitize_briefing_lede, strip_llm_wrapping_artifacts
 
         out = dict(ed)
         if out.get("lede"):
-            out["lede"] = strip_llm_wrapping_artifacts(out.get("lede"), max_length=800)
+            out["lede"] = sanitize_briefing_lede(out.get("lede"), max_length=800)
         for key in ("why", "how", "analysis", "outlook"):
             if out.get(key) and isinstance(out[key], str):
                 out[key] = strip_llm_wrapping_artifacts(out[key], max_length=4000)
@@ -223,7 +232,7 @@ def get_report(
                 lead_storylines.append(
                     {
                         "id": sid,
-                        "title": title or "",
+                        "title": _sanitize_storyline_title(title),
                         "editorial_document": ed,
                         "key_actors": key_actors,
                         "phase": phase,
@@ -278,6 +287,25 @@ def _db_domain_keys_for_correlations(path_domain: str) -> list[str]:
     return _domain_keys_matching_path(path_domain)
 
 
+def _resolve_event_briefing_text(
+    path_domain: str,
+    editorial_briefing: str | None,
+    global_narrative: str | None,
+    narrative_lenses: Any,
+) -> str:
+    """Domain-aware briefing: lens → global excerpt → legacy editorial_briefing."""
+    from shared.llm_text_sanitize import sanitize_briefing_lede
+
+    lenses = narrative_lenses if isinstance(narrative_lenses, dict) else {}
+    for key in _domain_keys_matching_path(path_domain):
+        lens_text = lenses.get(key)
+        if isinstance(lens_text, str) and lens_text.strip():
+            return sanitize_briefing_lede(lens_text, max_length=600)
+    if global_narrative and str(global_narrative).strip():
+        return sanitize_briefing_lede(str(global_narrative)[:1200], max_length=600)
+    return sanitize_briefing_lede(editorial_briefing or "", max_length=600)
+
+
 def _fetch_investigations(conn, path_domain: str) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     keys = _domain_keys_matching_path(path_domain)
@@ -286,7 +314,8 @@ def _fetch_investigations(conn, path_domain: str) -> list[dict[str, Any]]:
             cur.execute(
                 """
                 SELECT id, event_name, event_type, status, editorial_briefing,
-                       COALESCE(domain_keys, '{}') AS domain_keys
+                       COALESCE(domain_keys, '{}') AS domain_keys,
+                       global_narrative, narrative_lenses
                 FROM intelligence.tracked_events
                 WHERE COALESCE(domain_keys, '{}') && %s::text[]
                 ORDER BY updated_at DESC NULLS LAST
@@ -296,18 +325,19 @@ def _fetch_investigations(conn, path_domain: str) -> list[dict[str, Any]]:
             )
             for r in cur.fetchall():
                 dkeys = list(r[5]) if r[5] else []
+                briefing = _resolve_event_briefing_text(path_domain, r[4], r[6], r[7])
                 out.append(
                     {
                         "id": r[0],
                         "name": r[1] or "",
                         "type": r[2] or "",
                         "status": r[3] or "active",
-                        "briefing": r[4],
+                        "briefing": briefing,
                         "domain_keys": dkeys,
                     }
                 )
     except Exception as e:
-        logger.debug("_fetch_investigations: %s", e)
+        logger.warning("_fetch_investigations: %s", e)
     return out
 
 
