@@ -1,0 +1,5 @@
+Backend routes: 401
+Frontend API paths (unique method+path): 181
+Potential mismatches: 0
+
+All frontend API paths match a backend route.

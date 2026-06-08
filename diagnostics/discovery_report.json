@@ -1,6 +1,6 @@
 {
   "generated": "2026-04-02T14:36:38.992097",
-  "project_root": "/home/pete/Documents/projects/Projects/News Intelligence",
+  "project_root": "/home/pete/Documents/projects/News Intelligence",
   "snapshot_scripts": [
     {
       "path": "snapshot_backlog_status",

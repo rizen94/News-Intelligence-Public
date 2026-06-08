@@ -1,0 +1,66 @@
+{
+  "$schema": "https://repomix.com/schemas/latest/schema.json",
+  "output": {
+    "filePath": "repomix-output.md",
+    "style": "markdown",
+    "showLineNumbers": true,
+    "compress": true,
+    "topFilesLength": 15,
+    "headerText": "News Intelligence — Repomix bundle from Widow production source (/opt/news-intelligence on 192.168.93.101). Generated for AI context; excludes secrets, venv, node_modules, logs, and backups."
+  },
+  "include": [
+    "**/*.py",
+    "**/*.ts",
+    "**/*.tsx",
+    "**/*.mts",
+    "**/*.jsx",
+    "**/*.js",
+    "**/*.css",
+    "**/*.yaml",
+    "**/*.yml",
+    "**/*.toml",
+    "**/*.sh",
+    "**/*.sql",
+    "**/Dockerfile",
+    "docker-compose*.yml",
+    "requirements*.txt",
+    "pyproject.toml",
+    "package.json",
+    "README.md",
+    "AGENTS.md",
+    "PROJECT_STATUS.md",
+    "docs/**/*.md"
+  ],
+  "ignore": {
+    "useGitignore": true,
+    "useDefaultPatterns": true,
+    "customPatterns": [
+      "docs/archive/**",
+      "docs/_archive/**",
+      "diagnostics/**",
+      "scripts/archive/**",
+      "scripts/ni_review/**",
+      "api/database/migrations/archive/**",
+      "**/__pycache__/**",
+      "**/.venv/**",
+      "**/venv/**",
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/build/**",
+      "backups/**",
+      "logs/**",
+      "chroma_data/**",
+      "data/**",
+      "archive/**",
+      "web/_archived_duplicates/**",
+      "*.jsonl",
+      "*.log",
+      "*.bak*",
+      ".env*",
+      "repomix-output.*"
+    ]
+  },
+  "security": {
+    "enableSecurityCheck": true
+  }
+}

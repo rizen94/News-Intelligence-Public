@@ -124,3 +124,6 @@ my_pihole.txt
 configs/doc_obfuscation.local.yaml
 configs/doc_obfuscation.local.yml
 docs/_local_expanded/
+
+# Repomix generated exports (config files are tracked)
+repomix-output.*

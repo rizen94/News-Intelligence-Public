@@ -23,7 +23,7 @@ from collections import defaultdict
 # --- CONFIGURATION ---
 PROJECT_ROOT = os.environ.get(
     "PROJECT_ROOT",
-    "/home/pete/Documents/projects/Projects/News Intelligence",
+    "/home/pete/Documents/projects/News Intelligence",
 )
 DB_CONNECTION_STRING = os.environ.get("DATABASE_URL", None)
 

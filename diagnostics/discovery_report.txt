@@ -1,7 +1,7 @@
 ======================================================================
 DISCOVERY REPORT: Prompt & Pipeline Update Targets
 Generated: 2026-04-02T14:36:38.972018
-Project root: /home/pete/Documents/projects/Projects/News Intelligence
+Project root: /home/pete/Documents/projects/News Intelligence
 Files scanned: 14463 | Skipped: 14618
 ======================================================================
 
@@ -16362,18 +16362,18 @@ These insert/update/query entities — need dedup and status checks added
       L1: {"success":true,"data":{"is_running":true,"queue_size":190,"active_workers":20,"phase_workers_configured":20,"max_concur
 
   Found 12 migration files (not scanned, listed for reference):
-    /home/pete/Documents/projects/Projects/News Intelligence/scripts/archive/v4_migrations/v4_frontend_migration.py
-    /home/pete/Documents/projects/Projects/News Intelligence/scripts/archive/v4_migrations/v4_version_control.py
-    /home/pete/Documents/projects/Projects/News Intelligence/scripts/archive/v4_migrations/v4_migration_fixed.py
-    /home/pete/Documents/projects/Projects/News Intelligence/scripts/archive/v4_migrations/v4_migration_python_only.py
-    /home/pete/Documents/projects/Projects/News Intelligence/scripts/archive/v4_migrations/v4_migration_final.py
-    /home/pete/Documents/projects/Projects/News Intelligence/scripts/archive/v4_migrations/v4_api_migration.py
-    /home/pete/Documents/projects/Projects/News Intelligence/scripts/archive/v4_migrations/v4_migration_minimal.py
-    /home/pete/Documents/projects/Projects/News Intelligence/scripts/archive/v4_migrations/v4_migration_simplified.py
-    /home/pete/Documents/projects/Projects/News Intelligence/scripts/archive/nas_migration/complete_migration_via_ssh.py
-    /home/pete/Documents/projects/Projects/News Intelligence/scripts/archive/nas_migration/migrate_data_with_progress.py
-    /home/pete/Documents/projects/Projects/News Intelligence/scripts/archive/nas_migration/restore_ssh_via_telnet.py
-    /home/pete/Documents/projects/Projects/News Intelligence/scripts/archive/nas_migration/migrate_via_ssh_python.py
+    /home/pete/Documents/projects/News Intelligence/scripts/archive/v4_migrations/v4_frontend_migration.py
+    /home/pete/Documents/projects/News Intelligence/scripts/archive/v4_migrations/v4_version_control.py
+    /home/pete/Documents/projects/News Intelligence/scripts/archive/v4_migrations/v4_migration_fixed.py
+    /home/pete/Documents/projects/News Intelligence/scripts/archive/v4_migrations/v4_migration_python_only.py
+    /home/pete/Documents/projects/News Intelligence/scripts/archive/v4_migrations/v4_migration_final.py
+    /home/pete/Documents/projects/News Intelligence/scripts/archive/v4_migrations/v4_api_migration.py
+    /home/pete/Documents/projects/News Intelligence/scripts/archive/v4_migrations/v4_migration_minimal.py
+    /home/pete/Documents/projects/News Intelligence/scripts/archive/v4_migrations/v4_migration_simplified.py
+    /home/pete/Documents/projects/News Intelligence/scripts/archive/nas_migration/complete_migration_via_ssh.py
+    /home/pete/Documents/projects/News Intelligence/scripts/archive/nas_migration/migrate_data_with_progress.py
+    /home/pete/Documents/projects/News Intelligence/scripts/archive/nas_migration/restore_ssh_via_telnet.py
+    /home/pete/Documents/projects/News Intelligence/scripts/archive/nas_migration/migrate_via_ssh_python.py
 
 
 SECTION 5: CURRENT DATABASE STATE
