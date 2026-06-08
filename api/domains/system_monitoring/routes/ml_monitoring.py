@@ -7,7 +7,10 @@ from typing import Any
 
 from fastapi import APIRouter, Body, HTTPException
 from pydantic import BaseModel, Field
-from shared.database.connection import get_db_connection_context
+from shared.database.connection import (
+    get_db_connection_context,
+    get_ui_db_connection_context,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +33,7 @@ def _priority_value(priority: str) -> int:
 async def ml_queue_status() -> dict[str, Any]:
     """Queue aggregates from public.ml_processing_queue."""
     try:
-        with get_db_connection_context(pool="health") as conn:
+        with get_ui_db_connection_context() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -87,7 +90,7 @@ async def ml_processing_status(limit: int = 25) -> dict[str, Any]:
     """Recent ML queue rows for the processing activity table."""
     limit = max(1, min(limit, 100))
     try:
-        with get_db_connection_context(pool="health") as conn:
+        with get_ui_db_connection_context() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -125,7 +128,7 @@ async def ml_processing_status(limit: int = 25) -> dict[str, Any]:
 async def ml_timing_stats() -> dict[str, Any]:
     """Average processing duration by operation (completed rows only)."""
     try:
-        with get_db_connection_context(pool="health") as conn:
+        with get_ui_db_connection_context() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -179,7 +182,7 @@ async def ml_timing_stats() -> dict[str, Any]:
 async def ml_queue_article(body: MLQueueRequest) -> dict[str, Any]:
     """Enqueue an article for ML processing."""
     try:
-        with get_db_connection_context(pool="worker") as conn:
+        with get_db_connection_context() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """

@@ -1,15 +1,20 @@
 """
 Domain 5: User Management Routes
-Handles user profiles, preferences, and authentication
+Handles user profiles, preferences, and authentication.
+
+When NEWS_INTEL_PUBLIC_WEB_AUTH is enabled, all endpoints require an admin session.
 """
 
-import hashlib
+import json
 import logging
 from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
+
+from shared.auth.public_web_dependencies import require_public_web_admin
 from shared.database.connection import get_db_connection
+from shared.services.public_web_auth_service import hash_password
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +22,7 @@ router = APIRouter(
     prefix="/api/user_management",
     tags=["User Management"],
     responses={404: {"description": "Not found"}},
+    dependencies=[Depends(require_public_web_admin)],
 )
 
 
@@ -86,6 +92,7 @@ async def get_users(limit: int = 20, active_only: bool = True):
                             "created_at": row[4].isoformat() if row[4] else None,
                             "updated_at": row[5].isoformat() if row[5] else None,
                             "last_login": row[6].isoformat() if row[6] else None,
+                            "roles": row[7] if row[7] is not None else ["guest"],
                         }
                     )
 
@@ -116,7 +123,7 @@ async def get_user(user_id: int):
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT id, username, email, full_name, created_at, updated_at, last_login
+                    SELECT id, username, email, full_name, created_at, updated_at, last_login, roles
                     FROM user_profiles
                     WHERE id = %s
                 """,
@@ -137,6 +144,7 @@ async def get_user(user_id: int):
                         "created_at": user[4].isoformat() if user[4] else None,
                         "updated_at": user[5].isoformat() if user[5] else None,
                         "last_login": user[6].isoformat() if user[6] else None,
+                        "roles": user[7] if user[7] is not None else ["guest"],
                     },
                     "timestamp": datetime.now().isoformat(),
                 }
@@ -181,17 +189,29 @@ async def create_user(request: dict[str, Any]):
                 if cur.fetchone()[0] > 0:
                     raise HTTPException(status_code=409, detail="Username or email already exists")
 
-                # Hash password
-                password_hash = hashlib.sha256(password.encode()).hexdigest()
+                password_hash = hash_password(password)
+                roles_raw = request.get("roles")
+                if isinstance(roles_raw, list) and roles_raw:
+                    roles_json = json.dumps(roles_raw)
+                else:
+                    roles_json = json.dumps(["guest"])
 
                 # Create user
                 cur.execute(
                     """
-                    INSERT INTO user_profiles (username, email, password_hash, full_name, created_at, updated_at)
-                    VALUES (%s, %s, %s, %s, %s, %s)
+                    INSERT INTO user_profiles (username, email, password_hash, full_name, created_at, updated_at, roles)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb)
                     RETURNING id, username, email, full_name, created_at
-                """,
-                    (username, email, password_hash, full_name, datetime.now(), datetime.now()),
+                    """,
+                    (
+                        username,
+                        email,
+                        password_hash,
+                        full_name,
+                        datetime.now(),
+                        datetime.now(),
+                        roles_json,
+                    ),
                 )
 
                 new_user = cur.fetchone()
@@ -250,9 +270,15 @@ async def update_user(user_id: int, request: dict[str, Any]):
                     params.append(request["full_name"])
 
                 if "password" in request:
-                    password_hash = hashlib.sha256(request["password"].encode()).hexdigest()
+                    password_hash = hash_password(request["password"])
                     update_fields.append("password_hash = %s")
                     params.append(password_hash)
+
+                if "roles" in request:
+                    r = request["roles"]
+                    if isinstance(r, list):
+                        update_fields.append("roles = %s::jsonb")
+                        params.append(json.dumps(r))
 
                 if not update_fields:
                     raise HTTPException(status_code=400, detail="No fields to update")

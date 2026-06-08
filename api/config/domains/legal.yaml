@@ -1,49 +1,40 @@
-# Legal intelligence silo — requires migration 180 + DB row (see template doc).
-# domain_registry loads this only when is_active: true (on below).
-
+# Generated from specs/legal.domain.json — do not edit by hand
 domain_key: legal
 schema_name: legal
 display_name: Legal
-description: >-
-  Court decisions, legislation, regulatory enforcement, and legal news with
-  emphasis on Newton/West Newton and Greater Boston, Massachusetts state law,
-  and federal law — including implementation, proceedings, and stakeholder tradeoffs.
-display_order: 4
 is_active: true
-
-_instructions: |
-  Silo must exist (migration 180 / provision_domain). UI discovers domains via
-  GET /api/system_monitoring/registry_domains. See docs/_archive/retired_root_docs_2026_03/LEGAL_DOMAIN_DEPLOYMENT.md.
-
+description: Court decisions, legislation, regulatory enforcement, and legal news with emphasis on Newton/West Newton and
+  Greater Boston, Massachusetts state law, and federal law — including implementation, proceedings, and stakeholder tradeoffs.
+display_order: 4
 data_sources:
   rss:
     seed_feed_urls:
-      # Verify each URL returns RSS/Atom before adding to legal.rss_feeds in DB.
-      - "https://www.federalregister.gov/documents/search.rss"
-      - "https://www.scotusblog.com/feed/"
-      - "https://www.universalhub.com/rss.xml"
-      - "https://www.abajournal.com/rss/news.rss"
-      - "https://www.courthousenews.com/feed/"
-      - "https://www.jurist.org/feed/"
-      - "https://www.lexblog.com/feed/"
-      - "https://feeds.feedburner.com/AboveTheLaw"
-
+    - https://www.federalregister.gov/documents/search.rss
+    - https://www.scotusblog.com/feed/
+    - https://www.universalhub.com/rss.xml
+    - https://www.abajournal.com/rss/news.rss
+    - https://www.courthousenews.com/feed/
+    - https://www.jurist.org/feed/
+    - https://www.lexblog.com/feed/
+    - https://feeds.feedburner.com/AboveTheLaw
 focus_areas:
-  - Newton, West Newton, and Greater Boston municipal and metro legal news
-  - Massachusetts state legislation, regulations, and courts (when reported in news)
-  - Federal statutes, regulations, and federal courts
-  - Court proceedings and docket-style developments in public reporting
-  - New and amended laws: effective dates, scope, and implementation
-  - Balanced stakeholder pros/cons and tradeoffs (from sources; not legal advice)
+- Newton, West Newton, and Greater Boston municipal and metro legal news
+- Massachusetts state legislation, regulations, and courts (when reported in news)
+- Federal statutes, regulations, and federal courts
+- Court proceedings and docket-style developments in public reporting
+- '{''New and amended laws'': ''effective dates, scope, and implementation''}'
+- Balanced stakeholder pros/cons and tradeoffs (from sources; not legal advice)
+llm_prompt_guidance: 'Prioritize geography: Newton/West Newton and Greater Boston, then Massachusetts,
 
-llm_prompt_guidance: |
-  Prioritize geography: Newton/West Newton and Greater Boston, then Massachusetts,
   then federal. Cover court proceedings, new or changing laws, and how they are
-  applied. For competing views, summarize pros and cons as stakeholder effects
-  grounded in the article. Do not invent citations, docket numbers, or statutory
-  references. This is not legal advice. Prefer neutral legal summarization;
-  distinguish holdings from dicta or opinion when the source allows.
 
+  applied. For competing views, summarize pros and cons as stakeholder effects
+
+  grounded in the article. Do not invent citations, docket numbers, or statutory
+
+  references. This is not legal advice. Prefer neutral legal summarization;
+
+  distinguish holdings from dicta or opinion when the source allows.'
 workload_assumptions:
   expected_active_feeds: 8
   rough_new_articles_per_day: 120

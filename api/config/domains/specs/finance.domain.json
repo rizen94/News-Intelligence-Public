@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "domain_key": "finance",
+  "schema_name": "finance",
+  "display_name": "Finance",
+  "description": "Finance and markets coverage; URL key and Postgres schema both finance (migration 219).",
+  "display_order": 2,
+  "is_active": true,
+  "database": {
+    "clone_from": "science_tech",
+    "include_article_topic_clusters": true,
+    "migration_ref": "219_consolidate_politics_finance_schemas.sql"
+  },
+  "rss": {
+    "seed_feed_category": "General",
+    "feeds": []
+  },
+  "focus_areas": [
+    "Commodities, markets, macro — same scope as historical finance silo"
+  ],
+  "llm_prompt_guidance": "Same as production finance silo for markets and macro narrative.",
+  "workload_assumptions": {
+    "expected_active_feeds": 0,
+    "rough_new_articles_per_day": 0,
+    "llm_heavy_phases_enabled": true
+  }
+}

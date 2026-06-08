@@ -12,10 +12,10 @@ Pair with ``RSS_INGEST_EXCLUDE_DOMAIN_KEYS`` (e.g. ``politics``) so any code pat
 iterates domains cannot accidentally double-collect if a feed URL appears in two schemas later.
 
   PYTHONPATH=api uv run python api/scripts/switch_domain_rss_ingest.py \\
-    --deactivate politics --activate politics-2
+    --deactivate science-tech --activate politics
 
   PYTHONPATH=api uv run python api/scripts/switch_domain_rss_ingest.py \\
-    --deactivate politics --activate politics-2 --dry-run
+    --deactivate politics --activate finance --dry-run
 """
 
 from __future__ import annotations
@@ -50,7 +50,7 @@ if not os.environ.get("DB_PASSWORD") and os.path.exists(
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--deactivate", required=True, help="domain_key to turn off (e.g. politics)")
-    p.add_argument("--activate", required=True, help="domain_key to turn on (e.g. politics-2)")
+    p.add_argument("--activate", required=True, help="domain_key to turn on (e.g. politics)")
     p.add_argument("--dry-run", action="store_true")
     args = p.parse_args()
 

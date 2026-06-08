@@ -47,6 +47,7 @@ def main() -> None:
         nightly_pipeline_window_info,
         nightly_unified_pipeline_enabled,
     )
+    from services.pipeline_schedule_service import pipeline_schedule_info, rss_collection_allowed
     from shared.domain_registry import (
         get_pipeline_included_domain_keys,
         pipeline_url_schema_pairs,
@@ -78,6 +79,12 @@ def main() -> None:
     print(f"RSS effective collect domains:      {len(rss_effective)} -> {sorted(rss_effective.keys())}")
     print(f"NIGHTLY_UNIFIED_PIPELINE_ENABLED: {nightly_unified_pipeline_enabled()}")
     print(f"Nightly window snapshot: { {k: v for k, v in nightly.items() if k in ('unified_pipeline_enabled', 'in_unified_window', 'all_day_catchup', 'exclusive_other_phases', 'window_label')} }")
+    schedule = pipeline_schedule_info()
+    print(f"Pipeline schedule: active_window={schedule.get('active_window')} rss_allowed={schedule.get('rss_collection_allowed')}")
+    print(f"  nightly_heavy: {schedule.get('nightly_window_local')}")
+    print(f"  weekday_daytime: {schedule.get('daytime_window_local')}")
+    print(f"  quiet: {schedule.get('quiet_window_local')}")
+    print(f"  RSS would run now: {rss_collection_allowed()}")
     strict_env = os.environ.get("ENTITY_EXTRACTION_RESOLVE_STRICT_DOMAIN_KEYS", "").strip()
     print(f"ENTITY_EXTRACTION_RESOLVE_STRICT_DOMAIN_KEYS: {strict_env or '(unset)'}")
 

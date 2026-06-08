@@ -31,6 +31,74 @@ def _utc_aware(dt):
     return dt.astimezone(timezone.utc)
 
 
+def _insert_domain_article(cur, schema_name: str, insert_vals: tuple, cred_meta=None):
+    """
+    Insert into {schema}.articles with provenance columns when present.
+    insert_vals: title, url, content, summary, published_at, created_at, source_domain,
+                 quality_score, bias_score, enrichment_status, enrichment_attempts
+    """
+    published_at = insert_vals[4]
+    created_at = insert_vals[5]
+    event_date = published_at or created_at
+    ingestion_date = created_at
+
+    if cred_meta:
+        try:
+            cur.execute(
+                f"""
+                INSERT INTO {schema_name}.articles
+                (title, url, content, summary, published_at, created_at, source_domain,
+                 quality_score, bias_score, enrichment_status, enrichment_attempts, metadata,
+                 event_date, ingestion_date)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s)
+                RETURNING id
+                """,
+                (
+                    *insert_vals,
+                    json.dumps({"source_credibility": cred_meta}),
+                    event_date,
+                    ingestion_date,
+                ),
+            )
+            return
+        except psycopg2.errors.UndefinedColumn:
+            cur.execute(
+                f"""
+                INSERT INTO {schema_name}.articles
+                (title, url, content, summary, published_at, created_at, source_domain,
+                 quality_score, bias_score, enrichment_status, enrichment_attempts, metadata)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+                RETURNING id
+                """,
+                (*insert_vals, json.dumps({"source_credibility": cred_meta})),
+            )
+            return
+
+    try:
+        cur.execute(
+            f"""
+            INSERT INTO {schema_name}.articles
+            (title, url, content, summary, published_at, created_at, source_domain,
+             quality_score, bias_score, enrichment_status, enrichment_attempts,
+             event_date, ingestion_date)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
+            """,
+            (*insert_vals, event_date, ingestion_date),
+        )
+    except psycopg2.errors.UndefinedColumn:
+        cur.execute(
+            f"""
+            INSERT INTO {schema_name}.articles
+            (title, url, content, summary, published_at, created_at, source_domain,
+             quality_score, bias_score, enrichment_status, enrichment_attempts)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
+            """,
+            insert_vals,
+        )
+
+
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
 
@@ -1275,6 +1343,21 @@ def is_excluded_content(
     # Combine all text for checking
     text_to_check = f"{title} {content} {feed_name}".lower()
 
+    # Briefing config hard-exclude (global + per-domain exclude_keywords)
+    try:
+        from services.briefing_filter_helper import get_ingest_exclude_keywords
+
+        for kw in get_ingest_exclude_keywords(domain or None):
+            if kw and kw in text_to_check:
+                logger.debug(
+                    "Article excluded (briefing_filters ingest exclude %r): %s...",
+                    kw,
+                    title[:60],
+                )
+                return True
+    except ImportError:
+        pass
+
     # Domain-specific exclusions from synthesis config
     if domain:
         try:
@@ -1941,43 +2024,9 @@ def collect_rss_feeds() -> int:
                                 enrichment_status,
                                 enrichment_attempts,
                             )
-                            if cred_meta:
-                                try:
-                                    feed_cur.execute(
-                                        f"""
-                                        INSERT INTO {schema_name}.articles
-                                        (title, url, content, summary, published_at, created_at, source_domain,
-                                         quality_score, bias_score, enrichment_status, enrichment_attempts, metadata)
-                                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
-                                        RETURNING id
-                                        """,
-                                        (
-                                            *insert_vals,
-                                            json.dumps({"source_credibility": cred_meta}),
-                                        ),
-                                    )
-                                except psycopg2.errors.UndefinedColumn:
-                                    feed_cur.execute(
-                                        f"""
-                                        INSERT INTO {schema_name}.articles
-                                        (title, url, content, summary, published_at, created_at, source_domain,
-                                         quality_score, bias_score, enrichment_status, enrichment_attempts)
-                                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                                        RETURNING id
-                                        """,
-                                        insert_vals,
-                                    )
-                            else:
-                                feed_cur.execute(
-                                    f"""
-                                    INSERT INTO {schema_name}.articles
-                                    (title, url, content, summary, published_at, created_at, source_domain,
-                                     quality_score, bias_score, enrichment_status, enrichment_attempts)
-                                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                                    RETURNING id
-                                    """,
-                                    insert_vals,
-                                )
+                            _insert_domain_article(
+                                feed_cur, schema_name, insert_vals, cred_meta=cred_meta or None
+                            )
 
                             result = feed_cur.fetchone()
                             if result and feed_cur.rowcount > 0:
@@ -2358,40 +2407,7 @@ def collect_rss_feed(feed_url: str, feed_name: str = "Unknown") -> int:
                     enrichment_status,
                     enrichment_attempts,
                 )
-                if cred_meta:
-                    try:
-                        cur.execute(
-                            f"""
-                            INSERT INTO {schema_name}.articles
-                            (title, url, content, summary, published_at, created_at, source_domain,
-                             quality_score, bias_score, enrichment_status, enrichment_attempts, metadata)
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
-                            RETURNING id
-                            """,
-                            (*insert_vals, json.dumps({"source_credibility": cred_meta})),
-                        )
-                    except psycopg2.errors.UndefinedColumn:
-                        cur.execute(
-                            f"""
-                            INSERT INTO {schema_name}.articles
-                            (title, url, content, summary, published_at, created_at, source_domain,
-                             quality_score, bias_score, enrichment_status, enrichment_attempts)
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                            RETURNING id
-                            """,
-                            insert_vals,
-                        )
-                else:
-                    cur.execute(
-                        f"""
-                        INSERT INTO {schema_name}.articles
-                        (title, url, content, summary, published_at, created_at, source_domain,
-                         quality_score, bias_score, enrichment_status, enrichment_attempts)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                        RETURNING id
-                        """,
-                        insert_vals,
-                    )
+                _insert_domain_article(cur, schema_name, insert_vals, cred_meta=cred_meta or None)
 
                 result = cur.fetchone()
                 if result and cur.rowcount > 0:

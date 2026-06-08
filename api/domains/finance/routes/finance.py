@@ -61,7 +61,7 @@ def _get_recent_finance_articles(
     days: int,
     limit: int = 200,
 ) -> list[dict[str, Any]]:
-    """Fetch recent articles for the URL domain (e.g. ``finance`` or ``finance-2``)."""
+    """Fetch recent articles for the URL domain (e.g. ``finance``)."""
     try:
         from domains.news_aggregation.services.article_service import ArticleService
 

@@ -1,6 +1,7 @@
 # Intelligence Hub — consolidated router
 from fastapi import APIRouter
 
+from .longitudinal import router as longitudinal_router
 from .content_synthesis import router as synthesis_router
 from .context_centric import router as context_centric_router
 from .cross_domain import router as cross_domain_router
@@ -23,5 +24,6 @@ router.include_router(cross_domain_router)
 router.include_router(products_router)
 router.include_router(report_router)
 router.include_router(enrichment_router)
+router.include_router(longitudinal_router)
 
 __all__ = ["router"]

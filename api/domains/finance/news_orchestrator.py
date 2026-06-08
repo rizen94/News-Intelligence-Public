@@ -241,7 +241,7 @@ def get_shortlist(
     except Exception:
         is_registry_commodity = False
 
-    # 1) Finance-domain articles (RSS-derived) — FINANCE_PG_CONTENT_DOMAIN_KEY selects silo (finance vs finance-2)
+        # 1) Finance-domain articles (RSS-derived) — FINANCE_PG_CONTENT_DOMAIN_KEY selects silo (default finance)
     try:
         from config.settings import finance_postgres_content_domain_key
         from domains.news_aggregation.services.article_service import ArticleService

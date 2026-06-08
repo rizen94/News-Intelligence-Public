@@ -8,11 +8,14 @@ See docs/STORY_STATE_UPDATE_TRIGGERS.md.
 """
 
 import logging
+import os
 
 from shared.database.connection import get_db_connection
 from shared.domain_registry import resolve_domain_schema
 
 logger = logging.getLogger(__name__)
+
+_FACT_LOG_STALE_BACKLOG = int(os.environ.get("STORY_ENHANCEMENT_FACT_LOG_STALE_BACKLOG", "10000"))
 
 
 def _schema_for_domain(domain_key: str) -> str:
@@ -26,53 +29,86 @@ def process_fact_change_log(batch_size: int = 100) -> int:
     Production: 100-change batches, ~2s each; if behind >10k consider alert and skip to recent.
     Returns number of log rows processed.
     """
-    conn = get_db_connection()
-    if not conn:
+    list_conn = get_db_connection()
+    if not list_conn:
         logger.warning("story_state_trigger: no DB connection")
         return 0
 
     processed = 0
+    row_errors = 0
     try:
-        with conn.cursor() as cur:
+        with list_conn.cursor() as cur:
             cur.execute(
-                """
+                "SELECT COUNT(*) FROM intelligence.fact_change_log WHERE processed = FALSE"
+            )
+            backlog_n = int(cur.fetchone()[0] or 0)
+        order_sql = (
+            "ORDER BY changed_at DESC"
+            if backlog_n > _FACT_LOG_STALE_BACKLOG
+            else "ORDER BY changed_at ASC"
+        )
+        with list_conn.cursor() as cur:
+            cur.execute(
+                f"""
                 SELECT id, fact_id, entity_profile_id, change_type
                 FROM intelligence.fact_change_log
                 WHERE processed = FALSE
-                ORDER BY changed_at ASC
+                {order_sql}
                 LIMIT %s
                 """,
                 (batch_size,),
             )
             rows = cur.fetchall()
-        if not rows:
-            conn.close()
-            return 0
+    finally:
+        list_conn.close()
 
-        for log_id, fact_id, entity_profile_id, change_type in rows:
+    if not rows:
+        return 0
+
+    for log_id, fact_id, entity_profile_id, change_type in rows:
+        row_conn = get_db_connection()
+        if not row_conn:
+            continue
+        triggered = 0
+        try:
             triggered = _process_one_fact_change(
-                conn, log_id, fact_id, entity_profile_id, change_type
+                row_conn, log_id, fact_id, entity_profile_id, change_type
             )
-            if triggered is not None:
-                processed += 1
-                with conn.cursor() as cur2:
-                    cur2.execute(
+            with row_conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE intelligence.fact_change_log
+                    SET processed = TRUE, processed_at = NOW(), story_updates_triggered = %s
+                    WHERE id = %s
+                    """,
+                    (int(triggered or 0), log_id),
+                )
+            row_conn.commit()
+            processed += 1
+        except Exception as row_err:
+            row_errors += 1
+            try:
+                row_conn.rollback()
+                with row_conn.cursor() as cur:
+                    cur.execute(
                         """
                         UPDATE intelligence.fact_change_log
-                        SET processed = TRUE, processed_at = NOW(), story_updates_triggered = %s
+                        SET processed = TRUE, processed_at = NOW(), story_updates_triggered = 0
                         WHERE id = %s
                         """,
-                        (triggered, log_id),
+                        (log_id,),
                     )
-        conn.commit()
-    except Exception as e:
-        logger.warning("process_fact_change_log failed: %s", e, exc_info=True)
-        try:
-            conn.rollback()
-        except Exception:
-            pass
-    finally:
-        conn.close()
+                row_conn.commit()
+                processed += 1
+            except Exception:
+                try:
+                    row_conn.rollback()
+                except Exception:
+                    pass
+            logger.warning("fact_change_log row %s skipped after error: %s", log_id, row_err)
+        finally:
+            row_conn.close()
+
     return processed
 
 

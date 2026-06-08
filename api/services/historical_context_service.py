@@ -1,6 +1,10 @@
 """
 Historical Context Service for News Intelligence System v3.0
-Provides comprehensive historical context and pattern recognition
+Provides comprehensive historical context and pattern recognition.
+
+Deprecated for per-storyline durable memory: prefer
+``services.storyline_historical_context_service`` (versioned_facts + chronological spine).
+This module remains for legacy pattern/cycle helpers until callers migrate.
 """
 
 import json

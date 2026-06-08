@@ -22,6 +22,15 @@ def _sanitize_briefing_line_text(text: str) -> str:
         return (text or "").strip()
 
 
+def _sanitize_briefing_title_text(text: str) -> str:
+    try:
+        from shared.llm_text_sanitize import sanitize_briefing_title
+
+        return sanitize_briefing_title(text)
+    except Exception:
+        return (text or "").strip()
+
+
 def _build_llm_lead_prompt(key_developments: dict[str, Any], domain: str) -> str:
     """Build context string for LLM briefing lead. Marks recent vs older items so the LLM can prioritize today's developments."""
     parts = []
@@ -31,14 +40,21 @@ def _build_llm_lead_prompt(key_developments: dict[str, Any], domain: str) -> str
         for lede_item in editorial_ledes[:4]:
             if lede_item.get("lede"):
                 tag = " [recent]" if lede_item.get("recent") else ""
-                ledes.append(f"- {lede_item.get('title', '')}{tag}: {lede_item.get('lede', '')}")
+                ledes.append(
+                    f"- {_sanitize_briefing_title_text(lede_item.get('title', ''))}{tag}: "
+                    f"{_sanitize_briefing_line_text(lede_item.get('lede', ''))}"
+                )
         if ledes:
             parts.append("Storyline editorial ledes (prefer [recent]):\n" + "\n".join(ledes))
     headlines = key_developments.get("top_headlines") or []
     if headlines:
         head_lines = [
-            f"- {(h.get('title') or '').strip()}"
-            + (f": {(h.get('summary') or '')[:150]}" if h.get("summary") else "")
+            f"- {_sanitize_briefing_title_text((h.get('title') or '').strip())}"
+            + (
+                f": {_sanitize_briefing_line_text((h.get('summary') or '')[:150])}"
+                if h.get("summary")
+                else ""
+            )
             for h in headlines[:6]
             if (h.get("title") or "").strip()
         ]
@@ -48,7 +64,7 @@ def _build_llm_lead_prompt(key_developments: dict[str, Any], domain: str) -> str
     if storylines_list:
         story_lines = []
         for s in storylines_list[:5]:
-            t = (s.get("title") or "").strip()
+            t = _sanitize_briefing_title_text((s.get("title") or "").strip())
             if t:
                 tag = " [recent activity]" if s.get("recent") else " [older]"
                 story_lines.append("- " + t + tag)
@@ -59,7 +75,7 @@ def _build_llm_lead_prompt(key_developments: dict[str, Any], domain: str) -> str
     event_briefings = key_developments.get("event_briefings") or []
     if event_briefings:
         ev_lines = [
-            f"- {e.get('headline') or e.get('event_name', '')}"
+            f"- {_sanitize_briefing_title_text(e.get('headline') or e.get('event_name', ''))}"
             for e in event_briefings[:4]
             if e.get("headline") or e.get("event_name")
         ]
@@ -95,7 +111,7 @@ def _brief_to_content(brief: dict[str, Any]) -> str:
                 parts.append("What's new\n" + "\n".join("• " + lede for lede in ledes))
         elif headlines:
             lead_items = [
-                (h.get("title") or "").strip()
+                _sanitize_briefing_title_text((h.get("title") or "").strip())
                 for h in headlines[:5]
                 if (h.get("title") or "").strip()
             ]
@@ -107,7 +123,7 @@ def _brief_to_content(brief: dict[str, Any]) -> str:
         if storylines_list:
             story_lines = []
             for s in storylines_list[:6]:
-                title = (s.get("title") or "").strip()
+                title = _sanitize_briefing_title_text((s.get("title") or "").strip())
                 if not title:
                     continue
                 recency = ""
@@ -124,8 +140,10 @@ def _brief_to_content(brief: dict[str, Any]) -> str:
         if event_briefings:
             event_lines = []
             for eb in event_briefings[:4]:
-                headline = (eb.get("headline") or eb.get("event_name") or "").strip()
-                excerpt = (eb.get("briefing_excerpt") or "").strip()
+                headline = _sanitize_briefing_title_text(
+                    (eb.get("headline") or eb.get("event_name") or "").strip()
+                )
+                excerpt = _sanitize_briefing_line_text((eb.get("briefing_excerpt") or "").strip())
                 if headline:
                     event_lines.append("• " + headline + (": " + excerpt[:120] if excerpt else ""))
             if event_lines:
@@ -153,7 +171,7 @@ def _brief_to_content(brief: dict[str, Any]) -> str:
         )
     sa = sections.get("storyline_analysis") or {}
     if sa and "error" not in sa:
-        daily_summary = (sa.get("daily_summary") or "").strip()
+        daily_summary = _sanitize_briefing_line_text((sa.get("daily_summary") or "").strip())
         if daily_summary:
             metric_parts.append("Summary: " + daily_summary[:500])
         metric_parts.append(
@@ -371,6 +389,21 @@ def get_weekly_digest(
         }
     digests = svc.get_latest_weekly_digests(limit=limit)
     return {"success": True, "data": {"digests": digests, "count": len(digests)}, "message": None}
+
+
+@router.post("/products/weekly_digest/generate")
+async def post_generate_weekly_digest() -> dict[str, Any]:
+    """Generate the last completed week's digest when missing (idempotent)."""
+    from services.digest_automation_service import get_digest_service
+
+    svc = get_digest_service()
+    await svc.generate_digest_if_needed()
+    digests = svc.get_latest_weekly_digests(limit=1)
+    return {
+        "success": True,
+        "data": {"digests": digests, "count": len(digests)},
+        "message": "Weekly digest generation finished (no-op if already present).",
+    }
 
 
 @router.get("/products/alert_digest")

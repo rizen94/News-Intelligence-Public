@@ -15,6 +15,7 @@ from urllib.parse import quote
 import requests
 from psycopg2.extras import RealDictCursor
 from shared.database.connection import get_db_connection
+from shared.domain_registry import normalize_domain_key, resolve_domain_schema
 
 logger = logging.getLogger(__name__)
 
@@ -46,8 +47,12 @@ class BaseRAGService:
         self.session = requests.Session()
         self.session.headers.update({"User-Agent": "News Intelligence System v3.0 RAG Service"})
 
-        # Wikipedia API configuration
-        self.wikipedia_api_url = "https://en.wikipedia.org/api/rest_v1"
+        # Wikipedia API configuration (optional Kiwix local mirror — Phase 2)
+        import os
+
+        _kiwix_rest = (os.environ.get("KIWIX_WIKIPEDIA_REST_URL") or "").strip().rstrip("/")
+        self.wikipedia_api_url = _kiwix_rest or "https://en.wikipedia.org/api/rest_v1"
+        self.wikipedia_vintage_date = (os.environ.get("KIWIX_ZIM_VINTAGE_DATE") or "").strip() or None
 
         # GDELT API configuration (using free tier)
         self.gdelt_api_url = "https://api.gdeltproject.org/api/v2"
@@ -134,7 +139,7 @@ class BaseRAGService:
 
     def _get_entities_from_db(self, article_ids: list[int], domain: str) -> list[dict[str, Any]]:
         """Load entities from article_entities + entity_canonical for given article ids. Returns list of dicts with canonical_entity_id, name, type, description, aliases, wikipedia_url so context enrichment and entity viewer can use the main entity and all aliases."""
-        schema = domain.replace("-", "_") if domain else "politics"
+        schema = resolve_domain_schema(domain) if domain else "politics"
         conn = get_db_connection()
         if not conn:
             return []
@@ -568,7 +573,7 @@ class BaseRAGService:
             data = json.dumps(rag_context)
 
             if domain:
-                domain_key = domain.replace("-", "_") if domain else "politics"
+                domain_key = normalize_domain_key(domain) if domain else "politics"
                 cursor.execute(
                     """
                     INSERT INTO intelligence.storyline_rag_context (
@@ -613,7 +618,7 @@ class BaseRAGService:
                     SELECT rag_data FROM intelligence.storyline_rag_context
                     WHERE domain_key = %s AND storyline_id = %s
                 """,
-                    (domain.replace("-", "_"), int(storyline_id)),
+                    (normalize_domain_key(domain), int(storyline_id)),
                 )
             else:
                 cursor.execute(

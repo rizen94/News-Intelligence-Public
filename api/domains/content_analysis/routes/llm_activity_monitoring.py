@@ -8,7 +8,7 @@ from datetime import datetime
 
 from domains.content_analysis.services.llm_activity_tracker import get_llm_activity_tracker
 from fastapi import APIRouter, HTTPException, Query
-from shared.domain_registry import get_pipeline_schema_names_active
+from shared.domain_registry import get_pipeline_schema_names_active, resolve_domain_schema
 
 logger = logging.getLogger(__name__)
 
@@ -153,7 +153,7 @@ async def get_domain_llm_activity(
         stats = tracker.get_stats()
 
         # Filter active tasks by domain
-        domain_schema = domain.replace("-", "_")
+        domain_schema = resolve_domain_schema(domain)
         domain_tasks = [
             task for task in stats["active_tasks"] if task.get("domain") == domain_schema
         ]

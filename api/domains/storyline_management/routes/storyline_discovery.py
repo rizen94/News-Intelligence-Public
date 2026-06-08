@@ -14,7 +14,7 @@ from services.ai_storyline_discovery import (
     StorylineCluster,
     get_discovery_service,
 )
-from shared.domain_registry import DOMAIN_PATH_PATTERN
+from shared.domain_registry import DOMAIN_PATH_PATTERN, resolve_domain_schema
 
 logger = logging.getLogger(__name__)
 
@@ -153,7 +153,7 @@ async def get_article_similarity(
 
         db_config = get_db_config()
         service = get_discovery_service(db_config)
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
 
         # Get the target article
         conn = get_db_connection()
@@ -241,7 +241,7 @@ async def analyze_cluster(
         from shared.database.connection import get_db_config, get_db_connection
 
         get_db_config()
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
 
         # Get articles
         conn = get_db_connection()
@@ -449,7 +449,7 @@ async def check_merge_candidates(
 
         # Fetch the storylines from database
         conn = service.get_db_connection()
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
 
         storylines = []
         try:

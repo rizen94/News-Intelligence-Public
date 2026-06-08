@@ -60,6 +60,41 @@ def is_low_priority_for_briefing(text: str) -> bool:
     return False
 
 
+def get_ingest_exclude_keywords(domain_key: str | None = None) -> list[str]:
+    """
+    Keywords that cause RSS ingest rejection (not just briefing demotion).
+    Merges global ingest_exclude_keywords with per-domain exclude_keywords from briefing_filters.yaml.
+    """
+    _load_config()
+    out: list[str] = []
+    seen: set[str] = set()
+    try:
+        import yaml
+
+        if _CONFIG_PATH.exists():
+            with open(_CONFIG_PATH) as f:
+                data = yaml.safe_load(f) or {}
+            for kw in data.get("ingest_exclude_keywords") or []:
+                if isinstance(kw, str):
+                    k = kw.strip().lower()
+                    if k and k not in seen:
+                        seen.add(k)
+                        out.append(k)
+            domains = data.get("domains") or {}
+            if domain_key:
+                dk = domain_key.strip().lower().replace("_", "-")
+                dom = domains.get(dk) or domains.get(dk.replace("-", "_")) or {}
+                for kw in dom.get("exclude_keywords") or []:
+                    if isinstance(kw, str):
+                        k = kw.strip().lower()
+                        if k and k not in seen:
+                            seen.add(k)
+                            out.append(k)
+    except Exception as e:
+        logger.debug("get_ingest_exclude_keywords: %s", e)
+    return out
+
+
 def sort_briefing_items_by_priority(
     items: list[dict],
     title_key: str = "title",
@@ -87,3 +122,53 @@ def sort_briefing_items_by_priority(
         else:
             high.append(item)
     return high + low
+
+
+def apply_arc_feedback_priority_boost(
+    items: list[dict],
+    *,
+    arc_id: str | None = None,
+    title_key: str = "title",
+    summary_key: str = "summary",
+) -> list[dict]:
+    """
+    Re-rank briefing items using operator arc feedback (Phase 6).
+
+    Sections rated useful in the last 90 days get keyword hints that boost matching headlines.
+    """
+    if not items or not arc_id:
+        return items
+    try:
+        from services.arc_feedback_service import get_arc_feedback_summary
+
+        summary = get_arc_feedback_summary(arc_id)
+        useful_sections = [
+            s["section_key"]
+            for s in summary.get("by_section") or []
+            if (s.get("useful_count") or 0) >= 1 or (s.get("avg_rating") or 0) >= 4
+        ]
+        if not useful_sections:
+            return items
+        hints = {
+            "what_changed": ("announced", "signed", "passed", "sanctions", "embargo"),
+            "the_numbers": ("percent", "billion", "million", "barrel", "gdp", "index"),
+            "prior_analogues": ("similar", "echoes", "recalls", "historical", "analog"),
+            "where_this_fits": ("chapter", "arc", "decade", "era", "since"),
+        }
+        keywords: set[str] = set()
+        for sec in useful_sections:
+            keywords.update(hints.get(sec, (sec.replace("_", " "),)))
+        if not keywords:
+            return items
+
+        def score(item: dict) -> tuple[int, str]:
+            text = " ".join(
+                (item.get(title_key) or "", item.get(summary_key) or "", item.get("lede") or "")
+            ).lower()
+            hits = sum(1 for kw in keywords if kw in text)
+            return (-hits, text)
+
+        return sorted(items, key=score)
+    except Exception as e:
+        logger.debug("arc feedback briefing boost skipped: %s", e)
+        return items

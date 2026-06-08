@@ -1,8 +1,10 @@
 """
 Centralized path definitions. All modules import from here.
 PROJECT_ROOT is derived once; everything else follows.
+Supports configurable data directory for production deployments.
 """
 
+import os
 from pathlib import Path
 
 # api/config/paths.py -> config -> api -> project root
@@ -10,13 +12,17 @@ CONFIG_DIR = Path(__file__).resolve().parent
 _API_DIR = CONFIG_DIR.parent
 PROJECT_ROOT = _API_DIR.parent
 
+# Data directory: can be overridden via environment for production deployments
+# Default: relative to project root; Production (Widow): /home/pete/Documents/news-intelligence-data/
+DATA_DIR_ROOT = Path(os.environ.get("NEWS_INTEL_DATA_DIR", PROJECT_ROOT / "data"))
+
 SOURCES_YAML = CONFIG_DIR / "sources.yaml"
 FINANCE_SCHEDULE_YAML = CONFIG_DIR / "finance_schedule.yaml"
 ORCHESTRATOR_GOVERNANCE_YAML = CONFIG_DIR / "orchestrator_governance.yaml"
 NEWSROOM_YAML = CONFIG_DIR / "newsroom.yaml"
 
 # Core directories
-DATA_DIR = PROJECT_ROOT / "data"
+DATA_DIR = DATA_DIR_ROOT
 REPORTS_DIR = PROJECT_ROOT / "reports"
 LOG_DIR = PROJECT_ROOT / "logs"
 

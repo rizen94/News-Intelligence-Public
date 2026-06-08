@@ -17,9 +17,19 @@ from psycopg2.extras import Json, RealDictCursor
 logger = logging.getLogger(__name__)
 
 
+def _float_confidence(value: Any, default: float = 0.5) -> float:
+    """Normalize DB Decimal / numeric confidence for arithmetic."""
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def default_batch_ollama_url() -> str:
     """
-    When dual-host routing is on, batch topic / extraction LLM calls use the CPU Ollama endpoint
+    When dual-host routing is on, structured-extraction batch calls use the CPU Ollama endpoint
     (same family as ``STRUCTURED_EXTRACTION``). Otherwise ``OLLAMA_HOST`` (single server).
     """
     if os.environ.get("OLLAMA_DUAL_HOST_ROUTING_ENABLED", "false").lower() in (
@@ -28,6 +38,19 @@ def default_batch_ollama_url() -> str:
         "yes",
     ):
         return os.environ.get("OLLAMA_CPU_HOST", OLLAMA_HOST).rstrip("/")
+    return OLLAMA_HOST.rstrip("/")
+
+
+def default_gpu_batch_ollama_url() -> str:
+    """
+    GPU-heavy batch phases (topic clustering) use ``OLLAMA_GPU_HOST`` when dual-host routing is on.
+    """
+    if os.environ.get("OLLAMA_DUAL_HOST_ROUTING_ENABLED", "false").lower() in (
+        "1",
+        "true",
+        "yes",
+    ):
+        return os.environ.get("OLLAMA_GPU_HOST", OLLAMA_HOST).rstrip("/")
     return OLLAMA_HOST.rstrip("/")
 
 
@@ -48,11 +71,11 @@ class TopicClusteringService:
 
         Args:
             db_config: Database configuration dictionary
-            ollama_url: URL of the Ollama service (default: OLLAMA_HOST, or OLLAMA_CPU_HOST when dual routing on)
+            ollama_url: URL of the Ollama service (default: GPU host when dual routing on, else OLLAMA_HOST)
             domain: Domain key (e.g., 'politics', 'finance', 'science-tech')
         """
         self.db_config = db_config
-        self.ollama_url = (ollama_url or default_batch_ollama_url()).rstrip("/")
+        self.ollama_url = (ollama_url or default_gpu_batch_ollama_url()).rstrip("/")
         self.model_name = "llama3.1:8b"
         self.timeout = 120  # 2 minutes timeout
         self.domain = domain
@@ -65,8 +88,13 @@ class TopicClusteringService:
             self.topic_auto_match_min_score = 0.58
 
     def _get_schema_name(self, domain: str) -> str:
-        """Convert domain key to schema name"""
-        return domain.replace("-", "_")
+        """Resolve Postgres schema from domain key via domain_registry."""
+        try:
+            from shared.domain_registry import resolve_domain_schema
+
+            return resolve_domain_schema(domain)
+        except Exception:
+            return resolve_domain_schema(domain)
 
     def _get_db_connection(self):
         """Get database connection from shared pool and set search_path to domain schema."""
@@ -303,6 +331,38 @@ JSON Response:"""
         toks = re.findall(r"[a-z0-9']+", topic_name.lower())
         return not (len(toks) == 1 and len(toks[0]) <= 4)
 
+    def _ensure_table_id_sequence(self, cur, table: str) -> None:
+        """Template silos often lack SERIAL on topics / article_topic_assignments."""
+        qualified = f"{self.schema}.{table}"
+        seq_name = f"{table}_id_seq"
+        cur.execute("SELECT pg_get_serial_sequence(%s, 'id')", (qualified,))
+        if cur.fetchone()[0]:
+            return
+        cur.execute(
+            f"""
+            CREATE SEQUENCE IF NOT EXISTS {self.schema}.{seq_name} AS integer
+            OWNED BY {qualified}.id
+            """
+        )
+        cur.execute(
+            f"""
+            ALTER TABLE {qualified}
+            ALTER COLUMN id SET DEFAULT nextval('{self.schema}.{seq_name}'::regclass)
+            """
+        )
+        cur.execute(f"SELECT COALESCE(MAX(id), 0) FROM {qualified}")
+        max_id = int(cur.fetchone()[0] or 0)
+        if max_id > 0:
+            cur.execute(f"SELECT setval('{self.schema}.{seq_name}', %s, true)", (max_id,))
+        else:
+            cur.execute(f"SELECT setval('{self.schema}.{seq_name}', 1, false)")
+        cur.connection.commit()
+        logger.info("Created %s.%s for schema %s (max_id=%s)", self.schema, seq_name, self.schema, max_id)
+
+    def _ensure_topics_id_sequence(self, cur) -> None:
+        self._ensure_table_id_sequence(cur, "topics")
+        self._ensure_table_id_sequence(cur, "article_topic_assignments")
+
     def _fetch_similar_topic_candidates(self, cur, topic_name: str) -> list[tuple[int, str, Any]]:
         """
         Bounded candidate set: active topics whose name matches at least one significant token
@@ -348,6 +408,7 @@ JSON Response:"""
         try:
             conn = self._get_db_connection()
             cur = conn.cursor()
+            self._ensure_topics_id_sequence(cur)
 
             assigned_topics = []
             created_topics = []
@@ -415,9 +476,9 @@ JSON Response:"""
 
                 if existing_topic:
                     topic_id = existing_topic[0]
-                    existing_confidence = existing_topic[1] or 0.5
+                    existing_confidence = _float_confidence(existing_topic[1])
                     canonical_name = existing_topic[3] or canonical_name
-                    new_confidence = topic_data.get("confidence", 0.5)
+                    new_confidence = _float_confidence(topic_data.get("confidence", 0.5))
                     blended_confidence = (existing_confidence * 0.7) + (new_confidence * 0.3)
                 else:
                     cur.execute(
@@ -441,7 +502,7 @@ JSON Response:"""
                     )
                     topic_id = cur.fetchone()[0]
                     created_topics.append(topic_name)
-                    blended_confidence = topic_data.get("confidence", 0.5)
+                    blended_confidence = _float_confidence(topic_data.get("confidence", 0.5))
                     canonical_name = topic_name
 
                 cur.execute(
@@ -465,7 +526,7 @@ JSON Response:"""
                     """,
                         (
                             blended_confidence,
-                            topic_data.get("confidence", 0.5),
+                            _float_confidence(topic_data.get("confidence", 0.5)),
                             Json(topic_data),
                             assignment_method,
                             article_id,
@@ -486,7 +547,7 @@ JSON Response:"""
                             article_id,
                             topic_id,
                             blended_confidence,
-                            topic_data.get("confidence", 0.5),
+                            _float_confidence(topic_data.get("confidence", 0.5)),
                             assignment_method,
                             Json(topic_data),
                             self.model_name,

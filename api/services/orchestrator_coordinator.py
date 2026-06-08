@@ -108,8 +108,25 @@ class OrchestratorCoordinator:
             self._task = None
         logger.info("OrchestratorCoordinator loop stopped")
 
+    async def _wait_for_automation(self, timeout_seconds: float = 120.0) -> None:
+        """Defer processing until AutomationManager is running (avoids dropped requests on boot)."""
+        if not self._get_automation:
+            return
+        deadline = asyncio.get_event_loop().time() + timeout_seconds
+        while asyncio.get_event_loop().time() < deadline and not self._stop.is_set():
+            automation = self._get_automation()
+            if automation is not None and getattr(automation, "is_running", False):
+                logger.info("OrchestratorCoordinator: automation ready")
+                return
+            await asyncio.sleep(2)
+        logger.warning(
+            "OrchestratorCoordinator: automation not ready after %ss — loop continues degraded",
+            timeout_seconds,
+        )
+
     async def _run_loop(self) -> None:
         """Primary loop: assess → plan → execute → learn → sleep."""
+        await self._wait_for_automation()
         while not self._stop.is_set():
             try:
                 # 1. Assess current state

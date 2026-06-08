@@ -11,7 +11,7 @@ from typing import Any
 from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, Path, Query
 from config.settings import MODELS
 from shared.database.connection import get_db_connection
-from shared.domain_registry import DOMAIN_PATH_PATTERN
+from shared.domain_registry import DOMAIN_PATH_PATTERN, resolve_domain_schema
 from shared.services.domain_aware_service import validate_domain
 from shared.services.llm_service import llm_service
 
@@ -19,6 +19,7 @@ from ..services.proactive_detection_service import ProactiveDetectionService
 from ..services.quality_assessment_service import QualityAssessmentService
 from ..services.rag_analysis_service import RAGAnalysisService
 from ..services.storyline_service import StorylineService
+from services.article_content_enrichment_service import format_article_content_excerpt
 
 logger = logging.getLogger(__name__)
 
@@ -102,7 +103,7 @@ async def get_domain_storylines(
         if not validate_domain(domain):
             raise HTTPException(status_code=400, detail=f"Invalid or inactive domain: {domain}")
 
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
 
         conn = get_db_connection()
         if not conn:
@@ -226,7 +227,7 @@ async def update_domain_storyline(
         if not validate_domain(domain):
             raise HTTPException(status_code=400, detail=f"Invalid or inactive domain: {domain}")
 
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
 
         conn = get_db_connection()
         if not conn:
@@ -294,7 +295,7 @@ async def delete_domain_storyline(
         if not validate_domain(domain):
             raise HTTPException(status_code=400, detail=f"Invalid or inactive domain: {domain}")
 
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
 
         conn = get_db_connection()
         if not conn:
@@ -354,7 +355,7 @@ async def remove_article_from_domain_storyline(
         if not validate_domain(domain):
             raise HTTPException(status_code=400, detail=f"Invalid or inactive domain: {domain}")
 
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
 
         conn = get_db_connection()
         if not conn:
@@ -436,7 +437,7 @@ async def add_article_to_domain_storyline(
         if not validate_domain(domain):
             raise HTTPException(status_code=400, detail=f"Invalid or inactive domain: {domain}")
 
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
 
         conn = get_db_connection()
         if not conn:
@@ -531,7 +532,7 @@ async def get_domain_available_articles_for_storyline(
         if not validate_domain(domain):
             raise HTTPException(status_code=400, detail=f"Invalid or inactive domain: {domain}")
 
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
 
         conn = get_db_connection()
         if not conn:
@@ -575,7 +576,9 @@ async def get_domain_available_articles_for_storyline(
                             "source_domain": row[3],
                             "published_at": row[4].isoformat() if row[4] else None,
                             "summary": row[5],
-                            "content_excerpt": row[6] if len(row) > 6 else None,
+                            "content_excerpt": format_article_content_excerpt(
+                                row[6] if len(row) > 6 else None, 300
+                            ),
                         }
                     )
 
@@ -605,7 +608,7 @@ async def get_domain_storyline(
         if not validate_domain(domain):
             raise HTTPException(status_code=400, detail=f"Invalid or inactive domain: {domain}")
 
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
 
         conn = get_db_connection()
         if not conn:
@@ -654,7 +657,9 @@ async def get_domain_storyline(
                             "source_domain": row[3],
                             "published_at": row[4].isoformat() if row[4] else None,
                             "summary": row[5],
-                            "content_excerpt": row[6] if len(row) > 6 else None,
+                            "content_excerpt": format_article_content_excerpt(
+                                row[6] if len(row) > 6 else None, 1000
+                            ),
                         }
                     )
 
@@ -715,7 +720,7 @@ async def add_article_to_domain_storyline_by_id(
         if not validate_domain(domain):
             raise HTTPException(status_code=400, detail=f"Invalid or inactive domain: {domain}")
 
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
 
         article_id = request.get("article_id") if request else None
         if not article_id:
@@ -792,7 +797,7 @@ async def analyze_domain_storyline(
         if not validate_domain(domain):
             raise HTTPException(status_code=400, detail=f"Invalid or inactive domain: {domain}")
 
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
 
         conn = get_db_connection()
         if not conn:
@@ -874,8 +879,6 @@ async def get_domain_storyline_timeline(
         # Validate domain
         if not validate_domain(domain):
             raise HTTPException(status_code=400, detail=f"Invalid or inactive domain: {domain}")
-
-        domain.replace("-", "_")
 
         conn = get_db_connection()
         if not conn:
@@ -969,7 +972,7 @@ async def get_domain_storyline_suggestions(
         if not validate_domain(domain):
             raise HTTPException(status_code=400, detail=f"Invalid or inactive domain: {domain}")
 
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
 
         conn = get_db_connection()
         if not conn:
@@ -1021,7 +1024,9 @@ async def get_domain_storyline_suggestions(
                                 "summary": row[2],
                                 "published_at": row[3].isoformat() if row[3] else None,
                                 "source_domain": row[4],
-                                "content_excerpt": row[5] if len(row) > 5 else None,
+                                "content_excerpt": format_article_content_excerpt(
+                                    row[5] if len(row) > 5 else None, 300
+                                ),
                             }
                             for row in related_articles
                         ],
@@ -1383,7 +1388,7 @@ def load_rag_analysis_inputs_for_queue(
     Load (storyline_row, articles_rows) for process_storyline_rag_analysis.
     storyline_row: (title, description, analysis_summary). Returns None if missing/no articles.
     """
-    schema = domain.replace("-", "_")
+    schema = resolve_domain_schema(domain)
     conn = get_db_connection()
     if not conn:
         return None
@@ -1427,7 +1432,7 @@ async def process_storyline_rag_analysis(
         from shared.database.connection import get_db_connection
         from shared.services.llm_service import llm_service
 
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
         title, description, current_summary = storyline
 
         # Build context from articles
@@ -1498,11 +1503,17 @@ async def process_storyline_rag_analysis(
                         conn.commit()
                         logger.info(f"Updated RAG analysis for storyline {storyline_id}")
 
-                    # Extract and store timeline events from articles
-                    # Use the same connection but after commit
-                    _extract_timeline_events_from_articles(
-                        conn, schema, storyline_id, articles, title
-                    )
+                    # Legacy per-schema timeline_events writes (default off; use chronological_events pipeline)
+                    import os
+
+                    if os.environ.get("LEGACY_TIMELINE_EVENTS_WRITES", "0").strip().lower() in (
+                        "1",
+                        "true",
+                        "yes",
+                    ):
+                        _extract_timeline_events_from_articles(
+                            conn, schema, storyline_id, articles, title
+                        )
 
                 except Exception as e:
                     logger.error(

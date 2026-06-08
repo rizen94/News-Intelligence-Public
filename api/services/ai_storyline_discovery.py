@@ -39,6 +39,12 @@ import requests
 from psycopg2.extras import RealDictCursor
 
 from services.domain_synthesis_config import get_domain_synthesis_config
+from services.storyline_coherence_guardrails import (
+    assess_cluster_coherence,
+    is_overly_generic_storyline_title,
+    post_process_storyline_description,
+    storyline_metadata_prompt_suffix,
+)
 from shared.domain_registry import first_active_domain_key, resolve_domain_schema
 from shared.pipeline_pass_marker import bulk_record_article_phase_pass, phase_backlog_uses_pass_marker
 
@@ -688,7 +694,14 @@ class AIStorylineDiscovery:
 
         return unique_articles
 
-    def calculate_hybrid_similarity_matrix(self, articles: list[ArticleEmbedding]) -> np.ndarray:
+    def calculate_hybrid_similarity_matrix(
+        self,
+        articles: list[ArticleEmbedding],
+        *,
+        semantic_weight: float | None = None,
+        entity_weight: float | None = None,
+        temporal_weight: float | None = None,
+    ) -> np.ndarray:
         """
         Calculate pairwise similarity matrix with VECTORIZED operations (10-50x faster):
         - Semantic similarity (embeddings) as PRIMARY signal (85%)
@@ -697,6 +710,9 @@ class AIStorylineDiscovery:
 
         Uses numpy matrix operations instead of nested loops for massive speedup.
         """
+        sw = float(semantic_weight if semantic_weight is not None else SEMANTIC_WEIGHT)
+        ew = float(entity_weight if entity_weight is not None else ENTITY_WEIGHT)
+        tw = float(temporal_weight if temporal_weight is not None else TEMPORAL_WEIGHT)
         n = len(articles)
 
         # ===== 1. VECTORIZED SEMANTIC SIMILARITY (massive speedup) =====
@@ -775,11 +791,7 @@ class AIStorylineDiscovery:
         )
 
         # ===== 4. COMBINE WITH WEIGHTS =====
-        similarity_matrix = (
-            SEMANTIC_WEIGHT * semantic_matrix
-            + ENTITY_WEIGHT * entity_matrix
-            + TEMPORAL_WEIGHT * temporal_matrix
-        )
+        similarity_matrix = sw * semantic_matrix + ew * entity_matrix + tw * temporal_matrix
 
         np.fill_diagonal(similarity_matrix, 1.0)
         np.clip(similarity_matrix, 0.0, 1.0, out=similarity_matrix)
@@ -1003,8 +1015,9 @@ class AIStorylineDiscovery:
         domain_hint = ""
         if domain:
             cfg = get_domain_synthesis_config(domain)
-            if cfg.llm_context:
-                domain_hint = f"\nDomain context: {cfg.llm_context}\n"
+            ctx = cfg.narrative_prompt_context()
+            if ctx:
+                domain_hint = f"\nDomain context:\n{ctx}\n"
             if cfg.macro_subject_axes:
                 domain_hint += (
                     "\nCross-cutting science/technology axes (use only if the cluster clearly fits; "
@@ -1014,7 +1027,7 @@ class AIStorylineDiscovery:
 
         prompt = f"""Generate a news headline for these related articles{f" about {entities}" if entities else ""}:
 {article_texts}
-{domain_hint}
+{domain_hint}{storyline_metadata_prompt_suffix(domain)}
 Reply with ONLY a JSON object:
 {{"title": "headline", "description": "one sentence summary"}}"""
 
@@ -1040,12 +1053,15 @@ Reply with ONLY a JSON object:
                     end = result.rfind("}") + 1
                     if start >= 0 and end > start:
                         data = json.loads(result[start:end])
-                        return {
-                            "title": data.get(
-                                "title", f"Storyline: {cluster.articles[0].title[:50]}"
-                            ),
-                            "description": data.get("description", "Related articles cluster"),
-                        }
+                        title = data.get(
+                            "title", f"Storyline: {cluster.articles[0].title[:50]}"
+                        )
+                        description = post_process_storyline_description(
+                            data.get("description", "Related articles cluster"), domain
+                        )
+                        if is_overly_generic_storyline_title(title, domain):
+                            title = self._generate_fast_title(cluster)
+                        return {"title": title, "description": description}
                 except json.JSONDecodeError:
                     pass
 
@@ -1063,8 +1079,31 @@ Reply with ONLY a JSON object:
 
         return {
             "title": fallback_title,
-            "description": f"Cluster of {len(cluster.articles)} related articles with {cluster.avg_similarity:.0%} similarity. Key topics: {', '.join(cluster.common_entities[:3]) if cluster.common_entities else 'various'}",
+            "description": post_process_storyline_description(
+                f"Cluster of {len(cluster.articles)} related articles with {cluster.avg_similarity:.0%} similarity. Key topics: {', '.join(cluster.common_entities[:3]) if cluster.common_entities else 'various'}",
+                domain,
+            ),
         }
+
+    def _cluster_passes_coherence_gate(
+        self, cluster: StorylineCluster, domain: str
+    ) -> tuple[bool, str]:
+        articles = [
+            {
+                "title": a.title,
+                "summary": "",
+                "content": a.content,
+            }
+            for a in cluster.articles
+            if getattr(a, "article_id", 0) > 0
+        ]
+        title = cluster.suggested_title or self._generate_fast_title(cluster)
+        return assess_cluster_coherence(
+            domain,
+            title,
+            articles,
+            common_entities=cluster.common_entities,
+        )
 
     def _minimal_cluster_from_article_dicts(
         self, articles: list[dict[str, Any]], domain: str
@@ -1180,12 +1219,14 @@ Reply with ONLY a JSON object:
                 cur.execute(f"""
                     SELECT s.id, s.title, s.description,
                            COALESCE(array_agg(DISTINCT ec.canonical_name) FILTER (WHERE ec.canonical_name IS NOT NULL), ARRAY[]::text[]) AS entity_names,
-                           COALESCE(array_agg(DISTINCT ata.topic_id) FILTER (WHERE ata.topic_id IS NOT NULL), ARRAY[]::int[]) AS topic_ids
+                           COALESCE(array_agg(DISTINCT ata.topic_id) FILTER (WHERE ata.topic_id IS NOT NULL), ARRAY[]::int[]) AS topic_ids,
+                           COALESCE(array_agg(DISTINCT sa.article_id) FILTER (WHERE sa.article_id IS NOT NULL), ARRAY[]::int[]) AS article_ids
                     FROM {schema}.storylines s
                     LEFT JOIN {schema}.storyline_articles sa ON sa.storyline_id = s.id
                     LEFT JOIN {schema}.article_entities ae ON ae.article_id = sa.article_id
                     LEFT JOIN {schema}.entity_canonical ec ON ec.id = ae.canonical_entity_id
                     LEFT JOIN {schema}.article_topic_assignments ata ON ata.article_id = sa.article_id
+                    WHERE s.merged_into_id IS NULL
                     GROUP BY s.id, s.title, s.description
                 """)
                 for row in cur.fetchall():
@@ -1196,6 +1237,7 @@ Reply with ONLY a JSON object:
                             "description": (row[2] or "")[:1000],
                             "entity_names": list(row[3]) if row[3] else [],
                             "topic_ids": list(row[4]) if row[4] else [],
+                            "article_ids": [int(x) for x in (row[5] or [])],
                         }
                     )
         except Exception as e:
@@ -1265,6 +1307,19 @@ Reply with ONLY a JSON object:
     ) -> int | None:
         """If cluster matches an existing storyline above threshold, return that storyline id else None. v8: uses topic overlap when cluster_topic_ids provided."""
         threshold = threshold or self.DEDUP_SIMILARITY_THRESHOLD
+        cluster_article_ids = {
+            int(a.article_id) for a in cluster.articles if getattr(a, "article_id", 0) > 0
+        }
+        if cluster_article_ids:
+            for ex in existing_list:
+                ex_ids = {int(x) for x in (ex.get("article_ids") or [])}
+                if not ex_ids:
+                    continue
+                union = cluster_article_ids | ex_ids
+                if union:
+                    overlap = len(cluster_article_ids & ex_ids) / len(union)
+                    if overlap >= 0.5:
+                        return int(ex["id"])
         best_id = None
         best_sim = 0.0
         for ex in existing_list:
@@ -1307,38 +1362,50 @@ Reply with ONLY a JSON object:
         return added
 
     def save_storyline_suggestion(self, cluster: StorylineCluster, domain: str) -> int | None:
-        """Save a storyline suggestion to the database"""
+        """Save a storyline suggestion to the database (columns aligned to silo storylines DDL)."""
+        from services.storyline_assembly_service import get_storyline_automation_mode
+
+        automation_mode = get_storyline_automation_mode(domain)
         conn = self.get_db_connection()
         try:
             schema = _schema_from_domain_key(domain)
+            meta = json.dumps(
+                {
+                    "source": "storyline_discovery",
+                    "importance_score": round(float(cluster.importance_score), 4),
+                    "is_breaking_news": bool(cluster.is_breaking_news),
+                }
+            )
             with conn.cursor() as cur:
                 cur.execute(
                     f"""
                     INSERT INTO {schema}.storylines
                     (storyline_uuid, title, description, status, processing_status,
-                     article_count, total_articles, priority, importance_score,
-                     automation_enabled, created_at, updated_at)
+                     article_count, total_articles, priority, quality_score,
+                     automation_enabled, automation_mode, automation_frequency_hours,
+                     metadata, created_at, updated_at)
                     VALUES (
-                        gen_random_uuid()::text, %s, %s,
-                        CASE WHEN %s THEN 'active' ELSE 'suggested' END,
+                        gen_random_uuid(), %s, %s,
+                        'active',
                         'pending',
                         %s, %s,
                         CASE WHEN %s THEN 1 ELSE 2 END,
                         %s,
-                        true,
+                        true, %s, 6,
+                        %s::jsonb,
                         NOW(), NOW()
                     )
-                    ON CONFLICT DO NOTHING
                     RETURNING id
                 """,
                     (
                         cluster.suggested_title,
                         cluster.suggested_description,
-                        cluster.is_breaking_news,
                         len(cluster.articles),
                         len(cluster.articles),
                         cluster.is_breaking_news,
-                        cluster.importance_score,
+                        float(cluster.importance_score),
+                        automation_mode,
+                        meta,
                     ),
                 )
 
@@ -1790,25 +1857,35 @@ Reply with ONLY a JSON object:
         compared to politics/finance breaking narratives.
         """
         cfg = get_domain_synthesis_config(domain)
+        disc = cfg.storyline_development.discovery
         if min_similarity is not None:
             sim_thresh = float(min_similarity)
         else:
-            sim_thresh = float(cfg.clustering_similarity_threshold)
+            sim_thresh = float(disc.clustering_similarity_threshold)
         sim_thresh = max(0.35, min(0.99, sim_thresh))
 
         if min_cluster_size is not None:
             min_sz = int(min_cluster_size)
         else:
-            min_sz = int(cfg.storyline_min_cluster_size)
+            min_sz = int(disc.min_cluster_size)
         min_sz = max(2, min(100, min_sz))
+
+        sem_w = float(disc.semantic_weight)
+        ent_w = float(disc.entity_weight)
+        tmp_w = float(disc.temporal_weight)
 
         logger.info(
             "[%s] Storyline discovery clustering: similarity_threshold=%.3f min_cluster_size=%d "
-            "(from %s)",
+            "weights=%.2f/%.2f/%.2f (from %s)",
             domain,
             sim_thresh,
             min_sz,
-            "call overrides" if (min_similarity is not None or min_cluster_size is not None) else "domain_synthesis_config",
+            sem_w,
+            ent_w,
+            tmp_w,
+            "call overrides"
+            if (min_similarity is not None or min_cluster_size is not None)
+            else "domain_synthesis_config",
         )
 
         start_time = datetime.now()
@@ -1833,13 +1910,22 @@ Reply with ONLY a JSON object:
                 "embedding_model": EMBEDDING_MODEL,
             },
             "weights": {
-                "semantic_similarity": SEMANTIC_WEIGHT,
-                "entity_overlap": ENTITY_WEIGHT,
-                "temporal_proximity": TEMPORAL_WEIGHT,
+                "semantic_similarity": sem_w,
+                "entity_overlap": ent_w,
+                "temporal_proximity": tmp_w,
             },
             "clustering_params": {
                 "similarity_threshold": sim_thresh,
                 "min_cluster_size": min_sz,
+            },
+            "storyline_development": {
+                "discovery": {
+                    "clustering_similarity_threshold": sim_thresh,
+                    "min_cluster_size": min_sz,
+                    "semantic_weight": sem_w,
+                    "entity_weight": ent_w,
+                    "temporal_weight": tmp_w,
+                },
             },
         }
 
@@ -1904,12 +1990,18 @@ Reply with ONLY a JSON object:
         # Phase 3: Calculate hybrid similarity matrix
         phase_start = datetime.now()
         logger.info(f"[{domain}] Phase 3: Calculating hybrid similarity (semantic + entity)...")
-        similarity_matrix = self.calculate_hybrid_similarity_matrix(articles)
+        similarity_matrix = self.calculate_hybrid_similarity_matrix(
+            articles,
+            semantic_weight=sem_w,
+            entity_weight=ent_w,
+            temporal_weight=tmp_w,
+        )
         stats["phases"]["similarity_matrix"] = {
             "duration_ms": (datetime.now() - phase_start).total_seconds() * 1000,
             "matrix_size": f"{len(articles)}x{len(articles)}",
-            "semantic_weight": SEMANTIC_WEIGHT,
-            "entity_weight": ENTITY_WEIGHT,
+            "semantic_weight": sem_w,
+            "entity_weight": ent_w,
+            "temporal_weight": tmp_w,
         }
 
         # Phase 4: Cluster using HDBSCAN
@@ -1987,6 +2079,15 @@ Reply with ONLY a JSON object:
             for cluster in clusters[:10]:
                 # v8: skip clusters with only PDF contexts (no real articles to link)
                 if not any(a.article_id > 0 for a in cluster.articles):
+                    continue
+                coherent, reject_reason = self._cluster_passes_coherence_gate(cluster, domain)
+                if not coherent:
+                    logger.info(
+                        "[%s] Skipping cluster %s (coherence: %s)",
+                        domain,
+                        (cluster.suggested_title or "")[:80],
+                        reject_reason,
+                    )
                     continue
                 # Only articles have topic assignments; skip PDF context ids (negative)
                 cluster_article_ids = [a.article_id for a in cluster.articles if a.article_id > 0]

@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from shared.database.connection import get_db_connection
-from shared.domain_registry import DOMAIN_PATH_PATTERN
+from shared.domain_registry import DOMAIN_PATH_PATTERN, resolve_domain_schema
 from shared.services.domain_aware_service import validate_domain
 
 from ..services.quality_assessment_service import QualityAssessmentService
@@ -51,7 +51,7 @@ async def get_domain_storyline_suggestions(
 ):
     """Get article suggestions for a storyline"""
     try:
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
 
         conn = get_db_connection()
         if not conn:

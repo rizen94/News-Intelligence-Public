@@ -1,8 +1,8 @@
-# Domain onboarding YAML (`api/config/domains/`)
+# Domain onboarding (`api/config/domains/`)
 
-**Additional silos** (beyond the built-in **politics**, **finance**, **science-tech**) are declared here — same routing, pipeline, and schema parity once migrated and provisioned. The Python loader is [`api/shared/domain_registry.py`](../../shared/domain_registry.py).
+**Authoring:** JSON specs in [`specs/`](specs/) (`{domain_key}.domain.json`). **Runtime:** generated `{domain_key}.yaml` (do not edit by hand). Same routing, pipeline, and schema parity once migrated and provisioned. Loader: [`api/shared/domain_registry.py`](../../shared/domain_registry.py).
 
-**Canonical procedure:** [`docs/DOMAIN_EXTENSION_TEMPLATE.md`](../../../docs/DOMAIN_EXTENSION_TEMPLATE.md) (order of operations, migration, installer, dual activation, synthesis YAML).
+**Canonical procedure:** [`docs/DOMAIN_EXTENSION_TEMPLATE.md`](../../../docs/DOMAIN_EXTENSION_TEMPLATE.md) · **Spec README:** [`specs/README.md`](specs/README.md)
 
 **Dual `is_active` (do not confuse them):**
 
@@ -24,8 +24,10 @@ A silo can exist in the DB with **`is_active: false`** in YAML (no registry / RS
 
 | File | Purpose |
 |------|---------|
-| `_template.example.yaml` | **Example only** — not loaded. Copy to `{domain_key}.yaml` or run **`api/scripts/init_domain_yaml_from_template.py`**. |
-| `{domain_key}.yaml` | One onboarded silo per file (full parity with built-ins once live). **`init_domain_yaml_from_template.py`** defaults to **`is_active: true`** (use **`--inactive`** for drafts). After migration + verify, run **`api/scripts/ensure_domain_silo_alignment.py`** so **`public.domains`** matches YAML on every host. |
+| `specs/{domain_key}.domain.json` | **Source of truth** for onboarding (edit this). |
+| `specs/_template.domain.json` | Copy for new domains; **`init_domain_spec.py`**. |
+| `{domain_key}.yaml` | **Generated** runtime config (`generate_domain_artifacts.py`). After migration + verify, run **`ensure_domain_silo_alignment.py`** on each DB host. |
+| `_template.example.yaml` | Deprecated pointer (not loaded). |
 
 ## Strict requirements (**DB and routing**)
 
@@ -51,6 +53,13 @@ A silo can exist in the DB with **`is_active: false`** in YAML (no registry / RS
 | `llm_prompt_guidance` | no | multiline | **Future / docs** — use `\|` in YAML for paragraphs |
 | `workload_assumptions` | no | object | Hints for catch-up estimators |
 | `_…` | no | any | **Stripped** — not loaded into merged config used by code |
+
+### Storyline thresholds (synthesis YAML, not onboarding YAML)
+
+Per-domain **storyline discovery, proactive detection, and consolidation** thresholds live in [`api/config/domain_synthesis_config.yaml`](../domain_synthesis_config.yaml) under `storyline_development` (loaded by `api/services/domain_synthesis_config.py`). Onboarding YAML here controls RSS seeds and registry metadata only. After changing synthesis YAML, **restart API/worker processes** (config is cached at import). Operator checks:
+
+- `PYTHONPATH=api uv run python api/scripts/verify_domain_storyline_config.py`
+- `PYTHONPATH=api uv run python api/scripts/check_entity_extraction_pipeline.py` (per-silo `article_entities` backlog)
 
 ### What code consumes **today**
 
@@ -84,13 +93,13 @@ Until every path uses **`domain_registry`** / **`get_schema_names_active()`** / 
 
 ## How to use (ordered checklist)
 
-1. Create `{domain_key}.yaml`: copy [`_template.example.yaml`](_template.example.yaml), **or** run **`api/scripts/init_domain_yaml_from_template.py`** with `--domain-key`, `--schema-name`, `--display-name` (filename **without** leading `_`).
-2. Set **`is_active: false`**, fill **`domain_key`**, **`schema_name`**, **`display_name`** (≤ 100 chars).
-3. Validate YAML (see **Validation** in [`docs/DOMAIN_EXTENSION_TEMPLATE.md`](../../../docs/DOMAIN_EXTENSION_TEMPLATE.md)).
-4. Apply SQL migration for the new silo (`public.domains`, `CREATE SCHEMA`, table parity — see template doc).
-5. Run **`api/scripts/provision_domain.py`** with your config path, SQL file, and verify command (see template doc). That run seeds **`data_sources.rss.seed_feed_urls`** into **`rss_feeds`** unless you pass **`--no-seed-rss`**.
-6. Run **`api/scripts/verify_domain_provision.py --domain-key {domain_key}`** (use **`--strict`** in CI if warnings should fail the job). Fix errors/warnings as needed.
-7. Run **`api/scripts/ensure_domain_silo_alignment.py`** on each host that shares the DB (main, Widow, workers).
+1. Create **`specs/{domain_key}.domain.json`** via **`init_domain_spec.py`** or copy **`specs/_template.domain.json`**.
+2. Set **`is_active: false`** until verified; fill identity, RSS, prompts.
+3. **`validate_domain_spec.py --spec ...`** · **`generate_domain_artifacts.py --spec ... --migration-number NNN --force`**
+4. Apply generated SQL migration (see template doc).
+5. **`provision_domain.py --spec ... --sql ... --verify-cmd ...`** (seeds RSS unless **`--no-seed-rss`**).
+6. **`verify_domain_provision.py --domain-key {domain_key}`** · **`verify_domain_spec_parity.py --all`**
+7. **`ensure_domain_silo_alignment.py`** on each DB host.
 8. When satisfied: set **`is_active: true`** in YAML. **`public.domains.is_active`** is set by **`provision_domain.py`** unless you passed **`--no-activate-in-db`**. Restart long-lived workers only if they still cache domain lists at import (see below).
 9. The web UI loads the domain list from **`GET /api/system_monitoring/registry_domains`** at startup (with a static fallback if the API is unreachable). You do not need to edit `domainHelper.ts` for each new domain.
 

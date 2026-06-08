@@ -10,7 +10,7 @@ from domains.content_analysis.services.topic_clustering_service import TopicClus
 from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, Path, Query
 from pydantic import BaseModel
 from shared.database.connection import get_db_config, get_db_connection
-from shared.domain_registry import DOMAIN_PATH_PATTERN
+from shared.domain_registry import DOMAIN_PATH_PATTERN, resolve_domain_schema
 from shared.services.domain_aware_service import (
     get_domain_data_schemas,
     parse_optional_domain_to_schema,
@@ -180,7 +180,7 @@ async def get_domain_topics(
             raise HTTPException(status_code=400, detail=f"Invalid or inactive domain: {domain}")
 
         # Get schema name
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
 
         conn = get_db_connection()
         if not conn:
@@ -516,7 +516,7 @@ async def get_domain_article_topics(
         if not validate_domain(domain):
             raise HTTPException(status_code=400, detail=f"Invalid or inactive domain: {domain}")
 
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
 
         conn = get_db_connection()
         if not conn:

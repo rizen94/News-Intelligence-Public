@@ -167,6 +167,9 @@ def update_story_state(
     """
     Compute maturity and knowledge gaps, optionally detect change vs previous state,
     and insert a new row into intelligence.storyline_states.
+
+    Persists a bounded historical-memory snapshot in metadata (fact/event/entity counts).
+    fact_change_log.processed=TRUE only removes rows from the hot queue — not durable history.
     """
     conn = get_db_connection()
     if not conn:
@@ -182,12 +185,28 @@ def update_story_state(
             if maturity != (prev.get("maturity_score") or 0):
                 is_significant = True
                 change_text = f"Maturity {prev.get('maturity_score') or 0:.2f} → {maturity:.2f}"
+
+        metadata: dict[str, Any] = {}
+        try:
+            from services.storyline_historical_context_service import build_storyline_historical_context
+
+            hctx = build_storyline_historical_context(domain_key, storyline_id, conn=conn)
+            if hctx.get("success"):
+                summary = hctx.get("spine_summary") or {}
+                metadata["last_historical_snapshot_at"] = summary.get("built_at")
+                metadata["historical_fact_count"] = summary.get("fact_count", 0)
+                metadata["historical_event_count"] = summary.get("event_count", 0)
+                metadata["historical_entity_count"] = summary.get("entity_count", 0)
+        except Exception as snap_err:
+            logger.debug("update_story_state historical snapshot: %s", snap_err)
+
         with conn.cursor() as cur:
             cur.execute(
                 """
                 INSERT INTO intelligence.storyline_states
-                (domain_key, storyline_id, version, state_summary, maturity_score, knowledge_gaps, significant_change, change_summary)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                (domain_key, storyline_id, version, state_summary, maturity_score,
+                 knowledge_gaps, significant_change, change_summary, metadata)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
                 """,
                 (
                     domain_key,
@@ -198,9 +217,31 @@ def update_story_state(
                     json.dumps(gaps),
                     is_significant,
                     change_text or "",
+                    json.dumps(metadata),
                 ),
             )
         conn.commit()
+
+        if metadata.get("historical_fact_count", 0) > 0:
+            import os
+
+            if os.environ.get("STORY_STATE_FACT_CHANGE_REFINEMENT", "0").strip().lower() in (
+                "1",
+                "true",
+                "yes",
+            ):
+                try:
+                    from services.content_refinement_queue_service import enqueue_content_refinement
+
+                    enqueue_content_refinement(
+                        domain_key,
+                        storyline_id,
+                        job_type="narrative_finisher",
+                        metadata={"source": "story_state_fact_snapshot"},
+                    )
+                except Exception as ref_err:
+                    logger.debug("story_state refinement enqueue: %s", ref_err)
+
         return True
     except Exception as e:
         logger.warning("update_story_state %s/%s: %s", domain_key, storyline_id, e)

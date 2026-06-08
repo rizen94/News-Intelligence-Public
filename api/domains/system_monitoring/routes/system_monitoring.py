@@ -3,6 +3,7 @@ Domain 6: System Monitoring Routes
 Handles system metrics, health monitoring, and alerts
 """
 
+import asyncio
 import logging
 import os
 import sys
@@ -26,7 +27,7 @@ from shared.services.domain_aware_service import (
     resolve_domain_token_to_schema,
 )
 from shared.services.pipeline_trace_writer import log_pipeline_trace as _log_pipeline_trace
-from shared.services.response_cache import cached_response
+from shared.services.response_cache import cached_response, cached_response_sync
 
 # Reserve dedicated pool for monitoring/page-load endpoints in this module
 get_monitoring_db_connection = get_ui_db_connection
@@ -77,7 +78,7 @@ def _registry_silo_schemas() -> list[str]:
         return out
     # DB unavailable or empty: prefer active registry silos (template era), not legacy three.
     fallback = list(get_schema_names_active())
-    return fallback if fallback else ["politics_2", "finance_2"]
+    return fallback if fallback else ["politics", "finance"]
 
 
 def _check_frontend_once() -> dict[str, Any]:
@@ -140,7 +141,7 @@ async def orchestrator_status(request: Request):
 
 
 @router.get("/registry_domains")
-@cached_response(ttl=60)
+@cached_response_sync(ttl=60)
 def get_registry_domains() -> dict[str, Any]:
     """
     Active domains from shared.domain_registry (built-ins + active YAML).
@@ -164,63 +165,61 @@ def get_registry_domains() -> dict[str, Any]:
     return {"success": True, "data": {"domains": rows}}
 
 
+def _probe_db_health_fast() -> str:
+    """Quick SELECT 1 on the isolated health pool — never checkout from UI/worker pools."""
+    try:
+        from shared.database.connection import get_health_db_connection_context
+
+        with get_health_db_connection_context() as conn:
+            with conn.cursor() as cur:
+                try:
+                    cur.execute("SET LOCAL statement_timeout = '2000ms'")
+                except Exception:
+                    pass
+                cur.execute("SELECT 1")
+        return "healthy"
+    except Exception as e:
+        logger.warning("Database health probe failed: %s", e)
+        return f"unhealthy: {str(e)[:50]}"
+
+
+def _probe_database_health_sync() -> str:
+    """Sync DB probe for health_check — run via asyncio.to_thread, never on the event loop."""
+    return _probe_db_health_fast()
+
+
 @router.get("/health")
 @cached_response(ttl=30)
 async def health_check():
     """Health check for System Monitoring domain"""
     try:
-        # Check system resources (interval=0.1 for fast response — web load takes priority)
-        cpu_percent = psutil.cpu_percent(interval=0.1)
+        # Non-blocking CPU sample (interval=0.1 would block the uvicorn event loop).
+        cpu_percent = psutil.cpu_percent(interval=None)
         memory = psutil.virtual_memory()
         disk = psutil.disk_usage("/")
 
-        # Get GPU info if available (nvidia-smi or GPUtil)
-        gpu = _get_gpu_metrics()
+        # GPU subprocess must not block the uvicorn event loop (nvidia-smi can take up to 5s).
+        try:
+            gpu = await asyncio.wait_for(
+                asyncio.to_thread(_get_gpu_metrics),
+                timeout=2.0,
+            )
+        except asyncio.TimeoutError:
+            gpu = {}
+            logger.debug("GPU metrics skipped: timeout after 2s")
         gpu_vram_percent = gpu.get("gpu_vram_percent")
         gpu_utilization_percent = gpu.get("gpu_utilization_percent")
 
-        # Check database connection (with quick timeout to prevent stalling)
+        # DB probe off the event loop — thread.join() here previously froze all HTTP handling.
         db_status = "healthy"
         try:
-            import queue
-            import threading
-
-            result_queue = queue.Queue()
-            exception_queue = queue.Queue()
-
-            def db_check():
-                try:
-                    conn = get_monitoring_db_connection()
-                    if conn:
-                        with conn.cursor() as cur:
-                            cur.execute("SELECT 1")
-                        conn.close()
-                        result_queue.put(True)
-                    else:
-                        result_queue.put(False)
-                except Exception as e:
-                    exception_queue.put(e)
-
-            # Run database check in thread with timeout
-            thread = threading.Thread(target=db_check, daemon=True)
-            thread.start()
-            thread.join(timeout=2)  # 2 second timeout
-
-            if thread.is_alive():
-                db_status = "unhealthy: connection timeout"
-                logger.warning("Database health check timed out after 2 seconds")
-            elif not exception_queue.empty():
-                e = exception_queue.get()
-                db_status = f"unhealthy: {str(e)[:50]}"
-                logger.warning(f"Database health check failed: {e}")
-            elif not result_queue.empty():
-                if not result_queue.get():
-                    db_status = "unhealthy"
-            else:
-                db_status = "unhealthy: no response"
-        except Exception as e:
-            db_status = f"unhealthy: {str(e)[:50]}"
-            logger.warning(f"Database health check error: {e}")
+            db_status = await asyncio.wait_for(
+                asyncio.to_thread(_probe_database_health_sync),
+                timeout=2.0,
+            )
+        except asyncio.TimeoutError:
+            db_status = "unhealthy: connection timeout"
+            logger.warning("Database health check timed out after 2 seconds")
 
         # Redis removed from architecture; report not_used so frontend can show N/A
         redis_status = "not_used"
@@ -242,10 +241,15 @@ async def health_check():
         except Exception:
             cb_summary = {"open_circuits": 0, "breakers": {}}
 
+        # GPU metric sampling is best-effort — must not block health responses.
         try:
+            import threading
+
             from shared.gpu_metrics import maybe_record_gpu_metric_sample
 
-            maybe_record_gpu_metric_sample()
+            threading.Thread(
+                target=maybe_record_gpu_metric_sample, daemon=True, name="gpu-metric-sample"
+            ).start()
         except Exception:
             pass
 
@@ -582,45 +586,23 @@ def _get_processing_history_for_monitor() -> dict[str, Any] | None:
     return hist if isinstance(hist, dict) else None
 
 
-@router.get("/monitoring/overview")
-def get_monitoring_overview(request: Request):
-    """
-    Enhanced monitoring: connection status (API, database, webserver) and live activity feed.
-    Use for the monitoring UI that shows system health and "what the backend is doing".
-    """
-    import queue as queue_module
-    import threading
-
+def _build_monitoring_overview_sync(request: Request) -> dict[str, Any]:
+    """Build overview payload (runs in thread pool; must stay bounded)."""
     connections: dict[str, Any] = {"api": "ok"}
     db_status = "unknown"
     try:
-        result_queue = queue_module.Queue()
-        exception_queue = queue_module.Queue()
+        import concurrent.futures
 
-        def db_check():
+        def _overview_db_probe() -> str:
+            result = _probe_db_health_fast()
+            return "healthy" if result == "healthy" else "unhealthy"
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+            fut = ex.submit(_overview_db_probe)
             try:
-                conn = get_monitoring_db_connection()
-                if conn:
-                    with conn.cursor() as cur:
-                        cur.execute("SELECT 1")
-                    conn.close()
-                    result_queue.put(True)
-                else:
-                    result_queue.put(False)
-            except Exception as e:
-                exception_queue.put(e)
-
-        thread = threading.Thread(target=db_check, daemon=True)
-        thread.start()
-        thread.join(timeout=2)
-        if thread.is_alive():
-            db_status = "timeout"
-        elif not exception_queue.empty():
-            db_status = "unhealthy"
-        elif not result_queue.empty() and result_queue.get():
-            db_status = "healthy"
-        else:
-            db_status = "unhealthy"
+                db_status = fut.result(timeout=2.5)
+            except concurrent.futures.TimeoutError:
+                db_status = "timeout"
     except Exception:
         db_status = "unhealthy"
     connections["database"] = db_status
@@ -640,7 +622,6 @@ def get_monitoring_overview(request: Request):
                 "last_check": f.last_check.isoformat() if getattr(f, "last_check", None) else None,
             }
         else:
-            # On-demand check so first load after reboot has a status (frontend may not have been checked yet)
             webserver = _check_frontend_once()
     except Exception as e:
         webserver = {"status": "unknown", "error": str(e)[:80]}
@@ -658,7 +639,6 @@ def get_monitoring_overview(request: Request):
         if not cur:
             cur = _synthesize_current_activities_from_automation(live_automation)
         if cur:
-            # Merge/enrich must not wipe the feed on DB pool timeout or slow queries.
             try:
                 merged = _merge_current_activities_with_run_counts(
                     cur, automation=live_automation
@@ -671,6 +651,7 @@ def get_monitoring_overview(request: Request):
                 merged = _enrich_current_activities_with_run_estimates(
                     merged,
                     processing_history=hist,
+                    include_db_duration_avgs=False,
                 )
             except Exception as e:
                 logger.debug("Activity feed enrich: %s", e)
@@ -695,6 +676,33 @@ def get_monitoring_overview(request: Request):
         "activities": activities,
         "timestamp": datetime.now().isoformat(),
     }
+
+
+@router.get("/monitoring/overview")
+async def get_monitoring_overview(request: Request):
+    """
+    Enhanced monitoring: connection status (API, database, webserver) and live activity feed.
+    Use for the monitoring UI that shows system health and "what the backend is doing".
+    """
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(_build_monitoring_overview_sync, request),
+            timeout=8.0,
+        )
+    except asyncio.TimeoutError:
+        logger.warning("monitoring/overview timed out after 8s")
+        return {
+            "success": False,
+            "degraded": True,
+            "connections": {
+                "api": "ok",
+                "database": "timeout",
+                "webserver": {"status": "unknown"},
+            },
+            "activities": {"current": [], "recent": []},
+            "error": "overview_handler_timeout",
+            "timestamp": datetime.now().isoformat(),
+        }
 
 
 @router.get("/database/connections")
@@ -830,6 +838,26 @@ AUTOMATION_STATUS_TIMEOUT_SECONDS = 2.0
 PROCESS_RUN_SUMMARY_AUTOMATION_STATUS_TIMEOUT_SECONDS = 8.0
 
 
+def _automation_thread_alive(request: Request) -> bool:
+    thread = getattr(request.app.state, "automation_thread", None)
+    return bool(thread and thread.is_alive())
+
+
+@router.get("/startup/readiness")
+async def get_startup_readiness(request: Request):
+    """
+    Startup readiness for systemd and post-reboot verification.
+    Returns 200 with ready=true when DB and AutomationManager are live.
+    Returns 503 while warming up.
+    """
+    from fastapi.responses import JSONResponse
+    from services.startup_readiness import build_startup_readiness
+
+    payload = build_startup_readiness(request)
+    status_code = 200 if payload.get("ready") else 503
+    return JSONResponse(content={"success": True, **payload}, status_code=status_code)
+
+
 @router.get("/automation/status")
 async def get_automation_status(request: Request) -> dict[str, Any]:
     """
@@ -842,7 +870,17 @@ async def get_automation_status(request: Request) -> dict[str, Any]:
     import asyncio
 
     automation = getattr(request.app.state, "automation", None)
+    thread_alive = _automation_thread_alive(request)
     if automation is None or not hasattr(automation, "get_status"):
+        try:
+            from services.pipeline_schedule_service import pipeline_schedule_info
+
+            schedule_info = pipeline_schedule_info()
+        except Exception:
+            schedule_info = {}
+        disabled = []
+        if automation and hasattr(automation, "get_disabled_schedule_names"):
+            disabled = automation.get_disabled_schedule_names()
         return {
             "success": True,
             "data": {
@@ -850,7 +888,26 @@ async def get_automation_status(request: Request) -> dict[str, Any]:
                 "queue_size": 0,
                 "active_workers": 0,
                 "phases": [],
-                "message": "Automation manager not available",
+                "automation_thread_alive": thread_alive,
+                "disabled_schedules": disabled,
+                "pipeline_schedule": schedule_info,
+                "startup_ready": False,
+                "message": "Automation manager not available"
+                if automation is None
+                else "Automation thread not running",
+            },
+        }
+    if not thread_alive:
+        return {
+            "success": True,
+            "data": {
+                "is_running": False,
+                "queue_size": 0,
+                "active_workers": 0,
+                "phases": [],
+                "automation_thread_alive": False,
+                "startup_ready": False,
+                "message": "Automation thread died",
             },
         }
     try:
@@ -898,6 +955,7 @@ async def get_automation_status(request: Request) -> dict[str, Any]:
             "cross_domain_synthesis",
             "storyline_discovery",
             "proactive_detection",
+            "storyline_assembly",
             "fact_verification",
             "event_coherence_review",
             "entity_enrichment",
@@ -911,6 +969,7 @@ async def get_automation_status(request: Request) -> dict[str, Any]:
             "storyline_processing",
             "rag_enhancement",
             "storyline_automation",
+            "storyline_assembly",
             "storyline_enrichment",
             "story_continuation",
             "event_extraction",
@@ -974,6 +1033,18 @@ async def get_automation_status(request: Request) -> dict[str, Any]:
             _pipe_sel = pipeline_article_selection_mode_report()
         except Exception:
             _pipe_sel = {}
+        try:
+            from services.pipeline_schedule_service import pipeline_schedule_info
+
+            schedule_info = pipeline_schedule_info()
+        except Exception:
+            schedule_info = {}
+        disabled = (
+            automation.get_disabled_schedule_names()
+            if hasattr(automation, "get_disabled_schedule_names")
+            else []
+        )
+        startup_ready = thread_alive and bool(status.get("is_running", False))
         return {
             "success": True,
             "data": {
@@ -985,6 +1056,10 @@ async def get_automation_status(request: Request) -> dict[str, Any]:
                 "automation_background_tasks_active": status.get(
                     "automation_background_tasks_active"
                 ),
+                "automation_thread_alive": thread_alive,
+                "disabled_schedules": disabled,
+                "pipeline_schedule": schedule_info,
+                "startup_ready": startup_ready,
                 "phases": phases,
                 "backlog_counts": backlog_counts,
                 "pending_counts": status.get("pending_counts") or {},
@@ -1163,9 +1238,19 @@ async def trigger_phase(request: Request, body: dict[str, Any] = Body(..., embed
     phase = (body.get("phase") or "").strip()
     if not phase:
         raise HTTPException(status_code=400, detail="phase required (e.g. rss_processing)")
+    if not _automation_thread_alive(request):
+        raise HTTPException(status_code=503, detail="Automation thread died; restart the API")
     automation = getattr(request.app.state, "automation", None)
     if automation is None or not hasattr(automation, "request_phase"):
         raise HTTPException(status_code=503, detail="Automation manager not available")
+    if hasattr(automation, "is_schedule_disabled") and automation.is_schedule_disabled(phase):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Phase {phase} is disabled in AutomationManager (AUTOMATION_DISABLED_SCHEDULES). "
+                "On Widow, run api/scripts/run_widow_db_adjacent.py via cron instead."
+            ),
+        )
     import time
 
     requested_activity_id = f"requested_{phase}_{int(time.time())}"
@@ -1856,8 +1941,8 @@ async def investigate_anomaly(
 
 
 @router.get("/status")
-@cached_response(ttl=30)  # Cache system status for 30 seconds
-async def get_system_status():
+@cached_response_sync(ttl=30)  # sync def — blocking psycopg2/psutil must not run on the event loop
+def get_system_status():
     """Get comprehensive system status"""
     try:
         # Always return core system metrics even when DB is unavailable.
@@ -2052,8 +2137,8 @@ async def get_system_status():
 
 
 @router.get("/dashboard")
-@cached_response(ttl=60)  # Cache dashboard metrics for 1 minute
-async def get_dashboard_metrics():
+@cached_response_sync(ttl=60)  # sync def — blocking psycopg2 must not run on the event loop
+def get_dashboard_metrics():
     """Get dashboard-specific database metrics"""
     try:
         conn = get_monitoring_db_connection()
@@ -2156,8 +2241,8 @@ VALUES
 ON CONFLICT (feed_url) DO NOTHING;
 """
 
-        finance_2_official_feeds_sql = """
-INSERT INTO finance_2.rss_feeds (feed_name, feed_url, is_active, fetch_interval_seconds, created_at)
+        finance_official_feeds_sql = """
+INSERT INTO finance.rss_feeds (feed_name, feed_url, is_active, fetch_interval_seconds, created_at)
 VALUES
     ('SEC Press Releases', 'https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=&company=&dateb=&owner=include&start=0&count=100&output=atom', true, 3600, NOW()),
     ('Federal Reserve Press Releases', 'https://www.federalreserve.gov/feeds/press_all.xml', true, 3600, NOW()),
@@ -2172,12 +2257,12 @@ ON CONFLICT (feed_url) DO NOTHING;
             cur.execute(
                 """
                 SELECT EXISTS (
-                  SELECT 1 FROM information_schema.schemata WHERE schema_name = 'finance_2'
+                  SELECT 1 FROM information_schema.schemata WHERE schema_name = 'finance'
                 )
                 """
             )
             if cur.fetchone()[0]:
-                cur.execute(finance_2_official_feeds_sql)
+                cur.execute(finance_official_feeds_sql)
             conn.commit()
 
             # Verify feeds were added
@@ -2185,18 +2270,6 @@ ON CONFLICT (feed_url) DO NOTHING;
                 "SELECT COUNT(*) FROM finance.rss_feeds WHERE feed_name LIKE 'SEC%' OR feed_name LIKE 'Federal Reserve%' OR feed_name LIKE 'Treasury%' OR feed_name LIKE 'FDIC%'"
             )
             finance_count = int(cur.fetchone()[0] or 0)
-            cur.execute(
-                """
-                SELECT EXISTS (
-                  SELECT 1 FROM information_schema.schemata WHERE schema_name = 'finance_2'
-                )
-                """
-            )
-            if cur.fetchone()[0]:
-                cur.execute(
-                    "SELECT COUNT(*) FROM finance_2.rss_feeds WHERE feed_name LIKE 'SEC%' OR feed_name LIKE 'Federal Reserve%' OR feed_name LIKE 'Treasury%' OR feed_name LIKE 'FDIC%'"
-                )
-                finance_count += int(cur.fetchone()[0] or 0)
 
             cur.execute(
                 "SELECT COUNT(*) FROM politics.rss_feeds WHERE feed_name LIKE 'White House%' OR feed_name LIKE 'Department%' OR feed_name LIKE 'Congressional%' OR feed_name LIKE 'GAO%' OR feed_name LIKE 'CBO%'"
@@ -2337,6 +2410,7 @@ async def process_metric_collection():
 
 
 @router.get("/pipeline_status")
+@cached_response_sync(ttl=90)
 def get_pipeline_status():
     """
     Pipeline trace summary + per-silo article counts for Monitor.
@@ -2378,7 +2452,7 @@ def get_pipeline_status():
         try:
             with conn.cursor() as cur:
                 try:
-                    cur.execute("SET LOCAL statement_timeout = '8s'")
+                    cur.execute("SET LOCAL statement_timeout = '15s'")
                 except Exception:
                     pass
                 # Get pipeline trace statistics (using correct column names)
@@ -2460,8 +2534,8 @@ def get_pipeline_status():
 
                 # Sum article stats across pipeline silos (includes template silos when in pipeline)
                 _schemas = get_pipeline_schema_names_active() or get_schema_names_active() or (
-                    "politics_2",
-                    "finance_2",
+                    "politics",
+                    "finance",
                     "artificial_intelligence",
                 )
                 _sum_total = " + ".join(f"(SELECT COUNT(*) FROM {s}.articles)" for s in _schemas)
@@ -2504,7 +2578,7 @@ def get_pipeline_status():
                 else:
                     pipeline_status = "healthy"
 
-                return {
+                payload = {
                     "success": True,
                     "data": {
                         "pipeline_status": pipeline_status,
@@ -2524,6 +2598,7 @@ def get_pipeline_status():
                     },
                     "timestamp": datetime.now().isoformat(),
                 }
+                return payload
 
         finally:
             conn.close()

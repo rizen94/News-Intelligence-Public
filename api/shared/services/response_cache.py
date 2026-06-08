@@ -3,6 +3,7 @@ Simple response caching for frequently accessed endpoints
 Uses in-memory cache with TTL (Time To Live)
 """
 
+import asyncio
 import hashlib
 import inspect
 import json
@@ -52,7 +53,8 @@ def cached_response(ttl: int = 60, max_size: int = 1000):
             async def _call_underlying():
                 if inspect.iscoroutinefunction(func):
                     return await func(*args, **kwargs)
-                return func(*args, **kwargs)
+                # Sync handlers must not run on the event loop (blocks all HTTP on single-worker uvicorn).
+                return await asyncio.to_thread(func, *args, **kwargs)
 
             # Skip caching if lock not available
             if _cache_lock is None:

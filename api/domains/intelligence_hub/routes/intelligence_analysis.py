@@ -17,7 +17,7 @@ from services.intelligence_analysis_service import (
     IntelligenceAnalysisService,
     get_intelligence_service,
 )
-from shared.domain_registry import DOMAIN_PATH_PATTERN
+from shared.domain_registry import DOMAIN_PATH_PATTERN, resolve_domain_schema
 
 logger = logging.getLogger(__name__)
 
@@ -179,7 +179,7 @@ async def batch_quality_assessment(
     """
     try:
         svc = service()
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
 
         # Get storylines to assess
         conn = svc.get_db_connection()
@@ -404,7 +404,7 @@ async def get_high_impact_storylines(
     """
     try:
         svc = service()
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
 
         # Get active storylines
         conn = svc.get_db_connection()
@@ -497,7 +497,7 @@ async def get_intelligence_dashboard(
     """
     try:
         svc = service()
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
 
         # Get basic counts + editorial ledes from top storylines
         conn = svc.get_db_connection()

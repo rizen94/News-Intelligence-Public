@@ -19,6 +19,8 @@ from .base import BaseRAGService
 
 logger = logging.getLogger(__name__)
 
+_USE_PGVECTOR = os.environ.get("NI_RAG_USE_PGVECTOR", "true").lower() in ("1", "true", "yes")
+
 
 def _parse_json_column(val: Any, expected_type: type) -> Any:
     """Parse a DB column that may be already dict/list (JSONB) or a JSON string. Avoids json.loads on non-str."""
@@ -342,11 +344,109 @@ class RAGRetrievalModule:
             logger.error(f"Error in keyword search: {e}")
             return []
 
+    def _pgvector_chunk_results(
+        self, query: str, max_results: int, filters: dict[str, Any]
+    ) -> list[dict[str, Any]]:
+        """Map intelligence.embedding_chunks hits to article-shaped dicts for reranking."""
+        from services.embeddings_worker_service import search_embedding_chunks
+
+        domain = filters.get("domain")
+        date_from = filters.get("date_from")
+        date_to = filters.get("date_to")
+        chunks = search_embedding_chunks(
+            query,
+            limit=max(max_results * 2, 12),
+            domain_key=str(domain) if domain else None,
+            date_from=date_from,
+            date_to=date_to,
+            source_types=["article", "context"],
+            keyword_hint=query,
+        )
+        if not chunks:
+            return []
+
+        articles: list[dict[str, Any]] = []
+        seen_ids: set[int] = set()
+        for chunk in chunks:
+            meta = chunk.get("metadata") if isinstance(chunk.get("metadata"), dict) else {}
+            article_id = meta.get("article_id")
+            source_type = chunk.get("source_type")
+            source_id = str(chunk.get("source_id") or "")
+            if article_id is None and source_type == "article" and ":" in source_id:
+                try:
+                    article_id = int(source_id.split(":", 1)[1])
+                except (TypeError, ValueError):
+                    article_id = None
+            if article_id is not None:
+                aid = int(article_id)
+                if aid in seen_ids:
+                    continue
+                seen_ids.add(aid)
+                articles.append(
+                    {
+                        "id": aid,
+                        "title": (chunk.get("chunk_text") or "")[:200],
+                        "content": chunk.get("chunk_text") or "",
+                        "excerpt": (chunk.get("chunk_text") or "")[:400],
+                        "summary": "",
+                        "url": "",
+                        "published_at": chunk.get("event_date"),
+                        "source_domain": chunk.get("domain_key") or "",
+                        "publisher": "",
+                        "quality_score": 0.6,
+                        "readability_score": 0.5,
+                        "credibility_score": 0.5,
+                        "sentiment": {"label": None, "score": 0.0},
+                        "entities": {},
+                        "topics": [],
+                        "keywords": [],
+                        "relevance_score": float(chunk.get("similarity") or 0.5),
+                        "retrieval_method": "pgvector",
+                        "semantic_similarity_raw": float(chunk.get("similarity") or 0.0),
+                    }
+                )
+            else:
+                articles.append(
+                    {
+                        "id": -(int(meta.get("context_id") or 0) or hash(source_id) % 1_000_000),
+                        "title": (chunk.get("chunk_text") or "")[:200],
+                        "content": chunk.get("chunk_text") or "",
+                        "excerpt": (chunk.get("chunk_text") or "")[:400],
+                        "summary": "",
+                        "url": "",
+                        "published_at": chunk.get("event_date"),
+                        "source_domain": chunk.get("domain_key") or "",
+                        "publisher": "",
+                        "quality_score": 0.55,
+                        "readability_score": 0.5,
+                        "credibility_score": 0.5,
+                        "sentiment": {"label": None, "score": 0.0},
+                        "entities": {},
+                        "topics": [],
+                        "keywords": [],
+                        "relevance_score": float(chunk.get("similarity") or 0.5),
+                        "retrieval_method": "pgvector_context",
+                        "semantic_similarity_raw": float(chunk.get("similarity") or 0.0),
+                    }
+                )
+            if len(articles) >= max_results:
+                break
+        return articles[:max_results]
+
     async def _semantic_search(
         self, query: str, max_results: int, filters: dict[str, Any]
     ) -> list[dict[str, Any]]:
         """Semantic search using embeddings"""
         try:
+            if _USE_PGVECTOR:
+                try:
+                    pg_results = self._pgvector_chunk_results(query, max_results, filters)
+                    if pg_results:
+                        logger.info("pgvector semantic search returned %s hits", len(pg_results))
+                        return pg_results
+                except Exception as pg_err:
+                    logger.debug("pgvector semantic search fallback: %s", pg_err)
+
             if not self.embedding_model:
                 logger.warning("Embedding model not available, falling back to keyword search")
                 return await self._keyword_search(query, max_results, filters)

@@ -13,7 +13,7 @@ import time
 from datetime import datetime, timezone
 from typing import NamedTuple
 
-from shared.database.connection import get_db_connection
+from shared.database.connection import get_db_connection, get_db_connection_context
 from shared.domain_registry import (
     get_pipeline_schema_names_active,
     pipeline_url_schema_pairs,
@@ -719,6 +719,87 @@ def get_context_ids_without_claims(limit: int = 50) -> list[int]:
         conn.close()
 
 
+def get_context_claim_backlog_stats() -> dict[str, int]:
+    """
+    Break down contexts without extracted_claims for Monitor vs automation alignment.
+
+    - total_no_claims: any context with zero claim rows (legacy Monitor metric)
+    - actionable_no_claims: matches backlog_metrics / claim_extraction batch selection
+    - passed_no_claims: has pass marker outcome no_claims_after_filters, still no claims
+    - text_too_short: no claims and below min text length
+    """
+    from shared.pipeline_pass_marker import phase_backlog_uses_pass_marker, sql_context_pass_null
+
+    out = {
+        "total_no_claims": 0,
+        "actionable_no_claims": 0,
+        "passed_no_claims_after_filters": 0,
+        "text_too_short_no_claims": 0,
+    }
+    conn = get_db_connection()
+    if not conn:
+        return out
+    min_len = claim_extraction_min_text_len()
+    pass_sql = ""
+    if phase_backlog_uses_pass_marker("claim_extraction"):
+        pass_sql = f" AND ({sql_context_pass_null('claim_extraction', 'c')}) "
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SET LOCAL statement_timeout = '120s'")
+            cur.execute(
+                """
+                SELECT COUNT(*) FROM intelligence.contexts c
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM intelligence.extracted_claims ec WHERE ec.context_id = c.id
+                )
+                """
+            )
+            out["total_no_claims"] = int(cur.fetchone()[0] or 0)
+            cur.execute(
+                f"""
+                SELECT COUNT(*) FROM intelligence.contexts c
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM intelligence.extracted_claims ec WHERE ec.context_id = c.id
+                )
+                  AND (
+                      LENGTH(COALESCE(c.content, '')) + LENGTH(COALESCE(c.title, ''))
+                  ) >= %s
+                  {pass_sql}
+                """,
+                (min_len,),
+            )
+            out["actionable_no_claims"] = int(cur.fetchone()[0] or 0)
+            cur.execute(
+                """
+                SELECT COUNT(*) FROM intelligence.contexts c
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM intelligence.extracted_claims ec WHERE ec.context_id = c.id
+                )
+                  AND (c.metadata::jsonb->'pipeline'->'claim_extraction'->>'last_outcome')
+                      = 'no_claims_after_filters'
+                """
+            )
+            out["passed_no_claims_after_filters"] = int(cur.fetchone()[0] or 0)
+            cur.execute(
+                """
+                SELECT COUNT(*) FROM intelligence.contexts c
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM intelligence.extracted_claims ec WHERE ec.context_id = c.id
+                )
+                  AND (
+                      LENGTH(COALESCE(c.content, '')) + LENGTH(COALESCE(c.title, ''))
+                  ) < %s
+                """,
+                (min_len,),
+            )
+            out["text_too_short_no_claims"] = int(cur.fetchone()[0] or 0)
+    except Exception as e:
+        logger.warning("get_context_claim_backlog_stats: %s", e)
+    finally:
+        conn.close()
+    return out
+
+
 async def run_claim_extraction_batch(limit: int | None = None) -> ClaimExtractionBatchResult:
     """
     Process up to `limit` contexts that have no claims yet.
@@ -925,6 +1006,178 @@ def _map_predicate_to_fact_type(predicate: str) -> str:
     return "STATEMENT"
 
 
+def _claims_to_facts_chunk_size() -> int:
+    try:
+        return max(10, min(500, int(os.environ.get("CLAIMS_TO_FACTS_CHUNK_SIZE", "50"))))
+    except (TypeError, ValueError):
+        return 50
+
+
+def _promote_claims_to_versioned_facts_one_tx(
+    min_confidence: float,
+    limit: int,
+) -> dict[str, int]:
+    """Single short transaction — avoids holding DB locks across long entity-resolution loops."""
+    empty = {
+        "promoted": 0,
+        "candidates": 0,
+        "unresolved_subject": 0,
+        "insert_failed": 0,
+        "generic_subject_skipped": 0,
+        "merged_groups": 0,
+        "merged_claims_collapsed": 0,
+    }
+    stats = dict(empty)
+    with get_db_connection_context() as conn:
+        if not conn:
+            return dict(empty)
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SET LOCAL statement_timeout = '120s'")
+                cur.execute(
+                    """
+                    SELECT ec.id, ec.context_id, ec.subject_text, ec.predicate_text, ec.object_text,
+                           ec.confidence, ec.valid_from, ec.valid_to
+                    FROM intelligence.extracted_claims ec
+                    WHERE ec.confidence >= %s
+                    """
+                    + claims_to_facts_versioned_fact_absent_sql()
+                    + CLAIM_PROMOTION_GAP_IGNORED_EXCLUDE_SQL
+                    + claim_promotion_generic_subject_exclude_sql()
+                    + """
+                    ORDER BY ec.confidence DESC
+                    LIMIT %s
+                    FOR UPDATE OF ec SKIP LOCKED
+                    """,
+                    (min_confidence, limit),
+                )
+                claims = cur.fetchall()
+                stats["candidates"] = len(claims)
+                if not claims:
+                    conn.commit()
+                    return stats
+
+                active_schemas = frozenset(get_pipeline_schema_names_active())
+                grouped: dict[tuple, dict[str, object]] = {}
+                for (
+                    claim_id,
+                    context_id,
+                    subject,
+                    predicate,
+                    obj,
+                    confidence,
+                    valid_from,
+                    valid_to,
+                ) in claims:
+                    if _is_overly_generic_subject(subject):
+                        stats["generic_subject_skipped"] += 1
+                        continue
+                    entity_profile_id = _resolve_claim_to_entity_profile(
+                        cur,
+                        subject,
+                        context_id,
+                        active_schema_set=active_schemas,
+                    )
+                    if not entity_profile_id:
+                        stats["unresolved_subject"] += 1
+                        continue
+
+                    fact_type = _map_predicate_to_fact_type(predicate or "")
+                    key = (
+                        int(entity_profile_id),
+                        fact_type,
+                        _claim_text_norm(subject),
+                        _claim_text_norm(predicate),
+                        _claim_text_norm(obj),
+                        valid_from.isoformat() if hasattr(valid_from, "isoformat") else str(valid_from),
+                        valid_to.isoformat() if hasattr(valid_to, "isoformat") else str(valid_to),
+                    )
+                    group = grouped.get(key)
+                    if not group:
+                        grouped[key] = {
+                            "claim_ids": [int(claim_id)],
+                            "entity_profile_id": int(entity_profile_id),
+                            "fact_type": fact_type,
+                            "subject": subject or "",
+                            "predicate": predicate or "",
+                            "obj": obj or "",
+                            "confidence": float(confidence or 0.0),
+                            "valid_from": valid_from,
+                            "valid_to": valid_to,
+                        }
+                    else:
+                        group["claim_ids"].append(int(claim_id))
+                        group["confidence"] = max(
+                            float(group.get("confidence") or 0.0),
+                            float(confidence or 0.0),
+                        )
+
+                stats["merged_groups"] = len(grouped)
+                for group in grouped.values():
+                    claim_ids = list(group.get("claim_ids") or [])
+                    if len(claim_ids) > 1:
+                        stats["merged_claims_collapsed"] += len(claim_ids) - 1
+                    subject_text = str(group.get("subject") or "")
+                    predicate_text = str(group.get("predicate") or "")
+                    object_text = str(group.get("obj") or "")
+                    fact_text = f"{subject_text} {predicate_text}"
+                    if object_text:
+                        fact_text += f" {object_text}"
+                    rep_claim_id = claim_ids[0] if claim_ids else None
+                    metadata = {
+                        "source_claim_id": str(rep_claim_id) if rep_claim_id is not None else "",
+                        "source_claim_ids": [str(cid) for cid in claim_ids],
+                        "merged_count": len(claim_ids),
+                    }
+                    try:
+                        cur.execute(
+                            """
+                            INSERT INTO intelligence.versioned_facts
+                                (entity_profile_id, fact_type, fact_text, confidence,
+                                 valid_from, valid_to, extraction_method, metadata,
+                                 event_date, ingestion_date)
+                            VALUES (%s, %s, %s, %s, %s, %s, 'claim_extraction', %s,
+                                    COALESCE(%s, NOW()), NOW())
+                            """,
+                            (
+                                int(group["entity_profile_id"]),
+                                str(group["fact_type"]),
+                                fact_text[:2000],
+                                float(group.get("confidence") or 0.0),
+                                group.get("valid_from"),
+                                group.get("valid_to"),
+                                json.dumps(metadata),
+                                group.get("valid_from"),
+                            ),
+                        )
+                        stats["promoted"] += 1
+                    except Exception as e:
+                        stats["insert_failed"] += 1
+                        logger.debug(
+                            "promote merged claim group rep=%s size=%s: %s",
+                            rep_claim_id,
+                            len(claim_ids),
+                            e,
+                        )
+
+                conn.commit()
+        except Exception as e:
+            logger.warning("promote_claims_to_versioned_facts failed: %s", e)
+            conn.rollback()
+    if stats["candidates"] > 0:
+        logger.info(
+            "claims_to_facts batch: promoted=%s candidates=%s unresolved_subject=%s insert_failed=%s merged_groups=%s collapsed=%s merged_id_check=%s",
+            stats["promoted"],
+            stats["candidates"],
+            stats["unresolved_subject"],
+            stats["insert_failed"],
+            stats["merged_groups"],
+            stats["merged_claims_collapsed"],
+            _claims_to_facts_check_merged_source_ids(),
+        )
+    return stats
+
+
 def promote_claims_to_versioned_facts(
     min_confidence: float | None = None,
     limit: int | None = None,
@@ -942,6 +1195,9 @@ def promote_claims_to_versioned_facts(
 
     Uses ``FOR UPDATE OF ec SKIP LOCKED`` so multiple processes can promote in parallel without
     duplicating work on the same claim rows (each worker takes disjoint locks).
+
+    Large ``limit`` values are split into ``CLAIMS_TO_FACTS_CHUNK_SIZE`` transactions (default 50)
+    so entity resolution does not hold one connection open long enough to hit pool/idle timeouts.
 
     ``min_confidence`` / ``limit`` default from ``CLAIMS_TO_FACTS_MIN_CONFIDENCE`` /
     ``CLAIMS_TO_FACTS_BATCH_LIMIT`` (and claim_pipeline_max_fetch when limit <= 0).
@@ -962,155 +1218,17 @@ def promote_claims_to_versioned_facts(
         "merged_groups": 0,
         "merged_claims_collapsed": 0,
     }
-    conn = get_db_connection()
-    if not conn:
-        return dict(empty)
     stats = dict(empty)
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT ec.id, ec.context_id, ec.subject_text, ec.predicate_text, ec.object_text,
-                       ec.confidence, ec.valid_from, ec.valid_to
-                FROM intelligence.extracted_claims ec
-                WHERE ec.confidence >= %s
-                """
-                + claims_to_facts_versioned_fact_absent_sql()
-                + CLAIM_PROMOTION_GAP_IGNORED_EXCLUDE_SQL
-                + claim_promotion_generic_subject_exclude_sql()
-                + """
-                ORDER BY ec.confidence DESC
-                LIMIT %s
-                FOR UPDATE OF ec SKIP LOCKED
-                """,
-                (min_confidence, limit),
-            )
-            claims = cur.fetchall()
-            stats["candidates"] = len(claims)
-            if not claims:
-                conn.commit()
-                return stats
-
-            active_schemas = frozenset(get_pipeline_schema_names_active())
-            grouped: dict[tuple, dict[str, object]] = {}
-            for (
-                claim_id,
-                context_id,
-                subject,
-                predicate,
-                obj,
-                confidence,
-                valid_from,
-                valid_to,
-            ) in claims:
-                if _is_overly_generic_subject(subject):
-                    stats["generic_subject_skipped"] += 1
-                    continue
-                entity_profile_id = _resolve_claim_to_entity_profile(
-                    cur,
-                    subject,
-                    context_id,
-                    active_schema_set=active_schemas,
-                )
-                if not entity_profile_id:
-                    stats["unresolved_subject"] += 1
-                    continue
-
-                fact_type = _map_predicate_to_fact_type(predicate or "")
-                key = (
-                    int(entity_profile_id),
-                    fact_type,
-                    _claim_text_norm(subject),
-                    _claim_text_norm(predicate),
-                    _claim_text_norm(obj),
-                    valid_from.isoformat() if hasattr(valid_from, "isoformat") else str(valid_from),
-                    valid_to.isoformat() if hasattr(valid_to, "isoformat") else str(valid_to),
-                )
-                group = grouped.get(key)
-                if not group:
-                    grouped[key] = {
-                        "claim_ids": [int(claim_id)],
-                        "entity_profile_id": int(entity_profile_id),
-                        "fact_type": fact_type,
-                        "subject": subject or "",
-                        "predicate": predicate or "",
-                        "obj": obj or "",
-                        "confidence": float(confidence or 0.0),
-                        "valid_from": valid_from,
-                        "valid_to": valid_to,
-                    }
-                else:
-                    group["claim_ids"].append(int(claim_id))
-                    group["confidence"] = max(
-                        float(group.get("confidence") or 0.0),
-                        float(confidence or 0.0),
-                    )
-
-            stats["merged_groups"] = len(grouped)
-            for group in grouped.values():
-                claim_ids = list(group.get("claim_ids") or [])
-                if len(claim_ids) > 1:
-                    stats["merged_claims_collapsed"] += len(claim_ids) - 1
-                subject_text = str(group.get("subject") or "")
-                predicate_text = str(group.get("predicate") or "")
-                object_text = str(group.get("obj") or "")
-                fact_text = f"{subject_text} {predicate_text}"
-                if object_text:
-                    fact_text += f" {object_text}"
-                rep_claim_id = claim_ids[0] if claim_ids else None
-                metadata = {
-                    "source_claim_id": str(rep_claim_id) if rep_claim_id is not None else "",
-                    "source_claim_ids": [str(cid) for cid in claim_ids],
-                    "merged_count": len(claim_ids),
-                }
-                try:
-                    cur.execute(
-                        """
-                        INSERT INTO intelligence.versioned_facts
-                            (entity_profile_id, fact_type, fact_text, confidence,
-                             valid_from, valid_to, extraction_method, metadata)
-                        VALUES (%s, %s, %s, %s, %s, %s, 'claim_extraction', %s)
-                        """,
-                        (
-                            int(group["entity_profile_id"]),
-                            str(group["fact_type"]),
-                            fact_text[:2000],
-                            float(group.get("confidence") or 0.0),
-                            group.get("valid_from"),
-                            group.get("valid_to"),
-                            json.dumps(metadata),
-                        ),
-                    )
-                    stats["promoted"] += 1
-                except Exception as e:
-                    stats["insert_failed"] += 1
-                    logger.debug(
-                        "promote merged claim group rep=%s size=%s: %s",
-                        rep_claim_id,
-                        len(claim_ids),
-                        e,
-                    )
-
-        conn.commit()
-    except Exception as e:
-        logger.warning("promote_claims_to_versioned_facts failed: %s", e)
-        conn.rollback()
-    finally:
-        try:
-            conn.close()
-        except Exception:
-            pass
-    if stats["candidates"] > 0:
-        logger.info(
-            "claims_to_facts batch: promoted=%s candidates=%s unresolved_subject=%s insert_failed=%s merged_groups=%s collapsed=%s merged_id_check=%s",
-            stats["promoted"],
-            stats["candidates"],
-            stats["unresolved_subject"],
-            stats["insert_failed"],
-            stats["merged_groups"],
-            stats["merged_claims_collapsed"],
-            _claims_to_facts_check_merged_source_ids(),
-        )
+    chunk_size = _claims_to_facts_chunk_size()
+    remaining = max(0, int(limit))
+    while remaining > 0:
+        batch = min(chunk_size, remaining)
+        part = _promote_claims_to_versioned_facts_one_tx(float(min_confidence), batch)
+        for key in stats:
+            stats[key] += int(part.get(key) or 0)
+        remaining -= batch
+        if int(part.get("candidates") or 0) == 0:
+            break
     return stats
 
 

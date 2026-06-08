@@ -52,23 +52,10 @@ if str(_API) not in sys.path:
 _CONFIG_DIR = _API / "config" / "domains"
 _SYNTHESIS_CONFIG = _API / "config" / "domain_synthesis_config.yaml"
 
-# Minimum silo surface for pipeline + UI (migration 180-style parity).
-_CRITICAL_TABLES = frozenset(
-    {"articles", "rss_feeds", "storylines", "topics"},
-)
-# Full parity with create_domain_table + story_entity_index pattern (migration 180).
-_EXTENDED_TABLES = frozenset(
-    {
-        "article_topic_assignments",
-        "storyline_articles",
-        "topic_clusters",
-        "topic_cluster_memberships",
-        "topic_learning_history",
-        "entity_canonical",
-        "article_entities",
-        "story_entity_index",
-    }
-)
+from shared.domain_silo_contract import SILO_CRITICAL_TABLES, SILO_EXTENDED_TABLES
+
+_CRITICAL_TABLES = SILO_CRITICAL_TABLES
+_EXTENDED_TABLES = SILO_EXTENDED_TABLES
 
 
 def _load_yaml(path: Path) -> dict:
@@ -157,10 +144,12 @@ def main() -> None:
         resolve_domain_schema,
     )
 
-    if schema_name in RESERVED_SCHEMA_NAMES and domain_key not in (
-        "politics",
-        "finance",
-    ):
+    _allowed_reserved = {
+        ("politics", "politics"),
+        ("finance", "finance"),
+        ("artificial-intelligence", "artificial_intelligence"),
+    }
+    if schema_name in RESERVED_SCHEMA_NAMES and (domain_key, schema_name) not in _allowed_reserved:
         errors.append(
             f"schema_name {schema_name!r} is in RESERVED_SCHEMA_NAMES — pick a different schema for a new silo"
         )

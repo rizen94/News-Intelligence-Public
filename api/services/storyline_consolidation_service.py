@@ -13,6 +13,7 @@ Runs periodically via the AutomationManager.
 
 import json
 import logging
+import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -22,9 +23,22 @@ import numpy as np
 from psycopg2.extras import RealDictCursor
 
 from services.ai_storyline_discovery import get_discovery_service
-from shared.domain_registry import get_active_domain_keys
+from services.domain_synthesis_config import get_storyline_development_config
+from services.storyline_coherence_guardrails import (
+    assess_mega_group_coherence,
+    is_overly_generic_storyline_title,
+)
+from shared.domain_registry import get_pipeline_active_domain_keys, resolve_domain_schema
 
 logger = logging.getLogger(__name__)
+
+
+def _schema_for_domain(domain_key: str) -> str:
+    """Map URL domain key to Postgres schema via domain_registry."""
+    try:
+        return resolve_domain_schema(domain_key)
+    except Exception:
+        return domain_key.replace("-", "_")
 
 # Configuration
 MERGE_SIMILARITY_THRESHOLD = 0.65  # Auto-merge above this
@@ -32,6 +46,196 @@ PARENT_SIMILARITY_THRESHOLD = 0.50  # Create parent storyline above this
 MIN_ARTICLES_FOR_MEGA = 10  # Minimum articles for a mega-storyline
 MAX_MERGES_PER_RUN = 20  # Limit merges per run to avoid overload
 CONSOLIDATION_INTERVAL_MINUTES = 30  # How often to run
+
+# Entities that must not become mega-storyline titles (finance jargon, dates, outlets).
+_MEGA_ENTITY_STOPWORDS = frozenset(
+    {
+        "apy",
+        "cd",
+        "cds",
+        "mma",
+        "rate",
+        "rates",
+        "savings",
+        "account",
+        "accounts",
+        "money",
+        "market",
+        "best",
+        "today",
+        "return",
+        "returns",
+        "high",
+        "yield",
+        "lock",
+        "steady",
+        "amid",
+        "yahoo",
+        "finance",
+        "advertiser",
+        "disclosure",
+        "federal",
+        "reserve",
+        "fed",
+        "year",
+        "year_2026",
+        "2026",
+        "earn",
+        "up",
+        "to",
+        "the",
+        "and",
+        "for",
+        "with",
+        "from",
+        "new",
+        "see",
+        "hit",
+        "reach",
+        "rise",
+        "remain",
+        "across",
+        "conditions",
+        "volatile",
+        "volatility",
+        "threshold",
+        "plateau",
+        "heights",
+        "shifts",
+        "monday",
+        "tuesday",
+        "wednesday",
+        "thursday",
+        "friday",
+        "saturday",
+        "sunday",
+        "january",
+        "february",
+        "march",
+        "april",
+        "may",
+        "june",
+        "july",
+        "august",
+        "september",
+        "october",
+        "november",
+        "december",
+    }
+)
+
+_RATE_ROUNDUP_TITLE_RE = re.compile(
+    r"\b(best\s+)?(cd|money\s+market)(\s+account)?\s+rates?\b",
+    re.IGNORECASE,
+)
+
+# Canonical renames for known bad mega titles (lowercase key).
+_BAD_MEGA_TITLE_RENAMES: dict[str, str] = {
+    "ongoing: apy": "Ongoing: CD & money market rate roundups",
+    "ongoing: earn": "Ongoing: Savings & CD rate roundups",
+    "ongoing: year_2026": "Ongoing: 2026 savings rate roundups",
+}
+
+
+def _is_savings_rate_roundup_cluster(children: list["StorylineInfo"]) -> bool:
+    if len(children) < 2:
+        return False
+    hits = sum(1 for c in children if _RATE_ROUNDUP_TITLE_RE.search(c.title or ""))
+    return hits >= max(2, (len(children) * 2 + 2) // 3)
+
+
+def _common_title_phrase(children: list["StorylineInfo"], max_words: int = 6) -> str | None:
+    stop = _MEGA_ENTITY_STOPWORDS | {
+        "the",
+        "a",
+        "an",
+        "and",
+        "or",
+        "in",
+        "on",
+        "at",
+        "of",
+        "is",
+        "are",
+        "as",
+    }
+    counts: dict[str, int] = defaultdict(int)
+    for child in children:
+        for word in re.findall(r"[A-Za-z0-9%]+", child.title or ""):
+            key = word.lower()
+            if len(key) < 3 or key in stop:
+                continue
+            counts[key] += 1
+    if not counts:
+        return None
+    ranked = sorted(counts.items(), key=lambda kv: (-kv[1], -len(kv[0])))
+    top = [w for w, n in ranked if n >= 2][:max_words]
+    if len(top) < 2:
+        return None
+    return " ".join(w.title() if w.isalpha() else w for w in top)
+
+
+_EARNINGS_REPORT_MEGA_CHILD_RE = re.compile(
+    r"\b(earnings|reports?|quarterly\s+results?|q[1-4]\s+earnings)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_earnings_reports_mega_cluster(children: list["StorylineInfo"]) -> bool:
+    if len(children) < 2:
+        return False
+    hits = sum(1 for c in children if _EARNINGS_REPORT_MEGA_CHILD_RE.search(c.title or ""))
+    return hits >= max(2, (len(children) * 2 + 2) // 3)
+
+
+def derive_mega_storyline_title(children: list["StorylineInfo"]) -> str:
+    """Build a human-readable mega-storyline title (never bare 'APY' / 'Earn')."""
+    if not children:
+        return "Related Stories"
+
+    if _is_savings_rate_roundup_cluster(children):
+        return "Ongoing: CD & money market rate roundups"
+
+    if _is_earnings_reports_mega_cluster(children):
+        entity_counts: dict[str, int] = defaultdict(int)
+        for child in children:
+            for entity in child.entities:
+                key = (entity or "").strip().lower()
+                if len(key) < 3 or key in _MEGA_ENTITY_STOPWORDS or key.isdigit():
+                    continue
+                entity_counts[key] += 1
+        if entity_counts:
+            ranked = sorted(entity_counts.items(), key=lambda kv: (-kv[1], -len(kv[0])))
+            top = [e for e, n in ranked if n >= 2][:3]
+            if top:
+                label = ", ".join(e.title() if e.isalpha() else e for e in top)
+                return f"Ongoing: {label} earnings & filings"
+        return "Ongoing: Cross-company earnings & filings"
+
+    entity_counts: dict[str, int] = defaultdict(int)
+    for child in children:
+        for entity in child.entities:
+            key = (entity or "").strip().lower()
+            if len(key) < 3 or key in _MEGA_ENTITY_STOPWORDS or key.isdigit():
+                continue
+            entity_counts[key] += 1
+
+    if entity_counts:
+        top_entity = max(entity_counts, key=entity_counts.get)
+        if top_entity not in _MEGA_ENTITY_STOPWORDS:
+            label = top_entity.upper() if len(top_entity) <= 4 else top_entity.title()
+            return f"Ongoing: {label}"
+
+    phrase = _common_title_phrase(children)
+    if phrase:
+        candidate = f"Ongoing: {phrase}"
+        if not is_overly_generic_storyline_title(candidate):
+            return candidate
+
+    base = (children[0].title or "Related stories").strip()
+    if len(base) > 48:
+        base = base[:48].rsplit(" ", 1)[0] + "…"
+    return f"Related Stories: {base}"
 
 
 @dataclass
@@ -107,7 +311,7 @@ class StorylineConsolidationService:
 
     def fetch_storylines(self, domain: str, hours: int = 168) -> list[StorylineInfo]:
         """Fetch storylines with their embeddings for comparison"""
-        schema = domain.replace("-", "_")
+        schema = _schema_for_domain(domain)
 
         logger.debug(f"[{domain}] Ensuring schema columns exist...")
         self.ensure_schema_columns(schema)
@@ -189,7 +393,7 @@ class StorylineConsolidationService:
 
         Falls back to entity-based similarity if no embeddings exist.
         """
-        schema = domain.replace("-", "_")
+        schema = _schema_for_domain(domain)
         conn = self.get_db_connection()
 
         embedding_count = 0
@@ -410,7 +614,7 @@ class StorylineConsolidationService:
         - Marks secondary as merged
         - Creates merge history entry
         """
-        schema = domain.replace("-", "_")
+        schema = _schema_for_domain(domain)
         conn = self.get_db_connection()
 
         try:
@@ -452,7 +656,7 @@ class StorylineConsolidationService:
                     f"""
                     UPDATE {schema}.storylines
                     SET merged_into_id = %s,
-                        status = 'merged',
+                        status = 'archived',
                         updated_at = NOW()
                     WHERE id = %s
                 """,
@@ -493,13 +697,10 @@ class StorylineConsolidationService:
         secondary_id: int,
         overall_confidence: float,
     ) -> int | None:
-        """
-        Merge secondary into primary when only ids are known (e.g. graph_connection worker).
-        Loads minimal titles/descriptions from DB; no-ops if either row is missing or already merged.
-        """
+        """Merge by id (graph_connection worker)."""
         if primary_id == secondary_id:
             return None
-        schema = domain.replace("-", "_")
+        schema = _schema_for_domain(domain)
         conn = self.get_db_connection()
         rows: dict[int, tuple[str, str, int | None]] = {}
         try:
@@ -533,7 +734,7 @@ class StorylineConsolidationService:
             return None
 
         pt, pdesc, _ = rows[primary_id]
-        st, _, _ = rows[secondary_id]
+        st, sdesc, _ = rows[secondary_id]
         primary = StorylineInfo(
             id=primary_id,
             title=pt,
@@ -558,7 +759,12 @@ class StorylineConsolidationService:
         )
 
     def find_mega_storyline_candidates(
-        self, storylines: list[StorylineInfo], threshold: float = PARENT_SIMILARITY_THRESHOLD
+        self,
+        storylines: list[StorylineInfo],
+        threshold: float = PARENT_SIMILARITY_THRESHOLD,
+        *,
+        domain: str = "",
+        min_articles_for_mega: int = MIN_ARTICLES_FOR_MEGA,
     ) -> list[list[StorylineInfo]]:
         """
         Find groups of storylines that should have a common parent (mega-storyline).
@@ -628,7 +834,16 @@ class StorylineConsolidationService:
             # and enough total articles
             total_articles = sum(s.article_count for s in component)
 
-            if len(component) >= 2 and total_articles >= MIN_ARTICLES_FOR_MEGA:
+            if len(component) >= 2 and total_articles >= min_articles_for_mega:
+                ok, reason = assess_mega_group_coherence(domain, component)
+                if not ok:
+                    logger.info(
+                        "Skipping mega candidate (%s children, %s articles): %s",
+                        len(component),
+                        total_articles,
+                        reason,
+                    )
+                    continue
                 groups.append(component)
 
         return groups
@@ -684,7 +899,7 @@ class StorylineConsolidationService:
             )
 
     def _refresh_mega_counts_from_db(self, cur, schema: str, mega_id: int) -> None:
-        """Set description and article totals from actual child + storyline_articles rows."""
+        """Set description and article totals from child rows and pooled articles."""
         cur.execute(
             f"""
             SELECT COUNT(*)::int FROM {schema}.storylines
@@ -695,11 +910,15 @@ class StorylineConsolidationService:
         sub_n = cur.fetchone()[0]
         cur.execute(
             f"""
-            SELECT COUNT(DISTINCT article_id)::int
-            FROM {schema}.storyline_articles
-            WHERE storyline_id = %s
+            SELECT COUNT(DISTINCT sa.article_id)::int
+            FROM {schema}.storyline_articles sa
+            WHERE sa.storyline_id = %s
+               OR sa.storyline_id IN (
+                 SELECT id FROM {schema}.storylines
+                 WHERE parent_storyline_id = %s AND merged_into_id IS NULL
+               )
             """,
-            (mega_id,),
+            (mega_id, mega_id),
         )
         art_n = cur.fetchone()[0]
         desc = (
@@ -731,24 +950,20 @@ class StorylineConsolidationService:
         if not children:
             return None
 
-        schema = domain.replace("-", "_")
+        schema = _schema_for_domain(domain)
         self.ensure_schema_columns(schema)
         conn = self.get_db_connection()
 
         try:
             with conn.cursor() as cur:
-                # Generate mega-storyline title from common entities
-                entity_counts = defaultdict(int)
-                for child in children:
-                    for entity in child.entities:
-                        entity_counts[entity] += 1
-
-                if entity_counts:
-                    top_entity = max(entity_counts, key=entity_counts.get)
-                    mega_title = f"Ongoing: {top_entity.title()}"
-                else:
-                    # Use first child's title as base
-                    mega_title = f"Related Stories: {children[0].title[:40]}..."
+                mega_title = derive_mega_storyline_title(children)
+                if is_overly_generic_storyline_title(mega_title, domain):
+                    logger.info(
+                        "Skipping mega create — generic title %r (%s children)",
+                        mega_title,
+                        len(children),
+                    )
+                    return None
 
                 # Reuse existing mega with the same canonical title (avoid duplicate "Ongoing: X" rows)
                 cur.execute(
@@ -853,6 +1068,10 @@ class StorylineConsolidationService:
         6. Create mega-storylines
         """
         start_time = datetime.now()
+        cons_cfg = get_storyline_development_config(domain).consolidation
+        merge_threshold = cons_cfg.merge_similarity_threshold
+        parent_threshold = cons_cfg.parent_similarity_threshold
+        min_mega = cons_cfg.min_articles_for_mega
 
         result = {
             "domain": domain,
@@ -860,9 +1079,14 @@ class StorylineConsolidationService:
             "storylines_analyzed": 0,
             "merges_performed": 0,
             "mega_storylines_created": 0,
-            "merge_proposals_queued": 0,
-            "hyperedge_proposals_queued": 0,
             "errors": [],
+            "storyline_development": {
+                "consolidation": {
+                    "merge_similarity_threshold": merge_threshold,
+                    "parent_similarity_threshold": parent_threshold,
+                    "min_articles_for_mega": min_mega,
+                },
+            },
         }
 
         try:
@@ -913,21 +1137,8 @@ class StorylineConsolidationService:
 
             # Step 3: Find merge candidates
             logger.info(f"[{domain}] Finding merge candidates from {len(storylines)} storylines...")
-            merge_candidates = self.find_merge_candidates(storylines)
+            merge_candidates = self.find_merge_candidates(storylines, threshold=merge_threshold)
             result["merge_candidates_found"] = len(merge_candidates)
-
-            try:
-                from services.graph_connection_queue_service import (
-                    mark_storyline_merge_applied,
-                    record_storyline_merge_candidates,
-                )
-
-                result["merge_proposals_queued"] = record_storyline_merge_candidates(
-                    domain, merge_candidates
-                )
-            except Exception as qe:
-                logger.debug("graph_connection merge queue: %s", qe)
-                result["merge_proposals_queued"] = 0
 
             # Step 4: Perform merges
             merged_ids = set()
@@ -940,14 +1151,6 @@ class StorylineConsolidationService:
                 if merge_result:
                     merged_ids.add(secondary.id)
                     result["merges_performed"] += 1
-                    try:
-                        from services.graph_connection_queue_service import (
-                            mark_storyline_merge_applied,
-                        )
-
-                        mark_storyline_merge_applied(domain, primary.id, secondary.id)
-                    except Exception as me:
-                        logger.debug("mark merge applied: %s", me)
 
             # Step 5: Re-fetch after merges (for accurate mega-storyline creation)
             if result["merges_performed"] > 0:
@@ -961,22 +1164,13 @@ class StorylineConsolidationService:
 
             # Step 6: Find and create mega-storylines
             logger.info(f"[{domain}] Finding mega-storyline candidates...")
-            mega_groups = self.find_mega_storyline_candidates(storylines)
+            mega_groups = self.find_mega_storyline_candidates(
+                storylines,
+                threshold=parent_threshold,
+                domain=domain,
+                min_articles_for_mega=min_mega,
+            )
             result["mega_candidates_found"] = len(mega_groups)
-
-            try:
-                from services.graph_connection_queue_service import (
-                    record_storyline_hyperedge_groups,
-                )
-
-                result["hyperedge_proposals_queued"] = record_storyline_hyperedge_groups(
-                    domain,
-                    mega_groups[:5],
-                    pairwise_confidence_fn=self.calculate_storyline_similarity,
-                )
-            except Exception as he:
-                logger.debug("graph_connection hyperedge queue: %s", he)
-                result["hyperedge_proposals_queued"] = 0
 
             for group in mega_groups[:5]:  # Limit to 5 mega-storylines per run
                 mega_id = self.create_mega_storyline(domain, group)
@@ -1008,8 +1202,8 @@ class StorylineConsolidationService:
         return result
 
     def run_all_domains(self) -> dict[str, Any]:
-        """Run consolidation for all domains"""
-        domains = list(get_active_domain_keys())
+        """Run consolidation for pipeline-active domains (same scope as discovery/proactive)."""
+        domains = list(get_pipeline_active_domain_keys())
         results = {}
 
         for domain in domains:
@@ -1022,12 +1216,24 @@ class StorylineConsolidationService:
 
     def get_stats(self) -> dict[str, Any]:
         """Get consolidation service stats"""
+        per_domain: dict[str, dict[str, float | int]] = {}
+        try:
+            for dk in get_pipeline_active_domain_keys():
+                c = get_storyline_development_config(dk).consolidation
+                per_domain[dk] = {
+                    "merge_similarity_threshold": c.merge_similarity_threshold,
+                    "parent_similarity_threshold": c.parent_similarity_threshold,
+                    "min_articles_for_mega": c.min_articles_for_mega,
+                }
+        except Exception:
+            pass
         return {
             **self._stats,
             "config": {
-                "merge_threshold": MERGE_SIMILARITY_THRESHOLD,
-                "parent_threshold": PARENT_SIMILARITY_THRESHOLD,
-                "min_articles_for_mega": MIN_ARTICLES_FOR_MEGA,
+                "merge_threshold_default": MERGE_SIMILARITY_THRESHOLD,
+                "parent_threshold_default": PARENT_SIMILARITY_THRESHOLD,
+                "min_articles_for_mega_default": MIN_ARTICLES_FOR_MEGA,
+                "per_domain": per_domain,
                 "max_merges_per_run": MAX_MERGES_PER_RUN,
                 "interval_minutes": CONSOLIDATION_INTERVAL_MINUTES,
             },

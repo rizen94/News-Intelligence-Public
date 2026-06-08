@@ -13,6 +13,11 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from psycopg2.extras import RealDictCursor
+from services.domain_synthesis_config import get_storyline_development_config
+from services.storyline_coherence_guardrails import (
+    assess_cluster_coherence,
+    post_process_storyline_description,
+)
 from shared.services.domain_aware_service import DomainAwareService
 
 logger = logging.getLogger(__name__)
@@ -29,14 +34,24 @@ class ProactiveDetectionService(DomainAwareService):
             domain: Domain key (e.g., 'politics', 'finance', 'science-tech')
         """
         super().__init__(domain)
-        self.min_article_count = 3  # Minimum articles to consider emerging
-        self.min_confidence = 0.6  # Minimum confidence to report
-        # Promote to domain storylines when cluster is strong enough (balances domains vs test-only storylines)
-        self.promote_min_articles = int(os.getenv("PROACTIVE_PROMOTE_MIN_ARTICLES", "4"))
-        self.promote_min_confidence = float(os.getenv("PROACTIVE_PROMOTE_MIN_CONFIDENCE", "0.55"))
+        dev = get_storyline_development_config(domain)
+        pro = dev.proactive
+        self._narrative = dev.narrative
+        self.min_article_count = pro.min_articles
+        self.keyword_similarity_threshold = pro.keyword_similarity_threshold
+        self.lookback_hours = pro.lookback_hours
+        self.min_confidence = pro.promote_min_confidence
+        self.promote_min_articles = pro.promote_min_articles
+        self.promote_min_confidence = pro.promote_min_confidence
+        if os.getenv("PROACTIVE_PROMOTE_MIN_ARTICLES"):
+            self.promote_min_articles = int(os.getenv("PROACTIVE_PROMOTE_MIN_ARTICLES", "4"))
+        if os.getenv("PROACTIVE_PROMOTE_MIN_CONFIDENCE"):
+            self.promote_min_confidence = float(
+                os.getenv("PROACTIVE_PROMOTE_MIN_CONFIDENCE", "0.55")
+            )
 
     async def detect_emerging_storylines(
-        self, hours: int = 72, min_articles: int = 3
+        self, hours: int | None = None, min_articles: int | None = None
     ) -> dict[str, Any]:
         """
         Detect emerging storylines from recent articles.
@@ -48,6 +63,10 @@ class ProactiveDetectionService(DomainAwareService):
         Returns:
             Dictionary with detected emerging storylines
         """
+        if hours is None:
+            hours = self.lookback_hours
+        if min_articles is None:
+            min_articles = self.min_article_count
         try:
             conn = self.get_db_connection()
             try:
@@ -80,7 +99,10 @@ class ProactiveDetectionService(DomainAwareService):
 
                 clusters = await self._cluster_articles_by_similarity(articles)
                 valid_clusters = [
-                    cluster for cluster in clusters if len(cluster["articles"]) >= min_articles
+                    cluster
+                    for cluster in clusters
+                    if self._cluster_meets_size_threshold(cluster, min_articles)
+                    and self._cluster_passes_coherence_gate(cluster)
                 ]
                 emerging_storylines: list[dict[str, Any]] = []
                 for cluster in valid_clusters:
@@ -101,6 +123,15 @@ class ProactiveDetectionService(DomainAwareService):
                         "valid_clusters": len(valid_clusters),
                         "stored_count": stored_count,
                         "promoted_to_domain_storylines": promoted_count,
+                        "storyline_development": {
+                            "proactive": {
+                                "keyword_similarity_threshold": self.keyword_similarity_threshold,
+                                "min_articles": self.min_article_count,
+                                "promote_min_articles": self.promote_min_articles,
+                                "promote_min_confidence": self.promote_min_confidence,
+                                "lookback_hours": hours,
+                            },
+                        },
                     },
                 }
 
@@ -140,11 +171,13 @@ class ProactiveDetectionService(DomainAwareService):
                 # Calculate similarity (simple keyword overlap)
                 similarity = self._calculate_keyword_similarity(article_keywords, other_keywords)
 
-                if similarity > 0.3:  # 30% keyword overlap
+                if self._articles_link_for_clustering(article, other_article, similarity):
                     similar_articles.append(other_article)
                     processed_article_ids.add(other_article["id"])
 
-            if len(similar_articles) >= self.min_article_count:
+            if self._cluster_meets_size_threshold(
+                {"articles": similar_articles}, self.min_article_count
+            ):
                 clusters.append(
                     {
                         "articles": similar_articles,
@@ -230,6 +263,83 @@ class ProactiveDetectionService(DomainAwareService):
 
         return len(intersection) / len(union)
 
+    def _article_text_blob(self, article: dict) -> str:
+        return " ".join(
+            [
+                str(article.get("title") or ""),
+                str(article.get("summary") or ""),
+                str(article.get("content") or "")[:2000],
+            ]
+        ).lower()
+
+    def _article_has_outbreak_keyword(self, article: dict) -> bool:
+        if not self._narrative.outbreak_keywords:
+            return False
+        blob = self._article_text_blob(article)
+        return any(kw in blob for kw in self._narrative.outbreak_keywords)
+
+    def _article_has_credible_source(self, article: dict) -> bool:
+        dom = (article.get("source_domain") or "").lower()
+        if not dom:
+            return False
+        credible = self._narrative.credible_source_domains
+        if not credible:
+            credible = ["who.int", "cdc.gov", "fda.gov", "hhs.gov", "nih.gov"]
+        return any(c in dom for c in credible)
+
+    def _shared_outbreak_keywords(self, article_a: dict, article_b: dict) -> set[str]:
+        if not self._narrative.outbreak_keywords:
+            return set()
+        blob_a = self._article_text_blob(article_a)
+        blob_b = self._article_text_blob(article_b)
+        hits_a = {kw for kw in self._narrative.outbreak_keywords if kw in blob_a}
+        hits_b = {kw for kw in self._narrative.outbreak_keywords if kw in blob_b}
+        return hits_a & hits_b
+
+    def _articles_link_for_clustering(self, article_a: dict, article_b: dict, similarity: float) -> bool:
+        if similarity > self.keyword_similarity_threshold:
+            return True
+        if not self._narrative.allow_promote_pair_on_outbreak:
+            return False
+        if not self._shared_outbreak_keywords(article_a, article_b):
+            return False
+        return self._article_has_credible_source(article_a) or self._article_has_credible_source(
+            article_b
+        )
+
+    def _cluster_outbreak_signal(self, articles: list[dict]) -> bool:
+        if not self._narrative.allow_promote_pair_on_outbreak:
+            return False
+        if len(articles) < 2:
+            return False
+        kw_hits = sum(1 for a in articles if self._article_has_outbreak_keyword(a))
+        if kw_hits < 2:
+            return False
+        return any(self._article_has_credible_source(a) for a in articles)
+
+    def _cluster_passes_coherence_gate(self, cluster: dict) -> bool:
+        articles = cluster.get("articles") or []
+        if not articles:
+            return False
+        title = " ".join(
+            (cluster.get("keywords") or [])[:3]
+        ).title() or "Emerging Story"
+        coherent, reason = assess_cluster_coherence(self.domain, title, articles)
+        if not coherent:
+            logger.debug(
+                "Proactive cluster rejected (coherence=%s, n=%s): %s",
+                reason,
+                len(articles),
+                title[:80],
+            )
+        return coherent
+
+    def _cluster_meets_size_threshold(self, cluster: dict, min_articles: int) -> bool:
+        n = len(cluster.get("articles") or [])
+        if n >= min_articles:
+            return True
+        return n >= 2 and self._cluster_outbreak_signal(cluster["articles"])
+
     async def _create_emerging_storyline(self, cluster: dict) -> dict[str, Any] | None:
         """Create emerging storyline from article cluster"""
         articles = cluster["articles"]
@@ -265,7 +375,7 @@ class ProactiveDetectionService(DomainAwareService):
             if t:
                 title = t[:300]
             if d:
-                description = d[:5000]
+                description = post_process_storyline_description(d[:5000], self.domain)
         except Exception as e:
             logger.warning(
                 "AIStorylineDiscovery title failed, using keyword fallback: %s", e
@@ -302,7 +412,25 @@ class ProactiveDetectionService(DomainAwareService):
             hours_ago = 0
         trend_score = max(0.0, 100.0 - (hours_ago * 2))  # Decay over time
 
+        outbreak_signal = self._cluster_outbreak_signal(articles)
+        if outbreak_signal:
+            confidence = max(confidence, self.promote_min_confidence)
+
         article_ids = [int(a["id"]) for a in articles if a.get("id") is not None]
+        coherent, reject_reason = assess_cluster_coherence(
+            self.domain,
+            title,
+            articles,
+            common_entities=top_keywords,
+        )
+        if not coherent:
+            logger.info(
+                "Proactive emerging storyline demoted (coherence=%s): %s",
+                reject_reason,
+                title[:80],
+            )
+            confidence = min(confidence, self.min_confidence - 0.01)
+
         return {
             "title": title,
             "description": description,
@@ -314,12 +442,19 @@ class ProactiveDetectionService(DomainAwareService):
             "source_diversity": source_diversity,
             "first_detected_at": datetime.now(timezone.utc).isoformat(),
             "article_ids": article_ids,
+            "outbreak_signal": outbreak_signal,
+            "coherence_ok": coherent,
+            "coherence_reason": reject_reason,
         }
 
     def _should_promote_to_storyline(self, emerging: dict[str, Any]) -> bool:
         """Larger / higher-confidence clusters become domain storylines (narrative shell for other pipelines)."""
+        if emerging.get("coherence_ok") is False:
+            return False
         n = len(emerging.get("article_ids") or [])
         conf = float(emerging.get("confidence_score") or 0)
+        if emerging.get("outbreak_signal") and n >= 2:
+            return conf >= self.promote_min_confidence
         if n >= max(self.promote_min_articles, 5):
             return True
         if n >= self.promote_min_articles and conf >= self.promote_min_confidence:
@@ -339,7 +474,10 @@ class ProactiveDetectionService(DomainAwareService):
             return False
 
         article_ids = [int(x) for x in (emerging.get("article_ids") or [])]
-        if len(article_ids) < self.min_article_count:
+        min_linked = self.min_article_count
+        if emerging.get("outbreak_signal"):
+            min_linked = 2
+        if len(article_ids) < min_linked:
             return False
 
         # Re-check unlinked (avoid duplicate storylines if another process linked articles)
@@ -354,7 +492,10 @@ class ProactiveDetectionService(DomainAwareService):
             (article_ids,),
         )
         unlinked = [r[0] for r in cur.fetchall()]
-        if len(unlinked) < self.promote_min_articles:
+        min_unlinked = self.promote_min_articles
+        if emerging.get("outbreak_signal"):
+            min_unlinked = 2
+        if len(unlinked) < min_unlinked:
             return False
 
         title = (emerging.get("title") or "Emerging story")[:300]
@@ -376,6 +517,13 @@ class ProactiveDetectionService(DomainAwareService):
         key_ent = emerging.get("key_entities") or []
         settings_json = json.dumps({"min_quality_tier": 2, "source": "proactive_detection_promote"})
 
+        automation_mode = "auto_approve"
+        try:
+            from services.storyline_assembly_service import get_storyline_automation_mode
+
+            automation_mode = get_storyline_automation_mode(self.domain)
+        except Exception:
+            pass
         try:
             cur.execute(
                 f"""
@@ -389,7 +537,7 @@ class ProactiveDetectionService(DomainAwareService):
                 VALUES (
                     %s, %s, 'active', 'pending',
                     %s, %s,
-                    TRUE, 'suggest_only', 6,
+                    TRUE, %s, 6,
                     %s::jsonb, %s, %s,
                     %s::jsonb, NOW(), NOW()
                 )
@@ -400,6 +548,7 @@ class ProactiveDetectionService(DomainAwareService):
                     desc[:5000] if desc else None,
                     len(unlinked),
                     len(unlinked),
+                    automation_mode,
                     settings_json,
                     key_kw[:40] if key_kw else [],
                     key_ent[:40] if key_ent else [],

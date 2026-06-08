@@ -3,7 +3,7 @@
 Clear permanent_failure for processed_documents that failed only because PDF
 libraries were missing. Run after installing PDF deps (see below).
 
-**Project root:** use your clone path (e.g. ~/Documents/projects/Projects/News Intelligence).
+**Project root:** use your clone path (e.g. ~/Documents/projects/News Intelligence).
 `/opt/news-intelligence` is only the default on some servers (e.g. Widow).
 
 **Install PDF deps (PEP 668 / Pop!_OS — do not use system pip):**

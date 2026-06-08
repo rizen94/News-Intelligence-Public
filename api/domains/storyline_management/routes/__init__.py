@@ -13,6 +13,7 @@ automation, articles, timeline, watchlist, …). For domain terminology, see rep
 
 from fastapi import APIRouter
 
+from .storyline_assembly import router as assembly_router
 from .storyline_analysis import router as analysis_router
 from .storyline_articles import router as articles_router
 from .storyline_automation import router as automation_router
@@ -35,6 +36,7 @@ from .storyline_watchlist import router as watchlist_router
 router = APIRouter(prefix="/api", tags=["Storyline Management"])
 
 # Include all sub-routers (discovery/consolidation/automation first for route ordering)
+router.include_router(assembly_router)
 router.include_router(discovery_router)
 router.include_router(consolidation_router)
 router.include_router(automation_router)

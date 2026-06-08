@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "domain_key": "example-domain",
+  "schema_name": "example_domain",
+  "display_name": "Example Domain",
+  "description": "One or two sentences for operators.",
+  "display_order": 10,
+  "is_active": false,
+  "database": {
+    "clone_from": "science_tech",
+    "include_article_topic_clusters": true,
+    "migration_ref": null
+  },
+  "rss": {
+    "seed_feed_category": "General",
+    "feeds": []
+  },
+  "focus_areas": [],
+  "llm_prompt_guidance": "",
+  "workload_assumptions": {
+    "expected_active_feeds": 0,
+    "rough_new_articles_per_day": 0,
+    "llm_heavy_phases_enabled": true
+  }
+}

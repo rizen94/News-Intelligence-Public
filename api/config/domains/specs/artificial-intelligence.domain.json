@@ -1,0 +1,82 @@
+{
+  "version": 1,
+  "domain_key": "artificial-intelligence",
+  "schema_name": "artificial_intelligence",
+  "display_name": "Artificial Intelligence & Machine Learning",
+  "description": "AI research breakthroughs, model comparisons, practical applications, enterprise adoption, and emerging AI careers. Covers LLMs, computer vision, robotics, and AI governance.",
+  "display_order": 25,
+  "is_active": true,
+  "database": {
+    "clone_from": "science_tech",
+    "include_article_topic_clusters": true,
+    "migration_ref": "188_artificial_intelligence_domain_silo.sql"
+  },
+  "rss": {
+    "seed_feed_category": "General",
+    "feeds": [
+      {
+        "feed_url": "https://arxiv.org/rss/cs.AI"
+      },
+      {
+        "feed_url": "https://arxiv.org/rss/cs.LG"
+      },
+      {
+        "feed_url": "https://arxiv.org/rss/cs.CL"
+      },
+      {
+        "feed_url": "https://arxiv.org/rss/cs.CV"
+      },
+      {
+        "feed_url": "https://arxiv.org/rss/cs.RO"
+      },
+      {
+        "feed_url": "https://distill.pub/rss.xml"
+      },
+      {
+        "feed_url": "https://openai.com/blog/rss.xml"
+      },
+      {
+        "feed_url": "https://blog.google/technology/ai/rss/"
+      },
+      {
+        "feed_url": "https://blogs.microsoft.com/ai/feed/"
+      },
+      {
+        "feed_url": "https://huggingface.co/blog/feed.xml"
+      },
+      {
+        "feed_url": "https://machinelearningmastery.com/blog/feed/"
+      },
+      {
+        "feed_url": "https://thegradient.pub/rss/"
+      },
+      {
+        "feed_url": "https://hai.stanford.edu/rss.xml"
+      },
+      {
+        "feed_url": "https://news.mit.edu/rss/topic/artificial-intelligence2"
+      },
+      {
+        "feed_url": "https://deepmind.google/blog/rss.xml"
+      }
+    ]
+  },
+  "focus_areas": [
+    "Major model releases and architectural breakthroughs",
+    "Benchmark comparisons and performance evaluations",
+    "Practical AI implementation best practices",
+    "Enterprise AI adoption and ROI case studies",
+    "AI career paths and skill development",
+    "Model capabilities and limitations analysis",
+    "AI safety and alignment research",
+    "Open source AI tools and frameworks",
+    "Industry-specific AI applications",
+    "AI regulation and governance developments"
+  ],
+  "llm_prompt_guidance": "Prioritize concrete technical advances and empirical results over speculation. For model\ncomparisons, include specific benchmarks, compute requirements, and practical trade-offs.\nHighlight real-world implementation details, costs, and measurable business impacts.\nFor career content, focus on specific roles, required skills, salary trends, and growth\ntrajectories. Distinguish between research breakthroughs and production-ready tools.\nInclude deployment considerations, scaling challenges, and best practices from actual\nimplementations.",
+  "workload_assumptions": {
+    "expected_active_feeds": 35,
+    "rough_new_articles_per_day": 150,
+    "llm_heavy_phases_enabled": true
+  }
+}

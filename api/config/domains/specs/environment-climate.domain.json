@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "domain_key": "environment-climate",
+  "schema_name": "environment_climate",
+  "display_name": "Environment & Climate",
+  "description": "Environmental science, climate change, sustainability, and ecological research.",
+  "display_order": 15,
+  "is_active": true,
+  "database": {
+    "clone_from": "science_tech",
+    "include_article_topic_clusters": true,
+    "migration_ref": null
+  },
+  "rss": {
+    "seed_feed_category": "General",
+    "feeds": [
+      { "feed_url": "https://www.carbonbrief.org/feed", "feed_name": "Carbon Brief", "arc_relevance": ["resource_geopolitics"] },
+      { "feed_url": "https://www.iea.org/news/rss", "feed_name": "IEA News", "arc_relevance": ["resource_geopolitics"] },
+      { "feed_url": "https://www.usgs.gov/news/all-news/rss", "feed_name": "USGS News", "arc_relevance": ["resource_geopolitics"] },
+      { "feed_url": "https://www.eenews.net/articles/feed/", "feed_name": "E&E News", "arc_relevance": ["resource_geopolitics"] },
+      { "feed_url": "https://www.reuters.com/markets/commodities/rss", "feed_name": "Reuters Commodities", "arc_relevance": ["resource_geopolitics"] },
+      { "feed_url": "https://www.climate.gov/rss.xml", "feed_name": "Climate.gov", "arc_relevance": ["resource_geopolitics"] },
+      { "feed_url": "https://www.epa.gov/newsreleases/rss.xml", "feed_name": "EPA News", "arc_relevance": ["resource_geopolitics"] },
+      { "feed_url": "https://www.nature.com/nclimate.rss", "feed_name": "Nature Climate", "arc_relevance": ["resource_geopolitics"] },
+      { "feed_url": "https://www.theguardian.com/environment/rss", "feed_name": "Guardian Environment", "arc_relevance": ["resource_geopolitics"] },
+      { "feed_url": "https://www.environmentalhealthnews.org/feed/", "feed_name": "Environmental Health News", "arc_relevance": ["resource_geopolitics"] }
+    ]
+  },
+  "focus_areas": [
+    "Climate change research and impacts",
+    "Environmental policy and regulation",
+    "Sustainability and green technology",
+    "Ecological research and biodiversity",
+    "Renewable energy developments",
+    "Environmental health and pollution",
+    "Conservation and wildlife protection",
+    "Carbon emissions and climate modeling"
+  ],
+  "llm_prompt_guidance": "Focus on evidence-based environmental science and climate research. Distinguish between\nscientific consensus, emerging research, and policy implications. Highlight environmental\nimpacts, sustainability practices, and regulatory developments. Avoid sensationalizing\nenvironmental claims. Include relevant scientific studies, policy documents, and\nregulatory approvals where applicable.",
+  "workload_assumptions": {
+    "expected_active_feeds": 10,
+    "rough_new_articles_per_day": 100,
+    "llm_heavy_phases_enabled": true
+  }
+}

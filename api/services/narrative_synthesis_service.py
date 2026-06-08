@@ -60,7 +60,16 @@ class NarrativeSynthesisService:
     def __init__(self, llm: LLMService | None = None):
         self.llm = llm or LLMService()
 
-    async def generate_chronological_narrative(self, timeline: dict[str, Any]) -> dict[str, Any]:
+    async def generate_chronological_narrative(
+        self,
+        timeline: dict[str, Any],
+        *,
+        historical_context_rendered: str = "",
+        context_bundle: dict[str, Any] | None = None,
+        storyline_id: int | None = None,
+        domain_key: str | None = None,
+        retrieval_query: str | None = None,
+    ) -> dict[str, Any]:
         """
         Produce a long-form chronological narrative from a timeline dict
         (as returned by TimelineBuilderService.build_timeline).
@@ -71,11 +80,26 @@ class NarrativeSynthesisService:
 
         events_block = self._format_events_block(events, timeline.get("gaps", []))
 
+        context_block = await self._resolve_context_block(
+            timeline=timeline,
+            historical_context_rendered=historical_context_rendered,
+            context_bundle=context_bundle,
+            storyline_id=storyline_id,
+            domain_key=domain_key,
+            retrieval_query=retrieval_query,
+            max_chars=8000,
+        )
+        hist_block = ""
+        if context_block:
+            hist_block = (
+                "\n\nEstablished facts and long-horizon context (use for arc, not only recent events):\n"
+                + context_block
+            )
         prompt = CHRONOLOGICAL_PROMPT.format(
             title=self._storyline_title(timeline),
             events_block=events_block,
             source_count=timeline.get("source_count", 0),
-        )
+        ) + hist_block
 
         try:
             raw = await self.llm._call_ollama(ModelType.LLAMA_8B, prompt)
@@ -90,7 +114,16 @@ class NarrativeSynthesisService:
             logger.error(f"Narrative generation failed: {e}")
             return {"success": False, "error": str(e)}
 
-    async def generate_briefing(self, timeline: dict[str, Any]) -> dict[str, Any]:
+    async def generate_briefing(
+        self,
+        timeline: dict[str, Any],
+        *,
+        historical_context_rendered: str = "",
+        context_bundle: dict[str, Any] | None = None,
+        storyline_id: int | None = None,
+        domain_key: str | None = None,
+        retrieval_query: str | None = None,
+    ) -> dict[str, Any]:
         """Produce a short executive briefing from timeline data."""
         events = timeline.get("events", [])
         if not events:
@@ -118,6 +151,17 @@ class NarrativeSynthesisService:
             ),
             entities=", ".join(sorted(all_entities)[:15]),
         )
+        context_block = await self._resolve_context_block(
+            timeline=timeline,
+            historical_context_rendered=historical_context_rendered,
+            context_bundle=context_bundle,
+            storyline_id=storyline_id,
+            domain_key=domain_key,
+            retrieval_query=retrieval_query or self._storyline_title(timeline),
+            max_chars=4000,
+        )
+        if context_block:
+            prompt += "\n\nLong-horizon context:\n" + context_block
 
         try:
             raw = await self.llm._call_ollama(ModelType.LLAMA_8B, prompt)
@@ -135,6 +179,41 @@ class NarrativeSynthesisService:
     # ------------------------------------------------------------------
     # Formatting helpers
     # ------------------------------------------------------------------
+
+    async def _resolve_context_block(
+        self,
+        *,
+        timeline: dict[str, Any],
+        historical_context_rendered: str,
+        context_bundle: dict[str, Any] | None,
+        storyline_id: int | None,
+        domain_key: str | None,
+        retrieval_query: str | None,
+        max_chars: int,
+    ) -> str:
+        if context_bundle and context_bundle.get("rendered_for_prompt"):
+            return str(context_bundle["rendered_for_prompt"]).strip()[:max_chars]
+
+        sid = storyline_id or timeline.get("storyline_id")
+        dk = domain_key or timeline.get("domain_key")
+        query = (retrieval_query or self._storyline_title(timeline) or "").strip()
+        if sid and dk and query:
+            try:
+                from services.context_bundle_service import ContextBundleService
+
+                bundle = await ContextBundleService().build_context_bundle(
+                    storyline_id=int(sid),
+                    domain_key=dk,
+                    query=query,
+                )
+                if bundle.get("rendered_for_prompt"):
+                    return str(bundle["rendered_for_prompt"]).strip()[:max_chars]
+            except Exception as e:
+                logger.debug("context_bundle build skipped: %s", e)
+
+        if historical_context_rendered and historical_context_rendered.strip():
+            return historical_context_rendered.strip()[:max_chars]
+        return ""
 
     @staticmethod
     def _format_events_block(events: list[dict], gaps: list[dict]) -> str:

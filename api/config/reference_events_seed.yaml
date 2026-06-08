@@ -1,0 +1,344 @@
+# Curated reference events — append-only historical layer (Phase 3 seed).
+# Loader: api/scripts/load_longitudinal_seeds.py (idempotent via metadata.seed_id)
+
+events:
+  - id: ref_opec_embargo_1973
+    event_date: "1973-10-17"
+    date_precision: day
+    title: OAPEC oil embargo begins
+    summary: >
+      Arab oil producers announce export cuts and embargo targeting states supporting Israel
+      in the Yom Kippur War, triggering the first oil shock and stagflation in OECD economies.
+    category: energy
+    arc_ids: [resource_geopolitics]
+    entity_qids: [Q796, Q851, Q30]
+    sources:
+      - { label: "Wikipedia", url: "https://en.wikipedia.org/wiki/1973_oil_crisis" }
+      - { label: "US EIA", url: "https://www.eia.gov/energyexplained/oil-and-petroleum-products/oil-imports-and-exports.php" }
+
+  - id: ref_nixon_gold_window_1971
+    event_date: "1971-08-15"
+    title: Nixon closes gold window
+    summary: >
+      United States suspends dollar convertibility to gold, ending Bretton Woods fixed
+      exchange rates and accelerating fiat monetary regime globally.
+    category: macro
+    arc_ids: [resource_geopolitics, political_tensions_multipolar]
+    entity_qids: [Q30]
+    sources:
+      - { label: "Wikipedia", url: "https://en.wikipedia.org/wiki/Nixon_shock" }
+
+  - id: ref_iran_revolution_1979
+    event_date: "1979-02-11"
+    title: Iranian Revolution consolidates
+    summary: >
+      Islamic Republic established after Shah's fall; second oil shock follows hostage crisis
+      and regional realignment affecting Gulf supply security.
+    category: geopolitics
+    arc_ids: [resource_geopolitics, political_tensions_multipolar]
+    entity_qids: [Q794, Q851]
+    sources:
+      - { label: "Wikipedia", url: "https://en.wikipedia.org/wiki/Iranian_Revolution" }
+
+  - id: ref_soviet_afghan_1979
+    event_date: "1979-12-24"
+    title: Soviet invasion of Afghanistan
+    summary: >
+      USSR deploys forces to support Kabul regime; US responds with grain embargo, Olympic
+      boycott, and expanded support to mujahideen — late Cold War escalation node.
+    category: conflict
+    arc_ids: [political_tensions_multipolar]
+    entity_qids: [Q159, Q30, Q889]
+    sources:
+      - { label: "Wikipedia", url: "https://en.wikipedia.org/wiki/Soviet–Afghan_War" }
+
+  - id: ref_berlin_wall_1989
+    event_date: "1989-11-09"
+    title: Berlin Wall falls
+    summary: >
+      East German border opens; symbolic end of Cold War division in Europe precedes
+      German reunification and Warsaw Pact dissolution.
+    category: geopolitics
+    arc_ids: [political_tensions_multipolar]
+    entity_qids: [Q183, Q159]
+    sources:
+      - { label: "Wikipedia", url: "https://en.wikipedia.org/wiki/Fall_of_the_Berlin_Wall" }
+
+  - id: ref_ussr_dissolution_1991
+    event_date: "1991-12-26"
+    title: Soviet Union formally dissolved
+    summary: >
+      USSR ceases to exist; Russia inherits seat and nuclear arsenal; unipolar moment
+      begins with US as sole superpower.
+    category: geopolitics
+    arc_ids: [political_tensions_multipolar]
+    entity_qids: [Q159, Q30]
+    sources:
+      - { label: "Wikipedia", url: "https://en.wikipedia.org/wiki/Dissolution_of_the_Soviet_Union" }
+
+  - id: ref_gulf_war_1991
+    event_date: "1991-01-17"
+    title: Operation Desert Storm begins
+    summary: >
+      US-led coalition air campaign against Iraq after Kuwait invasion; demonstrates
+      post-Cold War US military reach and Gulf energy security priority.
+    category: conflict
+    arc_ids: [resource_geopolitics, political_tensions_multipolar]
+    entity_qids: [Q30, Q796, Q851]
+    sources:
+      - { label: "Wikipedia", url: "https://en.wikipedia.org/wiki/Gulf_War" }
+
+  - id: ref_wto_china_2001
+    event_date: "2001-12-11"
+    title: China joins WTO
+    summary: >
+      PRC accession completes long negotiation; accelerates export-led industrialization
+      and commodity supercycle demand for energy, metals, and agriculture.
+    category: trade
+    arc_ids: [resource_geopolitics, political_tensions_multipolar]
+    entity_qids: [Q148]
+    sources:
+      - { label: "WTO", url: "https://www.wto.org/english/thewto_e/countries_e/china_e.htm" }
+
+  - id: ref_911_2001
+    event_date: "2001-09-11"
+    title: September 11 attacks
+    summary: >
+      Al-Qaeda strikes US homeland; catalyzes Global War on Terror, homeland security
+      state expansion, and Middle East military interventions.
+    category: conflict
+    arc_ids: [political_tensions_multipolar]
+    entity_qids: [Q30]
+    sources:
+      - { label: "9/11 Commission", url: "https://www.9-11commission.gov/report/" }
+
+  - id: ref_iraq_invasion_2003
+    event_date: "2003-03-20"
+    title: US-led invasion of Iraq
+    summary: >
+      Coalition forces topple Saddam Hussein; prolonged insurgency and regional power
+      vacuum reshape Gulf geopolitics and oil market risk premia.
+    category: conflict
+    arc_ids: [resource_geopolitics, political_tensions_multipolar]
+    entity_qids: [Q30, Q796]
+    sources:
+      - { label: "Wikipedia", url: "https://en.wikipedia.org/wiki/Iraq_War" }
+
+  - id: ref_financial_crisis_2008
+    event_date: "2008-09-15"
+    title: Lehman Brothers bankruptcy
+    summary: >
+      Global financial crisis peak; commodity prices collapse then rebound with stimulus,
+      reshaping central bank policy and resource demand cycles.
+    category: macro
+    arc_ids: [resource_geopolitics, political_tensions_multipolar]
+    entity_qids: [Q30]
+    sources:
+      - { label: "Federal Reserve history", url: "https://www.federalreservehistory.org/essays/great-recession-of-200709" }
+
+  - id: ref_shale_revolution_2010
+    event_date: "2010-01-01"
+    date_precision: year
+    title: US shale oil production inflection
+    summary: >
+      Hydraulic fracturing and horizontal drilling unlock vast tight oil/gas reserves;
+      US approaches net exporter status, altering OPEC+ bargaining dynamics.
+    category: energy
+    arc_ids: [resource_geopolitics]
+    entity_qids: [Q30]
+    sources:
+      - { label: "EIA", url: "https://www.eia.gov/todayinenergy/detail.php?id=4430" }
+
+  - id: ref_crimea_2014
+    event_date: "2014-03-18"
+    title: Russia annexes Crimea
+    summary: >
+      Moscow incorporates Crimea after Euromaidan; Western sanctions begin, marking
+      post-Cold War European security order fracture.
+    category: geopolitics
+    arc_ids: [political_tensions_multipolar]
+    entity_qids: [Q159, Q212, Q30]
+    sources:
+      - { label: "Wikipedia", url: "https://en.wikipedia.org/wiki/Annexation_of_Crimea_by_the_Russian_Federation" }
+
+  - id: ref_paris_agreement_2015
+    event_date: "2015-12-12"
+    title: Paris Agreement adopted
+    summary: >
+      UNFCCC parties adopt binding framework to limit warming; accelerates energy transition
+      policy, carbon markets debate, and critical minerals demand planning.
+    category: climate
+    arc_ids: [resource_geopolitics]
+    entity_qids: [Q30, Q148, Q142]
+    sources:
+      - { label: "UNFCCC", url: "https://unfccc.int/process-and-meetings/the-paris-agreement" }
+
+  - id: ref_china_trade_war_2018
+    event_date: "2018-07-06"
+    title: US-China tariff escalation begins
+    summary: >
+      Major bilateral tariffs implemented; technology decoupling and supply chain
+      reshoring narratives intensify across strategic sectors.
+    category: trade
+    arc_ids: [political_tensions_multipolar, resource_geopolitics]
+    entity_qids: [Q30, Q148]
+    sources:
+      - { label: "USTR", url: "https://ustr.gov/issue-areas/enforcement/section-301-investigations/tariff-actions" }
+
+  - id: ref_covid_shock_2020
+    event_date: "2020-03-11"
+    title: WHO declares COVID-19 pandemic
+    summary: >
+      Global demand shock and supply chain disruption; oil briefly negative WTI;
+      fiscal/monetary expansion precedes inflation surge and energy volatility.
+    category: macro
+    arc_ids: [resource_geopolitics, political_tensions_multipolar]
+    entity_qids: [Q30, Q148]
+    sources:
+      - { label: "WHO", url: "https://www.who.int/emergencies/diseases/novel-coronavirus-2019" }
+
+  - id: ref_aukus_2021
+    event_date: "2021-09-15"
+    title: AUKUS security pact announced
+    summary: >
+      US, UK, Australia announce trilateral pact including nuclear submarine technology;
+      Indo-Pacific alignment hardens amid China competition.
+    category: geopolitics
+    arc_ids: [political_tensions_multipolar]
+    entity_qids: [Q30, Q145, Q408]
+    sources:
+      - { label: "White House", url: "https://www.whitehouse.gov/briefing-room/statements-releases/2021/09/15/joint-leaders-statement-on-aukus/" }
+
+  - id: ref_ukraine_invasion_2022
+    event_date: "2022-02-24"
+    title: Russia full-scale invasion of Ukraine
+    summary: >
+      Largest European land war since WWII; energy weaponization, sanctions coalition,
+      and food/fertilizer export disruptions reshape resource geopolitics chapter.
+    category: conflict
+    arc_ids: [resource_geopolitics, political_tensions_multipolar]
+    entity_qids: [Q159, Q212, Q30]
+    sources:
+      - { label: "Wikipedia", url: "https://en.wikipedia.org/wiki/Russian_invasion_of_Ukraine" }
+
+  - id: ref_eu_russia_oil_embargo_2022
+    event_date: "2022-12-05"
+    title: EU Russian crude embargo effective
+    summary: >
+      EU bans seaborne Russian crude imports; price cap mechanism attempts to limit
+      revenue while keeping barrels flowing — sanctions-era energy architecture.
+    category: energy
+    arc_ids: [resource_geopolitics]
+    entity_qids: [Q142, Q159]
+    sources:
+      - { label: "European Council", url: "https://www.consilium.europa.eu/en/policies/sanctions-against-russia/" }
+
+  - id: ref_ira_opec_plus_2023
+    event_date: "2023-04-02"
+    title: OPEC+ surprise production cut
+    summary: >
+      Saudi-led voluntary cuts surprise markets; underscores producer cartel leverage
+      in post-shale, post-sanctions supply management era.
+    category: energy
+    arc_ids: [resource_geopolitics]
+    entity_qids: [Q796, Q851]
+    sources:
+      - { label: "OPEC", url: "https://www.opec.org/" }
+
+  - id: ref_brics_expansion_2024
+    event_date: "2024-01-01"
+    date_precision: year
+    title: BRICS expanded membership wave
+    summary: >
+      Global South powers join BRICS framework; hedging against dollar-centric institutions
+      and Western sanctions toolkits accelerates multipolar finance experiments.
+    category: geopolitics
+    arc_ids: [political_tensions_multipolar]
+    entity_qids: [Q148, Q155, Q851]
+    sources:
+      - { label: "Wikipedia", url: "https://en.wikipedia.org/wiki/BRICS" }
+
+  - id: ref_cold_war_start_1947
+    event_date: "1947-03-12"
+    title: Truman Doctrine announced
+    summary: >
+      US commits to contain Soviet expansion; formalizes bipolar Cold War geopolitical
+      competition across Europe and developing world.
+    category: geopolitics
+    arc_ids: [political_tensions_multipolar]
+    entity_qids: [Q30, Q159]
+    sources:
+      - { label: "US State Dept", url: "https://history.state.gov/milestones/1945-1952/truman-doctrine" }
+
+  - id: ref_cuban_missile_1962
+    event_date: "1962-10-16"
+    title: Cuban Missile Crisis begins
+    summary: >
+      US-Soviet nuclear brinkmanship over missiles in Cuba; closest Cold War nuclear
+      escalation episode establishes crisis management precedents.
+    category: conflict
+    arc_ids: [political_tensions_multipolar]
+    entity_qids: [Q30, Q159, Q241]
+    sources:
+      - { label: "JFK Library", url: "https://www.jfklibrary.org/learn/about-jfk/jfk-in-history/cuban-missile-crisis" }
+
+  - id: ref_plaza_accord_1985
+    event_date: "1985-09-22"
+    title: Plaza Accord signed
+    summary: >
+      G5 agrees to coordinated dollar depreciation; reshapes trade balances and
+      contributes to Japan asset bubble dynamics — macro coordination landmark.
+    category: macro
+    arc_ids: [resource_geopolitics, political_tensions_multipolar]
+    entity_qids: [Q30, Q17]
+    sources:
+      - { label: "Wikipedia", url: "https://en.wikipedia.org/wiki/Plaza_Accord" }
+
+  - id: ref_asian_financial_crisis_1997
+    event_date: "1997-07-02"
+    title: Thai baht devaluation — Asian financial crisis
+    summary: >
+      Currency crisis spreads across East Asia; IMF programs and capital control debates
+      influence emerging market macro policy for decades.
+    category: macro
+    arc_ids: [political_tensions_multipolar]
+    entity_qids: [Q869, Q148]
+    sources:
+      - { label: "IMF", url: "https://www.imf.org/en/About/Factsheets/Sheets/2023/Asian-Financial-Crisis" }
+
+  - id: ref_critical_minerals_2022
+    event_date: "2022-08-16"
+    title: US Inflation Reduction Act signed
+    summary: >
+      Massive climate-industrial subsidy package including critical minerals sourcing
+      requirements; accelerates reshoring and friend-shoring of supply chains.
+    category: climate
+    arc_ids: [resource_geopolitics]
+    entity_qids: [Q30]
+    sources:
+      - { label: "Congress.gov", url: "https://www.congress.gov/bill/117th-congress/house-bill/5376" }
+
+  - id: ref_red_sea_disruption_2024
+    event_date: "2024-01-12"
+    title: US-UK strikes on Houthi targets in Yemen
+    summary: >
+      Response to Red Sea shipping attacks; Suez route disruption raises freight and
+      energy transit risk premia amid Gaza war spillover.
+    category: conflict
+    arc_ids: [resource_geopolitics, political_tensions_multipolar]
+    entity_qids: [Q30, Q145, Q805]
+    sources:
+      - { label: "Reuters", url: "https://www.reuters.com/world/middle-east/" }
+
+  - id: ref_dollar_gold_standard_end_memo
+    event_date: "1973-03-01"
+    date_precision: month
+    title: Smithsonian Agreement erodes — float intensifies
+    summary: >
+      Fixed-rate adjustments fail to stabilize Bretton Woods remnants; major currencies
+      move toward generalized floating ahead of 1973 oil shock.
+    category: macro
+    arc_ids: [resource_geopolitics]
+    entity_qids: [Q30]
+    sources:
+      - { label: "Federal Reserve", url: "https://www.federalreservehistory.org/essays/smithsonian-agreement" }

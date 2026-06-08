@@ -110,6 +110,15 @@ class TimelineBuilderService:
             if has_temporal
             else ""
         )
+        domain_join = ""
+        params: list[Any] = [storyline_id]
+        if self.schema_name:
+            domain_join = f"""
+              AND EXISTS (
+                  SELECT 1 FROM {self.schema_name}.storylines s
+                  WHERE s.id = ce.storyline_id::int
+              )
+            """
         cursor.execute(
             f"""
             SELECT ce.id, ce.title, ce.description, ce.event_type,
@@ -123,9 +132,10 @@ class TimelineBuilderService:
             FROM {_CHRONO_EVENTS} ce
             WHERE ce.storyline_id = %s::text
               AND ce.canonical_event_id IS NULL
+              {domain_join}
             ORDER BY ce.actual_event_date ASC NULLS LAST
         """,
-            (storyline_id,),
+            tuple(params),
         )
         rows = cursor.fetchall()
         cursor.close()
@@ -336,3 +346,33 @@ class TimelineBuilderService:
             return json.loads(val)
         except (json.JSONDecodeError, TypeError):
             return []
+
+
+def build_storyline_spine(domain_key: str, storyline_id: int, conn=None) -> dict[str, Any]:
+    """
+    Domain-scoped chronological spine (public.chronological_events + schema storylines join).
+  """
+    from shared.database.connection import get_db_connection
+    from shared.domain_registry import resolve_domain_schema
+
+    schema = resolve_domain_schema(domain_key)
+    own_conn = conn is None
+    if own_conn:
+        conn = get_db_connection()
+    if not conn:
+        return {
+            "storyline_id": storyline_id,
+            "events": [],
+            "gaps": [],
+            "milestones": [],
+            "event_count": 0,
+        }
+    try:
+        tbs = TimelineBuilderService(conn, schema_name=schema)
+        return tbs.build_timeline(storyline_id)
+    finally:
+        if own_conn and conn:
+            try:
+                conn.close()
+            except Exception:
+                pass

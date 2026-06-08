@@ -22,7 +22,7 @@ from config.paths import (
 
 # Archive storage — large files, raw downloads, model backups
 ARCHIVE_DIR = Path(
-    os.environ.get("NEWS_INTEL_ARCHIVE_DIR", "/media/pete/Fortress2/news-intelligence-archive")
+    os.environ.get("NEWS_INTEL_ARCHIVE_DIR", "")
 )
 
 # Ensure directories exist
@@ -51,7 +51,7 @@ RAM_SAFETY_MARGIN_GB = 8.0
 OLLAMA_MODEL_PRIMARY = os.environ.get("OLLAMA_MODEL_PRIMARY", "llama3.1:8b")
 OLLAMA_MODEL_SECONDARY = os.environ.get("OLLAMA_MODEL_SECONDARY", "mistral-nemo:12b")
 OLLAMA_MODEL_PHI = os.environ.get("OLLAMA_MODEL_PHI", "phi3.5:latest")
-OLLAMA_MODEL_EXTRACTION = os.environ.get("OLLAMA_MODEL_EXTRACTION", "qwen2.5:7b")
+OLLAMA_MODEL_EXTRACTION = os.environ.get("OLLAMA_MODEL_EXTRACTION", "llama3.1:8b")
 
 MODELS = {
     "embedding": os.environ.get("OLLAMA_MODEL_EMBEDDING", "nomic-embed-text"),
@@ -61,7 +61,12 @@ MODELS = {
     "topic_extraction": OLLAMA_MODEL_PRIMARY,
 }
 
+# Ollama hosts for dual-GPU routing across machines
+# Widow (local): Handles smaller models (8B, 12B, etc.) for quick tasks
+# popOS (remote): RTX5090 handles large 70B model for heavy summarization
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+# popOS machine with RTX5090 - 192.168.93.99 is the default IP
+OLLAMA_POP_OS_HOST = os.environ.get("OLLAMA_POP_OS_HOST", "http://192.168.93.99:11434")
 OLLAMA_TIMEOUT = 300
 
 # --- Ollama invocation policy (see shared/services/ollama_model_caller.py) ---
@@ -88,10 +93,11 @@ OLLAMA_EXTRA_PULL_MODELS: tuple[str, ...] = tuple(
     m.strip() for m in os.environ.get("OLLAMA_EXTRA_PULL_MODELS", "").split(",") if m.strip()
 )
 
-# Narrative finisher (~70B): final editorial pass on storylines (see docs/_archive/retired_root_docs_2026_03/STORYLINE_70B_NARRATIVE_FINISHER.md).
+# Narrative finisher (32B on popOS RTX5090): final editorial pass on storylines
+# qwen2.5:32b-instruct is the heavy model available on popOS (192.168.93.99)
 NARRATIVE_FINISHER_MODEL = os.environ.get(
     "OLLAMA_NARRATIVE_FINISHER_MODEL",
-    os.environ.get("OLLAMA_OPTIONAL_QUALITY_MODEL", "llama3.1:70b"),
+    os.environ.get("OLLAMA_OPTIONAL_QUALITY_MODEL", "qwen2.5:32b-instruct"),
 )
 # Backward compat for docs / env that used OLLAMA_OPTIONAL_QUALITY_MODEL only
 OLLAMA_OPTIONAL_QUALITY_MODEL = NARRATIVE_FINISHER_MODEL
@@ -120,8 +126,8 @@ def ollama_pull_model_names() -> tuple[str, ...]:
     return tuple(sorted(tags))
 
 
-# Database (Widow secondary; rollback: localhost:5433 + NAS tunnel)
-DB_HOST = os.environ.get("DB_HOST", "192.168.93.101")
+# Database (post-migration: local on Widow server)
+DB_HOST = os.environ.get("DB_HOST", "localhost")
 DB_PORT = int(os.environ.get("DB_PORT", "5432"))
 DB_NAME = os.environ.get("DB_NAME", "news_intel")
 DB_USER = os.environ.get("DB_USER", "newsapp")
@@ -225,7 +231,7 @@ def rss_ingest_mirror_pipeline_enabled() -> bool:
 
 
 def finance_postgres_content_domain_key() -> str:
-    """ArticleService / finance helpers: which ``domain_key`` owns finance RSS articles (default ``finance`` → schema ``finance_2``)."""
+    """ArticleService / finance helpers: which ``domain_key`` owns finance RSS articles (default ``finance``)."""
     return (os.environ.get("FINANCE_PG_CONTENT_DOMAIN_KEY") or "finance").strip()
 
 
@@ -236,7 +242,7 @@ def finance_intelligence_context_domain_key() -> str:
 
 
 def politics_postgres_content_domain_key() -> str:
-    """Background jobs that read politics articles by silo (default ``politics`` → schema ``politics_2``)."""
+    """Background jobs that read politics articles by silo (default ``politics``)."""
     return (os.environ.get("POLITICS_PG_CONTENT_DOMAIN_KEY") or "politics").strip()
 
 
@@ -300,6 +306,50 @@ def topic_clustering_iterative_refinement_enabled() -> bool:
         "true",
         "yes",
     )
+
+
+def news_intel_public_web_auth_enabled() -> bool:
+    """When true, enforce guest vs admin for browser-facing API traffic (see docs/PUBLIC_DEPLOYMENT.md)."""
+    return os.environ.get("NEWS_INTEL_PUBLIC_WEB_AUTH", "").lower() in ("1", "true", "yes")
+
+
+def news_intel_allow_anonymous_guest() -> bool:
+    """
+    When public web auth is on, unauthenticated requests default to guest role if true (public demo).
+    If false, callers must log in (guest or admin account).
+    """
+    return os.environ.get("NEWS_INTEL_ALLOW_ANONYMOUS_GUEST", "true").lower() in ("1", "true", "yes")
+
+
+def news_intel_auth_jwt_secret() -> str:
+    """HS256 secret for HTTP-only session cookie. Prefer NEWS_INTEL_JWT_SECRET; falls back to JWT_SECRET."""
+    return (
+        os.environ.get("NEWS_INTEL_JWT_SECRET", "").strip()
+        or os.environ.get("JWT_SECRET", "").strip()
+    )
+
+
+def news_intel_auth_cookie_name() -> str:
+    return os.environ.get("NEWS_INTEL_AUTH_COOKIE_NAME", "ni_session").strip() or "ni_session"
+
+
+def news_intel_auth_cookie_max_age_seconds() -> int:
+    try:
+        return max(60, int(os.environ.get("NEWS_INTEL_AUTH_COOKIE_MAX_AGE_SECONDS", str(7 * 24 * 3600))))
+    except ValueError:
+        return 7 * 24 * 3600
+
+
+def news_intel_auth_cookie_secure() -> bool:
+    """Default Secure cookies in production (HTTPS)."""
+    if news_intel_is_production():
+        return os.environ.get("NEWS_INTEL_AUTH_COOKIE_SECURE", "true").lower() in ("1", "true", "yes")
+    return os.environ.get("NEWS_INTEL_AUTH_COOKIE_SECURE", "false").lower() in ("1", "true", "yes")
+
+
+def news_intel_auth_cookie_samesite() -> str:
+    raw = os.environ.get("NEWS_INTEL_AUTH_COOKIE_SAMESITE", "lax").strip().lower()
+    return raw if raw in ("lax", "strict", "none") else "lax"
 
 
 # ============================================================

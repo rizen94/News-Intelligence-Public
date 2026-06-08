@@ -186,7 +186,7 @@ processing:
       interval_seconds: 900   # 15 min incremental sync
       scope: null
     claim_extraction:
-      interval_seconds: 1800 # 30 min, max 50 contexts/run
+      interval_seconds: 1800 # 30 min fallback; batch via CLAIM_EXTRACTION_BATCH_LIMIT env
       scope: null
     event_tracking:
       interval_seconds: 3600 # 1 hour

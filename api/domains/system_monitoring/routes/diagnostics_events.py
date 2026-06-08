@@ -8,7 +8,7 @@ from typing import Any
 
 from fastapi import APIRouter, Query
 
-from shared.services.response_cache import cached_response
+from shared.services.response_cache import cached_response_sync
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +19,7 @@ router = APIRouter(
 
 
 @router.get("/diagnostics/events")
-@cached_response(ttl=30)
+@cached_response_sync(ttl=30)
 def get_diagnostics_events(
     since_hours: float = Query(24, ge=1, le=168, description="Look back window (hours)"),
     max_per_source: int = Query(
@@ -59,7 +59,7 @@ def get_diagnostics_events(
 
 
 @router.get("/diagnostics/summary")
-@cached_response(ttl=30)
+@cached_response_sync(ttl=30)
 def get_diagnostics_summary(
     since_hours: float = Query(24, ge=1, le=168),
 ) -> dict[str, Any]:

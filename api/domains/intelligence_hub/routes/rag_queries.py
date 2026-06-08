@@ -17,7 +17,7 @@ from fastapi import APIRouter, Body, HTTPException, Path, Query
 from pydantic import BaseModel, Field
 from services.domain_knowledge_service import get_domain_knowledge_service
 from services.rag import get_enhanced_rag_service
-from shared.domain_registry import DOMAIN_PATH_PATTERN, get_active_domain_keys
+from shared.domain_registry import DOMAIN_PATH_PATTERN, get_active_domain_keys, resolve_domain_schema
 
 logger = logging.getLogger(__name__)
 
@@ -314,7 +314,7 @@ async def list_domain_entities(
     """
     try:
         knowledge_service = get_domain_knowledge_service()
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
         kb = knowledge_service.knowledge_bases.get(
             domain, knowledge_service.knowledge_bases.get(schema, {})
         )
@@ -357,7 +357,7 @@ async def get_domain_terminology(domain: str = Path(..., pattern=DOMAIN_PATH_PAT
     """
     try:
         knowledge_service = get_domain_knowledge_service()
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
         kb = knowledge_service.knowledge_bases.get(
             domain, knowledge_service.knowledge_bases.get(schema, {})
         )

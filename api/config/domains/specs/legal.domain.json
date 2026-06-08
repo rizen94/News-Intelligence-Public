@@ -1,0 +1,57 @@
+{
+  "version": 1,
+  "domain_key": "legal",
+  "schema_name": "legal",
+  "display_name": "Legal",
+  "description": "Court decisions, legislation, regulatory enforcement, and legal news with emphasis on Newton/West Newton and Greater Boston, Massachusetts state law, and federal law — including implementation, proceedings, and stakeholder tradeoffs.",
+  "display_order": 4,
+  "is_active": true,
+  "database": {
+    "clone_from": "science_tech",
+    "include_article_topic_clusters": true,
+    "migration_ref": "180_legal_domain_silo.sql"
+  },
+  "rss": {
+    "seed_feed_category": "General",
+    "feeds": [
+      {
+        "feed_url": "https://www.federalregister.gov/documents/search.rss"
+      },
+      {
+        "feed_url": "https://www.scotusblog.com/feed/"
+      },
+      {
+        "feed_url": "https://www.universalhub.com/rss.xml"
+      },
+      {
+        "feed_url": "https://www.abajournal.com/rss/news.rss"
+      },
+      {
+        "feed_url": "https://www.courthousenews.com/feed/"
+      },
+      {
+        "feed_url": "https://www.jurist.org/feed/"
+      },
+      {
+        "feed_url": "https://www.lexblog.com/feed/"
+      },
+      {
+        "feed_url": "https://feeds.feedburner.com/AboveTheLaw"
+      }
+    ]
+  },
+  "focus_areas": [
+    "Newton, West Newton, and Greater Boston municipal and metro legal news",
+    "Massachusetts state legislation, regulations, and courts (when reported in news)",
+    "Federal statutes, regulations, and federal courts",
+    "Court proceedings and docket-style developments in public reporting",
+    "{'New and amended laws': 'effective dates, scope, and implementation'}",
+    "Balanced stakeholder pros/cons and tradeoffs (from sources; not legal advice)"
+  ],
+  "llm_prompt_guidance": "Prioritize geography: Newton/West Newton and Greater Boston, then Massachusetts,\nthen federal. Cover court proceedings, new or changing laws, and how they are\napplied. For competing views, summarize pros and cons as stakeholder effects\ngrounded in the article. Do not invent citations, docket numbers, or statutory\nreferences. This is not legal advice. Prefer neutral legal summarization;\ndistinguish holdings from dicta or opinion when the source allows.",
+  "workload_assumptions": {
+    "expected_active_feeds": 8,
+    "rough_new_articles_per_day": 120,
+    "llm_heavy_phases_enabled": true
+  }
+}

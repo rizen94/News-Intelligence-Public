@@ -29,6 +29,9 @@ _DEFAULT_BALANCER_PHASES: frozenset[str] = frozenset(
         "proactive_detection",
         "claim_extraction",
         "claims_to_facts",
+        "entity_extraction",
+        "metadata_enrichment",
+        "story_enhancement",
     }
 )
 

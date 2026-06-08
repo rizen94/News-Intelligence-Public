@@ -10,6 +10,7 @@ Features:
 """
 
 import json
+from shared.domain_registry import resolve_domain_schema
 import logging
 import os
 import re
@@ -157,7 +158,7 @@ class IntelligenceAnalysisService:
         Retrieves relevant articles based on semantic similarity.
         """
         start_time = datetime.now()
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
 
         conn = self.get_db_connection()
         try:
@@ -331,7 +332,7 @@ Historical context (2-3 sentences):"""
         Comprehensive quality assessment of a storyline.
         Evaluates coherence, factual accuracy, completeness, and more.
         """
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
         conn = self.get_db_connection()
 
         try:
@@ -517,7 +518,7 @@ Historical context (2-3 sentences):"""
         """
         Detect anomalies in article flow, storyline patterns, and entity mentions.
         """
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
         anomalies = []
         conn = self.get_db_connection()
 
@@ -713,7 +714,7 @@ Historical context (2-3 sentences):"""
         Comprehensive impact assessment for a storyline.
         Evaluates reach, significance, velocity, and potential consequences.
         """
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
         conn = self.get_db_connection()
 
         try:
@@ -971,7 +972,7 @@ List potential consequences (one per line):"""
         - stable facts tied to event participants
         - refresh recommendations for storyline/editorial updates
         """
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
         conn = self.get_db_connection()
         try:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -1159,7 +1160,7 @@ List potential consequences (one per line):"""
         1) primary from intelligence.entity_positions
         2) fallback from versioned_facts (fact_type=POSITION/STATEMENT)
         """
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
         domain_key = schema
         conn = self.get_db_connection()
         since = datetime.now() - timedelta(days=max(1, days))
@@ -1440,7 +1441,7 @@ List potential consequences (one per line):"""
         Side-by-side narrative framing for a tracked event:
         groups contexts by source cluster and extracts framing signals.
         """
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
         conn = self.get_db_connection()
         try:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -1623,7 +1624,7 @@ List potential consequences (one per line):"""
         """
         Bridge watched storylines to emerging themes/events and optionally create alerts.
         """
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
         domain_key = schema
         conn = self.get_db_connection()
         try:
@@ -1830,7 +1831,7 @@ List potential consequences (one per line):"""
         Attach processed PDF document contexts to active themes and event chains.
         Optionally persists storyline/event links into intelligence.document_intelligence.
         """
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
         domain_key = schema
         conn = self.get_db_connection()
         try:

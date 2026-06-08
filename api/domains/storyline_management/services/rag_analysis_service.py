@@ -152,7 +152,25 @@ class RAGAnalysisService(DomainAwareService):
     async def _retrieve_historical_context(
         self, conn, storyline: dict, articles: list[dict]
     ) -> str | None:
-        """Retrieve historical context from related storylines"""
+        """Durable storyline memory (facts + spine); falls back to related-storyline keyword match."""
+        storyline_id = storyline.get("id")
+        if storyline_id:
+            try:
+                from services.storyline_historical_context_service import (
+                    build_storyline_historical_context,
+                    render_historical_context_for_llm,
+                )
+
+                ctx = build_storyline_historical_context(
+                    self.domain, int(storyline_id), conn=conn
+                )
+                if ctx.get("success"):
+                    rendered = render_historical_context_for_llm(ctx)
+                    if rendered.strip():
+                        return rendered
+            except Exception as e:
+                logger.debug("RAG historical_context service: %s", e)
+
         try:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 # Get related storylines (by keywords or entities)

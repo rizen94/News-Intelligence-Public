@@ -12,7 +12,7 @@ from domains.content_analysis.services.topic_extraction_queue_worker import (
 )
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Path, Query
 from shared.database.connection import get_db_connection
-from shared.domain_registry import DOMAIN_PATH_PATTERN
+from shared.domain_registry import DOMAIN_PATH_PATTERN, resolve_domain_schema
 from shared.services.domain_aware_service import validate_domain
 
 logger = logging.getLogger(__name__)
@@ -33,7 +33,7 @@ async def get_queue_status(domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN))
         if not validate_domain(domain):
             raise HTTPException(status_code=400, detail=f"Invalid domain: {domain}")
 
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
         worker = queue_workers.get(schema)
 
         if worker:
@@ -91,7 +91,7 @@ async def start_queue_worker(
         if not validate_domain(domain):
             raise HTTPException(status_code=400, detail=f"Invalid domain: {domain}")
 
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
 
         # Check if worker already running
         if schema in queue_workers and queue_workers[schema].is_running:
@@ -125,7 +125,7 @@ async def stop_queue_worker(domain: str = Path(..., pattern=DOMAIN_PATH_PATTERN)
         if not validate_domain(domain):
             raise HTTPException(status_code=400, detail=f"Invalid domain: {domain}")
 
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
 
         if schema not in queue_workers:
             return {"success": True, "message": "Queue worker not running", "domain": domain}
@@ -163,7 +163,7 @@ async def queue_unprocessed_articles(
         if not validate_domain(domain):
             raise HTTPException(status_code=400, detail=f"Invalid domain: {domain}")
 
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
         conn = get_db_connection()
         if not conn:
             raise HTTPException(status_code=500, detail="Database connection failed")
@@ -221,7 +221,7 @@ async def process_queue_manually(
         if not validate_domain(domain):
             raise HTTPException(status_code=400, detail=f"Invalid domain: {domain}")
 
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
 
         # Create temporary worker for manual processing
         worker = TopicExtractionQueueWorker(get_db_connection, schema=schema)

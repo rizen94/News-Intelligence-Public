@@ -83,6 +83,7 @@ def bulk_seed_canonical_entries(
                     skipped += 1
                     continue
                 et = normalize_seed_entity_type(ent.get("entity_type"))
+                wikidata_qid = (ent.get("wikidata_qid") or ent.get("qid") or "").strip() or None
                 aliases_raw = ent.get("aliases") or []
                 if isinstance(aliases_raw, str):
                     aliases_raw = [a.strip() for a in aliases_raw.split(",") if a.strip()]
@@ -91,20 +92,31 @@ def bulk_seed_canonical_entries(
 
                 cur.execute(
                     f"""
-                    INSERT INTO {schema}.entity_canonical (canonical_name, entity_type, aliases)
-                    SELECT %s, %s, %s::text[]
+                    INSERT INTO {schema}.entity_canonical (canonical_name, entity_type, aliases, wikidata_qid)
+                    SELECT %s, %s, %s::text[], %s
                     WHERE NOT EXISTS (
                         SELECT 1 FROM {schema}.entity_canonical ec
                         WHERE lower(trim(ec.canonical_name)) = lower(trim(%s))
                           AND ec.entity_type = %s
                     )
                     """,
-                    (name, et, aliases, name, et),
+                    (name, et, aliases, wikidata_qid, name, et),
                 )
                 if cur.rowcount and cur.rowcount > 0:
                     inserted += 1
                 else:
                     skipped += 1
+                    if wikidata_qid:
+                        cur.execute(
+                            f"""
+                            UPDATE {schema}.entity_canonical
+                            SET wikidata_qid = COALESCE(wikidata_qid, %s), updated_at = NOW()
+                            WHERE lower(trim(canonical_name)) = lower(trim(%s))
+                              AND entity_type = %s
+                              AND (wikidata_qid IS NULL OR wikidata_qid = '')
+                            """,
+                            (wikidata_qid, name, et),
+                        )
                     if not aliases:
                         continue
                     cur.execute(

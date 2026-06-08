@@ -312,11 +312,18 @@ class ArticleService(DomainAwareService):
                     return None
                 article = dict(row)
                 # Normalize for frontend: ensure body and summary have something to show
-                content = (article.get("content") or "").strip()
+                from services.article_content_enrichment_service import (
+                    format_article_body_paragraphs,
+                )
+
+                content = format_article_body_paragraphs(
+                    (article.get("content") or "").strip()
+                )
                 excerpt = (article.get("excerpt") or "").strip()
                 summary = (article.get("summary") or "").strip()
+                article["content"] = content
                 if not content and excerpt:
-                    article["content"] = excerpt
+                    article["content"] = format_article_body_paragraphs(excerpt)
                 if not summary:
                     article["summary"] = excerpt or (
                         content[:500] + "..." if len(content) > 500 else content

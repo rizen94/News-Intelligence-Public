@@ -13,6 +13,22 @@ as canonical and merges metadata from subsequent sources. ``source_count`` and
 ``last_corroborated_at`` on the canonical row preserve multi-source tracking.
 
 Tune aggressiveness with ``EVENT_DEDUP_*`` env vars (see ``configs/env.example``).
+
+Integration Point: Processes events from `chronological_events` table for deduplication
+and updates metadata including `source_count` and `event_fingerprint` for downstream
+processing by Story Continuation (Phase 5) phase.
+
+Error Handling:
+- Database connection issues trigger retry mechanisms
+- LLM embedding failures are logged and skipped
+- Invalid event data is logged and skipped
+- Duplicate detection failures are logged and events proceed to next phase
+
+Monitoring:
+- Duplicate detection rate
+- Semantic similarity scores
+- Processing time per event
+- Tier-1, Tier-2, Tier-3 match rates
 """
 
 import json

@@ -51,7 +51,7 @@ def _read_lines(path: str | None, use_stdin: bool) -> list[str]:
 
 def main() -> int:
     p = argparse.ArgumentParser()
-    p.add_argument("--domain-key", required=True, help="URL domain key, e.g. politics, finance-2")
+    p.add_argument("--domain-key", required=True, help="URL domain key, e.g. politics, finance")
     p.add_argument("--file", help="Path to newline-delimited subject strings")
     p.add_argument("--stdin", action="store_true", help="Read subjects from stdin")
     p.add_argument("--notes", default="", help="Optional operator note stored on catalog rows")

@@ -12,6 +12,22 @@ Matching strategy:
 
 Also manages storyline lifecycle transitions:
   active -> dormant -> watching -> concluded -> archived
+
+Integration Point: Processes events from `chronological_events` table and links them
+to existing storylines in the database. Updates `storyline_id` field for downstream
+processing by other phases.
+
+Error Handling:
+- Database connection issues trigger retry mechanisms
+- LLM context verification failures are logged and skipped
+- Invalid storyline data is logged and skipped
+- Entity lookup failures are logged and events proceed to next phase
+
+Monitoring:
+- Storyline linking accuracy
+- LLM verification confidence scores
+- Processing time per event
+- Storyline transition rates
 """
 
 import json
@@ -296,14 +312,15 @@ class StoryContinuationService:
         placeholders = ",".join(["%s"] * len(entity_names))
         lower_names = [n.lower() for n in entity_names]
 
+        schema = self.schema or "public"
         try:
             cursor.execute(
                 f"""
                 SELECT sei.storyline_id, s.title, s.summary, s.status,
                        COUNT(DISTINCT sei.entity_name) AS overlap,
                        ARRAY_AGG(DISTINCT sei.entity_name) AS matched_entities
-                FROM story_entity_index sei
-                JOIN storylines s ON s.id = sei.storyline_id
+                FROM {schema}.story_entity_index sei
+                JOIN {schema}.storylines s ON s.id = sei.storyline_id
                 WHERE LOWER(sei.entity_name) IN ({placeholders})
                   AND s.status NOT IN ('archived', 'concluded')
                 GROUP BY sei.storyline_id, s.title, s.summary, s.status
@@ -416,6 +433,7 @@ class StoryContinuationService:
 
     def _link_event(self, event: dict, match: dict):
         cursor = self.conn.cursor()
+        schema = self.schema or "public"
         try:
             storyline_id = match["storyline_id"]
             cursor.execute(
@@ -429,8 +447,8 @@ class StoryContinuationService:
 
             # Reactivate dormant storylines
             cursor.execute(
-                """
-                UPDATE storylines
+                f"""
+                UPDATE {schema}.storylines
                 SET status = 'active',
                     last_event_at = CURRENT_TIMESTAMP,
                     reactivation_count = COALESCE(reactivation_count, 0) + 1,
@@ -442,8 +460,8 @@ class StoryContinuationService:
             )
 
             cursor.execute(
-                """
-                UPDATE storylines
+                f"""
+                UPDATE {schema}.storylines
                 SET last_event_at = CURRENT_TIMESTAMP,
                     total_events = COALESCE(total_events, 0) + 1,
                     updated_at = CURRENT_TIMESTAMP

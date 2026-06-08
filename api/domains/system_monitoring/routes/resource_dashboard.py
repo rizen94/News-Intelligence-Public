@@ -328,23 +328,34 @@ def get_backlog_status() -> dict[str, Any]:
         # Contexts: total, backlog (no claims yet), and throughput (contexts that got claims in last 1h/24h)
         context_total = 0
         context_backlog = 0
+        context_backlog_breakdown: dict[str, int] = {}
         contexts_claim_extracted_last_1h = 0
         contexts_claim_extracted_last_24h = 0
         contexts_claim_extracted_last_4d = 0
         contexts_created_last_1h = 0
         contexts_created_last_24h = 0
+        versioned_facts_last_24h = 0
+        versioned_facts_last_72h = 0
+        versioned_facts_claim_promoted_last_24h = 0
         try:
             cur.execute("SET LOCAL statement_timeout = '5s'")
             cur.execute("SELECT COUNT(*) FROM intelligence.contexts")
             context_total = cur.fetchone()[0] or 0
-            cur.execute(
-                """
-                SELECT COUNT(*) FROM intelligence.contexts c
-                LEFT JOIN intelligence.extracted_claims ec ON ec.context_id = c.id
-                WHERE ec.id IS NULL
-                """
-            )
-            context_backlog = cur.fetchone()[0] or 0
+            try:
+                from services.claim_extraction_service import get_context_claim_backlog_stats
+
+                context_backlog_breakdown = get_context_claim_backlog_stats()
+                context_backlog = context_backlog_breakdown.get("actionable_no_claims", 0)
+            except Exception:
+                context_backlog_breakdown = {}
+                cur.execute(
+                    """
+                    SELECT COUNT(*) FROM intelligence.contexts c
+                    LEFT JOIN intelligence.extracted_claims ec ON ec.context_id = c.id
+                    WHERE ec.id IS NULL
+                    """
+                )
+                context_backlog = cur.fetchone()[0] or 0
             cur.execute(
                 """
                 SELECT
@@ -377,6 +388,28 @@ def get_backlog_status() -> dict[str, Any]:
             if r:
                 contexts_created_last_1h = r[0] or 0
                 contexts_created_last_24h = r[1] or 0
+            cur.execute(
+                """
+                SELECT
+                    COUNT(*) FILTER (
+                        WHERE created_at >= NOW() - INTERVAL '24 hours'
+                    ),
+                    COUNT(*) FILTER (
+                        WHERE created_at >= NOW() - INTERVAL '72 hours'
+                    ),
+                    COUNT(*) FILTER (
+                        WHERE created_at >= NOW() - INTERVAL '24 hours'
+                          AND extraction_method = 'claim_extraction'
+                    )
+                FROM intelligence.versioned_facts
+                """
+            )
+            vf = cur.fetchone()
+            versioned_facts_claim_promoted_last_24h = 0
+            if vf:
+                versioned_facts_last_24h = vf[0] or 0
+                versioned_facts_last_72h = vf[1] or 0
+                versioned_facts_claim_promoted_last_24h = vf[2] or 0
         except Exception:
             _rollback_db_connection(conn)
 
@@ -759,6 +792,14 @@ def get_backlog_status() -> dict[str, Any]:
         automation_backlog_nonzero.append(f"backlog_metrics_unavailable:{str(ex)[:120]}")
 
     nightly_catchup: dict[str, Any] = {}
+    pipeline_schedule: dict[str, Any] = {}
+    try:
+        from services.pipeline_schedule_service import pipeline_schedule_info
+
+        pipeline_schedule = pipeline_schedule_info()
+    except Exception as ex:
+        pipeline_schedule = {"error": str(ex)[:200]}
+
     try:
         from services.nightly_ingest_window_service import (
             nightly_pipeline_window_info,
@@ -863,6 +904,7 @@ def get_backlog_status() -> dict[str, Any]:
                 "reasons": steady_reasons,
             },
             "nightly_catchup": nightly_catchup,
+            "pipeline_schedule": pipeline_schedule,
             "articles": {
                 "backlog": article_backlog,
                 "per_hour": round(articles_per_hour, 2),
@@ -901,6 +943,8 @@ def get_backlog_status() -> dict[str, Any]:
             "contexts": {
                 "total": context_total,
                 "backlog": context_backlog,
+                "backlog_breakdown": context_backlog_breakdown,
+                "backlog_note": "backlog = actionable_no_claims (matches claim_extraction automation); see backlog_breakdown.total_no_claims for Monitor legacy count",
                 "per_hour": round(context_claims_per_hour, 2),
                 "per_hour_source": context_claims_per_hour_source,
                 "processed_last_1h": contexts_claim_extracted_last_1h,
@@ -910,6 +954,19 @@ def get_backlog_status() -> dict[str, Any]:
                 "created_last_24h": contexts_created_last_24h,
                 "eta_hours": round(h_contexts, 1),
                 "iterations_to_baseline": iterations_2h(h_contexts),
+            },
+            "longitudinal_pipeline": {
+                "versioned_facts_promoted_last_24h": versioned_facts_last_24h,
+                "versioned_facts_promoted_last_72h": versioned_facts_last_72h,
+                "versioned_facts_claim_promoted_last_24h": versioned_facts_claim_promoted_last_24h,
+                "claims_extracted_last_24h": contexts_claim_extracted_last_24h,
+                "claim_to_fact_ratio_24h": round(
+                    (versioned_facts_claim_promoted_last_24h / contexts_claim_extracted_last_24h)
+                    if contexts_claim_extracted_last_24h
+                    else 0,
+                    3,
+                ),
+                "throughput_note": "promoted counts use versioned_facts.created_at (insert time), not valid_from/event_date",
             },
             "entity_profiles": {
                 "total": entity_profile_total,
@@ -1534,6 +1591,22 @@ def get_gpu_metric_history(
 # ---------------------------------------------------------------------------
 
 
+def _build_processing_progress_response(
+    *,
+    include_hourly_tick_rows: bool,
+    include_pending_metrics: bool,
+) -> dict[str, Any]:
+    from .processing_progress import compute_processing_progress_response
+
+    out = compute_processing_progress_response(
+        include_hourly_tick_rows=include_hourly_tick_rows,
+        include_pending_metrics=include_pending_metrics,
+    )
+    if out.get("success") and isinstance(out.get("data"), dict):
+        out["data"]["workload_window_days_note"] = BACKLOG_WORKLOAD_WINDOW_DAYS
+    return out
+
+
 @router.get("/processing_progress")
 @cached_response_sync(ttl=90)
 def get_processing_progress(
@@ -1559,15 +1632,10 @@ def get_processing_progress(
     and mounted here so the path is always ``/api/system_monitoring/processing_progress``.
     """
     try:
-        from .processing_progress import compute_processing_progress_response
-
-        out = compute_processing_progress_response(
+        return _build_processing_progress_response(
             include_hourly_tick_rows=include_hourly_tick_rows,
             include_pending_metrics=include_pending_metrics,
         )
-        if out.get("success") and isinstance(out.get("data"), dict):
-            out["data"]["workload_window_days_note"] = BACKLOG_WORKLOAD_WINDOW_DAYS
-        return out
     except Exception as e:
         logger.exception("processing_progress route failed: %s", e)
         return {

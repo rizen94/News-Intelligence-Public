@@ -7,7 +7,7 @@ RAG analysis, proactive detection, and advanced analysis features
 import logging
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Path, Query
-from shared.domain_registry import DOMAIN_PATH_PATTERN
+from shared.domain_registry import DOMAIN_PATH_PATTERN, resolve_domain_schema
 from shared.services.domain_aware_service import validate_domain
 
 from ..schemas.storyline_schemas import EmergingStoryline, EmergingStorylinesResponse
@@ -141,7 +141,7 @@ async def analyze_domain_storyline(
         )
         from shared.database.connection import get_db_connection
 
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
 
         conn = get_db_connection()
         if not conn:
@@ -212,7 +212,7 @@ async def perform_domain_rag_analysis(
         )
         from shared.database.connection import get_db_connection
 
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
         conn = get_db_connection()
         if not conn:
             raise HTTPException(status_code=500, detail="Database connection failed")

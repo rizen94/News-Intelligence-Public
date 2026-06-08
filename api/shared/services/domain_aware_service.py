@@ -102,15 +102,11 @@ class DomainAwareService:
 
     def _normalize_schema_name(self, domain: str) -> str:
         """
-        Convert domain key to schema name.
-
-        Args:
-            domain: Domain key (e.g., 'politics', 'finance')
-
-        Returns:
-            Schema name (e.g., 'politics_2', 'finance_2')
+        Convert domain key to schema name via registry (e.g. environment-climate → environment_climate).
         """
-        return domain.replace("-", "_")
+        from shared.domain_registry import resolve_domain_schema
+
+        return resolve_domain_schema(domain)
 
     def _validate_domain(self):
         """
@@ -278,7 +274,7 @@ def get_all_domains() -> list[dict[str, Any]]:
             )
             db_by_key = {str(r["domain_key"]): dict(r) for r in cur.fetchall()}
             cur.execute("SELECT schema_name FROM information_schema.schemata")
-            existing_schemas = {r[0] for r in cur.fetchall()}
+            existing_schemas = {str(r["schema_name"]) for r in cur.fetchall()}
     finally:
         conn.close()
 

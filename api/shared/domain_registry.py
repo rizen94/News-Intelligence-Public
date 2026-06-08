@@ -31,22 +31,7 @@ logger = logging.getLogger(__name__)
 
 _CONFIG_DIR = Path(__file__).resolve().parent.parent / "config" / "domains"
 
-# Schemas that must never be targeted by provision_domain as a *new* YAML silo (system + legacy dumps).
-RESERVED_SCHEMA_NAMES: frozenset[str] = frozenset(
-    {
-        "public",
-        "information_schema",
-        "pg_catalog",
-        "pg_toast",
-        "politics",
-        "finance",
-        "science_tech",
-        "politics_2",
-        "finance_2",
-        "intelligence",
-        "artificial_intelligence",
-    }
-)
+from shared.domain_registry_constants import RESERVED_SCHEMA_NAMES  # noqa: E402
 
 
 def _strip_doc_keys(data: dict[str, Any]) -> dict[str, Any]:
@@ -163,15 +148,38 @@ def first_active_domain_key(fallback: str = "politics") -> str:
     return keys[0] if keys else fallback
 
 
+def normalize_domain_key(token: str) -> str:
+    """
+    Canonical URL ``domain_key`` for routes, ``intelligence.*.domain_key`` columns, and the SPA.
+
+    Never use bare ``hyphen → underscore`` when registry has a different schema for the URL key.
+    """
+    key = str(token).strip()
+    for e in get_domain_entries():
+        if e["domain_key"] == key:
+            return key
+    keys = schema_to_domain_key(key)
+    if keys:
+        return keys[0]
+    sch = resolve_domain_schema(key)
+    keys = schema_to_domain_key(sch)
+    if keys:
+        return keys[0]
+    return key
+
+
 def resolve_domain_schema(domain_key: str) -> str:
     """
     Map URL ``domain_key`` to Postgres ``schema_name`` for active entries.
-    Fallback: ``hyphen → underscore`` (for stale rows or tests).
+
+    Prefer registry YAML / ``public.domains`` (``domain_key`` and ``schema_name`` normally align).
+    Fallback: ``hyphen → underscore`` for hyphenated URL keys.
     """
+    key = str(domain_key).strip()
     for e in get_domain_entries():
-        if e["domain_key"] == domain_key:
+        if e["domain_key"] == key:
             return str(e["schema_name"])
-    return str(domain_key).replace("-", "_")
+    return key.replace("-", "_")
 
 
 def get_active_domain_keys() -> tuple[str, ...]:

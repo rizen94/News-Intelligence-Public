@@ -211,6 +211,14 @@ class StorylineListItem(BaseModel):
         None,
         description="MAX(storyline_articles.added_at); preferred for 'what's new' vs row updated_at",
     )
+    last_refinement: datetime | None = Field(
+        None,
+        description="Last editorial/RAG refinement pass (review); not new article material",
+    )
+    last_automation_run: datetime | None = Field(
+        None,
+        description="Last automation discovery scan for related articles",
+    )
     top_entities: list[dict[str, Any]] = Field(
         default_factory=list
     )  # [{name, type, description_short}]

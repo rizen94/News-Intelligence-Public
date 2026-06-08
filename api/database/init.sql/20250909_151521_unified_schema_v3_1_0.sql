@@ -18,7 +18,10 @@ CREATE TABLE rss_feeds (
     created_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
     error_count integer NOT NULL DEFAULT 0,
-    last_error text
+    last_error text,
+    is_caught_up boolean DEFAULT false,
+    caught_up_since timestamp,
+    last_caught_up_check timestamp
 );
 
 CREATE TABLE articles (

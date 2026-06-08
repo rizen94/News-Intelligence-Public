@@ -1,7 +1,7 @@
 # Newsroom Orchestrator v6 — optional config
 # Override with env: NEWSROOM_ORCHESTRATOR_ENABLED=true
 newsroom:
-  enabled: true
+  enabled: false
   reporter:
     poll_interval_seconds: 600
     new_article_window_minutes: 15

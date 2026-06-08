@@ -1,7 +1,8 @@
 """
 Nightly off-hours pipeline (America/New_York by default).
 
-**Unified window** ``[NIGHTLY_PIPELINE_START_HOUR, NIGHTLY_PIPELINE_END_HOUR)`` — default **02:00–07:00** local:
+**Unified window** ``[NIGHTLY_PIPELINE_START_HOUR, NIGHTLY_PIPELINE_END_HOUR)`` — default **00:00–07:00** local
+(see ``pipeline_schedule_service``; ``PIPELINE_NIGHTLY_*`` aliases the same hours):
 
 1. **Once per local calendar day** while the window is active: optional kickoff ``collect_rss_feeds`` (see
    ``NIGHTLY_PIPELINE_KICKOFF_RSS``; respects ``AUTOMATION_SKIP_RSS_IN_COLLECTION_CYCLE``).
@@ -99,6 +100,7 @@ DEFAULT_NIGHTLY_SEQUENTIAL_PHASES: tuple[str, ...] = (
     "entity_enrichment",
     "proactive_detection",
     "storyline_discovery",
+    "storyline_assembly",
     "storyline_automation",
     "storyline_processing",
     "storyline_enrichment",
@@ -143,9 +145,16 @@ def nightly_pipeline_window_info() -> dict[str, Any]:
     Snapshot for monitoring: schedule, env flags, and next window boundary in nightly automation TZ.
     Assumes ``NIGHTLY_PIPELINE_START_HOUR`` < ``NIGHTLY_PIPELINE_END_HOUR`` (same calendar day).
     """
-    zi = nightly_automation_tz()
-    start_h = int(os.environ.get("NIGHTLY_PIPELINE_START_HOUR", "2"))
-    end_h = int(os.environ.get("NIGHTLY_PIPELINE_END_HOUR", "7"))
+    from services.pipeline_schedule_service import (
+        nightly_end_hour,
+        nightly_start_hour,
+        pipeline_schedule_info,
+        pipeline_schedule_tz,
+    )
+
+    zi = pipeline_schedule_tz()
+    start_h = nightly_start_hour()
+    end_h = nightly_end_hour()
     all_day = _nightly_pipeline_all_day_enabled()
     exclusive = os.environ.get("NIGHTLY_PIPELINE_EXCLUSIVE", "true").lower() in (
         "1",
@@ -153,8 +162,18 @@ def nightly_pipeline_window_info() -> dict[str, Any]:
         "yes",
     )
     ingest_exclusive = nightly_ingest_exclusive_automation_enabled()
-    enrich_start = int(os.environ.get("NIGHTLY_ENRICHMENT_CONTEXT_START_HOUR", "2"))
-    enrich_end = int(os.environ.get("NIGHTLY_ENRICHMENT_CONTEXT_END_HOUR", "7"))
+    enrich_start = int(
+        os.environ.get(
+            "NIGHTLY_ENRICHMENT_CONTEXT_START_HOUR",
+            str(nightly_start_hour()),
+        )
+    )
+    enrich_end = int(
+        os.environ.get(
+            "NIGHTLY_ENRICHMENT_CONTEXT_END_HOUR",
+            str(nightly_end_hour()),
+        )
+    )
     now_local = datetime.now(zi)
     in_window = in_nightly_pipeline_window_est()
     window_label = f"{start_h:02d}:00–{end_h:02d}:00 ({zi})"
@@ -176,6 +195,7 @@ def nightly_pipeline_window_info() -> dict[str, Any]:
                 .isoformat()
             )
 
+    schedule = pipeline_schedule_info(now_local=now_local)
     return {
         "timezone": str(zi),
         "unified_pipeline_enabled": nightly_unified_pipeline_enabled(),
@@ -189,11 +209,12 @@ def nightly_pipeline_window_info() -> dict[str, Any]:
         "in_unified_window": in_window,
         "window_ends_local": window_ends_local,
         "next_window_starts_local": next_window_starts_local,
+        "pipeline_schedule": schedule,
     }
 
 
 def in_nightly_pipeline_window_est() -> bool:
-    """Unified nightly catch-up window [start, end) local time (default 02:00–07:00)."""
+    """Unified nightly catch-up window [start, end) local time (default 00:00–07:00)."""
     global _logged_nightly_all_day
     if not nightly_unified_pipeline_enabled():
         return False
@@ -205,27 +226,25 @@ def in_nightly_pipeline_window_est() -> bool:
             )
             _logged_nightly_all_day = True
         return True
-    zi = nightly_automation_tz()
-    start_h = int(os.environ.get("NIGHTLY_PIPELINE_START_HOUR", "2"))
-    end_h = int(os.environ.get("NIGHTLY_PIPELINE_END_HOUR", "7"))
-    now_local = datetime.now(zi)
-    start = now_local.replace(hour=start_h, minute=0, second=0, microsecond=0)
-    end = now_local.replace(hour=end_h, minute=0, second=0, microsecond=0)
-    return start <= now_local < end
+    from services.pipeline_schedule_service import in_nightly_heavy_window
+
+    return in_nightly_heavy_window()
 
 
 def in_nightly_enrichment_context_window_est() -> bool:
     """
-    Sub-window for ingest-focused exclusive automation (default 02:00–07:00, aligned with pipeline).
+    Sub-window for ingest-focused exclusive automation (default 00:00–07:00, aligned with pipeline).
     Does not limit when enrichment runs inside the unified pipeline — only NIGHTLY_INGEST_EXCLUSIVE.
     """
     if not nightly_unified_pipeline_enabled():
         return False
     if _nightly_pipeline_all_day_enabled():
         return True
-    zi = nightly_automation_tz()
-    start_h = int(os.environ.get("NIGHTLY_ENRICHMENT_CONTEXT_START_HOUR", "2"))
-    end_h = int(os.environ.get("NIGHTLY_ENRICHMENT_CONTEXT_END_HOUR", "7"))
+    from services.pipeline_schedule_service import nightly_end_hour, nightly_start_hour, pipeline_schedule_tz
+
+    zi = pipeline_schedule_tz()
+    start_h = int(os.environ.get("NIGHTLY_ENRICHMENT_CONTEXT_START_HOUR", str(nightly_start_hour())))
+    end_h = int(os.environ.get("NIGHTLY_ENRICHMENT_CONTEXT_END_HOUR", str(nightly_end_hour())))
     now_local = datetime.now(zi)
     start = now_local.replace(hour=start_h, minute=0, second=0, microsecond=0)
     end = now_local.replace(hour=end_h, minute=0, second=0, microsecond=0)

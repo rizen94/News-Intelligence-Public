@@ -15,14 +15,14 @@ Typical workflow
   1. Dry-run one domain and inspect counts + samples::
 
        cd api && PYTHONPATH=. python scripts/prune_articles_failing_ingest_filters.py \\
-         --domain politics-2 --dry-run --limit 5000
+         --domain politics --dry-run --limit 5000
 
   2. Take a DB snapshot/backup if the counts look right.
 
   3. Execute (batched commits)::
 
        cd api && PYTHONPATH=. python scripts/prune_articles_failing_ingest_filters.py \\
-         --domain politics-2 --execute --batch-size 500
+         --domain politics --execute --batch-size 500
 
   4. Optional: VACUUM ANALYZE the affected schemas (or whole DB) after a large purge.
 
@@ -158,7 +158,7 @@ def run() -> int:
         action="append",
         dest="domains",
         metavar="DOMAIN_KEY",
-        help="Domain key (repeatable), e.g. politics-2. Default: all active registry domains.",
+        help="Domain key (repeatable), e.g. politics. Default: all active registry domains.",
     )
     parser.add_argument("--dry-run", action="store_true", help="Count and sample only; no DELETE.")
     parser.add_argument(

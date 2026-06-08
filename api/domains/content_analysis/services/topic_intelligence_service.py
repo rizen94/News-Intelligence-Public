@@ -19,7 +19,9 @@ class TopicIntelligenceService:
 
     def __init__(self, domain: str = "politics"):
         self.domain = domain
-        self.schema = domain.replace("-", "_")
+        from shared.domain_registry import resolve_domain_schema
+
+        self.schema = resolve_domain_schema(domain)
         self.stop_words = self._load_stop_words()
         self.topic_patterns = self._load_topic_patterns()
 

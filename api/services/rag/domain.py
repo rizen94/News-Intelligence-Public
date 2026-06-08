@@ -5,6 +5,7 @@ Extracted from enhanced_rag_service.py
 """
 
 import logging
+from shared.domain_registry import resolve_domain_schema
 from typing import Any
 
 from psycopg2.extras import RealDictCursor
@@ -87,7 +88,7 @@ class RAGDomainModule:
         Returns:
             List of RAGChunk objects
         """
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
         chunks = []
 
         try:

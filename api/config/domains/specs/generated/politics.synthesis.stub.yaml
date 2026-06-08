@@ -1,0 +1,3 @@
+# Copy into api/config/domain_synthesis_config.yaml under domains:
+#   politics:
+#     # TODO: storyline_development / topic bias for Politics

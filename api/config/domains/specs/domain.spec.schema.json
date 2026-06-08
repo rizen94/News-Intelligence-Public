@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://news-intelligence.local/domain.spec.schema.json",
+  "title": "DomainOnboardingSpec",
+  "type": "object",
+  "required": ["version", "domain_key", "schema_name", "display_name"],
+  "additionalProperties": false,
+  "properties": {
+    "version": { "type": "integer", "const": 1 },
+    "domain_key": {
+      "type": "string",
+      "pattern": "^[a-z0-9-]+$",
+      "description": "URL segment; hyphens allowed, no underscores"
+    },
+    "schema_name": {
+      "type": "string",
+      "pattern": "^[a-z0-9_]+$",
+      "description": "Postgres schema; underscores only, no hyphens"
+    },
+    "display_name": { "type": "string", "minLength": 1, "maxLength": 100 },
+    "description": { "type": "string" },
+    "display_order": { "type": "integer" },
+    "is_active": { "type": "boolean" },
+    "database": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "clone_from": { "type": "string", "default": "science_tech" },
+        "include_article_topic_clusters": { "type": "boolean", "default": true },
+        "migration_ref": { "type": ["string", "null"] }
+      }
+    },
+    "rss": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "seed_feed_category": { "type": "string" },
+        "feeds": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["feed_url"],
+            "additionalProperties": false,
+            "properties": {
+              "feed_url": { "type": "string", "minLength": 1 },
+              "feed_name": { "type": "string" },
+              "fetch_interval_seconds": { "type": "integer", "minimum": 1 },
+              "arc_relevance": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Longitudinal arc IDs this feed supports (e.g. resource_geopolitics)"
+              }
+            }
+          }
+        }
+      }
+    },
+    "focus_areas": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "llm_prompt_guidance": { "type": "string" },
+    "workload_assumptions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "expected_active_feeds": { "type": "integer", "minimum": 0 },
+        "rough_new_articles_per_day": { "type": "integer", "minimum": 0 },
+        "llm_heavy_phases_enabled": { "type": "boolean" }
+      }
+    }
+  }
+}

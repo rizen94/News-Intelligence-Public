@@ -309,7 +309,7 @@ async def enqueue_storyline_refinement_job(
             detail=f"Invalid job_type; allowed: {sorted(VALID_JOB_TYPES)}",
         )
 
-    schema = domain.replace("-", "_")
+    schema = _require_domain_schema(domain)
     conn = get_db_connection()
     if not conn:
         raise HTTPException(status_code=503, detail="Database unavailable")

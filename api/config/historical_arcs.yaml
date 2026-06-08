@@ -1,0 +1,86 @@
+# MVP longitudinal arcs — chapter boundaries are stored and dated (doctrine rule 4).
+# Sync to DB: arc_catalog_service.sync_arc_definitions_from_yaml()
+
+arcs:
+  - arc_id: resource_geopolitics
+    display_name: Resource Geopolitics
+    description: >
+      Commodity shocks, supply chains, energy transitions, and climate-resource stress
+      from the 1973 oil crisis through the present sanctions era.
+    start_date: "1973-10-01"
+    end_date: null
+    is_active: true
+    primary_entity_qids:
+      - Q796                                    # OPEC
+      - Q851                                    # Saudi Arabia
+      - Q148                                    # China
+      - Q30                                     # United States
+      - Q159                                    # Russia
+    primary_macro_series_ids:
+      - DCOILWTICO                              # WTI crude
+      - DTWEXBGS                                # Trade-weighted USD
+      - CPIAUCSL                                # US CPI
+      - GPRHICU                                 # GPR historical (when imported)
+    chapters:
+      - name: OPEC era
+        start_date: "1973-10-01"
+        end_date: "1985-12-31"
+        summary: Oil embargo, stagflation, and petrodollar recycling reshape global finance.
+      - name: Post-Cold War liberalization
+        start_date: "1986-01-01"
+        end_date: "2000-12-31"
+        summary: Market integration, Gulf War supply shock, Asian industrialization accelerates.
+      - name: China supercycle
+        start_date: "2001-01-01"
+        end_date: "2014-12-31"
+        summary: Commodity demand surge, resource nationalism, and pre-shale US energy dynamics.
+      - name: Shale and energy transition
+        start_date: "2015-01-01"
+        end_date: "2021-12-31"
+        summary: US shale revolution, Paris Agreement implementation, green industrial policy emerges.
+      - name: Sanctions era
+        start_date: "2022-02-01"
+        end_date: null
+        summary: Russia-Ukraine war, weaponized interdependence, critical minerals race intensifies.
+
+  - arc_id: political_tensions_multipolar
+    display_name: Political Tensions & Multipolar Order
+    description: >
+      Cold War bipolarity through unipolar moment to contested multipolar competition;
+      conflict data spine from UCDP/ACLED where available.
+    start_date: "1945-09-02"
+    end_date: null
+    is_active: true
+    primary_entity_qids:
+      - Q30                                     # United States
+      - Q159                                    # Russia / USSR successor
+      - Q148                                    # China
+      - Q142                                    # France
+      - Q145                                    # United Kingdom
+      - Q183                                    # Germany
+    primary_macro_series_ids:
+      - FEDFUNDS
+      - UNRATE
+      - GEPUCURRENT
+      - GPRTOT
+    chapters:
+      - name: Cold War bipolarity
+        start_date: "1945-09-02"
+        end_date: "1991-12-26"
+        summary: US-Soviet rivalry, decolonization, proxy wars, nuclear deterrence architecture.
+      - name: Unipolar moment
+        start_date: "1991-12-27"
+        end_date: "2001-09-10"
+        summary: US primacy, EU expansion, globalization consensus, humanitarian intervention debates.
+      - name: War on terror & revisionism
+        start_date: "2001-09-11"
+        end_date: "2013-12-31"
+        summary: 9/11 wars, color revolutions, financial crisis, emerging power assertiveness.
+      - name: Great power competition
+        start_date: "2014-01-01"
+        end_date: "2021-12-31"
+        summary: Crimea, South China Sea tensions, trade wars, democratic backsliding wave.
+      - name: Multipolar friction
+        start_date: "2022-01-01"
+        end_date: null
+        summary: Ukraine war, Indo-Pacific alignment blocs, Global South hedging, institutional fragmentation.

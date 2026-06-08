@@ -5,6 +5,19 @@ Extracts discrete, structured events from articles with temporal grounding.
 Each article may contain multiple events. Events are fingerprinted for
 cross-source deduplication (Phase 2) and tagged with continuation signals
 for story matching (Phase 3).
+
+Integration Point: Stores events in `chronological_events` table for downstream processing
+by Event Deduplication (Phase 4) and Story Continuation (Phase 5) phases.
+
+Error Handling: 
+- LLM processing failures are logged and skipped
+- Database connection issues trigger retry mechanisms
+- Invalid event formats are logged and skipped
+
+Monitoring:
+- Events extracted per article
+- LLM model usage tracking
+- Processing time metrics
 """
 
 import hashlib

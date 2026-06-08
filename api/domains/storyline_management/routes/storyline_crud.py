@@ -57,10 +57,14 @@ async def get_domain_storylines(
     status: str | None = Query(
         None, description="Filter by status (e.g. active, archived, draft, completed, paused)"
     ),
+    include_top_entities: bool = Query(
+        True,
+        description="When false, skip per-storyline entity aggregation (faster list loads)",
+    ),
 ):
     """Get paginated list of storylines for a specific domain"""
     try:
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
 
         conn = get_db_connection()
         if not conn:
@@ -69,12 +73,13 @@ async def get_domain_storylines(
         try:
             with conn.cursor() as cur:
                 # Build query with optional status filter (alias `s` for list + count)
-                where_clause = ""
+                where_parts = ["s.merged_into_id IS NULL"]
                 params = []
 
                 if status:
-                    where_clause = "WHERE s.status = %s"
+                    where_parts.append("s.status = %s")
                     params.append(status)
+                where_clause = "WHERE " + " AND ".join(where_parts)
 
                 # Get total count
                 count_query = f"SELECT COUNT(*) FROM {schema}.storylines s {where_clause}"
@@ -90,7 +95,8 @@ async def get_domain_storylines(
                     SELECT s.id, s.title, s.description, s.created_at, s.updated_at,
                            s.status, s.article_count, s.quality_score,
                            (SELECT MAX(sa.added_at) FROM {schema}.storyline_articles sa
-                            WHERE sa.storyline_id = s.id) AS last_article_added_at
+                            WHERE sa.storyline_id = s.id) AS last_article_added_at,
+                           s.last_refinement, s.last_automation_run
                     FROM {schema}.storylines s
                     {where_clause}
                     ORDER BY (SELECT MAX(sa2.added_at) FROM {schema}.storyline_articles sa2 WHERE sa2.storyline_id = s.id) DESC NULLS LAST,
@@ -103,7 +109,7 @@ async def get_domain_storylines(
 
                 # Top 3 entities per storyline (by mention count) for list view
                 top_entities_by_storyline = {sid: [] for sid in storyline_ids}
-                if storyline_ids:
+                if storyline_ids and include_top_entities:
                     cur.execute(
                         f"""
                         WITH article_entities_agg AS (
@@ -140,6 +146,8 @@ async def get_domain_storylines(
                 storylines = []
                 for row in list_rows:
                     laa = row[8] if len(row) > 8 else None
+                    last_refinement = row[9] if len(row) > 9 else None
+                    last_automation_run = row[10] if len(row) > 10 else None
                     storylines.append(
                         StorylineListItem(
                             id=row[0],
@@ -151,6 +159,8 @@ async def get_domain_storylines(
                             created_at=row[3],
                             updated_at=row[4],
                             last_article_added_at=laa,
+                            last_refinement=last_refinement,
+                            last_automation_run=last_automation_run,
                             top_entities=top_entities_by_storyline.get(row[0], []),
                         )
                     )
@@ -185,60 +195,60 @@ async def get_domain_storylines(
 async def create_domain_storyline(
     domain: str = Depends(validate_domain_dependency), request: StorylineCreateRequest = None
 ):
-    """Create a new storyline in a specific domain"""
-    try:
-        storyline_service = StorylineService(domain=domain)
+     """Create a new storyline in a specific domain"""
+     try:
+         storyline_service = StorylineService(domain=domain)
 
-        result = await storyline_service.create_storyline_from_articles(
-            title=request.title if request else "",
-            description=request.description if request else None,
-            article_ids=request.article_ids if request else None,
-        )
+         result = await storyline_service.create_storyline_from_articles(
+             title=request.title if request else "",
+             description=request.description if request else None,
+             article_ids=request.article_ids if request else None,
+         )
 
-        if result.get("success"):
-            data = result.get("data", {})
-            # Fetch created storyline for response
-            conn = get_db_connection()
-            try:
-                with conn.cursor() as cur:
-                    schema = domain.replace("-", "_")
-                    cur.execute(
-                        f"""
-                        SELECT id, title, description, status, article_count,
-                               quality_score, analysis_summary, created_at, updated_at,
-                               last_evolution_at, evolution_count
-                        FROM {schema}.storylines
-                        WHERE id = %s
-                    """,
-                        (data.get("id"),),
-                    )
-                    row = cur.fetchone()
-                    if row:
-                        return StorylineResponse(
-                            id=row[0],
-                            title=row[1],
-                            description=row[2],
-                            status=row[3],
-                            article_count=row[4] or 0,
-                            quality_score=row[5],
-                            analysis_summary=row[6],
-                            created_at=row[7],
-                            updated_at=row[8],
-                            last_evolution_at=row[9],
-                            evolution_count=row[10],
-                        )
-            finally:
-                conn.close()
+         if result.get("success"):
+             data = result.get("data", {})
+             # Fetch created storyline for response
+             conn = get_db_connection()
+             try:
+                 with conn.cursor() as cur:
+                     schema = resolve_domain_schema(domain)
+                     cur.execute(
+                         f"""
+                         SELECT id, title, description, status, article_count,
+                                quality_score, analysis_summary, created_at, updated_at,
+                                last_evolution_at, evolution_count
+                         FROM {schema}.storylines
+                         WHERE id = %s
+                     """,
+                         (data.get("id"),),
+                     )
+                     row = cur.fetchone()
+                     if row:
+                         return StorylineResponse(
+                             id=row[0],
+                             title=row[1],
+                             description=row[2],
+                             status=row[3],
+                             article_count=row[4] or 0,
+                             quality_score=row[5],
+                             analysis_summary=row[6],
+                             created_at=row[7],
+                             updated_at=row[8],
+                             last_evolution_at=row[9],
+                             evolution_count=row[10],
+                         )
+             finally:
+                 conn.close()
 
-            raise HTTPException(status_code=500, detail="Failed to retrieve created storyline")
-        else:
-            raise HTTPException(status_code=500, detail=result.get("error", "Creation failed"))
+             raise HTTPException(status_code=500, detail="Failed to retrieve created storyline")
+         else:
+             raise HTTPException(status_code=500, detail=result.get("error", "Creation failed"))
 
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error creating storyline: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+     except HTTPException:
+         raise
+     except Exception as e:
+         logger.error(f"Error creating storyline: {e}")
+         raise HTTPException(status_code=500, detail=str(e))
 
 
 # ============================================================================
@@ -253,7 +263,7 @@ async def get_domain_storyline(
 ):
     """Get a single storyline with all its articles from a specific domain"""
     try:
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
 
         conn = get_db_connection()
         if not conn:
@@ -491,7 +501,7 @@ async def update_domain_storyline(
 ):
     """Update an existing storyline in a specific domain"""
     try:
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
 
         conn = get_db_connection()
         if not conn:
@@ -676,7 +686,7 @@ async def delete_domain_storyline(
 ):
     """Delete a storyline and its junction rows in a specific domain."""
     try:
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
 
         conn = get_db_connection()
         if not conn:

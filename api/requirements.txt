@@ -18,7 +18,7 @@ httptools==0.6.4
 
 # Data Processing
 pandas==2.1.3
-numpy==1.25.2
+numpy==1.26.3
 scipy==1.15.3
 
 # Machine Learning (Core)
@@ -28,7 +28,7 @@ sentence-transformers==2.2.2
 # Web Scraping & Parsing
 feedparser==6.0.10
 beautifulsoup4==4.12.2
-lxml==4.9.3
+lxml>=4.9.4
 chardet==5.2.0
 trafilatura>=1.6.0
 

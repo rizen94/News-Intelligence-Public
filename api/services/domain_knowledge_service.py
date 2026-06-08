@@ -11,6 +11,7 @@ Each domain (politics, finance, artificial-intelligence, …) has:
 """
 
 import logging
+from shared.domain_registry import resolve_domain_schema
 import os
 from dataclasses import dataclass, field
 from typing import Any
@@ -475,7 +476,7 @@ class DomainKnowledgeService:
         """
         Extract domain-specific entities from text.
         """
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
         kb = self.knowledge_bases.get(domain, self.knowledge_bases.get(schema, {}))
         entities_db = kb.get("entities", {})
 
@@ -498,7 +499,7 @@ class DomainKnowledgeService:
         """
         Get definitions for domain terminology found in text.
         """
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
         kb = self.knowledge_bases.get(domain, self.knowledge_bases.get(schema, {}))
         terminology = kb.get("terminology", {})
 
@@ -517,7 +518,7 @@ class DomainKnowledgeService:
         """
         Get relevant external sources for a domain.
         """
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
         kb = self.knowledge_bases.get(domain, self.knowledge_bases.get(schema, {}))
         sources = kb.get("sources", [])
 
@@ -780,7 +781,7 @@ class DomainKnowledgeService:
         """
         Get detailed information about a specific entity.
         """
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
         kb = self.knowledge_bases.get(domain, self.knowledge_bases.get(schema, {}))
         entities_db = kb.get("entities", {})
 
@@ -805,7 +806,7 @@ class DomainKnowledgeService:
         """
         Search the domain knowledge base for relevant information.
         """
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
         kb = self.knowledge_bases.get(domain, self.knowledge_bases.get(schema, {}))
 
         results = []

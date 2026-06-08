@@ -1,7 +1,29 @@
 # Briefing and list ranking: low-priority entities and keywords so sports/celebrity/entertainment
 # stay at the bottom of politics (and optionally finance/science-tech) briefings.
 # Used by DailyBriefingService and briefing_feed API to demote, not drop, content.
-# RSS ingest exclusion remains in api/collectors/rss_collector.py (is_excluded_content).
+# RSS ingest exclusion: api/collectors/rss_collector.py (is_excluded_content) merges
+# ingest_exclude_keywords below + per-domain exclude_keywords + domain_synthesis_config.
+
+# Global ingest hard-exclude (longitudinal MVP — sports/entertainment never enter articles).
+ingest_exclude_keywords:
+  - "celebrity gossip"
+  - "red carpet"
+  - "box office opening"
+  - "fantasy football"
+  - "sports betting"
+  - "power rankings"
+  - "starting lineup"
+  - "injury report"
+  - "grammy awards"
+  - "oscar nominations"
+  - "emmy awards"
+  - "reality tv"
+  - "kardashian"
+  - "tiktok star"
+  - "esports tournament"
+  - "comic con"
+  - "cosplay"
+  - "makeup tutorial"
 
 # Entity names (e.g. athletes, celebrities) that should be deprioritized as lead in domain briefings.
 # Match is case-insensitive substring on title/lede/summary.

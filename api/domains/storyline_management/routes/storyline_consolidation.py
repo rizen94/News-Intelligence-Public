@@ -8,7 +8,7 @@ import logging
 from datetime import datetime
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Path, Query
-from shared.domain_registry import DOMAIN_PATH_PATTERN
+from shared.domain_registry import DOMAIN_PATH_PATTERN, resolve_domain_schema
 
 logger = logging.getLogger(__name__)
 
@@ -106,7 +106,7 @@ async def get_storyline_hierarchy(
 
     Shows parent-child relationships between storylines.
     """
-    schema = domain.replace("-", "_")
+    schema = resolve_domain_schema(domain)
 
     try:
         service = get_consolidation_service()
@@ -187,7 +187,7 @@ async def get_mega_storylines(
     """
     Get all mega-storylines (parent storylines that aggregate related stories).
     """
-    schema = domain.replace("-", "_")
+    schema = resolve_domain_schema(domain)
 
     try:
         service = get_consolidation_service()
@@ -276,7 +276,7 @@ async def manual_merge_storylines(
         service = get_consolidation_service()
 
         # Fetch both storylines
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
         conn = service.get_db_connection()
 
         try:
@@ -345,7 +345,7 @@ async def get_related_storylines(
 
     Returns siblings (same parent) and similar storylines.
     """
-    schema = domain.replace("-", "_")
+    schema = resolve_domain_schema(domain)
 
     try:
         service = get_consolidation_service()

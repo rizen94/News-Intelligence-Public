@@ -11,6 +11,7 @@ All functionality is now available through a single RAGService class.
 """
 
 import logging
+from shared.domain_registry import resolve_domain_schema
 import os
 from typing import Any, Dict, List, Optional
 
@@ -174,7 +175,7 @@ class RAGService(BaseRAGService):
         import psycopg2
         from psycopg2.extras import RealDictCursor
 
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
 
         try:
             conn = self.get_db_connection()

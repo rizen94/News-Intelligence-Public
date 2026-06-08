@@ -11,7 +11,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Path, Query
 from shared.database.connection import get_db_connection
-from shared.domain_registry import DOMAIN_PATH_PATTERN
+from shared.domain_registry import DOMAIN_PATH_PATTERN, resolve_domain_schema
 from shared.services.domain_aware_service import validate_domain
 
 from ..routes.storyline_management import trigger_storyline_evolution
@@ -39,7 +39,7 @@ async def add_article_to_domain_storyline(
 ):
     """Add an article to a storyline in a specific domain"""
     try:
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
 
         conn = get_db_connection()
         if not conn:
@@ -156,7 +156,7 @@ async def remove_article_from_domain_storyline(
 ):
     """Remove an article from a storyline in a specific domain"""
     try:
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
 
         conn = get_db_connection()
         if not conn:
@@ -238,7 +238,7 @@ async def get_domain_available_articles_for_storyline(
 ):
     """Get paginated list of articles available to add to a storyline"""
     try:
-        schema = domain.replace("-", "_")
+        schema = resolve_domain_schema(domain)
 
         conn = get_db_connection()
         if not conn:

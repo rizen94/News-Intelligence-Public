@@ -7,9 +7,39 @@ defaults:
   max_articles_per_synthesis: 50
   max_entities_per_synthesis: 30
   min_article_confidence: 0.3
-  # Aligns with ai_storyline_discovery historical global default; legal/medicine override below.
   clustering_similarity_threshold: 0.70
   storyline_min_cluster_size: 3
+  storyline_development:
+    discovery:
+      clustering_similarity_threshold: 0.70
+      min_cluster_size: 3
+      semantic_weight: 0.85
+      entity_weight: 0.10
+      temporal_weight: 0.05
+    proactive:
+      keyword_similarity_threshold: 0.30
+      min_articles: 3
+      promote_min_articles: 4
+      promote_min_confidence: 0.55
+      lookback_hours: 72
+    consolidation:
+      merge_similarity_threshold: 0.65
+      parent_similarity_threshold: 0.50
+      min_articles_for_mega: 10
+    narrative:
+      outbreak_keywords: []
+      allow_promote_pair_on_outbreak: false
+      credible_source_domains:
+        - who.int
+        - cdc.gov
+        - fda.gov
+        - hhs.gov
+        - nih.gov
+    automation:
+      default_mode: auto_approve
+      assembly_after_enrichment: true
+      unlinked_article_threshold: 25
+      automation_batch_per_assembly: 20
   # Merged into every domain’s topic_filter (RSS is_excluded_content + synthesis).
   # High-precision phrases for affiliate credit-card / personal-finance spam that
   # often lands in general-news feeds (e.g. politics template silos).
@@ -123,6 +153,20 @@ domains:
       Prioritize elections, legislation, conflicts, protests, and leadership
       changes. Identify who benefits, who opposes, and what precedents exist.
 
+    storyline_development:
+      discovery:
+        clustering_similarity_threshold: 0.73
+        min_cluster_size: 4
+        semantic_weight: 0.82
+        entity_weight: 0.12
+      proactive:
+        keyword_similarity_threshold: 0.35
+        promote_min_articles: 4
+      consolidation:
+        merge_similarity_threshold: 0.68
+        parent_similarity_threshold: 0.52
+        min_articles_for_mega: 12
+
   finance: &finance_v1
     focus_areas:
       - commodities and price movements driven by events
@@ -195,6 +239,20 @@ domains:
       Prioritize commodities, tariffs, sanctions, central bank actions, and
       resource demand shifts. Track how geopolitical events shape prices.
 
+    storyline_development:
+      discovery:
+        clustering_similarity_threshold: 0.74
+        min_cluster_size: 4
+        semantic_weight: 0.80
+        entity_weight: 0.15
+      proactive:
+        keyword_similarity_threshold: 0.35
+        promote_min_articles: 4
+      consolidation:
+        merge_similarity_threshold: 0.68
+        parent_similarity_threshold: 0.52
+        min_articles_for_mega: 12
+
   legal:
     focus_areas:
       - Newton and Greater Boston local ordinances, municipal law, and city/county proceedings
@@ -233,9 +291,24 @@ domains:
       - local ordinance cycles (hearing, vote, implementation)
       - federal–state interaction (preemption, funding, enforcement shifts)
 
-    # Same case or statute is often described with different wording across outlets; clusters are slower than politics.
     clustering_similarity_threshold: 0.58
     storyline_min_cluster_size: 2
+
+    storyline_development:
+      discovery:
+        clustering_similarity_threshold: 0.58
+        min_cluster_size: 2
+        semantic_weight: 0.75
+        entity_weight: 0.18
+      proactive:
+        keyword_similarity_threshold: 0.28
+        min_articles: 2
+        promote_min_articles: 3
+        promote_min_confidence: 0.50
+      consolidation:
+        merge_similarity_threshold: 0.62
+        parent_similarity_threshold: 0.48
+        min_articles_for_mega: 8
 
     editorial_sections:
       - What Changed
@@ -309,9 +382,44 @@ domains:
       - outbreak and public health response arcs
       - drug safety and label updates when sourced to regulators or studies
 
-    # Journal abstracts and wire copy differ; drug/trial threads evolve over months.
     clustering_similarity_threshold: 0.59
     storyline_min_cluster_size: 2
+
+    storyline_development:
+      discovery:
+        clustering_similarity_threshold: 0.59
+        min_cluster_size: 2
+        semantic_weight: 0.78
+        entity_weight: 0.17
+      proactive:
+        keyword_similarity_threshold: 0.28
+        min_articles: 2
+        promote_min_articles: 3
+        promote_min_confidence: 0.50
+        lookback_hours: 336
+      consolidation:
+        merge_similarity_threshold: 0.62
+        parent_similarity_threshold: 0.48
+        min_articles_for_mega: 8
+      narrative:
+        outbreak_keywords:
+          - hantavirus
+          - outbreak
+          - epidemic
+          - pandemic
+          - public health emergency
+          - disease outbreak
+          - who alert
+          - cdc alert
+        allow_promote_pair_on_outbreak: true
+        credible_source_domains:
+          - who.int
+          - cdc.gov
+          - fda.gov
+          - hhs.gov
+          - nih.gov
+          - nejm.org
+          - thelancet.com
 
     editorial_sections:
       - Evidence and endpoints
@@ -403,3 +511,18 @@ domains:
       audits, and regulator or court actions over marketing language. Treat chatbot SaaS
       promos and “replace your team with AI” pitches as low-signal. Separate research
       advances from product roadmaps when sources allow.
+
+    storyline_development:
+      discovery:
+        clustering_similarity_threshold: 0.70
+        min_cluster_size: 3
+        semantic_weight: 0.82
+        entity_weight: 0.12
+      proactive:
+        keyword_similarity_threshold: 0.32
+        promote_min_articles: 4
+      consolidation:
+        merge_similarity_threshold: 0.66
+        parent_similarity_threshold: 0.50
+        min_articles_for_mega: 10
+

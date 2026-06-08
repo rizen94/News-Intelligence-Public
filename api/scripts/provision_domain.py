@@ -51,7 +51,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import yaml  # noqa: E402
 from psycopg2 import sql as psql  # noqa: E402
 from shared.database.connection import get_db_connection  # noqa: E402
-from shared.domain_registry import RESERVED_SCHEMA_NAMES  # noqa: E402
+from shared.domain_registry_constants import RESERVED_SCHEMA_NAMES  # noqa: E402
 from shared.services.domain_rss_seed import seed_from_domain_config  # noqa: E402
 from shared.services.domain_silo_post_migration import activate_domain_row  # noqa: E402
 
@@ -191,12 +191,29 @@ def run_verify(cmd: str) -> int:
     return subprocess.run(cmd, shell=True, cwd=str(_REPO_ROOT), env=env).returncode
 
 
+def _resolve_config_from_spec(spec_path: Path) -> Path:
+    """Validate spec, generate slim YAML, return path to domains/{key}.yaml."""
+    from shared.domain_spec import DomainSpec
+
+    spec = DomainSpec.from_json_file(spec_path.resolve())
+    yaml_path = Path(__file__).resolve().parent.parent / "config" / "domains" / f"{spec.domain_key}.yaml"
+    yaml_path.write_text(spec.render_yaml(), encoding="utf-8")
+    print(f"  [spec] wrote {yaml_path} from {spec_path}")
+    return yaml_path
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Provision domain silo (ordered + teardown on failure)"
     )
-    parser.add_argument(
-        "--config", required=True, type=Path, help="Path to api/config/domains/{key}.yaml"
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument(
+        "--config", type=Path, help="Path to api/config/domains/{key}.yaml"
+    )
+    group.add_argument(
+        "--spec",
+        type=Path,
+        help="Path to api/config/domains/specs/{key}.domain.json (generates YAML first)",
     )
     parser.add_argument("--sql", type=Path, help="SQL migration file to apply")
     parser.add_argument(
@@ -239,7 +256,11 @@ def main() -> None:
     if args.require_backup_ack and not args.ack_backup:
         raise SystemExit("Refusing: use --ack-backup after taking a DB backup.")
 
-    cfg = _load_config(args.config)
+    config_path = args.config
+    if args.spec:
+        config_path = _resolve_config_from_spec(args.spec)
+
+    cfg = _load_config(config_path)
     domain_key = cfg.get("domain_key")
     schema_name = cfg.get("schema_name")
     if not domain_key or not schema_name:
@@ -254,7 +275,7 @@ def main() -> None:
 
     if args.print_checklist_only:
         print_post_provision_checklist(
-            domain_key, schema_name, config_path=str(args.config.resolve())
+            domain_key, schema_name, config_path=str(config_path.resolve())
         )
         return
 
@@ -333,7 +354,7 @@ def main() -> None:
             "(reads YAML each run) once feeds exist."
         )
         print_post_provision_checklist(
-            domain_key, schema_name, config_path=str(args.config.resolve())
+            domain_key, schema_name, config_path=str(config_path.resolve())
         )
     finally:
         conn.close()
