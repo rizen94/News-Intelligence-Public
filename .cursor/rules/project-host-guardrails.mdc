@@ -1,0 +1,12 @@
+---
+description: News Intelligence host authority — Widow is canonical; PopOS copy is cold storage
+alwaysApply: true
+---
+
+# News Intelligence — host guardrails
+
+- **Migration complete (June 2026).** All NI development and queries belong on **Widow** (`192.168.93.101`).
+- **Dev workspace:** `/home/pete/Documents/projects/News Intelligence` on Widow
+- **PopOS local copy** is headed for NAS cold storage — not authoritative
+- **Database:** NI owns `news_intel` on Widow `:5432`. Homelab postgres-mcp on PopOS reads it read-only — not Homelab `:15432`
+- Read `PROJECT_STATUS.md` and `../PROJECT_BOUNDARIES.md` before infra or DB work

@@ -1,0 +1,85 @@
+wing: news_intelligence
+rooms:
+- name: schema
+  description: Files from schema/
+  keywords:
+  - schema
+  - schema
+- name: backups
+  description: Files from backups/
+  keywords:
+  - backups
+  - backups
+- name: documentation
+  description: Files from docs/
+  keywords:
+  - documentation
+  - docs
+- name: reports
+  description: Files from reports/
+  keywords:
+  - reports
+  - reports
+- name: scripts
+  description: Files from scripts/
+  keywords:
+  - scripts
+  - scripts
+- name: nginx
+  description: Files from nginx/
+  keywords:
+  - nginx
+  - nginx
+- name: configuration
+  description: Files from configs/
+  keywords:
+  - configuration
+  - configs
+- name: diagnostics
+  description: Files from diagnostics/
+  keywords:
+  - diagnostics
+  - diagnostics
+- name: backend
+  description: Files from api/
+  keywords:
+  - backend
+  - api
+- name: data
+  description: Files from data/
+  keywords:
+  - data
+  - data
+- name: migrations
+  description: Files from migrations/
+  keywords:
+  - migrations
+  - migrations
+- name: testing
+  description: Files from tests/
+  keywords:
+  - testing
+  - tests
+- name: archive
+  description: Files from archive/
+  keywords:
+  - archive
+  - archive
+- name: web
+  description: Files from web/
+  keywords:
+  - web
+  - web
+- name: logs
+  description: Files from logs/
+  keywords:
+  - logs
+  - logs
+- name: costs
+  description: Files from finance/
+  keywords:
+  - costs
+  - finance
+- name: general
+  description: Files that don't fit other rooms
+  keywords: []

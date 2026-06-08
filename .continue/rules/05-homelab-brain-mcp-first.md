@@ -1,34 +1,36 @@
 ---
-name: Homelab brain — MemPalace / Brain Router first
-description: Before designing new RAG pipelines or duplicate memory layers, use existing MCP tools (MemPalace, BrainRouter) and mined palace data.
+name: Homelab brain — MemPalace / MCP first
+description: Before designing new RAG pipelines or duplicate memory layers, use HomeLab MCP tools (MemPalace, Obsidian, Postgres).
 alwaysApply: true
 ---
 
 # Use the homelab “brain” before new pipelines
 
-This workspace is wired to **HomeLab** memory tooling via Continue MCP (see `.continue/mcpServers/`). Prefer those over ad-hoc duplicate retrieval.
+This workspace connects to **HomeLab MCP** via Continue (`.continue/mcpServers/homelab-mcp-stack.yaml`), synced from **`HomeLab-AI-Stack/config/mcp-stack.json`**.
+
+Re-sync after `.env` port/key changes:
+
+```bash
+./scripts/sync-homelab-mcp.sh
+```
 
 ## Order of operations
 
-1. **MemPalace MCP** (`python -m mempalace.mcp_server`) — semantic search, drawers, and palace operations already backed by **mined** project/docs. Use MemPalace tools when the question is “what do we already know / remember about X?” or cross-session recall.
+1. **MemPalace MCP** (`mempalace` server) — semantic search, drawers, palace operations. Tools are **`mempalace_*` only** (never `query_memories` / `check_memories`).
 
-2. **BrainRouter MCP** (`brain_router_mcp_server.py`) — calls **`brain_search`** on the Homelab **Brain Router** HTTP service (`BRAIN_ROUTER_BASE_URL`, default `http://127.0.0.1:18052`). Pass **`sources`** to pull from the right stores in one shot, for example:
-   - **`obsidian`** — human-authored vault notes and runbooks (`OBSIDIAN_VAULT_PATH` on the stack).
-   - **`mempalace`** — palace-backed snippets (same world as MemPalace MCP when configured).
-   - **`khoj`** — searchable knowledge base (Khoj service on the homelab network).
-   - **`memory_api`** — optional HTTP memory store when you deliberately want that layer.
+2. **Obsidian vault MCP** (`obsidian-vault` server) — human-authored vault notes and runbooks on NAS mount.
 
-   Example intent: “search decisions and runbooks” → include **`obsidian`**; “search indexed docs and articles in Khoj” → include **`khoj`**; “broad recall” → combine **`mempalace`** with others as needed.
+3. **Postgres MCP** (`postgres-mcp` server) — read-only SQL over **`news_intel`** on Widow (not Homelab local Postgres `:15432`).
 
-3. **Repo tools** (`grep_search`, `glob_search`, `read_file`, `view_repo_map`) — for **source-of-truth code** in this git tree. Memory tools complement the repo; they do not replace reading the actual files for implementation work.
+4. **Repo tools** — source-of-truth code in this git tree. Memory tools complement the repo; they do not replace reading files for implementation.
 
 ## Do not by default
 
-- Spin up a **second** custom code-RAG or parallel embedding pipeline for “project context” while MemPalace mining + Brain Router + Obsidian/Khoj already cover semantic and human-curated knowledge — unless there is a concrete gap (scale, access, or policy) those tools cannot meet.
+- Spin up a **second** custom code-RAG while MemPalace + Obsidian + Postgres MCP already cover semantic and relational knowledge — unless there is a concrete gap those tools cannot meet.
 
 ## Preconditions
 
-- Brain Router must be **reachable** at `BRAIN_ROUTER_BASE_URL` (compose / host as per HomeLab runbooks).
-- MemPalace world must be **initialized and mined** on a schedule you already use; otherwise search results will be thin — fix mining/indexing before adding new stores.
+- MCP tier running: `docker compose -f HomeLab-AI-Stack/compose/mcp.yaml up -d`
+- Gateway healthy: `curl -sf http://127.0.0.1:18443/mempalace/docs`
 
-For stack-level detail, read **`HomeLab-AI-Stack/docs/CONTINUE_VSCODE_MCP.md`**, **`docs/MEMPALACE_INTEGRATION.md`**, and **`docs/runbooks/FULL_STACK_OPERATOR_GUIDE.md`** (Brain Router + Obsidian + Khoj).
+Stack detail: **`HomeLab-AI-Stack/docs/MCP.md`**, **`HomeLab-AI-Stack/ARCHITECTURE.md`**. Project boundary: **`../PROJECT_BOUNDARIES.md`**.

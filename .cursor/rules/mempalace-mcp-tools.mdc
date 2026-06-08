@@ -1,0 +1,22 @@
+---
+description: MemPalace MCP only exposes mempalace_* tools — forbid hallucinated names
+alwaysApply: true
+---
+
+# MemPalace MCP (server name usually `mempalace`)
+
+When calling MCP on **`mempalace`**, use **only** tools whose names start with **`mempalace_`**.
+
+**These names do not exist — never call them:** `query_memories`, `check_memories`, `save_memory`, `get_memory`.
+
+| Intent | Tool |
+|--------|------|
+| Search / recall | **`mempalace_search`** (`query`, `limit`; optional **`wing`**: `News Intelligence`) |
+| Wings / taxonomy / structure | **`mempalace_list_wings`**, **`mempalace_get_taxonomy`**, **`mempalace_list_rooms`** |
+| Duplicate / overlap check | **`mempalace_check_duplicate`** |
+| Read / write drawers | **`mempalace_get_drawer`**, **`mempalace_add_drawer`**, **`mempalace_update_drawer`**, **`mempalace_list_drawers`** |
+| After external writes / mine | **`mempalace_reconnect`** |
+
+If unsure what is registered (MCPO container running), list tool names:
+
+`docker exec ai-lab-mcp-gateway /usr/local/bin/python3 -c 'import mempalace.mcp_server as m; print("\n".join(sorted(m.TOOLS)))'`

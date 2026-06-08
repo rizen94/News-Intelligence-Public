@@ -8,11 +8,17 @@ alwaysApply: true
 
 You are working in the **News Intelligence** monorepo: FastAPI backend (`api/`), React + TypeScript frontend (`web/`), Postgres per-domain schemas, background automation.
 
+## Host guardrails
+
+- **Migration complete (June 2026).** Active development is on **Widow** (`192.168.93.101`), path `/home/pete/Documents/projects/News Intelligence`.
+- If you are on the **PopOS local copy** (`192.168.93.99`), it is headed for NAS cold storage — redirect work to Widow via SSH/Remote.
+- See **`PROJECT_STATUS.md`** and **`../PROJECT_BOUNDARIES.md`** for host authority and NI vs Homelab split.
+
 ## Authoritative docs (read when unsure)
 
 - **`AGENTS.md`** (repo root) — full agent guidance: terminology, flows, DB rules, file layout, doc alignment policy.
 - **`docs/CODEBASE_MAP.md`** — human navigation.
-- **`docs/PIPELINE_AND_ORDER_OF_OPERATIONS.md`** — pipeline order.
+- **`docs/PIPELINE_AND_AUTOMATION.md`** — pipeline order.
 - **`docs/CODING_STYLE_GUIDE.md`** — Python + TS naming and patterns.
 - **`docs/PIPELINE_INGESTION_AND_PROCESS_METHODOLOGY.md`** — ingest / phase contracts.
 - **`docs/CODE_REVIEW_AND_RUN_CAVEATS.md`** — ops caveats.

@@ -15,4 +15,4 @@ mcpServers:
     args:
       - "mcp-server-git"
       - "--repository"
-      - "/home/pete/Documents/projects/Projects/News Intelligence"
+      - "/home/pete/Documents/projects/News Intelligence"

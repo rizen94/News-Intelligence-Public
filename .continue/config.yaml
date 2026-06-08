@@ -7,6 +7,9 @@ schema: v1
 #
 # Installed tags (ollama list): lab-backbone-autogen, lab-backbone, qwen2.5:32b-instruct,
 # llama3.1:8b, nomic-embed-text. Do not reference tags here until `ollama pull` / `ollama create`.
+#
+# Ollama defaults to a 30s HTTP timeout in Continue; large models (especially lab-backbone 32k)
+# need requestOptions.timeout in milliseconds. Prefer "Lab backbone autogen" for Agent/chat.
 
 models:
   # --- agent / coding primary (tool-capable, 8k ctx — stays mostly on GPU) -----
@@ -23,6 +26,9 @@ models:
       - autocomplete
     defaultCompletionOptions:
       contextLength: 8192
+      keepAlive: 1800
+    requestOptions:
+      timeout: 900000
 
   # --- fast tool-use chat (lightweight, 100% GPU on 32 GB cards) --------------
   - name: Llama 3.1 8B
@@ -35,6 +41,8 @@ models:
       - chat
       - edit
       - apply
+    requestOptions:
+      timeout: 300000
 
   # --- heavy reasoning (32B; large KV — may spill CPU if context is high) -----
   - name: Qwen 2.5 32B instruct
@@ -46,6 +54,8 @@ models:
     roles:
       - chat
       - edit
+    requestOptions:
+      timeout: 900000
 
   - name: Lab backbone 32k
     provider: ollama
@@ -58,6 +68,9 @@ models:
       - edit
     defaultCompletionOptions:
       contextLength: 32768
+      keepAlive: 1800
+    requestOptions:
+      timeout: 900000
 
   # --- embeddings -----------------------------------------------------------
   - name: Nomic Embed
@@ -66,3 +79,5 @@ models:
     apiBase: http://127.0.0.1:11434
     roles:
       - embed
+    requestOptions:
+      timeout: 120000
