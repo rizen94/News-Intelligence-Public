@@ -1,0 +1,81 @@
+version: 1
+# Golden questions for arc report eval harness (Phase 4.5)
+# Run: PYTHONPATH=api uv run python api/scripts/run_arc_report_eval.py
+
+arcs:
+  resource_geopolitics:
+    questions:
+      - id: rg_oil_1973
+        prompt: "What happened in October 1973 that reshaped global energy markets?"
+        must_include_reference_ids: [ref_opec_embargo_1973]
+        must_include_entities: [OPEC, Saudi Arabia]
+        date_range: { start: "1973-01-01", end: "1974-12-31" }
+        min_citation_markers: 2
+      - id: rg_nixon_gold
+        prompt: "When did the US end dollar-gold convertibility and why does it matter for commodities?"
+        must_include_reference_ids: [ref_nixon_gold_window_1971]
+        date_range: { start: "1971-01-01", end: "1972-12-31" }
+      - id: rg_ukraine_energy
+        prompt: "How did the 2022 Ukraine invasion affect European energy sanctions architecture?"
+        must_include_reference_ids: [ref_ukraine_invasion_2022, ref_eu_russia_oil_embargo_2022]
+        min_source_types: [reference_event]
+      - id: rg_china_supercycle
+        prompt: "What WTO accession milestone accelerated the commodity supercycle?"
+        must_include_reference_ids: [ref_wto_china_2001]
+      - id: rg_ira_minerals
+        prompt: "Which 2022 US legislation linked climate subsidies to critical minerals sourcing?"
+        must_include_reference_ids: [ref_critical_minerals_2022]
+      - id: rg_opec_1973_chapter
+        prompt: "Which arc chapter covers the first OPEC shock era?"
+        must_include_entities: [OPEC]
+        min_citation_markers: 1
+      - id: rg_sanctions_2022
+        prompt: "When did the sanctions-era chapter of resource geopolitics begin?"
+        date_range: { start: "2022-01-01", end: "2022-12-31" }
+        must_include_reference_ids: [ref_ukraine_invasion_2022]
+      - id: rg_arctic_climate
+        prompt: "How do climate stress and resource access interact in the Arctic narrative?"
+        min_citation_markers: 2
+      - id: rg_supply_chain
+        prompt: "What reference events mark semiconductor or supply-chain chokepoints since 2020?"
+        min_citation_markers: 1
+
+  political_tensions_multipolar:
+    questions:
+      - id: pt_cold_war_start
+        prompt: "What 1947 policy speech formalized Cold War containment?"
+        must_include_reference_ids: [ref_cold_war_start_1947]
+      - id: pt_ussr_end
+        prompt: "When did the Soviet Union formally dissolve?"
+        must_include_reference_ids: [ref_ussr_dissolution_1991]
+        date_range: { start: "1991-01-01", end: "1992-12-31" }
+      - id: pt_crimea
+        prompt: "When did Russia annex Crimea and what followed in Western policy?"
+        must_include_reference_ids: [ref_crimea_2014]
+      - id: pt_911
+        prompt: "What event on 2001-09-11 shifted US grand strategy?"
+        must_include_reference_ids: [ref_911_2001]
+      - id: pt_brics
+        prompt: "What recent BRICS expansion signals Global South institutional hedging?"
+        must_include_reference_ids: [ref_brics_expansion_2024]
+      - id: pt_unipolar_moment
+        prompt: "What reference event marks the end of the short unipolar moment?"
+        min_citation_markers: 1
+      - id: pt_nato_expansion
+        prompt: "How did NATO enlargement feature in post-Cold War tensions?"
+        min_citation_markers: 1
+      - id: pt_multipolar_2020s
+        prompt: "Which living-fact themes define multipolar competition in the 2020s?"
+        min_citation_markers: 2
+      - id: pt_acled_spine
+        prompt: "Does the report cite external conflict events without inventing dates?"
+        forbid_predictive_language: true
+        min_citation_markers: 1
+
+global_rules:
+  forbid_predictive_language: true
+  required_sections:
+    - What changed
+    - Where this fits
+  min_words: 400
+  max_words: 1500

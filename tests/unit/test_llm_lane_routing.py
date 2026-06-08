@@ -7,6 +7,19 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "api"))
 from shared.services.llm_service import LLMService, pop_llm_execution_lane, push_llm_execution_lane
 
 
+def test_default_gpu_batch_ollama_url_uses_gpu_when_dual(monkeypatch):
+    monkeypatch.setenv("OLLAMA_DUAL_HOST_ROUTING_ENABLED", "true")
+    monkeypatch.setenv("OLLAMA_CPU_HOST", "http://cpu-topic:11434")
+    monkeypatch.setenv("OLLAMA_GPU_HOST", "http://gpu-topic:11434")
+    monkeypatch.setenv("OLLAMA_HOST", "http://fallback:11434")
+
+    from domains.content_analysis.services.topic_clustering_service import (
+        default_gpu_batch_ollama_url,
+    )
+
+    assert default_gpu_batch_ollama_url() == "http://gpu-topic:11434"
+
+
 def test_default_batch_ollama_url_uses_cpu_when_dual(monkeypatch):
     monkeypatch.setenv("OLLAMA_DUAL_HOST_ROUTING_ENABLED", "true")
     monkeypatch.setenv("OLLAMA_CPU_HOST", "http://cpu-topic:11434")

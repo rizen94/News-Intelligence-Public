@@ -1,4 +1,4 @@
-"""Integration checks for politics / finance silos (schemas politics_2 / finance_2, migration 201 + YAML)."""
+"""Integration checks for politics / finance silos (schemas politics / finance, migration 219 + YAML)."""
 
 import os
 import sys
@@ -59,17 +59,17 @@ def test_politics2_finance2_in_active_registry():
     assert "finance" in keys, "api/config/domains/finance.yaml should be is_active"
 
 
-def test_politics2_finance2_valid_and_schema_map():
+def test_politics_finance_valid_and_schema_map():
     assert is_valid_domain_key("politics")
     assert is_valid_domain_key("finance")
-    assert resolve_domain_schema("politics") == "politics_2"
-    assert resolve_domain_schema("finance") == "finance_2"
+    assert resolve_domain_schema("politics") == "politics"
+    assert resolve_domain_schema("finance") == "finance"
 
 
-def test_politics2_finance2_in_url_schema_pairs():
+def test_politics_finance_in_url_schema_pairs():
     pairs = dict(url_schema_pairs())
-    assert pairs.get("politics") == "politics_2"
-    assert pairs.get("finance") == "finance_2"
+    assert pairs.get("politics") == "politics"
+    assert pairs.get("finance") == "finance"
 
 
 def test_pipeline_url_schema_pairs_matches_full_when_exclude_empty(monkeypatch):
@@ -84,9 +84,9 @@ def test_pipeline_excludes_legacy_domain_keys(monkeypatch):
     assert "politics" not in pipe
     assert "finance" not in pipe
     if "politics" in dict(url_schema_pairs()):
-        assert pipe.get("politics") == "politics_2"
+        assert pipe.get("politics") == "politics"
     if "finance" in dict(url_schema_pairs()):
-        assert pipe.get("finance") == "finance_2"
+        assert pipe.get("finance") == "finance"
 
 
 def test_pipeline_include_allowlist(monkeypatch):
@@ -127,9 +127,11 @@ def test_legislative_scan_domain_keys_env(monkeypatch):
     assert legislative_scan_domain_keys() == ("politics", "legal")
 
 
-def test_reserved_schema_names_include_template_schemas():
-    assert "politics_2" in RESERVED_SCHEMA_NAMES
-    assert "finance_2" in RESERVED_SCHEMA_NAMES
+def test_reserved_schema_names_include_core_builtins():
+    assert "politics" in RESERVED_SCHEMA_NAMES
+    assert "finance" in RESERVED_SCHEMA_NAMES
+    assert "politics_2" not in RESERVED_SCHEMA_NAMES
+    assert "finance_2" not in RESERVED_SCHEMA_NAMES
 
 
 def test_rss_ingest_exclude_env_parsing(monkeypatch):
@@ -171,8 +173,8 @@ def test_synthesis_config_politics_finance_anchors():
 
 
 @pytest.mark.requires_db
-def test_db_schemas_politics2_finance2_exist():
-    """Requires DB + migration 201 applied."""
+def test_db_schemas_politics_finance_exist():
+    """Requires DB + migrations 201+ (219 unifies schema names to politics/finance)."""
     conn = _db_conn_or_skip()
     try:
         with conn.cursor() as cur:
@@ -180,22 +182,25 @@ def test_db_schemas_politics2_finance2_exist():
                 """
                 SELECT table_schema FROM information_schema.tables
                 WHERE table_name = 'articles'
-                  AND table_schema IN ('politics_2', 'finance_2')
+                  AND table_schema IN ('politics', 'finance', 'politics_2', 'finance_2')
                 ORDER BY 1
                 """
             )
             rows = {r[0] for r in cur.fetchall()}
-        assert rows == {"politics_2", "finance_2"}, (
-            f"Expected politics_2 and finance_2 articles tables; got {rows!r}. "
-            "Run: PYTHONPATH=api uv run python api/scripts/run_migration_201.py"
+        if rows == {"politics", "finance"}:
+            return
+        if rows == {"politics_2", "finance_2"}:
+            pytest.skip("Apply migration 219 (run_migration_219.py) to unify schema names")
+        pytest.fail(
+            f"Expected politics+finance or politics_2+finance_2 articles tables; got {rows!r}"
         )
     finally:
         conn.close()
 
 
 @pytest.mark.requires_db
-def test_finance_2_extension_tables_after_migration_206():
-    """Requires DB + migrations 201 and 206 (finance_2 legacy parity)."""
+def test_finance_extension_tables_after_migration_206():
+    """Requires DB + migrations 201/206/219 (finance extension tables)."""
     conn = _db_conn_or_skip()
     expected = frozenset(
         {
@@ -213,20 +218,20 @@ def test_finance_2_extension_tables_after_migration_206():
             cur.execute(
                 f"""
                 SELECT table_name FROM information_schema.tables
-                WHERE table_schema = 'finance_2' AND table_name IN ({placeholders})
+                WHERE table_schema IN ('finance', 'finance_2') AND table_name IN ({placeholders})
                 """,
                 names,
             )
             found = {r[0] for r in cur.fetchall()}
         if not found:
             pytest.skip(
-                "finance_2 has no extension tables yet; apply migration 206 "
+                "finance silo has no extension tables yet; apply migration 206 "
                 "(PYTHONPATH=api uv run python api/scripts/run_migration_206.py)"
             )
         missing = expected - found
         if missing:
             pytest.fail(
-                "finance_2 extension incomplete (partial 206?): missing "
+                "finance extension incomplete (partial 206?): missing "
                 f"{sorted(missing)} (found {sorted(found)})"
             )
     finally:
@@ -241,14 +246,15 @@ def test_public_domains_rows_politics_finance_schemas():
             cur.execute(
                 """
                 SELECT domain_key, schema_name FROM public.domains
-                WHERE schema_name IN ('politics_2', 'finance_2')
+                WHERE schema_name IN ('politics', 'finance', 'politics_2', 'finance_2')
                 ORDER BY schema_name
                 """
             )
             rows = cur.fetchall()
         by_schema = {r[1]: r[0] for r in rows}
-        # Pre–211 DBs may still use politics-2 / finance-2 keys; post–211 use politics / finance.
-        assert by_schema.get("politics_2") in ("politics", "politics-2")
-        assert by_schema.get("finance_2") in ("finance", "finance-2")
+        pol_schema = by_schema.get("politics") or by_schema.get("politics_2")
+        fin_schema = by_schema.get("finance") or by_schema.get("finance_2")
+        assert pol_schema == "politics", f"politics catalog mismatch: {by_schema!r}"
+        assert fin_schema == "finance", f"finance catalog mismatch: {by_schema!r}"
     finally:
         conn.close()
