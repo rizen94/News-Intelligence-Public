@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # News Intelligence System v8.0 - Stop Script
-# Stops: API Server, Frontend (keeps PostgreSQL running)
+# Stops API Server and Frontend
 
 set -e
 
@@ -17,13 +17,20 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOG_DIR="$SCRIPT_DIR/logs"
 API_UVICORN_PGREP='uvicorn.*(main|main_v4):app'
 
+# Create logs directory if it doesn't exist
+mkdir -p "$LOG_DIR"
+
 # Logging functions
 log() {
-    echo -e "${BLUE}[$(date '+%Y-%m-%d %H:%M:%S')]${NC} $1"
+    echo -e "${BLUE}[INFO]${NC} $1"
 }
 
 success() {
     echo -e "${GREEN}[SUCCESS]${NC} $1"
+}
+
+error() {
+    echo -e "${RED}[ERROR]${NC} $1"
 }
 
 warning() {
@@ -35,84 +42,52 @@ is_running() {
     pgrep -f "$1" > /dev/null 2>&1
 }
 
-# Free a TCP port by killing the process listening on it (fallback when pkill misses)
-free_port() {
-    local port=$1
-    if command -v fuser &>/dev/null; then
-        fuser -k "${port}/tcp" 2>/dev/null || true
-    elif command -v lsof &>/dev/null; then
-        lsof -ti ":${port}" 2>/dev/null | xargs -r kill 2>/dev/null || true
-    fi
-    sleep 1
-}
+echo -e "${BLUE}==============================================${NC}"
+echo -e "${BLUE}News Intelligence System v8.0 - Stopping${NC}"
+echo -e "${BLUE}==============================================${NC}"
 
 # Stop API server
-stop_api() {
+if is_running "$API_UVICORN_PGREP"; then
+    API_PID=$(pgrep -f "$API_UVICORN_PGREP" | head -1)
+    log "Stopping API Server (PID: $API_PID)..."
+    pkill -f "$API_UVICORN_PGREP" || true
+    sleep 2
     if is_running "$API_UVICORN_PGREP"; then
-        log "Stopping API server..."
-        pkill -f "$API_UVICORN_PGREP" || true
-        sleep 2
-        if is_running "$API_UVICORN_PGREP"; then
-            warning "API server did not stop gracefully, forcing..."
-            pkill -9 -f "$API_UVICORN_PGREP" || true
-        fi
-        success "API server stopped"
-    else
-        warning "API server not running"
+        warning "API Server still running, sending SIGKILL..."
+        pkill -9 -f "$API_UVICORN_PGREP" || true
     fi
-    # Ensure port 8000 is free (e.g. different uvicorn invocation)
-    if ss -tlnp 2>/dev/null | grep -q ":8000 "; then
-        log "Freeing port 8000..."
-        free_port 8000
-    fi
-}
+    success "API Server stopped"
+else
+    log "API Server is not running"
+fi
 
 # Stop Frontend
-stop_frontend() {
-    if is_running "node.*react-scripts\|vite.*start\|webpack.*serve\|vite"; then
-        log "Stopping frontend..."
-        pkill -f "react-scripts\|vite.*start\|webpack.*serve\|vite" || true
-        sleep 2
-        if is_running "node.*react-scripts\|vite.*start\|webpack.*serve\|vite"; then
-            warning "Frontend did not stop gracefully, forcing..."
-            pkill -9 -f "react-scripts\|vite.*start\|webpack.*serve\|vite" || true
-        fi
-        success "Frontend stopped"
-    else
-        warning "Frontend not running"
+FRONTEND_PATTERN='node.*react-scripts\|vite.*start\|webpack.*serve'
+if is_running "$FRONTEND_PATTERN"; then
+    FRONTEND_PID=$(pgrep -f "$FRONTEND_PATTERN" | head -1)
+    log "Stopping Frontend (PID: $FRONTEND_PID)..."
+    pkill -f "$FRONTEND_PATTERN" || true
+    sleep 2
+    if is_running "$FRONTEND_PATTERN"; then
+        warning "Frontend still running, sending SIGKILL..."
+        pkill -9 -f "$FRONTEND_PATTERN" || true
     fi
-    # Ensure port 3000 is free (e.g. process name didn't match or leftover from previous run)
-    if ss -tlnp 2>/dev/null | grep -q ":3000 "; then
-        log "Freeing port 3000..."
-        free_port 3000
-        success "Port 3000 freed"
-    fi
-}
+    success "Frontend stopped"
+else
+    log "Frontend is not running"
+fi
 
-# Main execution
-main() {
-    log "=========================================="
-    log "News Intelligence System v8.0 - Stop"
-    log "=========================================="
-    log "Stopping services..."
-    echo ""
-    
-    stop_api
-    stop_frontend
-    
-    # Clean up PID files
-    if [ -f "$LOG_DIR/api.pid" ]; then
-        rm "$LOG_DIR/api.pid"
+# Stop Redis container if running
+if command -v docker &> /dev/null; then
+    REDIS_CONTAINER="news-intelligence-redis"
+    if docker ps --format '{{.Names}}' | grep -q "^${REDIS_CONTAINER}$"; then
+        log "Stopping Redis container..."
+        docker stop "$REDIS_CONTAINER" || true
+        docker rm "$REDIS_CONTAINER" || true
+        success "Redis container stopped and removed"
     fi
-    if [ -f "$LOG_DIR/frontend.pid" ]; then
-        rm "$LOG_DIR/frontend.pid"
-    fi
-    
-    log ""
-    success "Services stopped"
-    warning "Note: PostgreSQL is still running"
-    log "=========================================="
-}
+fi
 
-main "$@"
-
+echo -e "${BLUE}==============================================${NC}"
+success "All services stopped!"
+echo -e "${BLUE}==============================================${NC}"

@@ -1,1 +1,0 @@
-../../run_last_24h_report.sh

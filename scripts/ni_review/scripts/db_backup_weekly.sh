@@ -1,1 +1,0 @@
-../../db_backup_weekly.sh

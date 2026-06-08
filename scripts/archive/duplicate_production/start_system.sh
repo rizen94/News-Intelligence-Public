@@ -6,7 +6,7 @@ echo "🚀 Starting News Intelligence System..."
 echo "====================================="
 
 # Navigate to project directory
-cd /home/pete/Documents/projects/Projects/News\ Intelligence
+cd /home/pete/Documents/projects/News\ Intelligence
 
 # Start all services
 echo "Starting Docker Compose services..."

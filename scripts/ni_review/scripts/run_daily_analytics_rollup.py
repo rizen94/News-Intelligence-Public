@@ -10,7 +10,7 @@ This supports weekly/monthly analytics from summarized daily data without queryi
 every raw per-run/per-log row.
 
 Usage:
-  cd "/home/pete/Documents/projects/Projects/News Intelligence"
+  cd "/home/pete/Documents/projects/News Intelligence"
   PYTHONPATH=api uv run python scripts/run_daily_analytics_rollup.py --date 2026-03-18
   # Default: yesterday UTC
 """

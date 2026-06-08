@@ -23,7 +23,7 @@ fi
 PATH="${PATH//\/usr\/share\/cursor\/resources\/app\/resources\/helpers:/}"
 export PATH
 
-WORKSPACE="/home/pete/Documents/projects/Projects/News Intelligence"
+WORKSPACE="/home/pete/Documents/projects/News Intelligence"
 ALLOWED_FILE="${WORKSPACE}/api/main.py"
 DENIED_FILE="/etc/passwd"
 
@@ -52,9 +52,9 @@ OUTPUT="$(printf '%s\n' "${REQUESTS}" | npx -y @modelcontextprotocol/server-file
   "${WORKSPACE}/docs" \
   "${WORKSPACE}/configs" \
   "${WORKSPACE}/.continue" \
-  /home/pete/Documents/projects/Projects/HomeLab-AI-Stack/docs \
-  /home/pete/Documents/projects/Projects/HomeLab-AI-Stack/scripts \
-  /home/pete/Documents/projects/Projects/HomeLab-AI-Stack/configs \
+  /home/pete/Documents/projects/HomeLab-AI-Stack/docs \
+  /home/pete/Documents/projects/HomeLab-AI-Stack/scripts \
+  /home/pete/Documents/projects/HomeLab-AI-Stack/configs \
   2>&1 || true)"
 
 echo "----- raw MCP output -----"

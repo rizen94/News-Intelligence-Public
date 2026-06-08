@@ -1,1 +1,0 @@
-../../deploy_public_demo_to_widow.sh

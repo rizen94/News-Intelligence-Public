@@ -1,0 +1,32 @@
+# Example systemd mount unit for NAS CIFS on Widow.
+# Copy and customize — credentials MUST NOT be committed to git.
+#
+# 1. Create credentials file (root-only):
+#      sudo mkdir -p /etc/news-intelligence
+#      sudo nano /etc/news-intelligence/nas.credentials
+#    Contents:
+#      username=pete
+#      password=YOUR_PASSWORD
+#      domain=WORKGROUP
+#
+# 2. Install unit (adjust What= and mount point):
+#      sudo cp infrastructure/mnt-nas.mount.example /etc/systemd/system/mnt-nas.mount
+#      sudo sed -i 's|//192.168.93.100/public|//YOUR_NAS/share|g' /etc/systemd/system/mnt-nas.mount
+#      sudo systemctl daemon-reload
+#      sudo systemctl enable --now mnt-nas.mount
+#
+# Backup cron jobs skip gracefully when NAS is not mounted.
+
+[Unit]
+Description=NAS CIFS mount for News Intelligence backups
+After=network-online.target
+Before=news-intelligence-api-public.service
+
+[Mount]
+What=//192.168.93.100/public
+Where=/mnt/nas
+Type=cifs
+Options=credentials=/etc/news-intelligence/nas.credentials,uid=pete,gid=pete,file_mode=0644,dir_mode=0755,_netdev
+
+[Install]
+WantedBy=multi-user.target

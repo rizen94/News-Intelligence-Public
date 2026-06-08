@@ -9,7 +9,7 @@ echo "🎯 NEWS INTELLIGENCE SYSTEM 4.0 ARCHITECTURE UPDATE - CORRECTED"
 echo "============================================================="
 
 # Configuration
-PROJECT_ROOT="/home/pete/Documents/projects/Projects/News Intelligence"
+PROJECT_ROOT="/home/pete/Documents/projects/News Intelligence"
 BACKUP_DIR="$PROJECT_ROOT/backups/v4_migration_$(date +%Y%m%d_%H%M%S)"
 LOG_FILE="$PROJECT_ROOT/logs/v4_migration.log"
 
@@ -1475,7 +1475,7 @@ echo "🚀 EXECUTING NEWS INTELLIGENCE SYSTEM 4.0 MIGRATION - CORRECTED VERSION"
 echo "====================================================================="
 
 BACKUP_DIR="$(dirname "$0")"
-PROJECT_ROOT="/home/pete/Documents/projects/Projects/News Intelligence"
+PROJECT_ROOT="/home/pete/Documents/projects/News Intelligence"
 
 cd "$PROJECT_ROOT"
 

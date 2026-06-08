@@ -1,1 +1,0 @@
-../../configure_widow_no_sleep.sh

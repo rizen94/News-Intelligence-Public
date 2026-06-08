@@ -28,7 +28,7 @@ echo "📦 Step 3: Restarting Docker daemon..."
 systemctl restart docker
 
 echo "📦 Step 4: Enabling GPU mode in News Intelligence System..."
-cd /home/pete/Documents/projects/Projects/News\ Intelligence
+cd /home/pete/Documents/projects/News\ Intelligence
 
 # Stop current system
 docker-compose down

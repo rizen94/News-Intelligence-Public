@@ -1,0 +1,7 @@
+# News Intelligence — weekly retained Postgres backup (Widow)
+# Install: scripts/setup_widow_boot_stack.sh
+
+SHELL=/bin/bash
+PATH=/usr/local/bin:/usr/bin:/bin
+
+30 4 * * 0 pete /opt/news-intelligence/scripts/db_backup_weekly_retained.sh >> /opt/news-intelligence/logs/backup_weekly.log 2>&1

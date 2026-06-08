@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PROJECT_DIR="/home/pete/Documents/projects/Projects/News Intelligence"
+PROJECT_DIR="/home/pete/Documents/projects/News Intelligence"
 VENV="${PROJECT_DIR}/.venv/bin/python"
 SCRIPT="${PROJECT_DIR}/scripts/preseed_wikipedia_cache.py"
 LOG_DIR="${PROJECT_DIR}/logs"

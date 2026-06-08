@@ -6,7 +6,7 @@ echo "🚀 Starting News Intelligence System - Production Mode with GPU"
 echo "=============================================================="
 
 # Navigate to project directory
-cd /home/pete/Documents/projects/Projects/News\ Intelligence
+cd /home/pete/Documents/projects/News\ Intelligence
 
 # Check GPU availability
 echo "🔍 Checking GPU availability..."

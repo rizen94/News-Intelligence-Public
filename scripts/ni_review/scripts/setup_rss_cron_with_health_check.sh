@@ -1,1 +1,0 @@
-../../setup_rss_cron_with_health_check.sh

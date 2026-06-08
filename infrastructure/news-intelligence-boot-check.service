@@ -1,0 +1,22 @@
+# One-shot post-boot verification for News Intelligence (Widow)
+# Runs after API is up; logs result to journal.
+# Install: scripts/setup_widow_boot_stack.sh
+
+[Unit]
+Description=News Intelligence boot verification
+After=news-intelligence-api-public.service
+Requires=news-intelligence-api-public.service
+
+[Service]
+Type=oneshot
+User=pete
+Group=pete
+EnvironmentFile=-/opt/news-intelligence/.env
+ExecStart=/opt/news-intelligence/scripts/verify_widow_boot.sh
+RemainAfterExit=yes
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=news-intelligence-boot-check
+
+[Install]
+WantedBy=multi-user.target

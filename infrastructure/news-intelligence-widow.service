@@ -1,0 +1,34 @@
+# DEV ONLY — do NOT enable on Widow production.
+# Production uses news-intelligence-api-public.service (single uvicorn + AutomationManager).
+# Multi-worker uvicorn would spawn duplicate AutomationManagers and break the pipeline.
+#
+# For local dev on the Widow dev tree only:
+#   sudo cp infrastructure/news-intelligence-widow.service /etc/systemd/system/
+#   Edit paths to match your dev checkout, then: systemctl enable --now news-intelligence-widow
+
+[Unit]
+Description=News Intelligence API (DEV tree — single worker)
+After=network-online.target postgresql.service
+Wants=network-online.target postgresql.service
+
+[Service]
+Type=simple
+User=pete
+Group=pete
+WorkingDirectory=/home/pete/Documents/projects/News Intelligence/api
+Environment=PYTHONPATH=/home/pete/Documents/projects/News Intelligence/api
+EnvironmentFile=-/home/pete/Documents/projects/News Intelligence/.env
+ExecStartPre=/bin/mkdir -p /home/pete/Documents/projects/News Intelligence/logs
+ExecStart=/home/pete/Documents/projects/News Intelligence/.venv/bin/python -m uvicorn main:app --host 127.0.0.1 --port 8000
+Restart=on-failure
+RestartSec=10
+TimeoutStartSec=180
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=news-intelligence-widow-dev
+
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

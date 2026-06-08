@@ -1,1 +1,0 @@
-../../archive_logs_to_nas.sh

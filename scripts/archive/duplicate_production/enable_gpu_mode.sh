@@ -6,7 +6,7 @@ echo "🚀 Enabling GPU Mode for News Intelligence System"
 echo "================================================"
 
 # Navigate to project directory
-cd /home/pete/Documents/projects/Projects/News\ Intelligence
+cd /home/pete/Documents/projects/News\ Intelligence
 
 echo "📦 Step 1: Stopping current system..."
 docker-compose down

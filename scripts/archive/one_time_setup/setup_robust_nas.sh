@@ -395,8 +395,8 @@ docker cp news-intelligence-redis:/data/dump.rdb "$BACKUP_DIR/$BACKUP_NAME/redis
 
 # Backup configuration files
 log "Backing up configuration files..."
-cp -r /home/pete/Documents/projects/Projects/News\ Intelligence/docker-compose.yml "$BACKUP_DIR/$BACKUP_NAME/"
-cp -r /home/pete/Documents/projects/Projects/News\ Intelligence/.env "$BACKUP_DIR/$BACKUP_NAME/"
+cp -r /home/pete/Documents/projects/News\ Intelligence/docker-compose.yml "$BACKUP_DIR/$BACKUP_NAME/"
+cp -r /home/pete/Documents/projects/News\ Intelligence/.env "$BACKUP_DIR/$BACKUP_NAME/"
 
 # Create backup manifest
 cat > "$BACKUP_DIR/$BACKUP_NAME/manifest.txt" << MANIFEST_EOF

@@ -1,1 +1,0 @@
-../../setup_widow_ssh.sh

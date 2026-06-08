@@ -1,0 +1,8 @@
+# News Intelligence — log archive to NAS (Widow)
+# Install: scripts/setup_widow_boot_stack.sh
+# Requires /mnt/nas mounted (see infrastructure/mnt-nas.mount.example)
+
+SHELL=/bin/bash
+PATH=/usr/local/bin:/usr/bin:/bin
+
+0 5 * * * pete /opt/news-intelligence/scripts/archive_logs_to_nas.sh >> /opt/news-intelligence/logs/archive_logs.log 2>&1

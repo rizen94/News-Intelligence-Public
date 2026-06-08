@@ -8,4 +8,4 @@
 SHELL=/bin/bash
 PATH=/usr/local/bin:/usr/bin:/bin
 
-0 3 * * * WIDOW_USER /opt/news-intelligence/scripts/db_backup_single_latest.sh >> /opt/news-intelligence/logs/backup.log 2>&1
+0 3 * * * pete /opt/news-intelligence/scripts/db_backup_single_latest.sh >> /opt/news-intelligence/logs/backup.log 2>&1

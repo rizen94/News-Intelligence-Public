@@ -1,1 +1,0 @@
-../../decommission_nas_postgresql.sh

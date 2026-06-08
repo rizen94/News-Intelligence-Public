@@ -33,7 +33,7 @@ markupsafe==3.0.2
 mdurl==0.1.2
 mpmath==1.3.0
 networkx==3.4.2
--e file:///home/pete/Documents/projects/Projects/News%20Intelligence
+-e file:///home/pete/Documents/projects/News%20Intelligence
 nltk==3.9.3
 numpy==2.2.6
 nvidia-cublas-cu12==12.8.4.1

@@ -1,1 +1,0 @@
-../../deploy_to_widow.sh

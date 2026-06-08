@@ -1,1 +1,0 @@
-../../run_decouple_on_widow.sh

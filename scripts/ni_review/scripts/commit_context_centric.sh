@@ -1,1 +1,0 @@
-../../commit_context_centric.sh

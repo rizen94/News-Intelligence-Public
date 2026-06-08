@@ -1,1 +1,0 @@
-../../setup_nas_ssh_tunnel.sh

@@ -52,6 +52,11 @@ def _log_registry_domains_for_rss() -> None:
 
 def run_rss_collection():
     try:
+        from services.pipeline_schedule_service import rss_collection_allowed
+
+        if not rss_collection_allowed():
+            logger.info("RSS skipped (pipeline quiet window — weekday daytime or nightly only)")
+            return 0
         from collectors.rss_collector import collect_rss_feeds
         return collect_rss_feeds()
     except Exception as e:

@@ -6,7 +6,7 @@
 echo "🔧 TESTING INTEGRATED DEDUPLICATION PIPELINE"
 echo "==========================================="
 
-cd "/home/pete/Documents/projects/Projects/News Intelligence/api"
+cd "/home/pete/Documents/projects/News Intelligence/api"
 
 # Set environment variables
 export DB_HOST=localhost

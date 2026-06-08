@@ -1,0 +1,12 @@
+# News Intelligence — boot stack meta-target (Widow production)
+# Install: scripts/setup_widow_boot_stack.sh
+# Start:   sudo systemctl start news-intelligence.target
+
+[Unit]
+Description=News Intelligence stack (API, RSS worker, nginx proxy)
+Documentation=file:///opt/news-intelligence/docs/WIDOW_BOOT_RESILIENCE.md
+After=network-online.target postgresql.service pgbouncer.service ollama.service
+Wants=news-intelligence-api-public.service newsplatform-secondary.service nginx.service
+
+[Install]
+WantedBy=multi-user.target

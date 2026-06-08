@@ -1,1 +1,0 @@
-../../rss_collection_with_health_check.sh

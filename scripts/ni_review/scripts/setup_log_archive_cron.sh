@@ -1,1 +1,0 @@
-../../setup_log_archive_cron.sh

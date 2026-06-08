@@ -1,1 +1,0 @@
-../../setup_autostart.sh

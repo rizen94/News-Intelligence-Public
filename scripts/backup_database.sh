@@ -20,7 +20,7 @@ error_exit() {
 
 # Get timestamp for backup filename
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-BACKUP_DIR="$HOME/Documents/projects/Projects/News Intelligence/backups"
+BACKUP_DIR="$HOME/Documents/projects/News Intelligence/backups"
 BACKUP_FILE="$BACKUP_DIR/news_intelligence_backup_$TIMESTAMP.sql.gz"
 
 echo "💾 DATABASE BACKUP"

@@ -102,7 +102,7 @@ GROUP BY status
 ORDER BY jobs DESC;
 
 -- @section pack_1c_coverage_funnel_template
--- Replace :schema with active schema_name (e.g. politics_2). Repeat per domain.
+-- Replace :schema with active schema_name (e.g. politics). Repeat per domain.
 -- Interpretation: pipeline-stage coverage for one silo.
 /*
 SELECT
@@ -114,7 +114,7 @@ SELECT
   count(*) FILTER (WHERE quality_score IS NOT NULL) AS has_quality_score,
   count(*) FILTER (WHERE ml_data IS NOT NULL) AS has_ml_data,
   count(*) FILTER (WHERE entities IS NOT NULL AND entities::text NOT IN ('[]', 'null')) AS has_entities_json
-FROM politics_2.articles
+FROM politics.articles
 WHERE enrichment_status IS DISTINCT FROM 'removed';
 */
 
@@ -235,11 +235,11 @@ LIMIT 20;
 -- =============================================================================
 
 -- @section pack_4a_quality_score_distribution_template
--- Per schema; replace politics_2.
+-- Per schema; replace politics.
 /*
 SELECT width_bucket(quality_score::float, 0, 1, 10) AS bucket,
        count(*) AS articles
-FROM politics_2.articles
+FROM politics.articles
 WHERE quality_score IS NOT NULL
 GROUP BY 1
 ORDER BY 1;
@@ -250,7 +250,7 @@ ORDER BY 1;
 SELECT count(*) AS storylines_total,
        count(*) FILTER (WHERE analysis_summary IS NULL OR length(btrim(analysis_summary)) < 200) AS short_or_missing_summary,
        count(*) FILTER (WHERE master_summary IS NULL OR length(btrim(master_summary)) < 200) AS short_or_missing_master
-FROM politics_2.storylines;
+FROM politics.storylines;
 */
 
 -- =============================================================================

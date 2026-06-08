@@ -1,23 +1,20 @@
-# News Intelligence — FastAPI for nginx reverse proxy (bind localhost only).
-# DEPRECATED for normal ops: AutomationManager should run only on the main GPU host.
-# Prefer PUBLIC_API_UPSTREAM=<main-pc>:8000 on Widow nginx and: scripts/widow_disable_public_api.sh
+# News Intelligence — production API on Widow (localhost, behind nginx).
+# Single uvicorn process embeds AutomationManager — do NOT use --workers or --reload.
 #
-# Enable this unit only when Widow is the sole API instance (no second AutomationManager elsewhere).
-#
-# Install on Widow:
+# Install: scripts/setup_widow_boot_stack.sh
+# Or manually:
 #   sudo cp infrastructure/news-intelligence-api-public.service /etc/systemd/system/
-#   sudo sed -i 's|/opt/news-intelligence|/opt/news-intelligence|g' /etc/systemd/system/news-intelligence-api-public.service
-#   (edit User= and paths if your deploy dir differs)
-#   sudo systemctl daemon-reload
-#   sudo systemctl enable --now news-intelligence-api-public
+#   sudo sed -i 's|/opt/news-intelligence|YOUR_DEPLOY_DIR|g' /etc/systemd/system/news-intelligence-api-public.service
+#   sudo systemctl daemon-reload && sudo systemctl enable --now news-intelligence-api-public
 #
-# Requires: /opt/news-intelligence/.env with DB_* and /opt/news-intelligence/.env.public_demo (optional overlay).
-# When PgBouncer runs on Widow: DB_HOST=127.0.0.1 DB_PORT=6432 (see docs/PGBOUNCER_AND_CONNECTION_BUDGET.md, scripts/install_pgbouncer_widow.sh).
+# Requires: DEPLOY_DIR/.env with DB_* (PgBouncer: DB_HOST=127.0.0.1 DB_PORT=6432)
 
 [Unit]
 Description=News Intelligence API (localhost, behind nginx)
-After=network-online.target
-Wants=network-online.target
+Documentation=file:///opt/news-intelligence/docs/WIDOW_BOOT_RESILIENCE.md
+After=network-online.target postgresql.service pgbouncer.service ollama.service
+Wants=network-online.target postgresql.service pgbouncer.service ollama.service
+PartOf=news-intelligence.target
 
 [Service]
 Type=simple
@@ -28,10 +25,15 @@ Environment=PYTHONPATH=/opt/news-intelligence/api
 EnvironmentFile=-/opt/news-intelligence/.env
 EnvironmentFile=-/opt/news-intelligence/.env.public_demo
 ExecStartPre=/bin/mkdir -p /opt/news-intelligence/api/logs /opt/news-intelligence/logs
+ExecStartPre=/opt/news-intelligence/.venv/bin/python /opt/news-intelligence/scripts/systemd_db_probe.py
 ExecStart=/opt/news-intelligence/.venv/bin/python -m uvicorn main:app --host 127.0.0.1 --port 8000
+ExecStartPost=/opt/news-intelligence/scripts/systemd_wait_readiness.sh
 Restart=on-failure
-RestartSec=5
-TimeoutStartSec=120
+RestartSec=10
+TimeoutStartSec=600
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=news-intelligence-api
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=multi-user.target news-intelligence.target

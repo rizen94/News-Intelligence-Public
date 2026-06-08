@@ -1,1 +1,0 @@
-../../run_consolidation_on_widow.sh
